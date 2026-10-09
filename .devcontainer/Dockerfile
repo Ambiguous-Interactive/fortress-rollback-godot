@@ -24,12 +24,16 @@ ARG TARGETARCH
 
 # Modern CLI tooling for humans and agents, in a single layer. Ubuntu ships
 # fd and bat under different names; symlinks restore the conventional ones.
+# python3 must be the FULL package: the base image ships none, and features
+# install only python3-minimal, which lacks stdlib modules (json, unittest,
+# dataclasses) that this repo's harness requires.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \
         fd-find \
         fzf \
         jq \
+        python3 \
         ripgrep \
         tree \
         unzip \

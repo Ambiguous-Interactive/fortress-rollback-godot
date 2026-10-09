@@ -59,10 +59,29 @@ Decisions locked with user:
   its installer pins `REPO="sst/opencode"`, but the project moved to
   `anomalyco/opencode`, so the GitHub Releases lookup fails. This is the
   maintenance-mode failure mode flagged during planning. Fix: dropped the
-  feature; OpenCode now installs in the Dockerfile via the official install
-  script (run with a throwaway HOME — the script hardcodes
-  `INSTALL_DIR=$HOME/.opencode/bin` — then moved into `/usr/local/bin` and
-  validated with `opencode --version` at build time).
+  feature; OpenCode now installs in the Dockerfile.
+- RED data point 5: image + container built; post-create ran verify.sh to
+  21 passed / 2 failed — only `make lint-llm` and `make test-llm` failed,
+  with `ModuleNotFoundError: No module named 'dataclasses'` / `unittest`.
+  Root cause (from `/var/log/apt/history.log` inside the container): the
+  devcontainers base image ships NO python3; a feature's installer ran
+  `apt-get install --no-install-recommends python3-minimal` (enough for its
+  own logic) leaving the container without the real stdlib. Fix: install the
+  full `python3` package in the Dockerfile's apt layer, which runs before
+  features — features then see python3 present and skip their minimal stub.
+- RED data point 6: OpenCode's official install script queries the
+  unauthenticated GitHub API (`api.github.com/.../releases/latest`), which
+  rate-limits during builds -> "Failed to fetch version information". Fix:
+  fetch the release asset directly via the redirect URL
+  `releases/latest/download/opencode-linux-<arch>.tar.gz` (single binary at
+  tarball root, verified); no API call at all.
+- RED data point 7 (process lesson, not a code bug): `devcontainer up`
+  without `--remove-existing-container` REUSED the stale container after the
+  Dockerfile changed — `up` returned success with the same containerId as the
+  previous failed run, because postCreateCommand only runs on container
+  CREATE. Lesson: after image changes, rebuild with
+  `--remove-existing-container`; CI runs on a fresh runner so it always
+  creates fresh.
 - RED data point 3 fix verified: image built past the Godot layer; failure
   moved to feature stage (i.e., ownership fix worked).
 
@@ -70,6 +89,45 @@ Decisions locked with user:
 
 - `initializeCommand` confirmed working: `devcontainer.env` auto-created from
   the example on first `up`; `git check-ignore` confirms it is ignored.
+- GREEN: injected `TEST_SECRET_KEY=abc123` into `devcontainer.env`, recreated
+  the container, `printenv` inside showed the value (PASS), env file restored.
+  Secrets flow container-wide via `runArgs --env-file`.
+
+### T4 — MCP servers (GREEN target)
+
+- GREEN: `.mcp.json` and `opencode.json` valid JSON, all three servers wired
+  in both (verify.sh checks); godot MCP stdio handshake answers `initialize`
+  with `serverInfo` (live npx run inside the container).
+- Incidental external validation: the harness's own MCP client picked up the
+  new `.mcp.json` and connected the godot server mid-session.
+
+### T5 — Project gates inside container (GREEN target)
+
+- GREEN: full verify inside the container = **23 passed, 0 failed**, ~5.5s
+  wall: engine version, agentic CLIs, CLI tools, gdformat/gdlint, hooks,
+  wiring JSON, MCP handshake, `make lint-llm`, `make test-llm`,
+  `godot --headless --import`.
+
+### T6 — Docs + .gitignore (GREEN target)
+
+- `.devcontainer/README.md` written (harness style, <300 lines);
+  `.gitignore` gained `.devcontainer/devcontainer.env`.
+
+### T7 — CI workflow (GREEN target)
+
+- `.github/workflows/devcontainer.yml` added: shellcheck (warning level),
+  JSON validation, `devcontainer up` on a fresh runner, verify.sh in the
+  container. Fresh runners always create fresh containers, which sidesteps
+  RED data point 7.
+
+## Timings (measured)
+
+| Operation | Wall time |
+| --- | --- |
+| Full image rebuild (Dockerfile layer changed) | ~70–75s |
+| Container recreation, warm image cache | ~14s |
+| Full verify.sh inside container | ~5.5s |
+| `up` on a fresh runner (CI worst case) | covered by 30min timeout |
 
 ### T4 — MCP servers (GREEN target)
 
