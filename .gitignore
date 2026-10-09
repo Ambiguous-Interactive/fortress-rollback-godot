@@ -16,6 +16,9 @@ venv/
 # pre-commit
 .pre-commit-cache/
 
+# Devcontainer secrets (template: .devcontainer/devcontainer.env.example)
+.devcontainer/devcontainer.env
+
 # OS
 .DS_Store
 Thumbs.db

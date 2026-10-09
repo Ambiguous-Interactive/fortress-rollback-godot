@@ -26,7 +26,19 @@ Decisions locked with user:
 
 ### T1 — Skeleton: Dockerfile + devcontainer.json (GREEN target)
 
-- TODO
+- Files: `Dockerfile`, `devcontainer.json`, `devcontainer.env.example`,
+  `post-create.sh`, `init-firewall.sh`, root `.mcp.json` + `opencode.json`,
+  `.gitignore` entry for `.devcontainer/devcontainer.env`, README.
+- Pinned facts (verified at decision time): Godot `4.7.2-stable` assets exist
+  for x86_64+arm64 (HTTP 302 on release URLs); uv `0.13.0`; gdtoolkit `4.5.0`;
+  `devcontainers-extra/features/opencode:1.0.0` exists (GitHub Releases
+  installer); no astral uv feature exists -> official `COPY --from` image
+  install instead; opencode MCP schema confirmed from docs (incl. `oauth:
+  false` for header-auth servers and `{env:VAR}` substitution).
+- RED data point 1: BuildKit rejects ARG expansion in `COPY --from`
+  (`variable expansion is not supported for --from`). Fix: dedicated
+  `FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin` stage.
+- Build running.
 
 ### T2 — Tooling verification (GREEN target)
 
