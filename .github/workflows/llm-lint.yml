@@ -1,0 +1,76 @@
+name: LLM Harness Lint
+
+# Guards the AI-agent harness: file length caps, generated index/stub
+# freshness, pointer delegation, skill frontmatter, encodings, and the
+# tooling's own self-tests.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".llm/**"
+      - ".claude/**"
+      - ".agents/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/copilot-instructions.md"
+      - ".cursor/**"
+      - ".windsurf/**"
+      - ".clinerules/**"
+      - "scripts/**"
+      - "Makefile"
+      - ".pre-commit-config.yaml"
+      - ".githooks/**"
+      - ".github/workflows/llm-lint.yml"
+  pull_request:
+    paths:
+      - ".llm/**"
+      - ".claude/**"
+      - ".agents/**"
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - ".github/copilot-instructions.md"
+      - ".cursor/**"
+      - ".windsurf/**"
+      - ".clinerules/**"
+      - "scripts/**"
+      - "Makefile"
+      - ".pre-commit-config.yaml"
+      - ".githooks/**"
+      - ".github/workflows/llm-lint.yml"
+
+jobs:
+  lint:
+    name: Harness checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tooling self-tests
+        run: python3 -m unittest discover -s scripts/tests -t scripts -v
+
+      - name: File length caps
+        run: python3 scripts/llm/check_llm_file_lengths.py --verbose
+
+      - name: Index freshness
+        run: python3 scripts/llm/generate_llm_index.py --check
+
+      - name: Agent stub freshness
+        run: python3 scripts/llm/generate_skill_stubs.py --check
+
+      - name: Instructions meta-lint
+        run: python3 scripts/llm/lint_llm_instructions.py
+
+      - name: Fail on uncommitted drift
+        run: |
+          STATUS="$(git status --porcelain)"
+          if [ -n "$STATUS" ]; then
+            echo "::error::Working tree dirty after lint steps (generated files committed?):"
+            echo "$STATUS"
+            exit 1
+          fi

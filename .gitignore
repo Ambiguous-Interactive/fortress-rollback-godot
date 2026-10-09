@@ -1,0 +1,26 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+*.translation
+
+# Godot temporary/export artifacts
+export_presets.cfg.orig
+*.tmp
+
+# Python (tooling, venvs)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# pre-commit
+.pre-commit-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp

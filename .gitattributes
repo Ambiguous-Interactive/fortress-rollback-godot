@@ -1,0 +1,25 @@
+# Normalize all text files to LF in the repo; check out native per-platform.
+* text=auto
+
+# The .llm harness enforces a strict LF/UTF-8 no-BOM contract for all
+# instruction files. Force LF so Windows checkouts cannot break it.
+*.md   text eol=lf
+*.mdc  text eol=lf
+*.py   text eol=lf
+*.gd   text eol=lf
+*.tscn text eol=lf
+*.cfg  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
+*.sh   text eol=lf
+*.svg  text eol=lf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.webp binary
+*.wav binary
+*.ogg binary
+*.ttf binary

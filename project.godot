@@ -1,0 +1,26 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+
+config_version=5
+
+[application]
+
+config/name="Fortress Rollback Godot"
+config/description="GDScript-only port of the fortress-rollback deterministic rollback networking library."
+config/version="0.1.0"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+run/main_scene=""
+config/icon="res://icon.svg"
+
+[physics]
+
+; Deterministic fixed tick. Never change this without reviewing
+; .llm/skills/determinism/SKILL.md and updating every saved replay.
+physics_ticks_per_second=60
+common/physics_interpolation=false
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

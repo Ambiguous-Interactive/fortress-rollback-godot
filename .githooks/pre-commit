@@ -1,0 +1,16 @@
+#!/bin/sh
+# Dependency-free pre-commit guard for the .llm harness.
+# Install with: make hooks
+set -e
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+echo "[pre-commit] llm harness: checking staged files + generated artifacts"
+
+python3 scripts/llm/check_llm_file_lengths.py --staged .
+python3 scripts/llm/generate_llm_index.py --check
+python3 scripts/llm/generate_skill_stubs.py --check
+python3 scripts/llm/lint_llm_instructions.py
+
+echo "[pre-commit] llm harness OK"

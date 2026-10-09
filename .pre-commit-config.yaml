@@ -1,0 +1,40 @@
+# Pre-commit framework config (optional path; plain git hooks live in
+# .githooks/ and are installed with `make hooks`). Both run the same checks.
+# Usage: pre-commit install && pre-commit run --all-files
+repos:
+  - repo: local
+    hooks:
+      - id: llm-file-lengths
+        name: llm file lengths (300-line cap)
+        entry: python3 scripts/llm/check_llm_file_lengths.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: llm-index-fresh
+        name: llm skills index is fresh
+        entry: python3 scripts/llm/generate_llm_index.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: llm-stubs-fresh
+        name: agent skill stubs are fresh
+        entry: python3 scripts/llm/generate_skill_stubs.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: llm-instructions
+        name: llm instructions meta-lint
+        entry: python3 scripts/llm/lint_llm_instructions.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: llm-self-tests
+        name: llm tooling self-tests
+        entry: python3 -m unittest discover -s scripts/tests -t scripts
+        language: system
+        pass_filenames: false
+        always_run: true

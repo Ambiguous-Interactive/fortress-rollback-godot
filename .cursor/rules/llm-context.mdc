@@ -1,0 +1,8 @@
+---
+description: Canonical AI agent guidelines for this repository (delegates to .llm/context.md)
+alwaysApply: true
+---
+
+# Repository Guidelines
+
+See the [AI Agent Guidelines](../../.llm/context.md) for all AI agent guidelines.
