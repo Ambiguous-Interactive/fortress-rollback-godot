@@ -55,7 +55,16 @@ Decisions locked with user:
   Docker's first-mount copy then preserves ownership. Stale root-owned
   volumes from the failed run had to be removed manually (volumes persist
   across `--remove-existing-container`).
-- shellcheck (warning level) clean on all three `.devcontainer/*.sh`.
+- RED data point 4: devcontainers-extra `opencode` feature failed at build:
+  its installer pins `REPO="sst/opencode"`, but the project moved to
+  `anomalyco/opencode`, so the GitHub Releases lookup fails. This is the
+  maintenance-mode failure mode flagged during planning. Fix: dropped the
+  feature; OpenCode now installs in the Dockerfile via the official install
+  script (run with a throwaway HOME — the script hardcodes
+  `INSTALL_DIR=$HOME/.opencode/bin` — then moved into `/usr/local/bin` and
+  validated with `opencode --version` at build time).
+- RED data point 3 fix verified: image built past the Godot layer; failure
+  moved to feature stage (i.e., ownership fix worked).
 
 ### T3 — Secrets via `.env` (GREEN target)
 

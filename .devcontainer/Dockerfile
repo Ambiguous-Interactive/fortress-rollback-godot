@@ -61,5 +61,21 @@ RUN mkdir -p /home/vscode/.claude \
              /home/vscode/.commandhistory \
     && chown -R vscode:vscode /home/vscode
 
+# OpenCode: official release tarball (latest). The official install script
+# queries the unauthenticated GitHub API, which is rate-limited during
+# container builds, so fetch the release asset directly (a plain download,
+# no API call). glibc non-musl, non-baseline build; arch-aware like Godot.
+RUN case "${TARGETARCH}" in \
+        amd64) opencode_arch=x64 ;; \
+        arm64) opencode_arch=arm64 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/opencode.tar.gz \
+        "https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-${opencode_arch}.tar.gz" \
+    && tar -xzf /tmp/opencode.tar.gz -C /tmp \
+    && install -m 0755 /tmp/opencode /usr/local/bin/opencode \
+    && rm -rf /tmp/opencode /tmp/opencode.tar.gz \
+    && opencode --version
+
 # uv: official static binaries from the pinned release image (see uv-bin stage).
 COPY --from=uv-bin /uv /uvx /usr/local/bin/
