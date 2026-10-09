@@ -1,0 +1,44 @@
+name: Devcontainer Verify
+
+# Guards the devcontainer: shell script linting, config validity, a full
+# image build (features included), and the acceptance harness run inside the
+# freshly built container.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+      - ".mcp.json"
+      - "opencode.json"
+      - ".github/workflows/devcontainer.yml"
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - ".mcp.json"
+      - "opencode.json"
+      - ".github/workflows/devcontainer.yml"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Build and verify container
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint shell scripts
+        run: shellcheck -S warning .devcontainer/*.sh
+
+      - name: Validate JSON configs
+        run: |
+          jq -e . .devcontainer/devcontainer.json .mcp.json opencode.json >/dev/null
+          jq -e '.mcpServers | has("godot") and has("context7") and has("github")' .mcp.json >/dev/null
+          jq -e '.mcp | has("godot") and has("context7") and has("github")' opencode.json >/dev/null
+
+      - name: Build and start devcontainer
+        run: npx -y @devcontainers/cli@latest up --workspace-folder .
+
+      - name: Acceptance harness inside container
+        run: npx -y @devcontainers/cli@latest exec --workspace-folder . -- bash .devcontainer/verify.sh

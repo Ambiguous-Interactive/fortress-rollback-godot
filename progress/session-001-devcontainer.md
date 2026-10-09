@@ -42,11 +42,25 @@ Decisions locked with user:
 
 ### T2 — Tooling verification (GREEN target)
 
-- TODO
+- RED data point 2: first build failed — BuildKit could not run the Godot
+  layer: `ARG TARGETARCH` was dropped during the uv-stage restructure, so
+  `${TARGETARCH}` expanded empty and the arch `case` hit `*) exit 1`. Fix:
+  re-declared `ARG TARGETARCH` inside the build stage (predefined BuildKit
+  args still require stage-level declaration to be visible in RUN).
+- RED data point 3: image built; post-create failed with
+  `/home/vscode/.cache/uv/CACHEDIR.TAG: Permission denied`. Cause: Docker
+  creates missing named-volume mount-point parents as root, so the `vscode`
+  user could not write into the uv cache volume. Fix (canonical): pre-create
+  every mount point in the image and `chown -R vscode:vscode /home/vscode`;
+  Docker's first-mount copy then preserves ownership. Stale root-owned
+  volumes from the failed run had to be removed manually (volumes persist
+  across `--remove-existing-container`).
+- shellcheck (warning level) clean on all three `.devcontainer/*.sh`.
 
 ### T3 — Secrets via `.env` (GREEN target)
 
-- TODO
+- `initializeCommand` confirmed working: `devcontainer.env` auto-created from
+  the example on first `up`; `git check-ignore` confirms it is ignored.
 
 ### T4 — MCP servers (GREEN target)
 

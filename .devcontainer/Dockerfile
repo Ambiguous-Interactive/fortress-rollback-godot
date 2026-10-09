@@ -19,6 +19,8 @@ FROM ${BASE_IMAGE}
 # Engine version is pinned for deterministic harness behavior (replays,
 # checksums). Bump via devcontainer.json build args, not by editing layers.
 ARG GODOT_VERSION=4.7.2-stable
+# BuildKit predefined arg; must be (re)declared to be visible in RUN.
+ARG TARGETARCH
 
 # Modern CLI tooling for humans and agents, in a single layer. Ubuntu ships
 # fd and bat under different names; symlinks restore the conventional ones.
@@ -48,6 +50,16 @@ RUN case "${TARGETARCH}" in \
     && install -m 0755 "/tmp/godot/Godot_v${GODOT_VERSION}_linux.${godot_arch}" /usr/local/bin/godot \
     && rm -rf /tmp/godot /tmp/godot.zip \
     && godot --version
+
+# Pre-create persistent-volume mount points owned by the container user.
+# Without this, Docker creates missing mount-point parents as root and the
+# remote user cannot write into the freshly mounted volumes.
+RUN mkdir -p /home/vscode/.claude \
+             /home/vscode/.cache/uv \
+             /home/vscode/.local/share/opencode \
+             /home/vscode/.local/share/godot \
+             /home/vscode/.commandhistory \
+    && chown -R vscode:vscode /home/vscode
 
 # uv: official static binaries from the pinned release image (see uv-bin stage).
 COPY --from=uv-bin /uv /uvx /usr/local/bin/
