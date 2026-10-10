@@ -137,8 +137,12 @@ on every rebuild, and CI runs it after a fresh build.
 
 `.devcontainer/init-firewall.sh` (adapted from Anthropic's reference
 devcontainer) locks container egress to an allowlist: Anthropic, z.ai,
-OpenRouter, GitHub, npm, PyPI, astral.sh, opencode.ai, Context7, Godot, and
-VS Code update endpoints. It is **off by default**. To enable:
+OpenRouter, GitHub (meta CIDRs + asset hosts), npm, PyPI, astral.sh,
+nodejs.org, opencode.ai, Context7, Godot, and VS Code update/extension
+endpoints, plus the Ubuntu apt mirrors so later package installs work. IPv6
+egress is blocked entirely (the allowlist is IPv4-only), and Docker proxy
+variables are neutralized inside the script. It is **off by default**. To
+enable:
 
 1. Add `"--cap-add=NET_ADMIN"` and `"--cap-add=NET_RAW"` to `runArgs`.
 2. Add `"postStartCommand": "sudo bash .devcontainer/init-firewall.sh"`.

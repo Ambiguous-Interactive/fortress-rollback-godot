@@ -28,6 +28,11 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Docker Desktop can inject host proxies; they would tunnel traffic through
+# the (always-allowed) host network, making the firewall decorative and the
+# self-check false-fail. The firewall model is direct egress only.
+unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy
+
 echo "[firewall] installing dependencies"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -53,6 +58,11 @@ ALLOWED_DOMAINS=(
     "astral.sh"
     "nodejs.org"
     "godotengine.org"
+    "archive.ubuntu.com"
+    "security.ubuntu.com"
+    "objects.githubusercontent.com"
+    "raw.githubusercontent.com"
+    "codeload.github.com"
     "marketplace.visualstudio.com"
     "vscode.blob.core.windows.net"
     "update.code.visualstudio.com"
@@ -63,7 +73,7 @@ ALLOWED_DOMAINS=(
 # ── Phase A: gather everything the rules need (no mutations yet) ────────
 
 echo "[firewall] fetching GitHub IP ranges"
-gh_ranges=$(curl -fsS https://api.github.com/meta)
+gh_ranges=$(curl -fsS --max-time 20 https://api.github.com/meta)
 if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .packages' >/dev/null; then
     echo "ERROR: GitHub API response missing required fields" >&2
     exit 1
@@ -93,28 +103,31 @@ HOST_NETWORK="$(echo "$host_ip" | sed 's/\.[0-9]*$/.0\/24/')"
 
 docker_dns_rules="$(iptables-save -t nat | grep '127\.0\.0\.11' || true)"
 
-# ── Phase B: apply (flush → policies back-to-back, no network calls) ────
+# ── Phase B: apply ──────────────────────────────────────────────────────
+# Ordering contract: the filter-table flush is followed IMMEDIATELY by the
+# DROP policies — nothing fallible sits between them. Every later statement
+# is either guarded or pure rule-adding, so any mid-apply failure leaves the
+# container CLOSED, never flushed-and-open.
 
 iptables -F
 iptables -X
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT DROP
+
+# Docker's embedded DNS NAT rules (nat table ops do not traverse the filter
+# chains, so they are safe behind DROP). Guarded: a kernel without the mangle
+# table must not abort the apply phase.
 iptables -t nat -F
 iptables -t nat -X
-iptables -t mangle -F
-iptables -t mangle -X
-ipset destroy allowed-domains 2>/dev/null || true
-
 if [ -n "$docker_dns_rules" ]; then
     echo "[firewall] restoring Docker DNS rules"
     iptables -t nat -N DOCKER_OUTPUT 2>/dev/null || true
     iptables -t nat -N DOCKER_POSTROUTING 2>/dev/null || true
-    echo "$docker_dns_rules" | xargs -L 1 iptables -t nat
+    echo "$docker_dns_rules" | xargs -r -L 1 iptables -t nat || true
 fi
-
-# Policies FIRST: from this instant the container is closed, so any later
-# failure fails closed.
-iptables -P INPUT DROP
-iptables -P FORWARD DROP
-iptables -P OUTPUT DROP
+iptables -t mangle -F 2>/dev/null || true
+iptables -t mangle -X 2>/dev/null || true
 
 # Baseline allows: DNS (udp+tcp; large answers retry over TCP), SSH, localhost.
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
@@ -130,8 +143,14 @@ iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
 iptables -A OUTPUT -d "$HOST_NETWORK" -j ACCEPT
 
-# Allowlist.
+# Allowlist. (Destroy first: on re-invocation the set still exists, and the
+# flush above removed every rule that referenced it.)
+ipset destroy allowed-domains 2>/dev/null || true
 ipset create allowed-domains hash:net
+if [ "${#GH_CIDRS[@]}" -eq 0 ]; then
+    echo "ERROR: GitHub meta contained no CIDRs; refusing to continue" >&2
+    exit 1
+fi
 for cidr in "${GH_CIDRS[@]}"; do
     ipset add allowed-domains "$cidr" 2>/dev/null || true
 done
@@ -144,12 +163,13 @@ iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 
 # IPv6: the allowlist above is IPv4-only. Block IPv6 egress entirely
 # (except loopback/established/ICMPv6) so blocked domains cannot be reached
-# over a parallel IPv6 route — fail closed instead of fail open.
-ip6tables -F
-ip6tables -X 2>/dev/null || true
+# over a parallel IPv6 route. Policies precede the flush: if the flush fails
+# (restricted kernel), we are closed, not open.
 ip6tables -P INPUT DROP
 ip6tables -P FORWARD DROP
 ip6tables -P OUTPUT DROP
+ip6tables -F 2>/dev/null || true
+ip6tables -X 2>/dev/null || true
 ip6tables -A INPUT -i lo -j ACCEPT
 ip6tables -A OUTPUT -o lo -j ACCEPT
 ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT

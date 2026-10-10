@@ -174,6 +174,23 @@ Fresh-context reviewer on the full revised diff. Triage:
 
 Verification after fixes: rebuild clean (0 errors), verify 23/0.
 
+## Adversarial review round 3 (gate: RAN, FINDINGS)
+
+| ID | Finding | Triage | Action |
+| --- | --- | --- | --- |
+| M1 | Fail-closed contract still violated: fallible mangle flush + `xargs -L1` NAT restore sat between filter flush and DROP policies (abort window = flushed + ACCEPT) | AUTO-FIX | Reordered: filter flush → DROP policies immediately; nat/mangle ops guarded behind policies; `xargs -r … \|\| true`; ipset destroy restored for idempotent re-runs; ip6tables policies set BEFORE flush |
+| M2 | CI exec would deterministically fail: gdformat/gdlint live in ~/.local/bin, which plain `docker exec` (devcontainer exec) never sources from .bashrc; verify always checks them | AUTO-FIX | verify.sh exports PATH="$HOME/.local/bin:$PATH" itself; proven green through the same exec path CI uses |
+| m1 | Unguarded `ip6tables -F` could abort with v6 still ACCEPT | AUTO-FIX | policies-before-flush (see M1) |
+| m2 | jq guard: empty meta sections ([] truthy) would brick firewall on every start | AUTO-FIX | explicit `${#GH_CIDRS[@]} -eq 0` refusal |
+| m3 | No curl --max-time on meta fetch; AAAA-only domain failure message lacked context | AUTO-FIX | --max-time 20 added (per-domain error already lists the name) |
+| m4 | Docker Desktop proxy env makes firewall decorative + self-check false-fail | AUTO-FIX | proxies unset at script start |
+| m5 | CI jq gate spec-invalid for devcontainer.json (JSONC-legal) | AUTO-FIX | dropped from jq gate (up validates); comment explains |
+| m6 | Allowlist missing apt mirrors + GitHub asset hosts (later apt use would fail under firewall) | AUTO-FIX | archive/security.ubuntu.com, objects/raw.githubusercontent.com, codeload.github.com added |
+| — | VERIFIED-OK: --frozen-lockfile semantics (fails on missing/drift, CLI 0.89.0 source-inspected), godot-mcp bin name + smoke test non-vacuous, --quick-as-display-only accurate, arm64 runner label valid for public repos, firewall second-invocation idempotency, containerEnv syntax, godot dash→dot prefix check | — | — |
+
+Verification after fixes: verify.sh 23/0 through `devcontainer exec` (CI's
+exact context), static checks clean.
+
 ## Findings / Data
 
 - Measured timings and red-data-point ledger are above; the recurring

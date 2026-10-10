@@ -30,6 +30,10 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 
+# uv tool shims (gdformat/gdlint) land in ~/.local/bin, which plain
+# `docker exec` sessions (devcontainer exec, CI) do not source from .bashrc.
+export PATH="$HOME/.local/bin:$PATH"
+
 pass=0
 fail=0
 ok() { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass + 1)); }
