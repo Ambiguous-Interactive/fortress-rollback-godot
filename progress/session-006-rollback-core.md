@@ -52,7 +52,8 @@ exposed a mutable append operation. A second full-runtime fresh-context review r
 Regressions passed after enforcing sequential remote receipt, a callback
 guard independent of batch lifetime, and constructor-only input view population.
 Correct-identity completion during a callback is also refused; removing that
-guard reproduces premature publication. A new fresh-context review follows.
+guard reproduces premature publication. Both final fresh-context reviews completed
+without findings.
 
 Independent game tests serialize an integer LCG and pending events. Deliberately
 omitting either during restore triggers localized desync even with a constant
@@ -60,6 +61,11 @@ checksum collision. Delayed correction checks every globally confirmed replay
 prefix against an uninterrupted actual-input run, including non-power-of-two
 input rings and repeated snapshot reuse. Driver/expert tests compare complete
 callback sequences and canonical snapshots, including failures of every kind.
+An isolated mutation using the fastest player's received frame as the floor
+rejects valid delayed remote input in `external_corrections`; the production
+global rollback-window floor, `max(0, current_frame - max_prediction_frames)`, passes.
+The failure log is `.cache/tests/session-006-fast-floor-mutation.log` and #61
+records the reproduction and remaining acceptance gates.
 
 Godot 4.7.2 preserved parsed integral floats as JSON `1.0`, unlike 4.3. Strict
 trace validation rejected that result. Reconstructing validated scenario numeric
