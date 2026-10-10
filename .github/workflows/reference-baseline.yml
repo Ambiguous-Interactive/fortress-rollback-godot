@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".llm/code-samples/**"
       - "scripts/reference/**"
       - "scripts/run_godot_tests.py"
       - "tests/**"
@@ -13,6 +14,7 @@ on:
       - ".github/workflows/reference-baseline.yml"
   pull_request:
     paths:
+      - ".llm/code-samples/**"
       - "scripts/reference/**"
       - "scripts/run_godot_tests.py"
       - "tests/**"
@@ -50,6 +52,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y clang lld
       - name: Reproduce reference twice
         run: make reference-baseline
+      - name: Verify independent integer and checksum vectors
+        run: python3 scripts/reference/check_integer_vectors.py --check
       - name: Verify source inventory against the pinned extraction
         run: python3 scripts/reference/inventory.py
       - uses: actions/upload-artifact@v4
@@ -79,12 +83,15 @@ jobs:
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
         run: python3 scripts/reference/godot_smoke.py --web
+      - name: Verify integer encoding and snapshot ownership in native and Web
+        run: make representation-probes
       - name: Verify runner failure controls and fresh-process suites
         run: |
           for version in 4.3 4.7.2; do
             editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
             python3 scripts/run_godot_tests.py --godot "$editor" --results ".cache/tests/runner-$version.json"
+            python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
           done
       - uses: actions/upload-artifact@v4
         if: always()

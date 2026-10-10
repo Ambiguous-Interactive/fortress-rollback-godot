@@ -1,4 +1,4 @@
-.PHONY: lint-source hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
+.PHONY: representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
 
 PY ?= python3
 GODOT ?= godot
@@ -30,6 +30,10 @@ test-reference:
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:
 	$(PY) scripts/run_godot_tests.py --godot $(GODOT)
+
+## Minimum/current native and exported-Web representation experiments
+representation-probes:
+	$(PY) scripts/reference/ownership_probes.py --web
 
 ## Pinned upstream reference tests, repeated with explicit seed and feature flags
 reference-baseline:
