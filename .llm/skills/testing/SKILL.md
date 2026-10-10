@@ -150,6 +150,9 @@ session oracle's canonical scenario conversion protects this boundary.
 A mutation must fail at its intended boundary. Require the diagnostic and
 consumed-record position so an unrelated parser or later-request failure cannot
 satisfy the negative control. Select mutated records by semantic kind.
+For snapshot-omission controls, derive localization from the first serialized
+consumer of the missing field. A mutant that omits a field from every snapshot
+can hide its immediate difference until a later scheduled event exposes it.
 
 ## Faster local iteration
 

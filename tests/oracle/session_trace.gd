@@ -142,7 +142,7 @@ func _consume(batch: RefCounted, requests: Array[Dictionary]) -> int:
 			Types.Kind.LOAD:
 				kind = "load"
 				var result: RefCounted = request.reader.read_bytes(_game.bytes().size())
-				if result.code != SnapshotStatus.Code.OK:
+				if result.code != SnapshotStatus.Code.OK or not request.reader.is_complete():
 					error = "invalid load read"
 				else:
 					error = _game.restore(result.bytes)

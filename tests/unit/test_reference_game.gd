@@ -24,7 +24,7 @@ class Client:
 		var old_rng: int = game.rng
 		var old_pending: int = game.pending
 		var result: RefCounted = reader.read_bytes(game.bytes().size())
-		if result.code != SnapshotStatus.Code.OK or not game.restore(result.bytes).is_empty():
+		if result.code != SnapshotStatus.Code.OK or not reader.is_complete() or not game.restore(result.bytes).is_empty():
 			return false
 		if omitted == "rng":
 			game.rng = old_rng

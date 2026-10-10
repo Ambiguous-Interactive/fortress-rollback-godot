@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure integer encoding and ownership on both pinned engines and Web exports."""
+"""Verify integer, ownership and production protocol codec on pinned native/Web engines."""
 import argparse
 import json
 import os
@@ -14,6 +14,7 @@ from run import begin_results, capture
 
 PREFIX = 'FORTRESS_TEST_RESULT '
 EXPECTED = {
+    'res://tests/unit/test_protocol_codec.gd': {'golden', 'truncation', 'malformed', 'limits', 'types', 'ownership', 'semantics', 'hostile_bytes'},
     'res://tests/determinism/test_buffer_ownership.gd': {'engine_boundaries', 'owned_input', 'snapshot_wraps', 'snapshot_bounds'},
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }
@@ -23,13 +24,18 @@ FILES = [
     'tests/determinism/test_buffer_ownership.gd', 'tests/determinism/ownership_slots.gd',
     'tests/determinism/test_integer_encoding.gd', 'tests/determinism/integer_codec.gd', 'tests/determinism/integer_vectors.json',
     '.llm/code-samples/state_checksum.gd',
+    'tests/unit/test_protocol_codec.gd', 'tests/fixtures/protocol/golden.json',
+    'addons/fortress_rollback/protocol/protocol_codec.gd', 'addons/fortress_rollback/protocol/protocol_types.gd',
+    'addons/fortress_rollback/protocol/protocol_reader.gd', 'addons/fortress_rollback/protocol/protocol_validation.gd',
+    'addons/fortress_rollback/protocol/protocol_projection.gd',
 ]
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
 const Suite = preload("res://tests/determinism/test_buffer_ownership.gd")
 const Integers = preload("res://tests/determinism/test_integer_encoding.gd")
+const Protocol = preload("res://tests/unit/test_protocol_codec.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol]
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
@@ -155,7 +161,8 @@ def main():
             base = [str(editor), '--headless', '--path', str(project)]
             run(base + ['--editor', '--quit'], environment, results / f'ownership-{label}-import.log')
             # A failed negative test is expected, so inspect the exit code separately.
-            code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism'],
+            code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
+                                   + [argument for suite in EXPECTED for argument in ('--suite', suite)],
                                    environment, results / f'ownership-{label}-native.log', timeout=180)
             if code != (1 if negative else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
                 raise ValueError('native command failed outside the intended control')
@@ -205,7 +212,7 @@ def main():
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'),
               'sources': {p: digest(ROOT / p) for p in FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs']},
-              'records': records, 'scope': 'Research fixture only; no runtime API, performance or other-browser/platform claim.'}
+              'records': records, 'scope': 'Integer/ownership research and production protocol byte boundary; no transport, performance or other-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

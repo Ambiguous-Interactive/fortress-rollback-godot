@@ -27,7 +27,10 @@ class Game:
         checksum.resize(16)
         return Driver.SaveResult.new(true, checksum)
     func load_state(_frame: int, reader: RefCounted) -> bool:
-        ticks = reader.read_bytes(1).bytes[0]
+        var restored: RefCounted = reader.read_bytes(1)
+        if restored.code != 0 or not reader.is_complete():
+            return false
+        ticks = restored.bytes[0]
         return true
     func simulate_frame(_frame: int, inputs: RefCounted) -> bool:
         for player: int in range(2):

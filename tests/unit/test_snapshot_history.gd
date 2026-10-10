@@ -46,8 +46,11 @@ func _round_trip(context: RefCounted) -> void:
 		context.equal(save.writer.status(), History.Code.EXPIRED_VIEW, "writer expires")
 		var load_request: RefCounted = history.begin_load(frame, save.generation)
 		context.equal(load_request.code, History.Code.OK, "exact tag")
+		context.equal(load_request.reader.is_complete(), false, "unread snapshot is incomplete")
 		context.bytes_equal(load_request.reader.read_bytes(4).bytes, PackedByteArray([frame, 0, 1, 2]), frame, "canonical bytes")
+		context.equal(load_request.reader.is_complete(), true, "exact consumption can be checked before state publication")
 		context.equal(history.finish_load(load_request.reader, true), History.Code.OK, "consume entire record")
+		context.equal(load_request.reader.is_complete(), false, "expired reader is incomplete")
 		context.equal(history.begin_load(frame, save.generation + 1).code, History.Code.HISTORY_UNAVAILABLE, "generation required")
 		if frame >= 3:
 			context.equal(history.begin_load(frame - 3).code, History.Code.HISTORY_UNAVAILABLE, "overwritten frame")
@@ -84,6 +87,7 @@ func _failures(context: RefCounted) -> void:
 	var underflow: RefCounted = history.begin_load(0)
 	context.equal(underflow.reader.read_bytes(2).code, History.Code.UNDERFLOW, "underflow")
 	context.equal(underflow.reader.read_bytes(0).code, History.Code.UNDERFLOW, "sticky underflow")
+	context.equal(underflow.reader.is_complete(), false, "errored reader is incomplete")
 	context.equal(history.finish_load(underflow.reader, true), History.Code.UNDERFLOW, "failed load")
 
 
@@ -125,6 +129,7 @@ func _validation(context: RefCounted) -> void:
 	context.equal(history.configure(3, 4, 2, 2, 1000), History.Code.BUSY, "configure during view")
 	context.equal(history.finish_save(save.writer, true), History.Code.OK, "checksum disabled permits empty snapshot")
 	var load_request: RefCounted = history.begin_load(2147483647)
+	context.equal(load_request.reader.is_complete(), true, "empty live snapshot is complete")
 	context.equal(history.finish_load(load_request.reader, true), History.Code.OK, "empty record")
 
 
