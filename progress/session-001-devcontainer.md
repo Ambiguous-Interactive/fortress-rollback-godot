@@ -210,6 +210,15 @@ redaction), 5 MAJOR, ~14 MINOR. Severity trend by round: 1C/5M → 2M/6m →
 2M/6m → 1M/3m — all MAJOR+ findings fixed and re-verified before proceeding;
 remaining advisories are documented policy choices.
 
+## Adversarial review round 5 (gate: RAN — APPROVE)
+
+Fresh-context convergence pass: all round-4 fixes verified against code
+(flush→DROP adjacency with netlink-only ops behind policies; SSH accept
+scoped to allowlist with github.com's IP empirically inside the meta CIDR
+set; HOME guard is the first HOME touch under set -u). Final sweep found no
+CRITICAL/MAJOR issue; one sub-threshold README imprecision (rebuild vs
+create semantics) fixed as polish. **Recommendation: approve.**
+
 ## Findings / Data
 
 - Measured timings and red-data-point ledger are above; the recurring

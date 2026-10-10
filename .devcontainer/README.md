@@ -125,7 +125,8 @@ Ports 6005 (LSP) and 6006 (debug adapter) are forwarded automatically.
 ## Verification
 
 `.devcontainer/verify.sh` is the acceptance harness; `post-create.sh` runs it
-on every rebuild, and CI runs it after a fresh build.
+whenever a container is **created** (on first open and after rebuilds), and
+CI runs it inside a freshly built container.
 
 ```sh
 .devcontainer/verify.sh           # full: tools, secrets, wiring, MCP handshake,
