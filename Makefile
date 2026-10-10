@@ -1,4 +1,4 @@
-.PHONY: hooks lint-llm test-llm llm-index llm-index-prune pre-commit godot-check
+.PHONY: hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check
 
 PY ?= python3
 
@@ -17,6 +17,14 @@ lint-llm:
 ## Run the harness tooling self-tests
 test-llm:
 	$(PY) -m unittest discover -s scripts/tests -t scripts
+
+## Reference fetch/inventory negative controls (no network or downloaded tools)
+test-reference:
+	$(PY) -m unittest discover -s scripts/reference -p 'test_*.py'
+
+## Pinned upstream reference tests, repeated with explicit seed and feature flags
+reference-baseline:
+	$(PY) scripts/reference/run.py --setup-rust
 
 ## Regenerate the skills index + agent discovery stubs (after .llm edits)
 llm-index:

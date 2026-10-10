@@ -31,3 +31,4 @@ Thumbs.db
 # Local session objective and verified development caches
 GOAL.md
 /.cache/reference/
+/.cache/tests/

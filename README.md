@@ -7,7 +7,7 @@ A **GDScript-only port** of [fortress-rollback](https://github.com/wallstop/fort
 > [!WARNING]
 > This project is in an early bootstrap phase. The rollback engine itself is not
 > implemented yet; this repository currently ships the project skeleton and its
-> AI-assisted development harness.
+> AI-assisted development harness and pinned development reference tooling.
 
 ## AI-Assisted Development Notice
 
@@ -42,6 +42,15 @@ make test-llm
 # Regenerate the skills index + agent discovery stubs
 make llm-index
 ```
+
+## Implementation and verification
+
+[PLAN.md](./PLAN.md) defines the roadmap and supported product contracts.
+[Reference baseline](./docs/reference/README.md) documents verified source/tool
+pins and reproducible upstream/native/web probes. The
+[interface ADR](./docs/contracts.md) and [evidence policy](./docs/verification-policy.md)
+define the next implementation gates. These development artifacts do not imply
+that the rollback addon is implemented.
 
 ## License
 
