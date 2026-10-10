@@ -95,6 +95,7 @@ eval "$2"
     def test_runtime_discovery_initializes_and_checks_all_names_without_logging_secrets(self):
         cases = [
             ("✓ godot connected\n✗ context7 failed\n○ github pending", "PASS", 0, 0),
+            ("No MCP servers configured", "FAIL", 0, 0),
             ("✓ godot connected\n✓ context7 connected", "FAIL", 0, 0),
             ("✓ godot connected\n✓ context7 connected\n✓ github connected", "FAIL", 42, 0),
             ("✓ godot connected\n✓ context7 connected\n✓ github connected", "FAIL", 0, 42),
@@ -114,7 +115,7 @@ eval "$2"
                 executable.chmod(0o755)
                 env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
                 result = subprocess.run(
-                    ["bash", "-c", 'ok() { echo "PASS: $*"; }; bad() { echo "FAIL: $*"; }; source "$1"; check_opencode_runtime "$2"',
+                    ["bash", "-c", 'ok() { echo "PASS: $*"; }; bad() { echo "FAIL: $*"; }; source "$1"; check_opencode_runtime "$2" 1',
                      "probe", str(HELPERS), directory],
                     env=env, capture_output=True, text=True, check=True,
                 )
@@ -122,6 +123,33 @@ eval "$2"
                 if expected == "PASS":
                     self.assertNotIn("FAIL:", result.stdout)
                 self.assertNotIn("PRIVATE-SECRET", result.stdout + result.stderr)
+
+    def test_runtime_discovery_waits_for_asynchronous_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            executable = base / "opencode"
+            executable.write_text(
+                '#!/bin/sh\n'
+                'if [ "$1 $2" = "debug config" ]; then\n'
+                '  touch initialized; echo PRIVATE-SECRET; exit 0\n'
+                'fi\n'
+                '[ -f initialized ] || exit 43\n'
+                'if [ ! -f listed ]; then\n'
+                '  touch listed; echo "No MCP servers configured"; exit 0\n'
+                'fi\n'
+                'printf "○ godot pending\\n✗ context7 failed\\n○ github pending\\n"\n'
+                'echo PRIVATE-SECRET\n'
+            )
+            executable.chmod(0o755)
+            env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])
+            result = subprocess.run(
+                ["bash", "-c", 'ok() { echo "PASS: $*"; }; bad() { echo "FAIL: $*"; }; source "$1"; check_opencode_runtime "$2" 5',
+                 "probe", str(HELPERS), directory],
+                env=env, capture_output=True, text=True, check=True, timeout=10,
+            )
+            self.assertEqual(result.stdout.count("PASS:"), 3)
+            self.assertNotIn("FAIL:", result.stdout)
+            self.assertNotIn("PRIVATE-SECRET", result.stdout + result.stderr)
 
     def test_real_mcp_predicates_reject_bad_commands_and_disabled_servers(self):
         config = json.loads((ROOT / "opencode.json").read_text())

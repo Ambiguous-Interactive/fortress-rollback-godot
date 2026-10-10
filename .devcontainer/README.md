@@ -168,10 +168,12 @@ opencode mcp list
 ```
 
 With v2.0.26, `mcp list` alone can report **No MCP servers configured** in a
-workspace the shared service has not initialized yet. `debug config` loads
-that workspace before listing connections. All three server names must be
-listed; GitHub may fail without credentials. `verify.sh` checks the config
-shape and runtime discovery so a zero-server result cannot pass unnoticed.
+workspace the shared service has not initialized yet. `debug config` starts
+workspace initialization, but the runtime MCP catalog becomes ready
+asynchronously; an immediate list can still be empty. Repeat the list until
+all three names appear. GitHub may fail without credentials. `verify.sh`
+waits within a fixed deadline for actual discovery and fails if names remain
+missing; it also validates the configuration shape.
 
 ## Godot Editor + Language Server
 
@@ -220,8 +222,8 @@ are neutralized inside the script. It is **off by default**. To enable:
 | Bump uv | `UV_VERSION` arg in `Dockerfile` |
 | Bump gdtoolkit | `GDTOOLKIT_VERSION` in `post-create.sh` (env-overridable) |
 | Bump godot-mcp | pinned npm install in `Dockerfile` |
-| Refresh Codex / OpenCode | nothing to edit — they track latest; rebuild with `--no-cache` (see Version policy) |
-| Refresh Claude Code | it is digest-pinned in `devcontainer-lock.json`; drop that entry and rebuild — `--no-cache` does not affect it |
+| Refresh Codex / OpenCode | nothing to edit — they track latest; rebuild with `--build-no-cache` (see Version policy) |
+| Refresh Claude Code | it is digest-pinned in `devcontainer-lock.json`; drop that entry and rebuild — `--build-no-cache` does not affect it |
 | Pin Codex / OpenCode | replace `@latest` with an exact version in the `npm install -g` line in `Dockerfile` |
 | Add a VS Code extension | `customizations.vscode.extensions` |
 | Add an MCP server | both `.mcp.json` and `opencode.json` |

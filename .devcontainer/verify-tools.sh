@@ -74,25 +74,39 @@ check_codex_package() {
   fi
 }
 
-# Initialization and discovery use the real CLI. Remote auth/connectivity is
-# optional: names must be discovered even when their connection status fails.
-# Debug config may contain credentials, so discard it and never echo list logs.
+# Source inspection starts asynchronous workspace initialization in v2.0.26.
+# Poll actual runtime discovery until every name appears, including pending or
+# failed connections; remote connectivity is not an acceptance requirement.
+# Suppress raw config/list output because it may contain credential diagnostics.
 check_opencode_runtime() {
-  local root="$1" servers name
-  if ! (cd "$root" && timeout 60 opencode debug config >/dev/null 2>&1); then
+  local root="$1" budget="${2:-60}" servers name deadline remaining discovered=""
+  if ! (cd "$root" && timeout "$budget" opencode debug config >/dev/null 2>&1); then
     bad "OpenCode workspace initialization failed or timed out"
     return
   fi
-  if ! servers="$(cd "$root" && timeout 60 opencode mcp list 2>/dev/null)"; then
-    bad "OpenCode MCP discovery failed or timed out"
-    return
-  fi
-  for name in godot context7 github; do
-    if printf '%s\n' "$servers" | grep -Eq "^(✓|✗|○)[[:space:]]+${name}[[:space:]]+"; then
-      ok "OpenCode discovered MCP server ${name}"
-    else
-      bad "OpenCode did not discover MCP server ${name}"
+  deadline=$((SECONDS + budget))
+  while :; do
+    remaining=$((deadline - SECONDS))
+    if [ "$remaining" -le 0 ]; then
+      break
     fi
+    if ! servers="$(cd "$root" && timeout "$remaining" opencode mcp list 2>/dev/null)"; then
+      bad "OpenCode MCP discovery failed or timed out"
+      return
+    fi
+    discovered=""
+    for name in godot context7 github; do
+      if printf '%s\n' "$servers" | grep -E "^(✓|✗|○)[[:space:]]+${name}[[:space:]]+" >/dev/null; then
+        discovered="${discovered:+$discovered }$name"
+      fi
+    done
+    if [ "$discovered" = "godot context7 github" ]; then
+      for name in $discovered; do
+        ok "OpenCode discovered MCP server ${name}"
+      done
+      return
+    fi
+    sleep 1
   done
+  bad "OpenCode MCP discovery timed out; discovered expected names: ${discovered:-none}"
 }
-
