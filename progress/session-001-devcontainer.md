@@ -115,10 +115,10 @@ Decisions locked with user:
 
 ### T7 — CI workflow (GREEN target)
 
-- `.github/workflows/devcontainer.yml` added: shellcheck (warning level),
-  JSON validation, `devcontainer up` on a fresh runner, verify.sh in the
-  container. Fresh runners always create fresh containers, which sidesteps
-  RED data point 7.
+- GREEN: `.github/workflows/devcontainer.yml` passed on PR #1 — x64 (1m19s)
+  and arm64 (1m08s) build+verify jobs, plus harness lint (6s) after the
+  retrospective push; Cursor Bugbot pass. `--frozen-lockfile` enforcement
+  and the verify exec steps ran clean on first contact.
 
 ## Timings (measured)
 
