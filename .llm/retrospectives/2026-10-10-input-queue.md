@@ -35,6 +35,16 @@ No source-family status or release gate was weakened.
 Verify-on-touch: `make llm-index`, `make lint-llm`, `make test-llm`,
 `make lint-source`, `make test-oracle` and both native queue runners.
 
+## Delivery correction
+
+Updating the two completed-review metadata strings with a general JSON rewrite
+expanded the ledger from its compact inventory serialization. The intermediate
+commit changed 93496 lines. Restoring the original serialization left only the
+two intended string changes. `git diff origin/main --stat` verified that the
+final ledger diff remained 16 lines. No discovery record or coverage decision
+changed. Preserve existing artifact layout for small authored metadata updates;
+full inventory regeneration remains a separately verified operation.
+
 ## Outcome
 
 State: `findings-acted`.
