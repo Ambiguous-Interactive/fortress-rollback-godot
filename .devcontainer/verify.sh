@@ -68,7 +68,9 @@ fi
 
 section "Engine"
 if command -v godot >/dev/null 2>&1; then
-  version="$(godot --version 2>/dev/null | head -n 1)"
+  # `|| true` keeps a crashing engine binary from aborting the whole harness
+  # under pipefail; the version check below still fails the run.
+  version="$(godot --version 2>/dev/null | head -n 1 || true)"
   expected="${GODOT_EXPECTED//-/.}"
   if [ "${version#"${expected}"}" != "$version" ]; then
     ok "godot ${version} (expected ${expected})"

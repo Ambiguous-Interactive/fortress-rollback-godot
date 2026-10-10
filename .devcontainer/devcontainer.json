@@ -12,9 +12,6 @@
         "${localWorkspaceFolder}/.devcontainer/devcontainer.env"
     ],
     "features": {
-        "ghcr.io/devcontainers/features/node:1": {
-            "nodeVersion": "22"
-        },
         "ghcr.io/devcontainers/features/github-cli:1": {},
         "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
     },
@@ -48,7 +45,11 @@
     },
     "containerEnv": {
         "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+        "GODOT_VERSION": "4.7.2-stable",
         "HISTFILE": "/home/vscode/.commandhistory/.bash_history"
+    },
+    "remoteEnv": {
+        "MCP_GITHUB_PAT": "${containerEnv:GITHUB_TOKEN}"
     },
     "mounts": [
         "source=frg-claude-config-${devcontainerId},target=/home/vscode/.claude,type=volume",

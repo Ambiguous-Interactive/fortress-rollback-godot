@@ -129,22 +129,37 @@ Decisions locked with user:
 | Full verify.sh inside container | ~5.5s |
 | `up` on a fresh runner (CI worst case) | covered by 30min timeout |
 
-### T4 — MCP servers (GREEN target)
+## Adversarial review round 1 (gate: RAN, FINDINGS)
 
-- TODO
+Fresh-context subagent; triage below (C=critical, M=major, m=minor).
 
-### T5 — Project gates inside container (GREEN target)
+| ID | Finding (quoted ref) | Triage | Action |
+| --- | --- | --- | --- |
+| C1 | Claude Code reads credential-like vars (open-ended set incl. GITHUB_TOKEN-class names) as EMPTY in remote MCP headers, no warning (code.claude.com/docs/en/mcp "Credential variables that read as empty"); committed `.mcp.json` used `Bearer ${GITHUB_TOKEN}` | AUTO-FIX, doc-confirmed | Header re-keyed to `${MCP_GITHUB_PAT}`; `remoteEnv` derives it from `GITHUB_TOKEN` (`${containerEnv:...}`); env example + README updated |
+| M1 | Godot bump path broke verify (build args invisible to runtime; 3 copies of version) | AUTO-FIX | `containerEnv.GODOT_VERSION` added; version now lives in devcontainer.json (build+runtime) + Dockerfile default; README documents both spots |
+| M2 | `api.github.com/meta` has 40 duplicate CIDRs; bare `ipset add` aborts script post-flush pre-DROP = fail-open | AUTO-FIX | `sort -u` + `ipset add ... || true`; `aggregate` dep dropped; HOST_IP guarded with `head -n1` |
+| M3 | post-create + verify hard-depended on npm registry (npx download each fresh container) | AUTO-FIX | `@coding-solo/godot-mcp@0.1.1` pinned globally in image; MCP configs keep `npx` (resolves global first) for out-of-container portability |
+| M4 | POSIX `initializeCommand` fails on Windows hosts (cmd.exe) | DOC | README Quick Start states macOS/Linux; Windows via WSL2 |
+| M5 | Firewall IPv4-only; IPv6 egress fails open | AUTO-FIX | ip6tables added: IPv6 egress blocked except loopback/established/ICMPv6 (fail closed) |
+| m1 | Unguarded `$(godot --version)` could abort harness without FAIL line | AUTO-FIX | `\|\| true` added; check still fails the run |
+| m2 | Stale-volume repair undocumented | DOC | README maintenance section names exact `docker volume rm` command |
+| m3 | CI blind to Makefile/scripts/.githooks changes; no arm64 coverage | AUTO-FIX | paths extended; arm64 job added (ubuntu-24.04-arm) |
+| m4 | Latest downloads lack checksums; cache makes "latest" stale locally | ADVISORY | Documented trust model in README (TLS + official endpoints; agent CLIs latest-by-design, engine pinned) |
+| m5 | opencode `{env:GITHUB_TOKEN}` unset-behavior unverified outside container | ADVISORY | Failure mode is a 401 on one server (non-fatal); documented in README |
+| m6 | env-file quoting pitfalls corrupt tokens silently | AUTO-FIX | Format rules + broken-example added to env template |
+| m7 | Stale TODO block contradicted completed sections in progress log | AUTO-FIX | Removed |
+| m8 | README CLI workflow omitted `--remove-existing-container` (own recorded trap) | AUTO-FIX | Rebuild command now includes the flag |
+| m9 | CI used `@latest` CLI + default token permissions | AUTO-FIX | CLI pinned to 0.89.0; `permissions: contents: read` |
+| — | Node feature removed: npm needed godot-mcp install at Dockerfile time; feature ordering made that impossible (same class as RED point 5) | AUTO-FIX | Node 22.23.3 pinned tarball in Dockerfile; node feature dropped; claude-code feature reuses installed node |
 
-- TODO
-
-### T6 — Docs + .gitignore (GREEN target)
-
-- TODO
-
-### T7 — CI workflow (GREEN target)
-
-- TODO
+Verification after fixes: rebuild + full verify green (see T5 update below).
 
 ## Findings / Data
 
-- TODO
+- Measured timings and red-data-point ledger are above; the recurring
+  failure class this session was **ordering assumptions** (feature vs
+  Dockerfile layer, create vs start, build args vs runtime env) — every
+  instance surfaced only through building and running the actual container.
+- OpenCode upstream moved `sst/opencode` -> `anomalyco/opencode`, breaking
+  the devcontainers-extra feature (maintenance-mode risk, realized).
+

@@ -21,6 +21,10 @@ FROM ${BASE_IMAGE}
 ARG GODOT_VERSION=4.7.2-stable
 # BuildKit predefined arg; must be (re)declared to be visible in RUN.
 ARG TARGETARCH
+# Node LTS, pinned: it runs the MCP servers, so its presence must not depend
+# on feature ordering. Installed before features run (the claude-code feature
+# detects and reuses it).
+ARG NODE_VERSION=22.23.3
 
 # Modern CLI tooling for humans and agents, in a single layer. Ubuntu ships
 # fd and bat under different names; symlinks restore the conventional ones.
@@ -80,6 +84,25 @@ RUN case "${TARGETARCH}" in \
     && install -m 0755 /tmp/opencode /usr/local/bin/opencode \
     && rm -rf /tmp/opencode /tmp/opencode.tar.gz \
     && opencode --version
+
+# Node.js: official pinned tarball into /usr/local (bin, lib, share).
+RUN case "${TARGETARCH}" in \
+        amd64) node_arch=x64 ;; \
+        arm64) node_arch=arm64 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/node.tar.xz \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 --no-same-owner \
+    && rm /tmp/node.tar.xz \
+    && node --version && npm --version
+
+# godot-mcp server: installed globally and pinned so container creation and
+# MCP sessions never depend on npm registry uptime (npx resolves the global
+# package first; the committed MCP configs keep `npx -y` for portability
+# outside this container).
+RUN npm install -g "@coding-solo/godot-mcp@0.1.1" \
+    && godot-mcp --help >/dev/null 2>&1 || true
 
 # uv: official static binaries from the pinned release image (see uv-bin stage).
 COPY --from=uv-bin /uv /uvx /usr/local/bin/

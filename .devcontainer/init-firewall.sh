@@ -26,7 +26,7 @@ fi
 echo "[firewall] installing dependencies"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ipset iptables dnsutils aggregate
+apt-get install -y --no-install-recommends ipset iptables dnsutils
 rm -rf /var/lib/apt/lists/*
 
 # Domains agents and tooling need. GitHub CIDRs are fetched dynamically below.
@@ -86,9 +86,11 @@ if ! echo "$gh_ranges" | jq -e '.web and .api and .git and .packages' >/dev/null
     echo "ERROR: GitHub API response missing required fields" >&2
     exit 1
 fi
+# The meta endpoint contains duplicates across sections; ipset add fails on
+# duplicates and would abort the script mid-apply (fail-open), so dedupe.
 while read -r cidr; do
-    ipset add allowed-domains "$cidr"
-done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .packages)[]' | aggregate -q 2>/dev/null || echo "$gh_ranges" | jq -r '(.web + .api + .git + .packages)[]')
+    ipset add allowed-domains "$cidr" 2>/dev/null || true
+done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git + .packages)[]' | sort -u)
 
 for domain in "${ALLOWED_DOMAINS[@]}"; do
     echo "[firewall] resolving ${domain}"
@@ -103,7 +105,7 @@ for domain in "${ALLOWED_DOMAINS[@]}"; do
 done
 
 # 4. Host network (Docker Desktop socket proxy, host services).
-HOST_IP=$(ip route | grep default | cut -d" " -f3)
+HOST_IP=$(ip route | grep default | head -n1 | cut -d" " -f3)
 HOST_NETWORK=$(echo "$HOST_IP" | sed 's/\.[0-9]*$/.0\/24/')
 echo "[firewall] allowing host network ${HOST_NETWORK}"
 iptables -A INPUT -s "$HOST_NETWORK" -j ACCEPT
@@ -117,6 +119,20 @@ iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
 iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
+
+# 6. IPv6: the allowlist above is IPv4-only. Block IPv6 egress entirely
+# (except loopback/established/ICMPv6) so blocked domains cannot be reached
+# over a parallel IPv6 route — fail closed instead of fail open.
+ip6tables -F
+ip6tables -X 2>/dev/null || true
+ip6tables -P INPUT DROP
+ip6tables -P FORWARD DROP
+ip6tables -P OUTPUT DROP
+ip6tables -A INPUT -i lo -j ACCEPT
+ip6tables -A OUTPUT -o lo -j ACCEPT
+ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+ip6tables -A OUTPUT -p ipv6-icmp -j ACCEPT
 
 echo "[firewall] verifying"
 if curl --connect-timeout 5 https://example.com >/dev/null 2>&1; then
