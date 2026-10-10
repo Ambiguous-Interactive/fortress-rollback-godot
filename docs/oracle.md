@@ -94,6 +94,8 @@ processes. Persistent mutants attack version/revision, empty operations/bytes,
 unknown fields, handle bounds, altered state/checksum, load-state injection,
 request reversal and missing operations. Process tests reject nonzero exits
 with plausible output, timeouts, partial completion and stale success receipts.
+The load mutant selects by kind, preserves frame/checksum consistency, and must
+fail at that exact load's canonical state comparison.
 
 ## Remaining requirements
 

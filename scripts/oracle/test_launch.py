@@ -8,6 +8,8 @@ import unittest
 from unittest.mock import patch
 
 import launch
+import controls
+from contract import checksum
 from test_contract import scenario, trace
 
 
@@ -21,6 +23,34 @@ def game_result():
 
 
 class LauncherTests(unittest.TestCase):
+    def test_load_control_rejects_unrelated_and_later_failures(self):
+        prefix = 'FORTRESS_ORACLE_GAME_RESULT '
+        actual = {'request_count': 6, 'errors': ['operation 17: request 6: state mismatch']}
+        controls.validate_load_failure(prefix + json.dumps(actual), 6)
+        for value in ({'request_count': 0, 'errors': ['cannot read trace']},
+                      {'request_count': 7, 'errors': ['operation 17: request 7: state mismatch']},
+                      {'request_count': 6, 'errors': ['checksum mismatch']},
+                      {'request_count': 6.0, 'errors': ['state mismatch']}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                controls.validate_load_failure(prefix + json.dumps(value), 6)
+
+    def test_load_mutant_changes_only_semantic_load(self):
+        for kinds in (('load', 'save'), ('save', 'load')):
+            with self.subTest(kinds=kinds):
+                value = trace()
+                requests = value['operations'][2]['requests']
+                original = copy.deepcopy(requests[0])
+                requests[:] = [dict(original, kind=kind) for kind in kinds]
+                controls.mutate_load_state(value)
+                for request in requests:
+                    if request['kind'] == 'save':
+                        self.assertEqual(request, dict(original, kind='save'))
+                    else:
+                        self.assertEqual(request['frame'], original['frame'])
+                        self.assertEqual(request['state_bytes'][:8], original['state_bytes'][:8])
+                        self.assertNotEqual(request['state_bytes'], original['state_bytes'])
+                        self.assertEqual(request['checksum'], checksum(bytes.fromhex(request['state_bytes'])))
+
     def test_crash_rejects_plausible_trace(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.CompletedProcess(['oracle'], 2, json.dumps(trace()), '')

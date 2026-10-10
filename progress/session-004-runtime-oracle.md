@@ -53,6 +53,14 @@ reported no findings. Formatting, source widths and code review passed.
 The adapters fail on process errors, malformed streams and inconsistent saves;
 unknown fields are also checked against the actual Rust/Godot binaries.
 
+Automatic PR review questioned a positional load-control assumption. The real
+batch starts with load, but selection now uses request kind. The altered payload
+keeps its frame and receives a matching checksum, isolating the snapshot claim.
+A table exercises both save-first and load-first order; both engines reject the
+mutant on canonical load-state mismatch rather than malformed state metadata.
+The control requires the exact count preceding load and a state-mismatch
+diagnostic; unrelated failures or a later failing advance cannot satisfy it.
+
 A source-only post-error concern did not reproduce: missing inputs at frame four
 with distance two recovered after complete submission. Removed the unverified
 claim and added late missing-input/retry cases to the permanent runtime corpus.
@@ -61,7 +69,7 @@ claim and added late missing-input/retry cases to the permanent runtime corpus.
 
 | Gate | Observed local result |
 | --- | --- |
-| Offline oracle schema/process suite | Nine tests passed with data-driven mutations |
+| Offline oracle schema/process suite | Eleven tests passed with data-driven mutations |
 | Harness tooling | 90 tests passed |
 | Offline reference suite | 27 methods; 25 passed, two native controls skipped in offline mode |
 | Harness/source checks | Generated index/stubs fresh; source width 180 passed |

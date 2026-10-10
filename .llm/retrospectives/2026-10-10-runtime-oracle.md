@@ -18,6 +18,7 @@ the fresh-context review and pinned upstream `src/lib.rs`.
 | Bootstrap event and transport guidance invented contracts | Pinned `src/lib.rs` enums contradict the former skill lifecycle/events | Correct rollback/networking skills at source; link ADR and runtime evidence |
 | Rust tagged unit variants ignored extra fields | Binary malformed-operation experiment before empty struct variants | Preserve real-process unknown-field controls alongside Python schema tests |
 | A source-only recovery hypothesis did not reproduce | Missing samples at frame four, distance two, resumed through frame eight successfully | Remove the unverified defect claim; add late missing-input recovery to the runtime corpus |
+| Positional mutation selection can target the wrong boundary after reordering | PR review questioned request zero; table covers save-first and load-first batches | Select loads by kind and preserve valid frame/checksum when changing payload |
 
 ## Actions and pruning
 

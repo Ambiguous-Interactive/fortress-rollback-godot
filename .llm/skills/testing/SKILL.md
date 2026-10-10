@@ -134,6 +134,10 @@ A final checksum or accumulator sum can match after reordered inputs; replaying
 an oracle's own requests can preserve the same mistake. Keep a temporal mutation
 that retains the final state while violating an intermediate frame.
 
+A mutation must fail at its intended boundary. Require the diagnostic and
+consumed-record position so an unrelated parser or later-request failure cannot
+satisfy the negative control. Select mutated records by semantic kind.
+
 ## CI
 
 `.github/workflows/` runs harness self-tests (`make test-llm`), source widths
