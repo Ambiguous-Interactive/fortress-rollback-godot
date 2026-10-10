@@ -29,17 +29,21 @@ def validate_bundle(value):
             if not isinstance(operation, dict):
                 raise ValueError('invalid queue operation')
             kind = operation.get('kind')
-            if kind in ('read', 'confirmed', 'discard'):
+            if kind in ('read', 'confirmed', 'retained', 'discard'):
                 fields(operation, 'kind frame', 'queue operation')
                 integer(operation['frame'], 0, 100000, 'queue frame')
-            elif kind == 'add':
-                fields(operation, 'kind frame bytes', 'queue operation')
+            elif kind in ('add', 'add_reclaim'):
+                fields(operation, 'kind frame bytes' + (' floor' if kind == 'add_reclaim' else ''), 'queue operation')
+                if kind == 'add_reclaim':
+                    integer(operation['floor'], 0, 100000, 'reclaim floor')
                 integer(operation['frame'], 0, 100000, 'queue frame')
                 text = operation['bytes']
                 if not isinstance(text, str) or len(text) != case['input_width'] * 2 or any(c not in '0123456789abcdef' for c in text):
                     raise ValueError('invalid queue input bytes')
-            elif kind == 'delay':
-                fields(operation, 'kind value', 'queue operation')
+            elif kind in ('delay', 'delay_reclaim'):
+                fields(operation, 'kind value' + (' floor' if kind == 'delay_reclaim' else ''), 'queue operation')
+                if kind == 'delay_reclaim':
+                    integer(operation['floor'], 0, 100000, 'reclaim floor')
                 integer(operation['value'], 0, 128, 'queue delay')
             elif kind == 'reset':
                 fields(operation, 'kind', 'queue operation')
@@ -69,7 +73,8 @@ def compare(expected, actual, names, counts):
                 integer(record['delay'], 0, 127, location)
                 if type(record['accepted']) is not bool or not isinstance(record['bytes'], str):
                     raise ValueError(f'{location}: invalid accepted or bytes type')
-                if record['kind'] not in ('add', 'read', 'confirmed', 'delay', 'discard', 'reset') or record['status'] not in ('none', 'confirmed', 'predicted'):
+                kinds = ('add', 'add_reclaim', 'read', 'confirmed', 'retained', 'delay', 'delay_reclaim', 'discard', 'reset')
+                if record['kind'] not in kinds or record['status'] not in ('none', 'confirmed', 'predicted'):
                     raise ValueError(f'{location}: unknown kind or status')
     for left, right, name in zip(expected['cases'], actual['cases'], names):
         for index, (first, second) in enumerate(zip(left['records'], right['records'])):

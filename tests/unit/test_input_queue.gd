@@ -6,7 +6,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["delay", "prediction", "ring", "validation", "ownership"])
+	return PackedStringArray(["delay", "prediction", "ring", "validation", "ownership", "reclaim", "reclaim_delay"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -21,6 +21,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_validation(context)
 		"ownership":
 			_ownership(context)
+		"reclaim":
+			_reclaim(context)
+		"reclaim_delay":
+			_reclaim_delay(context)
 	context.finish()
 
 
@@ -137,3 +141,78 @@ func _ownership(context: RefCounted) -> void:
 	var prediction: RefCounted = queue.input(1)
 	prediction.bytes[0] = 99
 	context.bytes_equal(queue.input(2).bytes, PackedByteArray([2, 3]), 2, "prediction ownership")
+
+
+# Value: protects=global floor history and frozen episode; fails_when=local progress evicts floor; why_new=ordinary full ring rejects; seam=none
+func _reclaim(context: RefCounted) -> void:
+	for capacity: int in [3, 4]:
+		var queue: RefCounted = Queue.new()
+		queue.configure(capacity, PackedByteArray([0]))
+		queue.add_input(0, PackedByteArray([1]))
+		queue.add_input(1, PackedByteArray([1]))
+		queue.input(capacity)
+		for frame: int in range(2, capacity + 2):
+			context.equal(queue.add_input_with_reclaim_floor(frame, PackedByteArray([frame]), 1).code, Queue.Code.OK, "global floor append")
+		context.equal(queue.first_incorrect_frame(), 2, "local mismatch later than global floor")
+		context.equal(queue.input(1).code, Queue.Code.PREDICTION_MISMATCH, "floor does not bypass mismatch")
+		context.bytes_equal(queue.retained_confirmed_input(1).bytes, PackedByteArray([1]), 1, "global floor retained")
+		context.equal(queue.add_input_with_reclaim_floor(capacity + 2, PackedByteArray([9]), 1).code, Queue.Code.CAPACITY, "newer tail protected")
+		context.equal(queue.first_incorrect_frame(), 2, "rejection preserves mismatch")
+		queue.reset_prediction()
+		context.equal(queue.input(capacity + 2).status, Queue.Status.PREDICTED, "fresh episode")
+		context.equal(queue.input(1).status, Queue.Status.CONFIRMED, "side slot bypasses active prediction")
+		queue.discard_confirmed_frames(100)
+		context.equal(queue.retained_confirmed_input(1).code, Queue.Code.OK, "discard clamps to floor request")
+		queue.reset_prediction()
+		queue.discard_confirmed_frames(100)
+		context.equal(queue.retained_confirmed_input(1).code, Queue.Code.BEFORE_RETAINED, "discard drops side slot")
+		context.equal(queue.confirmed_input(capacity).code, Queue.Code.OK, "physical stale ring tag")
+		context.equal(queue.retained_confirmed_input(capacity).code, Queue.Code.BEFORE_RETAINED, "stale tag is not recoverable")
+		for frame: int in range(capacity + 2, capacity * 4):
+			context.equal(queue.add_input_with_reclaim_floor(frame, PackedByteArray([frame]), frame - capacity).code, Queue.Code.OK, "repeated nonpower wrap")
+			context.bytes_equal(queue.retained_confirmed_input(frame).bytes, PackedByteArray([frame]), frame, "wrapped actual")
+		queue.configure(capacity, PackedByteArray([0]))
+		context.equal(queue.confirmed_input(1).code, Queue.Code.NO_CONFIRMED_INPUT, "configure clears side slot")
+
+
+# Value: protects=atomic reclaim delay and floor validation; fails_when=partial gap evicts before failure; why_new=reclaim setters; seam=none
+func _reclaim_delay(context: RefCounted) -> void:
+	var queue: RefCounted = Queue.new()
+	queue.configure(3, PackedByteArray([0]))
+	for frame: int in range(3):
+		queue.add_input(frame, PackedByteArray([7]))
+	queue.input(4)
+	context.equal(queue.set_frame_delay_with_reclaim_floor(2, 0), Queue.Code.CAPACITY, "failed gap is atomic")
+	context.equal(queue.frame_delay(), 0, "failed gap preserves delay")
+	context.equal(queue.first_incorrect_frame(), -1, "failed gap preserves prediction")
+	context.equal(queue.input(0).status, Queue.Status.PREDICTED, "failed gap did not create side slot")
+	context.equal(queue.retained_confirmed_input(0).code, Queue.Code.OK, "failed gap retains ring")
+	context.equal(queue.set_frame_delay_with_reclaim_floor(2, 1), Queue.Code.OK, "safe gap reclaims")
+	context.equal(queue.input(1).status, Queue.Status.CONFIRMED, "floor is actual during episode")
+	context.equal(queue.frame_delay(), 2, "successful gap sets delay")
+	context.equal(queue.add_input_with_reclaim_floor(3, PackedByteArray([7]), 1).code, Queue.Code.CAPACITY, "protected tail after delay")
+	context.equal(queue.add_input_with_reclaim_floor(3, PackedByteArray([7]), 2).frame, 5, "retry newer global floor")
+	context.equal(queue.retained_confirmed_input(1).code, Queue.Code.BEFORE_RETAINED, "replaced old floor")
+	for floor_frame: int in [-1, -2, 2147483648, 9223372036854775807]:
+		context.equal(queue.add_input_with_reclaim_floor(4, PackedByteArray([7]), floor_frame).code, Queue.Code.FRAME_RANGE, "invalid add floor")
+		context.equal(queue.set_frame_delay_with_reclaim_floor(2, floor_frame), Queue.Code.FRAME_RANGE, "invalid unchanged delay floor")
+	context.bytes_equal(queue.retained_confirmed_input(2).bytes, PackedByteArray([7]), 2, "invalid floor preserves side")
+	context.equal(queue.add_input_with_reclaim_floor(6, PackedByteArray([7]), 5).code, Queue.Code.OUT_OF_ORDER, "skip cannot reclaim")
+	context.equal(queue.add_input_with_reclaim_floor(4, PackedByteArray(), 5).code, Queue.Code.INPUT_WIDTH, "bad width cannot reclaim")
+	context.equal(queue.set_frame_delay_with_reclaim_floor(1, 5), Queue.Code.DELAY_DECREASE_UNSUPPORTED, "decrease cannot reclaim")
+	var owned: RefCounted = queue.retained_confirmed_input(2)
+	owned.bytes[0] = 99
+	context.bytes_equal(queue.confirmed_input(2).bytes, PackedByteArray([7]), 2, "returned side owns bytes")
+	context.equal(queue.add_input_with_reclaim_floor(4, PackedByteArray([8]), 5).code, Queue.Code.OK, "advance floor beyond oldest")
+	context.equal(queue.confirmed_input(2).code, Queue.Code.OK, "noncontiguous side is physically present")
+	context.equal(queue.retained_confirmed_input(2).code, Queue.Code.BEFORE_RETAINED, "noncontiguous side is not recovery")
+	queue.reset_prediction()
+	context.equal(queue.input(2).status, Queue.Status.CONFIRMED, "raw Rust input can inspect noncontiguous side")
+	var wide: PackedByteArray = PackedByteArray()
+	wide.resize(Queue.MAX_INPUT_BYTES)
+	context.equal(queue.configure(256, wide), Queue.Code.INVALID_CONFIGURATION, "budget includes side slot")
+	context.equal(queue.retained_confirmed_input(4).code, Queue.Code.OK, "invalid budget preserves queue")
+	queue.configure(3, PackedByteArray([0]))
+	context.equal(queue.add_input_with_reclaim_floor(Queue.FRAME_MAX, PackedByteArray([7]), Queue.FRAME_MAX).code, Queue.Code.CAPACITY, "reclaim startup stays bounded")
+	context.equal(queue.confirmed_input(0).code, Queue.Code.NO_CONFIRMED_INPUT, "failed startup preserves empty queue")
+	context.equal(queue.add_input_with_reclaim_floor(0, PackedByteArray([7]), 0).frame, 0, "retry atomic startup")

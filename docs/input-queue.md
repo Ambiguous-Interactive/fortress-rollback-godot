@@ -175,7 +175,7 @@ make queue-probes GODOT=/path/to/godot
 
 The queue runner verifies source archives and the existing Rust toolchain/lock
 before building a development-only `__internal::InputQueue` adapter. It executes
-705 cases and 7961 operations in each fresh process, twice per implementation.
+711 cases and 8353 operations in each fresh process, twice per implementation.
 Its exhaustive component covers every depth-three operation sequence from a
 seven-operation alphabet after valid frame-zero insertion, for capacities two
 and three. This is a finite scoped exploration, not an exhaustive queue proof.
@@ -186,9 +186,51 @@ owned input/read copies and atomic failures.
 
 `receipt.json` records engines, source/binary/lock/scenario/trace hashes,
 completion counts, run-twice equality and limits. Missing/extra records and the
-first exact normalized difference fail comparison. Four malformed artifact
+first exact normalized difference fail comparison. Five malformed artifact
 controls run against each binary; a separate witness records the reviewed
 startup partial-prefix divergence and checks retained bytes after rejection.
 Raw traces and logs remain under `.cache/reference/results/queue/` by default.
 CI runs the queue corpus on the minimum and pinned current native engines.
 Exported-browser queue coverage remains a separate gate.
+
+## Global rollback-floor runtime path
+
+`add_input_with_reclaim_floor` and `set_frame_delay_with_reclaim_floor` may
+reclaim only at or below an explicitly supplied global floor. A tagged side slot
+retains the floor input after ring eviction; configured payload bounds include it.
+`retained_confirmed_input` checks recoverable contiguous history, while raw
+`confirmed_input` keeps physical tagged-slot observations. The shared session
+validates its floor from `current_frame - max_prediction_frames`; local arrival
+progress cannot authorize reclamation. Raw callers must supply a trustworthy floor.
+
+The session uses this path and tests asymmetric corrected resimulation against
+uninterrupted canonical history. Follow-up #61 still owns remaining actual
+upstream P2P recovery observations and its complete acceptance gate.
+
+### Independent upstream floor observations
+
+The queue differential runner now preserves the original 705 ordinary cases and
+adds six reclaim cases: 711 cases and 8,353 operations in total. Both engines run
+in fresh processes twice on Godot 4.3 and pinned current 4.7.2. The added traces
+compare actual upstream floor preservation, asymmetric local mismatch versus a
+global floor, non-power-of-two wraps, failed delay atomicity, active prediction,
+reset/discard clamps and physical stale input versus recoverable history. Five
+malformed bundle controls run per implementation, including a boolean floor.
+The startup partial-prefix divergence remains separately checked.
+
+The pinned reclaim entry points are crate-private and retained lookup is private.
+`scripts/oracle/queue_launch.py` therefore copies the verified upstream archive
+into a disposable observation tree and appends three public delegation wrappers
+calling the unchanged methods. It changes no existing Rust function or queue
+algorithm. The runtime session oracle builds the untouched dependency separately.
+Each queue receipt records the immutable archive pin, original queue hash, exact
+wrapper text and hash, and observed source hash. A control overwrites the cached
+wrapper and verifies regeneration from original bytes, leaving the pinned tree
+unchanged. This development hook is absent from the shipped Godot addon.
+
+The original queue SHA-256 is
+`537ae9aab97af4cdfb7b0d84b738f56879ee387136c073b40eba1ff476f4a776`;
+the wrapper SHA-256 is
+`7336f7bc2d46909f805354c47273eda5665d482f02820f69dbdd702789e87673`.
+Reproduce with `make queue-probes GODOT=/path/to/godot`. This evidence covers
+queue storage operations; it does not close upstream P2P recovery issue #61.

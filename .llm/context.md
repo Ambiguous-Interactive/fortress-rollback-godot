@@ -6,8 +6,9 @@ fortified, deterministic, GGPO-inspired rollback networking library (a fork of
 `ggrs`). Target engine: **Godot 4.x**. Everything gameplay-relevant is written
 in **GDScript 2.0**. The shipped addon has no Rust, GDExtension or C# dependency;
 Rust is permitted for independent development oracles.
-The project has pinned reference baselines, a deterministic test runner and a
-bounded raw input queue; the rollback session engine remains planned. Treat this file as the canonical operating manual.
+The project has pinned reference baselines, a deterministic test runner, bounded
+queues/snapshots and a shared local rollback session engine. P2P transport and
+browser release support remain planned. Treat this file as the canonical operating manual.
 
 ## Skills Index
 

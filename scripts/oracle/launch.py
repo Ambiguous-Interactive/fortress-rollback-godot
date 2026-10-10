@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute pinned upstream traces twice and replay the game boundaries in Godot."""
+"""Compare pinned upstream requests with the production Godot session and independent game."""
 import argparse
 import json
 from pathlib import Path
@@ -10,6 +10,7 @@ import sys
 from contract import fields, integer, validate_scenario, validate_trace
 from corpus import scenarios, validate_history
 from controls import negative_controls
+from session_compare import compare_result, negative_controls as session_negative_controls
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
@@ -86,7 +87,7 @@ def main():
     trees = sources(manifest, args.offline)
     cargo, _ = setup_rust(manifest, args.offline)
     version, _ = execute([str(cargo), '+' + manifest['rust']['version'], '--version'], args.output / 'cargo-version.log')
-    command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked',
+    command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--bin', 'fortress-development-oracle',
                '--manifest-path', str(ROOT / 'scripts/oracle/rust/Cargo.toml')]
     if args.offline:
         command.append('--offline')
@@ -119,11 +120,20 @@ def main():
             game_runs.append(game_result(stdout, stderr, runs[0]))
         if game_runs[0] != game_runs[1]:
             raise ValueError(f'{fixture.name}: game fresh-process replay divergence')
+        session_runs = []
+        for repeat in (1, 2):
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+                'res://tests/oracle/session_trace.gd', '--', '--trace', str(trace_path.resolve())],
+                args.output / f'{fixture.stem}-session-{repeat}.log')
+            session_runs.append(compare_result(stdout, stderr, runs[0]))
+        if session_runs[0] != session_runs[1]:
+            raise ValueError(f'{fixture.name}: production session fresh-process divergence')
+        session_controls = session_negative_controls(session_runs[0], runs[0])
         cases.append({'scenario': fixture.name, 'scenario_sha256': digest(fixture),
                       'trace_sha256': digest(trace_path), 'operations': len(runs[0]['operations']),
                       'requests': sum(len(op['requests']) for op in runs[0]['operations']),
-                      'game': game_runs[0], 'repeat_equal': True})
-        print(f'{name}: runtime trace and game boundaries passed twice', flush=True)
+                      'game': game_runs[0], 'session': session_runs[0], 'session_negative_controls': session_controls, 'repeat_equal': True})
+        print(f'{name}: runtime trace, game boundaries and production session passed twice', flush=True)
     controls = negative_controls(binary, [str(engine), '--headless', '--path', str(ROOT), '--script',
         'res://tests/oracle/replay_trace.gd'], *control_case, args.output, rust_environment())
     report = {'format': 1, 'passed': True, 'commit': subprocess.check_output(
@@ -137,9 +147,9 @@ def main():
         'platform': platform.platform(), 'features': [], 'default_features': False, 'cases': cases, 'negative_controls': controls,
         'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
             list((ROOT / 'scripts/oracle').rglob('*.py')) + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
-            + list((ROOT / 'tests/oracle').glob('*.gd')))},
+            + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')))},
         'limitations': ['Sync-test public API only; no P2P, transport or protocol parity.',
-                        'Godot replays game requests; no Godot session implementation exists.',
+                        'Production Godot sync-test session parity only; P2P parity remains a separate gate.',
                         'Confirmation unavailable through upstream public sync-test API.']}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     return 0

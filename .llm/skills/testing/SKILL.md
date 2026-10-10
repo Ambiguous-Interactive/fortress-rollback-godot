@@ -134,6 +134,12 @@ A final checksum or accumulator sum can match after reordered inputs; replaying
 an oracle's own requests can preserve the same mistake. Keep a temporal mutation
 that retains the final state while violating an intermediate frame.
 
+Godot JSON parsers expose numeric fields as floats. After validating integrality
+and bounds, reconstruct scenario records with explicit integers before emitting
+a strict cross-language trace. Godot 4.3 and 4.7.2 stringify integral floats
+differently; never weaken the Python integer schema to compensate. The production
+session oracle's canonical scenario conversion protects this boundary.
+
 A mutation must fail at its intended boundary. Require the diagnostic and
 consumed-record position so an unrelated parser or later-request failure cannot
 satisfy the negative control. Select mutated records by semantic kind.

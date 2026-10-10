@@ -91,6 +91,25 @@ Capacity failures must preserve Godot state even when the pinned upstream
 startup gap path partially inserts default inputs. Keep that divergence explicit
 and verify retained bytes after failure; a rejected result alone is insufficient.
 
+## Implemented local engine
+
+The [session guide](../../../docs/session.md) documents shipped sync-test and
+external-input correction. Recovery emits `LOAD(R)`, `ADVANCE(R)`, then
+`SAVE(f), ADVANCE(f)` for later resimulated frames. Commit the exposed frame only
+after complete consumption. The thin driver uses the same engine. Sync-test
+distance zero emits no saves/loads; positive distance rewinds only when current
+is strictly greater than distance. Check canonical bytes as well as checksums
+to catch missing PRNG/pending-event state even with checksum collisions.
+
+Keep a separate driver callback guard until each callback returns. Termination
+may clear the active batch, but must not reopen configuration, input submission,
+polling, advancement or request completion inside that callback. Status and
+termination remain available; the driver acknowledges only after releasing the
+guard. Test valid request identities as well as terminate-then-reconfigure.
+
+Protocol, P2P event lifecycle and browser support remain separately gated.
+Do not infer those from local request parity or deterministic delivery tests.
+
 ## Code Samples
 
 - [fixed_step_loop.gd](../../code-samples/fixed_step_loop.gd) — driving ticks

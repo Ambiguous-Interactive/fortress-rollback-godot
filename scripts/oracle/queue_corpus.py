@@ -52,4 +52,31 @@ def bundle():
         for index, sequence in enumerate(itertools.product(alphabet, repeat=3)):
             case(f'exhaust-{capacity}-{index}', [add(0)] + list(sequence) + [
                 confirmed(0), confirmed(1), confirmed(2), read(2), reset, read(0)], capacity=capacity)
+    # Preserve the original 705 cases verbatim above. Reclaiming needs its own
+    # asymmetric local mismatch/global floor and physical/recoverable witnesses.
+    def reclaim(frame, floor, value=7):
+        return {'kind': 'add_reclaim', 'frame': frame, 'floor': floor, 'bytes': value.to_bytes(4, 'little').hex()}
+
+    def retained(frame):
+        return {'kind': 'retained', 'frame': frame}
+
+    def reclaim_delay(value, floor):
+        return {'kind': 'delay_reclaim', 'value': value, 'floor': floor}
+
+    for capacity in (3, 4, 7):
+        operations = [add(0, 7), add(1, 7), read(capacity)]
+        operations += [reclaim(frame, 1, frame + 8) for frame in range(2, capacity + 2)]
+        operations += [retained(0), retained(1), confirmed(1), read(1), reclaim(capacity + 2, 1),
+                       reset, read(capacity + 2), read(1), discard(100), retained(1), reset,
+                       discard(100), retained(1), confirmed(capacity), retained(capacity)]
+        for frame in range(capacity + 2, capacity * 6):
+            operations += [reclaim(frame, frame - capacity, frame), retained(frame - capacity),
+                           retained(frame), confirmed(frame - capacity - 1)]
+        case(f'reclaim-asymmetric-wrap-{capacity}', operations, capacity=capacity)
+        operations = [add(frame, 7) for frame in range(capacity)]
+        operations += [read(capacity + 1), reclaim_delay(2, 0), retained(0), confirmed(capacity),
+                       read(0), reclaim_delay(2, 1), retained(1), read(1), delay(1),
+                       reclaim(capacity, 1), reclaim(capacity, 2), retained(2), retained(1),
+                       reclaim(capacity + 1, 5), confirmed(2), retained(2), reset, read(2)]
+        case(f'reclaim-delay-atomic-{capacity}', operations, capacity=capacity)
     return {'format': 1, 'upstream_revision': REVISION, 'cases': cases}

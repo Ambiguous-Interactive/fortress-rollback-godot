@@ -1,10 +1,12 @@
 class_name FortressInputQueue
 extends RefCounted
 
+# gdlint: disable=max-returns
+
 ## Bounded raw queue matching the pinned Rust queue's ordinary input path.
 ## Samples are sequential; duplicate idempotence belongs to the session boundary.
 ## Discard moves the logical tail; confirmed_input can read old tags until overwritten.
-## Freeze, hot join, backfill and rollback-floor side-slot reclamation are not provided.
+## A global rollback floor can reclaim full rings while retaining that floor in one side slot.
 enum Code {
 	OK,
 	NOT_CONFIGURED,
@@ -53,14 +55,16 @@ var _prediction_frame: int = -1
 var _prediction_bytes: PackedByteArray = PackedByteArray()
 var _first_incorrect: int = -1
 var _last_requested: int = -1
+var _reclaimed_frame: int = -1
+var _reclaimed_bytes: PackedByteArray = PackedByteArray()
 
 
 ## Allocate fixed-width history. Invalid reconfiguration preserves existing state.
-## Capacity and width are at most 65536; ring byte storage is at most 16 MiB.
+## Capacity and width are at most 65536; ring plus side-slot byte storage is at most 16 MiB.
 func configure(capacity: int, neutral: PackedByteArray) -> int:
 	if capacity < 2 or capacity > MAX_CAPACITY or neutral.is_empty() or neutral.size() > MAX_INPUT_BYTES:
 		return Code.INVALID_CONFIGURATION
-	if capacity * neutral.size() > MAX_STORAGE_BYTES:
+	if (capacity + 1) * neutral.size() > MAX_STORAGE_BYTES:
 		return Code.INVALID_CONFIGURATION
 	_capacity = capacity
 	_neutral = neutral.duplicate()
@@ -74,6 +78,8 @@ func configure(capacity: int, neutral: PackedByteArray) -> int:
 	_last_added = -1
 	_delay = 0
 	_last_actual = _neutral.duplicate()
+	_reclaimed_frame = -1
+	_reclaimed_bytes = _neutral.duplicate()
 	reset_prediction()
 	return Code.OK
 
@@ -81,6 +87,19 @@ func configure(capacity: int, neutral: PackedByteArray) -> int:
 ## Increase delay by immediately inserting repeat-latest actual frames.
 ## Capacity and frame-range rejection are atomic. Decrease after an add is unsupported.
 func set_frame_delay(delay: int) -> int:
+	return _set_frame_delay(delay, -1)
+
+
+## The supplied floor comes from the session global rollback window, never local arrivals.
+func set_frame_delay_with_reclaim_floor(delay: int, reclaim_floor: int) -> int:
+	if _capacity == 0:
+		return Code.NOT_CONFIGURED
+	if not _valid_frame(reclaim_floor):
+		return Code.FRAME_RANGE
+	return _set_frame_delay(delay, reclaim_floor)
+
+
+func _set_frame_delay(delay: int, reclaim_floor: int) -> int:
 	if _capacity == 0:
 		return Code.NOT_CONFIGURED
 	if delay < 0 or delay >= _capacity:
@@ -91,18 +110,31 @@ func set_frame_delay(delay: int) -> int:
 	if delay < _delay:
 		return Code.DELAY_DECREASE_UNSUPPORTED
 	var delta: int = delay - _delay
-	var code: int = _append_check(delta)
+	var code: int = _append_check(delta, reclaim_floor)
 	if code != Code.OK:
 		return code
 	var repeated: PackedByteArray = _last_actual.duplicate()
 	for index: int in range(delta):
-		_append(_last_added + 1, repeated)
+		_append(_last_added + 1, repeated, reclaim_floor)
 	_delay = delay
 	return Code.OK
 
 
 ## Initial missing frames use neutral bytes; later skipped samples are rejected.
 func add_input(sample_frame: int, bytes: PackedByteArray) -> Result:
+	return _add_input(sample_frame, bytes, -1)
+
+
+## Reclaim only when full, evicting through the global floor and preserving its actual bytes.
+func add_input_with_reclaim_floor(sample_frame: int, bytes: PackedByteArray, reclaim_floor: int) -> Result:
+	if _capacity == 0:
+		return Result.new(Code.NOT_CONFIGURED)
+	if not _valid_frame(reclaim_floor):
+		return Result.new(Code.FRAME_RANGE)
+	return _add_input(sample_frame, bytes, reclaim_floor)
+
+
+func _add_input(sample_frame: int, bytes: PackedByteArray, reclaim_floor: int) -> Result:
 	if _capacity == 0:
 		return Result.new(Code.NOT_CONFIGURED)
 	if not _valid_frame(sample_frame) or _delay > FRAME_MAX - sample_frame:
@@ -113,11 +145,12 @@ func add_input(sample_frame: int, bytes: PackedByteArray) -> Result:
 	if _last_added != -1 and scheduled != _last_added + 1:
 		return Result.new(Code.OUT_OF_ORDER)
 	var required: int = scheduled - _last_added
-	if required > _capacity - _length:
-		return Result.new(Code.CAPACITY)
+	var code: int = _append_check(required, reclaim_floor)
+	if code != Code.OK:
+		return Result.new(code)
 	while _last_added + 1 < scheduled:
-		_append(_last_added + 1, _neutral)
-	_append(scheduled, bytes)
+		_append(_last_added + 1, _neutral, reclaim_floor)
+	_append(scheduled, bytes, reclaim_floor)
 	return Result.new(Code.OK, scheduled)
 
 
@@ -132,6 +165,8 @@ func input(frame: int) -> Result:
 		return Result.new(Code.PREDICTION_MISMATCH)
 	# Rust records this request even if the frame predates the logical tail.
 	_last_requested = frame
+	if frame == _reclaimed_frame:
+		return Result.new(Code.OK, frame, _reclaimed_bytes, Status.CONFIRMED)
 	if frame < _tail_frame:
 		return Result.new(Code.BEFORE_RETAINED)
 	if _prediction_frame == -1:
@@ -148,10 +183,29 @@ func confirmed_input(frame: int) -> Result:
 		return Result.new(Code.NOT_CONFIGURED)
 	if not _valid_frame(frame):
 		return Result.new(Code.FRAME_RANGE)
+	if frame == _reclaimed_frame:
+		return Result.new(Code.OK, frame, _reclaimed_bytes, Status.CONFIRMED)
 	var index: int = frame % _capacity
 	if _frames[index] != frame:
 		return Result.new(Code.NO_CONFIRMED_INPUT)
 	return Result.new(Code.OK, frame, _slots[index], Status.CONFIRMED)
+
+
+## Recovery accepts only the contiguous retained interval, excluding stale physical tags.
+## Unlike input(), this exact actual lookup does not change prediction or request bookkeeping.
+func retained_confirmed_input(frame: int) -> Result:
+	if _capacity == 0:
+		return Result.new(Code.NOT_CONFIGURED)
+	if not _valid_frame(frame):
+		return Result.new(Code.FRAME_RANGE)
+	var first: int = _tail_frame
+	if _reclaimed_frame != -1 and _reclaimed_frame + 1 == _tail_frame:
+		first = _reclaimed_frame
+	if _length == 0 or frame < first:
+		return Result.new(Code.BEFORE_RETAINED)
+	if frame > _last_added:
+		return Result.new(Code.NO_CONFIRMED_INPUT)
+	return confirmed_input(frame)
 
 
 ## Discard before frame, clamped to the latest request, always retaining newest.
@@ -166,6 +220,8 @@ func discard_confirmed_frames(frame: int) -> int:
 	var target: int = mini(frame, _last_added)
 	if _last_requested != -1:
 		target = mini(target, _last_requested)
+	if _reclaimed_frame != -1 and _reclaimed_frame < target:
+		_reclaimed_frame = -1
 	if target > _tail_frame:
 		_length -= target - _tail_frame
 		_tail_frame = target
@@ -187,15 +243,25 @@ func frame_delay() -> int:
 	return _delay
 
 
-func _append_check(count: int) -> int:
+func _append_check(count: int, reclaim_floor: int) -> int:
 	if count > FRAME_MAX - _last_added:
 		return Code.FRAME_RANGE
-	if count > _capacity - _length:
+	# Startup stays bounded and atomic, including when a caller supplies a floor.
+	if _last_added == -1 and count > _capacity:
+		return Code.CAPACITY
+	var evictions: int = maxi(0, _length + count - _capacity)
+	if evictions > 0 and (reclaim_floor == -1 or _tail_frame + evictions - 1 > reclaim_floor):
 		return Code.CAPACITY
 	return Code.OK
 
 
-func _append(frame: int, bytes: PackedByteArray) -> void:
+func _append(frame: int, bytes: PackedByteArray, reclaim_floor: int) -> void:
+	if _length == _capacity:
+		if _tail_frame == reclaim_floor:
+			_reclaimed_frame = _tail_frame
+			_reclaimed_bytes = _slots[_tail_frame % _capacity].duplicate()
+		_tail_frame += 1
+		_length -= 1
 	var index: int = frame % _capacity
 	_frames[index] = frame
 	for offset: int in range(bytes.size()):

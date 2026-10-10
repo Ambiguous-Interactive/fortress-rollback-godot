@@ -5,11 +5,62 @@ import copy
 import json
 from pathlib import Path
 import platform
+import hashlib
+import shutil
 import subprocess
 
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
 from queue_contract import compare, validate_bundle
 from queue_corpus import bundle
+
+
+
+# Observation wrappers only: each delegates directly to an unchanged pinned queue path.
+OBSERVATION_HOOK = """
+impl<T: Config> InputQueue<T> {
+    pub fn oracle_add_reclaim(&mut self, input: PlayerInput<T::Input>, floor: Frame) -> Frame {
+        self.add_input_reclaiming_before(input, floor)
+    }
+    pub fn oracle_delay_reclaim(&mut self, delay: usize, floor: Frame) -> Result<(), FortressError> {
+        self.set_frame_delay_reclaiming_before(delay, floor)
+    }
+    pub fn oracle_retained(&self, frame: Frame) -> Option<PlayerInput<T::Input>> {
+        self.retained_confirmed_input(frame).ok()
+    }
+}
+"""
+
+
+def observation_source(tree):
+    """Leave verified sources immutable; append access-only wrappers in a disposable copy."""
+    workspace = CACHE / 'queue-observation'
+    upstream = workspace / 'fortress'
+    if upstream.exists():
+        shutil.rmtree(upstream)
+    shutil.copytree(tree, upstream)
+    relative = Path('src/input_queue/mod.rs')
+    original = (tree / relative).read_bytes()
+    hooked = original + OBSERVATION_HOOK.encode()
+    (upstream / relative).write_bytes(hooked)
+    adapter = workspace / 'adapter'
+    adapter.mkdir(parents=True, exist_ok=True)
+    original_manifest = ROOT / 'scripts/oracle/rust/Cargo.toml'
+    manifest = original_manifest.read_text()
+    old = '../../../.cache/reference/fortress-rollback-' + 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
+    if manifest.count(old) != 1:
+        raise ValueError('queue adapter dependency anchor changed')
+    manifest = manifest.replace(old, str(upstream))
+    manifest += '\n[[bin]]\nname = "queue"\npath = ' + json.dumps(str(ROOT / 'scripts/oracle/rust/src/bin/queue.rs')) + '\n'
+    (adapter / 'Cargo.toml').write_text(manifest)
+    shutil.copyfile(ROOT / 'scripts/oracle/rust/Cargo.lock', adapter / 'Cargo.lock')
+    return adapter / 'Cargo.toml', {
+        'method': 'unchanged verified source plus three access-only delegation wrappers in isolated copy',
+        'original_queue_sha256': hashlib.sha256(original).hexdigest(),
+        'hook_sha256': hashlib.sha256(OBSERVATION_HOOK.encode()).hexdigest(),
+        'observed_queue_sha256': hashlib.sha256(hooked).hexdigest(),
+        'hook': OBSERVATION_HOOK,
+        'original_queue_unmodified': (tree / relative).read_bytes() == original,
+    }
 
 
 def parse_godot(stdout, stderr):
@@ -61,10 +112,11 @@ def main():
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
     manifest = load_manifest()
-    sources(manifest, args.offline)
+    trees = sources(manifest, args.offline)
+    observed_manifest, observation = observation_source(trees['fortress'])
     cargo, _ = setup_rust(manifest, args.offline)
     command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked',
-               '--manifest-path', str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'queue']
+               '--manifest-path', str(observed_manifest), '--bin', 'queue']
     if args.offline:
         command.append('--offline')
     execute(command, args.output / 'build.log', timeout=600)
@@ -91,7 +143,8 @@ def main():
     controls = []
     for name, mutate in [('empty', lambda x: x.update(cases=[])), ('stale', lambda x: x.update(upstream_revision='stale')),
                           ('unknown', lambda x: x['cases'][0]['operations'][0].update(unknown=1)),
-                          ('float', lambda x: x['cases'][0].update(capacity=2.5))]:
+                          ('float', lambda x: x['cases'][0].update(capacity=2.5)),
+                          ('floor-bool', lambda x: next(op for op in x['cases'][-1]['operations'] if op['kind'] == 'add_reclaim').update(floor=True))]:
         bad = copy.deepcopy(scenario)
         mutate(bad)
         control = args.output / f'control-{name}.json'
@@ -119,7 +172,8 @@ def main():
               'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)),
               'engine': version.strip(), 'engine_sha256': digest(engine), 'platform': platform.platform(),
               'cases': len(names), 'operations': sum(counts), 'repeat_equal': True, 'controls': controls, 'reviewed_divergence': divergence,
-              'features': [], 'default_features': False, 'binary_sha256': digest(binary),
+              'observation': observation, 'upstream_archive': manifest['sources']['fortress']['archive'],
+              'ordinary_cases': 705, 'reclaim_cases': len(names) - 705, 'features': [], 'default_features': False, 'binary_sha256': digest(binary),
               'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
               'bundle_sha256': digest(fixture), 'rust_trace_sha256': digest(args.output / 'rust-trace.json'),
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),
