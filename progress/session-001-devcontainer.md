@@ -191,6 +191,25 @@ Verification after fixes: rebuild clean (0 errors), verify 23/0.
 Verification after fixes: verify.sh 23/0 through `devcontainer exec` (CI's
 exact context), static checks clean.
 
+## Adversarial review round 4 (gate: RAN, FINDINGS)
+
+| ID | Finding | Triage | Action |
+| --- | --- | --- | --- |
+| F1 | `iptables -X` was the one remaining fallible statement between flush and DROP policies (fail on hardened kernel → flushed + ACCEPT) | AUTO-FIX | Policies moved directly after `-F`; `-X` runs behind policies (mirrors IPv6 pattern) |
+| F2 | Unguarded `$HOME` under `set -u` kills verify with zero diagnostics in exotic exec contexts | AUTO-FIX | `: "${HOME:?...}"` guard with explicit message |
+| F3 | Unconditional OUTPUT tcp/22 ACCEPT contradicted allowlist claim (inherited from upstream reference) | AUTO-FIX | SSH scoped to the allowlist ipset (git-over-ssh still works); DNS port-based caveat documented in script |
+| F4 | Post-create PyPI fetch has no explicit retry | ADVISORY | Accepted: whole build is network-dependent by design; CREATE-time gates are documented |
+| — | VERIFIED-OK: Docker DNS packet-path trace under OUTPUT DROP; ipset destroy/create idempotency; all download pins HTTP 200; workflow YAML validity; no leftover npx/aggregate/node-feature references; exec bits; lock file committed and enforced | — | — |
+
+Verification after fixes: verify 23/0, shellcheck clean.
+
+## Adversarial review convergence
+
+Rounds 1-4 found: 1 CRITICAL (doc-confirmed Claude Code credential
+redaction), 5 MAJOR, ~14 MINOR. Severity trend by round: 1C/5M → 2M/6m →
+2M/6m → 1M/3m — all MAJOR+ findings fixed and re-verified before proceeding;
+remaining advisories are documented policy choices.
+
 ## Findings / Data
 
 - Measured timings and red-data-point ledger are above; the recurring

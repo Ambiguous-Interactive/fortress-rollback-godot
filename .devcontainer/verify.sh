@@ -32,6 +32,7 @@ ROOT="$(dirname "$SCRIPT_DIR")"
 
 # uv tool shims (gdformat/gdlint) land in ~/.local/bin, which plain
 # `docker exec` sessions (devcontainer exec, CI) do not source from .bashrc.
+: "${HOME:?HOME not set — cannot locate uv tool shims}"
 export PATH="$HOME/.local/bin:$PATH"
 
 pass=0

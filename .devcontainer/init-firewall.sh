@@ -104,16 +104,16 @@ HOST_NETWORK="$(echo "$host_ip" | sed 's/\.[0-9]*$/.0\/24/')"
 docker_dns_rules="$(iptables-save -t nat | grep '127\.0\.0\.11' || true)"
 
 # ── Phase B: apply ──────────────────────────────────────────────────────
-# Ordering contract: the filter-table flush is followed IMMEDIATELY by the
-# DROP policies — nothing fallible sits between them. Every later statement
-# is either guarded or pure rule-adding, so any mid-apply failure leaves the
-# container CLOSED, never flushed-and-open.
+# Ordering contract: after the flush, the DROP policies are the very next
+# statements — nothing fallible sits between them (mirrors the IPv6 block
+# below). Empty-chain deletion (-X) and everything else run behind the
+# policies, guarded, so any failure leaves the container CLOSED.
 
 iptables -F
-iptables -X
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT DROP
+iptables -X
 
 # Docker's embedded DNS NAT rules (nat table ops do not traverse the filter
 # chains, so they are safe behind DROP). Guarded: a kernel without the mangle
@@ -129,12 +129,14 @@ fi
 iptables -t mangle -F 2>/dev/null || true
 iptables -t mangle -X 2>/dev/null || true
 
-# Baseline allows: DNS (udp+tcp; large answers retry over TCP), SSH, localhost.
+# Baseline allows: DNS (udp+tcp; large answers retry over TCP), localhost.
+# Note: DNS is port-based (any destination) because Phase A must be able to
+# resolve the allowlist itself and arbitrary re-resolutions; SSH below is
+# scoped to the allowlist.
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT
 iptables -A INPUT -p udp --sport 53 -j ACCEPT
 iptables -A INPUT -p tcp --sport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
 iptables -A INPUT -p tcp --sport 22 -m state --state ESTABLISHED -j ACCEPT
 iptables -A INPUT -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
@@ -159,6 +161,9 @@ while read -r ip; do
 done <"$DOMAIN_IPS"
 
 iptables -A OUTPUT -m set --match-set allowed-domains dst -j ACCEPT
+# SSH (git over ssh to allowed hosts, e.g. github.com) — scoped to the
+# allowlist, unlike the upstream reference script's unconditional port-22.
+iptables -A OUTPUT -p tcp --dport 22 -m set --match-set allowed-domains dst -j ACCEPT
 iptables -A OUTPUT -j REJECT --reject-with icmp-admin-prohibited
 
 # IPv6: the allowlist above is IPv4-only. Block IPv6 egress entirely
