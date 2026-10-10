@@ -26,4 +26,4 @@ are visible before activation; every body stays under the 300-line cap.
 | Skill | When to Use |
 | --- | --- |
 | [`gdscript-style`](./gdscript-style/SKILL.md) | GDScript 2.0 conventions for this repo: static typing, naming, signals, autoload policy, error handling, file layout. Use when writing or reviewing any GDScript file. |
-| [`networking-transport`](./networking-transport/SKILL.md) | Transport and serialization conventions: ENet/WebRTC peer setup, channel usage, StreamPeerBuffer fixed-width packets, replay file format, checksum exchange. Use when touching networking, packets, replays, or desync reporting. |
+| [`networking-transport`](./networking-transport/SKILL.md) | Transport and serialization contracts: bounded WebRTC/SignalFish delivery, fixed-width bytes, versioned traces/replays and checksum domains. Use when touching networking, packets, replays, or desync reporting. |

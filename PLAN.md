@@ -29,6 +29,7 @@ Local development contracts and evidence entry points:
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
+- [Actual upstream sync-test traces and independent game replay](docs/oracle.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.
 

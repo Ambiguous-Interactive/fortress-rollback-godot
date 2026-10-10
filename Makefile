@@ -1,4 +1,5 @@
-.PHONY: representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
+.PHONY: oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
+.PHONY: llm-index llm-index-prune pre-commit godot-check test-godot
 
 PY ?= python3
 GODOT ?= godot
@@ -26,6 +27,14 @@ test-llm:
 ## Reference fetch/inventory negative controls (no network or downloaded tools)
 test-reference:
 	$(PY) -m unittest discover -s scripts/reference -p 'test_*.py'
+
+## Offline scenario/trace and process-receipt negative controls
+test-oracle:
+	$(PY) -m unittest discover -s scripts/oracle -p 'test_*.py'
+
+## Actual upstream runtime traces and independent GDScript game replay
+oracle-probes:
+	$(PY) scripts/oracle/launch.py --godot $(GODOT)
 
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:

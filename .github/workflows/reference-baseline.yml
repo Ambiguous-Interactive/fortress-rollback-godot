@@ -6,6 +6,7 @@ on:
     paths:
       - ".llm/code-samples/**"
       - "scripts/reference/**"
+      - "scripts/oracle/**"
       - "scripts/run_godot_tests.py"
       - "tests/**"
       - "docs/test-runner.md"
@@ -16,6 +17,7 @@ on:
     paths:
       - ".llm/code-samples/**"
       - "scripts/reference/**"
+      - "scripts/oracle/**"
       - "scripts/run_godot_tests.py"
       - "tests/**"
       - "docs/test-runner.md"
@@ -38,6 +40,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: make test-reference
+      - run: make test-oracle
 
   rust:
     name: Pinned Rust reference
@@ -92,6 +95,7 @@ jobs:
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
             python3 scripts/run_godot_tests.py --godot "$editor" --results ".cache/tests/runner-$version.json"
             python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
+            python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
           done
       - uses: actions/upload-artifact@v4
         if: always()

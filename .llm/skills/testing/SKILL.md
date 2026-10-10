@@ -44,9 +44,9 @@ possible.)
      recorded one. Store replays as small binary fixtures.
    - *Input fuzz*: random (seeded!) input streams across two fake peers; no
      desync, no stuck prediction.
-3. **Integration**: two sessions in one process exchanging packets through
-   queues instead of sockets (deterministic, no timing), asserting event
-   sequences (`prediction_used`, `frame_rolled_back`, `desync_detected`).
+3. **Integration**: two sessions in one process exchange packets through
+   queues with explicit time. Assert ordered save/load/advance requests and
+   actual event sequences such as `NetworkInterrupted` and `NetworkResumed`.
 
 ## Test Value Bar
 
@@ -123,6 +123,20 @@ runner-owned logs, and preserve partial stdout/stderr on timeout. A failed rerun
 must never leave a stale success receipt beside logs from its replacement.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
 need bounded readiness polling rather than one successful configuration read.
+
+Validate embedded scenarios/results independently before comparing their identity
+to submitted artifacts. Python equality treats booleans, integral floats and
+integers as equal; it is not schema validation. Standalone executables also need
+their own complete schema and nonempty-work boundary.
+
+Compare intermediate canonical prefixes against original submitted histories.
+A final checksum or accumulator sum can match after reordered inputs; replaying
+an oracle's own requests can preserve the same mistake. Keep a temporal mutation
+that retains the final state while violating an intermediate frame.
+
+A mutation must fail at its intended boundary. Require the diagnostic and
+consumed-record position so an unrelated parser or later-request failure cannot
+satisfy the negative control. Select mutated records by semantic kind.
 
 ## CI
 

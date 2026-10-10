@@ -1,6 +1,6 @@
 ---
 name: networking-transport
-description: "Transport and serialization conventions: ENet/WebRTC peer setup, channel usage, StreamPeerBuffer fixed-width packets, replay file format, checksum exchange. Use when touching networking, packets, replays, or desync reporting."
+description: "Transport and serialization contracts: bounded WebRTC/SignalFish delivery, fixed-width bytes, versioned traces/replays and checksum domains. Use when touching networking, packets, replays, or desync reporting."
 ---
 
 # Networking Transport

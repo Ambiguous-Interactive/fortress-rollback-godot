@@ -20,23 +20,21 @@ Each peer simulates every frame locally:
    in time.
 2. **Prediction**: if a remote input has not arrived by its deadline, predict
    it (usually: repeat the last known input) and keep simulating.
-3. **Rollback**: when the real input finally arrives and differs from the
-   prediction, rewind to the last confirmed frame, store the current
-   visual/presentation state, re-simulate frames `confirmed..N` with correct
-   inputs, then restore presentation.
+3. **Rollback**: when actual input differs from a frozen prediction, reset
+   prediction and restore the required saved simulation frame. Consume the
+   engine's ordered requests to resimulate; never select a snapshot from the
+   global confirmation value alone. Presentation reconciles after completion.
 4. **Confirm**: frames become confirmed once all players' inputs for them are
    known. Confirmed states are checksummed and exchanged to detect desync.
 
 ## Frame Lifecycle (per fixed tick)
 
 ```
-gather_local_input(frame + input_delay)
-  -> session.advance(inputs)              # may trigger ROLLBACK first
-       -> load_state(last_confirmed)
-       -> for f in confirmed..current: apply_inputs(f); sim.tick(f)
-       -> save_state(); checksum(state)
-  -> events emitted (predicted_input_used, rolled_back, desync_detected)
-  -> presentation syncs from sim (interpolation optional, never in sim)
+submit current sample (the queue schedules input delay)
+  -> advance_frame() returns ordered save/load/advance requests
+  -> fulfill every request in return order
+  -> consume events after completion
+  -> reconcile presentation from the final simulation state
 ```
 
 ## GDScript Mapping (from the Rust crate)
@@ -45,17 +43,29 @@ gather_local_input(frame + input_delay)
 | --- | --- |
 | `BTreeMap` / `BTreeSet` | `Dictionary`/`Array` iterated in explicitly sorted key order |
 | `Result<T, E>` (panic-free) | Return codes + `push_error`, or a `Result`-style typed wrapper; never `assert` in sim paths |
-| Traits for state serialization | A `FortressState` interface: `serialize(StreamPeerBuffer)`, `deserialize(StreamPeerBuffer)`, `checksum() -> int` |
+| Traits for state serialization | Bounded writer/reader callbacks and canonical bytes; checksum is an owned 16-byte domain |
 | `#![forbid(unsafe_code)]` | Pure GDScript; no engine calls inside `tick()` — sim reads only its own state + inputs |
-| Event/callback channels | Typed signal-emitting session events (delivery deferred to end of tick, never mid-tick) |
+| Event/callback channels | Typed event drain after request processing; signals never control mid-tick simulation |
 
 ## Session Lifecycle
 
-`connect (start/response handshake) -> syncing (input delay negotiation) ->
-running (advance/rollback loop) -> disconnected`. Mirror the upstream event
-names so documentation and tests stay portable: `session_start`,
-`input_processed`, `prediction_used`, `frame_rolled_back`, `desync_detected`,
-`session_terminated`.
+Pinned Rust `SessionState` has `Synchronizing` and `Running`, plus feature-gated
+`HotJoining`. The Godot ADR additionally specifies terminal lifecycle behavior;
+do not describe that decision as an existing Rust enum variant.
+
+Actual pinned `FortressEvent` variants include `Synchronizing`, `Synchronized`,
+`Disconnected`, `NetworkInterrupted`, `NetworkResumed`, `WaitRecommendation`,
+`DesyncDetected`, `SyncTimeout`, `ReplayDesync`, `SpectatorDivergence`,
+`InputDelayRecommendation` and `PeerDropped`, with additional hot-join variants.
+There is no built-in emitter for `InputDelayRecommendation`. Prediction and
+rollback requests are not events named `prediction_used` or `frame_rolled_back`.
+Public sync-test currently drains no events and exposes no confirmation getter.
+
+Evidence: pinned `src/lib.rs` enum definitions and
+`src/sessions/sync_test_session.rs`, verified by the
+[runtime oracle](../../../docs/oracle.md). The
+[session ADR](../../../docs/contracts.md) owns frame domains, Godot lifecycle,
+request acknowledgement and view lifetime. Bootstrap samples are not APIs.
 
 ## Hard Rules
 
