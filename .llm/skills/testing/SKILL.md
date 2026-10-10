@@ -44,9 +44,9 @@ possible.)
      recorded one. Store replays as small binary fixtures.
    - *Input fuzz*: random (seeded!) input streams across two fake peers; no
      desync, no stuck prediction.
-3. **Integration**: two sessions in one process exchanging packets through
-   queues instead of sockets (deterministic, no timing), asserting event
-   sequences (`prediction_used`, `frame_rolled_back`, `desync_detected`).
+3. **Integration**: two sessions in one process exchange packets through
+   queues with explicit time. Assert ordered save/load/advance requests and
+   actual event sequences such as `NetworkInterrupted` and `NetworkResumed`.
 
 ## Test Value Bar
 
