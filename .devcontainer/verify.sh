@@ -8,7 +8,7 @@
 # Usage:
 #   .devcontainer/verify.sh           # full check (used by post-create and CI)
 #   .devcontainer/verify.sh --quick   # skip slow checks (godot import, harness
-#                                     # tests, MCP handshake)
+#                                     # tests, MCP discovery/handshake)
 #
 # Environment overrides:
 #   GODOT_VERSION        expected Godot version, e.g. "4.7.2-stable"
@@ -41,28 +41,8 @@ ok() { printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fail=$((fail + 1)); }
 section() { printf '\n== %s ==\n' "$1"; }
 
-# check_cmd <name> <args...>: command must exist; prints first version line.
-check_cmd() {
-  local name="$1"
-  shift
-  if command -v "$name" >/dev/null 2>&1; then
-    local version
-    version="$("$name" "$@" 2>/dev/null | head -n 1 || true)"
-    ok "${name}: ${version:-<no version output>}"
-  else
-    bad "${name} not found"
-  fi
-}
-
-# check_secret <name>: report SET/UNSET without printing values.
-check_secret() {
-  local name="$1"
-  if [ -n "${!name:-}" ]; then
-    ok "${name}: set"
-  else
-    printf '  \033[33m opt\033[0m %s: unset (optional)\n' "$name"
-  fi
-}
+# shellcheck source=.devcontainer/verify-tools.sh
+source "$SCRIPT_DIR/verify-tools.sh"
 
 section "Environment"
 if [ -f /.dockerenv ] || grep -qE '(docker|containerd)' /proc/1/cgroup 2>/dev/null; then
@@ -88,7 +68,11 @@ fi
 
 section "Agentic CLIs"
 check_cmd claude --version
-check_cmd opencode --version
+# OpenCode v2 renamed its MCP config schema (mcp.servers); assert the major
+# line so an image built from the v1 tarball cannot pass silently.
+check_major opencode 2
+check_cmd codex --version
+check_codex_package
 check_cmd gh --version
 check_cmd node --version
 check_cmd uv --version
@@ -105,7 +89,7 @@ check_cmd gdformat --version
 check_cmd gdlint --version
 
 section "Secrets (.env passthrough; all optional)"
-for secret in GITHUB_TOKEN OPENROUTER_API_KEY ZAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN; do
+for secret in GITHUB_TOKEN OPENROUTER_API_KEY ZAI_API_KEY OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN; do
   check_secret "$secret"
 done
 
@@ -125,23 +109,44 @@ for cfg in "$ROOT/.mcp.json" "$ROOT/opencode.json"; do
   fi
 done
 
-if jq -e '.mcpServers | has("godot") and has("context7") and has("github")' \
-  "$ROOT/.mcp.json" >/dev/null 2>&1; then
+if jq -e '
+        (.mcpServers | has("godot") and has("context7") and has("github"))
+        and (.mcpServers.godot.command == "godot-mcp")
+        and (.mcpServers.godot.env.GODOT_PATH == "/usr/local/bin/godot")
+        and (.mcpServers.context7.url | test("^https://"))
+        and (.mcpServers.github.url | test("^https://"))
+    ' "$ROOT/.mcp.json" >/dev/null 2>&1; then
   ok ".mcp.json wires godot, context7, github servers"
 else
-  bad ".mcp.json missing one of: godot, context7, github"
+  bad ".mcp.json: each of godot/context7/github must exist with a real command/URL"
 fi
 
-if jq -e '.mcp | has("godot") and has("context7") and has("github")' \
-  "$ROOT/opencode.json" >/dev/null 2>&1; then
-  ok "opencode.json wires godot, context7, github servers"
+# Assert server *content*, not just key presence: an all-empty
+# mcp.servers object passes a `has()` check while leaving the agent with no
+# MCP tools at all. v2 also inverts the opt-out to `disabled`.
+if jq -e '
+        (.mcp.servers | has("godot") and has("context7") and has("github"))
+        and ([.mcp.servers[] | (if has("disabled") then .disabled else false end)] | all(. == false))
+        and (.mcp.servers.godot.type == "local")
+        and (.mcp.servers.godot.command == ["godot-mcp"])
+        and (.mcp.servers.godot.environment.GODOT_PATH == "/usr/local/bin/godot")
+        and (.mcp.servers.context7.type == "remote")
+        and (.mcp.servers.context7.url | test("^https://"))
+        and (.mcp.servers.github.type == "remote")
+        and (.mcp.servers.github.url | test("^https://"))
+        and (.mcp.servers.github.oauth == false)
+    ' "$ROOT/opencode.json" >/dev/null 2>&1; then
+  ok "opencode.json wires godot, context7, github servers (v2 mcp.servers schema)"
 else
-  bad "opencode.json missing one of: godot, context7, github"
+  bad "opencode.json: godot/context7/github must exist under .mcp.servers with correct type/command/url and must not be disabled (OpenCode v2 moved servers out of .mcp)"
 fi
 
 if [ "$QUICK" = "1" ]; then
-  printf '\n  (--quick: skipped godot import, harness tests, MCP handshake)\n'
+  printf '\n  (--quick: skipped godot import, harness tests, MCP discovery/handshake)\n'
 else
+  section "OpenCode runtime MCP discovery"
+  check_opencode_runtime "$ROOT"
+
   section "MCP handshake (godot server over stdio)"
   handshake='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify","version":"1.0"}}}'
   # Exercises the image-installed `godot-mcp` binary directly (not npx), so

@@ -27,3 +27,7 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Local session objective and verified development caches
+GOAL.md
+/.cache/reference/

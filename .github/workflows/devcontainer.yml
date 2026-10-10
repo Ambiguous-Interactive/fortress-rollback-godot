@@ -53,10 +53,29 @@ jobs:
       - name: Validate JSON configs
         # devcontainer.json is intentionally excluded: the devcontainer spec
         # allows JSONC, and `up` validates it. These two must stay pure JSON.
+        # Server CONTENT is asserted, not just key presence: an all-empty
+        # mcp.servers object would pass a `has()` check with zero MCP tools.
         run: |
           jq -e . .mcp.json opencode.json >/dev/null
-          jq -e '.mcpServers | has("godot") and has("context7") and has("github")' .mcp.json >/dev/null
-          jq -e '.mcp | has("godot") and has("context7") and has("github")' opencode.json >/dev/null
+          jq -e '
+            (.mcpServers | has("godot") and has("context7") and has("github"))
+            and (.mcpServers.godot.command == "godot-mcp")
+            and (.mcpServers.godot.env.GODOT_PATH == "/usr/local/bin/godot")
+            and (.mcpServers.context7.url | test("^https://"))
+            and (.mcpServers.github.url | test("^https://"))
+          ' .mcp.json >/dev/null
+          jq -e '
+            (.mcp.servers | has("godot") and has("context7") and has("github"))
+            and ([.mcp.servers[] | (if has("disabled") then .disabled else false end)] | all(. == false))
+            and (.mcp.servers.godot.type == "local")
+            and (.mcp.servers.godot.command == ["godot-mcp"])
+            and (.mcp.servers.godot.environment.GODOT_PATH == "/usr/local/bin/godot")
+            and (.mcp.servers.context7.type == "remote")
+            and (.mcp.servers.context7.url | test("^https://"))
+            and (.mcp.servers.github.type == "remote")
+            and (.mcp.servers.github.url | test("^https://"))
+            and (.mcp.servers.github.oauth == false)
+          ' opencode.json >/dev/null
 
       - name: Build and start devcontainer
         run: npx -y @devcontainers/cli@0.89.0 up --workspace-folder . --frozen-lockfile

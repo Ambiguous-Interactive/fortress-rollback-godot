@@ -2,9 +2,9 @@
 
 A fast, reproducible, agent-ready environment for this repo: Godot 4.7.2,
 GDScript formatting/linting, modern CLI tooling, and the agentic CLIs
-(Claude Code, OpenCode, gh) pre-installed, with secrets supplied through a
-gitignored `.env` file and MCP servers wired for both Claude Code and
-OpenCode.
+(Claude Code, Codex, OpenCode, gh) pre-installed, with secrets supplied
+through a gitignored `.env` file and MCP servers wired for both Claude Code
+and OpenCode.
 
 ## Quick Start
 
@@ -38,7 +38,8 @@ npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-containe
 | Godot | pinned `4.7.2-stable` (build arg) | Headless import/tests, LSP, engine determinism |
 | Node.js | pinned `22.x` (Dockerfile arg) | MCP server runtime |
 | Claude Code CLI | latest at build | Anthropic coding agent |
-| OpenCode | latest at build | Vendor-neutral coding agent |
+| OpenCode | **v2** latest at build (npm `@opencode/cli`) | Vendor-neutral coding agent |
+| Codex CLI | latest at build (npm `@openai/codex`) | OpenAI coding agent (reads `AGENTS.md`, `.agents/skills/`) |
 | godot-mcp server | pinned `0.1.1` (npm global) | `godot` MCP server; no npm dependency at runtime |
 | gh | latest | GitHub CLI (reads `GITHUB_TOKEN`) |
 | uv | pinned `0.13.0` | Python tooling; installs `gdtoolkit` |
@@ -49,6 +50,25 @@ Version policy rationale: the engine and infrastructure (uv, node, MCP
 server) are pinned for reproducibility; the agentic CLIs track latest at
 build time by design. Downloads come from official endpoints over TLS;
 checksums are not pinned for the latest-tracking tools.
+
+"Latest at build" means *newest when that image layer was built* — Docker
+caches the layer, so a plain rebuild will not fetch a newer CLI. To pull the
+current release of Codex / OpenCode, rebuild without the build cache:
+
+```sh
+npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-container --build-no-cache
+```
+
+This does **not** refresh Claude Code: it arrives via a devcontainer feature
+locked to a digest in `devcontainer-lock.json` (and CI builds with
+`--frozen-lockfile`). To move it, delete its entry from the lock file (or run
+`up` without `--frozen-lockfile`), then rebuild.
+
+Codex and OpenCode are installed from **npm global** packages. `verify.sh`
+checks the Codex package layout and the OpenCode major version. OpenCode v2
+uses `@opencode/cli`; the older `opencode-ai` package is the v1 line. The
+image requires major version 2. (Claude Code comes from a devcontainer
+feature instead, locked by digest in `devcontainer-lock.json`.)
 
 VS Code extensions are declared in `devcontainer.json` (`customizations`):
 Godot Tools, Godot Files, Godot Format, Claude Code, GitLens, EditorConfig,
@@ -87,6 +107,21 @@ corresponding block in `devcontainer.env` and rebuild:
   + `ANTHROPIC_AUTH_TOKEN=<OPENROUTER_API_KEY value>` + `ANTHROPIC_API_KEY=`
   (kept present and **empty** on purpose, or Claude Code may bypass OpenRouter)
 
+### Codex authentication
+
+Codex does not read this file; it authenticates on its own. Either sign in
+interactively (ChatGPT Plus/Pro/Edu/Team, or an API key) or point it at an
+API key:
+
+```sh
+codex login              # ChatGPT account (browser flow)
+codex login status       # check current auth
+printenv OPENAI_API_KEY | codex login --with-api-key   # API key, no browser
+```
+
+`~/.codex` (config + credentials) lives on a named volume, so auth survives
+rebuilds and container recreation.
+
 ## MCP Servers
 
 Configured for Claude Code in `/.mcp.json` and for OpenCode in
@@ -105,11 +140,38 @@ credential-like variable names (its own tokens, and credential-carrying names
 such as `GITHUB_TOKEN`) into remote MCP headers — they read as empty with no
 warning — while custom names expand normally. Without a token the `github`
 server fails to connect (401); every other server and CLI is unaffected.
-The same applies to OpenCode's `{env:GITHUB_TOKEN}`: unset token = one failed
-server, non-fatal.
+OpenCode expands `{env:GITHUB_TOKEN}` when its server loads configuration.
+Without that variable, GitHub reports a failed connection (the exact HTTP
+status depends on the endpoint); the other servers remain usable. Its shared
+background service owns configuration and connections, so after changing
+credentials, restart it from a shell with the new environment:
+`opencode service restart`.
 
 The `godot` server can launch the editor, but headless containers have no
 display; run/debug/debug-output tools are the headless-friendly subset.
+
+### OpenCode v2 configuration
+
+The [v2 MCP documentation](https://opencode.ai/v2/docs/mcp-servers) defines
+servers under `mcp.servers`, with `disabled: true` to prevent connections.
+The repo uses that shape and relies on CLI validation rather than a remote
+editor schema. The [configuration documentation](https://opencode.ai/v2/docs/config)
+describes project discovery and precedence: direct `opencode.json(c)` files
+are loaded from ancestors to the current directory, followed by configs
+inside `.opencode` directories, which take precedence.
+
+Run these commands from the repository root to inspect discovery:
+
+```sh
+opencode debug config
+opencode mcp list
+```
+
+With v2.0.26, `mcp list` alone can report **No MCP servers configured** in a
+workspace the shared service has not initialized yet. `debug config` loads
+that workspace before listing connections. All three server names must be
+listed; GitHub may fail without credentials. `verify.sh` checks the config
+shape and runtime discovery so a zero-server result cannot pass unnoticed.
 
 ## Godot Editor + Language Server
 
@@ -137,13 +199,13 @@ CI runs it inside a freshly built container.
 ## Optional: Egress Firewall
 
 `.devcontainer/init-firewall.sh` (adapted from Anthropic's reference
-devcontainer) locks container egress to an allowlist: Anthropic, z.ai,
-OpenRouter, GitHub (meta CIDRs + asset hosts), npm, PyPI, astral.sh,
-nodejs.org, opencode.ai, Context7, Godot, and VS Code update/extension
-endpoints, plus the Ubuntu apt mirrors so later package installs work. IPv6
-egress is blocked entirely (the allowlist is IPv4-only), and Docker proxy
-variables are neutralized inside the script. It is **off by default**. To
-enable:
+devcontainer) locks container egress to an allowlist: Anthropic, OpenAI
+(`api.openai.com`, `auth.openai.com`, `chatgpt.com`), z.ai, OpenRouter,
+GitHub (meta CIDRs + asset hosts), npm, PyPI, astral.sh, nodejs.org,
+opencode.ai, Context7, Godot, and VS Code update/extension endpoints, plus
+the Ubuntu apt mirrors so later package installs work. IPv6 egress is
+blocked entirely (the allowlist is IPv4-only), and Docker proxy variables
+are neutralized inside the script. It is **off by default**. To enable:
 
 1. Add `"--cap-add=NET_ADMIN"` and `"--cap-add=NET_RAW"` to `runArgs`.
 2. Add `"postStartCommand": "sudo bash .devcontainer/init-firewall.sh"`.
@@ -158,13 +220,16 @@ enable:
 | Bump uv | `UV_VERSION` arg in `Dockerfile` |
 | Bump gdtoolkit | `GDTOOLKIT_VERSION` in `post-create.sh` (env-overridable) |
 | Bump godot-mcp | pinned npm install in `Dockerfile` |
+| Refresh Codex / OpenCode | nothing to edit — they track latest; rebuild with `--no-cache` (see Version policy) |
+| Refresh Claude Code | it is digest-pinned in `devcontainer-lock.json`; drop that entry and rebuild — `--no-cache` does not affect it |
+| Pin Codex / OpenCode | replace `@latest` with an exact version in the `npm install -g` line in `Dockerfile` |
 | Add a VS Code extension | `customizations.vscode.extensions` |
 | Add an MCP server | both `.mcp.json` and `opencode.json` |
 
-Named volumes (`frg-*-${devcontainerId}`) persist Claude/OpenCode state, the
-uv cache, Godot import caches, and shell history across rebuilds, which keeps
-rebuilds fast. If a volume ever ends up with wrong ownership (e.g. from an
-older broken build), reset them and rebuild:
+Named volumes (`frg-*-${devcontainerId}`) persist Claude/Codex/OpenCode
+state, the uv cache, Godot import caches, and shell history across rebuilds,
+which keeps rebuilds fast. If a volume ever ends up with wrong ownership
+(e.g. from an older broken build), reset them and rebuild:
 
 ```sh
 docker volume ls --filter name=frg- --format '{{.Name}}' | xargs -r docker volume rm

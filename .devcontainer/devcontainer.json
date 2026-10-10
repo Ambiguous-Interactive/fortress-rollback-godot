@@ -53,6 +53,7 @@
     },
     "mounts": [
         "source=frg-claude-config-${devcontainerId},target=/home/vscode/.claude,type=volume",
+        "source=frg-codex-config-${devcontainerId},target=/home/vscode/.codex,type=volume",
         "source=frg-opencode-data-${devcontainerId},target=/home/vscode/.local/share/opencode,type=volume",
         "source=frg-uv-cache-${devcontainerId},target=/home/vscode/.cache/uv,type=volume",
         "source=frg-godot-cache-${devcontainerId},target=/home/vscode/.local/share/godot,type=volume",
