@@ -45,13 +45,13 @@ func _initialize() -> void:
 	configuration.neutral_input = PackedByteArray([0, 0, 0, 0])
 	configuration.input_delay = int(scenario["input_delay"])
 	configuration.check_distance = int(scenario["check_distance"])
-	configuration.max_snapshot_bytes = 4 * (configuration.player_count + 1)
+	configuration.max_snapshot_bytes = 4 * (configuration.player_count + (3 if scenario["format"] == 2 else 1))
 	configuration.storage_budget_bytes = 1048576
 	_session = Session.new()
 	if _session.configure(configuration) != Types.Code.OK:
 		_finish("session configuration rejected")
 		return
-	_game = ReferenceGame.new(configuration.player_count)
+	_game = ReferenceGame.new(configuration.player_count, int(scenario["format"]))
 	var operations: Array[Dictionary] = []
 	var sources: Array = scenario["operations"]
 	for index: int in range(sources.size()):
@@ -60,7 +60,7 @@ func _initialize() -> void:
 			_finish(_error)
 			return
 	_trace = {
-		"format": 1,
+		"format": int(scenario["format"]),
 		"upstream_revision": source["upstream_revision"],
 		"scenario": scenario,
 		"operations": operations,

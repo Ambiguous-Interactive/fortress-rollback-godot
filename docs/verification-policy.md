@@ -124,6 +124,19 @@ Rust-specific Kani/SMT/Loom results do not establish GDScript correctness.
 - Reviewer feedback and CI failures are resolved, task/parent status reflects
   actual evidence, and the session log and retrospective are committed.
 
+## Task closure checklist
+
+- Check each issue requirement against current files and exact executed gates.
+  Distinguish design publication from implementation and supported release claims.
+- Record every evidence field above, with commands, negative-control diagnostics
+  and scope limits; link the implementation PR and its final commit.
+- Resolve explicit prerequisites or record why closure remains blocked. Existing
+  artifacts for a prerequisite do not establish its full acceptance automatically.
+- Apply code review and fresh adversarial review to risky changes. Preserve user
+  work and commit regenerated harness artifacts with their canonical sources.
+- Complete the required retrospective, resolve current-head CI and feedback,
+  merge the session PR, and update the issue and parent checklist accurately.
+
 ## Current worked example
 
 The [reference baseline](reference/README.md) is the first reproduction bundle.
@@ -132,3 +145,32 @@ closure. It proves only the listed upstream tests and engine controls. Pending
 browser execution, formal checks, addon packaging and port differential coverage
 remain missing until their named gates exist and run. The session progress log
 records the concrete red/green CLI-probe repair and its history limitation.
+
+The following compact B4 policy witness runs entirely from committed source
+using Python's standard library. It requires no cache or external installation:
+
+```sh
+git rev-parse HEAD
+python3 -m unittest discover -s scripts/reference -p test_inventory.py -v
+python3 -m unittest discover -s scripts/oracle -p test_contract.py -v
+```
+
+The first suite passes nine methods. Its false-coverage controls change pending
+decisions to covered, add invented test IDs and claim audit completion; release
+validation still rejects them. The second suite passes four methods. Removing
+an operation is rejected by complete trace validation. Its temporal control
+swaps two input frames while retaining the correct final state and valid schema;
+the independent submitted-history invariant rejects it with `submitted history`.
+These controls deliberately make the invalid evidence fail; the test methods
+pass only when the intended rejection occurs. They do not certify a release.
+
+For the test-only false-positive engine boundary, run the minimum/current
+[runner controls](test-runner.md). `after_completion_error` emits a completed
+case before a real script error; the host rejects it as `engine_error` despite
+successful completion output. Normal runner startup cannot satisfy this control.
+
+This bundle fixes commands, fixture source, mutations and expected rejection
+boundaries so another engineer can reproduce it without undocumented state.
+No simulation seed is consumed by these fixed Python fixtures; engine category
+repeat controls explicitly use `9223372036854775807`. B4 policy publication
+does not complete its B2 semantic-audit prerequisite or implement future tiers.

@@ -11,31 +11,33 @@ const FRAME_MAX: int = 2147483647
 static func validate(trace: Dictionary) -> String:
 	if not _fields(trace, "format upstream_revision scenario operations final_state"):
 		return "trace: unknown or missing fields"
-	if not integer(trace["format"], 1, 1) or trace["upstream_revision"] != REVISION:
+	if not integer(trace["format"], 1, 2) or trace["upstream_revision"] != REVISION:
 		return "trace: unsupported format or revision"
 	var error: String = _scenario(trace["scenario"])
 	if not error.is_empty():
 		return error
 	var scenario: Dictionary = trace["scenario"]
+	if trace["format"] != scenario["format"]:
+		return "trace: format differs from scenario"
 	var sources: Array = scenario["operations"]
 	if not trace["operations"] is Array or trace["operations"].size() != sources.size():
 		return "trace: operation count differs from scenario"
 	var frame: int = 0
 	for index: int in range(sources.size()):
 		var operation: Variant = trace["operations"][index]
-		error = _operation(operation, sources[index], index, frame, int(scenario["players"]))
+		error = _operation(operation, sources[index], index, frame, int(scenario["players"]), int(scenario["format"]))
 		if not error.is_empty():
 			return "operation %d: %s" % [index, error]
 		frame = int(operation["frame_after"])
 	if not _fields(trace["final_state"], "frame bytes checksum"):
 		return "final state: unknown or missing fields"
-	return _state(trace["final_state"], int(scenario["players"]), "bytes")
+	return _state(trace["final_state"], int(scenario["players"]), "bytes", int(scenario["format"]))
 
 
 static func _scenario(value: Variant) -> String:
 	if not _fields(value, "format upstream_revision players input_width check_distance input_delay operations"):
 		return "scenario: unknown or missing fields"
-	if not integer(value["format"], 1, 1) or value["upstream_revision"] != REVISION:
+	if not integer(value["format"], 1, 2) or value["upstream_revision"] != REVISION:
 		return "scenario: unsupported format or revision"
 	if not integer(value["players"], 2, 8) or not integer(value["input_width"], 4, 4):
 		return "scenario: invalid players or input width"
@@ -60,7 +62,7 @@ static func _scenario(value: Variant) -> String:
 	return ""
 
 
-static func _operation(value: Variant, source: Dictionary, index: int, frame: int, players: int) -> String:
+static func _operation(value: Variant, source: Dictionary, index: int, frame: int, players: int, version: int) -> String:
 	if not _fields(value, "index kind result error frame_before frame_after confirmed_frame requests events"):
 		return "unknown or missing operation fields"
 	if not integer(value["index"], index, index) or value["kind"] != source["kind"]:
@@ -85,20 +87,20 @@ static func _operation(value: Variant, source: Dictionary, index: int, frame: in
 	if value["frame_after"] != frame + (1 if is_advance else 0):
 		return "impossible exposed frame transition"
 	for request: Variant in value["requests"]:
-		var error: String = _request(request, players)
+		var error: String = _request(request, players, version)
 		if not error.is_empty():
 			return error
 	return ""
 
 
-static func _request(value: Variant, players: int) -> String:
+static func _request(value: Variant, players: int, version: int) -> String:
 	if not _fields(value, "kind frame state_bytes checksum inputs"):
 		return "request: unknown or missing fields"
 	if value["kind"] not in ["save", "load", "advance"] or not integer(value["frame"], 0, FRAME_MAX - 1):
 		return "request: invalid kind or frame"
 	if not value["inputs"] is Array:
 		return "request: inputs is not an array"
-	var error: String = _state(value, players, "state_bytes")
+	var error: String = _state(value, players, "state_bytes", version)
 	if not error.is_empty():
 		return error
 	if value["kind"] != "advance":
@@ -116,10 +118,10 @@ static func _request(value: Variant, players: int) -> String:
 	return ""
 
 
-static func _state(value: Dictionary, players: int, bytes_key: String) -> String:
+static func _state(value: Dictionary, players: int, bytes_key: String, version: int) -> String:
 	if not integer(value["frame"], 0, FRAME_MAX):
 		return "state: invalid frame"
-	if not Game.valid_hex(value[bytes_key], 8 * (players + 1)) or not Game.valid_hex(value["checksum"], 32):
+	if not Game.valid_hex(value[bytes_key], 8 * (players + (3 if version == 2 else 1))) or not Game.valid_hex(value["checksum"], 32):
 		return "state: invalid canonical bytes or checksum"
 	return ""
 

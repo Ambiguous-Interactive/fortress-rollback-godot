@@ -1,0 +1,83 @@
+{
+  "verified_on": "2026-10-10",
+  "records": [
+    {
+      "passed": true,
+      "entries": [
+        "addons/fortress_rollback/LICENSE",
+        "addons/fortress_rollback/NOTICE.md",
+        "addons/fortress_rollback/core/config.gd",
+        "addons/fortress_rollback/core/driver.gd",
+        "addons/fortress_rollback/core/input_queue.gd",
+        "addons/fortress_rollback/core/session.gd",
+        "addons/fortress_rollback/core/session_types.gd",
+        "addons/fortress_rollback/core/snapshot_history.gd",
+        "addons/fortress_rollback/core/snapshot_reader.gd",
+        "addons/fortress_rollback/core/snapshot_status.gd",
+        "addons/fortress_rollback/core/snapshot_writer.gd",
+        "addons/fortress_rollback/licenses/fortress-LICENSE-MIT"
+      ],
+      "archive_sha256": "63988b329f15e85cf0fe9c4897a0b0170f3b5f0090fe9adf7618ea57af3a2d76",
+      "command": [
+        "/workspaces/fortress-rollback-godot/.cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64",
+        "--headless",
+        "--path",
+        "/tmp/fortress-clean-addon-trc2u8ub",
+        "--script",
+        "res://smoke.gd"
+      ],
+      "engine_sha256": "8b8d7c6089d8b4238e6ec872f027ef1a4bfc5241ddb5f8aec452b058368d255b",
+      "exit": 0,
+      "marker": "FORTRESS_ADDON_PACKAGE_OK",
+      "limits": "Addon-only candidate and one native tick; not a supported release or browser networking gate.",
+      "version": "4.3",
+      "invocation": [
+        "python3",
+        "scripts/reference/package_audit.py",
+        "--godot",
+        ".cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64",
+        "--output",
+        "/tmp/fortress-addon-b1-4.3"
+      ]
+    },
+    {
+      "passed": true,
+      "entries": [
+        "addons/fortress_rollback/LICENSE",
+        "addons/fortress_rollback/NOTICE.md",
+        "addons/fortress_rollback/core/config.gd",
+        "addons/fortress_rollback/core/driver.gd",
+        "addons/fortress_rollback/core/input_queue.gd",
+        "addons/fortress_rollback/core/session.gd",
+        "addons/fortress_rollback/core/session_types.gd",
+        "addons/fortress_rollback/core/snapshot_history.gd",
+        "addons/fortress_rollback/core/snapshot_reader.gd",
+        "addons/fortress_rollback/core/snapshot_status.gd",
+        "addons/fortress_rollback/core/snapshot_writer.gd",
+        "addons/fortress_rollback/licenses/fortress-LICENSE-MIT"
+      ],
+      "archive_sha256": "63988b329f15e85cf0fe9c4897a0b0170f3b5f0090fe9adf7618ea57af3a2d76",
+      "command": [
+        "/workspaces/fortress-rollback-godot/.cache/reference/editors/4.7.2/Godot_v4.7.2-stable_linux.arm64",
+        "--headless",
+        "--path",
+        "/tmp/fortress-clean-addon-qlg75v65",
+        "--script",
+        "res://smoke.gd"
+      ],
+      "engine_sha256": "3fcb80f4fe794e3859360eb641d8c41d8ffe2c2e54ba1981e55a76851d5ed1f4",
+      "exit": 0,
+      "marker": "FORTRESS_ADDON_PACKAGE_OK",
+      "limits": "Addon-only candidate and one native tick; not a supported release or browser networking gate.",
+      "version": "4.7.2",
+      "invocation": [
+        "python3",
+        "scripts/reference/package_audit.py",
+        "--godot",
+        ".cache/reference/editors/4.7.2/Godot_v4.7.2-stable_linux.arm64",
+        "--output",
+        "/tmp/fortress-addon-b1-4.7.2"
+      ]
+    }
+  ]
+}

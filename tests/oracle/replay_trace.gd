@@ -32,7 +32,7 @@ func _initialize() -> void:
 		return
 	var scenario: Dictionary = trace["scenario"]
 	var operations: Array = trace["operations"]
-	var game: RefCounted = ReferenceGame.new(int(scenario["players"]))
+	var game: RefCounted = ReferenceGame.new(int(scenario["players"]), int(scenario["format"]))
 	for index: int in range(operations.size()):
 		var error: String = _operation(game, operations[index], index)
 		if not error.is_empty():

@@ -32,12 +32,27 @@ means the commit alone does not reproduce the worktree.
 Without explicit suites, the selected category discovers `test_*.gd` recursively
 under `tests/<category>/`, in sorted path order. Unit additionally runs the runner's
 self-suite. Missing suites, duplicate paths, unknown options, invalid inventories,
-zero matched cases and zero assertions fail. Empty determinism/integration
-categories fail until product suites exist; selecting a category with the runner
+zero matched cases and zero assertions fail. Empty categories fail;
+selecting a category with the runner
 self-suite validates selection, not product integration or simulation coverage.
 The runner self-suite protects table assertions, first-byte/frame diagnostics and
 fresh-instance isolation. Deliberate failures live outside discovery under
 `tests/runner-controls/`.
+
+## Focused local iteration
+
+Select the owning suite while changing one subsystem:
+
+```sh
+make test-focus GODOT=path/to/verified/godot SUITE=res://tests/unit/test_input_queue.gd
+make test-focus GODOT=path/to/verified/godot CATEGORY=determinism FILTER=restore
+```
+
+This uses the same fail-closed launcher and both repetition layers. Empty selections fail.
+Run the full affected categories before delivery; focused receipts establish only their selected coverage.
+Oracle launchers still run every scenario and negative control. Their verified source caches retain
+unchanged file timestamps, so warm Cargo builds reuse artifacts after content validation.
+Changed, missing, injected or symlinked source files trigger replacement from the verified archive.
 
 ## Suite interface
 

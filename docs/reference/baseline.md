@@ -88,6 +88,38 @@ This baseline has no claim about Rust Kani/Z3/Loom proofs transferring to Godot.
 
 All upstream/Rust/browser/template material remains under the ignored
 `.cache/reference/` development directory. Repository scripts and browser package
-files are development tools. No release addon artifact exists yet, so a shipped
-package exclusion audit cannot be completed from this session's state.
-B1 remains open for its unverified closure requirements and linked PR review.
+files are development tools.
+
+## Session 007 closure audit
+
+The current pin manifest matches both checked-in and cached Rust/Godot baseline
+reports. All ten Rust raw logs match their report SHA256 digests, with the
+115/8/3/1/1 selections passing twice. Cached source, compiler metadata, minimum/
+current editors/templates and Chromium archives match their manifest digests.
+The pinned TLC 1.8.0 jar was fetched and its SHA256 verified; B1 requires pinning,
+while formal model execution remains V5 work.
+
+Fresh closure reproduction also passed every selection twice:
+
+```sh
+python3 scripts/reference/run.py --offline --output .cache/session-007/b1-rust
+```
+
+The output report and ten fresh logs preserve the same revisions, features,
+seed and complete passing test identities. No live source consumer overlapped
+this run. Verified byte-identical source caches retained their timestamps.
+
+The [addon package audit](package-baseline.json) creates a real candidate tar
+outside the repository, verifies its exact twelve runtime/attribution entries,
+and extracts it into a fresh project. Actual Godot 4.3 and 4.7.2 each run the
+driver's first tick successfully using only that extracted addon. No test,
+reference, Rust, C#, extension binary or browser tooling is packaged. Required
+repository and upstream MIT notices are included. Eight negative controls reject
+Rust, extensionless tools, missing/empty/altered notices, symlink directories and
+nonregular entries before any
+engine execution, and invalidate stale successful receipts.
+
+This resolves B1's packaging exclusion gap; it does not certify a supported
+release, P2P transport or browser rollback. The baseline, integrity, fail-closed
+controls and packaging evidence are ready for issue closure review after the
+session PR passes current-head CI and review.

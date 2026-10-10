@@ -67,8 +67,9 @@ actual browser version. A served page or HTTP 200 is insufficient.
 
 ## Cache and provenance
 
-`fetch.py` verifies cached archives on every use and re-extracts sources from
-those archives before a Rust run. Changes made to cached upstream sources are
+`fetch.py` verifies cached archives on every use and compares their extraction
+against source caches before a Rust run. Byte-identical trees retain timestamps;
+changed trees are replaced. Changes made to cached upstream sources are
 intentionally discarded; cache trees are not working checkouts. Do not run
 source-consuming commands concurrently with source re-extraction.
 
@@ -99,12 +100,27 @@ controls and limitations. Checked-in JSON summaries preserve the observed
 source/tool versions, test identities, semantic equality and artifact hashes.
 CI uploads raw logs; local logs stay in the ignored cache.
 
-B1 remains open until its remaining gates are demonstrated, including any
-required formal-tool setup/model runs and the eventual addon release-package
-exclusion check. The current repository has no addon release artifact to audit.
+The addon-only candidate exclusion audit is reproducible independently of the
+development cache. It includes runtime attribution, rejects tools and symlinks,
+and executes one real driver/session tick in a clean project using only the addon:
+
+```sh
+python3 scripts/reference/package_audit.py \
+  --godot .cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64 \
+  --output /tmp/fortress-addon-b1-4.3
+```
+
+Repeat with 4.7.2 and the corresponding verified executable.
+[package-baseline.json](package-baseline.json) records both observed passes,
+archive contents/digests and engine identity. This is a candidate packaging audit,
+not release publication or supported browser/networking evidence.
+
+B1 requires formal-tool pinning, not model execution. The TLC 1.8.0 jar was
+downloaded and its manifest digest verified; scoped formal execution belongs to V5.
+B1's baseline and packaging evidence is now available for closure review.
 The selected baseline does not cover optional Rust features, the full upstream
 suite, all player counts, SignalFish runtime, mixed browsers or Safari devices.
-TLC 1.8.0 is artifact-pinned; this session does not claim a model execution.
+This baseline does not claim a model execution.
 Firefox/WebKit revisions are recorded from the pinned Playwright registry;
 only Chromium is executed here. Platform-specific overrides remain in that
 registry. Rust-specific Kani/Z3/Loom gates belong to the later scoped verification

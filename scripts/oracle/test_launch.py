@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -77,6 +78,41 @@ class LauncherTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         launch.main()
             self.assertFalse(receipt.exists())
+
+    def test_invalid_workers_remove_stale_receipt_without_starting_setup(self):
+        for value in ('0', '9', '-1', 'bad', '1.5'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / 'receipt.json'
+                receipt.write_text('{"passed":true}')
+                result = subprocess.run([sys.executable, str(Path(launch.__file__)), '--godot', 'missing',
+                                         '--output', directory, '--jobs', value], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('workers must be an integer in 1..8', result.stderr)
+                self.assertFalse(receipt.exists())
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_game_controls_cannot_pass_at_schema_failure_or_wrong_boundary(self):
+        prefix = 'FORTRESS_ORACLE_GAME_RESULT '
+        valid = {'passed': False, 'complete': True, 'errors': ['final state: state mismatch at frame 20'], 'request_count': 10}
+        controls.validate_game_failure(prefix + json.dumps(valid), 'state mismatch', 10)
+        for patch_value in ({'errors': ['state: invalid canonical bytes or checksum']},
+                            {'request_count': 9}, {'request_count': 10.0}, {'complete': False}, {'passed': True}):
+            with self.subTest(patch_value=patch_value), self.assertRaises(ValueError):
+                controls.validate_game_failure(prefix + json.dumps(dict(valid, **patch_value)), 'state mismatch', 10)
+
+    def test_both_formats_keep_persistent_process_controls(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            witnesses = {version: ({'format': version}, {'format': version}) for version in (1, 2)}
+            with patch.object(launch, 'negative_controls', return_value=['control']) as run:
+                result = launch.versioned_controls(Path('binary'), Path('engine'), witnesses, output)
+            self.assertEqual(result, {'1': ['control'], '2': ['control']})
+            self.assertEqual([call.args[2]['format'] for call in run.call_args_list], [1, 2])
+            self.assertEqual([call.args[3]['format'] for call in run.call_args_list], [1, 2])
+            self.assertEqual([call.args[4] for call in run.call_args_list],
+                             [output / 'controls-v1', output / 'controls-v2'])
+            with self.assertRaisesRegex(ValueError, 'missing format-specific control witness'):
+                launch.versioned_controls(Path('binary'), Path('engine'), {2: witnesses[2]}, output)
 
     def test_game_receipt_mutations(self):
         mutations = {

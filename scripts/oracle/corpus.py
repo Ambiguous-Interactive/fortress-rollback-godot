@@ -4,7 +4,7 @@ import struct
 from contract import REVISION
 
 
-def scenarios():
+def _scenarios():
     for players in range(2, 9):
         for distance, delay in ((0, 0), (2, 2), (7, 7)):
             operations = [{'kind': 'events'}, {'kind': 'advance'},
@@ -24,18 +24,44 @@ def scenarios():
                 'operations': operations}
 
 
-def expected_final(scenario):
-    """Independent offline game from submitted histories, for the fixed corpus only."""
+def scenarios():
+    for name, scenario in _scenarios():
+        yield name, scenario
+        yield 'stateful-' + name, dict(scenario, format=2)
+
+
+def expected_states(scenario):
+    """Offline history oracle; no session requests or validator state drive this game."""
     players, delay = scenario['players'], scenario['input_delay']
     histories = [[] for _ in range(players)]
     for operation in scenario['operations']:
         if operation['kind'] == 'input' and operation['player'] < players:
-            histories[operation['player']].append(struct.unpack('<I', bytes.fromhex(operation['bytes']))[0])
-    # Corpus has one complete sample per player for each of twenty successful frames.
+            histories[operation['player']].append(int.from_bytes(bytes.fromhex(operation['bytes']), 'little'))
     if any(len(history) != 20 for history in histories):
-        raise ValueError('independent oracle requires the complete fixed corpus history')
-    return struct.pack('<i' + 'I' * players, 20,
-                       *(sum(history[:20 - delay]) & 0xffffffff for history in histories)).hex()
+        raise ValueError('submitted history is not the complete fixed corpus')
+    scheduled = [[0] * delay + history for history in histories]
+    totals, rng, pending = [0] * players, 8173, 0
+    states = []
+    for frame in range(21):
+        data = struct.pack('<i' + 'I' * players, frame, *totals)
+        if scenario['format'] == 2:
+            data += struct.pack('<II', rng, pending)
+        states.append(data.hex())
+        if frame < 20:
+            values = [history[frame] for history in scheduled]
+            if scenario['format'] == 2:
+                rng = (1664525 * rng + 1013904223) % (1 << 32)
+                totals = [(total + values[player] + pending + (rng % 256) * (player + 1)) % (1 << 32)
+                          for player, total in enumerate(totals)]
+                pending = sum((player + 1) * value for player, value in enumerate(values)) % (1 << 32)
+            else:
+                totals = [(total + value) % (1 << 32) for total, value in zip(totals, values)]
+    return states
+
+
+def expected_final(scenario):
+    """Independent offline game from submitted histories, for the fixed corpus only."""
+    return expected_states(scenario)[20]
 
 
 def validate_history(trace, scenario):
@@ -48,13 +74,7 @@ def validate_history(trace, scenario):
     if any(len(history) != 20 for history in histories):
         raise ValueError('submitted history is not the complete fixed corpus')
     scheduled = [['00000000'] * delay + history for history in histories]
-    states = []
-    totals = [0] * players
-    for frame in range(21):
-        states.append(struct.pack('<i' + 'I' * players, frame, *totals).hex())
-        if frame < 20:
-            totals = [(total + struct.unpack('<I', bytes.fromhex(history[frame]))[0]) & 0xffffffff
-                      for total, history in zip(totals, scheduled)]
+    states = expected_states(scenario)
     for operation in trace['operations']:
         for request in operation['requests']:
             frame = request['frame']

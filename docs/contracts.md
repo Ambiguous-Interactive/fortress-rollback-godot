@@ -1,9 +1,12 @@
 # ADR: session, driver, state and transport contracts
 
 Status: reviewed interface contract for [B3](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/14).
-This specifies future implementation; it adds no runtime API or parity evidence.
+This ADR settles target interfaces; [local sessions](session.md) documents the
+implemented subset and its current completion signature. Transport, networking
+events and first-release interfaces still require their own implementation gates.
 Reference: Fortress `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
-The baseline reproduction and applicability ledger remain separate prerequisites.
+The pinned baseline reproduction is B3's prerequisite. The wider applicability
+audit remains a separate task; this ADR does not claim whole-library parity.
 
 ## Decision and scope
 
@@ -44,8 +47,8 @@ time nor token generation is accessible through simulation callback arguments.
 
 ## Typed interfaces
 
-These signatures name required types; they are an API specification, not
-GDScript classes to import today. Godot 4.3 compatibility forbids requiring typed
+These signatures name target types; use [local session documentation](session.md)
+for importable classes and current signatures. Godot 4.3 compatibility forbids requiring typed
 dictionary syntax: use typed records and `Array[Record]` for public collections.
 No public return value relies on an unexplained `Variant`.
 
@@ -226,7 +229,9 @@ behavior remains subject to the pinned differential oracle.
 
 ## Acceptance walkthroughs and negative controls
 
-These are implementation acceptance scenarios, not executed runtime tests.
+These scenarios settle B3's design acceptance and define later implementation
+tests. The [local session suites](../tests/unit/test_session.gd) exercise the
+implemented subset; P2P mode switching remains a transport implementation gate.
 The pre-ADR negative control is the former high-level plan: it left checksum
 width, request acknowledgement, borrowed-view expiry and partial callback
 failure unresolved. The decisions above settle those ambiguities for review.
@@ -277,4 +282,21 @@ Bounded byte callbacks, acknowledgement enforcement, lifetime checks, fatal
 callback policy, fixed first-tier membership and explicit termination are Godot
 API decisions, not claims that Rust exposes those exact methods. Representation,
 performance and differential tests must verify these decisions before the API is
-advertised; this ADR alone does not close B3's implementation-evidence gates.
+advertised. B3 requires the reviewed ADR and acceptance examples; runtime parity
+and supported release claims require their separate implementation gates.
+
+## B3 acceptance evidence
+
+| Requirement | Decision and acceptance evidence |
+| --- | --- |
+| Typed, independent interfaces | Typed-interface table specifies all five boundaries; core types are `RefCounted`, and SignalFish is optional |
+| Ordering, statuses and lifecycle | Advance outcomes distinguish readiness/stall/fatal; ordered-consumption rules reject reentry and incomplete batches |
+| Owned inputs and bounded snapshots | Ownership section fixes width, view lifetime, tags, checksum bytes and sticky callback errors |
+| Defaults and separate clocks | Pinned builder/config anchors establish defaults; frame/time section separates simulation from injected protocol time |
+| Fixed first-release scope | Decision section fixes 2–8 membership, explicit history-loss termination and transport authority limits |
+| Tick, stall, rollback and failure | Acceptance table walks each request sequence, missing history and callback failure |
+| Mode switch and mutation | Shared-game integration example changes only configuration/transport; alias witnesses define required mutation tests |
+
+The pre-ADR ambiguity witness above is design red evidence, rather than an
+invented failing runtime implementation. The issue's design completion does
+not certify future runtime classes, networking, browser execution or E1/B2.
