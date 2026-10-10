@@ -1,6 +1,6 @@
 ---
 name: networking-transport
-description: "Transport and serialization conventions: ENet/WebRTC peer setup, channel usage, StreamPeerBuffer fixed-width packets, replay file format, checksum exchange. Use when touching networking, packets, replays, or desync reporting."
+description: "Transport and serialization contracts: bounded WebRTC/SignalFish delivery, fixed-width bytes, versioned traces/replays and checksum domains. Use when touching networking, packets, replays, or desync reporting."
 metadata:
   category: feature
 ---
@@ -16,20 +16,23 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Desktop/native | `ENetMultiplayerPeer` | UDP; compress disabled (we control framing) |
-| Web export | `WebRTCMultiplayerPeer` | No ENet in browsers; mesh topology |
-| Local tests / replays | `StreamPeerBuffer` queues | Deterministic, no sockets in CI |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Direct, relay and fallback adapters remain planned |
+| Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
+| Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
-ENet channels: `0` = reliable ordered (handshake, events, checksums),
-`1` = unreliable unordered (live input frames — a late packet is worthless,
-so never resend it reliably).
+The roadmap does not promise ENet or a fixed channel numbering scheme.
+WebRTC inputs target unreliable unordered delivery with protocol redundancy.
+Late actual inputs can repair predictions and must remain recoverable until
+acknowledged. Binary relay is reliable and can introduce head-of-line delay.
+Verify actual SDK channel options; do not infer zero retransmits from packet lifetime.
 
 ## Serialization Rules
 
 1. All packets are built with `StreamPeerBuffer` in **explicit little-endian,
    fixed-width** form (`put_u32`, `put_u16`, `put_u8`). Never `put_var` —
    its encoding is engine-version-dependent and kills replay stability.
-2. Every packet begins with: `magic: u16`, `version: u8`, `type: u8`.
+2. Versioned bounded protocol layout is owned by P1; the bootstrap sample
+   is illustrative and does not define a shipped wire format.
 3. Floats on the wire only if IEEE-exact ops were used end to end (see
    [determinism](../determinism/SKILL.md)); prefer integers.
 4. Inputs are delta-compressed only *after* correctness: predictability of
@@ -38,24 +41,22 @@ so never resend it reliably).
 
 ## Replay Format
 
-```
-magic "FRG1" | version u32 | seed u64 | input_delay u8
-| frame_count u32 | then per frame: frame u32 + input bytes for each peer
-```
-
-Replays are the deterministic test fixtures (see
-[testing](../testing/SKILL.md)). Bump `version` and provide a converter
-whenever the layout changes; never mutate a released format in place.
+Confirmed gameplay replays and diagnostic network/scenario traces are separate
+formats. X1 owns the gameplay replay format; there is no released `FRG1` format.
+The [development oracle](../../../docs/oracle.md) defines its scoped sync-test
+scenario/trace version. It does not define protocol packets or gameplay replay.
+Preserve revisions, wide values and exact ordering; reject unsupported versions.
+Never change a released format silently.
 
 ## Desync Detection
 
-1. Each peer checksums state every `CHECKSUM_INTERVAL` frames (see
-   [state_checksum.gd](../../code-samples/state_checksum.gd)).
-2. Checksum packets carry `frame`, `checksum`, and the input-hash history
-   window so the exact diverging input can be identified.
-3. On mismatch: emit `desync_detected` with both checksums + frames, dump
-   both state blobs to a diagnostic file, and keep the session alive in
-   "degraded" mode unless gameplay integrity is compromised.
+1. The session ADR negotiates an owned 16-byte checksum domain; the sample's
+   eight-byte FNV checksum and the oracle game's checksum are separate examples.
+2. P4 owns checksum exchange and desync policy; A3 owns bounded diagnostics.
+   Compare canonical bytes in verification, since matching checksums are insufficient.
+3. Upstream reports `DesyncDetected`. The Godot API's terminal/error behavior
+   follows the [session contract](../../../docs/contracts.md); do not invent a
+   shipped degraded mode or packet layout from bootstrap guidance.
 
 ## What Belongs Here vs Elsewhere
 

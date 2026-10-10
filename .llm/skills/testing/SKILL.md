@@ -124,6 +124,16 @@ must never leave a stale success receipt beside logs from its replacement.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
 need bounded readiness polling rather than one successful configuration read.
 
+Validate embedded scenarios/results independently before comparing their identity
+to submitted artifacts. Python equality treats booleans, integral floats and
+integers as equal; it is not schema validation. Standalone executables also need
+their own complete schema and nonempty-work boundary.
+
+Compare intermediate canonical prefixes against original submitted histories.
+A final checksum or accumulator sum can match after reordered inputs; replaying
+an oracle's own requests can preserve the same mistake. Keep a temporal mutation
+that retains the final state while violating an intermediate frame.
+
 ## CI
 
 `.github/workflows/` runs harness self-tests (`make test-llm`), source widths
