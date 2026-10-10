@@ -1,4 +1,4 @@
-.PHONY: oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
+.PHONY: queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
 .PHONY: llm-index llm-index-prune pre-commit godot-check test-godot
 
 PY ?= python3
@@ -31,6 +31,10 @@ test-reference:
 ## Offline scenario/trace and process-receipt negative controls
 test-oracle:
 	$(PY) -m unittest discover -s scripts/oracle -p 'test_*.py'
+
+## Actual pinned Rust and production Godot queue comparison
+queue-probes:
+	$(PY) scripts/oracle/queue_launch.py --godot $(GODOT)
 
 ## Actual upstream runtime traces and independent GDScript game replay
 oracle-probes:

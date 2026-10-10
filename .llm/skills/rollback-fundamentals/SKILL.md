@@ -80,6 +80,17 @@ request acknowledgement and view lifetime. Bootstrap samples are not APIs.
    [networking-transport](../networking-transport/SKILL.md)); a mismatch is a
    first-class error event, not a log line.
 
+## Raw queue and session boundaries
+
+The [audited queue contract](../../../docs/input-queue.md) separates raw queue
+observations from session guarantees. `confirmed_input` checks a physical frame
+tag even after logical discard; session recovery must check retained history.
+Raw duplicate submission is rejected; stalled-sample idempotence belongs to the
+session. Prediction uses a frozen per-player episode, not global confirmation.
+Capacity failures must preserve Godot state even when the pinned upstream
+startup gap path partially inserts default inputs. Keep that divergence explicit
+and verify retained bytes after failure; a rejected result alone is insufficient.
+
 ## Code Samples
 
 - [fixed_step_loop.gd](../../code-samples/fixed_step_loop.gd) — driving ticks

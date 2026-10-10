@@ -9,6 +9,7 @@ on:
       - "scripts/oracle/**"
       - "scripts/run_godot_tests.py"
       - "tests/**"
+      - "addons/**"
       - "docs/test-runner.md"
       - "docs/reference/**"
       - "Makefile"
@@ -20,6 +21,7 @@ on:
       - "scripts/oracle/**"
       - "scripts/run_godot_tests.py"
       - "tests/**"
+      - "addons/**"
       - "docs/test-runner.md"
       - "docs/reference/**"
       - "Makefile"
@@ -95,6 +97,7 @@ jobs:
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
             python3 scripts/run_godot_tests.py --godot "$editor" --results ".cache/tests/runner-$version.json"
             python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
+            python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
             python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
           done
       - uses: actions/upload-artifact@v4

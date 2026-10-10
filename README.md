@@ -6,8 +6,8 @@ A **GDScript-only port** of [fortress-rollback](https://github.com/wallstop/fort
 
 > [!WARNING]
 > This project is in an early bootstrap phase. The rollback engine itself is not
-> implemented yet; this repository currently ships the project skeleton and its
-> AI-assisted development harness and pinned development reference tooling.
+> implemented yet. The repository includes a bounded input queue, deterministic
+> tests, and pinned development reference tooling.
 
 ## AI-Assisted Development Notice
 
@@ -50,7 +50,11 @@ make llm-index
 pins and reproducible upstream/native/web probes. The
 [interface ADR](./docs/contracts.md) and [evidence policy](./docs/verification-policy.md)
 define the next implementation gates. These development artifacts do not imply
-that the rollback addon is implemented.
+that a complete rollback session is implemented.
+
+The [raw input queue](./docs/input-queue.md) is the first runtime component.
+Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
+for direct pinned Rust/Godot queue comparisons. Rust is development-only.
 
 ## License
 
