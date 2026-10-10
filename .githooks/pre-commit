@@ -8,6 +8,7 @@ cd "$ROOT"
 
 echo "[pre-commit] llm harness: checking staged files + generated artifacts"
 
+python3 scripts/check_source_line_lengths.py
 python3 scripts/llm/check_llm_file_lengths.py --staged .
 python3 scripts/llm/generate_llm_index.py --check
 python3 scripts/llm/generate_skill_stubs.py --check

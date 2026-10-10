@@ -17,9 +17,7 @@ func _init(fixed_seed: int) -> void:
 func equal(actual: Variant, expected: Variant, label: String) -> void:
 	assertions += 1
 	if actual != expected:
-		failures.append(
-			{"kind": "equality", "label": label, "expected": str(expected), "actual": str(actual)}
-		)
+		failures.append({"kind": "equality", "label": label, "expected": str(expected), "actual": str(actual)})
 
 
 func table(rows: Array[Dictionary]) -> void:
@@ -30,9 +28,7 @@ func table(rows: Array[Dictionary]) -> void:
 			equal(row["actual"], row["expected"], str(row["label"]))
 
 
-func bytes_equal(
-	actual: PackedByteArray, expected: PackedByteArray, frame: int, label: String
-) -> void:
+func bytes_equal(actual: PackedByteArray, expected: PackedByteArray, frame: int, label: String) -> void:
 	assertions += 1
 	var difference: int = -1
 	for index: int in range(mini(actual.size(), expected.size())):
@@ -42,16 +38,7 @@ func bytes_equal(
 	if difference < 0 and actual.size() != expected.size():
 		difference = mini(actual.size(), expected.size())
 	if difference >= 0:
-		failures.append(
-			{
-				"kind": "bytes",
-				"label": label,
-				"frame": frame,
-				"byte": difference,
-				"expected": expected.hex_encode(),
-				"actual": actual.hex_encode()
-			}
-		)
+		failures.append({"kind": "bytes", "label": label, "frame": frame, "byte": difference, "expected": expected.hex_encode(), "actual": actual.hex_encode()})
 
 
 func state(frame: int, canonical_bytes: PackedByteArray) -> void:

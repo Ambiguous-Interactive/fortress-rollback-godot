@@ -1,7 +1,11 @@
-.PHONY: hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
+.PHONY: lint-source hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
 
 PY ?= python3
 GODOT ?= godot
+
+## Enforce the 180-character maximum across repository source files
+lint-source:
+	$(PY) scripts/check_source_line_lengths.py
 
 ## Install git hooks (sets core.hooksPath to .githooks/)
 hooks:
@@ -42,7 +46,7 @@ llm-index-prune:
 	$(PY) scripts/llm/generate_skill_stubs.py --write --prune
 
 ## Everything the pre-commit hook runs
-pre-commit: lint-llm test-llm
+pre-commit: lint-source lint-llm test-llm
 
 ## Validate the Godot project headless (parse scripts, import assets)
 godot-check:

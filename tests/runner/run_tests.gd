@@ -73,19 +73,5 @@ func _discover(path: String, paths: Array[String]) -> void:
 
 
 func _fail(reason: String) -> void:
-	print(
-		(
-			PREFIX
-			+ JSON.stringify(
-				{
-					"format": 1,
-					"complete": true,
-					"passed": false,
-					"count": 0,
-					"records": [],
-					"errors": [{"kind": reason}]
-				}
-			)
-		)
-	)
+	print(PREFIX + JSON.stringify({"format": 1, "complete": true, "passed": false, "count": 0, "records": [], "errors": [{"kind": reason}]}))
 	quit(1)

@@ -52,8 +52,12 @@ def main():
             shutil.rmtree(project)
         project.mkdir(parents=True)
         shutil.copyfile(ROOT / 'scripts/reference/smoke.gd', project / 'smoke.gd')
-        (project / 'project.godot').write_text('config_version=5\n[application]\nconfig/name="Reference smoke"\nrun/main_scene="res://main.tscn"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
-        (project / 'main.tscn').write_text('[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://smoke.gd" id="1"]\n[node name="Smoke" type="Node"]\nscript = ExtResource("1")\n')
+        (project / 'project.godot').write_text(
+            'config_version=5\n[application]\nconfig/name="Reference smoke"\nrun/main_scene="res://main.tscn"\n'
+            '[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
+        (project / 'main.tscn').write_text(
+            '[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://smoke.gd" id="1"]\n'
+            '[node name="Smoke" type="Node"]\nscript = ExtResource("1")\n')
         base = [str(editor), '--headless', '--path', str(project)]
         run(base + ['--editor', '--quit'], environment, results / f'godot-{version}-import.log')
         for repeat in (1, 2):
@@ -80,7 +84,9 @@ def main():
                 for member in package.namelist():
                     if Path(member).name.startswith('web_'):
                         (template_dir / Path(member).name).write_bytes(package.read(member))
-            (project / 'export_presets.cfg').write_text('[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\nexport_filter="all_resources"\ninclude_filter=""\nexclude_filter=""\n[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
+            (project / 'export_presets.cfg').write_text(
+                '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\nexport_filter="all_resources"\ninclude_filter=""\nexclude_filter=""\n'
+                '[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
             export = CACHE / 'web-exports' / version
             if export.exists():
                 shutil.rmtree(export)

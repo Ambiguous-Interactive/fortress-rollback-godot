@@ -17,7 +17,9 @@ are visible before activation; every body stays under the 300-line cap.
 | [`llm-harness`](./llm-harness/SKILL.md) | How to maintain this repo's AI agent harness: .llm layout, 300-line caps, SKILL.md authoring, index/stub regeneration, pointer files, git hooks, CI. Use when editing .llm/, agent pointer files, or scripts/llm tooling. |
 | [`retrospective`](./retrospective/SKILL.md) | MANDATORY post-work self-improvement loop: after any large change or incident, analyze the work with evidence, distill durable lessons into skills/knowledge/research, prune what became stale, and record the outcome. Use after finishing a large task, subsystem, harness change, or debugging incident; when the user asks to reflect, retro, self-improve, capture lessons, or update skills; before ending any session that hit corrections, surprises, or rework. |
 | [`rollback-fundamentals`](./rollback-fundamentals/SKILL.md) | Rollback netcode concepts and their GDScript mapping: input delay, prediction, rollback and re-simulation, state save/load, checksums, session lifecycle. Use when designing or modifying session, input, prediction, or sync code. |
+| [`ship-session`](./ship-session/SKILL.md) | Finish a session PR: verify current-head CI, scan every feedback surface, address findings, squash merge to main, and synchronize local Git. Use after a push and before ending a session. |
 | [`testing`](./testing/SKILL.md) | Deterministic test strategy: headless Godot test runner, seed-fixed tests, run-twice equality, replay regression tests, checksum assertions, CI setup. Use when writing tests or debugging flaky/divergent behavior. |
+| [`user-copy`](./user-copy/SKILL.md) | Write plain comments, PR titles and descriptions, commit messages, and CHANGELOG entries. Use when authoring or reviewing these artifacts. |
 
 ## Feature Skills
 
