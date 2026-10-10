@@ -1,0 +1,38 @@
+{
+  "status": "passed",
+  "manifest_sha256": "05eeb7a20f720528cc64528cd6f9fb46d2e70d4dd307a6071df7c3a58cb9f09d",
+  "smoke_source_sha256": "bcbcd9feb8311fb7367782b4b9c8c03ec11382e72e1026dd2b108f143977e1d0",
+  "records": [
+    {
+      "invalid_script_rejected": true,
+      "version": "4.3.stable.official.77dcf97d8",
+      "editor_artifact": "Godot_v4.3-stable_linux.arm64.zip",
+      "headless_repeats": 2,
+      "marker": "FORTRESS_BASELINE_SMOKE_OK:78563412",
+      "browser_artifact": "chromium-1194-arm64.zip",
+      "template_artifact": "Godot_v4.3-stable_export_templates.tpz",
+      "browser": {
+        "browser": "Chromium",
+        "version": "141.0.7390.37",
+        "marker": "78563412",
+        "errors": []
+      }
+    },
+    {
+      "invalid_script_rejected": true,
+      "version": "4.7.2.stable.official.ed1daf0bf",
+      "editor_artifact": "Godot_v4.7.2-stable_linux.arm64.zip",
+      "headless_repeats": 2,
+      "marker": "FORTRESS_BASELINE_SMOKE_OK:78563412",
+      "browser_artifact": "chromium-1194-arm64.zip",
+      "template_artifact": "Godot_v4.7.2-stable_export_templates.tpz",
+      "browser": {
+        "browser": "Chromium",
+        "version": "141.0.7390.37",
+        "marker": "78563412",
+        "errors": []
+      }
+    }
+  ],
+  "limits": "Engine/codec smoke only; no addon, rollback, SignalFish or mixed-browser parity evidence."
+}

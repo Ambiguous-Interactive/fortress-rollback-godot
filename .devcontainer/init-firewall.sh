@@ -5,9 +5,10 @@
 # https://github.com/anthropics/claude-code (`.devcontainer/init-firewall.sh`)
 #
 # Blocks all container egress except an allowlist of domains needed by this
-# project's agents: LLM providers (Anthropic, z.ai, OpenRouter), GitHub,
-# package/tool sources (npm, PyPI, astral.sh, opencode.ai, nodejs.org), VS Code
-# updates and extension downloads, and Godot (godotengine.org, Context7 docs).
+# project's agents: LLM providers (Anthropic, OpenAI, z.ai, OpenRouter),
+# GitHub, package/tool sources (npm, PyPI, astral.sh, opencode.ai, nodejs.org),
+# VS Code updates and extension downloads, and Godot (godotengine.org,
+# Context7 docs).
 #
 # To enable, make these three changes in .devcontainer/devcontainer.json:
 #   1. "runArgs": add "--cap-add=NET_ADMIN" and "--cap-add=NET_RAW"
@@ -47,6 +48,9 @@ ALLOWED_DOMAINS=(
     "claude.ai"
     "statsig.anthropic.com"
     "sentry.io"
+    "api.openai.com"
+    "auth.openai.com"
+    "chatgpt.com"
     "api.z.ai"
     "openrouter.ai"
     "api.githubcopilot.com"

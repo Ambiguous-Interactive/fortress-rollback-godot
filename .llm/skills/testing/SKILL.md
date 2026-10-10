@@ -111,6 +111,19 @@ never *whether*. See [debugging](../debugging/SKILL.md).
    with the triple proof above (fails at HEAD, passes at base, passes after
    fix).
 
+## Infrastructure evidence
+
+Tool probes must check process exit status before accepting version text or a
+completion marker. Test both empty failures and plausible output followed by
+nonzero exit. A completed result stream must account for every selected test,
+including expected-panic cases; reject partial output even if listed tests pass.
+
+Invalidate a prior success report before starting a new attempt, clear only the
+runner-owned logs, and preserve partial stdout/stderr on timeout. A failed rerun
+must never leave a stale success receipt beside logs from its replacement.
+Validate fresh service startup as well as warm state: asynchronous catalogs may
+need bounded readiness polling rather than one successful configuration read.
+
 ## CI
 
 `.github/workflows/` runs: harness self-tests (`make test-llm`), and, once

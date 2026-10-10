@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "verified_on": "2026-10-10",
+  "sources": {
+    "fortress": {
+      "repository": "https://github.com/wallstop/fortress-rollback",
+      "revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+      "archive": {
+        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "digest": "d788b0dc86defaa53f92ca0cda454e72845663e47ba8d0f39f82a32d1cda827d",
+        "algorithm": "sha256"
+      },
+      "root": "fortress-rollback-f13cd5c0f2815926785a395947e18da0dbea0dd8"
+    },
+    "sdk": {
+      "repository": "https://github.com/Ambiguous-Interactive/signal-fish-client-godot",
+      "revision": "db7d30f228d8d564adcb2eb38d5983bf6b9877ac",
+      "archive": {
+        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/db7d30f228d8d564adcb2eb38d5983bf6b9877ac",
+        "digest": "0854f8c778a118defe95bd8887e227c8bc8c194c54d2e501c6d74094fa43ec12",
+        "algorithm": "sha256"
+      },
+      "root": "signal-fish-client-godot-db7d30f228d8d564adcb2eb38d5983bf6b9877ac"
+    },
+    "server": {
+      "repository": "https://github.com/Ambiguous-Interactive/signal-fish-server",
+      "revision": "9c2fb8fa635a69241b8ccf38be651d561fef7434",
+      "archive": {
+        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/9c2fb8fa635a69241b8ccf38be651d561fef7434",
+        "digest": "1c618785dd93e1a69f27687f1f8f75fbfb15e49f3a3a0f130aa3ee17af40a076",
+        "algorithm": "sha256"
+      },
+      "root": "signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434"
+    }
+  },
+  "artifacts": {
+    "Godot_v4.3-stable_export_templates.tpz": {
+      "url": "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_export_templates.tpz",
+      "digest": "476366caf0fd45a8f24136cf9cf1dc0bc2b96f7c82d53e5f82200b55aefd07b286d283fd6f1ce29e0de70648c5a51d3b12f96c6d4fafd4e8c4878ecda6406d6a",
+      "algorithm": "sha512"
+    },
+    "Godot_v4.3-stable_linux.arm64.zip": {
+      "url": "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.arm64.zip",
+      "digest": "bf559c7d24f2a7c8980d021c9e8c54baa66c5f3a1a0c1fb6fe73586eca63417fd365adf2e6c8be0b5944ab80da800fe4aa3a9024f58363f5dc3962e6127c0dc6",
+      "algorithm": "sha512"
+    },
+    "Godot_v4.3-stable_linux.x86_64.zip": {
+      "url": "https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip",
+      "digest": "fd52bb4ba8acc30ca5accd1c566d470ad7282f891ccc0995dfafabcf92bcf76280ce182bf9d80ebd885f3ed2165d01e1fc3f2928436b15498dfbd98656c2a45a",
+      "algorithm": "sha512"
+    },
+    "Godot_v4.7.2-stable_export_templates.tpz": {
+      "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_export_templates.tpz",
+      "digest": "f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011",
+      "algorithm": "sha256"
+    },
+    "Godot_v4.7.2-stable_linux.arm64.zip": {
+      "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.arm64.zip",
+      "digest": "5dd0d86405cf7e8adf79fb6377b38ba682a2846cb378ffe5364f38c01ad29b9d",
+      "algorithm": "sha256"
+    },
+    "Godot_v4.7.2-stable_linux.x86_64.zip": {
+      "url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip",
+      "digest": "cadd3204e728a35d3f13adb7fd0d7902636b79f6b95c40c265eb73b6c35329e4",
+      "algorithm": "sha256"
+    },
+    "rustup-init-aarch64": {
+      "url": "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init",
+      "digest": "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433",
+      "algorithm": "sha256"
+    },
+    "rustup-init-x86_64": {
+      "url": "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init",
+      "digest": "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71",
+      "algorithm": "sha256"
+    },
+    "rust-channel-1.94.0": {
+      "url": "https://static.rust-lang.org/dist/channel-rust-1.94.0.toml",
+      "digest": "aaa177def36e01d539bee6bde95295230b9ce378f81057845db8d0ebe97898ee",
+      "algorithm": "sha256"
+    },
+    "tla2tools-1.8.0.jar": {
+      "url": "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar",
+      "digest": "7beec0f04818732a62fa193731711a99aa4f11279499b2360a7d156c519ea78d",
+      "algorithm": "sha256"
+    },
+    "chromium-1194-arm64.zip": {
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1194/chromium-linux-arm64.zip",
+      "digest": "54685f7ce2045e91f07b7fa4cab0ca3390b12773eae4777ca4ae676d3e9d4ef2",
+      "algorithm": "sha256"
+    },
+    "chromium-1194-x86_64.zip": {
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1194/chromium-linux.zip",
+      "digest": "5ad70cf662e7090354edbe84e1a01ac531fd217f37f5001f0d2efbe0d152b396",
+      "algorithm": "sha256"
+    }
+  },
+  "rust": {
+    "version": "1.94.0",
+    "profile": "minimal",
+    "features": [],
+    "default_features": false,
+    "lockfile_sha256": "1ff03f231c91778ad6b7f8e244670af9acabec52ddd3a5c010b501cc760defbb",
+    "rustup_version": "1.29.1"
+  },
+  "godot": {
+    "minimum": "4.3",
+    "current_stable": "4.7.2",
+    "release_observed_on": "2026-10-10"
+  },
+  "browser": {
+    "package": "@playwright/test",
+    "version": "1.56.1",
+    "npm_integrity": "sha512-vSMYtL/zOcFpvJCW71Q/OEGQb7KYBPAdKh35WNSkaZA75JlAO8ED8UN6GUNTm3drWomcbcqRPFqQbLae8yBTdg==",
+    "status": "Chromium pinned for Linux arm64/x86_64; Firefox/WebKit execution pending",
+    "chromium_revision": "1194",
+    "chromium_version": "141.0.7390.37",
+    "firefox_revision": "1495",
+    "webkit_revision": "2215",
+    "node_version": "22.23.3",
+    "browser_registry_sha256": "1387ec667390e31e49040aa2c81d27720b38d32c7892d1a50c7f85b187e926c1"
+  },
+  "formal": {
+    "tlc_version": "1.8.0",
+    "status": "pinned; model execution pending"
+  }
+}
