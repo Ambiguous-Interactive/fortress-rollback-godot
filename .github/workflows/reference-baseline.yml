@@ -5,12 +5,18 @@ on:
     branches: [main]
     paths:
       - "scripts/reference/**"
+      - "scripts/run_godot_tests.py"
+      - "tests/**"
+      - "docs/test-runner.md"
       - "docs/reference/**"
       - "Makefile"
       - ".github/workflows/reference-baseline.yml"
   pull_request:
     paths:
       - "scripts/reference/**"
+      - "scripts/run_godot_tests.py"
+      - "tests/**"
+      - "docs/test-runner.md"
       - "docs/reference/**"
       - "Makefile"
       - ".github/workflows/reference-baseline.yml"
@@ -73,9 +79,18 @@ jobs:
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
         run: python3 scripts/reference/godot_smoke.py --web
+      - name: Verify runner failure controls and fresh-process suites
+        run: |
+          for version in 4.3 4.7.2; do
+            editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
+            python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
+            python3 scripts/run_godot_tests.py --godot "$editor" --results ".cache/tests/runner-$version.json"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: godot-browser-reference-results
-          path: .cache/reference/results/
+          path: |
+            .cache/reference/results/
+            .cache/tests/
           if-no-files-found: error

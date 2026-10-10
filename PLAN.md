@@ -25,6 +25,7 @@ Local development contracts and evidence entry points:
 - [Pinned reference setup, run instructions and evidence](docs/reference/README.md).
 - [Session/driver/state/transport interface ADR](docs/contracts.md).
 - [Verification and release evidence policy](docs/verification-policy.md).
+- [Fail-closed native test runner](docs/test-runner.md).
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.
@@ -356,8 +357,8 @@ Planning findings are captured here and in roadmap issue #2:
 - Packed-buffer ownership and allocation claims require probes; R2/R3 own them.
 
 These findings are tracked, not claimed as repaired runtime behavior.
-No library code, tests or workflows were implemented during planning.
-Only PLAN.md and the GitHub backlog are the planning-session deliverables.
+The planning session established PLAN.md and the GitHub backlog. Subsequent
+implementation evidence lives in `progress/` and the linked task issues.
 
 ## Primary references
 

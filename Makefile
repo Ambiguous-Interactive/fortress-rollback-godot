@@ -1,6 +1,7 @@
-.PHONY: hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check
+.PHONY: hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
 
 PY ?= python3
+GODOT ?= godot
 
 ## Install git hooks (sets core.hooksPath to .githooks/)
 hooks:
@@ -21,6 +22,10 @@ test-llm:
 ## Reference fetch/inventory negative controls (no network or downloaded tools)
 test-reference:
 	$(PY) -m unittest discover -s scripts/reference -p 'test_*.py'
+
+## Fail-closed native GDScript tests, repeated in fresh processes
+test-godot:
+	$(PY) scripts/run_godot_tests.py --godot $(GODOT)
 
 ## Pinned upstream reference tests, repeated with explicit seed and feature flags
 reference-baseline:

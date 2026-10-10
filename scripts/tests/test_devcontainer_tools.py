@@ -93,13 +93,24 @@ eval "$2"
                     self.assertEqual(result.stdout.strip(), "PASS" if packaged else "FAIL")
 
     def test_runtime_discovery_initializes_and_checks_all_names_without_logging_secrets(self):
+        def catalog(entries):
+            return json.dumps({"data": [
+                {"name": name, "status": {"status": status}}
+                for name, status in entries
+            ]})
+
+        all_names = [("godot", "connected"), ("context7", "failed"), ("github", "pending")]
         cases = [
-            ("✓ godot connected\n✗ context7 failed\n○ github pending", "PASS", 0, 0),
-            ("No MCP servers configured", "FAIL", 0, 0),
-            ("✓ godot connected\n✓ context7 connected", "FAIL", 0, 0),
-            ("✓ godot connected\n✓ context7 connected\n✓ github connected", "FAIL", 42, 0),
-            ("✓ godot connected\n✓ context7 connected\n✓ github connected", "FAIL", 0, 42),
+            (catalog(all_names), "PASS", 0, 0),
+            (catalog([]), "FAIL", 0, 0),
+            (catalog(all_names[:2]), "FAIL", 0, 0),
+            (catalog(all_names), "FAIL", 42, 0),
+            (catalog(all_names), "FAIL", 0, 42),
+            ('{"error":"godot context7 github PRIVATE-SECRET"}', "FAIL", 0, 0),
+            ('{"data":[{"name":null}]}', "FAIL", 0, 0),
         ]
+        for status in ("needs_auth", "expired", "disabled", "future_status"):
+            cases.append((catalog([(name, status) for name, _ in all_names]), "PASS", 0, 0))
         for output, expected, exit_code, init_exit in cases:
             with self.subTest(output=output, exit_code=exit_code, init_exit=init_exit), tempfile.TemporaryDirectory() as directory:
                 base = Path(directory)
@@ -110,6 +121,8 @@ eval "$2"
                     f'  touch initialized; echo PRIVATE-SECRET; exit {init_exit}\n'
                     'fi\n'
                     '[ -f initialized ] || exit 43\n'
+                    '[ \"$1 $2 $3\" = \"api mcp.list --param\" ] || exit 44\n'
+                    '[ \"$4\" = \"location[directory]=$PWD\" ] || exit 45\n'
                     f"cat <<'OUTPUT'\n{output}\nOUTPUT\nexit {exit_code}\n"
                 )
                 executable.chmod(0o755)
@@ -128,17 +141,23 @@ eval "$2"
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             executable = base / "opencode"
+            catalog = json.dumps({"data": [
+                {"name": "godot", "status": {"status": "pending"}},
+                {"name": "context7", "status": {"status": "needs_auth"}},
+                {"name": "github", "status": {"status": "failed", "error": "PRIVATE-SECRET"}},
+            ]})
             executable.write_text(
                 '#!/bin/sh\n'
                 'if [ "$1 $2" = "debug config" ]; then\n'
                 '  touch initialized; echo PRIVATE-SECRET; exit 0\n'
                 'fi\n'
                 '[ -f initialized ] || exit 43\n'
+                '[ "$1 $2 $3" = "api mcp.list --param" ] || exit 44\n'
+                '[ "$4" = "location[directory]=$PWD" ] || exit 45\n'
                 'if [ ! -f listed ]; then\n'
-                '  touch listed; echo "No MCP servers configured"; exit 0\n'
+                "  touch listed; echo '{\"data\":[]}'; exit 0\n"
                 'fi\n'
-                'printf "○ godot pending\\n✗ context7 failed\\n○ github pending\\n"\n'
-                'echo PRIVATE-SECRET\n'
+                f"cat <<'OUTPUT'\n{catalog}\nOUTPUT\n"
             )
             executable.chmod(0o755)
             env = dict(os.environ, PATH=directory + os.pathsep + os.environ["PATH"])

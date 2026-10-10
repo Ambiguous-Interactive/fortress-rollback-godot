@@ -75,8 +75,8 @@ check_codex_package() {
 }
 
 # Source inspection starts asynchronous workspace initialization in v2.0.26.
-# Poll actual runtime discovery until every name appears, including pending or
-# failed connections; remote connectivity is not an acceptance requirement.
+# Poll actual runtime discovery until every name appears, independent of
+# connection/authentication status; remote connectivity is not required.
 # Suppress raw config/list output because it may contain credential diagnostics.
 check_opencode_runtime() {
   local root="$1" budget="${2:-60}" servers name deadline remaining discovered=""
@@ -90,16 +90,23 @@ check_opencode_runtime() {
     if [ "$remaining" -le 0 ]; then
       break
     fi
-    if ! servers="$(cd "$root" && timeout "$remaining" opencode mcp list 2>/dev/null)"; then
+    if ! servers="$(cd "$root" && timeout "$remaining" opencode api mcp.list --param "location[directory]=$root" 2>/dev/null)"; then
       bad "OpenCode MCP discovery failed or timed out"
       return
     fi
-    discovered=""
-    for name in godot context7 github; do
-      if printf '%s\n' "$servers" | grep -E "^(✓|✗|○)[[:space:]]+${name}[[:space:]]+" >/dev/null; then
-        discovered="${discovered:+$discovered }$name"
-      fi
-    done
+    # The API command calls the same runtime catalog as `mcp list`, without
+    # human status glyphs. Authentication state never affects name discovery.
+    if ! discovered="$(printf '%s\n' "$servers" | jq -r '
+      if (.data | type) == "array" and
+          all(.data[]; (.name | type) == "string") then
+        [.data[].name] as $names |
+        ["godot", "context7", "github"] |
+        map(select(. as $name | $names | index($name) != null)) | join(" ")
+      else error("invalid runtime catalog") end
+    ' 2>/dev/null)"; then
+      bad "OpenCode returned an invalid MCP runtime catalog"
+      return
+    fi
     if [ "$discovered" = "godot context7 github" ]; then
       for name in $discovered; do
         ok "OpenCode discovered MCP server ${name}"
