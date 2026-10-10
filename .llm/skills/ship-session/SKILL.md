@@ -14,9 +14,10 @@ release and changes to repository settings require their own scope.
 
 Use [user-copy](../user-copy/SKILL.md) for titles, descriptions, comments,
 commit messages and release notes. Use Git for local state, fetch and push;
-use the authenticated GitHub connector for remote operations it supports.
-A connector gap permits a read-only REST fallback. Keep tokens in the client
-process environment; never print them or invoke an interactive credential helper.
+use authenticated GitHub MCP first for remote operations it supports.
+Use authenticated `gh` CLI for capability gaps, following
+[GitHub operations](../github-operations/SKILL.md). Missing credentials block
+the fallback; never print tokens or silently use unauthenticated requests.
 
 ## Verify the candidate
 
@@ -53,8 +54,9 @@ Resolve fixed threads after the fix is pushed; explain a declined finding with
 evidence and leave any requested decision explicit. Active change requests or
 unaddressed actionable findings block merge, even when no thread is open.
 
-Use the connector to read threads and resolution state. Then run the coverage
-backstop, using the full verified head SHA:
+Use GitHub MCP to read threads and resolution state. For unsupported surfaces,
+use authenticated `gh` CLI. Then run the authenticated coverage backstop, using
+the full verified head SHA:
 
 ```sh
 python3 scripts/github/pr_feedback.py --pr 123 --expected-head <full-head-sha>
@@ -62,8 +64,8 @@ python3 scripts/github/pr_feedback.py --pr 123 --expected-head <full-head-sha>
 
 Read the whole JSON output. This script inventories all four REST surfaces and
 annotations; it does not adjudicate findings or infer thread resolution.
-If the connector cannot prove pagination/completeness, use paginated GraphQL
-with a token to read remaining threads/comments. Missing authentication, API
+If MCP cannot prove pagination/completeness, use authenticated `gh api graphql`
+to read every remaining page of threads/comments. Missing authentication, API
 failure, rate limits, truncation or incomplete pagination are missing coverage,
 never a clean verdict. Do not infer conversation coverage from inline comments.
 

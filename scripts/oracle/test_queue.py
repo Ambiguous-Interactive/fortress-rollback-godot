@@ -1,6 +1,10 @@
 """Value: rejects false queue parity; existing replay tests never execute a Godot queue; no test seam."""
 import copy
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+from queue_launch import observation_source, OBSERVATION_HOOK
 from queue_contract import validate_bundle, compare
 
 
@@ -23,12 +27,33 @@ class QueueContractTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_bundle(bad)
         for bad_op in [{'kind': 'read', 'frame': True}, {'kind': 'add', 'frame': 0, 'bytes': 'FF'},
+                       {'kind': 'add_reclaim', 'frame': 0, 'bytes': '01', 'floor': True},
+                       {'kind': 'delay_reclaim', 'value': 1, 'floor': -1}, {'kind': 'retained', 'frame': 1.0},
                        {'kind': 'reset', 'extra': 1}, {'kind': 'unknown'}, {'kind': 'read', 'frame': -1}]:
             with self.subTest(operation=bad_op):
                 bad = copy.deepcopy(valid)
                 bad['cases'][0]['operations'] = [bad_op]
                 with self.assertRaises(ValueError):
                     validate_bundle(bad)
+
+    def test_observation_hook_preserves_original_and_replaces_stale_copy(self):
+        # The observed crate must come from fresh pinned bytes, never an old altered hook.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'pinned'
+            (source / 'src/input_queue').mkdir(parents=True)
+            original = b'// immutable source\n'
+            (source / 'src/input_queue/mod.rs').write_bytes(original)
+            with patch('queue_launch.CACHE', root / 'cache'):
+                _, receipt = observation_source(source)
+                hooked = root / 'cache/queue-observation/fortress/src/input_queue/mod.rs'
+                self.assertEqual(hooked.read_bytes(), original + OBSERVATION_HOOK.encode())
+                hooked.write_text('altered wrapper')
+                _, repeated = observation_source(source)
+                self.assertEqual(receipt, repeated)
+                self.assertEqual(hooked.read_bytes(), original + OBSERVATION_HOOK.encode())
+                self.assertEqual((source / 'src/input_queue/mod.rs').read_bytes(), original)
+                self.assertTrue(receipt['original_queue_unmodified'])
 
     def test_first_divergence_and_complete_consumption(self):
         record = {'index': 0, 'kind': 'read', 'accepted': True, 'frame': 0, 'bytes': '01',

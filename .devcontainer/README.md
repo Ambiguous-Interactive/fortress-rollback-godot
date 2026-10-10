@@ -107,6 +107,11 @@ corresponding block in `devcontainer.env` and rebuild:
   + `ANTHROPIC_AUTH_TOKEN=<OPENROUTER_API_KEY value>` + `ANTHROPIC_API_KEY=`
   (kept present and **empty** on purpose, or Claude Code may bypass OpenRouter)
 
+For repository operations, follow [GitHub operations](../.llm/skills/github-operations/SKILL.md):
+authenticated GitHub MCP first, then authenticated `gh` CLI for capability gaps.
+Validate available credential sources without printing secrets; rejected environment
+tokens must not mask valid stored authentication or configured Git helpers.
+
 ### Codex authentication
 
 Codex does not read this file; it authenticates on its own. Either sign in

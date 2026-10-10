@@ -12,6 +12,8 @@ This document contains durable decisions and navigation.
 **GitHub issues own implementation details, TODOs, dependencies, progress,
 experiments, acceptance criteria and closure evidence.**
 Do not maintain a second changing task checklist in this file.
+Read and update GitHub through authenticated MCP first, then authenticated `gh`
+for capability gaps; follow [GitHub operations](.llm/skills/github-operations/SKILL.md).
 
 - Roadmap: [GDScript-native Fortress Rollback implementation and parity tracking](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/2).
 - Start here: [pin and reproduce the reference baseline](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/12).
@@ -30,7 +32,8 @@ Local development contracts and evidence entry points:
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
 - [Audited raw input queue and prediction contracts](docs/input-queue.md).
-- [Actual upstream sync-test traces and independent game replay](docs/oracle.md).
+- [Actual upstream and production Godot sync-test differential traces](docs/oracle.md).
+- [Shared session engine, bounded snapshots and game driver](docs/session.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.
 
@@ -119,12 +122,13 @@ This index is navigation rather than a duplicate progress tracker.
 
 ## Architecture
 
-The first runtime component is the bounded raw queue in
-`addons/fortress_rollback/core/input_queue.gd`. `make queue-probes` compares
-its supported ordinary operations directly with the pinned upstream queue.
-Session confirmation, prediction-window gating, rollback-floor reclamation and
-snapshot orchestration remain subsequent work; raw queue evidence does not
-establish a usable rollback session.
+The runtime core includes the bounded raw queue, frame/generation-tagged snapshots,
+shared ordered request engine, local sync-test mode and synchronous game driver.
+`make oracle-probes` compares production Godot sync-test requests and canonical
+bytes directly with pinned upstream sessions. External-input tests verify
+asymmetric prediction and corrected replay; transport/P2P observation remains
+[#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59).
+These scoped gates do not establish browser or full-feature release parity.
 
 | Layer | Responsibility |
 | --- | --- |

@@ -5,9 +5,9 @@ A **GDScript-only port** of [fortress-rollback](https://github.com/wallstop/fort
 **Godot 4.x**.
 
 > [!WARNING]
-> This project is in an early bootstrap phase. The rollback engine itself is not
-> implemented yet. The repository includes a bounded input queue, deterministic
-> tests, and pinned development reference tooling.
+> This project is in an early development phase. Local sync-test sessions and
+> an external-input rollback core are implemented. Networked P2P sessions and
+> browser release support remain planned.
 
 ## AI-Assisted Development Notice
 
@@ -26,6 +26,8 @@ This repository is developed with heavy AI-assistance and carries a generic
   by tests, git hooks, and CI.
 
 See [`.llm/context.md`](./.llm/context.md) for the full operating manual.
+[GitHub operations](./.llm/skills/github-operations/SKILL.md) use authenticated
+MCP first and authenticated `gh` CLI for capability gaps.
 
 ## Quick Start
 
@@ -50,9 +52,11 @@ make llm-index
 pins and reproducible upstream/native/web probes. The
 [interface ADR](./docs/contracts.md) and [evidence policy](./docs/verification-policy.md)
 define the next implementation gates. These development artifacts do not imply
-that a complete rollback session is implemented.
+that a networked rollback session or supported release is available.
 
-The [raw input queue](./docs/input-queue.md) is the first runtime component.
+The [session guide](./docs/session.md) documents the shared expert engine,
+bounded snapshots and thin game driver. The [raw input queue](./docs/input-queue.md)
+provides bounded per-player history.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
 for direct pinned Rust/Godot queue comparisons. Rust is development-only.
 

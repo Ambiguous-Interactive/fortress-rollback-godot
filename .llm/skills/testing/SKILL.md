@@ -118,6 +118,13 @@ completion marker. Test both empty failures and plausible output followed by
 nonzero exit. A completed result stream must account for every selected test,
 including expected-panic cases; reject partial output even if listed tests pass.
 
+Decode structured UTF-8 child-process output with explicit `encoding="utf-8"`
+and strict errors. A successful JSON parse after locale decoding can still
+contain corrupted feedback. Exercise real emitted bytes under a forced non-UTF-8
+parent decoder, including malformed stdout and stderr; mocks returning decoded
+strings cannot expose this boundary. Decoding failures must report sanitized
+errors without revealing captured CLI output or credentials.
+
 Invalidate a prior success report before starting a new attempt, clear only the
 runner-owned logs, and preserve partial stdout/stderr on timeout. A failed rerun
 must never leave a stale success receipt beside logs from its replacement.
@@ -133,6 +140,12 @@ Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying
 an oracle's own requests can preserve the same mistake. Keep a temporal mutation
 that retains the final state while violating an intermediate frame.
+
+Godot JSON parsers expose numeric fields as floats. After validating integrality
+and bounds, reconstruct scenario records with explicit integers before emitting
+a strict cross-language trace. Godot 4.3 and 4.7.2 stringify integral floats
+differently; never weaken the Python integer schema to compensate. The production
+session oracle's canonical scenario conversion protects this boundary.
 
 A mutation must fail at its intended boundary. Require the diagnostic and
 consumed-record position so an unrelated parser or later-request failure cannot

@@ -23,6 +23,9 @@ struct Case { name: String, capacity: usize, input_width: usize, player: usize, 
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Operation {
     Add { frame: i32, bytes: String },
+    AddReclaim { frame: i32, bytes: String, floor: i32 },
+    DelayReclaim { value: usize, floor: i32 },
+    Retained { frame: i32 },
     Read { frame: i32 },
     Confirmed { frame: i32 },
     Discard { frame: i32 },
@@ -54,8 +57,15 @@ fn run(original: Value) -> Result<Value, String> {
         for operation in &case.operations {
             match operation {
                 Operation::Add { frame, bytes: text } => { if !(0..=100000).contains(frame) { return Err("frame out of oracle bounds".into()); } bytes(text, case.input_width)?; },
-                Operation::Read { frame } | Operation::Confirmed { frame } | Operation::Discard { frame } => {
+                Operation::Read { frame } | Operation::Confirmed { frame } | Operation::Retained { frame } | Operation::Discard { frame } => {
                     if !(0..=100000).contains(frame) { return Err("frame out of oracle bounds".into()); }
+                },
+                Operation::AddReclaim { frame, bytes: text, floor } => {
+                    if !(0..=100000).contains(frame) || !(0..=100000).contains(floor) { return Err("frame out of oracle bounds".into()); }
+                    bytes(text, case.input_width)?;
+                },
+                Operation::DelayReclaim { value, floor } => {
+                    if *value > 128 || !(0..=100000).contains(floor) { return Err("delay or floor out of oracle bounds".into()); }
                 },
                 Operation::Delay { value } => { if *value > 128 { return Err("delay out of oracle bounds".into()); } },
                 Operation::Reset {} => {},
@@ -74,6 +84,16 @@ fn run(original: Value) -> Result<Value, String> {
                 Operation::Add { frame: sample, bytes: text } => {
                     frame = queue.add_input(PlayerInput::new(Frame::new(*sample), bytes(text, case.input_width)?)).as_i32();
                     ("add", frame >= 0)
+                },
+                Operation::AddReclaim { frame: sample, bytes: text, floor } => {
+                    frame = queue.oracle_add_reclaim(PlayerInput::new(Frame::new(*sample), bytes(text, case.input_width)?), Frame::new(*floor)).as_i32();
+                    ("add_reclaim", frame >= 0)
+                },
+                Operation::DelayReclaim { value, floor } => ("delay_reclaim", queue.oracle_delay_reclaim(*value, Frame::new(*floor)).is_ok()),
+                Operation::Retained { frame: target } => {
+                    let value = queue.oracle_retained(Frame::new(*target));
+                    if let Some(input) = &value { frame = input.frame.as_i32(); payload = hex(&input.input[..case.input_width]); status = "confirmed"; }
+                    ("retained", value.is_some())
                 },
                 Operation::Delay { value } => ("delay", queue.set_frame_delay(*value).is_ok()),
                 Operation::Reset {} => { queue.reset_prediction(); ("reset", true) },

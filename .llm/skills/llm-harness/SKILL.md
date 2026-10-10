@@ -77,6 +77,9 @@ post-green feedback scan, squash merge, and local Git synchronization.
 Editors and formatters use 180-character source lines; run `make lint-source`.
 Keep line width separate from the markdown file line-count caps above.
 
+Use [GitHub operations](../github-operations/SKILL.md) for hosted issues, PRs and CI:
+authenticated MCP first, then authenticated `gh` for gaps.
+
 ## Design Rationale
 
 Why 300 lines? Instruction files compete for attention; long files get

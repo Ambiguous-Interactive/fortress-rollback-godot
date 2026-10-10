@@ -1,10 +1,11 @@
-# Upstream runtime oracle and game boundary replay
+# Upstream and production session oracle
 
 The development oracle executes the pinned Fortress public sync-test API.
 It emits actual ordered save/load/advance requests and API errors. Rust remains
-development-only; there is no production Godot session implementation yet.
+development-only. Godot independently executes the same scenario operations
+through its shipped session engine, then compares complete generated requests.
 This advances [V2](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/17)
-and the independent game-state portion of V3 without claiming session parity.
+and the sync-test portion of V3; P2P and advanced-feature evidence remain open.
 
 ## Reproduce
 
@@ -89,8 +90,18 @@ the independent prefix check. Request agreement alone cannot establish correctne
 The corpus covers every player count 2–8, distance/delay pairs 0/0, 2/2 and 7/7,
 twenty successful frames, wraparound sums, distinct histories, missing-input
 errors before and during rollback, recovery retries and invalid handles.
-Each Rust trace and Godot replay runs twice in fresh
-processes. Persistent mutants attack version/revision, empty operations/bytes,
+Each Rust trace, Godot game replay and production Godot session runs twice in
+fresh processes. Production-session comparison validates its trace independently,
+then compares every ordered request, input status, callback state and frame.
+Only structured invalid-player/missing-local error categories and unavailable
+Rust confirmation are projected. Error projection accepts only the pinned full
+`InvalidRequestStructured { kind: MissingLocalInput }` diagnostic or
+`InvalidRequestStructured { kind: InvalidLocalPlayerHandle { handle: PlayerHandle(H), num_players: N } }`.
+`H` must match the submitted player in `N..255`, and `N` must match the configured
+roster in `2..8`; unrelated messages containing variant names are rejected.
+Six per-case mutants reject missing completion, operations or requests, changed
+input status, unknown errors and changed final checksum. Separate game controls
+reject request reversal and altered load bytes. Persistent mutants attack version/revision, empty operations/bytes,
 unknown fields, handle bounds, altered state/checksum, load-state injection,
 request reversal and missing operations. Process tests reject nonzero exits
 with plausible output, timeouts, partial completion and stale success receipts.
@@ -103,8 +114,8 @@ V2 remains open. The scenario vocabulary currently covers sync-test public APIs;
 P2P setup, injected time, packet deliveries and protocol observations still need
 their implementation and tests, tracked in
 [follow-up #59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59).
-GDScript verifies game boundaries, not a second
-session engine. V3 must later compare the two actual session implementations.
+The sync-test corpus now compares two actual session implementations. V3 still
+requires P2P time/delivery comparison, richer generated exploration and shrinking.
 There is no browser oracle execution or full-feature differential claim.
 
 The corpus observes missing-input errors and recovery retries through the real

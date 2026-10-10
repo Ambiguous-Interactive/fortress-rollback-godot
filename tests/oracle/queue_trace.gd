@@ -1,5 +1,7 @@
 extends SceneTree
 
+# gdlint: disable=max-returns
+
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const REVISION: String = "f13cd5c0f2815926785a395947e18da0dbea0dd8"
 const PREFIX: String = "FORTRESS_QUEUE_RESULT "
@@ -41,20 +43,31 @@ func _execute(case: Dictionary) -> Dictionary:
 		var status: String = "none"
 		var result: RefCounted
 		match kind:
-			"add":
-				result = queue.add_input(int(operation["frame"]), str(operation["bytes"]).hex_decode())
+			"add", "add_reclaim":
+				if kind == "add":
+					result = queue.add_input(int(operation["frame"]), str(operation["bytes"]).hex_decode())
+				else:
+					result = queue.add_input_with_reclaim_floor(int(operation["frame"]), str(operation["bytes"]).hex_decode(), int(operation["floor"]))
 				accepted = result.code == Queue.Code.OK
 				frame = result.frame
-			"read", "confirmed":
+			"read", "confirmed", "retained":
 				var target: int = int(operation["frame"])
-				result = queue.input(target) if kind == "read" else queue.confirmed_input(target)
+				if kind == "read":
+					result = queue.input(target)
+				elif kind == "confirmed":
+					result = queue.confirmed_input(target)
+				else:
+					result = queue.retained_confirmed_input(target)
 				accepted = result.code == Queue.Code.OK
 				if accepted:
 					frame = result.frame
 					bytes = result.bytes.hex_encode()
 					status = "confirmed" if result.status == Queue.Status.CONFIRMED else "predicted"
-			"delay":
-				accepted = queue.set_frame_delay(int(operation["value"])) == Queue.Code.OK
+			"delay", "delay_reclaim":
+				if kind == "delay":
+					accepted = queue.set_frame_delay(int(operation["value"])) == Queue.Code.OK
+				else:
+					accepted = queue.set_frame_delay_with_reclaim_floor(int(operation["value"]), int(operation["floor"])) == Queue.Code.OK
 			"discard":
 				accepted = queue.discard_confirmed_frames(int(operation["frame"])) == Queue.Code.OK
 			"reset":
@@ -109,10 +122,16 @@ func _valid_operation(value: Variant, width: int) -> bool:
 	if not value is Dictionary or not value.has("kind") or not value["kind"] is String:
 		return false
 	match value["kind"]:
-		"read", "confirmed", "discard":
+		"read", "confirmed", "retained", "discard":
 			return _fields(value, ["kind", "frame"]) and _integer(value["frame"], 0, 100000)
 		"add":
 			return _fields(value, ["kind", "frame", "bytes"]) and _integer(value["frame"], 0, 100000) and _hex(value["bytes"], width)
+		"add_reclaim":
+			return (
+				_fields(value, ["kind", "frame", "bytes", "floor"]) and _integer(value["frame"], 0, 100000) and _integer(value["floor"], 0, 100000) and _hex(value["bytes"], width)
+			)
+		"delay_reclaim":
+			return _fields(value, ["kind", "value", "floor"]) and _integer(value["value"], 0, 128) and _integer(value["floor"], 0, 100000)
 		"delay":
 			return _fields(value, ["kind", "value"]) and _integer(value["value"], 0, 128)
 		"reset":

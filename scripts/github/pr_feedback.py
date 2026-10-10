@@ -6,9 +6,10 @@ import json
 import os
 import re
 import sys
-import urllib.error
+import shutil
+import subprocess
+from email.message import Message
 import urllib.parse
-import urllib.request
 
 API = "https://api.github.com"
 
@@ -17,24 +18,93 @@ class FeedbackError(Exception):
     """Evidence is incomplete or no longer matches the requested PR head."""
 
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, response, code, message, headers, new_url):
-        raise FeedbackError("API redirect refused")
+_secrets = set()
+
+
+def gh_command(arguments, environment):
+    try:
+        return subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="strict",
+                              timeout=30, env=environment, check=False)
+    except (OSError, subprocess.TimeoutExpired, UnicodeError):
+        raise FeedbackError("GitHub CLI could not complete the request; check installation and connectivity") from None
+
+
+def reject_json_constant(value):
+    raise ValueError("Non-JSON numeric constant")
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def parse_response(result):
+    if result.returncode != 0:
+        raise FeedbackError("GitHub CLI API request failed; check authentication, repository access and connectivity")
+    output = result.stdout.replace("\r\n", "\n")
+    header_block, separator, body = output.partition("\n\n")
+    lines = header_block.split("\n")
+    match = re.fullmatch(r"HTTP/\d+(?:\.\d+)? ([0-9]{3})(?: [^\r\n]*)?", lines[0])
+    if not separator or match is None:
+        raise FeedbackError("Malformed GitHub CLI response headers")
+    status = int(match.group(1))
+    headers = Message()
+    for line in lines[1:]:
+        header = re.fullmatch(r"([!#$%&'*+.^_`|~0-9A-Za-z-]+):[ \t]*([^\r\n]*)", line)
+        if header is None:
+            raise FeedbackError("Malformed GitHub CLI response header")
+        headers[header.group(1)] = header.group(2)
+    # The private debug trace reveals redirects hidden by the final included response.
+    trace_statuses = re.findall(r"(?m)^[<* \t]*HTTP/\d+(?:\.\d+)? ([0-9]{3})(?: [^\r\n]*)?$", result.stderr)
+    trace_location = re.search(r"(?im)^[<* \t]*location[ \t]*:", result.stderr)
+    if headers.get("Location") is not None or trace_location or any(300 <= int(code) < 400 for code in trace_statuses):
+        raise FeedbackError("Redirected GitHub API evidence refused")
+    if not 200 <= status < 300:
+        raise FeedbackError(f"GitHub API HTTP {status}")
+    if trace_statuses != [str(status)]:
+        raise FeedbackError("Missing or ambiguous GitHub CLI response trace")
+    links = headers.get_all("Link", [])
+    if links:
+        del headers["Link"]
+        headers["Link"] = ", ".join(links)
+    try:
+        data = json.loads(body, object_pairs_hook=unique_json_object, parse_constant=reject_json_constant)
+    except (ValueError, RecursionError):
+        raise FeedbackError("GitHub CLI returned malformed JSON") from None
+    return data, headers
 
 
 def request_json(url):
-    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "fortress-pr-feedback"}
-    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = "Bearer " + token
-    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.build_opener(NoRedirect()).open(request, timeout=30) as response:
-            return json.load(response), response.headers
-    except urllib.error.HTTPError as error:
-        raise FeedbackError(f"GitHub API HTTP {error.code}") from error
-    except (urllib.error.URLError, OSError, ValueError) as error:
-        raise FeedbackError("GitHub API transport or JSON failure") from error
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError:
+        raise FeedbackError("Unsafe GitHub API URL") from None
+    if parsed.scheme != "https" or parsed.netloc != "api.github.com" or parsed.fragment or any(ord(char) < 32 for char in url):
+        raise FeedbackError("Unsafe GitHub API URL")
+    executable = shutil.which("gh")
+    if executable is None:
+        raise FeedbackError("GitHub CLI is unavailable; install gh and configure trusted authentication using .llm/skills/github-operations/SKILL.md")
+    environment = os.environ.copy()
+    for name in ("GH_DEBUG", "DEBUG", "GH_FORCE_TTY", "CLICOLOR_FORCE"):
+        environment.pop(name, None)
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        if not environment.get(name):
+            environment.pop(name, None)
+    environment.update(GH_DEBUG="api", GH_PROMPT_DISABLED="1", GH_NO_UPDATE_NOTIFIER="1", NO_COLOR="1", GH_TELEMETRY="0")
+    token = environment.get("GH_TOKEN") or environment.get("GITHUB_TOKEN")
+    if not token:
+        credentials = gh_command([executable, "auth", "token", "--hostname", "github.com"], environment)
+        if credentials.returncode != 0 or not credentials.stdout.strip() or any(char.isspace() for char in credentials.stdout.strip()):
+            raise FeedbackError("Authenticated GitHub CLI credential unavailable; configure a trusted credential using .llm/skills/github-operations/SKILL.md")
+        token = credentials.stdout.strip()
+    _secrets.add(token)
+    arguments = [executable, "api", url, "--hostname", "github.com", "--method", "GET", "--include",
+                 "--header", "Accept: application/vnd.github+json", "--header", "X-GitHub-Api-Version: 2022-11-28"]
+    return parse_response(gh_command(arguments, environment))
 
 
 def integer(value):
@@ -55,7 +125,10 @@ def get_all(url, requester, key=None):
     expected_count = None
     original = urllib.parse.urlsplit(url)
     while url:
-        parsed = urllib.parse.urlsplit(url)
+        try:
+            parsed = urllib.parse.urlsplit(url)
+        except ValueError:
+            raise FeedbackError("Unsafe pagination URL") from None
         if parsed.scheme != "https" or parsed.netloc != "api.github.com" or parsed.path != original.path or parsed.fragment:
             raise FeedbackError("Unsafe pagination URL")
         if url in seen:
@@ -191,10 +264,10 @@ def scan(repo, number, expected_head=None, requester=request_json):
 
 def emit(value):
     rendered = json.dumps(value, indent=2, ensure_ascii=True)
-    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
-        token = os.environ.get(name)
-        if token:
-            rendered = rendered.replace(token, "[REDACTED]")
+    secrets = _secrets | {os.environ.get(name, "") for name in ("GH_TOKEN", "GITHUB_TOKEN")}
+    for token in sorted(secrets - {""}, key=len, reverse=True):
+        rendered = rendered.replace(token, "[REDACTED]")
+        rendered = rendered.replace(json.dumps(token, ensure_ascii=True)[1:-1], "[REDACTED]")
     print(rendered)
 
 
