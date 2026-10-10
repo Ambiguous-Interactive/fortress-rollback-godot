@@ -52,6 +52,9 @@ source lines fit the limit; hooks, pre-commit and unconditional harness CI
 apply the same checker. GDScript formatting preserves the intentional parser
 failure fixture. Python, JavaScript and Docker command wrapping preserves data.
 Boundary tests cover 180 versus 181 and untracked hooks; fresh review is clean.
+A whole-source GDScript lint found the bootstrap fixed-step sample declared a
+signal after constants. Reordering that declaration makes all valid samples
+and suites pass without changing behavior.
 
 ## R1 — Integer and encoding contracts (#22)
 
