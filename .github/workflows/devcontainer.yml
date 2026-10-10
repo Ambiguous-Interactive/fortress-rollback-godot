@@ -57,7 +57,9 @@ jobs:
           jq -e '.mcp | has("godot") and has("context7") and has("github")' opencode.json >/dev/null
 
       - name: Build and start devcontainer
-        run: npx -y @devcontainers/cli@0.89.0 up --workspace-folder .
+        run: npx -y @devcontainers/cli@0.89.0 up --workspace-folder . --frozen-lockfile
 
       - name: Acceptance harness inside container
-        run: npx -y @devcontainers/cli@0.89.0 exec --workspace-folder . -- bash .devcontainer/verify.sh
+        # postCreateCommand already ran the FULL verify.sh during up; the exec
+        # re-runs the quick subset for a clean pass/fail line in the log.
+        run: npx -y @devcontainers/cli@0.89.0 exec --workspace-folder . -- bash .devcontainer/verify.sh --quick

@@ -154,6 +154,26 @@ Fresh-context subagent; triage below (C=critical, M=major, m=minor).
 
 Verification after fixes: rebuild + full verify green (see T5 update below).
 
+## Adversarial review round 2 (gate: RAN, FINDINGS)
+
+Fresh-context reviewer on the full revised diff. Triage:
+
+| ID | Finding | Triage | Action |
+| --- | --- | --- | --- |
+| M1 | Firewall flushed iptables, then did network work (curl/dig) before setting DROP — transient failure (e.g. rate-limited meta call, runs every postStart) leaves container fail-open | AUTO-FIX | Restructured into gather phase (all fetch/DNS/route before any mutation) + apply phase (flush → DROP policies back-to-back, policies set immediately after flush); added tcp/53, `claude.ai`, extension-V hosts; verified by inspection + shellcheck |
+| M2 | Claim "`npx` resolves the global package first" is FALSE (empirically tested: npx hits registry even with global install) — runtime godot-mcp was unpinned registry fetches; image pin never validated | AUTO-FIX | MCP configs invoke `godot-mcp` binary directly; verify.sh handshake uses the image binary; Dockerfile smoke test non-vacuous (`npm ls -g` + `command -v`); false portability claims removed (configs also hardcode container Godot path) |
+| m1 | README claimed "gdformat on save" but `DoHe.godot-format` bundles GDQuest's formatter — different engine than pinned gdtoolkit | AUTO-FIX (doc) | README states the divergence explicitly |
+| m2 | Firewall allowlist gaps: extension VSIX hosts, `claude.ai` (native login path), TCP/53 DNS | AUTO-FIX | Added `gallery.vsassets.io`, `vscode.download.prss.microsoft.com`, `claude.ai`, `nodejs.org`; DNS allowed over tcp+udp |
+| m3 | CI never enforced committed lock file (silent rewrite) | AUTO-FIX | `up --frozen-lockfile` in CI |
+| m4 | Hardcoded `/usr/local/bin/godot` contradicted claimed config portability | AUTO-FIX (doc) | Portability claim dropped; outside-container install documented |
+| m5 | CI ran full verify twice (up runs it via post-create, then exec again) | AUTO-FIX | exec step now `--quick`; post-create full run is the gate |
+| m6 | `latest` opencode can skew between matrix legs of one CI run | ADVISORY | Accepted: latest-at-build is the declared policy |
+| I1 | remoteEnv `${containerEnv:...}` → extension-host propagation unverified with a real token | DOC | env template documents direct `MCP_GITHUB_PAT` fallback |
+| I2 | npx non-resolution under container's npm 10.9 untested | MOOT | configs no longer use npx |
+| — | VERIFIED-OK ledger: all pinned asset URLs exist both arches; lock file consumed by CLI 0.89.0; ARG scoping sound; volume chown complete; verify fails closed; no secrets on disk | — | — |
+
+Verification after fixes: rebuild clean (0 errors), verify 23/0.
+
 ## Findings / Data
 
 - Measured timings and red-data-point ledger are above; the recurring

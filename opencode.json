@@ -3,7 +3,7 @@
     "mcp": {
         "godot": {
             "type": "local",
-            "command": ["npx", "-y", "@coding-solo/godot-mcp"],
+            "command": ["godot-mcp"],
             "environment": {
                 "GODOT_PATH": "/usr/local/bin/godot"
             },

@@ -2,8 +2,7 @@
     "mcpServers": {
         "godot": {
             "type": "stdio",
-            "command": "npx",
-            "args": ["-y", "@coding-solo/godot-mcp"],
+            "command": "godot-mcp",
             "env": {
                 "GODOT_PATH": "/usr/local/bin/godot"
             }

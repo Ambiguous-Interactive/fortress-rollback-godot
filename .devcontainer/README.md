@@ -51,9 +51,13 @@ build time by design. Downloads come from official endpoints over TLS;
 checksums are not pinned for the latest-tracking tools.
 
 VS Code extensions are declared in `devcontainer.json` (`customizations`):
-Godot Tools, Godot Files, Godot Format (gdformat on save), Claude Code,
-GitLens, EditorConfig, Makefile Tools, Code Spell Checker, Error Lens, Even
-Better TOML.
+Godot Tools, Godot Files, Godot Format, Claude Code, GitLens, EditorConfig,
+Makefile Tools, Code Spell Checker, Error Lens, Even Better TOML.
+
+Formatter note: the Godot Format extension bundles **GDQuest's** GDScript
+formatter for format-on-save. The CLI `gdformat`/`gdlint` tools (used by
+agents) come from the pinned **gdtoolkit** — a different engine; don't expect
+byte-identical output between them.
 
 ## Secrets (`.devcontainer/devcontainer.env`)
 
@@ -91,7 +95,7 @@ the environment):
 
 | Server | Type | Notes |
 | --- | --- | --- |
-| `godot` | stdio (`@coding-solo/godot-mcp`) | Run projects, capture debug output, scene ops; `GODOT_PATH=/usr/local/bin/godot`; installed in the image, `npx` resolves it locally |
+| `godot` | stdio (`godot-mcp` binary, pinned `0.1.1` in image) | Run projects, capture debug output, scene ops; `GODOT_PATH=/usr/local/bin/godot`. Configs assume this devcontainer — outside it, `npm i -g @coding-solo/godot-mcp@0.1.1` |
 | `context7` | HTTP | Up-to-date library docs (Godot included) for agents |
 | `github` | HTTP | GitHub MCP; uses `Authorization: Bearer ${MCP_GITHUB_PAT}` |
 

@@ -139,10 +139,12 @@ if [ "$QUICK" = "1" ]; then
 else
   section "MCP handshake (godot server over stdio)"
   handshake='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify","version":"1.0"}}}'
+  # Exercises the image-installed `godot-mcp` binary directly (not npx), so
+  # the pinned version in the image is what gets validated.
   # `|| true` neutralizes pipefail/SIGPIPE from `head`; the response content
   # alone decides pass/fail below.
   response="$(cd "$ROOT" && printf '%s\n' "$handshake" | \
-    timeout 120 env GODOT_PATH="$(command -v godot)" npx -y @coding-solo/godot-mcp 2>/dev/null | head -n 5 || true)"
+    timeout 120 env GODOT_PATH="$(command -v godot)" godot-mcp 2>/dev/null | head -n 5 || true)"
   if printf '%s' "$response" | grep -q '"serverInfo"'; then
     ok "godot MCP server answered initialize"
   else

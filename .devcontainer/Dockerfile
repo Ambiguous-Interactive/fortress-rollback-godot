@@ -97,12 +97,15 @@ RUN case "${TARGETARCH}" in \
     && rm /tmp/node.tar.xz \
     && node --version && npm --version
 
-# godot-mcp server: installed globally and pinned so container creation and
-# MCP sessions never depend on npm registry uptime (npx resolves the global
-# package first; the committed MCP configs keep `npx -y` for portability
-# outside this container).
+# godot-mcp server: installed globally and pinned so MCP sessions never
+# depend on npm registry uptime or version drift. The committed MCP configs
+# invoke the `godot-mcp` binary directly (note: `npx -y` does NOT resolve
+# global installs, so configs must not use npx). The configs assume this
+# devcontainer (they also hardcode the container's Godot path); outside it,
+# install the package manually: npm i -g @coding-solo/godot-mcp@0.1.1
 RUN npm install -g "@coding-solo/godot-mcp@0.1.1" \
-    && godot-mcp --help >/dev/null 2>&1 || true
+    && npm ls -g --depth=0 "@coding-solo/godot-mcp" \
+    && command -v godot-mcp
 
 # uv: official static binaries from the pinned release image (see uv-bin stage).
 COPY --from=uv-bin /uv /uvx /usr/local/bin/
