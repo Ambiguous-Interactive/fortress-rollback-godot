@@ -23,7 +23,8 @@ _secrets = set()
 
 def gh_command(arguments, environment):
     try:
-        return subprocess.run(arguments, capture_output=True, text=True, timeout=30, env=environment, check=False)
+        return subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="strict",
+                              timeout=30, env=environment, check=False)
     except (OSError, subprocess.TimeoutExpired, UnicodeError):
         raise FeedbackError("GitHub CLI could not complete the request; check installation and connectivity") from None
 

@@ -98,8 +98,22 @@ The feedback backstop now uses authenticated `gh api`, with private debug traces
 and preserved pagination headers. Missing authentication, malformed output and
 redirected evidence fail explicitly. New requester controls failed before the
 replacement, then passed alongside a real authenticated repository read.
-All 23 feedback tests and all 97 harness tests pass. The final guidance review
+All 25 feedback tests and all 99 harness tests pass. The final guidance review
 reported no findings after correcting rejected-token fallback selection.
+
+A bot review identified locale-dependent decoding in the CLI backstop. Real
+subprocess tests emitted UTF-8 accented/Japanese feedback while forcing the
+parent default decoder to Latin-1, reproducing mojibake before the fix. The
+helper now decodes stdout/stderr as strict UTF-8; both malformed-stream cases
+fail with sanitized errors. Regression tests are
+`GhCommandEncodingTests.test_real_subprocess_preserves_utf8_feedback_under_non_utf8_locale`
+and `test_real_subprocess_rejects_malformed_utf8_without_leaking_output` in
+`scripts/tests/test_pr_feedback.py`. Red/green logs are
+`.cache/tests/session-006-gh-utf8-{red,green}.log`; full helper/harness green logs
+are `.cache/tests/session-006-{feedback,harness-utf8}-green.log`.
+The subprocess sweep found no other GitHub/API feedback path needing this fix.
+Oracle launch/control decoding already names UTF-8; Godot output uses byte
+capture and explicit UTF-8 decoding. Build-log and ASCII Git probes stay scoped.
 
 ## Verification
 
@@ -115,7 +129,7 @@ Commands use cached minimum/current ARM64 executables under
 | Session comparator controls | Six per case, 126 per engine; invalid schema/order/state/input/stream rejected |
 | Ordinary queue differential | 711 cases / 8353 operations, twice per implementation/engine; five malformed controls and isolated access-only source hook |
 | Offline oracle tooling | `make test-oracle`: 18 tests, including malformed structured diagnostics |
-| Harness | `make llm-index`, `make lint-llm`, `make test-llm`: 97 tests pass, including 23 feedback tests |
+| Harness | `make llm-index`, `make lint-llm`, `make test-llm`: 99 tests pass, including 25 feedback tests |
 | Format/source | `gdformat`, `gdlint`, `make lint-source`: maximum 180 |
 
 Receipts: `.cache/tests/session-006-all{43,472}.json`,

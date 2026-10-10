@@ -18,8 +18,8 @@ Evidence: session log, engine receipts, scoped/full review probes and source dif
 | Read views must not expose construction mutators | FrameInputs.append changed roster size and allocated after expiry | Populate internally; expose checked reads only |
 | Error projection must parse the pinned structured category | Substring matching accepted an arbitrary error containing MissingLocalInput | Anchor the exact Debug diagnostic shapes; keep malformed variants as negative controls |
 | Concurrent reference launchers share destructive extraction | Two launches raced fetch.py extraction; FileNotFoundError before game execution | Run source/bootstrap-dependent oracle launchers sequentially |
-
 | GitHub capability gaps require authenticated fallback and a complete credential check | User required MCP first and authenticated gh; checking only environment and gh config missed a usable configured Git credential helper and caused an unnecessary wait | Added canonical routing skill, noninteractive helper lookup and endpoint validation; linked applicable guidance and removed the REST fallback rule |
+| Locale-dependent subprocess decoding silently corrupts valid JSON feedback | Real UTF-8 café/Japanese bytes decoded with forced Latin-1 reproduced mojibake; malformed stdout/stderr were accepted before repair | Use explicit strict UTF-8 decoding; add two actual-subprocess regression tests and the owning testing-skill lesson |
 
 ## Routing and prune ledger
 
@@ -27,6 +27,9 @@ The authenticated CLI replacement has a real-tool positive control alongside
 mocked malformed responses. `gh api --verbose` changes the normal output writers;
 private child-process `GH_DEBUG=api` preserves `--include` headers and JSON.
 The helper rejects redirected evidence and redacts configured credentials.
+Strict UTF-8 decoding preserves Unicode feedback and rejects malformed streams
+without leaking child output. The helper suite has 25 tests; all 99 harness
+tests pass, including the real-byte locale and malformed-stream controls.
 This operational detail remains with the tested helper rather than a second skill.
 
 Updated existing testing/rollback skills instead of adding overlapping stores.

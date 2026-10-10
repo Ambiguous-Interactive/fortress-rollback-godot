@@ -7,6 +7,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -340,6 +341,38 @@ class GhRequesterTests(unittest.TestCase):
                 with self.assertRaises(feedback.FeedbackError) as raised:
                     feedback.request_json(feedback.API+"/fixture")
                 self.assertNotIn("private-secret",str(raised.exception))
+
+
+class GhCommandEncodingTests(unittest.TestCase):
+    # Value: preserves=Unicode API findings; fails_when=parent locale decodes UTF-8 incorrectly;
+    # why_new=requester mocks do not exercise subprocess decoding; seam=none
+    def test_real_subprocess_preserves_utf8_feedback_under_non_utf8_locale(self):
+        body = {"body": "Café — 日本語", "user": {"login": "réviseur"}}
+        payload = ("HTTP/2.0 200 OK\nContent-Type: application/json\n\n" + json.dumps(body, ensure_ascii=False)).encode("utf-8")
+        diagnostic = "< HTTP/2.0 200 OK\nDiagnostic café 日本語\n".encode("utf-8")
+        command = [sys.executable, "-c", f"import sys; sys.stdout.buffer.write({payload!r}); sys.stderr.buffer.write({diagnostic!r})"]
+        # Patch the parent's default selector, covering Python UTF-8 mode too.
+        # The child still emits literal UTF-8 bytes; subprocess.run itself is real.
+        with patch.object(subprocess, "_text_encoding", return_value="latin-1"):
+            control = subprocess.run(command, capture_output=True, text=True, check=True, env={})
+            self.assertNotEqual(feedback.parse_response(control)[0], body, "control must reproduce locale mojibake")
+            result = feedback.gh_command(command, {})
+        self.assertEqual(feedback.parse_response(result)[0], body)
+        self.assertEqual(result.stderr, diagnostic.decode("utf-8"))
+
+    # Value: rejects=malformed UTF-8 without leaking CLI bytes; fails_when=decoding replaces or leaks;
+    # why_new=real decode errors bypass existing mocked timeout/error checks; seam=none
+    def test_real_subprocess_rejects_malformed_utf8_without_leaking_output(self):
+        for stream in ("stdout", "stderr"):
+            with self.subTest(stream=stream):
+                payload = b"private-cli-marker\xff"
+                command = [sys.executable, "-c", f"import sys; sys.{stream}.buffer.write({payload!r})"]
+                with patch.object(subprocess, "_text_encoding", return_value="latin-1"):
+                    with self.assertRaises(feedback.FeedbackError) as raised:
+                        feedback.gh_command(command, {})
+                self.assertEqual(str(raised.exception),
+                                 "GitHub CLI could not complete the request; check installation and connectivity")
+                self.assertNotIn("private-cli-marker", str(raised.exception))
 
 
 if __name__ == "__main__":
