@@ -79,6 +79,28 @@ shapes, canonical bounds and scenario identity now reject those diagnostics;
 A fresh full-oracle review then reported no findings; it independently ran the
 711-case queues and a distance/delay 7/7 production session on both engines.
 
+## GitHub workflow correction
+
+The user required authenticated GitHub MCP first and authenticated `gh` CLI as
+the fallback for capability gaps. Earlier ship-session guidance permitted a
+read-only REST fallback without making that routing and authentication explicit.
+Replaced that rule with one canonical GitHub operations skill and linked it from
+context, delivery, review, copy, harness, planning and evidence guidance.
+Credential handling uses existing authentication, trusted process tokens or a
+configured noninteractive Git credential helper; no token output is allowed.
+The initial credential search missed that helper and caused an unnecessary wait.
+The helper supplied usable authentication, verified against the required endpoint,
+and `gh` was authenticated using captured output and token stdin. Missing
+credentials explicitly block fallback after checking these available routes. This guidance change
+remains part of the same session PR.
+
+The feedback backstop now uses authenticated `gh api`, with private debug traces
+and preserved pagination headers. Missing authentication, malformed output and
+redirected evidence fail explicitly. New requester controls failed before the
+replacement, then passed alongside a real authenticated repository read.
+All 23 feedback tests and all 97 harness tests pass. The final guidance review
+reported no findings after correcting rejected-token fallback selection.
+
 ## Verification
 
 Commands use cached minimum/current ARM64 executables under
@@ -93,7 +115,7 @@ Commands use cached minimum/current ARM64 executables under
 | Session comparator controls | Six per case, 126 per engine; invalid schema/order/state/input/stream rejected |
 | Ordinary queue differential | 711 cases / 8353 operations, twice per implementation/engine; five malformed controls and isolated access-only source hook |
 | Offline oracle tooling | `make test-oracle`: 18 tests, including malformed structured diagnostics |
-| Harness | `make llm-index`, `make lint-llm`, `make test-llm`: 90 tests pass |
+| Harness | `make llm-index`, `make lint-llm`, `make test-llm`: 97 tests pass, including 23 feedback tests |
 | Format/source | `gdformat`, `gdlint`, `make lint-source`: maximum 180 |
 
 Receipts: `.cache/tests/session-006-all{43,472}.json`,

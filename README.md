@@ -26,6 +26,8 @@ This repository is developed with heavy AI-assistance and carries a generic
   by tests, git hooks, and CI.
 
 See [`.llm/context.md`](./.llm/context.md) for the full operating manual.
+[GitHub operations](./.llm/skills/github-operations/SKILL.md) use authenticated
+MCP first and authenticated `gh` CLI for capability gaps.
 
 ## Quick Start
 

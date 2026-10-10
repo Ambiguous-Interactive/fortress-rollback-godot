@@ -18,6 +18,9 @@ Adapted from `wallstop/unity-helpers` at commit `28d37d270c495f3e7416cf64a58db1e
 
 Use the writing rules below for this GDScript repository. Follow higher-priority instructions and required repository templates when they require a different format.
 
+Use [GitHub operations](../github-operations/SKILL.md) when publishing or reading
+GitHub artifacts: authenticated MCP first, then authenticated `gh` for gaps.
+
 ## Plain Language
 
 Use Simplified Technical English: common words, active voice, and one idea per sentence.

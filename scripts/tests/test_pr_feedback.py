@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -136,15 +137,6 @@ class FeedbackTests(unittest.TestCase):
                 with self.assertRaises(feedback.FeedbackError):
                     feedback.scan("wallstop/fortress-rollback-godot", 1, requester=fixture)
 
-    def test_transport_and_invalid_json_errors_are_sanitized(self):
-        for error in (feedback.urllib.error.HTTPError("secret", 403, "secret", {}, None), ValueError("secret")):
-            with self.subTest(error=error):
-                with patch.object(feedback.urllib.request, "build_opener") as opener:
-                    opener.return_value.open.side_effect = error
-                    with self.assertRaises(feedback.FeedbackError) as raised:
-                        feedback.request_json(feedback.API + "/fixture")
-                    self.assertNotIn("secret", str(raised.exception))
-
     def test_failure_exit_code_and_secret_redaction(self):
         output = io.StringIO()
         with patch.object(feedback, "scan", side_effect=feedback.FeedbackError("Incomplete evidence")):
@@ -217,6 +209,137 @@ class FeedbackTests(unittest.TestCase):
         fixture.pages[url] = ({"check_runs": [changed], "total_count": 1}, {})
         result = feedback.scan("wallstop/fortress-rollback-godot", 1, requester=fixture)
         self.assertIsNone(result["check_runs_all_attempts"][0]["conclusion"])
+
+
+# Value: protects=authenticated CLI coverage and redacted failures; fails_when=anonymous/malformed evidence accepted;
+# why_new=existing fixtures bypass requester; seam=subprocess only
+class GhRequesterTests(unittest.TestCase):
+    def setUp(self):
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.binary = patch.object(feedback.shutil, "which", return_value="/fake/gh")
+        self.binary.start()
+        self.process = patch.object(feedback.subprocess, "run")
+        self.run = self.process.start()
+        self.addCleanup(self.environment.stop)
+        self.addCleanup(self.binary.stop)
+        self.addCleanup(self.process.stop)
+        feedback._secrets.clear()
+
+    def response(self, body, headers=None, status=200, trace=None):
+        lines = [f"HTTP/2.0 {status} OK", "Content-Type: application/json"]
+        lines.extend(f"{key}: {value}" for key, value in (headers or {}).items())
+        return subprocess.CompletedProcess([], 0, "\r\n".join(lines) + "\r\n\r\n" + json.dumps(body), trace or f"< HTTP/2.0 {status} OK\n")
+
+    def configure_process(self, response):
+        def execute(arguments, **options):
+            self.assertTrue(options["capture_output"])
+            self.assertTrue(options["text"])
+            self.assertEqual(options["timeout"], 30)
+            self.assertNotIn("stored-secret", str(arguments))
+            if arguments[1:3] == ["auth", "token"]:
+                return subprocess.CompletedProcess(arguments, 0, "stored-secret\n", "")
+            self.assertEqual(arguments[1], "api")
+            self.assertIn("--include", arguments)
+            self.assertNotIn("--verbose", arguments)
+            self.assertEqual(options["env"]["GH_DEBUG"], "api")
+            self.assertEqual(arguments[arguments.index("--hostname")+1], "github.com")
+            self.assertNotIn("--paginate", arguments)
+            return response(arguments[2]) if callable(response) else response
+        self.run.side_effect = execute
+
+    def test_configured_auth_keeps_real_headers_and_paginated_coverage(self):
+        fixture = Fixture()
+        self.configure_process(lambda url: self.response(*fixture(url)))
+        result = feedback.scan("wallstop/fortress-rollback-godot", 1)
+        self.assertEqual(len(result["inline_comments"]), 2)
+        self.assertEqual(len(result["check_runs_all_attempts"][0]["feedback_annotations"]), 2)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            feedback.emit({"body": "stored-secret"})
+        self.assertNotIn("stored-secret", output.getvalue())
+        self.assertIn("[REDACTED]", output.getvalue())
+
+    def test_environment_token_does_not_require_configured_auth(self):
+        self.configure_process(self.response([]))
+        for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+            with self.subTest(name=name), patch.dict(os.environ, {name:"environment-secret"}):
+                self.run.reset_mock()
+                self.assertEqual(feedback.request_json(feedback.API+"/fixture")[0], [])
+                self.assertEqual(self.run.call_count, 1)
+                self.assertNotIn("environment-secret", str(self.run.call_args.args))
+
+    def test_missing_binary_and_authentication_are_explicit(self):
+        with patch.object(feedback.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(feedback.FeedbackError, "install.*gh"):
+                feedback.request_json(feedback.API+"/fixture")
+        results = (subprocess.CompletedProcess([],1,"private-secret","private-secret"),
+                   subprocess.CompletedProcess([],0,"","private-secret"),
+                   subprocess.CompletedProcess([],0,"malformed auth output","private-secret"))
+        for result in results:
+            self.run.return_value = result
+            self.run.side_effect = None
+            with self.subTest(result=result.returncode), self.assertRaisesRegex(feedback.FeedbackError, "trusted credential"):
+                feedback.request_json(feedback.API+"/fixture")
+            self.assertEqual(self.run.call_args.args[0][1:3], ["auth", "token"])
+
+    def test_empty_environment_overrides_allow_stored_auth(self):
+        self.configure_process(self.response([]))
+        with patch.dict(os.environ, {"GH_TOKEN":"", "GITHUB_TOKEN":""}):
+            feedback.request_json(feedback.API+"/fixture")
+        self.assertEqual(self.run.call_count, 2)
+        self.assertNotIn("GH_TOKEN", self.run.call_args.kwargs["env"])
+        self.assertNotIn("GITHUB_TOKEN", self.run.call_args.kwargs["env"])
+
+    def test_header_case_and_multiple_link_fields_preserve_pagination(self):
+        response = self.response([])
+        links = 'link: <https://api.github.com/fixture?page=1>; rel="first"\r\n'
+        links += 'LINK: <https://api.github.com/fixture?page=2>; rel="next"'
+        response.stdout = response.stdout.replace("Content-Type: application/json", links)
+        self.configure_process(response)
+        data, headers = feedback.request_json(feedback.API+"/fixture")
+        self.assertEqual(data, [])
+        self.assertIn('rel="first"', headers.get("Link"))
+        self.assertIn('rel="next"', headers.get("Link"))
+
+    def test_failed_commands_and_timeout_never_expose_cli_output(self):
+        self.configure_process(subprocess.CompletedProcess([],1,"private-secret","private-secret"))
+        with self.assertRaises(feedback.FeedbackError) as raised:
+            feedback.request_json(feedback.API+"/fixture")
+        self.assertNotIn("private-secret", str(raised.exception))
+        for error in (OSError("private-secret"), subprocess.TimeoutExpired(["gh"],30,output="private-secret",stderr="private-secret")):
+            self.run.side_effect = error
+            with self.subTest(error=type(error).__name__), self.assertRaises(feedback.FeedbackError) as raised:
+                feedback.request_json(feedback.API+"/fixture")
+            self.assertNotIn("private-secret", str(raised.exception))
+
+    def test_unsafe_urls_are_rejected_before_running_gh(self):
+        urls = ("http://api.github.com/fixture", "https://evil.example/fixture", "https://api.github.com:443/fixture",
+                "https://api.github.com/fixture#fragment", "https://user@api.github.com/fixture", "https://[invalid/fixture")
+        for url in urls:
+            with self.subTest(url=url), self.assertRaises(feedback.FeedbackError):
+                feedback.request_json(url)
+        self.run.assert_not_called()
+
+    def test_malformed_ambiguous_and_redirected_evidence_fails(self):
+        responses = [
+            subprocess.CompletedProcess([],0,"{}",""),
+            subprocess.CompletedProcess([],0,"HTTP/2.0 200 OK\nInvalid header\n\n{}","< HTTP/2.0 200 OK\n"),
+            subprocess.CompletedProcess([],0,"HTTP/2.0 200 OK\n\nnot-json private-secret","< HTTP/2.0 200 OK\n"),
+            subprocess.CompletedProcess([],0,"HTTP/2.0 200 OK\n\n{\"same\":1,\"same\":2}","< HTTP/2.0 200 OK\n"),
+            subprocess.CompletedProcess([],0,"HTTP/2.0 200 OK\n\nNaN","< HTTP/2.0 200 OK\n"),
+            self.response({}, {"Location":"https://evil.example/fixture"}),
+            self.response({}, status=302),
+            self.response({},trace="< HTTP/2.0 301 Moved\n< Location: https://evil.example/fixture\n< HTTP/2.0 200 OK\n"),
+            self.response({},trace="no recognizable response markers"),
+            self.response({},trace="< HTTP/2.0 200 OK\n< HTTP/2.0 200 OK\n"),
+        ]
+        for result in responses:
+            with self.subTest(stdout=result.stdout[:50]):
+                self.configure_process(result)
+                with self.assertRaises(feedback.FeedbackError) as raised:
+                    feedback.request_json(feedback.API+"/fixture")
+                self.assertNotIn("private-secret",str(raised.exception))
 
 
 if __name__ == "__main__":

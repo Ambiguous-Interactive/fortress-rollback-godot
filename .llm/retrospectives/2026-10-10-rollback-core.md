@@ -19,9 +19,19 @@ Evidence: session log, engine receipts, scoped/full review probes and source dif
 | Error projection must parse the pinned structured category | Substring matching accepted an arbitrary error containing MissingLocalInput | Anchor the exact Debug diagnostic shapes; keep malformed variants as negative controls |
 | Concurrent reference launchers share destructive extraction | Two launches raced fetch.py extraction; FileNotFoundError before game execution | Run source/bootstrap-dependent oracle launchers sequentially |
 
+| GitHub capability gaps require authenticated fallback and a complete credential check | User required MCP first and authenticated gh; checking only environment and gh config missed a usable configured Git credential helper and caused an unnecessary wait | Added canonical routing skill, noninteractive helper lookup and endpoint validation; linked applicable guidance and removed the REST fallback rule |
+
 ## Routing and prune ledger
 
+The authenticated CLI replacement has a real-tool positive control alongside
+mocked malformed responses. `gh api --verbose` changes the normal output writers;
+private child-process `GH_DEBUG=api` preserves `--include` headers and JSON.
+The helper rejects redirected evidence and redacts configured credentials.
+This operational detail remains with the tested helper rather than a second skill.
+
 Updated existing testing/rollback skills instead of adding overlapping stores.
+Added one GitHub operations skill to own tool routing and credential handling;
+existing delivery/review/copy guidance links it rather than duplicating its rules.
 Canonical context, README, PLAN and oracle docs no longer say the local session
 engine is absent. P2P/browser limitations remain explicit and verified separately.
 No release coverage status or applicability ledger flag was promoted.

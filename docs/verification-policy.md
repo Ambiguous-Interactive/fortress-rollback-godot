@@ -4,6 +4,9 @@ Status: development contract for [B4](https://github.com/Ambiguous-Interactive/f
 This policy defines gates; it does not claim that their future runners exist.
 The [implementation plan](../PLAN.md) owns supported product decisions and
 GitHub task issues own changing implementation status.
+Use authenticated MCP first and authenticated `gh` for capability gaps when
+reading or recording hosted evidence; follow
+[GitHub operations](../.llm/skills/github-operations/SKILL.md).
 
 ## Evidence before closure
 

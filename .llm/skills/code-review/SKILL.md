@@ -104,6 +104,9 @@ how to cover it, never whether. Triple-proof protocol:
 - [ ] For high-risk changes: adversarial pass requested (see
       [adversarial-review](../adversarial-review/SKILL.md))
 
+Read remote PR evidence through [GitHub operations](../github-operations/SKILL.md):
+authenticated MCP first, then authenticated `gh` for missing capabilities.
+
 ## Related
 
 - [debugging](../debugging/SKILL.md) — when review finds a live defect

@@ -70,6 +70,11 @@ until a skill is activated, so keep bodies focused and link to
 
 ## Session delivery and copy
 
+Use authenticated GitHub MCP first; use authenticated `gh` CLI for capability gaps.
+Follow [GitHub operations](./skills/github-operations/SKILL.md) for credentials,
+pagination and fallback limits. Missing credentials block the fallback; never
+print tokens or silently use unauthenticated GitHub requests.
+
 Follow [ship-session](./skills/ship-session/SKILL.md) after every push and before
 ending a session. Once the session PR has fully green current-head CI, scan all
 four feedback surfaces with complete pagination and thread resolution state.

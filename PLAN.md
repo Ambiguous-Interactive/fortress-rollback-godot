@@ -12,6 +12,8 @@ This document contains durable decisions and navigation.
 **GitHub issues own implementation details, TODOs, dependencies, progress,
 experiments, acceptance criteria and closure evidence.**
 Do not maintain a second changing task checklist in this file.
+Read and update GitHub through authenticated MCP first, then authenticated `gh`
+for capability gaps; follow [GitHub operations](.llm/skills/github-operations/SKILL.md).
 
 - Roadmap: [GDScript-native Fortress Rollback implementation and parity tracking](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/2).
 - Start here: [pin and reproduce the reference baseline](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/12).
