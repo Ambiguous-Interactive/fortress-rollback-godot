@@ -1,7 +1,11 @@
-.PHONY: hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
+.PHONY: representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline llm-index llm-index-prune pre-commit godot-check test-godot
 
 PY ?= python3
 GODOT ?= godot
+
+## Enforce the 180-character maximum across repository source files
+lint-source:
+	$(PY) scripts/check_source_line_lengths.py
 
 ## Install git hooks (sets core.hooksPath to .githooks/)
 hooks:
@@ -27,6 +31,10 @@ test-reference:
 test-godot:
 	$(PY) scripts/run_godot_tests.py --godot $(GODOT)
 
+## Minimum/current native and exported-Web representation experiments
+representation-probes:
+	$(PY) scripts/reference/ownership_probes.py --web
+
 ## Pinned upstream reference tests, repeated with explicit seed and feature flags
 reference-baseline:
 	$(PY) scripts/reference/run.py --setup-rust
@@ -42,7 +50,7 @@ llm-index-prune:
 	$(PY) scripts/llm/generate_skill_stubs.py --write --prune
 
 ## Everything the pre-commit hook runs
-pre-commit: lint-llm test-llm
+pre-commit: lint-source lint-llm test-llm
 
 ## Validate the Godot project headless (parse scripts, import assets)
 godot-check:

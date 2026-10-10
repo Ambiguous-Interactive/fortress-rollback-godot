@@ -27,6 +27,8 @@ Local development contracts and evidence entry points:
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
+- [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
+- [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.
 
@@ -359,6 +361,20 @@ Planning findings are captured here and in roadmap issue #2:
 These findings are tracked, not claimed as repaired runtime behavior.
 The planning session established PLAN.md and the GitHub backlog. Subsequent
 implementation evidence lives in `progress/` and the linked task issues.
+
+## Session completion contract
+
+Target sessions shorter than two hours and aggregate each session into one PR.
+Follow [ship-session](.llm/skills/ship-session/SKILL.md): after all current-head CI
+is green, scan inline threads, submitted reviews, conversation comments and check
+annotations with complete pagination. Address every actionable finding, repeat
+CI after fixes, and scan again immediately before merging. Squash merge the
+session PR to `main` under standing user authorization, verify its merge SHA,
+fetch and fast-forward local `main` to `origin/main`, then verify main CI.
+
+Use [user-copy](.llm/skills/user-copy/SKILL.md) for comments, PR titles/bodies,
+commit messages and CHANGELOG entries. Editor and formatter source line widths
+are 180 characters; `make lint-source` checks every tracked source file.
 
 ## Primary references
 

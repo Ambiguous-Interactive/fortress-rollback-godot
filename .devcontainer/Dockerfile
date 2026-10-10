@@ -90,7 +90,8 @@ RUN case "${TARGETARCH}" in \
 
 RUN npm install -g "@opencode/cli@latest" \
     && opencode --version \
-    && node -e 'const v=require("/usr/local/lib/node_modules/@opencode/cli/package.json").version; if(!v.startsWith("2.")) {console.error("expected OpenCode v2, got "+v); process.exit(1)}'
+    && node -e 'const v=require("/usr/local/lib/node_modules/@opencode/cli/package.json").version; \
+        if(!v.startsWith("2.")) {console.error("expected OpenCode v2, got "+v); process.exit(1)}'
 
 # Codex CLI (latest), using the global npm layout checked by verify-tools.sh.
 # Check the package root offline without parsing human-readable diagnostics.

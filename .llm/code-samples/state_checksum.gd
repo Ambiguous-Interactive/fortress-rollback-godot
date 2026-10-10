@@ -2,30 +2,33 @@
 #
 # Godot's built-in hash() is NOT a checksum contract: the algorithm can
 # change between engine versions/platforms. A desync detector needs a
-# checksum that is stable forever - see
+# checksum with an explicit byte contract - see
 # .llm/skills/determinism/SKILL.md and
 # .llm/skills/networking-transport/SKILL.md.
 class_name StateChecksum
 extends RefCounted
 
-const OFFSET_BASIS: int = 0x1DC91FA97C4A0ED1  # FNV-1a 64 basis, top bit cleared
-const PRIME: int = 0x2DD7E1CFAF5FDD           # FNV-1a 64 prime, masked to 63 bits
-const MASK: int = 0x7FFFFFFFFFFFFFFF
+# Standard FNV-1a64 offset 0xcbf29ce484222325 as a signed64 bit pattern.
+# Signed overflow supplies modulo-2^64 multiplication in the measured Godot
+# native/Web matrix; independent Rust known answers guard that assumption.
+# This 8-byte sample does not implement Fortress's 16-byte checksum domain.
+const OFFSET_BASIS: int = -3750763034362895579
+const PRIME: int = 1099511628211
 
 var _hash: int = OFFSET_BASIS
 
 
 func update_bytes(data: PackedByteArray) -> void:
-	for byte in data:
+	for byte: int in data:
 		_hash ^= byte
-		_hash = (_hash * PRIME) & MASK
+		_hash = _hash * PRIME
 
 
 func update_int(value: int) -> void:
 	# Canonical int encoding: fixed-width little-endian u64 (sign-extended
 	# values are encoded via two's complement bytes).
-	var v := value
-	for i in 8:
+	var v: int = value
+	for _i: int in range(8):
 		update_bytes(PackedByteArray([v & 0xFF]))
 		v >>= 8
 

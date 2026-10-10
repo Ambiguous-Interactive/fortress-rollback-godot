@@ -52,7 +52,8 @@ class ReferenceContracts(unittest.TestCase):
                        'running 2 tests\ntest partial ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;'):
             with self.subTest(output=output), self.assertRaises(ValueError):
                 semantic(output)
-        self.assertEqual(semantic('running 1 test\ntest real_contract ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'), [('real_contract', 'ok')])
+        output = 'running 1 test\ntest real_contract ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;\n'
+        self.assertEqual(semantic(output), [('real_contract', 'ok')])
 
     def test_expected_panic_is_a_completed_passing_test(self):
         output = 'running 1 test\ntest panic_contract - should panic ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;\n'
@@ -109,7 +110,9 @@ class ReferenceContracts(unittest.TestCase):
                             archive = cache / 'editor.zip'
                             arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}[godot_runner.platform.machine()]
                             with zipfile.ZipFile(archive, 'w') as package:
-                                package.writestr(f'Godot_v4.3-stable_linux.{arch}', '#!/bin/sh\ncase "$*" in *--version*) echo "4.3.stable.fake";; *) echo "INJECTED_MISSING_MARKER";; esac\n')
+                                package.writestr(
+                                    f'Godot_v4.3-stable_linux.{arch}',
+                                    '#!/bin/sh\ncase "$*" in *--version*) echo "4.3.stable.fake";; *) echo "INJECTED_MISSING_MARKER";; esac\n')
                             with patch.object(module, 'fetch', return_value=archive):
                                 with self.assertRaises(ValueError):
                                     module.main()

@@ -14,8 +14,7 @@ func cases() -> PackedStringArray:
 func run_case(_name: String, context: RefCounted) -> void:
 	calls += 1
 	var rows: Array[Dictionary] = [
-		{"actual": calls, "expected": 1, "label": "fresh fixture"},
-		{"actual": str(context.seed).to_int(), "expected": context.seed, "label": "lossless seed"}
+		{"actual": calls, "expected": 1, "label": "fresh fixture"}, {"actual": str(context.seed).to_int(), "expected": context.seed, "label": "lossless seed"}
 	]
 	context.table(rows)
 	var probe: RefCounted = Context.new(context.seed)

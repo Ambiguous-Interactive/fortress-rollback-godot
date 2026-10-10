@@ -7,11 +7,11 @@
 class_name FixedStepDriver
 extends Node
 
+signal tick_advanced(frame: int)
+
 const TICK_HZ: int = 60
 ## Clamp so a background stall cannot trigger a runaway catch-up spiral.
 const MAX_TICKS_PER_FRAME: int = 5
-
-signal tick_advanced(frame: int)
 
 var _accumulator_ns: int = 0
 var _frame: int = 0

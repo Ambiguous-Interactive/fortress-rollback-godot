@@ -29,7 +29,7 @@ platform — forever, including after load/save and across replays.
 | `move_and_slide()` / physics engine | Solver is not cross-platform deterministic | Custom kinematic integration at fixed tick |
 | `Vector2.normalized()` chains in sim | `sqrt` is IEEE-exact (safe), but downstream float accumulation drifts | Prefer integer math; if floats, keep ops in fixed order |
 | Threads / `Mutex` / `WorkerThreadPool` in sim | Ordering is scheduler-dependent | Single-threaded sim; parallelize presentation only |
-| `hash()` builtin for state checksums | Algorithm may differ across Godot versions/platforms | Explicit FNV-1a (see [sample](../../code-samples/state_checksum.gd)) |
+| `hash()` builtin for state checksums | Algorithm may differ across Godot versions/platforms | A specified stable algorithm (see [sample](../../code-samples/state_checksum.gd)) |
 | Iterating sets where order matters | GDScript `Dictionary` preserves insertion order, but sorted iteration is the contract for state walks | Sort keys explicitly before iterating in checksums/serialization |
 
 ## Required
@@ -60,6 +60,32 @@ platform — forever, including after load/save and across replays.
   they silently differ between editor and exported builds. Gate dev-only
   values with `OS.is_debug_build()` outside the sim, never inside it.
 - `PI`, `TAU` constants are fine; computed trig on them is not (in sim).
+
+## Integer and Checksum Domains
+
+Use measured signed-64 arithmetic and explicit little-endian fixed-width bytes.
+Unsigned u64/u128 values use bounded unsigned-32 limbs or canonical bytes; do
+not convert them through floats or JSON numbers. Validate frame exhaustion,
+shift counts, division overflow and buffer bounds before performing operations.
+See [integer experiments](../../../docs/experiments/integer-encoding.md).
+
+The checksum sample implements standard 64-bit FNV-1a with a signed GDScript
+bit pattern and modulo-2^64 multiplication. Its eight-byte diagnostic domain
+is separate from the negotiated 16-byte checksum in the
+[session contract](../../../docs/contracts.md#input-and-snapshot-ownership).
+Independent Rust known answers guard its constants and update behavior.
+
+## Buffer Ownership
+
+PackedByteArray assignment and parameter passing share mutable storage. Copy
+submitted input with `duplicate()`; copy returned bytes or use checked views
+that expire at operation completion. Typed arrays also alias on assignment.
+`Array.duplicate(true)` does not clone nested RefCounted objects: serialize
+complete authoritative state into owned canonical bytes for snapshots.
+StreamPeerBuffer properties and data methods have distinct copy boundaries;
+measure each boundary rather than generalizing from one packed-array result.
+See the minimum/current native and exported-Web
+[ownership experiment](../../../docs/experiments/buffer-ownership.md).
 
 ## Metamorphic Relations (oracle-free checks)
 

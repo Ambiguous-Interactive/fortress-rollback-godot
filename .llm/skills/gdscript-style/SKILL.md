@@ -54,8 +54,9 @@ Boring, typed, reviewable GDScript. The reference formatter is `gdformat`
   Extract subsystems rather than growing a god class.
 - No cyclic `preload`; dependencies flow one direction:
   `presentation -> session -> sim`.
-- Comments explain *why*; determinism-critical lines get an explicit
-  comment (future-you will thank present-you).
+- Improve names before adding comments. Keep only non-obvious reasons or
+  constraints; retain required determinism explanations. Follow
+  [user-copy](../user-copy/SKILL.md) for comments and public API docs.
 
 ## Formatting / Linting
 

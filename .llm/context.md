@@ -4,9 +4,10 @@ You are working on **fortress-rollback-godot**: a GDScript-only port of
 [fortress-rollback](https://github.com/wallstop/fortress-rollback), a
 fortified, deterministic, GGPO-inspired rollback networking library (a fork of
 `ggrs`). Target engine: **Godot 4.x**. Everything gameplay-relevant is written
-in **GDScript 2.0**. There is no Rust, no GDExtension, and no C# in this repo.
-The project is in an early bootstrap phase; the harness below is the most
-mature part of it. Treat this file as the canonical operating manual.
+in **GDScript 2.0**. The shipped addon has no Rust, GDExtension or C# dependency;
+Rust is permitted for independent development oracles.
+The project has pinned reference baselines and a deterministic test runner;
+the rollback addon remains planned. Treat this file as the canonical operating manual.
 
 ## Skills Index
 
@@ -66,10 +67,25 @@ until a skill is activated, so keep bodies focused and link to
    explicit waiver (see
    [retrospective](./skills/retrospective/SKILL.md)).
 
+## Session delivery and copy
+
+Follow [ship-session](./skills/ship-session/SKILL.md) after every push and before
+ending a session. Once the session PR has fully green current-head CI, scan all
+four feedback surfaces with complete pagination and thread resolution state.
+Address every actionable finding, recheck immediately before merge, squash merge
+to `main`, and fetch/update local Git to match `origin/main`. This is standing
+user authorization; no additional merge confirmation is needed.
+
+Use [user-copy](./skills/user-copy/SKILL.md) for plain comments, PR titles and
+bodies, commit messages and CHANGELOG entries. Set the maximum source line width
+to **180 characters** in editors and formatters; `make lint-source` enforces it
+across repository source files. File line-count caps remain separate.
+
 ## Commands
 
 | Task | Command |
 | --- | --- |
+| Check source line widths | `make lint-source` |
 | Validate the whole harness | `make lint-llm` |
 | Run harness self-tests | `make test-llm` |
 | Regenerate index + agent stubs | `make llm-index` |

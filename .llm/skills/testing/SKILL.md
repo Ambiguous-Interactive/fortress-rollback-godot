@@ -126,10 +126,12 @@ need bounded readiness polling rather than one successful configuration read.
 
 ## CI
 
-`.github/workflows/` runs: harness self-tests (`make test-llm`), and, once
-game code exists, the headless determinism suite on Linux (plus macOS on
-release candidates for cross-platform bit-equality). Any test that cannot run
-headless must justify itself in review.
+`.github/workflows/` runs harness self-tests (`make test-llm`), source widths
+(`make lint-source`), pinned reference baselines and minimum/current Godot
+runner controls. Runtime suites must be wired into CI when added; a test file
+or local receipt alone does not establish CI coverage. Cross-platform native
+and full browser matrices remain release gates in PLAN.md.
+Any test that cannot run headless must justify itself in review.
 
 Related: [determinism](../determinism/SKILL.md),
 [rollback-fundamentals](../rollback-fundamentals/SKILL.md),

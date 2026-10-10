@@ -69,6 +69,14 @@ Commit regenerated index + stubs together with the new skill.
 - **Change tooling**: update tests FIRST (red), then the script (green);
   CI runs the same suite.
 
+## Session Delivery
+
+Guidance changes use [user-copy](../user-copy/SKILL.md). Finish the session with
+[ship-session](../ship-session/SKILL.md): green current-head CI, a complete
+post-green feedback scan, squash merge, and local Git synchronization.
+Editors and formatters use 180-character source lines; run `make lint-source`.
+Keep line width separate from the markdown file line-count caps above.
+
 ## Design Rationale
 
 Why 300 lines? Instruction files compete for attention; long files get

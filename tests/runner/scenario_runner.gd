@@ -5,9 +5,7 @@ const Context = preload("res://tests/runner/test_context.gd")
 
 # No SceneTree, nodes, timers or filesystem discovery: browser hosts can call
 # execute with the same scripts, category selection and scenario seed.
-func execute(
-	scripts: Array[Script], category: String, filter_text: String, fixed_seed: int
-) -> Dictionary:
+func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int) -> Dictionary:
 	var records: Array[Dictionary] = []
 	var errors: Array[Dictionary] = []
 	for script: Script in scripts:
@@ -43,38 +41,17 @@ func execute(
 					context.failures.append({"kind": "incomplete_case"})
 				if context.assertions == 0:
 					context.failures.append({"kind": "zero_assertions"})
-				runs.append(
-					{
-						"assertions": context.assertions,
-						"failures": context.failures,
-						"states": context.states
-					}
-				)
+				runs.append({"assertions": context.assertions, "failures": context.failures, "states": context.states})
 			if runs[0] != runs[1]:
 				errors.append(_first_difference(script.resource_path, name, runs))
-			records.append(
-				{
-					"suite": script.resource_path,
-					"case": name,
-					"category": category,
-					"seed": str(fixed_seed),
-					"runs": runs
-				}
-			)
+			records.append({"suite": script.resource_path, "case": name, "category": category, "seed": str(fixed_seed), "runs": runs})
 	if records.is_empty():
 		errors.append({"kind": "zero_matching_cases"})
 	var is_pass: bool = errors.is_empty()
 	for record: Dictionary in records:
 		for run: Dictionary in record["runs"]:
 			is_pass = is_pass and run["failures"].is_empty()
-	return {
-		"format": 1,
-		"complete": true,
-		"passed": is_pass,
-		"count": records.size(),
-		"errors": errors,
-		"records": records
-	}
+	return {"format": 1, "complete": true, "passed": is_pass, "count": records.size(), "errors": errors, "records": records}
 
 
 func _first_difference(suite: String, case_name: String, runs: Array[Dictionary]) -> Dictionary:
@@ -86,12 +63,7 @@ func _first_difference(suite: String, case_name: String, runs: Array[Dictionary]
 			result["record"] = index
 			result["frame"] = first[index]["frame"]
 			var context: RefCounted = Context.new(0)
-			context.bytes_equal(
-				second[index]["bytes"].hex_decode(),
-				first[index]["bytes"].hex_decode(),
-				first[index]["frame"],
-				"repeat"
-			)
+			context.bytes_equal(second[index]["bytes"].hex_decode(), first[index]["bytes"].hex_decode(), first[index]["frame"], "repeat")
 			result["differences"] = context.failures
 			return result
 	result["record"] = mini(first.size(), second.size())

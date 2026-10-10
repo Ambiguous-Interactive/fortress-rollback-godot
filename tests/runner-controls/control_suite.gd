@@ -6,17 +6,7 @@ static var leaked_calls: int = 0
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(
-		[
-			"pass",
-			"fail",
-			"incomplete",
-			"uncaught",
-			"after_completion_error",
-			"static_leak",
-			"watchdog"
-		]
-	)
+	return PackedStringArray(["pass", "fail", "incomplete", "uncaught", "after_completion_error", "static_leak", "watchdog"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
