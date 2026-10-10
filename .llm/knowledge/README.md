@@ -34,3 +34,6 @@ evidence. Facts without evidence do not get in (curation gate).
 
 - [harness-tooling.md](./harness-tooling.md) — `.llm/` enforcement
   tooling: lint scope, frontmatter rules, test bootstrap
+- [devcontainer-tooling.md](./devcontainer-tooling.md) — container
+  build/runtime facts: feature ordering, volume ownership, npx/Claude Code
+  MCP semantics, fail-closed firewall ordering
