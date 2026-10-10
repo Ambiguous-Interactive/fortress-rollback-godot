@@ -30,7 +30,7 @@ def checksum(data):
 
 def validate_scenario(value):
     fields(value, 'format upstream_revision players input_width check_distance input_delay operations', 'scenario')
-    integer(value['format'], 1, 1, 'scenario version')
+    integer(value['format'], 1, 2, 'scenario version')
     if value['upstream_revision'] != REVISION:
         raise ValueError('scenario: stale upstream revision')
     integer(value['players'], 2, 8, 'players')
@@ -55,9 +55,28 @@ def validate_scenario(value):
     return value
 
 
-def state(value, players, frame_key='frame', bytes_key='bytes'):
+def initial_game_state(players, version=1):
+    data = bytes(4 * (players + 1))
+    return data + struct.pack('<II', 8173, 0) if version == 2 else data
+
+
+def advance_game_state(data, incoming, version=1):
+    players = len(incoming)
+    frame, *totals = struct.unpack('<i' + 'I' * players, data[:4 * (players + 1)])
+    if version == 2:
+        rng, pending = struct.unpack('<II', data[-8:])
+        rng = (rng * 1664525 + 1013904223) & 0xffffffff
+        totals = [(total + value + pending + (rng & 255) * (player + 1)) & 0xffffffff
+                  for player, (total, value) in enumerate(zip(totals, incoming))]
+        pending = sum((player + 1) * value for player, value in enumerate(incoming)) & 0xffffffff
+        return struct.pack('<i' + 'I' * (players + 2), frame + 1, *totals, rng, pending)
+    return struct.pack('<i' + 'I' * players, frame + 1,
+                       *((total + value) & 0xffffffff for total, value in zip(totals, incoming)))
+
+
+def state(value, players, frame_key='frame', bytes_key='bytes', version=1):
     integer(value[frame_key], 0, 2147483647, 'state frame')
-    data = hex_bytes(value[bytes_key], 4 * (players + 1), 'state bytes')
+    data = hex_bytes(value[bytes_key], 4 * (players + (3 if version == 2 else 1)), 'state bytes')
     if struct.unpack_from('<i', data)[0] != value[frame_key]:
         raise ValueError('state: frame differs from bytes')
     hex_bytes(value['checksum'], 16, 'checksum')
@@ -70,7 +89,7 @@ def validate_trace(value, scenario):
     validate_scenario(scenario)
     fields(value, 'format upstream_revision scenario operations final_state', 'trace')
     validate_scenario(value['scenario'])
-    integer(value['format'], 1, 1, 'trace version')
+    integer(value['format'], scenario['format'], scenario['format'], 'trace version')
     if value['upstream_revision'] != REVISION or value['scenario'] != scenario:
         raise ValueError('trace: stale revision or mismatched scenario')
     operations = value['operations']
@@ -78,7 +97,7 @@ def validate_trace(value, scenario):
         raise ValueError('trace: missing or extra operations')
     frame = 0
     game_frame = 0
-    game_bytes = bytes(4 * (scenario['players'] + 1))
+    game_bytes = initial_game_state(scenario['players'], scenario['format'])
     snapshots = {}
     for index, (operation, source) in enumerate(zip(operations, scenario['operations'])):
         fields(operation, 'index kind result error frame_before frame_after confirmed_frame requests events', 'operation')
@@ -116,7 +135,7 @@ def validate_trace(value, scenario):
             if kind in ('save', 'load'):
                 if inputs:
                     raise ValueError('request: snapshot has inputs')
-                data = state(request, scenario['players'], bytes_key='state_bytes')
+                data = state(request, scenario['players'], bytes_key='state_bytes', version=scenario['format'])
                 if kind == 'save':
                     if request['frame'] != game_frame or data != game_bytes:
                         raise ValueError('request: save state differs from current game')
@@ -128,18 +147,18 @@ def validate_trace(value, scenario):
             elif kind == 'advance':
                 if request['frame'] != game_frame or len(inputs) != scenario['players']:
                     raise ValueError('request: advance frame or input count mismatch')
-                totals = list(struct.unpack('<' + 'I' * scenario['players'], game_bytes[4:]))
+                incoming_values = []
                 for player, item in enumerate(inputs):
                     fields(item, 'player bytes status', 'frame input')
                     integer(item['player'], player, player, 'input slot')
                     if item['status'] not in ('confirmed', 'predicted', 'disconnected'):
                         raise ValueError('request: unknown input status')
                     incoming = struct.unpack('<I', hex_bytes(item['bytes'], 4, 'frame input'))[0]
-                    totals[player] = (totals[player] + incoming) & 0xffffffff
+                    incoming_values.append(incoming)
                 game_frame += 1
-                game_bytes = struct.pack('<i' + 'I' * scenario['players'], game_frame, *totals)
+                game_bytes = advance_game_state(game_bytes, incoming_values, scenario['format'])
                 after = dict(request, frame=game_frame)
-                if state(after, scenario['players'], bytes_key='state_bytes') != game_bytes:
+                if state(after, scenario['players'], bytes_key='state_bytes', version=scenario['format']) != game_bytes:
                     raise ValueError('request: advance canonical state mismatch')
             else:
                 raise ValueError('request: unknown kind')
@@ -147,6 +166,6 @@ def validate_trace(value, scenario):
             raise ValueError('trace: requests do not reach exposed frame')
         frame = expected_after
     fields(value['final_state'], 'frame bytes checksum', 'final state')
-    if state(value['final_state'], scenario['players']) != game_bytes or value['final_state']['frame'] != frame:
+    if state(value['final_state'], scenario['players'], version=scenario['format']) != game_bytes or value['final_state']['frame'] != frame:
         raise ValueError('trace: final state mismatch')
     return value

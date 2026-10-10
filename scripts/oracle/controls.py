@@ -39,7 +39,7 @@ def reject(command, log, environment, payload=None, expected_prefix=None, expect
 
 def negative_controls(binary, engine_command, scenario, trace, directory, environment):
     scenario_mutations = {
-        'version': lambda x: x.update(format=2),
+        'version': lambda x: x.update(format=3),
         'revision': lambda x: x.update(upstream_revision='0' * 40),
         'empty_operations': lambda x: x.update(operations=[]),
         'empty_bytes': lambda x: x['operations'][2].update(bytes=''),

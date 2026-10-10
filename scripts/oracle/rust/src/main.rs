@@ -32,6 +32,9 @@ enum Operation {
 struct Game {
     frame: i32,
     accumulators: Vec<u32>,
+    version: u32,
+    rng: u32,
+    pending: u32,
 }
 
 impl Game {
@@ -39,6 +42,10 @@ impl Game {
         let mut bytes = self.frame.to_le_bytes().to_vec();
         for value in &self.accumulators {
             bytes.extend(value.to_le_bytes());
+        }
+        if self.version == 2 {
+            bytes.extend(self.rng.to_le_bytes());
+            bytes.extend(self.pending.to_le_bytes());
         }
         bytes
     }
@@ -82,7 +89,7 @@ fn state_fields(kind: &str, frame: i32, game: &Game, inputs: Value) -> Value {
 
 fn run(original: Value) -> Result<Value, String> {
     let scenario: Scenario = serde_json::from_value(original.clone()).map_err(|error| error.to_string())?;
-    if scenario.format != 1 || scenario.upstream_revision != REVISION {
+    if !(1..=2).contains(&scenario.format) || scenario.upstream_revision != REVISION {
         return Err("unsupported format or upstream revision".into());
     }
     if !(2..=8).contains(&scenario.players) || scenario.input_width != 4 || scenario.check_distance > 7 || scenario.input_delay > 7 {
@@ -105,7 +112,7 @@ fn run(original: Value) -> Result<Value, String> {
         .with_check_distance(scenario.check_distance)
         .with_input_delay(scenario.input_delay).map_err(|error| format!("{error:?}"))?
         .start_synctest_session().map_err(|error| format!("{error:?}"))?;
-    let mut game = Game { frame: 0, accumulators: vec![0; scenario.players] };
+    let mut game = Game { frame: 0, accumulators: vec![0; scenario.players], version: scenario.format, rng: 8173, pending: 0 };
     let mut records = Vec::new();
     for (index, operation) in scenario.operations.iter().enumerate() {
         let before = session.current_frame().as_i32();
@@ -141,6 +148,10 @@ fn run(original: Value) -> Result<Value, String> {
                                 FortressRequest::AdvanceFrame { inputs } => {
                                     let frame = game.frame;
                                     let mut traced_inputs = Vec::new();
+                                    let mut next_pending = 0_u32;
+                                    if game.version == 2 {
+                                        game.rng = game.rng.wrapping_mul(1664525).wrapping_add(1013904223);
+                                    }
                                     for (player, (input, status)) in inputs.iter().enumerate() {
                                         let status_text = match status {
                                             InputStatus::Confirmed => "confirmed",
@@ -148,8 +159,12 @@ fn run(original: Value) -> Result<Value, String> {
                                             InputStatus::Disconnected => "disconnected",
                                         };
                                         traced_inputs.push(json!({"player":player,"bytes":hex(input),"status":status_text}));
-                                        game.accumulators[player] = game.accumulators[player].wrapping_add(u32::from_le_bytes(*input));
+                                        let value = u32::from_le_bytes(*input);
+                                        let event = if game.version == 2 { game.pending.wrapping_add((game.rng & 255) * (player as u32 + 1)) } else { 0 };
+                                        game.accumulators[player] = game.accumulators[player].wrapping_add(value).wrapping_add(event);
+                                        next_pending = next_pending.wrapping_add(value.wrapping_mul(player as u32 + 1));
                                     }
+                                    game.pending = next_pending;
                                     game.frame = game.frame.checked_add(1).ok_or("game frame exhausted")?;
                                     requests.push(state_fields("advance", frame, &game, json!(traced_inputs)));
                                 }
@@ -164,7 +179,7 @@ fn run(original: Value) -> Result<Value, String> {
         records.push(json!({"index":index,"kind":kind,"result":if error.is_some(){"error"}else{"ok"},"error":error,
             "frame_before":before,"frame_after":session.current_frame().as_i32(),"confirmed_frame":null,"requests":requests,"events":events}));
     }
-    Ok(json!({"format":1,"upstream_revision":REVISION,"scenario":original,"operations":records,
+    Ok(json!({"format":scenario.format,"upstream_revision":REVISION,"scenario":original,"operations":records,
         "final_state":{"frame":game.frame,"bytes":hex(&game.bytes()),"checksum":format!("{:032x}",game.checksum())}}))
 }
 

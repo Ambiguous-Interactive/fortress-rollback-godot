@@ -40,7 +40,7 @@ class ContractTests(unittest.TestCase):
 
     def test_scenario_mutations(self):
         mutations = {
-            'version': lambda x: x.update(format=2),
+            'version': lambda x: x.update(format=3),
             'revision': lambda x: x.update(upstream_revision='0' * 40),
             'empty': lambda x: x.update(operations=[]),
             'unknown': lambda x: x.update(ignored=True),

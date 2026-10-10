@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -77,6 +78,18 @@ class LauncherTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         launch.main()
             self.assertFalse(receipt.exists())
+
+    def test_invalid_workers_remove_stale_receipt_without_starting_setup(self):
+        for value in ('0', '9', '-1', 'bad', '1.5'):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / 'receipt.json'
+                receipt.write_text('{"passed":true}')
+                result = subprocess.run([sys.executable, str(Path(launch.__file__)), '--godot', 'missing',
+                                         '--output', directory, '--jobs', value], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn('workers must be an integer in 1..8', result.stderr)
+                self.assertFalse(receipt.exists())
+                self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_game_receipt_mutations(self):
         mutations = {

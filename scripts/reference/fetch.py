@@ -62,8 +62,40 @@ def verify(path, pin):
         raise ValueError(f'digest mismatch: {path}: expected {pin["digest"]}, got {actual}')
 
 
+def same_tree(expected, actual):
+    """Compare all entries and bytes; metadata alone never establishes source integrity."""
+    if not actual.is_dir() or actual.is_symlink():
+        return False
+    left = {path.relative_to(expected): path for path in expected.rglob('*')}
+    right = {path.relative_to(actual): path for path in actual.rglob('*')}
+    if left.keys() != right.keys():
+        return False
+    for relative, path in left.items():
+        other = right[relative]
+        if path.is_symlink() or other.is_symlink():
+            if not (path.is_symlink() and other.is_symlink() and path.readlink() == other.readlink()):
+                return False
+        elif path.is_dir():
+            if not other.is_dir():
+                return False
+        elif not other.is_file() or path.stat().st_mode != other.stat().st_mode or digest(path) != digest(other):
+            return False
+    return True
+
+
+def retain_verified_tree(expected, destination):
+    """Keep unchanged mtimes for Cargo; replace any altered extraction from verified bytes."""
+    if same_tree(expected, destination):
+        return
+    if destination.is_symlink() or destination.is_file():
+        destination.unlink()
+    elif destination.exists():
+        shutil.rmtree(destination)
+    shutil.move(str(expected), destination)
+
+
 def sources(data, offline=False, cache=CACHE):
-    """Re-extract verified archives so modified source caches cannot become the oracle."""
+    """Re-extract verified archives and retain only byte-identical source caches."""
     result = {}
     for name, source in data['sources'].items():
         archive = fetch(source['archive'], name + '.tar.gz', offline, cache)
@@ -74,9 +106,7 @@ def sources(data, offline=False, cache=CACHE):
                     raise ValueError(f'{name}: unexpected source archive root')
                 tar.extractall(temporary, filter='data')
             destination = cache / source['root']
-            if destination.exists():
-                shutil.rmtree(destination)
-            shutil.move(str(Path(temporary) / source['root']), destination)
+            retain_verified_tree(Path(temporary) / source['root'], destination)
         result[name] = destination
         print(f'{name}: verified {source["revision"]} {source["archive"]["digest"]}')
     lock = result['fortress'] / 'Cargo.lock'

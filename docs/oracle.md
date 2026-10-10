@@ -15,7 +15,7 @@ python3 scripts/oracle/launch.py --godot /absolute/path/to/godot
 ```
 
 Use `--offline` after the pinned references, Rust toolchain and crates are cached.
-The launcher validates source archive integrity and re-extracts the references.
+The launcher validates source archive integrity and every extracted file before reuse.
 Cargo builds with the committed lockfile, Rust 1.94.0 and no upstream default or
 optional features. The upstream default prediction window is eight frames.
 Run separately with Godot 4.3 and current pinned 4.7.2. CI runs both.
@@ -26,9 +26,9 @@ The receipt records source/manifest/compiler/binary/engine identity, commit,
 dirty-worktree state and scenario/trace hashes. It is scoped development evidence,
 not a release coverage certificate.
 
-## Scenario version 1
+## Scenario versions 1 and 2
 
-All fields are required; unknown fields fail. `format` is integer 1 and
+All fields are required; unknown fields fail. `format` is integer 1 or 2 and
 `upstream_revision` is `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
 `players` is 2–8; `input_width` is four bytes; `check_distance` and
 `input_delay` are 0–7. `operations` contains 1–10000 ordered operations:
@@ -44,9 +44,9 @@ Missing local samples produce actual upstream errors. Unknown versions, empty
 operations, empty/wrong-width bytes and stale revisions fail before execution.
 JSON integers in this bounded schema are exact. Wide checksums use hex strings.
 
-## Trace version 1
+## Trace versions 1 and 2
 
-The trace contains `format`, `upstream_revision`, the exact `scenario`, one
+The trace format equals the scenario format. The trace contains `format`, `upstream_revision`, the exact `scenario`, one
 `operations` record per submitted operation, and `final_state`.
 Operation records contain `index`, `kind`, `result` (`ok`/`error`), `error`
 (null or the upstream Debug diagnostic), `frame_before`, `frame_after`,
@@ -70,9 +70,19 @@ without saved bytes, wrong slot ordering, and mismatched canonical state.
 
 ## Independent game and controls
 
-Canonical state is a little-endian signed32 frame followed by one unsigned32
+Version 1 canonical state is a little-endian signed32 frame followed by one unsigned32
 accumulator per player. Each advance adds that player's little-endian unsigned32
 input modulo 2^32. State includes every value influencing continuation.
+Version 2 appends unsigned32 PRNG and pending-event state, seeded to 8173 and
+zero. Each tick first updates the PRNG with `(rng * 1664525 + 1013904223) mod 2^32`.
+Each accumulator adds its input, the previous pending event, and
+`(rng & 255) * (player + 1)`, modulo 2^32. The next pending event is the weighted
+sum of current inputs, `sum((player + 1) * input[player]) mod 2^32`.
+All fields are restored; both extra fields influence subsequent gameplay.
+The version 1 corpus and serialization remain unchanged. Version 2 runs the same
+21 roster/distance/delay scenarios with this stateful game. A neutral first tick
+with two players encodes `0100000068000000d000000068004e6700000000`.
+
 The diagnostic unsigned128 checksum has FNV-1a-64 in its low limb and the
 bitwise complement in its high limb, encoded as 32 lowercase numeric hex digits.
 This exercises unsigned values beyond signed64 without JSON number conversion.
@@ -91,7 +101,11 @@ The corpus covers every player count 2–8, distance/delay pairs 0/0, 2/2 and 7/
 twenty successful frames, wraparound sums, distinct histories, missing-input
 errors before and during rollback, recovery retries and invalid handles.
 Each Rust trace, Godot game replay and production Godot session runs twice in
-fresh processes. Production-session comparison validates its trace independently,
+fresh processes. Four independent scenarios run concurrently by default;
+`--jobs 1` selects serial diagnosis, with accepted bounds 1–8. Setup/build and
+negative controls stay serial. Each scenario owns its logs and fixtures; final
+receipts retain corpus order. Failed scenarios prevent successful receipt publication.
+Production-session comparison validates its trace independently,
 then compares every ordered request, input status, callback state and frame.
 Only structured invalid-player/missing-local error categories and unavailable
 Rust confirmation are projected. Error projection accepts only the pinned full
@@ -105,6 +119,10 @@ reject request reversal and altered load bytes. Persistent mutants attack versio
 unknown fields, handle bounds, altered state/checksum, load-state injection,
 request reversal and missing operations. Process tests reject nonzero exits
 with plausible output, timeouts, partial completion and stale success receipts.
+The shared stateful game also runs through the public driver with deliberate
+PRNG and pending-event restore omissions. Constant checksum collisions still
+produce `DESYNC` at the first differing saved frame. An uninterrupted run checks
+canonical bytes after every successful healthy step. Restore rejection is atomic.
 The load mutant selects by kind, preserves frame/checksum consistency, and must
 fail at that exact load's canonical state comparison.
 

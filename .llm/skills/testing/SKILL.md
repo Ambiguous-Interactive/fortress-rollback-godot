@@ -151,6 +151,22 @@ A mutation must fail at its intended boundary. Require the diagnostic and
 consumed-record position so an unrelated parser or later-request failure cannot
 satisfy the negative control. Select mutated records by semantic kind.
 
+## Faster local iteration
+
+Use `make test-focus GODOT=/path/to/godot SUITE=res://tests/unit/test_input_queue.gd`
+for one suite while changing it. This retains both in-process and fresh-process
+repeat layers. Final delivery still runs all applicable suites and controls.
+The oracle launcher defaults to four independent scenario workers; `--jobs 1`
+selects serial diagnosis. Preserve deterministic receipt order and unique logs.
+Clear owned success receipts before validating new execution options, including
+malformed worker values; real subprocess controls protect that failure path.
+
+Keep verified source timestamps when bytes, modes, entry inventories and symlinks
+match freshly extracted pinned archives. A timestamp-only cache or a hash of an
+old receipt is insufficient. Cache downloaded Cargo crates and registry indexes,
+then unpack afresh: Cargo does not revalidate already-unpacked `registry/src`
+against crate checksums. Never restore that source tree as trusted CI evidence.
+
 ## CI
 
 `.github/workflows/` runs harness self-tests (`make test-llm`), source widths

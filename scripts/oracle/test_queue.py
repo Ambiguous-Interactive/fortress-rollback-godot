@@ -48,9 +48,16 @@ class QueueContractTests(unittest.TestCase):
                 _, receipt = observation_source(source)
                 hooked = root / 'cache/queue-observation/fortress/src/input_queue/mod.rs'
                 self.assertEqual(hooked.read_bytes(), original + OBSERVATION_HOOK.encode())
+                timestamps = {path: path.stat().st_mtime_ns for path in [hooked,
+                    root / 'cache/queue-observation/adapter/Cargo.toml', root / 'cache/queue-observation/adapter/Cargo.lock']}
+                observation_source(source)
+                self.assertEqual({path: path.stat().st_mtime_ns for path in timestamps}, timestamps)
+                injected = root / 'cache/queue-observation/adapter/build.rs'
+                injected.write_text('hostile build script')
                 hooked.write_text('altered wrapper')
                 _, repeated = observation_source(source)
                 self.assertEqual(receipt, repeated)
+                self.assertFalse(injected.exists())
                 self.assertEqual(hooked.read_bytes(), original + OBSERVATION_HOOK.encode())
                 self.assertEqual((source / 'src/input_queue/mod.rs').read_bytes(), original)
                 self.assertTrue(receipt['original_queue_unmodified'])

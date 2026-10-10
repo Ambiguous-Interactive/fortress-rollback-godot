@@ -1,8 +1,11 @@
 .PHONY: queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
-.PHONY: llm-index llm-index-prune pre-commit godot-check test-godot
+.PHONY: llm-index llm-index-prune pre-commit godot-check test-godot test-focus
 
 PY ?= python3
 GODOT ?= godot
+CATEGORY ?= unit
+SUITE ?=
+FILTER ?=
 
 ## Enforce the 180-character maximum across repository source files
 lint-source:
@@ -43,6 +46,10 @@ oracle-probes:
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:
 	$(PY) scripts/run_godot_tests.py --godot $(GODOT)
+
+## Focused local iteration, preserving both fresh-process and in-process repetitions
+test-focus:
+	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --category $(CATEGORY) $(if $(SUITE),--suite $(SUITE)) $(if $(FILTER),--filter $(FILTER))
 
 ## Minimum/current native and exported-Web representation experiments
 representation-probes:

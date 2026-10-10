@@ -8,8 +8,10 @@ import platform
 import hashlib
 import shutil
 import subprocess
+import tempfile
 
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
+from fetch import retain_verified_tree
 from queue_contract import compare, validate_bundle
 from queue_corpus import bundle
 
@@ -35,15 +37,16 @@ def observation_source(tree):
     """Leave verified sources immutable; append access-only wrappers in a disposable copy."""
     workspace = CACHE / 'queue-observation'
     upstream = workspace / 'fortress'
-    if upstream.exists():
-        shutil.rmtree(upstream)
-    shutil.copytree(tree, upstream)
+    workspace.mkdir(parents=True, exist_ok=True)
     relative = Path('src/input_queue/mod.rs')
     original = (tree / relative).read_bytes()
     hooked = original + OBSERVATION_HOOK.encode()
-    (upstream / relative).write_bytes(hooked)
+    with tempfile.TemporaryDirectory(dir=workspace) as temporary:
+        expected = Path(temporary) / 'fortress'
+        shutil.copytree(tree, expected)
+        (expected / relative).write_bytes(hooked)
+        retain_verified_tree(expected, upstream)
     adapter = workspace / 'adapter'
-    adapter.mkdir(parents=True, exist_ok=True)
     original_manifest = ROOT / 'scripts/oracle/rust/Cargo.toml'
     manifest = original_manifest.read_text()
     old = '../../../.cache/reference/fortress-rollback-' + 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
@@ -51,8 +54,12 @@ def observation_source(tree):
         raise ValueError('queue adapter dependency anchor changed')
     manifest = manifest.replace(old, str(upstream))
     manifest += '\n[[bin]]\nname = "queue"\npath = ' + json.dumps(str(ROOT / 'scripts/oracle/rust/src/bin/queue.rs')) + '\n'
-    (adapter / 'Cargo.toml').write_text(manifest)
-    shutil.copyfile(ROOT / 'scripts/oracle/rust/Cargo.lock', adapter / 'Cargo.lock')
+    with tempfile.TemporaryDirectory(dir=workspace) as temporary:
+        expected = Path(temporary) / 'adapter'
+        expected.mkdir()
+        (expected / 'Cargo.toml').write_text(manifest)
+        shutil.copyfile(ROOT / 'scripts/oracle/rust/Cargo.lock', expected / 'Cargo.lock')
+        retain_verified_tree(expected, adapter)
     return adapter / 'Cargo.toml', {
         'method': 'unchanged verified source plus three access-only delegation wrappers in isolated copy',
         'original_queue_sha256': hashlib.sha256(original).hexdigest(),

@@ -31,3 +31,6 @@ Thumbs.db
 # Verified development caches
 /.cache/reference/
 /.cache/tests/
+
+# Agent measurement and issue-read artifacts
+/.cache/session-*/

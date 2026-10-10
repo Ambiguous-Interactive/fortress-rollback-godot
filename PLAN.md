@@ -125,7 +125,7 @@ This index is navigation rather than a duplicate progress tracker.
 The runtime core includes the bounded raw queue, frame/generation-tagged snapshots,
 shared ordered request engine, local sync-test mode and synchronous game driver.
 `make oracle-probes` compares production Godot sync-test requests and canonical
-bytes directly with pinned upstream sessions. External-input tests verify
+bytes, including snapshotted PRNG and pending-event games, directly with pinned upstream sessions. External-input tests verify
 asymmetric prediction and corrected replay; transport/P2P observation remains
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59).
 These scoped gates do not establish browser or full-feature release parity.

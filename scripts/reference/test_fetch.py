@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import tarfile
 import os
 import sys
 import unittest
@@ -13,7 +14,7 @@ import zipfile
 import run as rust_runner
 import godot_smoke as godot_runner
 
-from fetch import MANIFEST, fetch, load_manifest
+from fetch import MANIFEST, fetch, load_manifest, sources
 from run import semantic
 from godot_smoke import run as engine_command
 
@@ -46,6 +47,45 @@ class ReferenceContracts(unittest.TestCase):
                 fetch(pin, 'artifact', offline=True, cache=cache)
             path.write_bytes(b'valid')
             self.assertEqual(fetch(pin, 'artifact', offline=True, cache=cache), path)
+
+    def test_verified_extraction_retains_mtimes_and_repairs_all_cache_mutations(self):
+        # Value: verified warm sources avoid rebuilds; byte, mode, extra/missing and symlink mutations still repair.
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder)
+            seed = cache / 'seed'
+            seed.mkdir()
+            (seed / 'Cargo.lock').write_bytes(b'lock')
+            (seed / 'source.rs').write_bytes(b'original')
+            archive = cache / 'downloads/fortress.tar.gz'
+            archive.parent.mkdir()
+            with tarfile.open(archive, 'w:gz') as package:
+                package.add(seed, arcname='pinned')
+            data = {'sources': {'fortress': {'root': 'pinned', 'revision': '0' * 40,
+                    'archive': {'algorithm': 'sha256', 'digest': hashlib.sha256(archive.read_bytes()).hexdigest()}}},
+                    'rust': {'lockfile_sha256': hashlib.sha256(b'lock').hexdigest()}}
+            tree = sources(data, True, cache)['fortress']
+            original = (tree / 'source.rs').stat().st_mtime_ns
+            sources(data, True, cache)
+            self.assertEqual((tree / 'source.rs').stat().st_mtime_ns, original)
+            for mutation in ('bytes', 'mode', 'extra', 'missing', 'symlink'):
+                with self.subTest(mutation=mutation):
+                    source = tree / 'source.rs'
+                    if mutation == 'bytes':
+                        source.write_bytes(b'corrupt!')
+                    elif mutation == 'mode':
+                        source.chmod(0o755)
+                    elif mutation == 'extra':
+                        (tree / 'injected.rs').write_bytes(b'hostile')
+                    elif mutation == 'missing':
+                        source.unlink()
+                    else:
+                        source.unlink()
+                        source.symlink_to(seed / 'source.rs')
+                    sources(data, True, cache)
+                    self.assertEqual(source.read_bytes(), b'original')
+                    self.assertEqual(source.stat().st_mode, (seed / 'source.rs').stat().st_mode)
+                    self.assertFalse(source.is_symlink())
+                    self.assertFalse((tree / 'injected.rs').exists())
 
     def test_runner_rejects_empty_failed_or_ignored_selection(self):
         for output in ('running 0 tests', 'test regression ... FAILED', 'test regression ... ignored', 'test partial ... ok',
