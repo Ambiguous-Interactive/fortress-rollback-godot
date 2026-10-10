@@ -1,0 +1,22 @@
+{
+    "mcpServers": {
+        "godot": {
+            "type": "stdio",
+            "command": "godot-mcp",
+            "env": {
+                "GODOT_PATH": "/usr/local/bin/godot"
+            }
+        },
+        "context7": {
+            "type": "http",
+            "url": "https://mcp.context7.com/mcp"
+        },
+        "github": {
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "headers": {
+                "Authorization": "Bearer ${MCP_GITHUB_PAT}"
+            }
+        }
+    }
+}

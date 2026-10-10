@@ -1,0 +1,67 @@
+name: Devcontainer Verify
+
+# Guards the devcontainer: shell script linting, config validity, a full
+# image build (features included), and the acceptance harness run inside the
+# freshly built container. Fresh runners always create fresh containers.
+# Both architectures are covered: the Dockerfile's arch branches
+# (x86_64/arm64) are the paths real users take.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+      - ".mcp.json"
+      - "opencode.json"
+      - "Makefile"
+      - ".githooks/**"
+      - "scripts/**"
+      - ".github/workflows/devcontainer.yml"
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - ".mcp.json"
+      - "opencode.json"
+      - "Makefile"
+      - ".githooks/**"
+      - "scripts/**"
+      - ".github/workflows/devcontainer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build and verify (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint shell scripts
+        run: shellcheck -S warning .devcontainer/*.sh
+
+      - name: Validate JSON configs
+        # devcontainer.json is intentionally excluded: the devcontainer spec
+        # allows JSONC, and `up` validates it. These two must stay pure JSON.
+        run: |
+          jq -e . .mcp.json opencode.json >/dev/null
+          jq -e '.mcpServers | has("godot") and has("context7") and has("github")' .mcp.json >/dev/null
+          jq -e '.mcp | has("godot") and has("context7") and has("github")' opencode.json >/dev/null
+
+      - name: Build and start devcontainer
+        run: npx -y @devcontainers/cli@0.89.0 up --workspace-folder . --frozen-lockfile
+
+      - name: Acceptance harness inside container
+        # postCreateCommand already ran the FULL verify.sh during up; the exec
+        # re-runs the quick subset for a clean pass/fail line in the log.
+        run: npx -y @devcontainers/cli@0.89.0 exec --workspace-folder . -- bash .devcontainer/verify.sh --quick

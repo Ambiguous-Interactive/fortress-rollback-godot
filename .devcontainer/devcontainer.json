@@ -1,0 +1,77 @@
+{
+    "name": "Fortress Rollback Godot",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "GODOT_VERSION": "4.7.2-stable"
+        }
+    },
+    "initializeCommand": "test -f .devcontainer/devcontainer.env || cp .devcontainer/devcontainer.env.example .devcontainer/devcontainer.env",
+    "runArgs": [
+        "--env-file",
+        "${localWorkspaceFolder}/.devcontainer/devcontainer.env"
+    ],
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {},
+        "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "geequlim.godot-tools",
+                "alfish.godot-files",
+                "DoHe.godot-format",
+                "anthropic.claude-code",
+                "eamodio.gitlens",
+                "editorconfig.editorconfig",
+                "ms-vscode.makefile-tools",
+                "streetsidesoftware.code-spell-checker",
+                "usernamehw.errorlens",
+                "tamasfe.even-better-toml"
+            ],
+            "settings": {
+                "godotTools.editorPath.godot4": "/usr/local/bin/godot",
+                "godotTools.lsp.serverPort": 6005,
+                "[gdscript]": {
+                    "editor.defaultFormatter": "DoHe.godot-format",
+                    "editor.formatOnSave": true
+                },
+                "files.eol": "\n",
+                "editor.rulers": [
+                    100
+                ]
+            }
+        }
+    },
+    "containerEnv": {
+        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+        "GODOT_VERSION": "4.7.2-stable",
+        "HISTFILE": "/home/vscode/.commandhistory/.bash_history"
+    },
+    "remoteEnv": {
+        "MCP_GITHUB_PAT": "${containerEnv:GITHUB_TOKEN}"
+    },
+    "mounts": [
+        "source=frg-claude-config-${devcontainerId},target=/home/vscode/.claude,type=volume",
+        "source=frg-opencode-data-${devcontainerId},target=/home/vscode/.local/share/opencode,type=volume",
+        "source=frg-uv-cache-${devcontainerId},target=/home/vscode/.cache/uv,type=volume",
+        "source=frg-godot-cache-${devcontainerId},target=/home/vscode/.local/share/godot,type=volume",
+        "source=frg-bash-history-${devcontainerId},target=/home/vscode/.commandhistory,type=volume"
+    ],
+    "forwardPorts": [
+        6005,
+        6006
+    ],
+    "portsAttributes": {
+        "6005": {
+            "label": "GDScript Language Server",
+            "onAutoForward": "silent"
+        },
+        "6006": {
+            "label": "GDScript Debug Adapter",
+            "onAutoForward": "silent"
+        }
+    },
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    "remoteUser": "vscode"
+}
