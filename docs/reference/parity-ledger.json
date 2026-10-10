@@ -1361,15 +1361,23 @@
     "fortress:src/input_queue/mod.rs": {
       "applicability": "unknown",
       "port_test_ids": [],
-      "rationale": "Source-family discovery only; semantic contracts and runtime-specific obligations remain unaudited.",
-      "review": null,
+      "rationale": "Scoped source audit in docs/input-queue.md resolves ordinary queue retention, delay and frozen prediction episodes. Mixed first-tier, advanced-session and Rust-specific obligations require semantic entries; whole-family applicability and executable coverage remain pending.",
+      "review": {
+        "evidence": "docs/input-queue.md (source inspection only; no whole-family runtime certification)",
+        "reviewer": "Codex source audit; fresh-context adversarial review completed in session 005",
+        "revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8"
+      },
       "status": "pending"
     },
     "fortress:src/input_queue/prediction.rs": {
       "applicability": "unknown",
       "port_test_ids": [],
-      "rationale": "Source-family discovery only; semantic contracts and runtime-specific obligations remain unaudited.",
-      "review": null,
+      "rationale": "Scoped source audit in docs/input-queue.md resolves standalone repeat-last and blank prediction strategies; queue hardcodes repeat-last. Mixed first-tier, advanced-session and Rust-specific obligations require semantic entries; whole-family applicability and executable coverage remain pending.",
+      "review": {
+        "evidence": "docs/input-queue.md (source inspection only; no whole-family runtime certification)",
+        "reviewer": "Codex source audit; fresh-context adversarial review completed in session 005",
+        "revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8"
+      },
       "status": "pending"
     },
     "fortress:src/json.rs": {

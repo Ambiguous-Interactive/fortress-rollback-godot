@@ -68,6 +68,16 @@ regression and witness artifacts remain pending evidence, including Loom/Kani/SM
 and allocation-related assets. Rust-specific execution mechanisms are not grounds
 for discarding behavioral obligations.
 
+## Scoped queue source audit
+
+The [input queue contract](../input-queue.md) reviews ordinary delay, retained
+actual input and prediction-episode semantics in `src/input_queue/mod.rs` and
+`src/input_queue/prediction.rs`. Those two decisions record the scoped source
+inspection, while retaining `pending` status and `unknown` whole-family
+applicability. Queue mechanisms share their source family with advanced
+membership, recovery and Rust verification obligations. Schema 1 cannot express
+that split, so the audit does not certify those families or complete B2.
+
 ## Remaining B2 requirements
 
 Issue 13 stays open. The next source audit must:

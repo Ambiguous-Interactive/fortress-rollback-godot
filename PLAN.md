@@ -29,6 +29,7 @@ Local development contracts and evidence entry points:
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
+- [Audited raw input queue and prediction contracts](docs/input-queue.md).
 - [Actual upstream sync-test traces and independent game replay](docs/oracle.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.
@@ -117,6 +118,13 @@ This index is navigation rather than a duplicate progress tracker.
 | Maintenance | [M1 classification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/51); [M2 reporting](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/52); [M3 reviewed upgrades](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/53) |
 
 ## Architecture
+
+The first runtime component is the bounded raw queue in
+`addons/fortress_rollback/core/input_queue.gd`. `make queue-probes` compares
+its supported ordinary operations directly with the pinned upstream queue.
+Session confirmation, prediction-window gating, rollback-floor reclamation and
+snapshot orchestration remain subsequent work; raw queue evidence does not
+establish a usable rollback session.
 
 | Layer | Responsibility |
 | --- | --- |
