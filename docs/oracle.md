@@ -123,6 +123,9 @@ The shared stateful game also runs through the public driver with deliberate
 PRNG and pending-event restore omissions. Constant checksum collisions still
 produce `DESYNC` at the first differing saved frame. An uninterrupted run checks
 canonical bytes after every successful healthy step. Restore rejection is atomic.
+Persistent process-mutation controls run separately for both format versions.
+State/checksum controls must consume every request before their final comparison
+fails; empty-work controls must fail scenario validation with zero requests.
 The load mutant selects by kind, preserves frame/checksum consistency, and must
 fail at that exact load's canonical state comparison.
 

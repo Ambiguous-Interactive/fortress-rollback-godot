@@ -36,6 +36,17 @@ production-session processes. Receipts:
 `.cache/reference/results/session-007-oracle{43,472}/receipt.json`.
 Full native units: `.cache/tests/session-007-all{43,472}.json`.
 Original omission-independent local rollback/correction tests remain intact.
+The final coverage audit caught that choosing the last control witness moved
+persistent process mutations to version 2. Both format witnesses now execute
+those controls separately; the original receipt control list remains version 1,
+with an additional versioned inventory. A missing witness fails explicitly.
+The automatic review also identified version-1 widths in the version-2 state
+mutations. Real pre-fix logs failed at schema validation instead of state comparison.
+Mutation widths and empty-state bytes/checksums now follow their scenario version;
+state/checksum controls require complete request consumption and the intended
+comparison diagnostic. Empty-work controls require the scenario diagnostic at
+request count zero. Fresh review independently reran all 13 controls per version
+and completed clean. All 23 offline oracle tests pass.
 
 ## Iteration and CI
 

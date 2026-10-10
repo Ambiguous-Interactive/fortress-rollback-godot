@@ -91,6 +91,29 @@ class LauncherTests(unittest.TestCase):
                 self.assertFalse(receipt.exists())
                 self.assertEqual(list(Path(directory).iterdir()), [])
 
+    def test_game_controls_cannot_pass_at_schema_failure_or_wrong_boundary(self):
+        prefix = 'FORTRESS_ORACLE_GAME_RESULT '
+        valid = {'passed': False, 'complete': True, 'errors': ['final state: state mismatch at frame 20'], 'request_count': 10}
+        controls.validate_game_failure(prefix + json.dumps(valid), 'state mismatch', 10)
+        for patch_value in ({'errors': ['state: invalid canonical bytes or checksum']},
+                            {'request_count': 9}, {'request_count': 10.0}, {'complete': False}, {'passed': True}):
+            with self.subTest(patch_value=patch_value), self.assertRaises(ValueError):
+                controls.validate_game_failure(prefix + json.dumps(dict(valid, **patch_value)), 'state mismatch', 10)
+
+    def test_both_formats_keep_persistent_process_controls(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            witnesses = {version: ({'format': version}, {'format': version}) for version in (1, 2)}
+            with patch.object(launch, 'negative_controls', return_value=['control']) as run:
+                result = launch.versioned_controls(Path('binary'), Path('engine'), witnesses, output)
+            self.assertEqual(result, {'1': ['control'], '2': ['control']})
+            self.assertEqual([call.args[2]['format'] for call in run.call_args_list], [1, 2])
+            self.assertEqual([call.args[3]['format'] for call in run.call_args_list], [1, 2])
+            self.assertEqual([call.args[4] for call in run.call_args_list],
+                             [output / 'controls-v1', output / 'controls-v2'])
+            with self.assertRaisesRegex(ValueError, 'missing format-specific control witness'):
+                launch.versioned_controls(Path('binary'), Path('engine'), {2: witnesses[2]}, output)
+
     def test_game_receipt_mutations(self):
         mutations = {
             'incomplete': lambda x: x.update(complete=False),
