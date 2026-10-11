@@ -17,6 +17,9 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd")
+const HandshakeTypes = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
+const ProtocolTypes = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 
 class Game:
     extends RefCounted
@@ -56,8 +59,41 @@ func _initialize() -> void:
     if result.code != Types.Code.OK or result.frame_after != 1 or game.ticks != 1:
         quit(1)
         return
+    if not _handshake():
+        quit(1)
+        return
     print("FORTRESS_ADDON_PACKAGE_OK")
     quit(0)
+
+func _handshake() -> bool:
+    var peers: Array[Handshake] = []
+    var roster: Array[PackedByteArray] = [PackedByteArray([1, 0, 0, 0, 0, 0, 0, 0]), PackedByteArray([2, 0, 0, 0, 0, 0, 0, 0])]
+    for slot: int in range(2):
+        var local: ProtocolTypes.Message = ProtocolTypes.Message.new()
+        local.kind = ProtocolTypes.Kind.SYNC_REQUEST
+        local.sender_id = roster[slot].duplicate()
+        local.connection_id = roster[slot].duplicate()
+        local.session_id.fill(1)
+        local.config.roster = roster
+        var options: HandshakeTypes.Options = HandshakeTypes.Options.new()
+        options.roundtrips = 1
+        var peer: Handshake = Handshake.new()
+        if peer.configure(local, roster[1 - slot], options) != HandshakeTypes.Code.OK:
+            return false
+        local.token.fill(slot + 1)
+        if peer.begin(0, local.token) != HandshakeTypes.Code.OK:
+            return false
+        peers.append(peer)
+    for packet: PackedByteArray in peers[0].drain_outbox():
+        if peers[1].receive(packet, roster[0], 0) != HandshakeTypes.Code.OK:
+            return false
+    for packet: PackedByteArray in peers[1].drain_outbox():
+        if peers[0].receive(packet, roster[1], 0) != HandshakeTypes.Code.OK:
+            return false
+    for packet: PackedByteArray in peers[0].drain_outbox():
+        if peers[1].receive(packet, roster[0], 0) != HandshakeTypes.Code.OK:
+            return false
+    return peers[0].status().state == "running" and peers[1].status().state == "running"
 '''
 
 
@@ -111,7 +147,7 @@ def main():
     report = {'passed': True, 'entries': entries, 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
               'command': command, 'engine_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
-              'limits': 'Addon-only candidate and one native tick; not a supported release or browser networking gate.'}
+              'limits': 'Addon-only candidate, one native tick and two-peer byte handshake; not a supported release or browser networking gate.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'files': len(entries), 'results': str(receipt)}))
 

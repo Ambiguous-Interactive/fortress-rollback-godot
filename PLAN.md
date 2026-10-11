@@ -35,6 +35,8 @@ Local development contracts and evidence entry points:
 - [Actual upstream and production Godot sync-test differential traces](docs/oracle.md).
 - [Shared session engine, bounded snapshots and game driver](docs/session.md).
 - [Bounded protocol message layout and source audit](docs/protocol.md).
+- [Fixed-peer byte handshake and injected time/token API](docs/handshake.md).
+- [Actual upstream/Godot handshake observations and scoped model refinement](docs/oracle-handshake.md).
 - [Runnable offline driver and presentation example](docs/offline-example.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.

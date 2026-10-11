@@ -66,8 +66,9 @@ roster slots to authenticated transport senders belong to the endpoint.
 The header length is 44 bytes. The declared payload must consume the complete
 packet. Unknown versions, kinds, flags and trailing bytes are rejected.
 Layout-version agreement is separate from the synchronization payload's
-minimum semantic compatibility version. This release supports version 1
-and minimum compatibility 1 only; no fallback negotiation is implemented.
+minimum semantic compatibility version. The codec preserves all u8 semantic
+versions so the endpoint can diagnose incompatibility. Layout version stays 1;
+no fallback negotiation is implemented.
 
 ## Message payloads
 
@@ -89,8 +90,8 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 10 | `FLOOR_REQUEST` | round_seq:u32 |
 | 11 | `FLOOR_REPLY` | round_seq:u32, count:u8, floors[count]:i32, nullable |
 
-The currently supported feature mask is zero. Unknown feature bits fail
-validation rather than enabling undeclared behavior. `GOODBYE.reason` preserves
+The codec preserves all u32 feature masks for endpoint agreement checks.
+Parsing a feature bit does not enable its behavior. `GOODBYE.reason` preserves
 all u8 values; policy maps known reasons and handles unknown reasons explicitly.
 
 An input packet carries at least one complete frame and one slot. `players`
@@ -114,8 +115,8 @@ round sequence and lifecycle checks remain endpoint responsibilities.
 
 | Field | Encoding | Accepted values |
 | --- | --- | --- |
-| player_count | u8 | Exactly `Limits.player_count`, 2–8 |
-| input_width | u32 | Exactly `Limits.input_width`, 1–65536 |
+| player_count | u8 | 2–8, independently of the local player's configuration |
+| input_width | u32 | 1–65536, independently of the local input width |
 | fps | u32 | 1–4294967295 |
 | max_prediction | u16 | 0–128 |
 | input_delay | u16 | 0–65535 |
@@ -135,6 +136,10 @@ The fixed configuration part is 29 bytes. Roster entries can repeat because one 
 may own several player slots. Transport identities are never renumbered during
 a live session. The input width uses u32 so the local engine's supported
 65536-byte input domain remains representable.
+
+Handshake dimensions are bounded before reading variable bytes, then compared
+by the endpoint. This allows player-count and input-width mismatch events.
+Gameplay input/status/floor geometry still uses the agreed `Limits` values.
 
 `config_digest` is an opaque application-supplied 8-byte compatibility digest
 for additional game agreement beyond these explicit fields. It is preserved

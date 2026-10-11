@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add bounded peer handshakes with explicit configuration mismatch events, injected time and tokens, retries, and synchronization progress.
+
 - Add a playable offline sync-test example with complete integer snapshots and rollback-safe presentation.
 
 - Add complete snapshot-read checks so callbacks can reject trailing bytes before restoring game state.

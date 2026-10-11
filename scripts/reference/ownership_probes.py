@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify integer, ownership and production protocol codec on pinned native/Web engines."""
+"""Verify integer, ownership and production protocol/handshake on pinned native/Web engines."""
 import argparse
 import json
 import os
@@ -15,6 +15,8 @@ from run import begin_results, capture
 PREFIX = 'FORTRESS_TEST_RESULT '
 EXPECTED = {
     'res://tests/unit/test_protocol_codec.gd': {'golden', 'truncation', 'malformed', 'limits', 'types', 'ownership', 'semantics', 'hostile_bytes'},
+    'res://tests/unit/test_protocol_handshake_fields.gd': {'compatibility', 'geometry', 'bounds'},
+    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'time', 'identity', 'backpressure', 'ownership'},
     'res://tests/determinism/test_buffer_ownership.gd': {'engine_boundaries', 'owned_input', 'snapshot_wraps', 'snapshot_bounds'},
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }
@@ -24,18 +26,23 @@ FILES = [
     'tests/determinism/test_buffer_ownership.gd', 'tests/determinism/ownership_slots.gd',
     'tests/determinism/test_integer_encoding.gd', 'tests/determinism/integer_codec.gd', 'tests/determinism/integer_vectors.json',
     '.llm/code-samples/state_checksum.gd',
-    'tests/unit/test_protocol_codec.gd', 'tests/fixtures/protocol/golden.json',
+    'tests/unit/test_protocol_codec.gd', 'tests/unit/test_protocol_handshake_fields.gd', 'tests/fixtures/protocol/golden.json',
     'addons/fortress_rollback/protocol/protocol_codec.gd', 'addons/fortress_rollback/protocol/protocol_types.gd',
     'addons/fortress_rollback/protocol/protocol_reader.gd', 'addons/fortress_rollback/protocol/protocol_validation.gd',
     'addons/fortress_rollback/protocol/protocol_projection.gd',
+    'tests/unit/test_handshake.gd', 'addons/fortress_rollback/protocol/handshake.gd',
+    'addons/fortress_rollback/protocol/handshake_types.gd', 'addons/fortress_rollback/protocol/handshake_agreement.gd',
 ]
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
 const Suite = preload("res://tests/determinism/test_buffer_ownership.gd")
 const Integers = preload("res://tests/determinism/test_integer_encoding.gd")
 const Protocol = preload("res://tests/unit/test_protocol_codec.gd")
+const HandshakeFields = preload("res://tests/unit/test_protocol_handshake_fields.gd")
+const Handshake = preload("res://tests/unit/test_handshake.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers, Protocol]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake]
+\tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
@@ -212,7 +219,7 @@ def main():
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'),
               'sources': {p: digest(ROOT / p) for p in FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs']},
-              'records': records, 'scope': 'Integer/ownership research and production protocol byte boundary; no transport, performance or other-browser/platform claim.'}
+              'records': records, 'scope': 'Integer/ownership research and byte handshake endpoint; no real transport, gameplay, performance or other-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

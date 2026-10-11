@@ -24,10 +24,10 @@ static func limits(value: T.Limits) -> bool:
 	)
 
 
-static func config(value: T.Config, bounds: T.Limits) -> bool:
+static func config(value: T.Config) -> bool:
 	if value == null:
 		return false
-	if value.player_count != bounds.player_count or value.input_width != bounds.input_width:
+	if value.player_count < 2 or value.player_count > 8 or value.input_width < 1 or value.input_width > 65536:
 		return false
 	if value.fps < 1 or value.fps > 4294967295 or value.max_prediction < 0 or value.max_prediction > 128:
 		return false
@@ -58,7 +58,9 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 		return -1
 	match message.kind:
 		T.Kind.SYNC_REQUEST, T.Kind.SYNC_REPLY:
-			if message.token.size() != 16 or message.min_compat_version != 1 or message.features != 0 or message.config_digest.size() != 8 or not config(message.config, bounds):
+			if message.token.size() != 16 or message.min_compat_version < 0 or message.min_compat_version > 255:
+				return -1
+			if message.features < 0 or message.features > 4294967295 or message.config_digest.size() != 8 or not config(message.config):
 				return -1
 			return 58 + message.config.input_width + message.config.player_count * 8
 		T.Kind.INPUT:

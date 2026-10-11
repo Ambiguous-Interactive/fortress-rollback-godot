@@ -70,8 +70,12 @@ bounded snapshots and thin game driver. The [raw input queue](./docs/input-queue
 provides bounded per-player history.
 The [protocol codec](./docs/protocol.md) specifies bounded binary messages for
 the planned P2P layer, with independent native and exported-Web vectors.
+The [fixed-peer handshake](./docs/handshake.md) consumes those bytes, validates
+agreement and peer identity, and reports synchronization progress or specific
+mismatches. Protocol time and request tokens come from the caller.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
-for direct pinned Rust/Godot queue comparisons. Rust is development-only.
+for direct pinned Rust/Godot queue comparisons. `make handshake-probes` compares
+actual upstream handshake observations with the Godot endpoint. Rust is development-only.
 
 ## License
 
