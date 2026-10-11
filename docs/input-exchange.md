@@ -13,7 +13,7 @@ Preload `protocol/input_endpoint.gd`, `input_endpoint_types.gd`,
 
 | Operation | Contract |
 | --- | --- |
-| `configure(local, remote_sender, handshake_options, options, accept_input)` | One-shot configuration; local is a `SYNC_REQUEST` profile. |
+| `configure(local, remote_sender, handshake_options, options, accept_input, lifecycle_options = null)` | One-shot configuration; optional lifecycle controls. |
 | `begin(now_us, token)` | Start the composed handshake. |
 | `poll(now_us, next_token = null, statuses = [])` | Drive synchronization or strict running retry; optional full roster statuses refresh gossip. |
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Decode and validate the actual packet before retaining new inputs. |
@@ -70,10 +70,12 @@ re-ACKed, repairing a lost ACK without overwriting confirmed session data.
 Full-roster status `last_frame` values merge monotonically. `peer_statuses`
 contains only received peer observations; the separate `connect_statuses` cache
 contains local status supplied to `submit`/`poll` and feeds outgoing packets.
-Local status must never stand in for evidence of a remote peer retaining input. Disconnect flags and
-nonzero epochs return `UNSUPPORTED_KIND`: disconnect convergence, epoch changes,
-quality reports, keepalive/liveness policy and checksum exchange remain separate
-roadmap work.
+Local status must never stand in for evidence of a remote peer retaining input.
+Disconnect flags and nonzero epochs return `UNSUPPORTED_KIND`: disconnect
+convergence and epoch changes remain separate roadmap work. An explicit lifecycle options
+argument enables [quality, liveness, checksum and goodbye controls](peer-lifecycle.md).
+Omitting it preserves the standalone input-only API; the peer façade enables it
+by default.
 
 ## Bounds and evidence
 

@@ -18,6 +18,14 @@ const TICK_US: int = 16667
 class Game:
 	extends Simulation
 	var restores: int = 0
+	var is_divergent: bool = false
+
+	func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
+		if not super.simulate_frame(input_frame, inputs):
+			return false
+		if is_divergent:
+			x[0] = 20 + (x[0] - 20 + 1) % 441
+		return true
 
 	func load_state(saved_frame: int, reader: Reader) -> bool:
 		var accepted: bool = super.load_state(saved_frame, reader)
@@ -40,6 +48,8 @@ var sent: int = 0
 var dropped: int = 0
 var delivered: int = 0
 var failure: int = I.Code.OK
+var event_counts: Array[Dictionary] = [{}, {}]
+var latest_events: Array[Dictionary] = [{}, {}]
 var _tokens: int = 0
 var _packets: Array[Dictionary] = []
 var _held: PackedInt32Array = PackedInt32Array([-1, -1])
@@ -60,6 +70,8 @@ func reset() -> int:
 	delivered = 0
 	_tokens = 0
 	failure = I.Code.OK
+	event_counts = [{}, {}]
+	latest_events = [{}, {}]
 	is_partitioned = false
 	for player: int in range(2):
 		var config: Config = Config.new()
@@ -75,6 +87,7 @@ func reset() -> int:
 		profile.connection_id = _ids[player].duplicate()
 		profile.session_id[0] = 17
 		profile.config.input_delay = 2
+		profile.config.desync_interval = 30
 		profile.config.roster = [_ids[0].duplicate(), _ids[1].duplicate()]
 		var handshake: H.Options = H.Options.new()
 		handshake.roundtrips = 2
@@ -106,8 +119,10 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 		return
 	now_us += TICK_US
 	for session: Peer in sessions:
+		if session.status().lifecycle == Types.Lifecycle.TERMINATED:
+			continue
 		var code: int = session.poll(now_us, [_token()])
-		if code != I.Code.OK:
+		if code != I.Code.OK and session.status().lifecycle != Types.Lifecycle.TERMINATED:
 			failure = code
 	_deliver()
 	for player: int in range(sessions.size()):
@@ -123,16 +138,28 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 				presentations[player].reconcile(games[player])
 			elif result.code in [Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 				stalls[player] += 1
+			elif session.status().lifecycle == Types.Lifecycle.TERMINATED:
+				pass
 			else:
 				failure = I.Code.INPUT_FAILED
 		# Bounded diagnostics must be drained even when simulation stalls.
-		session.drain_events()
+		for event: Dictionary in session.drain_events():
+			var kind: String = event.kind
+			event_counts[player][kind] = event_counts[player].get(kind, 0) + 1
+			if kind != "inputs_received":
+				latest_events[player] = event.duplicate(true)
 		session.drain_transitions()
 	_collect()
 
 
 func queued_packets() -> int:
 	return _packets.size()
+
+
+## Deliberately use different game rules on peer one to demonstrate checksum failure.
+func inject_desync() -> void:
+	if games.size() == 2:
+		games[0].is_divergent = true
 
 
 func _token() -> PackedByteArray:
@@ -161,11 +188,16 @@ func _deliver() -> void:
 			retained.append(packet)
 			continue
 		var source: int = packet.sender
+		if sessions[1 - source].status().lifecycle == Types.Lifecycle.TERMINATED:
+			dropped += 1
+			continue
 		var code: int = sessions[1 - source].receive(packet.bytes, _ids[source], now_us, _token())
 		if (code == I.Code.WRONG_STATE and sessions[1 - source].network_status().state == "synchronizing"
-			and packet.bytes.size() >= 8 and packet.bytes.decode_u16(6) == T.Kind.INPUT):
-			# One endpoint can finish handshake first; its retained input will retry.
+			and packet.bytes.size() >= 8 and packet.bytes.decode_u16(6) not in [T.Kind.SYNC_REQUEST, T.Kind.SYNC_REPLY]):
+			# The sender retries gameplay and control traffic after synchronization.
 			dropped += 1
+		elif code != I.Code.OK and sessions[1 - source].status().lifecycle == Types.Lifecycle.TERMINATED:
+			delivered += 1
 		elif code != I.Code.OK:
 			failure = code
 		else:

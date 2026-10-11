@@ -22,6 +22,8 @@ const HandshakeTypes = preload("res://addons/fortress_rollback/protocol/handshak
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const InputTypes = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const ProtocolTypes = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+var kinds: Dictionary = {}
 
 class Game:
     extends RefCounted
@@ -30,6 +32,8 @@ class Game:
         writer.write_bytes(PackedByteArray([ticks]))
         var checksum: PackedByteArray = PackedByteArray()
         checksum.resize(16)
+        checksum.fill(255)
+        checksum.encode_s64(0, ticks)
         return Driver.SaveResult.new(true, checksum)
     func load_state(_frame: int, reader: RefCounted) -> bool:
         var restored: RefCounted = reader.read_bytes(1)
@@ -77,6 +81,7 @@ func _handshake() -> bool:
         local.connection_id = roster[slot].duplicate()
         local.session_id.fill(1)
         local.config.roster = roster
+        local.config.desync_interval = 5
         var options: HandshakeTypes.Options = HandshakeTypes.Options.new()
         options.roundtrips = 1
         var peer: Handshake = Handshake.new()
@@ -115,6 +120,7 @@ func _peer_session() -> bool:
         local.connection_id = roster[slot].duplicate()
         local.session_id.fill(1)
         local.config.roster = roster
+        local.config.desync_interval = 5
         var options: HandshakeTypes.Options = HandshakeTypes.Options.new()
         options.roundtrips = 1
         var game: Game = Game.new()
@@ -129,18 +135,36 @@ func _peer_session() -> bool:
     for tick: int in range(6):
         if not _deliver(peers, roster, tick):
             return false
-    for frame: int in range(3):
+    for frame: int in range(70):
+        var now_us: int = (frame + 1) * 16667
         for slot: int in range(2):
             var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([1]))]
-            if peers[slot].step(10 + frame, samples).code != Types.Code.OK:
+            if peers[slot].step(now_us, samples).code != Types.Code.OK:
                 return false
-        if not _deliver(peers, roster, 10 + frame) or not _deliver(peers, roster, 10 + frame):
+        if not _deliver(peers, roster, now_us) or not _deliver(peers, roster, now_us):
             return false
-    return games[0].ticks == 3 and games[1].ticks == 3 and peers[0].status().confirmed_frame == 2
+    if games[0].ticks != 70 or games[1].ticks != 70 or peers[0].status().confirmed_frame < 68:
+        return false
+    for kind: int in [ProtocolTypes.Kind.QUALITY_REPORT, ProtocolTypes.Kind.QUALITY_REPLY, ProtocolTypes.Kind.CHECKSUM_REPORT]:
+        if kinds.get(kind, 0) < 1:
+            return false
+    for slot: int in range(2):
+        peers[slot].poll(3400000)
+        var terminal: bool = false
+        for event: Dictionary in peers[slot].drain_events():
+            terminal = terminal or event.kind == "disconnected"
+        var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, 70, PackedByteArray([1]))]
+        if not terminal or peers[slot].step(3400000, samples).code != Types.Code.TERMINATED or games[slot].ticks != 70:
+            return false
+    return true
 
 func _deliver(peers: Array[Peer], roster: Array[PackedByteArray], now_us: int) -> bool:
     for slot: int in range(2):
         for packet: Peer.Packet in peers[slot].drain_outbox():
+            var decoded: ProtocolTypes.Result = Codec.decode(packet.bytes, ProtocolTypes.Limits.new())
+            if decoded.code != ProtocolTypes.Code.OK:
+                return false
+            kinds[decoded.message.kind] = kinds.get(decoded.message.kind, 0) + 1
             if peers[1 - slot].receive(packet.bytes, roster[slot], now_us) != InputTypes.Code.OK:
                 return false
         peers[slot].drain_events()
@@ -199,7 +223,8 @@ def main():
     report = {'passed': True, 'entries': entries, 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
               'command': command, 'engine_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
-              'limits': 'Addon-only candidate: one driver tick and three two-peer byte gameplay steps; not a supported release or browser networking gate.'}
+              'limits': 'Addon-only candidate: one driver tick, 70 two-peer gameplay steps, full checksum/quality bytes and terminal timeout; '
+                        'not a supported release or browser networking gate.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'files': len(entries), 'results': str(receipt)}))
 

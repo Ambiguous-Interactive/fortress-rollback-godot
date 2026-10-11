@@ -1,0 +1,110 @@
+extends RefCounted
+
+# Value: protects=fixed-membership timeout halt; fails_when=partition advances or silently recovers; why_new=P3 covered only healed short faults; seam=none
+const Match = preload("res://examples/peer/match.gd")
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+
+
+func cases() -> PackedStringArray:
+	return PackedStringArray(["terminal_partition", "interruption_recovery", "game_desync"])
+
+
+func run_case(name: String, context: RefCounted) -> void:
+	match name:
+		"terminal_partition":
+			_terminal_partition(context)
+		"interruption_recovery":
+			_interruption_recovery(context)
+		"game_desync":
+			_game_desync(context)
+	context.finish()
+
+
+func _healthy(context: RefCounted) -> Match:
+	var game: Match = Match.new()
+	game.drop_every = 0
+	game.reorder = false
+	game.latency_ticks = 0
+	context.equal(game.reset(), 0, "playable byte peers start")
+	for tick: int in range(120):
+		game.tick(PackedInt32Array([2, 8]))
+	context.equal(game.games[0].frame > 60 and game.games[1].frame > 60, true, "healthy peers advance before partition")
+	return game
+
+
+func _terminal_partition(context: RefCounted) -> void:
+	var game: Match = _healthy(context)
+	var confirmed: PackedInt64Array = PackedInt64Array([
+		game.sessions[0].status().confirmed_frame, game.sessions[1].status().confirmed_frame])
+	game.is_partitioned = true
+	for tick: int in range(450):
+		game.tick(PackedInt32Array([2, 8]))
+	var frozen: Array[PackedByteArray] = []
+	for peer: int in range(2):
+		context.equal(game.sessions[peer].status().lifecycle, Types.Lifecycle.TERMINATED, "unrecoverable fixed-membership partition terminates peer=%d" % peer)
+		context.equal(game.sessions[peer].status().reason != Types.Code.OK, true, "termination retains explicit reason")
+		context.equal(game.sessions[peer].status().confirmed_frame >= confirmed[peer], true, "termination never revokes confirmed history")
+		frozen.append(game.games[peer].canonical_bytes())
+	game.is_partitioned = false
+	for tick: int in range(60):
+		game.tick(PackedInt32Array([1, 4]))
+	for peer: int in range(2):
+		context.bytes_equal(game.games[peer].canonical_bytes(), frozen[peer], game.games[peer].frame, "healing cannot restart a terminated session")
+	context.equal(game.reset(), 0, "explicit restart rebuilds the fixed roster")
+	for tick: int in range(80):
+		game.tick(PackedInt32Array([1, 4]))
+	context.equal(game.games[0].frame > 40 and game.games[1].frame > 40, true, "restarted peers advance")
+
+
+# Value: protects=visible interruption and resume; fails_when=timer or healing event is lost; why_new=timeout case only checks terminal states; seam=none
+func _interruption_recovery(context: RefCounted) -> void:
+	var game: Match = _healthy(context)
+	game.is_partitioned = true
+	for tick: int in range(44):
+		game.tick(PackedInt32Array([2, 8]))
+	var before: PackedInt32Array = PackedInt32Array([game.games[0].frame, game.games[1].frame])
+	for peer: int in range(2):
+		context.equal(game.event_counts[peer].get("network_interrupted", 0), 1, "short partition visibly interrupts once")
+		context.equal(game.sessions[peer].status().lifecycle, Types.Lifecycle.RUNNING, "short partition remains recoverable")
+	game.is_partitioned = false
+	for tick: int in range(160):
+		game.tick(PackedInt32Array([2, 8]))
+	for peer: int in range(2):
+		context.equal(game.event_counts[peer].get("network_resumed", 0), 1, "healing visibly resumes once")
+		context.equal(game.games[peer].frame > before[peer] + 100, true, "resumed peer advances beyond prediction window")
+		context.equal(game.sessions[peer].status().lifecycle, Types.Lifecycle.RUNNING, "healed peer remains live")
+	context.equal(game.failure, 0, "ordinary interruption is an observable lifecycle event")
+
+
+# Value: protects=game checksum mismatch halt; fails_when=divergence is accepted; why_new=endpoint reports cannot prove game integration; seam=none
+func _game_desync(context: RefCounted) -> void:
+	for at_boundary: bool in [false, true]:
+		_desync_from(context, at_boundary)
+
+
+func _desync_from(context: RefCounted, at_boundary: bool) -> void:
+	var game: Match = _healthy(context)
+	if at_boundary:
+		game.drop_every = 7
+		game.reorder = true
+		game.latency_ticks = 3
+		for tick: int in range(450):
+			game.tick(PackedInt32Array([2, 0]))
+		context.equal(game.games[0].x[0], 460, "real input reaches valid right boundary before divergence")
+	game.inject_desync()
+	var observed: bool = false
+	for tick: int in range(240):
+		game.tick(PackedInt32Array([2 if tick % 2 == 0 else 0, 4 if tick % 2 == 0 else 8]))
+		for peer: int in range(2):
+			var event: Dictionary = game.latest_events[peer]
+			if event.get("kind", "") == "desync_detected":
+				observed = true
+				context.equal(event.frame > 0, true, "mismatch identifies actual saved frame")
+				context.equal(event.local_checksum.size() == 16 and event.remote_checksum.size() == 16, true, "mismatch preserves full checksum domain")
+				context.equal(event.local_checksum != event.remote_checksum, true, "diagnostics retain the differing game checksums")
+	context.equal(observed, true, "wrong game rules produce a real desync event")
+	for peer: int in range(2):
+		context.equal(game.sessions[peer].status().lifecycle, Types.Lifecycle.TERMINATED, "every fixed member has an explicit terminal outcome")
+		var frozen: PackedByteArray = game.games[peer].canonical_bytes()
+		game.tick(PackedInt32Array([1, 4]))
+		context.bytes_equal(game.games[peer].canonical_bytes(), frozen, game.games[peer].frame, "terminal mismatch forbids another game step")

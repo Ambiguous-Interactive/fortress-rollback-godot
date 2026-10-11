@@ -38,6 +38,7 @@ Local development contracts and evidence entry points:
 - [Fixed-peer byte handshake and injected time/token API](docs/handshake.md).
 - [Actual upstream/Godot handshake observations and scoped model refinement](docs/oracle-handshake.md).
 - [Fixed-membership byte sessions and transport-facing API](docs/peer-session.md).
+- [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).

@@ -6,7 +6,7 @@ Run the source and Godot multiplayer gate with either pinned editor:
 python3 scripts/oracle/p2p_launch.py --godot /path/to/godot --offline
 ```
 
-This P3 development harness executes the pinned upstream
+This P3/P4 development harness executes the pinned upstream
 `P2PSession` and the shipped `FortressPeerSession`. It is separate from the
 sync-test oracle and the P2 handshake oracle. Rust remains a development tool;
 the addon has no native extension or Rust dependency.
@@ -53,9 +53,13 @@ publication; every timer service and outgoing packet remains observed. Step invo
 The injected clock starts at zero and advances only through submitted integer
 microseconds. Each upstream peer has an explicit protocol RNG seed. A clock
 origin supplies the upstream Instant representation; real elapsed time does not
-choose a delivery or simulation frame. Quality reports and keepalives are set
-outside these schedules. Disconnect, checksum exchange, hot join and graceful
-closure are outside this gate.
+choose a delivery or simulation frame. The original P3 scenarios explicitly disable Godot lifecycle controls and set
+source quality and keepalive intervals outside their schedules. Optional
+`lifecycle` settings enable actual P4 timers and source `DesyncDetection`.
+They specify quality, keepalive, notify and timeout intervals in integer
+microseconds, a checksum interval in frames, and an optional divergent peer.
+The divergent peer starts with one changed accumulator byte in both applications.
+Hot join and graceful membership changes remain outside this gate.
 
 ## Compared observations
 
@@ -93,7 +97,7 @@ not count as upstream event parity; endpoint tests own their emission contract.
 
 ## Coverage and negative controls
 
-The corpus has 26 scenarios: every mesh size 2 through 8, each with delay zero
+The original gameplay corpus has 26 scenarios: every mesh size 2 through 8, each with delay zero
 and delay two; and loss, reorder/duplicate, prediction stall/recovery and retry
 cases for 2, 4 and 8 peers. Loss drops the first input and ACK flight. Retry
 checks exactly 200000 microseconds versus 200001, then drops ACKs and checks the
@@ -122,6 +126,75 @@ confirmation, plausible JSON followed by nonzero exit, and corrupted compressed
 bytes through the actual upstream decoder. Controls require their intended
 diagnostic and exit code rather than accepting unrelated engine parse errors.
 
+
+## Lifecycle observations
+
+Eight additional two-peer scenarios compare real quality reports, echoed replies,
+keepalives, interruption and resume events, timeout, pacing recommendations,
+and checksum exchange. Timer cases exercise interval equality and interval plus
+one. Delayed quality replies produce actual RTT observations. One case combines
+100 ms RTT with retained input to compare the source frame estimate at 60 FPS.
+The skew case produces an actual `WaitRecommendation`, including its skip count.
+Matching and reordered input cases exchange nonzero checksum inventories without
+false desync events. The divergent initial state produces an actual source
+`DesyncDetected` with frame, peer and both checksums.
+
+Source observations call public `network_stats()` and `frames_ahead()`.
+`network_stats()` returns `NotSynchronized` before one whole elapsed second.
+Traces retain that error instead of substituting inferred zero gauges.
+Available RTT and local/remote frame advantage gauges remain compared.
+Godot observations preserve the source API's subsecond availability rule;
+Godot's own gauges are available earlier through its production API.
+The source caches pacing before submitting the next local input.
+Checksum send and comparison use confirmation published by the previous advance,
+not a receipt floor that increased during delivery. Comparisons require a frame
+strictly below that published floor. Actual callback snapshots supply checksums.
+
+Raw source messages retain unsigned 128-bit checksum and timestamp integers.
+The development Rust adapter enables JSON arbitrary precision to preserve them.
+Python validates each raw integer independently before semantic comparison.
+Positive raw-message probes require exact ping/pong values above 64 bits,
+including the maximum unsigned-128 value, through the actual source decoder.
+Separate rejection controls cover boolean, float, string, null and range aliases.
+Godot decodes actual production bytes, including tokens and checksum payloads.
+Standalone malformed nested settings, including a present null lifecycle object,
+fail in both real executables. Omission retains the P3 profile.
+Persistent controls alter events, peer/frame/checksum payloads, metrics and
+terminal boundaries. Each control declares its intended diagnostic and selected
+operation or packet before execution. The unfrozen terminal control preserves
+valid canonical callback/state evidence so rejection must reach the frozen-policy
+guard. The eight named acceptance cases require nonzero actual source
+observations and their specified controls before publishing success; arbitrary
+short custom profiles remain valid inputs. Receipts retain these counts.
+The standalone `--corpus-case` option requires a recognized name, an expected
+source trace and a lifecycle-enabled scenario. Omit it for custom input profiles.
+Additional observer controls encode mutated ping, pong and
+checksum bytes, decode them, and require rejection at the selected packet.
+
+Godot fixed membership terminates on a timeout or detected desync.
+The source can continue callbacks and input submission after reporting desync.
+A narrow comparison projection permits only the first terminal event at the
+final submitted operation. It requires the exact trigger payload, peer and
+pre-operation canonical state. Godot must preserve that frame and state without
+callbacks. Raw source callbacks, subsequent state and outgoing input remain in
+the artifact; the comparison excludes only this final source continuation.
+Godot's terminal `GOODBYE` packets use reason 255. Their exact encoded observations
+and local link-close extension events remain recorded. Only the final real desync
+policy permits them: exactly three consecutive GOODBYEs for each owned remote,
+and exactly one ordered close event per remote. Self events, duplicates, missing
+notifications and timeout notifications fail validation. The projection excludes
+only that validated final terminal suffix. Postterminal gauges remain raw observations,
+with no cross-policy parity claim. Extra earlier triggers or later submitted
+operations invalidate the projection. Runtime tests separately verify frozen
+postterminal API calls and bounded terminal notification.
+
+The comparison profile remains prediction windows 2 through 8. A source-only
+zero-window checksum audit advances without SAVE requests or checksum reports.
+Godot captures additional zero-window SAVE callbacks to provide usable checksums;
+that stronger runtime behavior is an explicit extension outside this comparison.
+Unknown or stale pong hardening, hostile peer policies, bounded diagnostic
+ownership and full release matrices have separate runtime coverage.
+
 ## Evidence
 
 The output directory retains submitted scenarios, raw source observations,
@@ -141,4 +214,4 @@ engine probe.
 
 This gate proves the scoped fake-transport gameplay path. It does not establish
 WebRTC delivery, browser deployment, cross-platform release parity, spectator
-sessions, disconnect policy, replay format, time synchronization or hot join.
+sessions, replay format, hot join or broad release timing/fault coverage.

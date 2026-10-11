@@ -9,6 +9,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Game = preload("res://tests/oracle/p2p_game.gd")
 const Reference = preload("res://tests/oracle/reference_game.gd")
 
@@ -69,7 +70,12 @@ func _id(value: int, width: int = 8) -> PackedByteArray:
 	return result
 
 
-func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = false, pending: int = 128, start: bool = true, reentry: bool = false, window: int = 8) -> Dictionary:
+func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = false, pending: int = 128, start: bool = true,
+	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60) -> Dictionary:
+	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
+	if lifecycle_options == null:
+		lifecycle_options = L.Options.new()
+		lifecycle_options.enabled = false
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	var owners: PackedInt32Array = PackedInt32Array()
@@ -101,6 +107,7 @@ func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = fa
 		local.config.input_width = 4
 		local.config.input_delay = delay
 		local.config.max_prediction = window
+		local.config.desync_interval = checksum_interval
 		local.config.neutral_input = config.neutral_input.duplicate()
 		local.config.roster.clear()
 		for owner: int in owners:
@@ -111,7 +118,7 @@ func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = fa
 		input.max_pending_frames = pending
 		var game: RefCounted = ReentryGame.new(count) if reentry else Game.new(count)
 		var peer: Peer = Peer.new()
-		context.equal(peer.configure(config, local, game, handshake, input), I.Code.OK, "configure mesh")
+		context.equal(peer.configure(config, local, game, handshake, input, lifecycle_options), I.Code.OK, "configure mesh")
 		if reentry:
 			game.peer = weakref(peer)
 			game.context = context
@@ -315,6 +322,7 @@ class ReentryGame:
 		probed = true
 		var target: RefCounted = peer.get_ref()
 		context.equal(target.poll(1000), I.Code.BUSY, "save callback cannot poll transport")
+		context.equal(target.close(1000, 7), I.Code.BUSY, "save callback cannot close session")
 		context.equal(target.step(1000, []).code, Types.Code.BUSY, "save callback cannot step session")
 		context.equal(target.begin(1000, []), I.Code.BUSY, "save callback cannot begin handshake")
 		context.equal(target.receive(PackedByteArray(), target.peer_ids()[0], 1000), I.Code.BUSY, "save callback cannot receive transport")

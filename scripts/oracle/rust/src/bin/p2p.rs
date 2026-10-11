@@ -1,6 +1,7 @@
 //! Actual upstream multiplayer session, fake transport and application callbacks.
 #![forbid(unsafe_code)]
-use fortress_rollback::{Config, FortressRequest, InputStatus, PlayerHandle, SessionBuilder, Message, NonBlockingSocket, PlayerType, ProtocolConfig, SyncConfig};
+use fortress_rollback::{Config, FortressRequest, InputStatus, PlayerHandle, SessionBuilder, Message, NonBlockingSocket, PlayerType,
+ ProtocolConfig, SyncConfig, DesyncDetection, FortressEvent};
 use fortress_rollback::network::compression::decode_with_max_len;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -8,7 +9,14 @@ use std::{io::{self, Read}, sync::{Arc, Mutex}, collections::BTreeMap, time::Dur
 const REVISION: &str = "f13cd5c0f2815926785a395947e18da0dbea0dd8";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:usize, operations:Vec<Operation> }
+struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:usize, operations:Vec<Operation>,
+ #[serde(default, deserialize_with="present_lifecycle")] lifecycle:Option<Lifecycle> }
+fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Lifecycle>, D::Error> {
+    Lifecycle::deserialize(deserializer).map(Some)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Lifecycle { quality_us:u64, keepalive_us:u64, notify_us:u64, timeout_us:u64, checksum_interval:u32, divergent_peer:i32 }
 #[derive(Deserialize)]
 #[serde(tag="kind", rename_all="snake_case", deny_unknown_fields)]
 enum Operation {
@@ -113,6 +121,7 @@ fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Gam
 }
 
 fn project_packet(raw:&Value,peer:usize,destination:usize,delay:usize,decoded:&mut BTreeMap<(usize,usize,i32),Vec<u8>>)->Result<Value,String>{
+   if raw["body"]=="KeepAlive" {return Ok(json!({"kind":"keep_alive"}));}
    let body=raw["body"].as_object().ok_or("message body")?;let (kind,body)=body.iter().next().ok_or("empty body")?;
    let semantic=match kind.as_str(){
     "Input"=>{
@@ -124,14 +133,34 @@ fn project_packet(raw:&Value,peer:usize,destination:usize,delay:usize,decoded:&m
      json!({"kind":"input","start_frame":start,"ack_frame":body["ack_frame"],"statuses":body["peer_connect_status"],
       "players":[peer],"frames":frames.iter().map(|v|hex(v)).collect::<Vec<_>>()})
     },"InputAck"=>json!({"kind":"input_ack","ack_frame":body["ack_frame"]}),
+    "QualityReport"=>{let ping=body["ping"].to_string().parse::<u128>().map_err(|_|"ping integer")?;
+     json!({"kind":"quality_report","frame_advantage":body["frame_advantage"],"ping":format!("{ping:032x}")})},
+    "QualityReply"=>{let pong=body["pong"].to_string().parse::<u128>().map_err(|_|"pong integer")?;
+     json!({"kind":"quality_reply","pong":format!("{pong:032x}")})},
+    "KeepAlive"=>json!({"kind":"keep_alive"}),
+    "ChecksumReport"=>{let checksum=body["checksum"].to_string().parse::<u128>().map_err(|_|"checksum integer")?;
+     json!({"kind":"checksum_report","frame":body["frame"],"checksum":format!("{checksum:032x}")})},
     _=>return Err(format!("unsupported gameplay packet {kind}")),
    };
    Ok(semantic)
 }
+fn event(e:FortressEvent<OracleConfig>)->Result<Value,String>{Ok(match e {
+ FortressEvent::NetworkInterrupted{addr,disconnect_timeout}=>json!({"kind":"network_interrupted","peer":addr.parse::<usize>().unwrap(),
+  "disconnect_timeout":disconnect_timeout as u64}),
+ FortressEvent::NetworkResumed{addr}=>json!({"kind":"network_resumed","peer":addr.parse::<usize>().unwrap()}),
+ FortressEvent::Disconnected{addr}=>json!({"kind":"disconnected","peer":addr.parse::<usize>().unwrap()}),
+ FortressEvent::WaitRecommendation{skip_frames}=>json!({"kind":"wait_recommendation","skip_frames":skip_frames}),
+ FortressEvent::DesyncDetected{frame,local_checksum,remote_checksum,addr}=>json!({"kind":"desync_detected","frame":frame.as_i32(),
+  "local_checksum":format!("{local_checksum:032x}"),"remote_checksum":format!("{remote_checksum:032x}"),"peer":addr.parse::<usize>().unwrap()}),
+ _=>return Err(format!("unmodeled lifecycle event {e:?}")),
+})}
 fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let scenario:Scenario=serde_json::from_value(original.clone()).map_err(|e|e.to_string())?;
  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
  ||scenario.operations.is_empty()||scenario.operations.len()>10000{return Err("scenario bounds".into());}
+ if let Some(l)=&scenario.lifecycle {if l.quality_us<1000||l.keepalive_us<1000||l.notify_us==0||l.notify_us>=l.timeout_us||l.timeout_us>10000000
+  ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
+  ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
  let mut previous=0;
  for op in &scenario.operations {
   let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
@@ -142,14 +171,19 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let mut sessions=Vec::new();let mut buffers=Vec::new();let mut games=Vec::new();
  for peer in 0..scenario.players {
   let clock=time.clone();let protocol=ProtocolConfig{clock:Some(Arc::new(move||origin+Duration::from_micros(*clock.lock().unwrap()))),
-   protocol_rng_seed:Some(1701+peer as u64),quality_report_interval:Duration::from_secs(100),..Default::default()};
-  let sync=SyncConfig{num_sync_packets:1,keepalive_interval:Duration::from_secs(100),..Default::default()};
+   protocol_rng_seed:Some(1701+peer as u64),quality_report_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.quality_us)),..Default::default()};
+  let sync=SyncConfig{num_sync_packets:1,keepalive_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.keepalive_us)),..Default::default()};
   let mut builder=SessionBuilder::<OracleConfig>::new().with_num_players(scenario.players).map_err(|e|format!("{e:?}"))?
    .with_max_prediction_window(scenario.max_prediction).with_input_delay(scenario.input_delay).map_err(|e|format!("{e:?}"))?
    .with_protocol_config(protocol).with_sync_config(sync);
+  if let Some(l)=&scenario.lifecycle {builder=builder.with_disconnect_timeout(Duration::from_micros(l.timeout_us))
+   .with_disconnect_notify_delay(Duration::from_micros(l.notify_us))
+   .with_desync_detection_mode(if l.checksum_interval==0{DesyncDetection::Off}else{DesyncDetection::On{interval:l.checksum_interval}});}
+  else {builder=builder.with_disconnect_timeout(Duration::from_secs(100)).with_disconnect_notify_delay(Duration::from_secs(50));}
   for slot in 0..scenario.players {builder=builder.add_player(if slot==peer {PlayerType::Local}else{PlayerType::Remote(slot.to_string())},slot.into()).unwrap();}
   let queue=Arc::new(Mutex::new(Buffers::default()));sessions.push(builder.start_p2p_session(Socket(queue.clone())).unwrap());buffers.push(queue);
-  games.push(Game{frame:0,accumulators:vec![0;scenario.players],version:2,rng:8173,pending:0});
+  let mut game=Game{frame:0,accumulators:vec![0;scenario.players],version:2,rng:8173,pending:0};
+  if scenario.lifecycle.as_ref().is_some_and(|l|l.divergent_peer==peer as i32){game.accumulators[0]=1;}games.push(game);
  }
  // Bootstrap uses real peer sessions and messages; no forged synchronization.
  for _ in 0..8 {
@@ -165,7 +199,8 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   let (peer,now)=match op {Operation::Step{peer,now_us,..}|Operation::Poll{peer,now_us}=>(*peer,*now_us),
    Operation::Deliver{packet,now_us}=>{let (sender,destination,message)=packets.get(*packet).ok_or("unknown observed packet")?;
     buffers[*destination].lock().unwrap().incoming.push((sender.to_string(),message.clone()));(*destination,*now_us)}};
-  *time.lock().unwrap()=now;let before=sessions[peer].current_frame().as_i32();let mut requests=Vec::new();let mut error=None;
+  *time.lock().unwrap()=now;let before=sessions[peer].current_frame().as_i32();let pre_state=hex(&games[peer].bytes());
+  let pre_confirmed=sessions[peer].confirmed_frame().as_i32();let mut requests=Vec::new();let mut error=None;
   match op {Operation::Step{bytes,..}=>{
    error=sessions[peer].add_local_input(PlayerHandle::new(peer),input_bytes(bytes)?).err().map(|e|format!("{e:?}"));
    if error.is_none(){(requests,error)=apply(&mut sessions[peer],&mut games[peer])?;}
@@ -177,10 +212,16 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
    let id=packets.len();packets.push((peer,destination,message));
    packet_values.push(json!({"id":id,"from":peer,"to":destination,"raw":raw,"semantic":semantic}));outgoing.push(id);
   }
-  let events=sessions[peer].events().map(|e|format!("{e:?}")).collect::<Vec<_>>();
-  records.push(json!({"index":index,"peer":peer,"frame_before":before,"frame_after":sessions[peer].current_frame().as_i32(),
+  let events=sessions[peer].events().map(|e|if scenario.lifecycle.is_some(){event(e)}else{Ok(json!(format!("{e:?}"))) }).collect::<Result<Vec<_>,_>>()?;
+  let mut record=json!({"index":index,"peer":peer,"frame_before":before,"frame_after":sessions[peer].current_frame().as_i32(),
    "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"error":error,"requests":requests,"events":events,"outgoing":outgoing,
-   "state":hex(&games[peer].bytes())}));
+   "state":hex(&games[peer].bytes())});
+  if scenario.lifecycle.is_some(){record["pre_state"]=json!(pre_state);record["pre_confirmed"]=json!(pre_confirmed);
+   let stats=(0..scenario.players).filter(|r|*r!=peer).map(|remote|{
+   match sessions[peer].network_stats(PlayerHandle::new(remote)) {Ok(s)=>json!({"peer":remote,"error":null,"ping":s.ping as u64,
+    "local_frames_behind":s.local_frames_behind,"remote_frames_behind":s.remote_frames_behind}),Err(e)=>json!({"peer":remote,"error":format!("{e:?}")})}
+  }).collect::<Vec<_>>();record["metrics"]=json!({"frames_ahead":sessions[peer].frames_ahead(),"peers":stats});}
+  records.push(record);
  }
  Ok(json!({"format":1,"complete":true,"upstream_revision":REVISION,"scenario":original,"records":records,"packets":packet_values}))
 }

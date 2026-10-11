@@ -138,7 +138,9 @@ their own complete schema and nonempty-work boundary.
 Preserve decoded wire fields instead of substituting scenario expectations.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
-silently become the same observation. Constrain omitted setup records to their
+silently become the same observation. Test omitted and explicit-null optional
+objects separately through every standalone executable; parser defaults can alias
+them before shared validation runs. Constrain omitted setup records to their
 exact allowed position. Formal projection must account for the observed initial
 state and every supported post-state, not just action names and final success.
 
@@ -152,6 +154,10 @@ advance on delivery before predicted game state is repaired; capture actual
 callback boundaries rather than assuming the current state is already canonical.
 Compare stalled save/load/advance requests too; unchanged frame numbers do not
 mean a session performed no work.
+Exercise the lowest accepted checksum capacity through repeated eviction, with
+both lockstep and predictive advancement. Require healthy progress and nonzero
+actual comparisons for each peer, then inject a real game mismatch at that same
+capacity. Retained/send counts alone can pass while every comparison is skipped.
 
 Validate original numeric tokens when parsing erases integer versus float syntax.
 Bind evidence to all executed source inventories and tool identities, captured
@@ -165,10 +171,23 @@ session oracle's canonical scenario conversion protects this boundary.
 
 A mutation must fail at its intended boundary. Require the diagnostic and
 consumed-record position so an unrelated parser or later-request failure cannot
-satisfy the negative control. Select mutated records by semantic kind.
+satisfy the negative control. Declare expected diagnostics independently before
+running the mutant; learning them from the validator makes rejection circular.
+Select mutated records by semantic kind. Require scenario-specific nonzero
+observations and an expected control inventory before publishing success. A
+shortened corpus that never reaches its named event must fail those gates.
 For snapshot-omission controls, derive localization from the first serialized
 consumer of the missing field. A mutant that omits a field from every snapshot
 can hide its immediate difference until a later scheduled event exposes it.
+
+Before projecting intentional source/product differences, validate the excluded
+inventory's exact peer membership, payload, count, order and allowed position.
+Keep controls for invented local-peer events and duplicate notification suffixes.
+Mutants of terminal freeze must preserve earlier frame/state consistency checks
+so they reach the intended terminal boundary.
+For deliberate gameplay divergence, retain valid serialized-state bounds. Drive
+the game to domain edges and force rollback after divergence; require a genuine
+checksum mismatch rather than accepting an unrelated callback failure.
 
 ## Faster local iteration
 

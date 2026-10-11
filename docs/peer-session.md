@@ -19,13 +19,14 @@ remains permitted. This restriction counts endpoint identities, not player slots
 
 | Operation | Result and contract |
 | --- | --- |
-| `configure(config, local, game, handshake_options, input_options)` | One-shot configuration; returns an input endpoint code. |
+| `configure(config, local, game, handshake_options, input_options, lifecycle_options = null)` | One-shot configuration; lifecycle controls enabled by default. |
 | `peer_ids()` | Owned remote identities in ascending hexadecimal order. |
 | `begin(now_us, tokens)` | One nonzero 16-byte token per remote, in `peer_ids()` order. |
 | `poll(now_us, tokens = [])` | Service every endpoint with current receipt gossip; supply fresh retry tokens during synchronization. |
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Route actual bytes using independently attributed sender identity. |
 | `receive_and_poll(packet, attributed_sender, now_us, next_token = null, tokens = [])` | Receive and service timers using the receipt gossip from the start of the operation. |
 | `step(now_us, local_inputs)` | Existing driver `StepResult`; submit every local slot at the current sample frame. |
+| `close(now_us, reason = 0)` | Queue redundant goodbye packets and halt the fixed-membership game. |
 | `status()` | Existing core status, including frame, confirmation and termination reason. |
 | `network_status()` | Owned endpoint observations keyed by remote hexadecimal identity. |
 | `drain_outbox()` | Owned `Packet` records with `to` and `bytes`; caller delivers or drops them. |
@@ -66,9 +67,11 @@ to repair after delivery. Compare game bytes at completed confirmed boundaries.
 Gossip travels with retained input packets. With every pending input acknowledged,
 polling emits no input packet; an idle mesh can retain a final confirmation lag.
 This matches the pinned upstream default without its optional status-nudge policy.
-Resume input submission to propagate fresh gossip. Idle convergence, checksum
-exchange, disconnect policy and real WebRTC/SignalFish delivery have separate
-roadmap gates. This façade is a usable byte session, not a supported browser release.
+Resume input submission to propagate fresh gossip. Idle convergence and real
+WebRTC/SignalFish delivery have separate roadmap gates.
+[Lifecycle controls](peer-lifecycle.md) provide timing observations, confirmed
+game checksums and explicit terminal outcomes. This façade is a usable byte
+session, not a supported browser release.
 
 See [input exchange](input-exchange.md) for bounded retention and ACK rules,
 [session callbacks](session.md) for game state obligations, and

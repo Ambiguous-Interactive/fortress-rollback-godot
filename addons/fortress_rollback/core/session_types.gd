@@ -50,6 +50,7 @@ class Status:
 	var reason: int = Code.OK
 	var failure_frame: int = -1
 	var failure_kind: int = -1
+	var pending_rollback_frame: int = -1
 
 
 class InputResult:

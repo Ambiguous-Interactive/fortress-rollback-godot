@@ -74,6 +74,10 @@ events and post-transition observations at strict interval boundaries.
 Validate scalar and collection cardinality limits before scanning identities or
 allocating lookup tables. Accepted queue minima must permit initialization and
 completion after drains, including the maximum configured roundtrip count.
+For retained checksum histories, trace scheduling, send-floor advancement,
+strict confirmation eligibility, comparison and eviction as one handoff. Accepted
+minimum capacity must retain matching local/remote evidence until comparison can
+consume it. Successful sends and bounded occupancy do not prove this handoff.
 Every composed façade must expose drains for all bounded publication queues,
 including diagnostics. Run healthy sessions past each default capacity. A partial
 multi-link publication must consume the accepted clock even when a later link
@@ -81,6 +85,14 @@ backpressures. Keep outgoing local receipt gossip separate from incoming peer
 observations; confirmation must never count local claims as remote evidence.
 Capture receipt status at the compared service boundary. Receiving input before
 retrying another link can change its gossip even when frames and ACKs match.
+
+Audit committed lifecycle state against published events on callback failure,
+including a retained input prefix followed by refusal. Preserve accepted liveness
+transitions before terminal failure; exclude speculative input-success events.
+Reserve bounded fatal diagnostics independently of normal event capacity. Fill
+the reserve with a recoverable overflow first, then inject terminal events from
+every remote link. Each actual fatal cause must survive with owned peer metadata;
+halting simulation alone does not prove diagnostic preservation.
 
 - Wire formats, channels, replay layout, checksum exchange: this skill.
 - When to roll back and why: rollback-fundamentals.

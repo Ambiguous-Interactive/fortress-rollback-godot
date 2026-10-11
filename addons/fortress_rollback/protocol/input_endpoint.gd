@@ -3,6 +3,9 @@ extends RefCounted
 
 # gdlint: disable=max-returns
 
+const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
+const Lifecycle = preload("res://addons/fortress_rollback/protocol/endpoint_lifecycle.gd")
+
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
@@ -10,6 +13,8 @@ const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd"
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
 
+var _lifecycle: L.Options = null
+var _fatal_event: Dictionary = {}
 var _handshake: Handshake = null
 var _local: T.Message = null
 var _remote: PackedByteArray = PackedByteArray()
@@ -26,7 +31,7 @@ var _transitions: Array[Dictionary] = []
 
 
 ## Variant ingress prevents implicit conversion of hostile callers.
-func configure(local: Variant, remote_sender: Variant, handshake_options: Variant, options: Variant, accept_input: Variant) -> int:
+func configure(local: Variant, remote_sender: Variant, handshake_options: Variant, options: Variant, accept_input: Variant, lifecycle_options: Variant = null) -> int:
 	if _busy:
 		return I.Code.BUSY
 	if _handshake != null:
@@ -36,6 +41,8 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 	if not handshake_options is H.Options or not H.valid_options(handshake_options) or not options is I.Options or not I.valid_options(options):
 		return I.Code.INVALID_ARGUMENT
 	if not accept_input is Callable or not accept_input.is_valid():
+		return I.Code.INVALID_ARGUMENT
+	if lifecycle_options != null and not L.valid_options(lifecycle_options):
 		return I.Code.INVALID_ARGUMENT
 	var local_players: PackedByteArray = PackedByteArray()
 	var remote_players: PackedByteArray = PackedByteArray()
@@ -70,6 +77,7 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 	for field: String in ["retry_interval_us", "max_pending_frames", "max_received_frames", "max_input_frames", "max_outbox", "max_events",
 		"max_transitions", "max_buffer_bytes"]:
 		_options.set(field, options.get(field))
+	_lifecycle = L.copy_options(lifecycle_options) if lifecycle_options != null and lifecycle_options.enabled else null
 	_handshake = handshake
 	_accept_input = accept_input
 	var statuses: Array[Dictionary] = []
@@ -77,6 +85,8 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 		statuses.append({"disconnected": false, "last_frame": -1, "epoch": 0})
 	_state = {"now_us": -1, "last_submitted_frame": -1, "last_sent_frame": -1, "last_received_frame": -1, "last_acked_frame": -1,
 		"last_input_progress_us": -1, "pending": {}, "received": {}, "peer_statuses": statuses, "connect_statuses": statuses.duplicate(true), "terminated": false}
+	if _lifecycle != null:
+		_state.merge(Lifecycle.initial(_lifecycle))
 	return I.Code.OK
 
 
@@ -88,6 +98,8 @@ func begin(now_us: Variant, token: Variant) -> int:
 	if code == I.Code.OK:
 		_state.now_us = now_us
 		_state.last_input_progress_us = now_us
+		if _lifecycle != null:
+			Lifecycle.start(_state, now_us)
 	return code
 
 
@@ -105,6 +117,8 @@ func poll(now_us: Variant, next_token: Variant = null, statuses: Variant = []) -
 		code = _handshake.poll(now_us, next_token)
 		if code == I.Code.OK:
 			_state.now_us = now_us
+			if _lifecycle != null:
+				_state.last_send_us = maxi(_state.last_send_us, _handshake.status().last_send_us)
 		return code
 	var plan: Dictionary = _plan(now_us)
 	if not statuses.is_empty():
@@ -114,6 +128,10 @@ func poll(now_us: Variant, next_token: Variant = null, statuses: Variant = []) -
 			_send_pending(plan)
 		plan.state.last_input_progress_us = now_us
 		_trace(plan, "retry", "sent" if not plan.outbox.is_empty() else "empty")
+	if _lifecycle != null:
+		if not plan.outbox.is_empty():
+			plan.state.last_send_us = now_us
+		Lifecycle.poll(plan, _lifecycle, _packet, _encode)
 	return _commit(plan)
 
 
@@ -135,16 +153,26 @@ func receive(packet: Variant, attributed_sender: Variant, now_us: Variant, next_
 		code = _handshake.receive(packet, attributed_sender, now_us, next_token)
 		if code == I.Code.OK:
 			_state.now_us = now_us
+			if _lifecycle != null:
+				var sync_plan: Dictionary = _plan(now_us)
+				sync_plan.state.last_send_us = maxi(sync_plan.state.last_send_us, _handshake.status().last_send_us)
+				Lifecycle.received(sync_plan)
+				return _commit(sync_plan)
 		return code
 	var handshake_status: Dictionary = _handshake.status()
 	if handshake_status.state != "running":
 		return I.Code.WRONG_STATE
 	if message.connection_id.hex_encode() != handshake_status.remote_connection:
 		return I.Code.WRONG_CONNECTION
-	if message.kind not in [T.Kind.INPUT, T.Kind.INPUT_ACK]:
-		return I.Code.UNSUPPORTED_KIND
 	var plan: Dictionary = _plan(now_us)
+	if message.kind not in [T.Kind.INPUT, T.Kind.INPUT_ACK]:
+		if _lifecycle == null:
+			return I.Code.UNSUPPORTED_KIND
+		code = Lifecycle.receive_control(plan, message, _packet, _encode)
+		return _commit(plan) if code == I.Code.OK else code
 	if message.kind == T.Kind.INPUT_ACK:
+		if _lifecycle != null:
+			Lifecycle.received(plan)
 		_ack(plan, message.ack_frame)
 		_trace(plan, "receive_ack", "applied" if plan.state.last_acked_frame != _state.last_acked_frame else "ignored")
 		return _commit(plan)
@@ -179,6 +207,8 @@ func submit(frame: Variant, data: Variant, statuses: Variant, now_us: Variant) -
 	var plan: Dictionary = _plan(now_us)
 	plan.state.pending[frame] = data.duplicate()
 	plan.state.last_submitted_frame = frame
+	if _lifecycle != null:
+		Lifecycle.sample(plan.state, frame, _lifecycle)
 	_merge_statuses(plan, statuses, "connect_statuses")
 	_send_pending(plan)
 	_trace(plan, "submit", "sent")
@@ -218,6 +248,9 @@ func drain_events() -> Array[Dictionary]:
 	for event: Dictionary in _events:
 		result.append(event.duplicate(true))
 	_events.clear()
+	if not _fatal_event.is_empty():
+		result.append(_fatal_event.duplicate(true))
+		_fatal_event.clear()
 	return result
 
 
@@ -329,6 +362,8 @@ func _receive_frames(plan: Dictionary, message: T.Message) -> int:
 	if gap:
 		staged.clear()
 	_merge_statuses(plan, message.statuses)
+	if _lifecycle != null:
+		Lifecycle.received(plan)
 	# Reserve every publication before invoking the irreversible retention sink.
 	var reply: T.Message = _packet(T.Kind.INPUT_ACK)
 	reply.ack_frame = plan.state.last_received_frame if staged.is_empty() else staged[-1].frame
@@ -346,6 +381,9 @@ func _receive_frames(plan: Dictionary, message: T.Message) -> int:
 			_busy = false
 			_state = plan.state
 			_state.terminated = true
+			for event: Dictionary in plan.events:
+				if event.kind != "inputs_received":
+					_events.append(event)
 			_events.append({"kind": "input_failed", "frame": entry.frame})
 			plan.transitions[-1].disposition = "input_failed"
 			plan.transitions[-1].last_received_frame = _state.last_received_frame
@@ -375,6 +413,11 @@ func _trace(plan: Dictionary, action: String, disposition: String) -> void:
 
 
 func _capacity(plan: Dictionary) -> int:
+	if _lifecycle != null and _events.size() + plan.events.size() > _options.max_events:
+		_state.terminated = true
+		_state.now_us = plan.state.now_us
+		_fatal_event = {"kind": "event_capacity_exceeded", "terminal_cause": plan.events.duplicate(true)}
+		return I.Code.BACKPRESSURE
 	if _outbox.size() + plan.outbox.size() > _options.max_outbox or _events.size() + plan.events.size() > _options.max_events:
 		return I.Code.BACKPRESSURE
 	if _transitions.size() + plan.transitions.size() > _options.max_transitions:
@@ -385,7 +428,13 @@ func _capacity(plan: Dictionary) -> int:
 func _commit(plan: Dictionary) -> int:
 	var code: int = _capacity(plan)
 	if code != I.Code.OK:
+		if _lifecycle != null and (_events.size() + plan.events.size() > _options.max_events or plan.state.terminated):
+			_state.terminated = true
+			_state.now_us = plan.state.now_us
+			_fatal_event = {"kind": "event_capacity_exceeded", "terminal_cause": plan.events.duplicate(true)}
 		return code
+	if _lifecycle != null and not plan.outbox.is_empty():
+		plan.state.last_send_us = plan.state.now_us
 	_state = plan.state
 	for packet: PackedByteArray in plan.outbox:
 		_outbox.append(packet)
@@ -394,3 +443,58 @@ func _commit(plan: Dictionary) -> int:
 	for transition: Dictionary in plan.transitions:
 		_transitions.append(transition)
 	return I.Code.OK
+
+
+func _encode(message: T.Message) -> PackedByteArray:
+	return Codec.encode(message, _limits).bytes
+
+
+func update_local_frame_advantage(frame: Variant) -> int:
+	if _busy:
+		return I.Code.BUSY
+	if _lifecycle == null or _handshake == null or _state.terminated:
+		return I.Code.WRONG_STATE
+	if typeof(frame) != TYPE_INT or not V.frame(frame):
+		return I.Code.INVALID_FRAME
+	if frame == -1 or _state.last_received_frame == -1:
+		return I.Code.OK
+	# Bound before multiplication; signed-64 microseconds cannot overflow this cap.
+	var half_rtt: int = _state.round_trip_time_ms / 2
+	var delta: int = 2147483647 if half_rtt > 2147483647 * 1000 / _local.config.fps else half_rtt * _local.config.fps / 1000
+	var remote_frame: int = mini(2147483647, _state.last_received_frame + delta)
+	_state.local_frame_advantage = clampi(remote_frame - frame, -2147483648, 2147483647)
+	return I.Code.OK
+
+
+func send_checksum(frame: Variant, checksum: Variant, now_us: Variant) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if _lifecycle == null or _handshake.status().state != "running":
+		return I.Code.WRONG_STATE
+	if typeof(frame) != TYPE_INT or not V.frame(frame, false) or not checksum is PackedByteArray or checksum.size() != 16:
+		return I.Code.INVALID_ARGUMENT
+	var plan: Dictionary = _plan(now_us)
+	var report: T.Message = _packet(T.Kind.CHECKSUM_REPORT)
+	report.frame = frame
+	report.checksum = checksum.duplicate()
+	plan.outbox.append(_encode(report))
+	return _commit(plan)
+
+
+func close(now_us: Variant, reason: Variant = 0) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if _lifecycle == null or _handshake.status().state != "running":
+		return I.Code.WRONG_STATE
+	if typeof(reason) != TYPE_INT or reason < 0 or reason > 255:
+		return I.Code.INVALID_ARGUMENT
+	var plan: Dictionary = _plan(now_us)
+	var goodbye: T.Message = _packet(T.Kind.GOODBYE)
+	goodbye.reason = reason
+	for index: int in range(3):
+		plan.outbox.append(_encode(goodbye))
+	plan.state.terminated = true
+	plan.events.append({"kind": "disconnected", "reason": reason})
+	return _commit(plan)
