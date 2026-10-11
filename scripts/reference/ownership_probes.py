@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify integer, ownership and production protocol/handshake on pinned native/Web engines."""
+"""Verify integer, ownership and production byte sessions on pinned native/Web engines."""
 import argparse
 import json
 import os
@@ -20,6 +20,12 @@ EXPECTED = {
     'res://tests/determinism/test_buffer_ownership.gd': {'engine_boundaries', 'owned_input', 'snapshot_wraps', 'snapshot_bounds'},
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }
+EXPECTED.update({
+    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'retry', 'validation', 'retention', 'capacity', 'ownership'},
+    'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save'},
+    'res://tests/unit/test_peer_session.gd': {'mesh', 'loss', 'multiple_locals', 'backpressure', 'ingress',
+        'partial_publication', 'reentry', 'begin_preflight', 'long_runtime', 'request_mismatch', 'low_windows', 'packet_service'},
+})
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -33,6 +39,12 @@ FILES = [
     'tests/unit/test_handshake.gd', 'addons/fortress_rollback/protocol/handshake.gd',
     'addons/fortress_rollback/protocol/handshake_types.gd', 'addons/fortress_rollback/protocol/handshake_agreement.gd',
 ]
+FILES += [str(path.relative_to(ROOT)) for path in sorted((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))]
+FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
+          'addons/fortress_rollback/protocol/input_endpoint_types.gd',
+          'tests/unit/test_input_endpoint.gd', 'tests/unit/test_session_network_seams.gd',
+          'tests/unit/test_peer_session.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
+FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
 const Suite = preload("res://tests/determinism/test_buffer_ownership.gd")
@@ -40,8 +52,11 @@ const Integers = preload("res://tests/determinism/test_integer_encoding.gd")
 const Protocol = preload("res://tests/unit/test_protocol_codec.gd")
 const HandshakeFields = preload("res://tests/unit/test_protocol_handshake_fields.gd")
 const Handshake = preload("res://tests/unit/test_handshake.gd")
+const Endpoint = preload("res://tests/unit/test_input_endpoint.gd")
+const Seams = preload("res://tests/unit/test_session_network_seams.gd")
+const Peers = preload("res://tests/unit/test_peer_session.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
@@ -219,7 +234,8 @@ def main():
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'),
               'sources': {p: digest(ROOT / p) for p in FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs']},
-              'records': records, 'scope': 'Integer/ownership research and byte handshake endpoint; no real transport, gameplay, performance or other-browser/platform claim.'}
+              'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery and 2–8-player gameplay; '
+              'no real transport, performance or other-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

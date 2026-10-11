@@ -102,7 +102,8 @@ CI uploads raw logs; local logs stay in the ignored cache.
 
 The addon-only candidate exclusion audit is reproducible independently of the
 development cache. It includes runtime attribution, rejects tools and symlinks,
-and executes one real driver/session tick in a clean project using only the addon:
+and executes a driver tick plus real two-peer handshake/input/ACK delivery
+in a clean project using only the addon:
 
 ```sh
 python3 scripts/reference/package_audit.py \

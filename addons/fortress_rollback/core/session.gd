@@ -32,6 +32,8 @@ var _target: int = 0
 var _outcome: int = Code.OK
 var _originals: Dictionary = {}
 var _is_driver_callback: bool = false
+var _has_confirmation_limit: bool = false
+var _confirmation_limit: int = -1
 
 
 ## Creates owned validated configuration and fresh history; never replaces an open batch.
@@ -71,6 +73,8 @@ func configure(config: Config) -> int:
 	_failure_frame = -1
 	_failure_kind = -1
 	_originals.clear()
+	_has_confirmation_limit = false
+	_confirmation_limit = -1
 	return Code.OK
 
 
@@ -96,13 +100,17 @@ func submit_local_input(player: int, sample_frame: int, bytes: PackedByteArray) 
 	if bytes.size() != _config.input_width:
 		return Types.Result.new(Code.INPUT_WIDTH)
 	if not _samples[player].is_empty():
-		return Types.Result.new(Code.OK if _samples[player] == bytes else Code.INPUT_ALREADY_SUBMITTED)
+		var repeated: Types.Result = Types.Result.new(Code.OK if _samples[player] == bytes else Code.INPUT_ALREADY_SUBMITTED)
+		repeated.value = _received[player] if repeated.code == Code.OK else -1
+		return repeated
 	var result: Queue.Result = _queues[player].add_input_with_reclaim_floor(sample_frame, bytes, _floor())
 	if result.code != Queue.Code.OK:
 		return Types.Result.new(Code.INPUT_FAILED)
 	_samples[player] = bytes.duplicate()
 	_received[player] = result.frame
-	return Types.Result.new(Code.OK)
+	var submitted: Types.Result = Types.Result.new(Code.OK)
+	submitted.value = result.frame
+	return submitted
 
 
 ## External-input core seam, without transport or P2P handshake guarantees.
@@ -120,13 +128,51 @@ func receive_input(player: int, frame: int, bytes: PackedByteArray) -> Types.Res
 	if frame <= _received[player]:
 		var existing: Queue.Result = _queues[player].retained_confirmed_input(frame)
 		return Types.Result.new(Code.OK if existing.code == Queue.Code.OK and existing.bytes == bytes else Code.INPUT_ALREADY_SUBMITTED)
-	if frame != _received[player] + 1:
+	if frame != _received[player] + 1 and not (_received[player] == -1 and frame == _config.input_delay):
 		return Types.Result.new(Code.INVALID_FRAME)
 	# Input delay applies to local samples, not already scheduled remote frames.
 	var result: Queue.Result = _queues[player].add_input_with_reclaim_floor(frame - _queues[player].frame_delay(), bytes, _floor())
 	if result.code != Queue.Code.OK:
 		return Types.Result.new(Code.INPUT_FAILED)
 	_received[player] = result.frame
+	return Types.Result.new(Code.OK)
+
+
+## Owned current submitted sample, available until its successful advance completes.
+func scheduled_local_input(player: int) -> Types.InputResult:
+	var result: Types.InputResult = Types.InputResult.new()
+	if _config == null:
+		result.code = Code.NOT_CONFIGURED
+	elif player < 0 or player >= _queues.size() or player not in _config.local_players:
+		result.code = Code.INVALID_PLAYER
+	elif _samples[player].is_empty():
+		result.code = Code.MISSING_LOCAL_INPUT
+	else:
+		result.frame = _received[player]
+		result.bytes = _samples[player].duplicate()
+		result.status = Queue.Status.CONFIRMED
+	return result
+
+
+## Per-slot actual scheduled receipt bounds for transport gossip; never prediction frames.
+func received_frames() -> PackedInt64Array:
+	return _received.duplicate()
+
+
+## Fixed-membership mesh confirmation; enable before simulation, then advance monotonically.
+## Transport owns the endpoint gossip fold; this engine validates its local receipt ceiling.
+func set_confirmation_limit(frame: int) -> Types.Result:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return Types.Result.new(code)
+	if _config.sync_test:
+		return Types.Result.new(Code.INVALID_CONFIGURATION)
+	if frame < -1 or frame > Queue.FRAME_MAX or frame > _receipt_minimum():
+		return Types.Result.new(Code.INVALID_FRAME)
+	if frame < _confirmed() or (_has_confirmation_limit and frame < _confirmation_limit) or (not _has_confirmation_limit and _current != 0):
+		return Types.Result.new(Code.INVALID_FRAME)
+	_has_confirmation_limit = true
+	_confirmation_limit = frame
 	return Types.Result.new(Code.OK)
 
 
@@ -167,11 +213,13 @@ func begin_advance() -> Types.Result:
 				_plan.append(Vector2i(Kind.SAVE, frame))
 			_plan.append(Vector2i(Kind.ADVANCE, frame))
 	var can_advance: bool = _config.sync_test or _can_advance()
-	if not can_advance and _plan.is_empty():
+	var save_mesh_boundary: bool = _has_confirmation_limit and _config.max_prediction_frames > 0
+	if not can_advance and _plan.is_empty() and not save_mesh_boundary:
 		return Types.Result.new(Code.PREDICTION_STALL)
-	if can_advance:
+	if can_advance or save_mesh_boundary:
 		if (_config.sync_test and _config.check_distance > 0) or (not _config.sync_test and _config.max_prediction_frames > 0):
 			_plan.append(Vector2i(Kind.SAVE, _current))
+	if can_advance:
 		_plan.append(Vector2i(Kind.ADVANCE, _current))
 	_target = _current + 1 if can_advance else _current
 	_outcome = Code.OK if can_advance else Code.PREDICTION_STALL
@@ -305,6 +353,10 @@ func _can_advance() -> bool:
 
 
 func _confirmed() -> int:
+	return mini(_receipt_minimum(), _confirmation_limit) if _has_confirmation_limit else _receipt_minimum()
+
+
+func _receipt_minimum() -> int:
 	var confirmed: int = Queue.FRAME_MAX
 	for frame: int in _received:
 		confirmed = mini(confirmed, frame)

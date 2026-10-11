@@ -19,6 +19,8 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd")
 const HandshakeTypes = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
+const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
+const InputTypes = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const ProtocolTypes = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 
 class Game:
@@ -59,7 +61,7 @@ func _initialize() -> void:
     if result.code != Types.Code.OK or result.frame_after != 1 or game.ticks != 1:
         quit(1)
         return
-    if not _handshake():
+    if not _handshake() or not _peer_session():
         quit(1)
         return
     print("FORTRESS_ADDON_PACKAGE_OK")
@@ -94,6 +96,56 @@ func _handshake() -> bool:
         if peers[1].receive(packet, roster[0], 0) != HandshakeTypes.Code.OK:
             return false
     return peers[0].status().state == "running" and peers[1].status().state == "running"
+
+
+func _peer_session() -> bool:
+    var peers: Array[Peer] = []
+    var games: Array[Game] = []
+    var roster: Array[PackedByteArray] = [PackedByteArray([1, 0, 0, 0, 0, 0, 0, 0]), PackedByteArray([2, 0, 0, 0, 0, 0, 0, 0])]
+    for slot: int in range(2):
+        var config: Config = Config.new()
+        config.local_players = PackedInt32Array([slot])
+        config.sync_test = false
+        config.check_distance = 0
+        config.max_snapshot_bytes = 1
+        config.storage_budget_bytes = 100000
+        var local: ProtocolTypes.Message = ProtocolTypes.Message.new()
+        local.kind = ProtocolTypes.Kind.SYNC_REQUEST
+        local.sender_id = roster[slot].duplicate()
+        local.connection_id = roster[slot].duplicate()
+        local.session_id.fill(1)
+        local.config.roster = roster
+        var options: HandshakeTypes.Options = HandshakeTypes.Options.new()
+        options.roundtrips = 1
+        var game: Game = Game.new()
+        var peer: Peer = Peer.new()
+        if peer.configure(config, local, game, options, InputTypes.Options.new()) != InputTypes.Code.OK:
+            return false
+        local.token.fill(slot + 1)
+        if peer.begin(0, [local.token]) != InputTypes.Code.OK:
+            return false
+        peers.append(peer)
+        games.append(game)
+    for tick: int in range(6):
+        if not _deliver(peers, roster, tick):
+            return false
+    for frame: int in range(3):
+        for slot: int in range(2):
+            var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([1]))]
+            if peers[slot].step(10 + frame, samples).code != Types.Code.OK:
+                return false
+        if not _deliver(peers, roster, 10 + frame) or not _deliver(peers, roster, 10 + frame):
+            return false
+    return games[0].ticks == 3 and games[1].ticks == 3 and peers[0].status().confirmed_frame == 2
+
+func _deliver(peers: Array[Peer], roster: Array[PackedByteArray], now_us: int) -> bool:
+    for slot: int in range(2):
+        for packet: Peer.Packet in peers[slot].drain_outbox():
+            if peers[1 - slot].receive(packet.bytes, roster[slot], now_us) != InputTypes.Code.OK:
+                return false
+        peers[slot].drain_events()
+        peers[slot].drain_transitions()
+    return true
 '''
 
 
@@ -147,7 +199,7 @@ def main():
     report = {'passed': True, 'entries': entries, 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
               'command': command, 'engine_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
-              'limits': 'Addon-only candidate, one native tick and two-peer byte handshake; not a supported release or browser networking gate.'}
+              'limits': 'Addon-only candidate: one driver tick and three two-peer byte gameplay steps; not a supported release or browser networking gate.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'files': len(entries), 'results': str(receipt)}))
 

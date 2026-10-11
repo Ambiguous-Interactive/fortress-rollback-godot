@@ -1,0 +1,396 @@
+class_name FortressInputEndpoint
+extends RefCounted
+
+# gdlint: disable=max-returns
+
+const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
+const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
+const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
+
+var _handshake: Handshake = null
+var _local: T.Message = null
+var _remote: PackedByteArray = PackedByteArray()
+var _local_players: PackedByteArray = PackedByteArray()
+var _remote_players: PackedByteArray = PackedByteArray()
+var _options: I.Options = null
+var _limits: T.Limits = null
+var _accept_input: Callable = Callable()
+var _busy: bool = false
+var _state: Dictionary = {}
+var _outbox: Array[PackedByteArray] = []
+var _events: Array[Dictionary] = []
+var _transitions: Array[Dictionary] = []
+
+
+## Variant ingress prevents implicit conversion of hostile callers.
+func configure(local: Variant, remote_sender: Variant, handshake_options: Variant, options: Variant, accept_input: Variant) -> int:
+	if _busy:
+		return I.Code.BUSY
+	if _handshake != null:
+		return I.Code.WRONG_STATE
+	if not local is T.Message or not V.config(local.config) or not remote_sender is PackedByteArray:
+		return I.Code.INVALID_ARGUMENT
+	if not handshake_options is H.Options or not H.valid_options(handshake_options) or not options is I.Options or not I.valid_options(options):
+		return I.Code.INVALID_ARGUMENT
+	if not accept_input is Callable or not accept_input.is_valid():
+		return I.Code.INVALID_ARGUMENT
+	var local_players: PackedByteArray = PackedByteArray()
+	var remote_players: PackedByteArray = PackedByteArray()
+	for slot: int in range(local.config.player_count):
+		if local.config.roster[slot] == local.sender_id:
+			local_players.append(slot)
+		elif local.config.roster[slot] == remote_sender:
+			remote_players.append(slot)
+	if local_players.is_empty() or remote_players.is_empty():
+		return I.Code.INVALID_ARGUMENT
+	var local_width: int = local_players.size() * local.config.input_width
+	var remote_width: int = remote_players.size() * local.config.input_width
+	var overhead: int = 60 + maxi(local_players.size(), remote_players.size()) + 7 * local.config.player_count
+	if handshake_options.max_packet_bytes < overhead + maxi(local_width, remote_width):
+		return I.Code.INVALID_ARGUMENT
+	if options.max_pending_frames * local_width + options.max_received_frames * remote_width > options.max_buffer_bytes:
+		return I.Code.INVALID_ARGUMENT
+	var handshake: Handshake = Handshake.new()
+	var code: int = handshake.configure(local, remote_sender, handshake_options)
+	if code != I.Code.OK:
+		return code
+	_limits = T.Limits.new()
+	_limits.max_packet_bytes = handshake_options.max_packet_bytes
+	_limits.max_input_frames = options.max_input_frames
+	_limits.player_count = local.config.player_count
+	_limits.input_width = local.config.input_width
+	_local = Codec.decode(Codec.encode(local, _limits).bytes, _limits).message
+	_remote = remote_sender.duplicate()
+	_local_players = local_players
+	_remote_players = remote_players
+	_options = I.Options.new()
+	for field: String in ["retry_interval_us", "max_pending_frames", "max_received_frames", "max_input_frames", "max_outbox", "max_events",
+		"max_transitions", "max_buffer_bytes"]:
+		_options.set(field, options.get(field))
+	_handshake = handshake
+	_accept_input = accept_input
+	var statuses: Array[Dictionary] = []
+	for slot: int in range(_limits.player_count):
+		statuses.append({"disconnected": false, "last_frame": -1, "epoch": 0})
+	_state = {"now_us": -1, "last_submitted_frame": -1, "last_sent_frame": -1, "last_received_frame": -1, "last_acked_frame": -1,
+		"last_input_progress_us": -1, "pending": {}, "received": {}, "peer_statuses": statuses, "connect_statuses": statuses.duplicate(true), "terminated": false}
+	return I.Code.OK
+
+
+func begin(now_us: Variant, token: Variant) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	code = _handshake.begin(now_us, token)
+	if code == I.Code.OK:
+		_state.now_us = now_us
+		_state.last_input_progress_us = now_us
+	return code
+
+
+func poll(now_us: Variant, next_token: Variant = null, statuses: Variant = []) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if not statuses is Array:
+		return I.Code.INVALID_ARGUMENT
+	if not statuses.is_empty():
+		code = _status_code(statuses)
+		if code != I.Code.OK:
+			return code
+	if _handshake.status().state != "running":
+		code = _handshake.poll(now_us, next_token)
+		if code == I.Code.OK:
+			_state.now_us = now_us
+		return code
+	var plan: Dictionary = _plan(now_us)
+	if not statuses.is_empty():
+		_merge_statuses(plan, statuses, "connect_statuses")
+	if now_us - plan.state.last_input_progress_us > _options.retry_interval_us:
+		if not plan.state.pending.is_empty():
+			_send_pending(plan)
+		plan.state.last_input_progress_us = now_us
+		_trace(plan, "retry", "sent" if not plan.outbox.is_empty() else "empty")
+	return _commit(plan)
+
+
+func receive(packet: Variant, attributed_sender: Variant, now_us: Variant, next_token: Variant = null) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if not attributed_sender is PackedByteArray:
+		return I.Code.INVALID_ARGUMENT
+	if attributed_sender != _remote:
+		return I.Code.WRONG_SOURCE
+	var result: T.Result = Codec.decode(packet, _limits)
+	if result.code != T.Code.OK:
+		return I.Code.INVALID_PACKET
+	var message: T.Message = result.message
+	if message.session_id != _local.session_id or message.sender_id != _remote:
+		return I.Code.WRONG_SOURCE
+	if message.kind in [T.Kind.SYNC_REQUEST, T.Kind.SYNC_REPLY]:
+		code = _handshake.receive(packet, attributed_sender, now_us, next_token)
+		if code == I.Code.OK:
+			_state.now_us = now_us
+		return code
+	var handshake_status: Dictionary = _handshake.status()
+	if handshake_status.state != "running":
+		return I.Code.WRONG_STATE
+	if message.connection_id.hex_encode() != handshake_status.remote_connection:
+		return I.Code.WRONG_CONNECTION
+	if message.kind not in [T.Kind.INPUT, T.Kind.INPUT_ACK]:
+		return I.Code.UNSUPPORTED_KIND
+	var plan: Dictionary = _plan(now_us)
+	if message.kind == T.Kind.INPUT_ACK:
+		_ack(plan, message.ack_frame)
+		_trace(plan, "receive_ack", "applied" if plan.state.last_acked_frame != _state.last_acked_frame else "ignored")
+		return _commit(plan)
+	return _receive_frames(plan, message)
+
+
+func submit(frame: Variant, data: Variant, statuses: Variant, now_us: Variant) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if _handshake.status().state != "running":
+		return I.Code.WRONG_STATE
+	if typeof(frame) != TYPE_INT or not V.frame(frame, false):
+		return I.Code.INVALID_FRAME
+	if not data is PackedByteArray or data.size() != _local_players.size() * _limits.input_width:
+		return I.Code.INVALID_ARGUMENT
+	code = _status_code(statuses)
+	if code != I.Code.OK:
+		return code
+	if frame <= _state.last_submitted_frame:
+		if not _state.pending.has(frame):
+			return I.Code.INVALID_FRAME
+		if _state.pending[frame] != data:
+			return I.Code.CONFLICT
+		var duplicate: Dictionary = _plan(now_us)
+		_merge_statuses(duplicate, statuses, "connect_statuses")
+		return _commit(duplicate)
+	if frame != _state.last_submitted_frame + 1 and not (_state.last_submitted_frame == -1 and frame == _local.config.input_delay):
+		return I.Code.INVALID_FRAME
+	if _state.pending.size() >= _options.max_pending_frames:
+		return I.Code.BACKPRESSURE
+	var plan: Dictionary = _plan(now_us)
+	plan.state.pending[frame] = data.duplicate()
+	plan.state.last_submitted_frame = frame
+	_merge_statuses(plan, statuses, "connect_statuses")
+	_send_pending(plan)
+	_trace(plan, "submit", "sent")
+	return _commit(plan)
+
+
+func status() -> Dictionary:
+	if _handshake == null:
+		return {}
+	var result: Dictionary = _state.duplicate(true)
+	var handshake: Dictionary = _handshake.status()
+	result.state = "terminated" if _state.terminated else handshake.state
+	result.remote_connection = handshake.remote_connection
+	result.handshake = handshake
+	result.local_players = _local_players.duplicate()
+	result.remote_players = _remote_players.duplicate()
+	result.pending_frames = _state.pending.size()
+	return result
+
+
+func drain_outbox() -> Array[PackedByteArray]:
+	var result: Array[PackedByteArray] = []
+	if _busy or _handshake == null:
+		return result
+	result = _handshake.drain_outbox()
+	for packet: PackedByteArray in _outbox:
+		result.append(packet.duplicate())
+	_outbox.clear()
+	return result
+
+
+func drain_events() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if _busy or _handshake == null:
+		return result
+	result = _handshake.drain_events()
+	for event: Dictionary in _events:
+		result.append(event.duplicate(true))
+	_events.clear()
+	return result
+
+
+func drain_transitions() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if _busy or _handshake == null:
+		return result
+	result = _handshake.drain_transitions()
+	for transition: Dictionary in _transitions:
+		result.append(transition.duplicate(true))
+	_transitions.clear()
+	return result
+
+
+func _gate(now_us: Variant) -> int:
+	if _busy:
+		return I.Code.BUSY
+	if _handshake == null:
+		return I.Code.WRONG_STATE
+	if _state.terminated:
+		return I.Code.TERMINATED
+	if typeof(now_us) != TYPE_INT or now_us < 0 or now_us < _state.now_us:
+		return I.Code.INVALID_ARGUMENT
+	return I.Code.OK
+
+
+func _status_code(statuses: Variant) -> int:
+	if not statuses is Array or statuses.size() != _limits.player_count:
+		return I.Code.INVALID_ARGUMENT
+	for status_value: Variant in statuses:
+		if not status_value is T.Status or not V.frame(status_value.last_frame) or status_value.epoch < 0 or status_value.epoch > 65535:
+			return I.Code.INVALID_ARGUMENT
+		if status_value.disconnected or status_value.epoch != 0:
+			return I.Code.UNSUPPORTED_KIND
+	return I.Code.OK
+
+
+func _plan(now_us: int) -> Dictionary:
+	var state: Dictionary = _state.duplicate(true)
+	state.now_us = now_us
+	return {"state": state, "outbox": [], "events": [], "transitions": []}
+
+
+func _packet(kind: int) -> T.Message:
+	var message: T.Message = T.Message.new()
+	message.kind = kind
+	message.session_id = _local.session_id
+	message.sender_id = _local.sender_id
+	message.connection_id = _local.connection_id
+	return message
+
+
+func _send_pending(plan: Dictionary) -> void:
+	var message: T.Message = _packet(T.Kind.INPUT)
+	message.ack_frame = plan.state.last_received_frame
+	message.players = _local_players
+	for value: Dictionary in plan.state.connect_statuses:
+		var status_value: T.Status = T.Status.new()
+		status_value.last_frame = value.last_frame
+		message.statuses.append(status_value)
+	var width: int = _local_players.size() * _limits.input_width
+	var overhead: int = 60 + _local_players.size() + 7 * _limits.player_count
+	var count: int = mini(_options.max_input_frames, (_limits.max_packet_bytes - overhead) / width)
+	var frames: Array = plan.state.pending.keys()
+	frames.sort()
+	message.start_frame = frames[0]
+	message.frame_count = mini(count, frames.size())
+	for index: int in range(message.frame_count):
+		message.data.append_array(plan.state.pending[frames[index]])
+	plan.state.last_sent_frame = maxi(plan.state.last_sent_frame, message.start_frame + message.frame_count - 1)
+	plan.outbox.append(Codec.encode(message, _limits).bytes)
+
+
+func _ack(plan: Dictionary, frame: int) -> void:
+	if frame <= plan.state.last_acked_frame or frame > plan.state.last_sent_frame:
+		return
+	var frames: Array = plan.state.pending.keys()
+	frames.sort()
+	for pending_frame: int in frames:
+		if pending_frame > frame:
+			break
+		plan.state.pending.erase(pending_frame)
+		plan.state.last_acked_frame = pending_frame
+
+
+func _merge_statuses(plan: Dictionary, statuses: Array, field: String = "peer_statuses") -> void:
+	for slot: int in range(statuses.size()):
+		plan.state[field][slot].last_frame = maxi(plan.state[field][slot].last_frame, statuses[slot].last_frame)
+
+
+func _receive_frames(plan: Dictionary, message: T.Message) -> int:
+	if message.players != _remote_players:
+		return I.Code.INVALID_PACKET
+	var code: int = _status_code(message.statuses)
+	if code != I.Code.OK:
+		return code
+	var width: int = _remote_players.size() * _limits.input_width
+	var staged: Array[Dictionary] = []
+	for index: int in range(message.frame_count):
+		var frame: int = message.start_frame + index
+		var bytes: PackedByteArray = message.data.slice(index * width, (index + 1) * width)
+		if plan.state.received.has(frame) and plan.state.received[frame] != bytes:
+			return I.Code.CONFLICT
+		if frame > plan.state.last_received_frame:
+			staged.append({"frame": frame, "data": bytes})
+	var gap: bool = message.start_frame > plan.state.last_received_frame + 1
+	if plan.state.last_received_frame == -1 and message.start_frame == _local.config.input_delay:
+		gap = false
+	if gap:
+		staged.clear()
+	_merge_statuses(plan, message.statuses)
+	# Reserve every publication before invoking the irreversible retention sink.
+	var reply: T.Message = _packet(T.Kind.INPUT_ACK)
+	reply.ack_frame = plan.state.last_received_frame if staged.is_empty() else staged[-1].frame
+	plan.outbox.append(Codec.encode(reply, _limits).bytes)
+	_trace(plan, "receive_input", "gap" if gap else ("duplicate" if staged.is_empty() else "progress"))
+	if not staged.is_empty():
+		plan.events.append({"kind": "inputs_received", "start_frame": staged[0].frame, "frame_count": staged.size()})
+	code = _capacity(plan)
+	if code != I.Code.OK:
+		return code
+	_busy = true
+	for entry: Dictionary in staged:
+		var accepted: Variant = _accept_input.call(entry.frame, entry.data.duplicate()) if _accept_input.is_valid() else null
+		if typeof(accepted) != TYPE_INT or accepted != 0:
+			_busy = false
+			_state = plan.state
+			_state.terminated = true
+			_events.append({"kind": "input_failed", "frame": entry.frame})
+			plan.transitions[-1].disposition = "input_failed"
+			plan.transitions[-1].last_received_frame = _state.last_received_frame
+			_transitions.append(plan.transitions[-1])
+			return I.Code.INPUT_FAILED
+		plan.state.received[entry.frame] = entry.data
+		plan.state.last_received_frame = entry.frame
+		while plan.state.received.size() > _options.max_received_frames:
+			var frames: Array = plan.state.received.keys()
+			frames.sort()
+			plan.state.received.erase(frames[0])
+	_busy = false
+	if not staged.is_empty():
+		plan.state.last_input_progress_us = plan.state.now_us
+	# An undecodable gap cannot validate a piggyback ACK; stale duplicates can.
+	if not gap:
+		_ack(plan, message.ack_frame)
+	plan.transitions[-1].last_received_frame = plan.state.last_received_frame
+	plan.transitions[-1].last_acked_frame = plan.state.last_acked_frame
+	plan.transitions[-1].pending_frames = plan.state.pending.size()
+	return _commit(plan)
+
+
+func _trace(plan: Dictionary, action: String, disposition: String) -> void:
+	plan.transitions.append({"action": action, "disposition": disposition, "last_received_frame": plan.state.last_received_frame,
+		"last_acked_frame": plan.state.last_acked_frame, "pending_frames": plan.state.pending.size()})
+
+
+func _capacity(plan: Dictionary) -> int:
+	if _outbox.size() + plan.outbox.size() > _options.max_outbox or _events.size() + plan.events.size() > _options.max_events:
+		return I.Code.BACKPRESSURE
+	if _transitions.size() + plan.transitions.size() > _options.max_transitions:
+		return I.Code.BACKPRESSURE
+	return I.Code.OK
+
+
+func _commit(plan: Dictionary) -> int:
+	var code: int = _capacity(plan)
+	if code != I.Code.OK:
+		return code
+	_state = plan.state
+	for packet: PackedByteArray in plan.outbox:
+		_outbox.append(packet)
+	for event: Dictionary in plan.events:
+		_events.append(event)
+	for transition: Dictionary in plan.transitions:
+		_transitions.append(transition)
+	return I.Code.OK

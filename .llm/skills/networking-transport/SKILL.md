@@ -74,6 +74,13 @@ events and post-transition observations at strict interval boundaries.
 Validate scalar and collection cardinality limits before scanning identities or
 allocating lookup tables. Accepted queue minima must permit initialization and
 completion after drains, including the maximum configured roundtrip count.
+Every composed façade must expose drains for all bounded publication queues,
+including diagnostics. Run healthy sessions past each default capacity. A partial
+multi-link publication must consume the accepted clock even when a later link
+backpressures. Keep outgoing local receipt gossip separate from incoming peer
+observations; confirmation must never count local claims as remote evidence.
+Capture receipt status at the compared service boundary. Receiving input before
+retrying another link can change its gossip even when frames and ACKs match.
 
 - Wire formats, channels, replay layout, checksum exchange: this skill.
 - When to roll back and why: rollback-fundamentals.

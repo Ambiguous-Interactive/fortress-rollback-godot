@@ -106,7 +106,7 @@ jobs:
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
         run: python3 scripts/reference/godot_smoke.py --web
-      - name: Verify integer encoding, snapshot ownership and byte handshakes
+      - name: Verify integer encoding, snapshot ownership and byte sessions
         run: make representation-probes
       - name: Verify runner failure controls and fresh-process suites
         run: |
@@ -119,6 +119,7 @@ jobs:
             python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
             python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
             python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
+            python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
           done
       - uses: actions/upload-artifact@v6
         if: always()

@@ -23,6 +23,9 @@ enum Code {
 	DESYNC,
 	TERMINATED,
 	EXPIRED_VIEW,
+	NOT_SYNCHRONIZED,
+	NETWORK_BACKPRESSURE,
+	PROTOCOL_FAILED,
 }
 enum Kind { SAVE, LOAD, ADVANCE }
 enum Lifecycle { RUNNING, TERMINATED }
@@ -51,6 +54,7 @@ class Status:
 
 class InputResult:
 	extends RefCounted
+	var frame: int = -1
 	var code: int = Code.OK
 	var bytes: PackedByteArray = PackedByteArray()
 	var status: int = 0
