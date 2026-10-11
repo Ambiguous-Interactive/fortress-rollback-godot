@@ -25,7 +25,9 @@ Each peer simulates every frame locally:
    engine's ordered requests to resimulate; never select a snapshot from the
    global confirmation value alone. Presentation reconciles after completion.
 4. **Confirm**: frames become confirmed once all players' inputs for them are
-   known. Confirmed states are checksummed and exchanged to detect desync.
+   known. Confirmed states are checksummed and exchanged to detect desync. Activating
+   an additional confirmation policy cannot revoke already published history,
+   including before the first simulation advance.
 
 ## Frame Lifecycle (per fixed tick)
 

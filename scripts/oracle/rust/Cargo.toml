@@ -17,3 +17,7 @@ handshake-oracle = ["fortress-rollback/trace-validation"]
 name = "handshake"
 path = "src/bin/handshake.rs"
 required-features = ["handshake-oracle"]
+
+[[bin]]
+name = "p2p"
+path = "src/bin/p2p.rs"

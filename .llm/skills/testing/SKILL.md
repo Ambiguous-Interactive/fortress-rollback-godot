@@ -135,6 +135,8 @@ Validate embedded scenarios/results independently before comparing their identit
 to submitted artifacts. Python equality treats booleans, integral floats and
 integers as equal; it is not schema validation. Standalone executables also need
 their own complete schema and nonempty-work boundary.
+Preserve decoded wire fields instead of substituting scenario expectations.
+Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Constrain omitted setup records to their
 exact allowed position. Formal projection must account for the observed initial
@@ -144,6 +146,16 @@ Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying
 an oracle's own requests can preserve the same mistake. Keep a temporal mutation
 that retains the final state while violating an intermediate frame.
+For network scenarios, compare corrected confirmed prefixes while faults remain
+active and assert a nonzero comparison count for every peer. Confirmation can
+advance on delivery before predicted game state is repaired; capture actual
+callback boundaries rather than assuming the current state is already canonical.
+Compare stalled save/load/advance requests too; unchanged frame numbers do not
+mean a session performed no work.
+
+Validate original numeric tokens when parsing erases integer versus float syntax.
+Bind evidence to all executed source inventories and tool identities, captured
+before use and rechecked before publishing a success receipt.
 
 Godot JSON parsers expose numeric fields as floats. After validating integrality
 and bounds, reconstruct scenario records with explicit integers before emitting

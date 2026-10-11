@@ -53,11 +53,32 @@ or expired views; request completion still belongs to the driver or expert API.
 
 Submit every local sample using `submit_local_input(player, current_frame, bytes)`.
 Identical retries during a stall are idempotent; a conflicting retry returns
-`INPUT_ALREADY_SUBMITTED`. Input delay schedules each local sample. In external
-mode, `receive_input(player, scheduled_frame, bytes)` accepts already scheduled
-remote inputs; frames must arrive sequentially starting at zero and remain
-immutable. A gap is rejected without changing confirmation or input history.
-Delayed neutral prefixes must arrive explicitly as remote input records.
+`INPUT_ALREADY_SUBMITTED`. Successful submissions and identical retries return
+the actual delayed scheduled frame in `Result.value`. Before successful advance,
+`scheduled_local_input(player)` returns an owned `InputResult` with that frame,
+bytes and confirmed status; absent samples return `MISSING_LOCAL_INPUT`.
+
+In external mode, `receive_input(player, scheduled_frame, bytes)` accepts already
+scheduled remote inputs. The first record may start at zero or at the negotiated
+`input_delay`; the latter uses the queue's bounded atomic startup insertion of
+neutral frames. Subsequent records are strictly sequential and immutable.
+Explicit neutral prefixes remain supported. A rejected gap preserves history.
+`received_frames()` returns an owned per-slot actual scheduled receipt vector.
+
+A fixed-membership transport can enable `set_confirmation_limit(-1)` before
+actual receipts expose a higher confirmation and before simulation, then publish
+its monotonically increasing mesh confirmation fold. Initial activation must
+preserve the already published confirmation even when the simulation frame is
+still zero. An equal initial bound is valid; a lower bound is rejected.
+Each bound must remain in `[-1, FRAME_MAX]` and no greater than the local receipt
+minimum. This mutation observes the same batch and callback guards as input.
+Sync-test rejects it; standalone external sessions retain receipt-only behavior.
+The transport folds each remote slot's local receipt with every running
+endpoint's gossiped receipt, while local slots contribute their own receipt.
+The pinned source witness is `P2PSession::remote_slot_confirmed_bound` and
+`confirmed_frame` at commit `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
+Disconnect membership changes require a separate protocol; this bound cannot
+lower confirmation or implement disconnect convergence.
 
 `begin_advance()` returns a typed result. `READY` includes a batch whose
 `next_request()` returns the next `SAVE`, `LOAD` or `ADVANCE`. Complete it through
@@ -78,7 +99,8 @@ fatal before a load callback. Presentation reads only the final corrected state.
 For positive prediction limit `P`, advancement requires `ahead < P`. Before
 confirmation, `ahead=current_frame`; otherwise it is `current_frame-confirmed`.
 Zero prediction waits for actual current inputs from every slot. Global
-confirmation is the minimum actual scheduled input frame across all players;
+confirmation is the minimum actual scheduled input frame across all players,
+capped by the explicit mesh limit when enabled;
 it can include the current unsimulated frame. Speculative agreement never confirms.
 A recovery-only batch can finish with `PREDICTION_STALL`; it corrects the game,
 preserves the current sample and leaves the exposed frame unchanged.

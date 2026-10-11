@@ -7,8 +7,8 @@ fortified, deterministic, GGPO-inspired rollback networking library (a fork of
 in **GDScript 2.0**. The shipped addon has no Rust, GDExtension or C# dependency;
 Rust is permitted for independent development oracles.
 The project has pinned reference baselines, a deterministic test runner, bounded
-queues/snapshots and a shared local rollback session engine. P2P transport and
-browser release support remain planned. Treat this file as the canonical operating manual.
+queues/snapshots, a shared rollback engine and fixed-membership byte sessions.
+Real transports and browser release support remain planned. Treat this file as the canonical operating manual.
 
 ## Skills Index
 
