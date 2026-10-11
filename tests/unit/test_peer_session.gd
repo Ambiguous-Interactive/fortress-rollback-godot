@@ -239,6 +239,20 @@ func _backpressure(context: RefCounted) -> void:
 
 
 func _ingress(context: RefCounted) -> void:
+	var setup: Dictionary = _build(context, 2)
+	for field: int in range(3):
+		for malformed: Variant in [null, false, {}, [], RefCounted.new()]:
+			if field == 2 and malformed == null:
+				continue
+			var handshake: Variant = malformed if field == 0 else H.Options.new()
+			var inputs: Variant = malformed if field == 1 else I.Options.new()
+			var lifecycle: Variant = malformed if field == 2 else L.Options.new()
+			var peer: Peer = Peer.new()
+			context.equal(peer.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), handshake, inputs, lifecycle), I.Code.INVALID_ARGUMENT,
+				"malformed options fail at the public variant boundary")
+			context.equal(peer.network_status().state, "unconfigured", "invalid options preserve fresh configuration")
+			context.equal(peer.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new()), I.Code.OK,
+				"valid retry succeeds after rejected options")
 	var mesh: Dictionary = _build(context, 2)
 	context.equal(mesh.peers[0].poll(true), I.Code.INVALID_ARGUMENT, "bool clock rejected")
 	context.equal(mesh.peers[0].receive(PackedByteArray(), _id(7), 0), I.Code.WRONG_SOURCE, "unregistered transport source rejected")

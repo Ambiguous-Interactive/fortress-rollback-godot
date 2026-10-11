@@ -52,7 +52,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		return I.Code.INVALID_ARGUMENT
 	if not local is T.Message or not V.config(local.config) or not game is RefCounted:
 		return I.Code.INVALID_ARGUMENT
-	if not H.valid_options(handshake_options) or not I.valid_options(input_options):
+	if not handshake_options is H.Options or not H.valid_options(handshake_options) or not input_options is I.Options or not I.valid_options(input_options):
 		return I.Code.INVALID_ARGUMENT
 	var controls: Variant = L.Options.new() if lifecycle_options == null else lifecycle_options
 	if not L.valid_options(controls):
@@ -177,11 +177,10 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	if _lifecycle.enabled:
 		var polled: int = _poll(now_us, [])
 		if polled != I.Code.OK:
-			return Driver.StepResult.new(_step_code(polled), before, before)
+			return Driver.StepResult.new(_step_failure(polled), before, before)
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
-		var reason: int = _core.status().reason if _core.status().lifecycle == Types.Lifecycle.TERMINATED else _step_code(control_code)
-		return Driver.StepResult.new(reason, before, before)
+		return Driver.StepResult.new(_step_failure(control_code), before, before)
 	_busy = true
 	var scheduled: int = -1
 	for sample: Driver.LocalInput in local_inputs:
@@ -201,8 +200,9 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 		var sent: int = endpoint.submit(scheduled, data, statuses, now_us)
 		if sent != I.Code.OK:
 			_busy = false
+			_collect_events()
 			_check_failure()
-			return Driver.StepResult.new(_step_code(sent), before, before)
+			return Driver.StepResult.new(_step_failure(sent), before, before)
 	code = _confirmation_code()
 	if code != Types.Code.OK:
 		_busy = false
@@ -278,7 +278,7 @@ func close(now_us: Variant, reason: Variant = 0) -> int:
 		var closed: int = _endpoint(index).close(now_us, reason)
 		if closed != I.Code.OK:
 			code = closed
-	_collect_events()
+	_collect_events(true)
 	_core.terminate(Types.Code.TERMINATED)
 	_terminate_links()
 	return code
@@ -350,6 +350,7 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = []) -> int:
 			_endpoint(index).update_local_frame_advantage(_core.status().current_frame)
 		var code: int = _endpoint(index).poll(now_us, null if tokens.is_empty() else tokens[index], statuses)
 		if code != I.Code.OK:
+			_collect_events()
 			_check_failure()
 			return code
 	_now = now_us
@@ -427,6 +428,10 @@ func _check_failure() -> void:
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 
 
+func _step_failure(code: int) -> int:
+	return _core.status().reason if _core.status().lifecycle == Types.Lifecycle.TERMINATED else _step_code(code)
+
+
 func _step_code(code: int) -> int:
 	match code:
 		I.Code.BUSY:
@@ -442,7 +447,7 @@ func _step_code(code: int) -> int:
 	return Types.Code.PROTOCOL_FAILED
 
 
-func _collect_events() -> void:
+func _collect_events(local_close: bool = false) -> void:
 	if _core == null:
 		return
 	for index: int in range(_ids.size()):
@@ -456,7 +461,7 @@ func _collect_events() -> void:
 					_fatal_event = _owned_event(_checksums.failure)
 					_core.terminate(code)
 				continue
-			if event.kind in ["disconnected", "event_capacity_exceeded"]:
+			if event.kind == "event_capacity_exceeded" or (event.kind == "disconnected" and not local_close):
 				_core.terminate(Types.Code.PROTOCOL_FAILED)
 			_publish_event(event)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:

@@ -114,7 +114,7 @@ jobs:
             editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
             python3 scripts/reference/package_audit.py --godot "$editor" --output ".cache/reference/results/package-$version"
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
-            python3 scripts/run_godot_tests.py --godot "$editor" --results ".cache/tests/runner-$version.json"
+            python3 scripts/run_godot_tests.py --godot "$editor" --timeout 120 --results ".cache/tests/runner-$version.json"
             python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
             python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
             python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"

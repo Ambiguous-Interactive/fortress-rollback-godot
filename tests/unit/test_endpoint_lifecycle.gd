@@ -178,6 +178,7 @@ func _checksum_goodbye(context: RefCounted) -> void:
 	context.equal(endpoint.status().state, "terminated", "remote goodbye stops fixed membership")
 
 func _capacity(context: RefCounted) -> void:
+	_terminal_capacity_matrix(context)
 	var f: RefCounted = Fixture.new()
 	var inputs: I.Options = I.Options.new()
 	inputs.max_events = 1
@@ -201,6 +202,49 @@ func _capacity(context: RefCounted) -> void:
 	context.equal(endpoint.status(), before, "reply backpressure preserves advantage and receive time")
 	endpoint.drain_outbox()
 	context.equal(endpoint.receive(f._encode(quality), f._id(2), 3), I.Code.OK, "draining allows valid control retry")
+
+
+# Value: protects=terminal causes under pressure; fails_when=packet or transition refusal invents event overflow; why_new=capacity covered ordinary replies; seam=none
+func _terminal_capacity_matrix(context: RefCounted) -> void:
+	var f: RefCounted = Fixture.new()
+	for pressure: String in ["outbox", "transitions", "events"]:
+		for action: String in ["goodbye", "timeout", "local"]:
+			var inputs: I.Options = I.Options.new()
+			inputs.max_outbox = 3
+			inputs.max_transitions = 1
+			inputs.max_events = 1 if pressure == "events" else 128
+			var endpoint: E = _ready(f, Fixture.Sink.new(), null, inputs)
+			if pressure == "outbox":
+				for packet: int in range(3):
+					context.equal(endpoint.send_checksum(1, f._id(1, 16), 2), I.Code.OK, "actual checksum reports fill outbox")
+			elif pressure == "transitions":
+				context.equal(endpoint.receive(f._encode(_message(f, T.Kind.INPUT_ACK)), f._id(2), 2), I.Code.OK, "actual ACK fills transition queue")
+			else:
+				context.equal(endpoint.receive(f._encode(_message(f, T.Kind.CHECKSUM_REPORT)), f._id(2), 2), I.Code.OK, "actual checksum fills event queue")
+			var code: int = I.Code.OK
+			if action == "timeout":
+				code = endpoint.poll(2000003)
+			elif action == "local":
+				code = endpoint.close(3, 7)
+			else:
+				var goodbye: T.Message = _message(f, T.Kind.GOODBYE)
+				goodbye.reason = 7
+				code = endpoint.receive(f._encode(goodbye), f._id(2), 3)
+			var refused: bool = pressure == "events" or action == "timeout" or (pressure == "outbox" and action == "local")
+			context.equal(code, I.Code.BACKPRESSURE if refused else I.Code.OK, "terminal operation reports actual queue pressure")
+			context.equal(endpoint.status().state, "terminated", "terminal intent commits despite rejected outgoing work")
+			var events: Array[Dictionary] = endpoint.drain_events()
+			if pressure == "events":
+				context.equal(events.size(), 2, "genuine overflow respects event bound plus reserved fatal slot")
+				context.equal(events[-1].kind, "event_capacity_exceeded", "only genuine event overflow uses overflow diagnostic")
+			else:
+				var expected: Array = [{"kind": "disconnected", "reason": "timeout" if action == "timeout" else 7}]
+				if action == "timeout":
+					expected.push_front({"kind": "network_interrupted", "disconnect_timeout_ms": 1500})
+				context.equal(events, expected, "owned actual terminal causes survive unrelated queue pressure")
+			context.equal(endpoint.drain_outbox().size() <= inputs.max_outbox, true, "terminal refusal never exceeds packet bound")
+			context.equal(endpoint.drain_transitions().size() <= inputs.max_transitions, true, "terminal refusal never exceeds transition bound")
+			context.equal(endpoint.drain_events().size(), 0, "terminal diagnostics drain exactly once")
 
 # Value: protects=resume before terminal retention failure; fails_when=committed resume event is discarded; why_new=existing refusal coverage lacks interrupted input; seam=none
 func _retention_failure(context: RefCounted) -> void:

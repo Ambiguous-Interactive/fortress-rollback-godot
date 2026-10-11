@@ -64,6 +64,11 @@ checksums, so applications can distinguish verification from transmission.
 
 ## Closure and bounds
 
+A successful local close stores `TERMINATED`. Remote loss and genuine event
+publication failure store `PROTOCOL_FAILED`. A `step` that encounters a
+terminal control failure returns its committed reason. Later calls return
+`TERMINATED`; healthy transport pressure remains retryable.
+
 `close(now_us, reason = 0)` accepts a byte reason, queues three best-effort
 GOODBYE packets per link and halts the local game. Receiving GOODBYE halts the
 fixed-membership game. Queue pressure can prevent transmission; the local

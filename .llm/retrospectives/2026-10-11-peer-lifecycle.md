@@ -35,6 +35,13 @@ No new skill, tooling, operational fact or duplicate product guide was needed.
 | 13 | Explicit misspelled/empty corpus names bypassed the required inventory. | Reject unknown explicit acceptance names; keep custom profiles separate. |
 | 14 | Source quality projection used `as_u64` for unsigned-128 ping/pong fields. | Exercise valid upper-bound messages through the real standalone decoder. |
 | 15 | Named lifecycle controls consumed metrics from an input-only profile. | Validate option prerequisites before invoking specialized consumers. |
+| 16 | CI job 114373774083 stopped both full-suite processes at the default 30-second watchdog. | Verify the actual CI command and its declared full-suite budget. |
+| 17 | Feedback repair `red.json`: local close committed PROTOCOL_FAILED instead of TERMINATED. | Distinguish intentional closure from genuine publication failure before first-reason-wins termination. |
+| 18 | The same red transcript returned NETWORK_BACKPRESSURE after status committed PROTOCOL_FAILED. | Require the terminating operation's error to agree with terminal status; retain healthy retry pressure. |
+| 19 | Cold review compared new guide wording with `peer_session.gd:168–170`: later calls return generic TERMINATED. | Scope API statements to the operation that encounters failure; preserve later-call contracts. |
+| 20 | Cold pressure/matrix logs: close and timeout invented event overflow under packet/transition pressure with free event capacity. | Separate terminal transmission pressure from genuine diagnostic capacity failure. |
+| 21 | Cold ingress logs: dictionary/bool options raise SCRIPT ERROR and return apparent configure OK. | Guard Variant types before entering typed validators. |
+| 22 | `session-011-closure-full-{4.3,4.7.2}.json` records mixed process exits [1,0]. | Finalize fixtures before declaring verification frozen; concurrent passes cannot establish repeatability. |
 
 Review paths are `.cache/session-011/{session-review,protocol-final-review,
 oracle-review,example-review}/`; line numbers refer to their captured reports.
@@ -67,6 +74,9 @@ The source audit alone cannot prove that extension's runtime correctness.
 | 8 | Audit low-window callbacks; label capture extensions. | [Rollback fundamentals](../skills/rollback-fundamentals/SKILL.md) |
 | 9 | Strengthen accepted-minimum retention handoff and nonzero comparison requirements. | Networking and testing skills |
 | 10–15 | Apply existing width, strict-ingress, exact-order and nonvacuous rules to standalone validator paths. | Testing skill; no duplicate instructions added |
+| 16 | Require the full CI entry point and an evidence-based per-process watchdog. | Testing skill and CI workflow |
+| 17–21 | Extend error-path tests across pressure domains and malformed option ingress; qualify later-call docs. | Existing networking/API guidance; no duplicate rule |
+| 22 | Require finalized fixtures before declaring verification frozen; preserve and rerun affected evidence. | Testing skill |
 
 Product changes are owned by the runtime/oracle authors. Curation neither edits
 them nor treats a review finding as proof of its eventual repair.
@@ -155,6 +165,39 @@ successful production decoding; `p3-cold-original-green.log` shows structured
 rejection of a named lifecycle check on an input-only profile.
 `python-final-green.log` passes all 52 oracle unit tests.
 
+`ci-red/tests/runner-4.3.json` preserves both actual 30-second watchdog failures,
+with no completed suite marker. Earlier local verification used 300 seconds
+and did not exercise CI's default budget. The workflow now explicitly uses
+120 seconds for the complete suite; focused deliberate hang controls retain
+their short limits. `session-011-feedback-full-{4.3,4.7.2}.json` each passes
+107 cases in two completed fresh processes using that budget. Six real runner
+controls per pin still pass; actual CI remains a required delivery gate.
+
+`feedback-repair/red.json` records two completed repetitions of both reason
+failures. `green-{4.3,4.7.2}.json` each passes 25 focused cases in two fresh
+processes, each repeated twice. Real full-outbox probes distinguish terminal
+timeout from recoverable poll/submission pressure. The close-overflow guard
+retains genuine protocol publication failure. This applies existing committed
+state/event guidance to the public result and first stored terminal reason.
+
+`terminal-cold-review/pressure-{4.3,4.7.2}.log` independently drains both
+events and transitions during 128 actual quality receives. Local close returns
+BACKPRESSURE but falsely commits PROTOCOL_FAILED and an event-overflow diagnostic.
+The scoped healthy mesh checks pass; these close-pressure failures remain real.
+`feedback-repair/closure-green-{4.3,4.7.2}.json` each passes 34 focused
+cases in two repeated fresh processes. Unchanged hostile ingress and terminal
+matrices also execute on both pins without script errors: malformed options
+return INVALID_ARGUMENT, pressured timeout publishes actual interruption and
+disconnection, and genuine event overflow retains its reserved fatal diagnostic.
+The earlier probe incorrectly expected quality receives to publish events; its
+unchanged rerun remains recorded, alongside a corrected fixture and actual
+queued-interruption overflow control. A renewed cold API review passes 34
+focused cases and 349 independent hostile assertions per engine. Final wrap
+receipts pass 107 unit cases, determinism, real runner controls, clean installs,
+native/Web ownership and all four source gates on both pins. Source inventories
+remain unchanged. Exact wrap commands and paths are in the session record;
+current-head CI and merge-triggered main CI remain delivery gates.
+
 ## Prune Ledger
 
 - Fixed at source: replaced rollback skill's blanket “P2P event lifecycle ...
@@ -169,6 +212,11 @@ rejection of a named lifecycle check on an input-only profile.
 - Retained: canonical-byte, callback guard, strict schema and pending-repair
   guidance still applies. Sync-test distance-zero behavior is separate from the
   peer zero-window capture extension and was not removed.
+- Strengthened: fixture finalization joins existing receipt invalidation guidance;
+  mixed-process results remain failed evidence and require a complete rerun.
+- Fixed at source: replaced implicit full-suite CI timeout with an explicit
+  budget; focused watchdog controls remain unchanged. No competing timeout
+  policy or duplicate networking skill was added.
 - Verify-on-touch: counted actual source records above; inspected product
   extension documentation; ran all harness gates below. No completed oracle or
   browser release gate is claimed from the curation commands.

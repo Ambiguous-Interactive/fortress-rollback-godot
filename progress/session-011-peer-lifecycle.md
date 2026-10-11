@@ -87,6 +87,11 @@ that raw availability error is preserved, with the API projection documented.
 | Explicit unknown corpus names silently skipped required coverage. | Reject unknown and empty CLI corpus names before acceptance. |
 | Source quality-token projection narrowed valid unsigned-128 values. | Parse the full source width and exercise actual standalone upper-bound packets. |
 | Named lifecycle checks accepted a profile without lifecycle observations. | Reject the missing prerequisite before controls consume lifecycle metrics. |
+| Full CI suite inherited a 30-second process watchdog. | Set an explicit 120-second full-suite budget; retain focused hang controls. |
+| Local close stored the remote-failure reason. | Preserve intentional TERMINATED while genuine event overflow still fails. |
+| Terminal poll returned retryable transport backpressure. | Return committed terminal reason; retain recoverable poll/submission pressure. |
+| Local close and timeout invented event overflow under packet pressure. | Separate terminal transmission from genuine diagnostic capacity failure. |
+| Malformed option types entered typed validators and appeared successful. | Reject invalid public Variant types before validation; verify script-error absence. |
 
 Red/green and independent probe artifacts are under `.cache/tests/` and
 `.cache/session-011/`. Final source receipts bind captured source and tool
@@ -106,8 +111,9 @@ The native/exported-Web inventory includes 70 cases and the intended ownership
 alias failures. Clean addon installation exercises 70 gameplay frames, quality
 and full checksum bytes, and terminal timeout, with no development tools.
 
-Both pinned engines pass all 107 unit cases in repeated fresh processes, with
-202702 assertions across each process's two deterministic repetitions. Both
+The final frozen snapshot passes all 107 unit cases in repeated fresh processes under
+the explicit 120-second CI budget, with complete results across each process's
+two deterministic repetitions. Both
 determinism suites pass. Six real runner failure/repetition controls pass per pin.
 Python gates pass 29 reference tests (two intentional engine skips), 52 oracle
 tests and 99 harness tests. Source width, GDScript lint, harness caps, generated
@@ -124,13 +130,20 @@ python3 scripts/oracle/handshake_launch.py --godot <editor> --offline --output <
 python3 scripts/oracle/p2p_launch.py --godot <editor> --offline --output <p2p-output>
 ```
 
-Outputs live under `.cache/reference/results/session-011-delivery-<kind>-<version>/`.
-Each receipt binds actual source/tool inventories; the linked P4 issue records
-the final session PR, exact current-head CI/feedback and merge-triggered main CI.
+Final source receipts live under
+`.cache/reference/results/session-011-wrap-<kind>-<version>/`.
+Both pins pass all four source gates with unchanged inventories; final full-suite
+receipts are `.cache/tests/session-011-wrap-full-<version>.json`. Earlier closure
+attempts captured fixture edits and source drift; failed receipts were retained
+and no P2P success receipt was published for those attempts. The final API cold
+review passes 34 focused cases and 349 independent hostile assertions per pin,
+including all combinations of event, packet and transition pressure. Final
+harness curation is clean. The linked P4 issue owns final session PR, exact
+current-head CI/feedback and merge-triggered main-CI evidence.
 
 Broad long-lived mesh/profile/flood acceptance remains
 [P5](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/34).
 Real WebRTC/SignalFish transport, browser multiplayer setup and membership repair
-remain separate roadmap gates. The broader goal remains active after P4.
+remain separate roadmap gates. The broader roadmap remains incomplete after P4.
 
 Retrospective: [artifact](../.llm/retrospectives/2026-10-11-peer-lifecycle.md).

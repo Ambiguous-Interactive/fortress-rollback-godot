@@ -95,6 +95,7 @@ func _mesh_case(name: String, context: RefCounted) -> void:
 	if name == "real_desync":
 		mesh.games[1].game.accumulators[0] += 1
 	if name == "terminal_timeout":
+		_poll_pressure(context)
 		context.equal(mesh.peers[0].poll(500001), I.Code.OK, "partition interruption boundary")
 		var events: Array[Dictionary] = mesh.peers[0].drain_events()
 		context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "network_interrupted"), true, "visible interruption")
@@ -104,14 +105,17 @@ func _mesh_case(name: String, context: RefCounted) -> void:
 		context.equal(mesh.peers[0].step(2000001, fixture._inputs(mesh, 0)).code, Types.Code.TERMINATED, "terminal peer cannot advance")
 		return
 	if name == "close":
+		_close_pressure(context)
 		context.equal(mesh.peers[0].close(1, 7), I.Code.OK, "queue actual goodbye")
 		context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.TERMINATED, "local close halts game")
+		context.equal(mesh.peers[0].status().reason, Types.Code.TERMINATED, "intentional close retains its explicit halt reason")
 		var packets: Array[Dictionary] = fixture._drain(mesh)
 		context.equal(packets.size(), 3, "three redundant source goodbye packets")
 		mesh.now = 1
 		var packet: Dictionary = packets[0]
 		context.equal(mesh.peers[1].receive(packet.bytes, fixture._id(0), 1), I.Code.OK, "receive actual goodbye")
 		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.TERMINATED, "remote fixed membership close halts game")
+		context.equal(mesh.peers[1].status().reason, Types.Code.PROTOCOL_FAILED, "remote goodbye remains a fixed membership fault")
 		_disconnect_during_rollback(context)
 		return
 	var detected: Dictionary = {}
@@ -150,6 +154,89 @@ func _mesh_case(name: String, context: RefCounted) -> void:
 			context.equal(peer.network_status().checksums.local_frames <= 2, true, "local report retention bounded before allocation")
 			context.equal(peer.network_status().checksums.next_frame > 180, true, "nonvacuous three actual checksum report intervals")
 	context.state(mesh.games[0].game.frame, mesh.games[0].game.bytes())
+
+
+# Value: protects=local close under transmission pressure; fails_when=outbox pressure invents event overflow; why_new=close tests use empty outboxes; seam=none
+func _close_pressure(context: RefCounted) -> void:
+	var fixture: RefCounted = Fixture.new()
+	var limits: T.Limits = T.Limits.new()
+	limits.input_width = 4
+	for pressure: String in ["outbox", "outbox_and_transitions", "events"]:
+		var event_overflow: bool = pressure == "events"
+		var options: L.Options = L.Options.new()
+		options.max_events = 1 if event_overflow else 1024
+		var mesh: Dictionary = fixture._build(context, 2, 0, false, 128, true, false, 8, options)
+		context.equal(mesh.peers[1].step(1, fixture._inputs(mesh, 1)).code, Types.Code.OK, "real peer supplies negotiated quality headers")
+		var packets: Array[Dictionary] = fixture._drain(mesh)
+		var report: T.Message = Codec.decode(packets[0].bytes, limits).message
+		report.kind = T.Kind.QUALITY_REPORT
+		report.token.resize(16)
+		var bytes: PackedByteArray = Codec.encode(report, limits).bytes
+		mesh.peers[0].drain_transitions()
+		if pressure == "outbox_and_transitions":
+			report.kind = T.Kind.INPUT_ACK
+			var ack: PackedByteArray = Codec.encode(report, limits).bytes
+			for transition: int in range(128):
+				context.equal(mesh.peers[0].receive(ack, fixture._id(1), 1), I.Code.OK, "real ACK receipts fill the transition inventory")
+		for packet: int in range(128):
+			context.equal(mesh.peers[0].receive(bytes, fixture._id(1), 1), I.Code.OK, "real quality replies saturate transmission capacity")
+			if pressure != "outbox_and_transitions":
+				mesh.peers[0].drain_transitions()
+			mesh.peers[0].drain_events()
+		if event_overflow:
+			# Leave one interruption publication queued at the peer boundary.
+			mesh.peers[0].drain_outbox()
+			context.equal(mesh.peers[0].poll(500002), I.Code.OK, "one actual interruption fills peer event publication")
+		var before: PackedByteArray = mesh.games[0].game.bytes().duplicate()
+		context.equal(mesh.peers[0].close(500003 if event_overflow else 2, 7), I.Code.OK if event_overflow else I.Code.BACKPRESSURE, "close reports only real outgoing packet pressure")
+		context.equal(mesh.peers[0].status().reason, Types.Code.PROTOCOL_FAILED if event_overflow else Types.Code.TERMINATED, "close distinguishes event overflow from packet pressure")
+		context.equal(mesh.games[0].game.bytes(), before, "close under pressure freezes exact game state")
+		context.equal(mesh.peers[0].network_status().last_now_us, 500003 if event_overflow else 2, "best effort close accepts the caller clock")
+		if not event_overflow:
+			context.equal(mesh.peers[0].drain_outbox().size(), 128, "rejected goodbye never exceeds the transmission bound")
+			context.equal(mesh.peers[0].drain_transitions().size(), 128 if pressure == "outbox_and_transitions" else 0, "close preserves the transition inventory bound")
+			context.equal(mesh.peers[0].close(3, 9), I.Code.TERMINATED, "repeated close preserves the first terminal decision")
+			context.equal(mesh.peers[0].status().reason, Types.Code.TERMINATED, "rejected repeated close cannot replace local intent")
+		var events: Array[Dictionary] = mesh.peers[0].drain_events()
+		if event_overflow:
+			context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "event_capacity_exceeded"), true, "real publication overflow stays fatal")
+		else:
+			context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "disconnected" and event.reason == 7), true, "best effort close preserves owned byte reason")
+			context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "event_capacity_exceeded"), false, "transmission pressure cannot invent publication overflow")
+
+
+# Value: protects=terminal poll reason and recoverable pressure; fails_when=poll maps a committed halt to pressure; why_new=timeout coverage drains outboxes; seam=none
+func _poll_pressure(context: RefCounted) -> void:
+	var fixture: RefCounted = Fixture.new()
+	var limits: T.Limits = T.Limits.new()
+	limits.input_width = 4
+	for mode: String in ["recoverable_poll", "terminal_poll", "recoverable_submit"]:
+		var terminal: bool = mode == "terminal_poll"
+		var options: L.Options = L.Options.new()
+		var mesh: Dictionary = fixture._build(context, 2, 0, false, 128, true, false, 8, options)
+		context.equal(mesh.peers[1].step(1, fixture._inputs(mesh, 1)).code, Types.Code.OK, "actual sender supplies negotiated packet headers")
+		var packets: Array[Dictionary] = fixture._drain(mesh)
+		var report: T.Message = Codec.decode(packets[0].bytes, limits).message
+		report.kind = T.Kind.QUALITY_REPORT
+		report.token.resize(16)
+		var bytes: PackedByteArray = Codec.encode(report, limits).bytes
+		for packet: int in range(128):
+			context.equal(mesh.peers[0].receive(bytes, fixture._id(1), 1), I.Code.OK, "authenticated quality replies fill the real bounded outbox")
+			mesh.peers[0].drain_transitions()
+		var before: PackedByteArray = mesh.games[0].game.bytes()
+		var now: int = 2000002 if terminal else (2 if mode == "recoverable_submit" else 200002)
+		var result: RefCounted = mesh.peers[0].step(now, fixture._inputs(mesh, 0))
+		context.equal(result.code, Types.Code.PROTOCOL_FAILED if terminal else Types.Code.NETWORK_BACKPRESSURE, "step distinguishes committed terminal failure from recoverable pressure")
+		context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.TERMINATED if terminal else Types.Lifecycle.RUNNING, "pressure terminalizes only the timeout plan")
+		context.equal(mesh.games[0].game.bytes(), before, "rejected poll performs no game callbacks")
+		if terminal:
+			context.equal(result.code, mesh.peers[0].status().reason, "first fatal step returns the committed core reason")
+			var events: Array[Dictionary] = mesh.peers[0].drain_events()
+			context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "disconnected" and event.reason == "timeout"), true, "terminal plan preserves timeout cause")
+			context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "event_capacity_exceeded"), false, "packet pressure cannot invent event overflow")
+		else:
+			mesh.peers[0].drain_outbox()
+			context.equal(mesh.peers[0].step(now, fixture._inputs(mesh, 0)).code, Types.Code.OK, "draining recoverable pressure permits the same input to advance")
 
 
 # Value: protects=minimum inventory comparison before eviction; fails_when=cap one prunes eligible pairs; why_new=existing exchange uses cap two; seam=none
@@ -361,6 +448,7 @@ func _overflow_timeout(context: RefCounted, count: int, local_close: bool = fals
 	mesh.peers[0].drain_outbox()
 	if local_close:
 		context.equal(mesh.peers[0].close(500002, 7), I.Code.OK, "local close publishes every terminal link cause")
+		context.equal(mesh.peers[0].status().reason, Types.Code.PROTOCOL_FAILED, "local intent cannot conceal a real event publication failure")
 	else:
 		context.equal(mesh.peers[0].poll(2500002), I.Code.OK, "renewed timeout produces ordered interruption and disconnect")
 	var events: Array[Dictionary] = mesh.peers[0].drain_events()

@@ -128,6 +128,8 @@ errors without revealing captured CLI output or credentials.
 Invalidate a prior success report before starting a new attempt, clear only the
 runner-owned logs, and preserve partial stdout/stderr on timeout. A failed rerun
 must never leave a stale success receipt beside logs from its replacement.
+Finalize fixtures before declaring a verification snapshot frozen. An intervening
+edit restarts affected fresh-process and source-inventory checks.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
 need bounded readiness polling rather than one successful configuration read.
 
@@ -135,6 +137,8 @@ Validate embedded scenarios/results independently before comparing their identit
 to submitted artifacts. Python equality treats booleans, integral floats and
 integers as equal; it is not schema validation. Standalone executables also need
 their own complete schema and nonempty-work boundary.
+Run the full CI entry point with its declared per-process watchdog. Size the
+full-suite budget from completed runs without relaxing focused hang controls.
 Preserve decoded wire fields instead of substituting scenario expectations.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot

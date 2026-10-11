@@ -428,7 +428,12 @@ func _capacity(plan: Dictionary) -> int:
 func _commit(plan: Dictionary) -> int:
 	var code: int = _capacity(plan)
 	if code != I.Code.OK:
-		if _lifecycle != null and (_events.size() + plan.events.size() > _options.max_events or plan.state.terminated):
+		if _lifecycle != null and plan.state.terminated and _events.size() + plan.events.size() <= _options.max_events:
+			_state = plan.state
+			for event: Dictionary in plan.events:
+				_events.append(event)
+			return code
+		if _lifecycle != null and _events.size() + plan.events.size() > _options.max_events:
 			_state.terminated = true
 			_state.now_us = plan.state.now_us
 			_fatal_event = {"kind": "event_capacity_exceeded", "terminal_cause": plan.events.duplicate(true)}
