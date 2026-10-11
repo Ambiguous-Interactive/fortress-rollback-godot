@@ -16,7 +16,7 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Supported browser target | WebRTC plus optional SignalFish SDK | Direct, relay and fallback adapters remain planned |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay implemented; direct/fallback and browser validation remain planned |
 | Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
 | Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
@@ -25,6 +25,24 @@ WebRTC inputs target unreliable unordered delivery with protocol redundancy.
 Late actual inputs can repair predictions and must remain recoverable until
 acknowledged. Binary relay is reliable and can introduce head-of-line delay.
 Verify actual SDK channel options; do not infer zero retransmits from packet lifetime.
+
+Optional SDK seams must load every runtime script in an addon-only project and
+exercise the real pinned SDK separately through its public transport boundary.
+Prove clean-load rejection with an unused runtime script that preloads a missing
+SDK resource; exercising only gameplay-reachable scripts misses optional imports.
+Compare copied peer-ID algorithms against the actual SDK implementation. Validate
+every SDK path that can change mesh authority before SDK consumption, including
+additive peer directives after partial connection initialization failure. Plan
+validation alone cannot fence those callbacks. Never synthesize public plan notifications
+to replay setup. Fence membership and transport-lifetime changes explicitly.
+A public binary signal without server epoch metadata cannot prove incarnation
+attribution; retain that limit instead of treating reconnect tokens as epochs.
+
+For SDK binary relay, keep a drained peer batch caller-owned until atomic adapter
+acceptance. Retain the exact FIFO head on send refusal and count owned queues,
+socket backlog and receive work separately. Verify retry bytes and corrected
+confirmed game state through the actual SDK, rather than counting simulated ticks.
+Name injected transport, native server and browser evidence separately.
 
 ## Serialization Rules
 
@@ -85,6 +103,18 @@ backpressures. Keep outgoing local receipt gossip separate from incoming peer
 observations; confirmation must never count local claims as remote evidence.
 Capture receipt status at the compared service boundary. Receiving input before
 retrying another link can change its gossip even when frames and ACKs match.
+
+Preserve the inbound FIFO head and its generated handshake token when a peer
+returns recoverable queue pressure before committing packet state. The same
+code may also accompany terminal event overflow: inspect committed lifecycle
+before deciding to retry. Continue bounded outgoing service while incoming work
+waits, so pressure cannot starve queued ACKs. Prove both paths using real peers.
+
+Before servicing queued optional-SDK bytes, validate current connection, authentication,
+player UUID and frozen room identity through public getters. A close can invalidate
+the connection before its signal arrives; a spectator baseline can replace identity.
+A known-member reconnect requires a new rollback lifetime when the SDK omits the
+server epoch. Prove refusal with a valid queued packet and no outgoing work.
 
 Audit committed lifecycle state against published events on callback failure,
 including a retained input prefix followed by refusal. Preserve accepted liveness

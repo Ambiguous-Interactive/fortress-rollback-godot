@@ -49,6 +49,9 @@ class Game:
         return true
 
 func _initialize() -> void:
+    if not _load_runtime_scripts("res://addons/fortress_rollback"):
+        quit(1)
+        return
     var config: Config = Config.new()
     config.max_snapshot_bytes = 1
     config.storage_budget_bytes = 100000
@@ -70,6 +73,21 @@ func _initialize() -> void:
         return
     print("FORTRESS_ADDON_PACKAGE_OK")
     quit(0)
+
+func _load_runtime_scripts(path: String) -> bool:
+    var directory: DirAccess = DirAccess.open(path)
+    if directory == null:
+        return false
+    for child: String in directory.get_directories():
+        if not _load_runtime_scripts(path + "/" + child):
+            return false
+    for file: String in directory.get_files():
+        if file.ends_with(".gd"):
+            var script: Script = load(path + "/" + file) as Script
+            if script == null or not script.can_instantiate():
+                return false
+    return true
+
 
 func _handshake() -> bool:
     var peers: Array[Handshake] = []
@@ -223,7 +241,8 @@ def main():
     report = {'passed': True, 'entries': entries, 'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
               'command': command, 'engine_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
-              'limits': 'Addon-only candidate: one driver tick, 70 two-peer gameplay steps, full checksum/quality bytes and terminal timeout; '
+              'limits': 'Addon-only candidate: every runtime script loads without SignalFish; one driver tick, 70 two-peer gameplay steps, '
+                        'full checksum/quality bytes and terminal timeout; '
                         'not a supported release or browser networking gate.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'files': len(entries), 'results': str(receipt)}))
