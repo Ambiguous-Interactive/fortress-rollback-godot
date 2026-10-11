@@ -126,7 +126,11 @@ strings cannot expose this boundary. Decoding failures must report sanitized
 errors without revealing captured CLI output or credentials.
 
 Invalidate a prior success report before starting a new attempt, clear only the
-runner-owned logs, and preserve partial stdout/stderr on timeout. A failed rerun
+runner-owned logs, and preserve partial stdout/stderr on timeout. Capture
+bounded in-loop state snapshots before the outer watchdog when
+the inner timeout can occur later: include pending work and receipt/status
+gossip needed to distinguish throughput from confirmation stalls. Local passes
+do not supersede CI failures for the same source candidate. A failed rerun
 must never leave a stale success receipt beside logs from its replacement.
 Finalize fixtures before declaring a verification snapshot frozen. An intervening
 edit restarts affected fresh-process and source-inventory checks.

@@ -1,5 +1,9 @@
 # Session 013 — SignalFish WebRTC byte delivery
 
+Delivery is unfinished. PR #71 remains unmerged after a live CI confirmation
+stall tracked in issue #72. Positive receipts below bind earlier candidates;
+the final diagnostics patch changes witness hashes and awaits new execution.
+
 ## Contract and priorities
 
 Advance [S3](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/37)
@@ -193,7 +197,7 @@ metadata and unrelated additions. The earlier false receipt remains rejected.
 
 ## Final browser verification and scope
 
-The authoritative source-bound receipt passes at
+The earlier source-bound browser receipt passed at
 `.cache/session-013/webrtc-final-imported/signalfish-webrtc.json`. Exact editor
 bytes match the pinned archives: `4.3.stable.official.77dcf97d8` and
 `4.7.2.stable.official.ed1daf0bf`; Chromium is `141.0.7390.37`.
@@ -210,7 +214,7 @@ The final independent reviewer validates every log digest, current helper and
 addon hashes, and both exported source inventories against pinned SDK bytes.
 Only paired generated import metadata differs. Eleven affected Python controls
 and the Node orphan control pass; source widths cover 203 files. Native and
-browser reviews agree there are no remaining revisions.
+browser reviews found no remaining revisions in that earlier candidate.
 
 Reproduce the final browser receipt with:
 
@@ -270,3 +274,84 @@ Minimum/current engine suites now run in two independent CI jobs. Both retain
 all smoke, representation, SDK, runner, unit, determinism and oracle checks.
 Each selects its pinned engine for the existing per-engine command list and
 uploads uniquely named artifacts. All 30-minute job watchdogs remain.
+
+## Earlier source-bound local receipts and current CI blocker
+
+Candidate `2e20d1c7015753550c1957deaf20fa1344cf4b04` passes all eight browser
+runs under actual two-CPU affinity. Independent review verifies every log
+hash and frozen helper/addon/export inventory. Receipts for that candidate:
+
+| Engine | Receipt | SHA-256 |
+| --- | --- | --- |
+| 4.3 | `.cache/session-013/webrtc-ci-batched-4.3/signalfish-webrtc.json` | `acc2730014285ddcd18963897075c06f2a8cb061133436ec9a16bdbb11b8aa45` |
+| 4.7.2 | `.cache/session-013/webrtc-ci-batched-4.7.2/signalfish-webrtc.json` | `618238ef176d64af9c751346a37bf148ab2f1f57ecad65fd69ebc3c07e022a0e` |
+
+These local passes do not establish green CI. Reference workflow
+[38162898633](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/38162898633)
+fails its live transport job `114539356227`. Both engine unit/oracle jobs,
+reference controls, pinned Rust, devcontainer checks, harness lint and the
+automatic review pass. Godot 4.3's complete direct matrix passes, followed by
+4.7.2's clean matrix. The faulted 4.7.2 eight-peer room then stalls.
+
+All eight peers submit 40 frames. Peers 0/3/5/6/7 reach canonical checks;
+peers 1/2/4 remain at `final_confirmation`. Node's gameplay-completion barrier
+expires after 120 seconds. Its captured errors array is empty; two- and
+four-peer fault rooms pass. No canonical mismatch is reported. The launcher
+correctly retains a false receipt. Exact failure logs are in
+[artifact 11711640644](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/38162898633/artifacts/11711640644),
+under `signalfish-webrtc/4.7.2-faults.log` and `4.7.2-faults-events.log`.
+Local extracted copies are `.cache/session-013/ci-third-failure/`.
+
+Endpoint INPUT retries publish receipt gossip while pending inputs remain;
+ACK-only packets do not publish refreshed gossip. This is an investigation
+hypothesis, not a demonstrated root cause. The logs lack pending-bank and
+endpoint receipt/status snapshots. Preserve every check and watchdog; add
+bounded in-loop diagnostics before attempting a protocol or pacing repair.
+[Issue #72](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/72)
+records exact reproduction artifacts and all remaining delivery gates.
+
+The final patch adds diagnostics only; it does not repair the unknown stall.
+Its changed witness hashes supersede candidate `2e20d1c` for current-source
+verification. The positive local receipts remain historical evidence for
+their recorded sources. New current-head execution and CI remain pending.
+
+The session's two-hour boundary prevents completing another reviewed repair,
+PR CI cycle and merge-triggered main CI cycle. PR #71 remains unmerged; main
+stays at previously green `026590cd315c0e3e4e66929cb7da364020c532f2`.
+Continue on this existing PR, diagnose #72, then obtain green current-head CI,
+complete feedback scans, guarded squash merge, local main synchronization and
+main CI verification. No transport task is closed and no failed gate is waived.
+
+## Bounded confirmation diagnostics
+
+The final change instruments the unresolved wait; it does not claim a repair.
+After a failed final-confirmation condition, the host emits an immediate public
+status snapshot and at most five more at five-second wall-clock intervals.
+Snapshots include current/confirmed/pending-rollback frames, endpoint submitted,
+sent/received/acked frames, pending frame IDs, progress time and receipt gossip.
+Only frame IDs are logged from pending banks; packet payloads are excluded.
+No pacing, simulation time, transport service, acceptance or watchdog changes.
+
+Fresh adversarial review verifies the public status fields, copied ownership,
+bounded endpoint/frame/status payloads and unchanged execution conditions.
+Both pinned engines parse the frozen host successfully; GDScript lint passes.
+Harness verification passes 99 self-tests, all metadata/link/length checks,
+fresh generated artifacts and source widths across 203 files. The five Python
+probe tests (including table-driven mutations) and Node orphan control pass.
+The first Python invocation used the wrong module search directory and failed
+import; rerunning from `scripts/reference` passes. This is a command correction,
+not a changed expectation or implementation repair.
+
+Changing the inventoried host supersedes all earlier browser receipts for
+current-source acceptance. The candidate must run a new source-bound browser
+matrix and current-head CI; the production addon remains unchanged since the
+reviewed initial runtime candidate. The diagnostic export is validation of
+logging only, never evidence that the CI stall is fixed.
+
+The frozen diagnostic host executes successfully in the actual Godot 4.7.2
+export. Its clean four-peer log contains a parseable `FINAL_CONFIRMATION_STATUS`
+with current frame 40, confirmed frame 37, pending rollback 39 and all three
+endpoint pending/gossip dictionaries. Evidence:
+`.cache/session-013/webrtc-diagnostic-frozen-4.7.2/4.7.2-clean-events.log`.
+This establishes diagnostic execution while the condition is false, not a
+repair of the CI failure or a complete current-source browser acceptance pass.

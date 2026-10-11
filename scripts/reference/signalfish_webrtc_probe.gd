@@ -154,17 +154,40 @@ func _transport_totals() -> Dictionary:
 
 func _wait(condition: Callable, use_transport: bool = false) -> bool:
 	print("WEBRTC_STAGE ", stage)
+	var diagnostics: int = 0
+	var next_diagnostic_us: int = Time.get_ticks_usec()
 	for attempt: int in 3000:
 		for client: SDK in clients: client.poll()
 		for mesh: SDKMesh in meshes: mesh.poll()
 		if use_transport and not _service(): return false
 		if not errors.is_empty(): return false
 		if condition.call(): return true
+		if stage == "final_confirmation" and diagnostics < 6 and Time.get_ticks_usec() >= next_diagnostic_us:
+			_confirmation_diagnostic(attempt)
+			diagnostics += 1
+			next_diagnostic_us = Time.get_ticks_usec() + 5000000
 		await get_tree().create_timer(0.002).timeout
 	for peer: Peer in peers:
 		print("TIMEOUT_STATUS ", peer.status().current_frame, " ", peer.status().confirmed_frame, " ", peer.status().pending_rollback_frame)
 	errors.append("wait_timeout_" + stage)
 	return false
+
+func _confirmation_diagnostic(attempt: int) -> void:
+	for peer: Peer in peers:
+		var core: S.Status = peer.status()
+		var endpoints: Dictionary = {}
+		var network: Dictionary = peer.network_status()
+		for key: String in network.peers:
+			var endpoint_status: Dictionary = network.peers[key]
+			var selected: Dictionary = {}
+			for field: String in ["last_submitted_frame", "last_sent_frame", "last_received_frame", "last_acked_frame", "pending_frames",
+				"last_input_progress_us", "peer_statuses", "connect_statuses"]:
+				selected[field] = endpoint_status[field]
+			selected["pending_frame_ids"] = endpoint_status.pending.keys()
+			endpoints[key] = selected
+		print("FINAL_CONFIRMATION_STATUS ", JSON.stringify({"attempt": attempt, "local_index": local_index, "players": player_count,
+			"current_frame": core.current_frame, "confirmed_frame": core.confirmed_frame, "pending_rollback_frame": core.pending_rollback_frame,
+			"simulated_us": simulated_us, "endpoints": endpoints}))
 
 func _service() -> bool:
 	simulated_us += 2000

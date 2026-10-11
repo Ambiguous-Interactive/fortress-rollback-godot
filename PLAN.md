@@ -276,6 +276,8 @@ mesh uses packet lifetime instead. Reserve packet consumption for the adapter.
 Respect server-selected offerer roles and latest plan generations.
 The direct adapter now provides bounded byte delivery and lifetime fences.
 The exported Chromium witness covers 2/4/8 peers on both pinned engines.
+An earlier source-bound local candidate passed; CI tail-confirmation liveness remains blocked
+by [#72](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/72).
 Live ICE/replan recovery, automatic fallback and the full browser matrix remain
 acceptance work in S3–S5; keep those task issues open.
 
