@@ -35,7 +35,9 @@ var sent_packets: int = 0
 var received_packets: int = 0
 var active_comparisons: int = 0
 var stage: String = "initial"
-var simulated_us: int = 0
+var transport_us: int = 0
+var transport_epoch_us: int = -1
+var token_serial: int = 0
 var endpoint: String = ""
 var player_count: int = 0
 var local_index: int = 0
@@ -98,11 +100,11 @@ func _play(count: int) -> bool:
 				for endpoint_status: Dictionary in peer.network_status().peers.values():
 					if endpoint_status.last_received_frame < frame - 1: return false
 			return true, true): return false
-		simulated_us += 16667
+		_update_transport_clock()
 		for index: int in clients.size():
 			var slot: int = memberships[index].slot(clients[index].get_player_id())
 			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([_sample(frame, slot)]))]
-			var stepped: Driver.StepResult = peers[index].step(simulated_us, samples)
+			var stepped: Driver.StepResult = peers[index].step(transport_us, samples)
 			if stepped.code != S.Code.OK:
 				errors.append("step_%d_at_%d" % [stepped.code, frame])
 				return false
@@ -187,16 +189,40 @@ func _confirmation_diagnostic(attempt: int) -> void:
 			endpoints[key] = selected
 		print("FINAL_CONFIRMATION_STATUS ", JSON.stringify({"attempt": attempt, "local_index": local_index, "players": player_count,
 			"current_frame": core.current_frame, "confirmed_frame": core.confirmed_frame, "pending_rollback_frame": core.pending_rollback_frame,
-			"simulated_us": simulated_us, "endpoints": endpoints}))
+			"transport_us": transport_us, "endpoints": endpoints}))
+
+func _ticks_usec() -> int:
+	return Time.get_ticks_usec()
+
+func _reset_transport_clock() -> void:
+	transport_epoch_us = _ticks_usec()
+	transport_us = 0
+
+func _update_transport_clock() -> void:
+	if transport_epoch_us == -1: _reset_transport_clock()
+	transport_us = _ticks_usec() - transport_epoch_us
+
+func _next_token(_remote_uuid: String = "") -> PackedByteArray:
+	token_serial += 1
+	var token: PackedByteArray = PackedByteArray()
+	token.resize(16)
+	token.encode_u64(0, local_index + 1)
+	token.encode_u64(8, token_serial)
+	return token
+
+func _poll_tokens(peer: Peer) -> Array[PackedByteArray]:
+	var tokens: Array[PackedByteArray] = []
+	for remote: PackedByteArray in peer.peer_ids(): tokens.append(_next_token())
+	return tokens
 
 func _service() -> bool:
-	simulated_us += 2000
+	_update_transport_clock()
 	if not _healthy(): return false
 	for index: int in clients.size():
 		clients[index].poll()
 		meshes[index].poll()
 		if not errors.is_empty(): return false
-		var polled: int = peers[index].poll(simulated_us)
+		var polled: int = peers[index].poll(transport_us, _poll_tokens(peers[index]))
 		if polled != I.Code.OK:
 			errors.append("peer_poll_%d" % polled)
 			return false
@@ -206,7 +232,7 @@ func _service() -> bool:
 			if accepted != 0:
 				errors.append("direct_enqueue_%d" % accepted)
 				return false
-		var result: Direct.Result = transports[index].poll(simulated_us)
+		var result: Direct.Result = transports[index].poll(transport_us, _next_token)
 		if result.code != 0:
 			errors.append("direct_poll_%d_peer_%d" % [result.code, result.peer_code])
 			return false

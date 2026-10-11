@@ -18,11 +18,9 @@ from godot_smoke import run
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
 
-
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
-
 
 def validate_browser(result, faults):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') != 'Chromium'
@@ -84,7 +82,6 @@ def validate_browser(result, faults):
                     raise ValueError('data-channel fault controls unobserved')
     return result
 
-
 def validate_restore_control(result, kind="corrupt"):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('corrupt') is not (kind == 'corrupt')
             or result.get('defaultFactory') is not (kind == 'default')
@@ -103,7 +100,6 @@ def validate_restore_control(result, kind="corrupt"):
         if witness.get('passed') is not False or failure.get('stage') != ('handshake' if kind == 'default' else 'gameplay') or not expected:
             raise ValueError('snapshot corruption rejected outside canonical gameplay prefix comparison')
     return result
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -128,7 +124,8 @@ def main():
     if args.godot and len(versions) != 1:
         raise ValueError('--godot requires exactly one --version')
     owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
-        for suffix in ('version', 'import', 'export', 'clean', 'faults', 'corrupt', 'clean-events', 'faults-events', 'corrupt-events', 'default', 'default-events')]
+        for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
+                       'faults-events', 'corrupt-events', 'default', 'default-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -142,6 +139,7 @@ def main():
                'godot_helper': ROOT / 'scripts/reference/godot_smoke.py', 'pins': ROOT / 'docs/reference/pins.json', 'run': ROOT / 'scripts/reference/run.py',
                'native_launcher': ROOT / 'scripts/reference/signalfish_live_probe.py', 'sdk_launcher': ROOT / 'scripts/reference/signalfish_probe.py',
                'cargo': cargo, 'rustc': cargo.with_name('rustc'), 'launcher': Path(__file__).resolve(),
+               'clock_test': ROOT / 'scripts/reference/signalfish_webrtc_probe_clock_test.gd', 'clock_fixture': ROOT / 'tests/unit/test_input_endpoint.gd',
                'host': ROOT / 'scripts/reference/signalfish_webrtc_probe.gd', 'setup': ROOT / 'scripts/reference/browser/webrtc_setup.gd',
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
@@ -236,9 +234,9 @@ def main():
                     project.mkdir()
                     shutil.copytree(sources['addon'], project / 'addons/fortress_rollback')
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
-                    shutil.copyfile(sources['host'], project / 'host.gd')
-                    shutil.copyfile(sources['game'], project / 'webrtc_game.gd')
-                    shutil.copyfile(sources['setup'], project / 'webrtc_setup.gd')
+                    for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
+                                          ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
+                        shutil.copyfile(sources[key], project / filename)
                     (project / 'project.godot').write_text(
                         'config_version=5\n[application]\nconfig/name="WebRTC witness"\nrun/main_scene="res://main.tscn"\n'
                         '[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
@@ -251,6 +249,7 @@ def main():
                     export.mkdir()
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
+                                'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
                     frozen = inventory(executed)
                     command = [str(engine), '--headless', '--path', str(project)]
@@ -259,6 +258,8 @@ def main():
                         raise ValueError('unexpected engine version')
                     run(command + ['--editor', '--quit'], environment, args.output / f'{version}-import.log')
                     frozen = freeze_after_import(executed, frozen)
+                    if 'WEBRTC_CLOCK_TEST passed' not in run(command + ['--script', 'res://clock_test.gd', '--quit-after', '2'],
+                            environment, args.output / f'{version}-clock-test.log'): raise ValueError('transport clock regression incomplete')
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
                     for label in ('clean', 'faults', 'corrupt', 'default'):
@@ -294,7 +295,6 @@ def main():
                         'other browsers, automatic relay fallback or reconnect/replan claim.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'results': str(receipt), 'engines': versions, 'runs': len(records)}))
-
 
 if __name__ == '__main__':
     main()

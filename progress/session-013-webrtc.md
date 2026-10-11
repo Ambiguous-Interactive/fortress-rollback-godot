@@ -355,3 +355,85 @@ endpoint pending/gossip dictionaries. Evidence:
 `.cache/session-013/webrtc-diagnostic-frozen-4.7.2/4.7.2-clean-events.log`.
 This establishes diagnostic execution while the condition is false, not a
 repair of the CI failure or a complete current-source browser acceptance pass.
+
+## Authorized continuation
+
+The user extends the session limit to four hours. Continue the existing PR #71
+and investigate its current diagnostic failure, rather than treating the earlier
+two-hour handoff as completion. Original start is 16:38:47 UTC; the extended
+session boundary is 20:38:47 UTC. Work resumes at 19:05 UTC.
+
+The current diagnostic CI run `38164142071` finishes both engine unit/oracle
+jobs successfully but rejects Godot 4.3's faulted direct browser scenario.
+Artifact `11711119282` contains the endpoint snapshots needed for root-cause
+localization. Preserve all confirmation, canonical state, fault and watchdog
+checks. The existing runtime and browser review receipts are bounded historical
+evidence; current-head delivery still requires a repaired live CI gate.
+
+## Elapsed transport clock investigation
+
+The current diagnostic artifact distinguishes the symptoms. Its Godot 4.3
+faulted eight-peer room remains at gameplay waits 18/19; it never enters final
+confirmation. All two- and four-peer frames and canonical checks pass.
+The preceding Godot 4.7.2 failure reaches final confirmation, but its Node
+watchdog also starts at gameplay frame zero. Neither is an independent
+120-second final-confirmation timeout.
+
+The host increments protocol time by 2,000 microseconds per rendered timer
+turn. The production input endpoint retries after 200,000 microseconds.
+A slow rendered turn therefore delays actual retries while the independent
+Node watchdog continues measuring elapsed real time. The
+[Godot 4.3 timer documentation](https://docs.godotengine.org/en/4.3/classes/class_scenetreetimer.html)
+places SceneTreeTimer processing after the current frame's nodes; a requested
+2ms delay does not establish that only 2ms elapses before resumption.
+
+A deterministic native regression supplies 16ms clock samples and drops an
+actual endpoint INPUT. The original host fails to retry after 13 turns and
+208ms because its transport clock records only 26ms. Red logs on both pins:
+`.cache/session-013/webrtc-clock-red-<version>.log`. The repaired clock reads
+elapsed monotonic time from the owned handshake epoch. Both pins retry after
+208ms and at least seven times over 100 turns/1.6 seconds, retaining the
+original pending input. Simulation still uses the same 40 original frames and
+inputs; no canonical, confirmation, fault or watchdog bound changes.
+
+Independent protocol review excludes a receipt-generation cycle and premature
+cumulative ACK removal. Frame 39 is emitted only after all remote receipts
+reach 38, so its outgoing gossip protects the final target. The changed host
+clock is the repair boundary; no production protocol change is justified.
+
+A full real-export run then reaches a previously masked handshake retry.
+`Peer.poll` correctly rejects its missing fresh token with INVALID_ARGUMENT.
+The host must supply caller-owned tokens for polling and incoming handshake
+callbacks. This is a separate demonstrated caller defect. The clock-only
+cold review passed, but the token repair requires new execution and a new
+fresh-context review before delivery. The new clock regression and reused
+actual endpoint fixture are inventoried, executed before export, and their
+logs are cleared and hashed with the complete receipt.
+
+## Final elapsed-clock and retry-token candidate
+
+Both frozen-source browser matrices exit zero, with all clean, faulted, corrupt
+and default-factory scenarios passing their expected outcomes on both pins.
+Current receipt paths and SHA-256 values:
+
+- `.cache/session-013/webrtc-deadline-final-4.3/signalfish-webrtc.json`: `6bda63087f4a052f013a8e53b2c6c382c10ee0a1f1257cf391f3c564092616db`.
+- `.cache/session-013/webrtc-deadline-final-4.7.2/signalfish-webrtc.json`: `a54b9d661d9c1d9f495acc080cb87868d8ea597de84f2d38197803487f9c59c0`.
+
+All 56 positive peer instances preserve 38 canonical and 37 active comparisons
+each, confirmed frame >=38, actual rollback, original inputs and physical
+connection/channel teardown. Faulted runs drop 340/344 packets and delay
+241/246 packets respectively. No watchdog or acceptance requirement changes.
+
+Fresh-context adversarial review independently passes the elapsed-clock, epoch,
+actual dropped-input retry and fresh handshake-token tests on both engines.
+The zero-argument callback mutant fails; the repaired callback accepts the
+public UUID argument. Exit failures and script errors remain rejected even
+with a plausible success marker. Independent artifact review validates every
+label, log digest and current helper/addon/SDK binding. Export inventories were
+frozen during execution; temporary exports are unavailable for post-run rehash.
+
+Verification passes 99 harness self-tests and source widths across 204 files.
+Reference Python discovery reports 41 tests with three expected skips. GDScript
+lint and four browser controls pass. Hosted current-head CI, feedback scans,
+squash merge and merge-triggered main CI remain required; linked issue #72
+records the delivery evidence without committing stale green claims.

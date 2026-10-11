@@ -182,6 +182,11 @@ all inputs before advancing and never restore a snapshot.
 Batch bounded transport polls before yielding an exported host render turn.
 Repeated timer yields per input can make integration duration depend on
 software rendering, despite unchanged protocol work; verify under CPU limits.
+Real socket witnesses must measure transport deadlines with elapsed monotonic
+host time from the owned handshake epoch. A requested timer delay is not the
+elapsed duration of its render turn. Keep game simulation on original frames
+and inputs. Exercise handshake retries as well as input loss: an immediate
+handshake can hide a missing caller-owned retry token.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same

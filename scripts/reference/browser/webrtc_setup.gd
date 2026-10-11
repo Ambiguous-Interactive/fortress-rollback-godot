@@ -121,11 +121,8 @@ func run(host: Node, count: int) -> bool:
 			host.errors.append("configure_peer_%d" % configured)
 			return false
 		var tokens: Array[PackedByteArray] = []
-		for remote: int in count - 1:
-			var token: PackedByteArray = session.duplicate()
-			token[0] = host.local_index + 1
-			token[1] = remote + 1
-			tokens.append(token)
+		for remote: int in count - 1: tokens.append(host._next_token())
+		host._reset_transport_clock()
 		var begun: int = peer.begin(0, tokens)
 		if begun != I.Code.OK:
 			host.errors.append("begin_%d" % begun)
@@ -139,7 +136,6 @@ func run(host: Node, count: int) -> bool:
 		if connected_code != 0:
 			host.errors.append("configure_direct_%d" % connected_code)
 			return false
-	host.simulated_us = 0
 	return true
 
 
