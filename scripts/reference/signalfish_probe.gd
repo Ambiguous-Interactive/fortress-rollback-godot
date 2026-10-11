@@ -18,6 +18,8 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const NewPeerProbe = preload("res://signalfish_probe_new_peer.gd")
+const RelayProbe = preload("res://signalfish_probe_relay.gd")
+const LifetimeProbe = preload("res://signalfish_probe_lifetime.gd")
 const UUIDS: PackedStringArray = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
 const ROOM: String = "00000000-0000-0000-0000-000000000003"
 const GENERATION: String = "00000000-0000-0000-0000-000000000004"
@@ -173,6 +175,12 @@ func _initialize() -> void:
 	client.free()
 	if not ended or not errors.is_empty():
 		printerr("SDK close must fence adapter receive %s" % errors)
+		quit(1)
+		return
+	if not RelayProbe.new().check():
+		quit(1)
+		return
+	if not LifetimeProbe.new().check():
 		quit(1)
 		return
 	print("FORTRESS_SIGNALFISH_SDK_OK")

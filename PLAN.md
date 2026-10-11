@@ -40,6 +40,7 @@ Local development contracts and evidence entry points:
 - [Fixed-membership byte sessions and transport-facing API](docs/peer-session.md).
 - [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
 - [Optional SignalFish membership, agreed UUID slots and plan fences](docs/signalfish-membership.md).
+- [SignalFish binary relay, bounded packet ownership and broadcast filtering](docs/signalfish-relay.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).

@@ -48,6 +48,9 @@ def main():
     executable = Path(shutil.which(str(args.godot)) or args.godot).resolve()
     inputs = {'addon': ROOT / 'addons/fortress_rollback', 'probe': ROOT / 'scripts/reference/signalfish_probe.gd',
               'new_peer_probe': ROOT / 'scripts/reference/signalfish_probe_new_peer.gd',
+              'relay_probe': ROOT / 'scripts/reference/signalfish_probe_relay.gd',
+              'relay_controls': ROOT / 'scripts/reference/signalfish_probe_relay_controls.gd',
+              'lifetime_probe': ROOT / 'scripts/reference/signalfish_probe_lifetime.gd',
               'sdk_archive': archive, 'engine': executable, 'launcher': Path(__file__).resolve()}
     before = inventory(inputs)
     with tempfile.TemporaryDirectory(prefix='fortress-signalfish-sdk-') as temporary:
@@ -62,13 +65,20 @@ def main():
         shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
         shutil.copyfile(ROOT / 'scripts/reference/signalfish_probe.gd', project / 'probe.gd')
         shutil.copyfile(ROOT / 'scripts/reference/signalfish_probe_new_peer.gd', project / 'signalfish_probe_new_peer.gd')
+        shutil.copyfile(ROOT / 'scripts/reference/signalfish_probe_relay.gd', project / 'signalfish_probe_relay.gd')
+        shutil.copyfile(ROOT / 'scripts/reference/signalfish_probe_relay_controls.gd', project / 'signalfish_probe_relay_controls.gd')
+        shutil.copyfile(ROOT / 'scripts/reference/signalfish_probe_lifetime.gd', project / 'signalfish_probe_lifetime.gd')
         (project / 'project.godot').write_text('config_version=5\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
         executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                     'new_peer_probe': project / 'signalfish_probe_new_peer.gd',
+                    'relay_probe': project / 'signalfish_probe_relay.gd',
+                    'relay_controls': project / 'signalfish_probe_relay_controls.gd',
+                    'lifetime_probe': project / 'signalfish_probe_lifetime.gd',
                     'probe': project / 'probe.gd', 'project': project / 'project.godot'}
         executed_before = inventory(executed)
-        if {name: digest for name, digest in executed_before.items() if name.startswith('addon/') or name in ('probe', 'new_peer_probe')} != {
-                name: digest for name, digest in before.items() if name.startswith('addon/') or name in ('probe', 'new_peer_probe')}:
+        copied_names = ('probe', 'new_peer_probe', 'relay_probe', 'relay_controls', 'lifetime_probe')
+        if {name: digest for name, digest in executed_before.items() if name.startswith('addon/') or name in copied_names} != {
+                name: digest for name, digest in before.items() if name.startswith('addon/') or name in copied_names}:
             raise ValueError('copied source inventory differs')
         command = [str(executable), '--headless', '--path', str(project), '--script', 'res://probe.gd']
         try:
@@ -84,11 +94,21 @@ def main():
             raise ValueError('SDK integration failed; see signalfish-sdk.log')
         if inventory(inputs) != before or inventory(executed) != executed_before:
             raise ValueError('source or tool inventory changed during execution')
+    relay_lines = [line.removeprefix('FORTRESS_SIGNALFISH_RELAY_RESULT ') for line in output.splitlines()
+                   if line.startswith('FORTRESS_SIGNALFISH_RELAY_RESULT ')]
+    if len(relay_lines) != 1:
+        raise ValueError('missing relay gameplay evidence')
+    relay_evidence = json.loads(relay_lines[0])
+    expected = [{'players': count, 'canonical_comparisons': count * 38, 'frames_submitted': 40} for count in (2, 4, 8)]
+    if relay_evidence.get('records') != expected or relay_evidence.get('broadcast_deliveries', 0) < 1:
+        raise ValueError('incomplete relay gameplay evidence')
     report = {'passed': True, 'sdk_revision': manifest['sources']['sdk']['revision'],
               'sdk_archive_digest': manifest['sources']['sdk']['archive']['digest'],
               'engine_sha256': before['engine'], 'input_inventory': before, 'executed_inventory': executed_before,
+              'relay_evidence': relay_evidence, 'log_sha256': hashlib.sha256(raw_output).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
               'limits': 'Real pinned SDK decoder, public state, mesh attachment and signals; 70 confirmed two-peer gameplay steps '
+                        'plus 2/4/8-peer relay framing and varied-input canonical confirmed prefixes '
                         'through SDK binary send/receive using an injected wire transport; '
                         'no live server, WebRTC or browser transport validation.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')

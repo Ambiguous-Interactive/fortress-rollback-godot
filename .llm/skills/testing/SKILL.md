@@ -132,6 +132,10 @@ Finalize fixtures before declaring a verification snapshot frozen. An intervenin
 edit restarts affected fresh-process and source-inventory checks.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
 need bounded readiness polling rather than one successful configuration read.
+Integration witnesses must capture every applicable SDK failure signal and
+recheck latched errors after the final event drain and before publishing success.
+Inject each actual failure signal at that last boundary and require nonzero exit
+with no success marker. Correct game state can outlive a late connection failure.
 
 Validate embedded scenarios/results independently before comparing their identity
 to submitted artifacts. Python equality treats booleans, integral floats and

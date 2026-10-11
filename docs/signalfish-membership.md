@@ -6,11 +6,11 @@ The optional seam freezes a 2–8 player UUID roster and configures the existing
 The addon parses and runs when the SDK is absent. Install the SDK separately
 only in applications that use SignalFish.
 
-This seam does not implement byte delivery, relay envelopes, queue scheduling,
-or automatic transport fallback. `status().byte_delivery_implemented` is always
+This membership seam does not implement byte delivery or automatic transport fallback.
+The separate [binary relay adapter](signalfish-relay.md) supplies recipient envelopes
+and bounded send/receive queues. `status().byte_delivery_implemented` is always
 `false`. Applications still supply bytes, attributed senders, clocks and tokens,
-and drain the peer's bounded outputs. S2–S4 own complete relay, WebRTC and
-fallback adapters. Do not treat `route == "mesh"` as a connected gameplay session.
+and drain the peer's bounded outputs. S3–S4 own complete WebRTC and fallback adapters. Do not treat `route == "mesh"` as a connected gameplay session.
 
 ## Freeze membership and configure a peer
 
@@ -106,8 +106,7 @@ config unchanged. An accepted membership cannot be reconfigured.
 unknown or local UUIDs before passing the frozen core sender ID to the existing
 peer decoder. `adapter.receive_mesh` resolves the SDK-attributed Godot numeric
 ID; `adapter.receive_relay` accepts the SDK-attributed full UUID. The peer decoder
-then validates sender, session and connection identity. Relay callers must
-supply a recipient-validated envelope body once S2 provides that envelope.
+then validates sender, session and connection identity. The binary relay adapter supplies a validated recipient envelope body.
 
 ## Plans and restart fences
 

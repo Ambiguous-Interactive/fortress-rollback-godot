@@ -14,7 +14,10 @@ import signalfish_probe as probe
 class SignalFishProbeControls(unittest.TestCase):
     def test_process_and_evidence_controls(self):
         scripts = {
-            'success': 'print("FORTRESS_SIGNALFISH_SDK_OK")\n',
+            'success': 'print(\'FORTRESS_SIGNALFISH_RELAY_RESULT {"broadcast_deliveries": 1, "records": '
+                       '[{"players":2,"canonical_comparisons":76,"frames_submitted":40},'
+                       '{"players":4,"canonical_comparisons":152,"frames_submitted":40},'
+                       '{"players":8,"canonical_comparisons":304,"frames_submitted":40}]}\')\nprint("FORTRESS_SIGNALFISH_SDK_OK")\n',
             'nonzero': 'print("FORTRESS_SIGNALFISH_SDK_OK")\nraise SystemExit(2)\n',
             'invalid_utf8': 'import os\nos.write(1, b"FORTRESS_SIGNALFISH_SDK_OK\\xff")\n',
             'timeout': 'import time\nprint("FORTRESS_SIGNALFISH_SDK_OK", flush=True)\ntime.sleep(1)\n',
@@ -32,6 +35,9 @@ class SignalFishProbeControls(unittest.TestCase):
                 source.parent.mkdir(parents=True)
                 source.write_text('extends SceneTree\n')
                 (source.parent / 'signalfish_probe_new_peer.gd').write_text('extends RefCounted\n')
+                (source.parent / 'signalfish_probe_relay.gd').write_text('extends RefCounted\n')
+                (source.parent / 'signalfish_probe_relay_controls.gd').write_text('extends RefCounted\n')
+                (source.parent / 'signalfish_probe_lifetime.gd').write_text('extends RefCounted\n')
                 sdk = root / 'sdk/addons/signal_fish'
                 sdk.mkdir(parents=True)
                 (sdk / 'client.gd').write_text('extends Node\n')

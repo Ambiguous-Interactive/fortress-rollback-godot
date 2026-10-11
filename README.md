@@ -7,7 +7,8 @@ A **GDScript-only port** of [fortress-rollback](https://github.com/wallstop/fort
 > [!WARNING]
 > This project is in an early development phase. Local sync-test sessions and
 > an external-input rollback core are implemented. Fixed-membership byte sessions
-> include bounded input exchange and rollback. Real transports and browser release support remain planned.
+> include bounded input exchange and rollback. Optional SignalFish binary relay
+> is implemented; direct WebRTC and browser release validation remain planned.
 
 ## AI-Assisted Development Notice
 
@@ -72,7 +73,7 @@ make llm-index
 pins and reproducible upstream/native/web probes. The
 [interface ADR](./docs/contracts.md) and [evidence policy](./docs/verification-policy.md)
 define the next implementation gates. These development artifacts do not imply
-that a supported browser release or real transport integration is available.
+that a supported browser release is available.
 
 The [session guide](./docs/session.md) documents the shared expert engine,
 bounded snapshots and thin game driver. The [raw input queue](./docs/input-queue.md)
@@ -84,10 +85,12 @@ agreement and peer identity, and reports synchronization progress or specific
 mismatches. Protocol time and request tokens come from the caller.
 The [byte session guide](./docs/peer-session.md) connects that handshake,
 [bounded input exchange](./docs/input-exchange.md) and the shared game driver.
-The application supplies delivery and drains bounded packet/event/diagnostic queues.
+The application selects delivery and drains bounded packet/event/diagnostic queues.
 The [optional SignalFish membership seam](./docs/signalfish-membership.md) freezes
 room UUIDs into stable player slots and validates SDK plans before mesh setup.
-Byte delivery and real browser transport validation remain separate gates.
+The [SignalFish relay adapter](./docs/signalfish-relay.md) delivers opaque binary
+packets with bounded queues, recipient filtering and explicit send pressure.
+Direct WebRTC and real browser transport validation remain separate gates.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
 for direct pinned Rust/Godot queue comparisons. `make handshake-probes` compares
 actual upstream handshake observations with the Godot endpoint.

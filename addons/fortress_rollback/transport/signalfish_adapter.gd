@@ -5,12 +5,15 @@ extends RefCounted
 const Membership = preload("res://addons/fortress_rollback/transport/signalfish_membership.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const LIFETIME_SIGNALS: Array[String] = ["room_left", "disconnected", "connection_failed", "reconnected", "room_joined", "player_left", "player_joined",
+	"authentication_error", "reconnection_failed", "spectator_joined"]
 
 var _client: WeakRef = null
 var _mesh: WeakRef = null
 var _membership: Membership = null
 var _mesh_attached: bool = false
 var _restart_required: bool = false
+var _room_id: String = ""
 var _state: Dictionary = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 
 
@@ -28,11 +31,14 @@ func attach(client: Object, mesh: Object, membership: Membership) -> Error:
 	_client = weakref(client)
 	_mesh = weakref(mesh)
 	_membership = membership
+	_room_id = client.call("get_room_id") if client.has_method("get_room_id") else ""
 	# Validate before the mesh listener can observe an unsupported plan.
 	client.connect("session_plan", _on_plan)
 	if client.has_signal("new_peer"):
 		client.connect("new_peer", _on_new_peer)
-	for signal_name: String in ["room_left", "disconnected", "connection_failed", "reconnected", "room_joined", "player_left", "player_joined"]:
+	if client.has_signal("player_reconnected"):
+		client.connect("player_reconnected", _on_player_reconnected)
+	for signal_name: String in LIFETIME_SIGNALS:
 		if client.has_signal(signal_name):
 			client.connect(signal_name, _on_transport_ended)
 	var code: Error = mesh.call("attach", client)
@@ -52,19 +58,23 @@ func detach() -> void:
 	if is_instance_valid(client):
 		if client.has_signal("new_peer") and client.is_connected("new_peer", _on_new_peer):
 			client.disconnect("new_peer", _on_new_peer)
-		for signal_name: String in ["room_left", "disconnected", "connection_failed", "reconnected", "room_joined", "player_left", "player_joined"]:
+		if client.has_signal("player_reconnected") and client.is_connected("player_reconnected", _on_player_reconnected):
+			client.disconnect("player_reconnected", _on_player_reconnected)
+		for signal_name: String in LIFETIME_SIGNALS:
 			if client.has_signal(signal_name) and client.is_connected(signal_name, _on_transport_ended):
 				client.disconnect(signal_name, _on_transport_ended)
 	_restart_required = false
 	_client = null
 	_mesh = null
 	_membership = null
+	_room_id = ""
 	_state = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 
 
 ## Plans replace routing and offerer roles without changing player slots or session IDs.
 ## Relay selection requires the separate byte-delivery adapter; it does not send bytes.
 func _apply_plan(plan: Object) -> Error:
+	_check_lifetime()
 	if _restart_required:
 		return _refuse(ERR_UNAVAILABLE)
 	if _membership == null or plan == null or not plan.has_method("to_dict"):
@@ -161,9 +171,24 @@ func _on_transport_ended(_first: Variant = null, _second: Variant = null) -> voi
 	_refuse(ERR_UNAVAILABLE)
 
 
+func _on_player_reconnected(uuid: String) -> void:
+	# The server explicitly announces a new remote incarnation; S4 owns safe reactivation.
+	if _membership != null and uuid != _membership.local_uuid() and _membership.slot(uuid) >= 0:
+		_on_transport_ended()
+
+
 func _check_lifetime() -> void:
 	if _client == null:
 		return
 	if not is_instance_valid(_client.get_ref()) or _mesh == null or not is_instance_valid(_mesh.get_ref()):
+		_restart_required = true
+		_refuse(ERR_UNAVAILABLE)
+		return
+	var client: Object = _client.get_ref()
+	# Closing can precede disconnected; AuthenticationError clears the room without closing.
+	if (client.has_method("is_connected_to_server") and not client.call("is_connected_to_server")) \
+		or (client.has_method("is_authenticated") and not client.call("is_authenticated")) \
+		or client.call("get_player_id") != _membership.local_uuid() \
+		or (not _room_id.is_empty() and client.call("get_room_id") != _room_id):
 		_restart_required = true
 		_refuse(ERR_UNAVAILABLE)

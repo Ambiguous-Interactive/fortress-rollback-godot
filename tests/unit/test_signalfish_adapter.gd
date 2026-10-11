@@ -11,10 +11,14 @@ const COLLISION: String = "47a5d0e7-f0f0-053e-880f-5fb4defc9ecf"
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["new_peer"])
+	return PackedStringArray(["new_peer", "lifetime"])
 
 
 func run_case(_name: String, context: RefCounted) -> void:
+	if _name == "lifetime":
+		_lifetime(context)
+		context.finish()
+		return
 	for kind: String in ["matching", "role_changed", "collision", "local", "before_plan", "relay"]:
 		var membership: M = M.new()
 		var session: PackedByteArray = PackedByteArray()
@@ -50,12 +54,63 @@ func run_case(_name: String, context: RefCounted) -> void:
 	context.finish()
 
 
+func _lifetime(context: RefCounted) -> void:
+	for kind: String in ["authentication", "closing", "identity", "room", "remote", "other_remote", "operation"]:
+		var membership: M = M.new()
+		var session: PackedByteArray = PackedByteArray()
+		session.resize(16)
+		var incarnation: PackedByteArray = PackedByteArray()
+		incarnation.resize(8)
+		context.equal(membership.configure(LOCAL, PackedStringArray([LOCAL, REMOTE]), session, incarnation, T.Config.new()), OK, "lifetime frozen roster")
+		var client: Client = Client.new()
+		var mesh: MeshStub = MeshStub.new()
+		var adapter: A = A.new()
+		context.equal(adapter.attach(client, mesh, membership), OK, "lifetime state capture")
+		client.session_plan.emit(Plan.new())
+		match kind:
+			"authentication":
+				client.authenticated_state = false
+			"closing":
+				client.connected_state = false
+			"identity":
+				client.player = REMOTE
+			"room":
+				client.room = REMOTE
+			"remote":
+				client.player_reconnected.emit(REMOTE)
+			"other_remote":
+				client.player_reconnected.emit(COLLISION)
+			"operation":
+				client.room_join_failed.emit("another room refused", 1)
+		if kind in ["other_remote", "operation"]:
+			context.equal(adapter.status().route, "mesh", "unchanged frozen lifetime remains live")
+		else:
+			context.equal(adapter.status().route, "restart_required", "actual public lifetime state fences ingress")
+			context.equal(adapter.receive_mesh(null, PackedByteArray(), M.uuid_to_peer_id(REMOTE), 0), I.Code.WRONG_STATE, "mesh gate refuses ended lifetime")
+			context.equal(adapter.receive_relay(null, PackedByteArray(), REMOTE, 0), I.Code.WRONG_STATE, "relay gate refuses ended lifetime")
+		adapter.detach()
+		client.free()
+		mesh.free()
+
+
 class Client:
 	extends Node
 	signal session_plan(plan: Object)
 	signal new_peer(peer_id: String, you_initiate: bool)
+	signal player_reconnected(peer_id: String)
+	signal room_join_failed(reason: String, code: int)
+	var player: String = LOCAL
+	var room: String = LOCAL
+	var connected_state: bool = true
+	var authenticated_state: bool = true
 	func get_player_id() -> String:
-		return LOCAL
+		return player
+	func get_room_id() -> String:
+		return room
+	func is_connected_to_server() -> bool:
+		return connected_state
+	func is_authenticated() -> bool:
+		return authenticated_state
 
 
 class MeshStub:

@@ -67,6 +67,10 @@ actual browser version. A served page or HTTP 200 is insufficient.
 
 ## Cache and provenance
 
+The [SignalFish relay guide](../signalfish-relay.md) provides a pinned local-server
+build and real native 2/4/8-player gameplay witness. Its native evidence remains
+separate from browser and direct WebRTC release gates.
+
 `fetch.py` verifies cached archives on every use and compares their extraction
 against source caches before a Rust run. Byte-identical trees retain timestamps;
 changed trees are replaced. Changes made to cached upstream sources are
