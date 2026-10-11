@@ -230,5 +230,18 @@ The last fresh sampler review passes all 23 tests plus ten independent
 three-page schedules and a late-callback probe, with no actionable findings.
 Combined Node controls total 24; reference controls total 45, with three
 expected skips. Harness lint, 99 self-tests, source lint and whitespace checks
-pass. Production runtime, native/P2P and package source bindings remain unchanged
-from the verified gameplay candidate. Final hosted gates must still pass.
+pass. Production runtime, native and package bindings remain unchanged from the
+verified gameplay candidate. P2P execution files also remain unchanged, but its
+broad inventory includes two unrelated ownership-probe scripts changed above;
+those earlier receipts no longer establish a full current-inventory match.
+Current-head hosted CI reruns the P2P corpus with its complete updated inventory.
+Final hosted gates must still pass.
+
+Independent artifact review accepts the final browser receipt: all 1,067 current
+input/tool hashes and 27 owned log hashes match; all 56 positive peers preserve
+40 frames, 38 canonical and 37 active comparisons, confirmation at least 38,
+nonzero rollback and complete physical teardown. The ownership receipt records
+46 current sources (44 staged inputs plus two Python helpers), with exact
+78-case native/Web agreement on both positive and intended-negative pairs.
+The native 97-file supplemental binding remains current. The broad earlier P2P
+inventory limitation above is recorded rather than silently claiming equivalence.
