@@ -38,6 +38,7 @@ var stage: String = "initial"
 var transport_us: int = 0
 var transport_epoch_us: int = -1
 var token_serial: int = 0
+var next_progress_us: int = 0
 var endpoint: String = ""
 var player_count: int = 0
 var local_index: int = 0
@@ -240,6 +241,9 @@ func _service() -> bool:
 		received_packets += result.received
 		peers[index].drain_events()
 		peers[index].drain_transitions()
+	if transport_us >= next_progress_us:
+		Setup.publish_progress(self)
+		next_progress_us = transport_us + 500000
 	return _healthy()
 
 func _observe_client(client: SDK) -> void:

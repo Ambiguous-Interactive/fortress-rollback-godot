@@ -468,3 +468,54 @@ receipt gossip gap on both engines. All inputs and ACKs drain but identical
 stalled samples cannot emit changed gossip. Issue #73 includes a standalone
 reproduction, exact source references, pinned Rust policy audit and recovery
 acceptance. It is distinct from this browser schedule and transport PR.
+
+The 64x64 two-CPU experiment fails Godot 4.3 clean at the launcher's
+180-second outer boundary, with eight peers at gameplay waits 8/9. The
+receipt remains false and Godot 4.7.2 never executes. This contradicts the
+viewport prediction; the paired same-engine timing comparison is unavailable.
+Revert the viewport change and remove the unsupported prescriptive lesson.
+Do not attribute the measured slow turns to rendering without further evidence.
+
+Hosted viewport head `cd2f7f08594ec13e04aebb082ab0c76601ee4a43` also fails
+Godot 4.3 clean at the 180-second outer boundary. Run `38169411537`,
+job `114558659869`, artifact `11714126061`. The viewport hypothesis is
+falsified in both settings. Owned-process inspection finds only the current
+two browser groups during the local experiment; no baseline orphan is observed.
+
+Independent watchdog review identifies a demonstrated test boundary problem.
+The old Node wait budgets all forty game frames and the entire final tail
+together. The Python 180-second limit additionally covers all three sequential
+rooms and their setup/cleanup, despite separate child waits allowing more.
+Current snapshots establish progress, not eventual global success: peer 5
+reaches canonical state while the others remain in final confirmation.
+
+The planned repair tracks each unfinished peer independently. Actual original
+frame advancement gets a 20-second inactivity bound and 240-second absolute
+gameplay cap; after frame 39, confirmation gets 30-second inactivity and
+90-second absolute caps. Only monotone confirmed/receipt/ACK frontiers can
+extend confirmation inactivity. Stages, tokens, packet counts and timestamps
+cannot. A 480-second room cap covers setup/gameplay/confirmation/cleanup;
+three rooms plus 60 seconds of launch/close yield a 1500-second outer label
+cap. All deadlines remain real-time integration checks. Actual state equality,
+rollback, original inputs, faults, channel policies and teardown remain the
+acceptance gates. Deterministic failure controls and fresh execution are
+required; this plan alone does not establish successful delivery.
+
+Fresh adversarial review rejects the initial watchdog implementation at exact
+deadline boundaries. A late frame or completion can refresh/bypass its expired
+phase deadline; a never-resolving browser evaluation can block all sampling.
+Independent fake-clock/fake-page reproductions prove both findings. Check
+existing phase deadlines before accepting updates and bound observation itself.
+The author repairs both with deterministic controls, then restarts source-bound
+execution; earlier partial runs do not establish the repaired candidate.
+
+The repaired watchdog candidate freezes at 20:00 UTC. Nine Node controls
+pass, including late-transition/completion and exact idle/absolute deadline
+cases, plus a never-resolving page rejected through the observation deadline.
+All four Python witness controls and reference discovery pass (41 tests,
+three expected skips). Harness checks pass 99 self-tests and source widths
+across 207 files. Both native clock/token tests still execute before export.
+New browser runner/watchdog/control helpers are inventoried; their existing
+combined instrument-controls log is cleared and SHA-256 bound. Full current
+source browser runs are pending in `.cache/session-013/webrtc-watchdog-final-fixed`.
+Fresh review of the repaired technical diff and hosted CI remain required.

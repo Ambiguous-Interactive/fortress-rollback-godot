@@ -145,3 +145,15 @@ static func raw_connection() -> WebRTCPeerConnection:
 	var connection: WebRTCPeerConnection = WebRTCPeerConnection.new()
 	connection.close()
 	return connection
+
+
+static func publish_progress(host: Node) -> void:
+	if host.peers.is_empty(): return
+	var peer: Peer = host.peers[0]
+	var received: Array[int] = []
+	var acked: Array[int] = []
+	for endpoint_status: Dictionary in peer.network_status().peers.values():
+		received.append(endpoint_status.last_received_frame)
+		acked.append(endpoint_status.last_acked_frame)
+	var progress: Dictionary = {"received": received, "acked": acked, "confirmed": peer.status().confirmed_frame}
+	JavaScriptBridge.eval("document.body.dataset.fortressProgress = " + JSON.stringify(JSON.stringify(progress)))

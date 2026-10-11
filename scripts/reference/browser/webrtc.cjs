@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const https = require('node:https');
 const net = require('node:net');
 const path = require('node:path');
+const { waitGameplay, boundedRoom } = require('./webrtc_watchdog.cjs');
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory }) {
   window.fortressEndpoint = endpoint;
@@ -97,15 +98,17 @@ async function main() {
   const records = [];
   try {
     for (let index = 0; index < 2; index++) browsers.push(await chromium.launch({
-      headless: true, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
+      headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--ignore-certificate-errors'],
     }));
     for (const count of ((corrupt || defaultFactory) ? [2] : [2, 4, 8])) {
       const contexts = [];
       const pages = [];
       try {
+        await boundedRoom(async () => {
+        await boundedRoom(async () => {
         for (let index = 0; index < count; index++) {
-          const context = await browsers[index % 2].newContext({ ignoreHTTPSErrors: true, viewport: { width: 64, height: 64 } });
+          const context = await browsers[index % 2].newContext({ ignoreHTTPSErrors: true });
           contexts.push(context);
           const page = await context.newPage();
           pages.push(page);
@@ -130,16 +133,16 @@ async function main() {
             || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 10000 })));
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressFirstDeliveryReady = true; })));
         }
+        }, 120000, 'setup');
         {
-          await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressGameplayDone === 'true'
-            || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 120000 })));
+          await waitGameplay(pages);
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
             null, { timeout: 10000 })));
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownReady = true; })));
         }
         await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined,
-          null, { timeout: 120000 })));
+          null, { timeout: 10000 })));
         try {
           await Promise.all(pages.map(page => page.waitForFunction(() => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
             && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), null, { timeout: 10000 })));
@@ -169,6 +172,7 @@ async function main() {
             throw new Error(JSON.stringify({ control: 'wrong_channel_policy_boundary', peers }));
         }
         records.push({ players: count, peers });
+        });
       } finally {
         await Promise.all(contexts.map(context => context.close()));
       }

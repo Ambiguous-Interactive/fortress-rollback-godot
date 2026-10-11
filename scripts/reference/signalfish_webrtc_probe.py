@@ -13,15 +13,14 @@ import tempfile
 import zipfile
 
 from browser.webrtc_import import freeze_after_import
+from browser.webrtc_runner import run_browser
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from godot_smoke import run
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
-
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
-
 def validate_browser(result, faults):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') != 'Chromium'
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
@@ -81,7 +80,6 @@ def validate_browser(result, faults):
                 if type(rtc.get(key)) is not int or (rtc[key] < 1 if faults else rtc[key] != 0):
                     raise ValueError('data-channel fault controls unobserved')
     return result
-
 def validate_restore_control(result, kind="corrupt"):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('corrupt') is not (kind == 'corrupt')
             or result.get('defaultFactory') is not (kind == 'default')
@@ -100,7 +98,6 @@ def validate_restore_control(result, kind="corrupt"):
         if witness.get('passed') is not False or failure.get('stage') != ('handshake' if kind == 'default' else 'gameplay') or not expected:
             raise ValueError('snapshot corruption rejected outside canonical gameplay prefix comparison')
     return result
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--server', type=Path, required=True)
@@ -143,7 +140,9 @@ def main():
                'host': ROOT / 'scripts/reference/signalfish_webrtc_probe.gd', 'setup': ROOT / 'scripts/reference/browser/webrtc_setup.gd',
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
-               'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs', 'node': Path(shutil.which('node')),
+               'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
+               'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs',
+               'watchdog_test': ROOT / 'scripts/reference/browser/webrtc_watchdog.test.cjs', 'node': Path(shutil.which('node')),
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
     for module in sorted((CACHE / 'browser/node_modules').rglob('*')):
         relative = module.relative_to(CACHE / 'browser/node_modules')
@@ -199,7 +198,7 @@ def main():
     expected = {name: before[name] for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'cargo', 'rustc')}
     expected['archive'] = before['server_archive']
     validate_build_receipt(build, server_pin['revision'], server_before, before['server'], expected, before['build_log'])
-    run([str(sources['node']), '--test', str(sources['instrument_test'])], environment, args.output / 'instrument-controls.log')
+    run([str(sources['node']), '--test', str(sources['instrument_test']), str(sources['watchdog_test'])], environment, args.output / 'instrument-controls.log')
     records, executed_records = [], []
     with tempfile.TemporaryDirectory(prefix='fortress-real-webrtc-') as temporary:
         root = Path(temporary)
@@ -266,7 +265,7 @@ def main():
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
                                            f'ws://127.0.0.1:{port}/v3/ws', label, str(args.output / f'{version}-{label}-events.log')]
-                        output = run(browser_command, environment, args.output / f'{version}-{label}.log')
+                        output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log')
                         result = validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default') else validate_browser(json.loads(output), faults)
                         records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default') else None,
                                         'command': browser_command, 'result': result})
