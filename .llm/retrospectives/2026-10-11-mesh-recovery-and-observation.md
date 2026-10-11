@@ -22,6 +22,23 @@ the production change also touches prediction and protocol ownership.
 
 | Removing delayed application still leaves delayed resampling behind the same batch barrier. | The actual-module second reproduction rejects a peer advancing every second at 20.15 seconds while its sibling completes within its own deadline; independent loops finish at 19.9 seconds. | Extend the same testing procedure: independent per-page cadence, one in-flight evaluation and a persistent earliest deadline through pauses. |
 
+## Post-merge incident findings
+
+Main's 4.7.2 mesh stalls with fresh observations and live retry service. The
+lossless eight-peer control proves that an eight-packet receive budget can lose
+to seven input retries plus ACKs while the host permits 32 sends. Pair the
+witness budgets and bind the actual host selection to the traffic regression.
+Require actual confirmation progress, as a conservative upper-bound assertion
+alone also accepts confirmation stuck at -1. Extend existing networking guidance.
+
+Failed-room cleanup erased physical counters needed for diagnosis. Capture them
+before destruction with an independent bounded diagnostic that preserves the
+original error; actual-main controls protect successful and hung captures.
+
+Overlapping local probes rewrote the same browser installation and caused
+ETXTBSY. Unique result directories do not isolate executable extraction. The
+existing testing skill now requires serialization of shared bootstrap caches.
+
 ## Prune ledger
 
 Extend existing testing/networking guidance rather than create overlapping skills.

@@ -155,6 +155,13 @@ static func _expected(frame: int, count: int) -> PackedByteArray:
 func _transport_totals() -> Dictionary:
 	return {"sent": sent_packets, "received": received_packets}
 
+func _direct_options() -> Direct.Options:
+	var options: Direct.Options = Direct.Options.new()
+	options.max_packet_bytes = 1024
+	options.max_sends_per_poll = 32
+	options.max_receives_per_poll = 32
+	return options
+
 func _wait(condition: Callable, use_transport: bool = false) -> bool:
 	print("WEBRTC_STAGE ", stage)
 	var diagnostics: Dictionary = _new_wait_diagnostics()

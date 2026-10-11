@@ -280,6 +280,8 @@ mesh uses packet lifetime instead. Reserve packet consumption for the adapter.
 Respect server-selected offerer roles and latest plan generations.
 The direct adapter now provides bounded byte delivery and lifetime fences.
 The exported Chromium witness covers 2/4/8 peers on both pinned engines.
+The slow eight-peer FIFO regression requires actual receipt and confirmation;
+live witness send/receive work budgets must match its tested configuration.
 The witness exercises elapsed transport deadlines and caller-owned handshake
 retries; [#72](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/72)
 records its loss regression and delivery gate.

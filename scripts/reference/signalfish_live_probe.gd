@@ -187,6 +187,7 @@ func _setup(count: int) -> bool:
 		var options: Relay.Options = Relay.Options.new()
 		options.max_packet_bytes = 1024
 		options.max_sends_per_poll = 32
+		options.max_receives_per_poll = 32
 		if relay.configure(clients[index], modes[index], infos[index], memberships[index], adapters[index], peer, options) != 0: return false
 	simulated_us = 0
 	return true

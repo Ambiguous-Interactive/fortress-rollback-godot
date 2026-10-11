@@ -95,6 +95,12 @@ fit that direct-path limit; relay has a different size budget. The adapter retai
 one refused incoming packet. Remaining packets stay in the engine's channel
 buffers; the receive budget limits application reads per call, not engine polling.
 
+Size send and receive work together for the roster and actual polling interval.
+Slow full-mesh service can receive both retry inputs and their ACKs from every
+remote peer. Raising only the send budget can grow a FIFO of stale packets even
+without network loss. The eight-peer browser witness uses 32 sends and 32 receives
+per call; the deterministic slow-poll test exercises that configuration.
+
 ## Identity, lifetime and failures
 
 Packets are attributed by the multiplayer peer's numeric sender ID and resolved

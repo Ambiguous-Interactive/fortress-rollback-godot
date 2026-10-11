@@ -132,6 +132,10 @@ returns recoverable queue pressure before committing packet state. The same
 code may also accompany terminal event overflow: inspect committed lifecycle
 before deciding to retry. Continue bounded outgoing service while incoming work
 waits, so pressure cannot starve queued ACKs. Prove both paths using real peers.
+Size send and receive work together under polling slower than the retry interval.
+An input retry generates an ACK; an eight-peer lossless FIFO can grow when only
+send work is raised. Test actual peer traffic, physical backlog and confirmation,
+then bind the host's selected budgets to the tested workload.
 Validate callback tokens as null or exactly 16 owned bytes before copying. Peer
 pressure can occur before protocol token validation; relying on that later
 validation can retain an arbitrary callback object or oversized packed array.
