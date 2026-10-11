@@ -122,6 +122,14 @@ async function main() {
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
         const room = await pages[0].evaluate(() => document.body.dataset.fortressRoom);
         await Promise.all(pages.slice(1).map(page => page.evaluate(value => { window.fortressRoom = value; }, room)));
+        if (!defaultFactory) {
+          await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressHandshakeReady === 'true'
+            || document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 120000 })));
+          await Promise.all(pages.map(page => page.evaluate(() => { window.fortressFirstStepReady = true; })));
+          await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressFrame === '0' || document.body.dataset.fortressGameplayDone === 'true'
+            || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 10000 })));
+          await Promise.all(pages.map(page => page.evaluate(() => { window.fortressFirstDeliveryReady = true; })));
+        }
         {
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressGameplayDone === 'true'
             || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 120000 })));

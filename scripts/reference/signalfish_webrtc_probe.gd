@@ -88,6 +88,8 @@ func _play(count: int) -> bool:
 		for peer: Peer in peers:
 			if peer.network_status().state != "running": return false
 		return true, true): return false
+	JavaScriptBridge.eval("document.body.dataset.fortressHandshakeReady = 'true'")
+	if not await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressFirstStepReady || false"), true): return false
 	stage = "gameplay"
 	JavaScriptBridge.eval("window.fortressFaultActive = true")
 	for frame: int in 40:
@@ -105,6 +107,9 @@ func _play(count: int) -> bool:
 				errors.append("step_%d_at_%d" % [stepped.code, frame])
 				return false
 		JavaScriptBridge.eval("document.body.dataset.fortressFrame = '%d'" % frame)
+		if frame == 0 and not await _wait_cleanup("window.fortressFirstDeliveryReady || false"):
+			errors.append("prediction_barrier")
+			return false
 		if frame >= 3:
 			if games[0].history.get(frame - 2) != _expected(frame - 2, count):
 				errors.append("canonical_prefix_frame_%d" % (frame - 2))

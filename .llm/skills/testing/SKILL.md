@@ -172,6 +172,9 @@ mean a session performed no work. Do not gate every new input on global
 confirmation when receipt gossip requires later submissions. Pace the witness
 by endpoint receipts while retaining independent final confirmation and
 corrected-prefix checks; otherwise the test driver can create a cyclic wait.
+When every peer must exercise rollback, coordinate an explicit predicted step
+before delivering its original inputs. A fast clean run can otherwise receive
+all inputs before advancing and never restore a snapshot.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same

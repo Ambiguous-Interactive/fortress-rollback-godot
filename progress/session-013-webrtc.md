@@ -229,3 +229,27 @@ traffic across live replan boundaries. S4 owns direct/relay switching and
 browser suspension recovery; S5 owns the full compatibility matrix. S2 still
 requires actual slow-recipient/backlog and reconnect acceptance. Detailed
 follow-ups and post-green delivery evidence belong in their linked task issues.
+
+## CI prediction coverage investigation
+
+The first current-head transport CI run rejected its clean Godot 4.3 result.
+The four-player room's peer 0 submitted all 40 frames, confirmed frame 38 and
+passed all 38 canonical and 37 active comparisons, but performed zero rollback
+loads. Other peers performed 39 loads. Host scheduling allowed that peer to
+receive every original input before advancing. Clean gameplay correctness did
+not establish the required prediction-correction coverage.
+
+The test driver must coordinate the first predicted step before any participant
+delivers its frame-zero input. This preserves actual WebRTC transport, original
+inputs and every existing acceptance bound. Handshake acknowledgements must
+continue until all participants are running, and negative-control terminal
+results must release coordinator waits. The zero-load parser mutant remains
+rejected. The earlier local receipt remains valid only for its earlier sources.
+
+The coordinated first-step repair passes the actual clean 2/4/8-peer
+reproduction: every peer performs rollback loads, including the previously
+unexercised position. Independent review proves no frame-zero bytes leave
+before all peers predict; handshake acknowledgements remain live. Both
+coordinator waits accept terminal gameplay status so failed controls proceed
+to teardown. Python/Node controls, GDScript lint and source/harness lint pass.
+New source-bound runs and current-head CI provide final execution evidence.
