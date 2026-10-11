@@ -16,7 +16,7 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay implemented; direct/fallback and browser validation remain planned |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay and direct bytes implemented; automatic fallback and release matrix remain planned |
 | Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
 | Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
@@ -43,6 +43,18 @@ acceptance. Retain the exact FIFO head on send refusal and count owned queues,
 socket backlog and receive work separately. Verify retry bytes and corrected
 confirmed game state through the actual SDK, rather than counting simulated ticks.
 Name injected transport, native server and browser evidence separately.
+
+Fence retained direct bytes with a monotonic local plan/lifetime revision, not
+just current opaque generation equality. The SDK can rebuild per-peer channels
+while retaining its multiplayer peer, and plans can change A→B→A between service
+calls. Same-generation offerer changes can also replace connections. Test queued
+outgoing and incoming work across those transitions; repeated identical plans
+must not fabricate a replacement. Reserve PacketPeer reads for one consumer and
+capture sender/channel/mode before get_packet advances to the next packet.
+Inspect actual browser data channels, not just Godot option dictionaries.
+The pinned engine's legacy maxPacketLifetime spelling is ignored by browsers
+that expect maxPacketLifeTime. Use the production connection factory correction
+and verify the resulting lifetime; do not claim a zero-retransmit policy.
 
 ## Serialization Rules
 
@@ -109,6 +121,11 @@ returns recoverable queue pressure before committing packet state. The same
 code may also accompany terminal event overflow: inspect committed lifecycle
 before deciding to retry. Continue bounded outgoing service while incoming work
 waits, so pressure cannot starve queued ACKs. Prove both paths using real peers.
+Validate callback tokens as null or exactly 16 owned bytes before copying. Peer
+pressure can occur before protocol token validation; relying on that later
+validation can retain an arbitrary callback object or oversized packed array.
+Recheck lifetime gates immediately after callbacks, before validating their
+return values, so malformed output cannot overwrite a latched teardown failure.
 
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate

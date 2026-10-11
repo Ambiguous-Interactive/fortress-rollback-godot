@@ -137,6 +137,12 @@ recheck latched errors after the final event drain and before publishing success
 Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
+Duck-typed engine doubles must expose only publicly bound methods. Check the
+real engine method list before treating a native double as interface evidence.
+A passing fake getter cannot prove an exported PacketPeer supports it. Verify
+browser constructor options and resulting properties: an ignored option can
+leave healthy gameplay on the wrong reliability policy.
+
 Validate embedded scenarios/results independently before comparing their identity
 to submitted artifacts. Python equality treats booleans, integral floats and
 integers as equal; it is not schema validation. Standalone executables also need
@@ -147,7 +153,8 @@ Preserve decoded wire fields instead of substituting scenario expectations.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Test omitted and explicit-null optional
-objects separately through every standalone executable; parser defaults can alias
+objects separately through every standalone executable. Require field presence
+when explicit null is part of the observed contract; parser defaults can alias
 them before shared validation runs. Constrain omitted setup records to their
 exact allowed position. Formal projection must account for the observed initial
 state and every supported post-state, not just action names and final success.
@@ -161,15 +168,25 @@ active and assert a nonzero comparison count for every peer. Confirmation can
 advance on delivery before predicted game state is repaired; capture actual
 callback boundaries rather than assuming the current state is already canonical.
 Compare stalled save/load/advance requests too; unchanged frame numbers do not
-mean a session performed no work.
+mean a session performed no work. Do not gate every new input on global
+confirmation when receipt gossip requires later submissions. Pace the witness
+by endpoint receipts while retaining independent final confirmation and
+corrected-prefix checks; otherwise the test driver can create a cyclic wait.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same
 capacity. Retained/send counts alone can pass while every comparison is skipped.
 
 Validate original numeric tokens when parsing erases integer versus float syntax.
-Bind evidence to all executed source inventories and tool identities, captured
-before use and rechecked before publishing a success receipt.
+Bind evidence to all executed source inventories, including imported helpers,
+and tool identities before use and before publishing a success receipt.
+When engine import creates metadata, first verify authored sources are unchanged.
+Allow only metadata paired with existing inputs, then freeze the complete
+post-import inventory through export and execution.
+Verify supplied pinned executables against bytes extracted from the verified
+archive; a version string and unchanged execution hash do not prove provenance.
+Observe resource construction separately from child creation, so teardown checks
+also include abandoned connections that never created channels.
 
 Godot JSON parsers expose numeric fields as floats. After validating integrality
 and bounds, reconstruct scenario records with explicit integers before emitting

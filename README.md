@@ -8,7 +8,7 @@ A **GDScript-only port** of [fortress-rollback](https://github.com/wallstop/fort
 > This project is in an early development phase. Local sync-test sessions and
 > an external-input rollback core are implemented. Fixed-membership byte sessions
 > include bounded input exchange and rollback. Optional SignalFish binary relay
-> is implemented; direct WebRTC and browser release validation remain planned.
+> and direct WebRTC byte delivery are implemented. Browser release validation remains planned.
 
 ## AI-Assisted Development Notice
 
@@ -90,7 +90,8 @@ The [optional SignalFish membership seam](./docs/signalfish-membership.md) freez
 room UUIDs into stable player slots and validates SDK plans before mesh setup.
 The [SignalFish relay adapter](./docs/signalfish-relay.md) delivers opaque binary
 packets with bounded queues, recipient filtering and explicit send pressure.
-Direct WebRTC and real browser transport validation remain separate gates.
+The [SignalFish WebRTC adapter](./docs/signalfish-webrtc.md) owns bounded direct
+bytes through the SDK mesh. Automatic fallback and the release browser matrix remain separate gates.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
 for direct pinned Rust/Godot queue comparisons. `make handshake-probes` compares
 actual upstream handshake observations with the Godot endpoint.

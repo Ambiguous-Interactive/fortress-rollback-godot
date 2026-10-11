@@ -120,9 +120,16 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 	for _index: int in mini(_options.max_receives_per_poll, _received.size()):
 		var incoming: Envelope.Decoded = _received[0]
 		if not _receive_token_ready:
-			_receive_token = next_token_factory.call(incoming.sender) if next_token_factory.is_valid() else null
-			if _receive_token is PackedByteArray:
-				_receive_token = _receive_token.duplicate()
+			var candidate: Variant = next_token_factory.call(incoming.sender) if next_token_factory.is_valid() else null
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
+			if candidate != null and (not candidate is PackedByteArray or candidate.size() != 16):
+				_receive_token = null
+				_failure = Code.INVALID_ARGUMENT
+				result.code = _failure
+				break
+			_receive_token = candidate.duplicate() if candidate is PackedByteArray else null
 			_receive_token_ready = true
 		result.code = _gate()
 		if result.code != Code.OK:

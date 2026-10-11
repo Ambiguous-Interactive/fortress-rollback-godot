@@ -4,9 +4,11 @@
 
 ### Added
 
+- Add bounded SignalFish WebRTC byte delivery with unordered input transport, owned retry queues and sender checks. Reserve mesh packet reads for the adapter and restart after plan replacement.
+
 - Add bounded SignalFish binary relay with recipient envelopes, owned retry queues and send backpressure. Applications retain refused batches and restart after receive overflow or reconnect.
 
-- Add optional SignalFish membership setup with stable UUID slots, handshake agreement, sender checks and v3 plan selection. Byte transport and reconnect recovery remain planned.
+- Add optional SignalFish membership setup with stable UUID slots, handshake agreement, sender checks and v3 plan selection. Reconnect recovery remains planned.
 
 - Add peer RTT, pacing hints, interruption and resume events, and confirmed game checksums. Fixed-membership sessions halt on timeout, closure or desync; create a new session to restart.
 
@@ -25,3 +27,7 @@
 - Add local sync-test sessions, bounded snapshot history, ordered rollback requests, and a synchronous game driver.
 
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
+
+### Fixed
+
+- Fix invalid transport token callbacks retaining oversized data. Relay and WebRTC adapters validate null or exactly 16 bytes before copying.
