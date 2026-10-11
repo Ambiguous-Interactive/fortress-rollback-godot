@@ -85,6 +85,9 @@ mismatches. Protocol time and request tokens come from the caller.
 The [byte session guide](./docs/peer-session.md) connects that handshake,
 [bounded input exchange](./docs/input-exchange.md) and the shared game driver.
 The application supplies delivery and drains bounded packet/event/diagnostic queues.
+The [optional SignalFish membership seam](./docs/signalfish-membership.md) freezes
+room UUIDs into stable player slots and validates SDK plans before mesh setup.
+Byte delivery and real browser transport validation remain separate gates.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
 for direct pinned Rust/Godot queue comparisons. `make handshake-probes` compares
 actual upstream handshake observations with the Godot endpoint.

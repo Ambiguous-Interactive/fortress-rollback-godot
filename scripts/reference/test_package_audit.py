@@ -1,12 +1,16 @@
 """Value: addon packaging rejects development files, missing notices and symlinks before engine startup."""
+import argparse
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import package_audit
+
+GODOT: Path | None = None
 
 
 class PackageAuditControls(unittest.TestCase):
@@ -53,5 +57,36 @@ class PackageAuditControls(unittest.TestCase):
                 self.assertIs(json.loads(receipt.read_text())['passed'], False)
 
 
+class RuntimeScriptControls(unittest.TestCase):
+    # Value: an unused optional adapter with a missing dependency must fail the clean install.
+    def test_every_runtime_script_loads_without_sdk(self):
+        if GODOT is None:
+            self.skipTest('pass --godot to execute real addon controls')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(package_audit.ROOT / package_audit.ADDON, root / package_audit.ADDON)
+            shutil.copyfile(package_audit.ROOT / 'LICENSE', root / 'LICENSE')
+            canonical = root / 'docs/reference/licenses/fortress-LICENSE-MIT'
+            canonical.parent.mkdir(parents=True)
+            shutil.copyfile(package_audit.ROOT / 'docs/reference/licenses/fortress-LICENSE-MIT', canonical)
+            optional = root / package_audit.ADDON / 'transport/optional_dependency.gd'
+            optional.parent.mkdir(exist_ok=True)
+            optional.write_text('extends RefCounted\nconst SDK = preload("res://addons/signal_fish/missing.gd")\n')
+            output = root / 'results'
+            arguments = ['package_audit.py', '--godot', str(GODOT), '--output', str(output)]
+            with patch.object(package_audit, 'ROOT', root), patch('sys.argv', arguments):
+                with self.assertRaisesRegex(ValueError, 'clean addon failed'):
+                    package_audit.main()
+                self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], False)
+                self.assertIn('missing.gd', (output / 'clean-addon.log').read_text())
+                optional.write_text('extends RefCounted\n')
+                package_audit.main()
+                self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], True)
+
+
 if __name__ == '__main__':
-    unittest.main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--godot', type=Path)
+    args, remaining = parser.parse_known_args()
+    GODOT = args.godot.resolve() if args.godot else None
+    unittest.main(argv=[__file__, *remaining])

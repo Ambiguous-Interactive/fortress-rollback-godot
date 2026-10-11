@@ -26,6 +26,18 @@ Late actual inputs can repair predictions and must remain recoverable until
 acknowledged. Binary relay is reliable and can introduce head-of-line delay.
 Verify actual SDK channel options; do not infer zero retransmits from packet lifetime.
 
+Optional SDK seams must load every runtime script in an addon-only project and
+exercise the real pinned SDK separately through its public transport boundary.
+Prove clean-load rejection with an unused runtime script that preloads a missing
+SDK resource; exercising only gameplay-reachable scripts misses optional imports.
+Compare copied peer-ID algorithms against the actual SDK implementation. Validate
+every SDK path that can change mesh authority before SDK consumption, including
+additive peer directives after partial connection initialization failure. Plan
+validation alone cannot fence those callbacks. Never synthesize public plan notifications
+to replay setup. Fence membership and transport-lifetime changes explicitly.
+A public binary signal without server epoch metadata cannot prove incarnation
+attribution; retain that limit instead of treating reconnect tokens as epochs.
+
 ## Serialization Rules
 
 1. All packets are built with `StreamPeerBuffer` in **explicit little-endian,

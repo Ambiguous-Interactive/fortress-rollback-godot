@@ -39,6 +39,7 @@ Local development contracts and evidence entry points:
 - [Actual upstream/Godot handshake observations and scoped model refinement](docs/oracle-handshake.md).
 - [Fixed-membership byte sessions and transport-facing API](docs/peer-session.md).
 - [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
+- [Optional SignalFish membership, agreed UUID slots and plan fences](docs/signalfish-membership.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).
@@ -251,6 +252,9 @@ No finite test corpus or bounded model establishes whole-program equivalence.
 
 Reuse the existing SDK through an optional adapter.
 The core addon must parse and run without SignalFish installed.
+The [membership seam](docs/signalfish-membership.md) derives frozen UUID slots
+and binds the full roster/configuration into the existing peer handshake.
+Its plan route describes validated setup; byte delivery remains a separate adapter contract.
 Use SDK public interfaces for binary data, plans, signaling and mesh setup.
 
 Agree a stable UUID-to-player-slot roster and configuration at session start.

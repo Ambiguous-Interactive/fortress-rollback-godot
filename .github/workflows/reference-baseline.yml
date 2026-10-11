@@ -113,6 +113,8 @@ jobs:
           for version in 4.3 4.7.2; do
             editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
             python3 scripts/reference/package_audit.py --godot "$editor" --output ".cache/reference/results/package-$version"
+            python3 scripts/reference/test_package_audit.py --godot "$editor" -v
+            python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
             python3 scripts/run_godot_tests.py --godot "$editor" --timeout 120 --results ".cache/tests/runner-$version.json"
             python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
