@@ -200,6 +200,10 @@ Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;
 an all-pages barrier can otherwise discard valid progress against stale clocks.
+Observe each page independently with one evaluation in flight per page; slower
+siblings must not block its next sample. Keep a persistent earliest-deadline timer
+active during inter-sample pauses, and test a fast advancing page behind a valid
+slow response that finishes just before its own deadline.
 Deactivate an observation synchronously on every failure path. Resolve a sibling
 in the same turn as timeout/evaluation/validation rejection and prove it cannot
 sample or rearm after failure; an awaiting `finally` can run too late.
@@ -209,6 +213,9 @@ actual comparisons for each peer, then inject a real game mismatch at that same
 capacity. Retained/send counts alone can pass while every comparison is skipped.
 
 Validate original numeric tokens when parsing erases integer versus float syntax.
+Keep a copied probe's exact case inventory, native selection and Web host selection
+aligned when extending a shared suite. Verify preload dependencies are copied;
+exercise the affected probe, since the root unit runner cannot prove its staging.
 Bind evidence to all executed source inventories, including imported helpers,
 and tool identities before use and before publishing a success receipt.
 When engine import creates metadata, first verify authored sources are unchanged.

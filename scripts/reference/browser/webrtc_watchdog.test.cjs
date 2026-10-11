@@ -197,7 +197,7 @@ test('observation diagnostic retains only bounded current-round frontiers from c
 });
 
 // Value: protects=timely per-page progress; fails_when=batch sampling delays evidence; why_new=earlier controls test watchdog alone; seam=none.
-async function scheduledGameplay(observe, pauseTimes) {
+async function scheduledGameplay(observe, pauseTimes = null) {
   const vm = require('node:vm');
   const fs = require('node:fs');
   const path = require('node:path');
@@ -228,14 +228,15 @@ async function scheduledGameplay(observe, pauseTimes) {
   });
   const rounds = [0, 0];
   const pages = rounds.map((unused, index) => ({ evaluate() {
-    return observe(index, ++rounds[index], (value, delay) => new Promise(resolve => schedule(() => resolve(value), delay)));
+    return observe(index, ++rounds[index], (value, delay) => new Promise(resolve => schedule(() => resolve(value), delay)), () => now);
   } }));
-  let pauses = 0;
   try {
-    await loaded.exports.waitGameplay(pages, () => now, async () => {
-      assert.ok(pauses < pauseTimes.length, 'unexpected extra sampling round');
-      now = pauseTimes[pauses++];
+    const pause = pauseTimes === null ? undefined : index => new Promise(resolve => {
+      const target = pauseTimes[rounds[index] - 1];
+      if (target === undefined) return;
+      schedule(resolve, Math.max(0, target - now));
     });
+    await loaded.exports.waitGameplay(pages, () => now, pause);
     return { now, rounds };
   } finally { timers.clear(); }
 }
@@ -320,7 +321,7 @@ test('actual sampler stops same-turn sibling callbacks at every rejection bounda
   const vm = require('node:vm');
   const fs = require('node:fs');
   const path = require('node:path');
-  for (const boundary of ['timer', 'evaluation', 'validation']) {
+  for (const boundary of ['timer', 'evaluation', 'validation', 'pause']) {
     let now = 0;
     let timer;
     let armed = 0;
@@ -344,7 +345,12 @@ test('actual sampler stops same-turn sibling callbacks at every rejection bounda
       return new Promise((resolve, reject) => { controls[index] = { resolve, reject }; });
     } }));
     let pauses = 0;
-    const running = loaded.exports.waitGameplay(pages, () => now, async () => { now = ++pauses === 1 ? 10000 : 15000; });
+    const running = loaded.exports.waitGameplay(pages, () => now, index => {
+      now = ++pauses === 1 ? 10000 : 15000;
+      if (boundary === 'pause' && index === 0 && rounds[index] === 2)
+        return new Promise((resolve, reject) => { controls[index] = { resolve, reject }; });
+      return Promise.resolve();
+    });
     for (let turn = 0; turn < 20 && !controls[1]; turn++) await Promise.resolve();
     assert.equal(rounds[1], 3);
     // Peer 0 changed at 0; peer 1 changed at 10000 and remains live until 30000.
@@ -352,15 +358,74 @@ test('actual sampler stops same-turn sibling callbacks at every rejection bounda
     const before = armed;
     samples.length = 0;
     if (boundary === 'timer') timer();
-    else if (boundary === 'evaluation') controls[0].reject(new Error('evaluation failed'));
+    else if (boundary === 'evaluation' || boundary === 'pause') controls[0].reject(new Error(`${boundary} failed`));
     else controls[0].resolve(observed(999));
     // Queue its success immediately after the failing operation, before the async finally resumes.
     controls[1].resolve(observed(1));
     await assert.rejects(running, boundary === 'timer' ? /page evaluation exceeded active progress deadline/
-      : boundary === 'evaluation' ? /evaluation failed/ : /invalid frame frontier/);
+      : boundary === 'evaluation' ? /evaluation failed/ : boundary === 'pause' ? /pause failed/ : /invalid frame frontier/);
     await Promise.resolve();
     assert.equal(armed, before, `${boundary} failure must not rearm timers`);
     assert.deepEqual(samples, boundary === 'validation' ? [{ index: 0, at: 15000 }] : [],
       `${boundary} failure must not sample its late sibling`);
   }
+});
+
+// Value: protects=independent repeated observations; fails_when=slow evaluation blocks healthy sibling polling; why_new=earlier controls advance once per batch; seam=none.
+test('actual sampler keeps observing healthy progress while one sibling evaluation takes almost its full deadline', async () => {
+  const inflight = [0, 0];
+  const result = await scheduledGameplay((index, round, later, clock) => {
+    assert.equal(inflight[index], 0, 'only one evaluation per page may be in flight');
+    inflight[index]++;
+    const value = index === 0 ? Promise.resolve(observed(Math.floor(clock() / 1000), clock() >= 19000))
+      : round === 1 ? Promise.resolve(observed(0)) : later(observed(1, true), 19900 - clock());
+    return value.finally(() => { inflight[index]--; });
+  });
+  assert.equal(result.now, 19900);
+  assert.ok(result.rounds[0] > 70, 'fast peer must be repeatedly observed while its sibling is pending');
+  assert.equal(result.rounds[1], 2);
+});
+
+test('continuous observation deadline remains armed while all peers are between attempts', async () => {
+  await assert.rejects(scheduledGameplay((index, round) => Promise.resolve(observed(0)), [19900, 20150]), error => {
+    assert.match(error.message, /page evaluation exceeded active progress deadline/);
+    const detail = JSON.parse(error.message.slice(error.message.indexOf('{')));
+    assert.equal(detail.elapsed_ms, 20000);
+    assert.equal(detail.deadline_ms, 20000);
+    assert.deepEqual(detail.attempts, [{ started_ms: 19900, completed_ms: 19900 }, { started_ms: 19900, completed_ms: 19900 }]);
+    assert.deepEqual(detail.last_samples.map(sample => sample.elapsed_ms), [19900, 19900]);
+    return true;
+  });
+});
+
+test('diagnostic keeps bounded gameplay frontiers and completed clocks when a later observation hangs', async () => {
+  await assert.rejects(scheduledGameplay((index, round) => round === 1 ? Promise.resolve({ ...snapshot(0), arbitrary_history: 'ignored' })
+    : new Promise(() => {}), [1000]), error => {
+    const detail = JSON.parse(error.message.slice(error.message.indexOf('{')));
+    assert.equal(detail.elapsed_ms, 20000);
+    assert.deepEqual(detail.evaluations, [null, null]);
+    assert.deepEqual(detail.attempts, [{ started_ms: 1000, completed_ms: null }, { started_ms: 1000, completed_ms: null }]);
+    assert.deepEqual(detail.last_samples, [0, 1].map(() => ({ elapsed_ms: 0, frame: 0, done: false,
+      progress: { confirmed: 37, received: [38], acked: [37] } })));
+    assert.deepEqual(detail.peers.map(peer => peer.frontier), [null, null], 'gameplay gossip must not become accepted progress');
+    return true;
+  });
+});
+
+// Value: protects=failure wins over queued terminal success; fails_when=pause rejection waits for outer catch; why_new=other boundaries never complete all peers; seam=none.
+test('a rejected completed-peer pause prevents same-turn sibling success from accepting the room', async () => {
+  const { waitGameplay } = require('./webrtc_watchdog.cjs');
+  let rejectPause;
+  let resolveSibling;
+  let siblingCalls = 0;
+  const pages = [{ evaluate: async () => observed(0, true) }, { evaluate() {
+    return ++siblingCalls === 1 ? Promise.resolve(observed(0)) : new Promise(resolve => { resolveSibling = resolve; });
+  } }];
+  const running = waitGameplay(pages, () => 0, index => index === 0
+    ? new Promise((resolve, reject) => { rejectPause = reject; }) : Promise.resolve());
+  for (let turn = 0; turn < 20 && !resolveSibling; turn++) await Promise.resolve();
+  assert.equal(typeof resolveSibling, 'function');
+  rejectPause(new Error('completed-peer pause failed'));
+  resolveSibling(observed(1, true));
+  await assert.rejects(running, /completed-peer pause failed/);
 });

@@ -15,6 +15,12 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 class ClockProbe:
 	extends "res://host.gd"
 	var ticks_us: int = 10000000
+	var diagnostic_snapshots: Array[Dictionary] = []
+
+	func _wait_diagnostic(attempt: int) -> void:
+		for peer: Peer in peers:
+			diagnostic_snapshots.append(_wait_snapshot(peer, attempt))
+		super._wait_diagnostic(attempt)
 
 	func _ticks_usec() -> int:
 		return ticks_us
@@ -70,6 +76,9 @@ func _initialize() -> void:
 	var callback_token: Variant = probe._next_token.call("remote-uuid")
 	if not _check(callback_token is PackedByteArray and callback_token.size() == 16 and callback_token.count(0) < 16
 		and callback_token != initial_token and callback_token != request.token, "direct factory UUID callback returns fresh16-byte token"): return
+	probe.peers.append(peer)
+	probe.player_count = 2
+	if not _wait_diagnostics(probe): return
 	probe.free()
 	print("WEBRTC_CLOCK_TEST passed")
 	quit(0)
@@ -79,3 +88,51 @@ func _check(condition: bool, message: String) -> bool:
 	push_error(message)
 	quit(1)
 	return false
+
+
+# Value: protects=bounded gameplay stall snapshots; fails_when=only final wait logs or clock/count drift; why_new=retry test omits diagnostic waits; seam=probe clock ticks
+func _wait_diagnostics(probe: ClockProbe) -> bool:
+	probe.stage = "gameplay"
+	var started_us: int = probe.ticks_us
+	var schedule: Dictionary = probe._new_wait_diagnostics()
+	probe._service_wait_diagnostics(0, schedule)
+	probe.ticks_us = started_us + 4999999
+	probe._service_wait_diagnostics(1, schedule)
+	if not _check(probe.diagnostic_snapshots.is_empty(), "gameplay waits first five elapsed seconds"): return false
+	probe.ticks_us += 1
+	probe._service_wait_diagnostics(2, schedule)
+	if not _check(probe.diagnostic_snapshots.size() == 1, "gameplay diagnostic fires at five second equality"): return false
+	var snapshot: Dictionary = probe.diagnostic_snapshots[0]
+	if not _check(snapshot.stage == "gameplay" and snapshot.attempt == 2 and snapshot.players == 2, "snapshot identifies actual wait stage"): return false
+	if not _check(snapshot.transport_us == probe.ticks_us - probe.transport_epoch_us, "snapshot reports actual elapsed transport clock"): return false
+	if not _check(snapshot.endpoints.size() == 1, "snapshot executes actual peer endpoint walk"): return false
+	var metadata: Dictionary = snapshot.endpoints.values()[0]
+	var fields: Array[String] = ["last_submitted_frame", "last_sent_frame", "last_received_frame", "last_acked_frame", "pending_frames",
+		"last_input_progress_us", "peer_statuses", "connect_statuses", "pending_frame_ids"]
+	if not _check(metadata.size() == fields.size(), "snapshot contains bounded metadata without input payloads"): return false
+	for field: String in fields:
+		if not _check(metadata.has(field), "snapshot preserves endpoint field " + field): return false
+	probe.ticks_us += 4999999
+	probe._service_wait_diagnostics(3, schedule)
+	if not _check(probe.diagnostic_snapshots.size() == 1, "repeated diagnostic waits full five seconds"): return false
+	for index: int in range(1, 6):
+		probe.ticks_us = started_us + 5000000 * (index + 1)
+		probe._service_wait_diagnostics(index + 3, schedule)
+	if not _check(probe.diagnostic_snapshots.size() == 6, "wait publishes exactly six snapshots"): return false
+	probe.ticks_us += 100000000
+	probe._service_wait_diagnostics(20, schedule)
+	if not _check(probe.diagnostic_snapshots.size() == 6, "long wait cannot exceed six diagnostics"): return false
+	probe.diagnostic_snapshots.clear()
+	schedule = probe._new_wait_diagnostics()
+	probe._service_wait_diagnostics(0, schedule)
+	if not _check(probe.diagnostic_snapshots.is_empty(), "new gameplay wait owns a fresh delayed schedule"): return false
+	probe.stage = "final_confirmation"
+	schedule = probe._new_wait_diagnostics()
+	probe._service_wait_diagnostics(0, schedule)
+	if not _check(probe.diagnostic_snapshots.size() == 1, "final confirmation preserves immediate diagnostic"): return false
+	if not _check(probe.diagnostic_snapshots[0].stage == "final_confirmation", "final snapshot preserves stage"): return false
+	probe.stage = "handshake"
+	probe.ticks_us += 10000000
+	probe._service_wait_diagnostics(1, schedule)
+	if not _check(probe.diagnostic_snapshots.size() == 1, "other waits do not emit stall snapshots"): return false
+	return true

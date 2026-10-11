@@ -63,47 +63,62 @@ function boundedFrontier(progress, players) {
 
 async function waitGameplay(pages, clock = () => performance.now(), pause = () => new Promise(resolve => setTimeout(resolve, 250))) {
   const watchdog = new ProgressWatchdog(pages.length, clock());
-  for (;;) {
-    let timer;
-    let completed;
-    let active = true;
-    const evaluations = pages.map(() => null);
-    const round_started_ms = clock() - watchdog.started;
-    try {
-      let rejectObservation;
-      const observation = new Promise((resolve, reject) => { rejectObservation = reject; });
-      const fail = error => { active = false; throw error; };
-      const arm = () => {
-        clearTimeout(timer);
-        timer = setTimeout(() => {
-          const diagnostic = { round_started_ms, elapsed_ms: clock() - watchdog.started, deadline_ms: watchdog.deadline() - watchdog.started,
-            peers: watchdog.peers.map(peer => ({ frame: peer.frame, changed_ms: peer.changed - watchdog.started,
-              final_ms: peer.finalStarted === null ? null : peer.finalStarted - watchdog.started, frontier: peer.frontier, done: peer.done })), evaluations };
-          active = false;
-          rejectObservation(new Error('page evaluation exceeded active progress deadline ' + JSON.stringify(diagnostic)));
-        }, Math.max(0, watchdog.deadline() - clock()));
-      };
-      arm();
-      completed = await Promise.race([Promise.all(pages.map((page, index) => page.evaluate(() => ({
-      done: document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
-      frame: document.body.dataset.fortressFrame === undefined ? -1 : Number(document.body.dataset.fortressFrame),
-      progress: document.body.dataset.fortressProgress === undefined ? null : JSON.parse(document.body.dataset.fortressProgress),
-      })).then(snapshot => {
-        try {
-        if (!active) return false;
+  let timer;
+  let active = true;
+  let rejectObservation;
+  let finish;
+  const evaluations = pages.map(() => null);
+  const last_samples = pages.map(() => null);
+  const attempts = pages.map(() => ({ started_ms: null, completed_ms: null }));
+  const observation = new Promise((resolve, reject) => { rejectObservation = reject; });
+  const accepted = new Promise(resolve => { finish = resolve; });
+  const fail = error => {
+    if (!active) return;
+    active = false;
+    rejectObservation(error);
+  };
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const pending = attempts.filter(attempt => attempt.completed_ms === null && attempt.started_ms !== null);
+      const diagnostic = { round_started_ms: pending.length ? Math.min(...pending.map(attempt => attempt.started_ms)) : clock() - watchdog.started,
+        elapsed_ms: clock() - watchdog.started, deadline_ms: watchdog.deadline() - watchdog.started,
+        peers: watchdog.peers.map(peer => ({ frame: peer.frame, changed_ms: peer.changed - watchdog.started,
+          final_ms: peer.finalStarted === null ? null : peer.finalStarted - watchdog.started, frontier: peer.frontier, done: peer.done })),
+        evaluations, attempts, last_samples };
+      fail(new Error('page evaluation exceeded active progress deadline ' + JSON.stringify(diagnostic)));
+    }, Math.max(0, watchdog.deadline() - clock()));
+  };
+  const observe = async (page, index) => {
+    while (active) {
+      attempts[index] = { started_ms: clock() - watchdog.started, completed_ms: null };
+      evaluations[index] = null;
+      let snapshot;
+      try { snapshot = await page.evaluate(() => ({
+        done: document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
+        frame: document.body.dataset.fortressFrame === undefined ? -1 : Number(document.body.dataset.fortressFrame),
+        progress: document.body.dataset.fortressProgress === undefined ? null : JSON.parse(document.body.dataset.fortressProgress),
+      })); } catch (error) { fail(error); return; }
+      if (!active) return;
+      try {
         const now = clock();
+        attempts[index].completed_ms = now - watchdog.started;
         evaluations[index] = { elapsed_ms: now - watchdog.started, frame: snapshot.frame, done: snapshot.done,
           progress: boundedFrontier(snapshot.progress, pages.length) };
-        // Apply evidence at its own completion time, before waiting for slower siblings.
-        const done = watchdog.sample(index, snapshot, now);
+        watchdog.sample(index, snapshot, now);
+        last_samples[index] = evaluations[index];
         arm();
-        return done;
-        } catch (error) { return fail(error); }
-      }, fail))), observation]);
-    } finally { active = false; clearTimeout(timer); }
-    if (completed.every(Boolean)) return;
-    await pause();
-  }
+        if (watchdog.peers.every(peer => peer.done)) { finish(); return; }
+      } catch (error) { fail(error); return; }
+      // Each page resumes its own bounded observations without waiting for siblings.
+      try { await pause(index); } catch (error) { fail(error); return; }
+    }
+  };
+  try {
+    arm();
+    for (let index = 0; index < pages.length; index++) observe(pages[index], index).catch(fail);
+    await Promise.race([accepted, observation]);
+  } finally { active = false; clearTimeout(timer); }
 }
 
 async function waitDefaultSetup(pages) {

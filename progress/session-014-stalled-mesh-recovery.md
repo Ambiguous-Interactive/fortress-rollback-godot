@@ -146,3 +146,89 @@ local main synchronization and merge-triggered main CI must all be verified.
 The final authoritative delivery record will be posted to the linked issues,
 so recording the merge does not create another source commit after validation.
 Broader roadmap tasks remain in their existing detailed issues.
+
+## Hosted representation-probe repair
+
+The first pushed head `563a7cc` fails both general Godot CI jobs in
+`ownership_probes.py` at the exact inventory gate. The staged native result
+contains 73 complete cases while its expected inventory still contains 70.
+The added endpoint cases were omitted from that probe's explicit inventory;
+root unit success could not prove the independently staged probe remained valid.
+The actual offline native/Web command reproduces the same failure.
+
+The repair updates the selected inventory and stages the five stalled-gossip cases through
+both native and exported Web hosts. Independent declaration/selection/preload
+checks fail before repair and protect future copied-suite changes. The validator
+continues requiring exact membership, repeats, assertion evidence and intended
+negative-control failures. Evidence: `.cache/session-014/ownership-fix/`.
+Both native/Web positive and alias-negative pairs now pass on both pins: 78 cases
+per run, with exact exported/native equality. The seven focused Python tests and
+45 reference controls pass (three expected skips). A fresh review independently
+executes copied positive/negative native controls, verifies the 44-source preload
+closure and reports no findings. Hosted rerun evidence follows in the linked issues.
+
+## Hosted gameplay observation investigation
+
+Transport jobs at `563a7cc` also fail clean eight-peer rooms after successful
+two/four-peer rooms. Godot 4.7.2 retains cached frame 25 and Godot 4.3 frame 34.
+All peers enter the following gameplay wait; no final-confirmation or SDK errors
+appear. The next observation rounds start 213/233 milliseconds after their
+earliest cached deadlines, then fire with no current-round evaluations.
+These artifacts do not establish a false timeout or the stalled endpoint cause.
+They lack timestamped gameplay endpoint snapshots and preceding round completions.
+Artifact IDs: `11715943563` (4.7.2), `11716515157` (4.3), run `38176423915`.
+
+Investigate whether the remaining all-pages barrier suppresses resampling a ready
+peer behind a slower sibling. Preserve individual deadlines and obtain actual-module
+RED/GREEN evidence before any sampling repair. Add bounded gameplay-wait snapshots
+to distinguish transport state from renderer/observation delay on a rerun.
+
+The actual-module independent-observation reproduction confirms a second batch
+barrier defect at `563a7cc`: peer 0 advances every second and completes at
+19,000 ms; peer 1 completes its second evaluation at 19,900 ms, before its own
+20,000-ms deadline. The old coordinator prevents peer 0's next observation
+until the sibling finishes, then rejects at 20,150 ms after its shared pause.
+The repaired coordinator finishes at 19,900 ms. This establishes an algorithm
+defect without retrospectively attributing the hosted artifacts.
+
+Per-page observation loops now keep one evaluation in flight each and preserve
+the 250-ms cadence. The earliest individual deadline remains armed during
+evaluations and pauses. Accepted last samples and attempt/completion clocks
+remain bounded diagnostics; gameplay receipt changes do not reset frame clocks.
+Completed peers remain observed for terminal regression until global completion.
+All 23 combined Node controls pass; three new controls fail against `563a7cc`.
+Evidence: `.cache/session-014/sampler-evidence/independent-commands.json`.
+
+The fresh independent-loop review reproduces a pause-rejection ordering bug:
+`await pause(index)` rejects to a detached observer catch one microtask later.
+A queued sibling can sample and rearm in that gap, or complete the operation
+before the earlier failure is processed. The standalone reproduction shows
+both late mutation and false acceptance; the failure must deactivate locally
+in the pause rejection continuation. A separate agent owns its RED/GREEN repair.
+The first restarted browser run is interrupted before changing its frozen
+source. Earlier browser receipts remain historical for their recorded helpers;
+final current-source execution restarts after this review finding is repaired.
+
+The pause repair catches rejection in the local await continuation. The old
+completed-peer schedule accepts despite an earlier pause failure; repaired
+execution rejects that failure with zero late samples and unchanged timer arms.
+The extended failure-path table covers timeout, evaluation, validation and pause.
+All 23 watchdog cases pass. Evidence remains with the independent sampler logs.
+
+Gameplay wait diagnostics now start after five seconds, repeat every five
+seconds and stop at six snapshots per wait. Final-confirmation diagnostics
+remain immediate. Both inherited actual-host clock tests pass, including exact
+boundaries, reset, actual endpoint metadata, truthful elapsed time and payload
+exclusion. A fresh reviewer repeats both engine tests and finds no revisions.
+RED/GREEN logs: `.cache/session-014/wait-diagnostics/`. The final browser matrix
+is restarted at `.cache/session-014/webrtc-independent-final/` after source freeze.
+
+The restarted final full browser execution exits zero. Receipt
+`.cache/session-014/webrtc-independent-final/signalfish-webrtc.json` passes all
+eight labels across both pins. Its SHA-256 is `4b181a9aad6bf1c68516362b28a4903bccb87cc1515bec143ad57e0b440d73ea`.
+The last fresh sampler review passes all 23 tests plus ten independent
+three-page schedules and a late-callback probe, with no actionable findings.
+Combined Node controls total 24; reference controls total 45, with three
+expected skips. Harness lint, 99 self-tests, source lint and whitespace checks
+pass. Production runtime, native/P2P and package source bindings remain unchanged
+from the verified gameplay candidate. Final hosted gates must still pass.
