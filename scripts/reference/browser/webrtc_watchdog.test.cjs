@@ -82,3 +82,90 @@ test('an unresponsive page evaluation cannot suppress the independent progress d
   const never = { evaluate: () => new Promise(() => {}) };
   await assert.rejects(waitGameplay([never, never], clock), /page evaluation exceeded active progress deadline/);
 });
+
+test('default factory terminal setup can take over 20s without entering the frame watchdog', async () => {
+  const { waitDefaultSetup } = require('./webrtc_watchdog.cjs');
+  const vm = require('node:vm');
+  let now = 0;
+  const page = { async waitForFunction(condition, argument, options) {
+    assert.equal(argument, null);
+    assert.equal(options.timeout, 120000);
+    const document = { body: { dataset: {} } };
+    const ready = () => vm.runInNewContext(`(${condition.toString()})()`, { document });
+    assert.equal(ready(), false);
+    now = 25000; // Authentication/mesh establishment is setup, with no gameplay frame yet.
+    document.body.dataset.fortressGameplayDone = 'true';
+    assert.equal(ready(), true);
+  } };
+  const oldPhase = new ProgressWatchdog(2, now);
+  await waitDefaultSetup([page, page]);
+  assert.throws(() => oldPhase.sample(0, { done: true }, now), /gameplay stalled/);
+  const correctPhase = new ProgressWatchdog(2, now);
+  assert.equal(correctPhase.sample(0, { done: true }, now), true);
+});
+
+test('actual default main orchestration waits for delayed terminal setup before starting gameplay', async () => {
+  const vm = require('node:vm');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  let now = 0;
+  let terminalWaits = 0;
+  const output = [];
+  const timers = { setTimeout, clearTimeout };
+  const watchdogModule = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'webrtc_watchdog.cjs'), 'utf8'), {
+    module: watchdogModule, ...timers, require: name => {
+      assert.equal(name, 'node:perf_hooks');
+      return { performance: { now: () => now } };
+    },
+  });
+  const fakeResult = JSON.stringify({ passed: false, failure: { stage: 'handshake', errors: ['direct_poll_3_peer_0'] } });
+  const makePage = () => {
+    const document = { body: { dataset: { fortressRoom: 'ROOM' } } };
+    const window = { fortressRtc: {}, fortressResources: { channels: [], connections: [] } };
+    const invoke = (operation, argument) => vm.runInNewContext(`(${operation.toString()})(argument)`, { document, window, argument });
+    return {
+      on() {}, async addInitScript() {}, async goto() {},
+      async waitForFunction(operation) {
+        if (invoke(operation)) return;
+        // The real setup phase can require 25s, without any submitted gameplay frame.
+        if (operation.toString().includes('fortressGameplayDone')) {
+          terminalWaits++;
+          now = 25000;
+          document.body.dataset.fortressGameplayDone = 'true';
+        }
+        assert.equal(invoke(operation), true, 'unexpected unmet browser barrier');
+      },
+      async evaluate(operation, argument) {
+        if (operation.toString().includes('progress:') && document.body.dataset.fortressGameplayDone !== 'true') {
+          now = 25000;
+          document.body.dataset.fortressGameplayDone = 'true';
+        }
+        const result = invoke(operation, argument);
+        if (window.fortressTeardownArmed) document.body.dataset.fortressTeardownArmed = 'true';
+        if (window.fortressTeardownReady) document.body.dataset.fortressWebrtc = fakeResult;
+        return result;
+      },
+    };
+  };
+  const browser = { version: () => '141', async close() {}, async newContext() {
+    return { async newPage() { return makePage(); }, async close() {} };
+  } };
+  const server = { on() {}, listen(port, host, ready) { ready(); }, address() { return { port: 123 }; }, close() {} };
+  const mainModule = { exports: {} };
+  const fakeRequire = name => {
+    if (name === './webrtc_watchdog.cjs') return watchdogModule.exports;
+    if (name === 'fake-playwright') return { chromium: { async launch() { return browser; } } };
+    if (name === 'node:https') return { createServer() { return server; } };
+    if (name === 'node:fs') return { readFileSync() { return ''; } };
+    return require(name);
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'webrtc.cjs'), 'utf8') + '\nmodule.exports.main = main;', {
+    module: mainModule, require: fakeRequire, ...timers,
+    process: { argv: ['node', 'probe', '/export', 'ws://127.0.0.1:1/v3/ws', 'default'], env: { FORTRESS_PLAYWRIGHT_PACKAGE: 'fake-playwright' } },
+    console: { log(value) { output.push(value); }, error() {} },
+  });
+  await mainModule.exports.main();
+  assert.equal(terminalWaits, 2);
+  assert.equal(JSON.parse(output.at(-1)).passed, true);
+});

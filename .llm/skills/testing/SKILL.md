@@ -194,7 +194,7 @@ the prediction; preserve failed receipts and remove unsupported guidance.
 Budget real-browser watchdogs for their actual phase and room count. Track
 each unfinished peer independently; only monotone game or protocol evidence
 may reset inactivity. Keep separate gameplay and confirmation caps and an
-absolute room/launcher ceiling. Packet counts, stage names and clocks do not
+absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
 prove progress. Fresh execution must still satisfy every acceptance gate.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero

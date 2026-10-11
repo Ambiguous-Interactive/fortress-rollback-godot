@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const https = require('node:https');
 const net = require('node:net');
 const path = require('node:path');
-const { waitGameplay, boundedRoom } = require('./webrtc_watchdog.cjs');
+const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchdog.cjs');
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory }) {
   window.fortressEndpoint = endpoint;
@@ -132,7 +132,7 @@ async function main() {
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressFrame === '0' || document.body.dataset.fortressGameplayDone === 'true'
             || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 10000 })));
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressFirstDeliveryReady = true; })));
-        }
+        } else await waitDefaultSetup(pages);
         }, 120000, 'setup');
         {
           await waitGameplay(pages);

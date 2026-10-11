@@ -519,3 +519,28 @@ New browser runner/watchdog/control helpers are inventoried; their existing
 combined instrument-controls log is cleared and SHA-256 bound. Full current
 source browser runs are pending in `.cache/session-013/webrtc-watchdog-final-fixed`.
 Fresh review of the repaired technical diff and hosted CI remain required.
+
+
+Automated review of the watchdog push finds two additional boundary gaps.
+The raw-factory control entered gameplay before its expected setup failure;
+wait for its terminal status inside the existing 120-second setup cap.
+The transport job combined both engines under a 30-minute ceiling despite
+larger child budgets. Split it by pinned engine with unique artifacts and
+fail-fast disabled. Each job preserves every browser label and native control.
+Its 180-minute ceiling covers 68 minutes of browser bounds, 51 minutes of
+native bounds, 29 minutes of bounded setup/build work and 32 minutes of margin.
+
+Current-source full browser execution finishes at 20:15 UTC with CLI exit 0:
+`.cache/session-013/webrtc-default-phase-final/signalfish-webrtc.json`, SHA-256
+`f9fa4c93b42f0f20c2b23d001e1a872c6cf1acba825b41eb77525a64cd25bcb8`.
+All eight labels pass across both pins, including exact raw-factory handshake
+failure, canonical state, actual rollback, fault delivery and physical teardown.
+No owned Chromium/server process remains. Ten Node and five Python controls
+pass. Fresh adversarial review additionally requires the delayed-setup test to
+exercise the production call site. A test-only VM runs the actual main
+orchestration with fake pages and a 25-second setup delay. Removing the
+production wait fails with peer 0 gameplay stalled; frozen source passes
+eleven Node controls. Runtime sources are unchanged. A new full source-bound
+receipt is running in `.cache/session-013/webrtc-default-main-final` because
+the inventoried test changed; the earlier receipt remains historical.
+Hosted final-head CI, squash merge and main CI remain required.

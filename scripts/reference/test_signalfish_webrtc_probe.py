@@ -109,6 +109,17 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             with self.subTest(stage=stage, errors=errors), self.assertRaises(ValueError):
                 probe.validate_restore_control(changed)
 
+    def test_default_factory_control_still_requires_exact_handshake_error(self):
+        result = {'passed': True, 'corrupt': False, 'defaultFactory': True, 'faults': False, 'browser_instances': 2, 'errors': [],
+                  'records': [{'players': 2, 'peers': [{'result': {'passed': False,
+                      'failure': {'stage': 'handshake', 'errors': ['direct_poll_3_peer_0']}}} for _ in range(2)]}]}
+        self.assertEqual(probe.validate_restore_control(result, 'default'), result)
+        for stage, errors in [('connect_mesh', ['direct_poll_3_peer_0']), ('handshake', ['wait_timeout_handshake']), ('handshake', [])]:
+            changed = copy.deepcopy(result)
+            changed['records'][0]['peers'][0]['result']['failure'].update(stage=stage, errors=errors)
+            with self.subTest(stage=stage, errors=errors), self.assertRaises(ValueError):
+                probe.validate_restore_control(changed, 'default')
+
 
 if __name__ == '__main__':
     unittest.main()

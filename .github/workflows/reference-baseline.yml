@@ -137,9 +137,13 @@ jobs:
           if-no-files-found: error
 
   signalfish:
-    name: SignalFish relay and Chromium WebRTC
+    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["4.3", "4.7.2"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -176,16 +180,17 @@ jobs:
             --cargo "$cargo" \
             --source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
             --output .cache/reference/results/signalfish-server-build
-      - name: Verify real browser WebRTC on both engines
+      - name: Verify real browser WebRTC on the pinned engine
         run: |
           python3 scripts/reference/signalfish_webrtc_probe.py \
+            --version "${{ matrix.version }}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
             --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/signalfish-webrtc
       - name: Verify native relay and late-event controls
         run: |
-          for version in 4.3 4.7.2; do
+          for version in "${{ matrix.version }}"; do
             editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
             python3 scripts/reference/signalfish_live_probe.py \
               --godot "$editor" \
@@ -197,6 +202,6 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: signalfish-live-reference-results
+          name: signalfish-live-reference-results-${{ matrix.version }}
           path: .cache/reference/results/
           if-no-files-found: error

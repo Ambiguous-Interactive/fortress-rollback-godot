@@ -75,6 +75,11 @@ async function waitGameplay(pages, clock = () => performance.now(), pause = () =
   }
 }
 
+async function waitDefaultSetup(pages) {
+  await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressGameplayDone === 'true'
+    || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 120000 })));
+}
+
 async function boundedRoom(operation, timeout = ROOM_MS, label = 'room') {
   let timer;
   try {
@@ -83,4 +88,4 @@ async function boundedRoom(operation, timeout = ROOM_MS, label = 'room') {
     })]);
   } finally { clearTimeout(timer); }
 }
-module.exports = { ProgressWatchdog, waitGameplay, boundedRoom, GAME_MS, FINAL_MS, ROOM_MS, LABEL_SECONDS };
+module.exports = { ProgressWatchdog, waitGameplay, waitDefaultSetup, boundedRoom, GAME_MS, FINAL_MS, ROOM_MS, LABEL_SECONDS };
