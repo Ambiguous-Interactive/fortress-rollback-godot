@@ -253,3 +253,20 @@ before all peers predict; handshake acknowledgements remain live. Both
 coordinator waits accept terminal gameplay status so failed controls proceed
 to teardown. Python/Node controls, GDScript lint and source/harness lint pass.
 New source-bound runs and current-head CI provide final execution evidence.
+
+## CI render-turn budget and engine concurrency
+
+The next CI run exceeded the unchanged 180-second outer Node watchdog during
+the faulted 4.3 matrix. The 2/4-peer rooms had completed all frames and
+canonical checks. Every 8-peer participant had reached gameplay wait 14 or 15;
+none reported an inner timeout, protocol error or final-confirmation stall.
+The host yielded eight rendered Godot timer turns per input frame. The repair
+keeps all eight transport polls and simulated-time advances, then yields once
+after the batch. Every acceptance check, fault schedule and watchdog remains.
+Independent review finds no required revisions. A real two-CPU run verifies
+progress under contention.
+
+Minimum/current engine suites now run in two independent CI jobs. Both retain
+all smoke, representation, SDK, runner, unit, determinism and oracle checks.
+Each selects its pinned engine for the existing per-engine command list and
+uploads uniquely named artifacts. All 30-minute job watchdogs remain.

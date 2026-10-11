@@ -117,7 +117,7 @@ func _play(count: int) -> bool:
 			active_comparisons += 1
 		for turn: int in 8:
 			if not _service(): return false
-			await get_tree().create_timer(0.002).timeout
+		await get_tree().create_timer(0.002).timeout
 	stage = "final_confirmation"
 	if not await _wait(func() -> bool:
 		for peer: Peer in peers:

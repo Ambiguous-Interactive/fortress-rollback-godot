@@ -175,6 +175,9 @@ corrected-prefix checks; otherwise the test driver can create a cyclic wait.
 When every peer must exercise rollback, coordinate an explicit predicted step
 before delivering its original inputs. A fast clean run can otherwise receive
 all inputs before advancing and never restore a snapshot.
+Batch bounded transport polls before yielding an exported host render turn.
+Repeated timer yields per input can make integration duration depend on
+software rendering, despite unchanged protocol work; verify under CPU limits.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same
