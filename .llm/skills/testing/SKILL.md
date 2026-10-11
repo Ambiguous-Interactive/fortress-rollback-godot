@@ -187,6 +187,10 @@ host time from the owned handshake epoch. A requested timer delay is not the
 elapsed duration of its render turn. Keep game simulation on original frames
 and inputs. Exercise handshake retries as well as input loss: an immediate
 handshake can hide a missing caller-owned retry token.
+For a nonvisual network witness, use a small rendered viewport and measure
+software-rendering cost under the same CPU constraints. Preserve the actual
+renderer, browser processes, transport faults and game acceptance; remove
+unrelated rendering load before considering a watchdog change.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same

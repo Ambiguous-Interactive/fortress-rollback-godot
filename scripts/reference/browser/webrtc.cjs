@@ -105,7 +105,7 @@ async function main() {
       const pages = [];
       try {
         for (let index = 0; index < count; index++) {
-          const context = await browsers[index % 2].newContext({ ignoreHTTPSErrors: true });
+          const context = await browsers[index % 2].newContext({ ignoreHTTPSErrors: true, viewport: { width: 64, height: 64 } });
           contexts.push(context);
           const page = await context.newPage();
           pages.push(page);

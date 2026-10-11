@@ -437,3 +437,34 @@ Reference Python discovery reports 41 tests with three expected skips. GDScript
 lint and four browser controls pass. Hosted current-head CI, feedback scans,
 squash merge and merge-triggered main CI remain required; linked issue #72
 records the delivery evidence without committing stale green claims.
+
+## Hosted render-cost failure and viewport comparison
+
+Head `24e1de6d97e218ce267bd512ac272d201621cf33` passes eight of nine
+checks, including both full engine suites. The live browser job rejects
+Godot 4.7.2 clean eight-peer final confirmation after all four Godot 4.3
+labels pass. Run `38168114912`, job `114554824345`, artifact `11713325728`.
+The event snapshots show continuing receipts/ACKs with pending inputs 38/39,
+not the empty-pending gossip gap independently reproduced in issue #73.
+Peer 0 executes 36 service turns in 10.194 seconds; peer 5 executes 53 in
+15.486 seconds. Peers enter final confirmation at 102–119 seconds; Node's
+existing 120-second whole-gameplay barrier then expires.
+
+The current browser contexts use the default 1280x720 viewport despite a
+Node-only nonvisual game. The unchanged two-CPU baseline completes its clean
+2/4/8 matrix in 65.189 seconds from first engine console event to result.
+Its subsequent fault run is deliberately stopped for the comparison; the
+baseline receipt remains false/incomplete. Timing evidence lives in
+`.cache/session-013/webrtc-viewport-baseline/render-timing.json`.
+
+The candidate changes only the browser context viewport to 64x64. Real
+Compatibility rendering, independent engine/browser processes, channels,
+faults, gameplay, source guards and watchdogs remain unchanged. Node syntax
+and physical orphan controls pass. Full current-source eight-label execution
+is running with the same two-CPU affinity before acceptance or merge.
+
+Independent core review also reproduces an existing exhausted-prediction
+receipt gossip gap on both engines. All inputs and ACKs drain but identical
+stalled samples cannot emit changed gossip. Issue #73 includes a standalone
+reproduction, exact source references, pinned Rust policy audit and recovery
+acceptance. It is distinct from this browser schedule and transport PR.
