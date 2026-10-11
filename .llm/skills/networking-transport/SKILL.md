@@ -66,6 +66,15 @@ ACKs and wide token bytes in the semantic projection. Test independent byte
 goldens and malformed bodies through the production decoder on native and Web.
 Round-trip agreement alone cannot establish field preservation or source parity.
 
+Keep valid remote handshake dimensions, semantic versions and feature masks
+parseable within hard bounds; endpoint policy must emit specific mismatches.
+The [handshake guide](../../../docs/handshake.md) owns timing and echo policy.
+Audit every queued control message's timer effects, then compare actual packets,
+events and post-transition observations at strict interval boundaries.
+Validate scalar and collection cardinality limits before scanning identities or
+allocating lookup tables. Accepted queue minima must permit initialization and
+completion after drains, including the maximum configured roundtrip count.
+
 - Wire formats, channels, replay layout, checksum exchange: this skill.
 - When to roll back and why: rollback-fundamentals.
 - Bit-exactness of what you serialize: determinism.

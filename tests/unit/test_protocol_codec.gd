@@ -116,8 +116,6 @@ func _malformed(context: RefCounted) -> void:
 	_mutated(context, 3, 59, PackedByteArray([254, 255, 255, 255]), "invalid status negative")
 	_mutated(context, 3, 72, PackedByteArray([255, 255, 255, 255]), "hostile data count")
 	_mutated(context, 7, 44, PackedByteArray([255, 255, 255, 255]), "null checksum frame")
-	_mutated(context, 1, 60, PackedByteArray([2]), "unsupported compatibility")
-	_mutated(context, 1, 61, PackedByteArray([1, 0, 0, 0]), "unknown feature")
 	_mutated(context, 1, 65, PackedByteArray([0]), "zero config players")
 	_mutated(context, 1, 66, PackedByteArray([255, 255, 255, 255]), "hostile config width")
 	_mutated(context, 11, 48, PackedByteArray([255]), "hostile floor count")

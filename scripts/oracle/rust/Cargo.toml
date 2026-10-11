@@ -8,3 +8,12 @@ publish = false
 fortress-rollback = { path = "../../../.cache/reference/fortress-rollback-f13cd5c0f2815926785a395947e18da0dbea0dd8", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
+web-time = "=1.1.0"
+
+[features]
+handshake-oracle = ["fortress-rollback/trace-validation"]
+
+[[bin]]
+name = "handshake"
+path = "src/bin/handshake.rs"
+required-features = ["handshake-oracle"]

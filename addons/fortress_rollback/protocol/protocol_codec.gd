@@ -81,7 +81,7 @@ static func encode_config(config: Variant, limits: Variant) -> T.Result:
 		return T.Result.new(T.Code.INVALID_TYPE)
 	if not V.limits(limits):
 		return T.Result.new(T.Code.INVALID_LIMITS)
-	if not V.config(config, limits):
+	if not V.config(config):
 		return T.Result.new(T.Code.INVALID_MESSAGE)
 	if 29 + config.input_width + config.player_count * 8 > limits.max_packet_bytes:
 		return T.Result.new(T.Code.LIMIT_EXCEEDED)
@@ -169,7 +169,7 @@ static func _write_body(writer: StreamPeerBuffer, message: T.Message) -> void:
 					writer.put_32(frame)
 
 
-static func _read_config(reader: Reader, limits: T.Limits) -> T.Config:
+static func _read_config(reader: Reader) -> T.Config:
 	var config: T.Config = T.Config.new()
 	config.player_count = reader.number(1)
 	config.input_width = reader.number(4)
@@ -180,7 +180,7 @@ static func _read_config(reader: Reader, limits: T.Limits) -> T.Config:
 	config.input_format = reader.number(4)
 	config.snapshot_format = reader.number(4)
 	config.checksum_algorithm = reader.number(4)
-	if config.player_count != limits.player_count or config.input_width != limits.input_width:
+	if config.player_count < 2 or config.player_count > 8 or config.input_width < 1 or config.input_width > 65536:
 		reader.valid = false
 		return config
 	config.neutral_input = reader.take(config.input_width)
@@ -196,7 +196,7 @@ static func _read_body(reader: Reader, message: T.Message, limits: T.Limits) -> 
 			message.token = reader.take(16)
 			message.min_compat_version = reader.number(1)
 			message.features = reader.number(4)
-			message.config = _read_config(reader, limits)
+			message.config = _read_config(reader)
 			message.config_digest = reader.take(8)
 		T.Kind.INPUT:
 			_read_input(reader, message, limits)

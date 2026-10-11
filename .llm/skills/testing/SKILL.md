@@ -135,6 +135,10 @@ Validate embedded scenarios/results independently before comparing their identit
 to submitted artifacts. Python equality treats booleans, integral floats and
 integers as equal; it is not schema validation. Standalone executables also need
 their own complete schema and nonempty-work boundary.
+Validate nullable fields before normalization; false and empty strings cannot
+silently become the same observation. Constrain omitted setup records to their
+exact allowed position. Formal projection must account for the observed initial
+state and every supported post-state, not just action names and final success.
 
 Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying
