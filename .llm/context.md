@@ -10,7 +10,7 @@ The project has pinned reference baselines, a deterministic test runner, bounded
 queues/snapshots, a shared rollback engine and fixed-membership byte sessions.
 Optional SignalFish membership freezes UUID slots and validates SDK plans; its
 binary relay adapter bounds packet ownership, pressure and recipient filtering.
-Direct WebRTC and browser release validation remain planned. Treat this file as the canonical operating manual.
+Direct WebRTC byte delivery is implemented; browser release validation remains planned. Treat this file as the canonical operating manual.
 
 ## Skills Index
 

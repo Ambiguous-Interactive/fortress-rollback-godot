@@ -174,10 +174,9 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	if code != Types.Code.OK:
 		return Driver.StepResult.new(code, before, before)
 	_now = now_us
-	if _lifecycle.enabled:
-		var polled: int = _poll(now_us, [])
-		if polled != I.Code.OK:
-			return Driver.StepResult.new(_step_failure(polled), before, before)
+	var polled: int = _poll(now_us, [])
+	if polled != I.Code.OK:
+		return Driver.StepResult.new(_step_failure(polled), before, before)
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
 		return Driver.StepResult.new(_step_failure(control_code), before, before)
@@ -345,10 +344,11 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = []) -> int:
 	_now = now_us
 	if statuses.is_empty():
 		statuses = _statuses()
+	var status_nudge: bool = _gossip_nudge_needed()
 	for index: int in range(_ids.size()):
 		if _lifecycle.enabled:
 			_endpoint(index).update_local_frame_advantage(_core.status().current_frame)
-		var code: int = _endpoint(index).poll(now_us, null if tokens.is_empty() else tokens[index], statuses)
+		var code: int = _endpoint(index).poll(now_us, null if tokens.is_empty() else tokens[index], statuses, status_nudge)
 		if code != I.Code.OK:
 			_collect_events()
 			_check_failure()
@@ -397,6 +397,17 @@ func _statuses() -> Array[T.Status]:
 		entry.last_frame = frame
 		result.append(entry)
 	return result
+
+
+func _gossip_nudge_needed() -> bool:
+	var observed: Types.Status = _core.status()
+	if observed.current_frame - observed.confirmed_frame < _config.max_prediction_frames:
+		return false
+	var receipts: PackedInt64Array = _core.received_frames()
+	var receipt_fold: int = receipts[0]
+	for frame: int in receipts:
+		receipt_fold = mini(receipt_fold, frame)
+	return observed.confirmed_frame < receipt_fold
 
 
 func _confirmation_code() -> int:

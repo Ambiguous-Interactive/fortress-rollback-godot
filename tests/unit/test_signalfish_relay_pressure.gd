@@ -16,7 +16,7 @@ const R = preload("res://addons/fortress_rollback/transport/signalfish_relay.gd"
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["recoverable", "terminal", "handshake"])
+	return PackedStringArray(["recoverable", "terminal", "handshake", "invalid_tokens"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -24,6 +24,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		_recoverable(context)
 	elif name == "terminal":
 		_terminal(context)
+	elif name == "invalid_tokens":
+		_invalid_tokens(context)
 	else:
 		_handshake(context)
 	context.finish()
@@ -159,3 +161,38 @@ func _handshake(context: RefCounted) -> void:
 	context.equal(tokens.calls, 1, "handshake retry does not remint token")
 	context.equal(fixture.peer.drain_outbox().size(), 1, "accepted retry publishes next-round request")
 	F.new()._destroy(fixture)
+
+
+func _invalid_tokens(context: RefCounted) -> void:
+	for size: int in [-3, -2, -1, 0, 15, 17, 16777216]:
+		var fixture: Dictionary = _build(context, false)
+		_queue(context, fixture, 0)
+		_queue(context, fixture, 1)
+		var tokens: InvalidTokenFactory = InvalidTokenFactory.new(size)
+		tokens.on_call = fixture.relay.detach if size in [-3, -2] else Callable()
+		var expected: int = R.Code.WRONG_STATE if size in [-3, -2] else R.Code.INVALID_ARGUMENT
+		var result: R.Result = fixture.relay.poll(20, tokens.next)
+		context.equal(result.code, expected, "reject malformed token before peer pressure " + str(size))
+		context.equal(result.received, 0, "invalid token never advances peer")
+		context.equal(fixture.relay.get("_receive_token") == null, true, "invalid token never retained")
+		context.equal(fixture.relay.poll(20).code, expected, "callback failure latched")
+		F.new()._destroy(fixture)
+
+
+class InvalidTokenFactory:
+	extends RefCounted
+	var size: int
+	var on_call: Callable = Callable()
+
+	func _init(value: int) -> void:
+		size = value
+
+	# Variant deliberately exercises malformed public callback returns.
+	func next(_uuid: String) -> Variant:
+		if on_call.is_valid():
+			on_call.call()
+		if size < 0 and size != -3:
+			return "wrong-type"
+		var token: PackedByteArray = PackedByteArray()
+		token.resize(16 if size == -3 else size)
+		return token

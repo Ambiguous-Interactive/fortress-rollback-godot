@@ -14,6 +14,7 @@ var _membership: Membership = null
 var _mesh_attached: bool = false
 var _restart_required: bool = false
 var _room_id: String = ""
+var _lifetime_revision: int = 0
 var _state: Dictionary = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 
 
@@ -28,6 +29,7 @@ func attach(client: Object, mesh: Object, membership: Membership) -> Error:
 		return ERR_INVALID_PARAMETER
 	if client.call("get_player_id") != membership.local_uuid():
 		return ERR_INVALID_DATA
+	_lifetime_revision += 1
 	_client = weakref(client)
 	_mesh = weakref(mesh)
 	_membership = membership
@@ -51,6 +53,7 @@ func attach(client: Object, mesh: Object, membership: Membership) -> Error:
 
 
 func detach() -> void:
+	_lifetime_revision += 1
 	_stop_mesh()
 	var client: Object = _client.get_ref() if _client != null else null
 	if is_instance_valid(client) and client.is_connected("session_plan", _on_plan):
@@ -112,13 +115,17 @@ func _apply_plan(plan: Object) -> Error:
 	elif not _mesh_attached:
 		_restart_required = true
 		return _refuse(ERR_UNAVAILABLE)
+	if _state.route != route or _state.generation != data.generation or _state.offerers != offerers:
+		_lifetime_revision += 1
 	_state = {"route": route, "generation": data.generation, "offerers": offerers.duplicate(), "error": OK, "byte_delivery_implemented": false}
 	return OK
 
 
 func status() -> Dictionary:
 	_check_lifetime()
-	return _state.duplicate(true)
+	var result: Dictionary = _state.duplicate(true)
+	result["lifetime_revision"] = _lifetime_revision
+	return result
 
 
 ## Caller owns byte consumption; unknown and local Godot IDs fail before decoding.
@@ -160,6 +167,7 @@ func _stop_mesh() -> void:
 
 
 func _refuse(code: Error) -> Error:
+	_lifetime_revision += 1
 	_stop_mesh()
 	_state = {"route": "restart_required" if _restart_required else "blocked", "generation": "", "offerers": {}, "error": code, "byte_delivery_implemented": false}
 	return code

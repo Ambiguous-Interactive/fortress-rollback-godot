@@ -15,7 +15,7 @@ Preload `protocol/input_endpoint.gd`, `input_endpoint_types.gd`,
 | --- | --- |
 | `configure(local, remote_sender, handshake_options, options, accept_input, lifecycle_options = null)` | One-shot configuration; optional lifecycle controls. |
 | `begin(now_us, token)` | Start the composed handshake. |
-| `poll(now_us, next_token = null, statuses = [])` | Drive synchronization or strict running retry; optional full roster statuses refresh gossip. |
+| `poll(now_us, next_token = null, statuses = [], status_nudge = false)` | Drive synchronization or strict running retry; optional full roster statuses and boolean idle-carrier policy. |
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Decode and validate the actual packet before retaining new inputs. |
 | `submit(frame, data, statuses, now_us)` | Retain one complete local frame and send the oldest pending prefix. |
 | `status()` | Owned observations, including handshake, history, slot ownership and ACK floors. |
@@ -64,6 +64,21 @@ inputs, standalone ACKs and fresh local sends cannot postpone retransmission.
 `poll` retries strictly after the configured interval, then resets that retry
 clock even if there is no pending output.
 
+`status_nudge = true` enables an input-idle status carrier after every pending
+input has been acknowledged. It repeats exactly one owned last-acknowledged frame,
+with current full-roster statuses and the actual received ACK floor. Both the
+last real input send and last nudge must be strictly older than the keepalive
+interval (default 200000 microseconds; explicit lifecycle options select it even
+when controls are disabled). ACKs, duplicate input and lifecycle packets cannot
+reset those clocks. A capacity refusal preserves the carrier, gossip and clocks;
+the caller can drain outputs and retry at the same time. The session enables this
+policy automatically only for an exhausted window held below actual receipts by
+stale remote gossip. Standalone endpoints default to no idle carrier.
+When a carrier replaces an otherwise empty retry, one `status_nudge` transition
+records the service. A retained-input packet has priority at the outbox minimum;
+overdue quality traffic waits for space without consuming its timer or token.
+Interruption and timeout decisions still run during that deferral.
+
 Recent received actual bytes are bounded and immutable. A conflicting retained
 frame rejects the whole packet. Older pruned frames are ignored and cumulatively
 re-ACKed, repairing a lost ACK without overwriting confirmed session data.
@@ -82,7 +97,10 @@ by default.
 Input options bound pending and received history (1–4096 frames each), packet
 batches (1–128 frames) and each publication queue (1–4096 entries). Configuration
 checks cardinalities before allocating lookup state and rejects history geometry
-above the configured retained-byte budget, capped at 16 MiB. The handshake options
+above the configured retained-byte budget, capped at 16 MiB. Geometry includes
+one extra locally packed frame for the last acknowledged input:
+`(max_pending_frames + 1) * local_width + max_received_frames * remote_width`.
+Existing callers with an exact history-only budget must include this extra frame. The handshake options
 own packet size and independent handshake queue capacities. Input publication
 queues have their own caps; callers drain all outputs between service iterations.
 At least one complete input frame in either direction must fit the packet cap.

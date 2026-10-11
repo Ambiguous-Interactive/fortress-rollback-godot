@@ -51,7 +51,8 @@ def main():
               'relay_probe': ROOT / 'scripts/reference/signalfish_probe_relay.gd',
               'relay_controls': ROOT / 'scripts/reference/signalfish_probe_relay_controls.gd',
               'lifetime_probe': ROOT / 'scripts/reference/signalfish_probe_lifetime.gd',
-              'sdk_archive': archive, 'engine': executable, 'launcher': Path(__file__).resolve()}
+              'sdk_archive': archive, 'engine': executable, 'launcher': Path(__file__).resolve(),
+              'fetch_helper': ROOT / 'scripts/reference/fetch.py', 'pin_manifest': ROOT / 'docs/reference/pins.json'}
     before = inventory(inputs)
     with tempfile.TemporaryDirectory(prefix='fortress-signalfish-sdk-') as temporary:
         project = Path(temporary)

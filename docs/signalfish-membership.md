@@ -8,9 +8,10 @@ only in applications that use SignalFish.
 
 This membership seam does not implement byte delivery or automatic transport fallback.
 The separate [binary relay adapter](signalfish-relay.md) supplies recipient envelopes
-and bounded send/receive queues. `status().byte_delivery_implemented` is always
+and bounded send/receive queues. The [WebRTC adapter](signalfish-webrtc.md) owns
+direct packet delivery. The membership seam's `status().byte_delivery_implemented` is always
 `false`. Applications still supply bytes, attributed senders, clocks and tokens,
-and drain the peer's bounded outputs. S3–S4 own complete WebRTC and fallback adapters. Do not treat `route == "mesh"` as a connected gameplay session.
+and drain the peer's bounded outputs. S4 owns automatic fallback. Do not treat `route == "mesh"` as a connected gameplay session.
 
 ## Freeze membership and configure a peer
 

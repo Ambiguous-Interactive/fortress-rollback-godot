@@ -16,7 +16,7 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay implemented; direct/fallback and browser validation remain planned |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay and direct bytes implemented; automatic fallback and release matrix remain planned |
 | Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
 | Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
@@ -43,6 +43,18 @@ acceptance. Retain the exact FIFO head on send refusal and count owned queues,
 socket backlog and receive work separately. Verify retry bytes and corrected
 confirmed game state through the actual SDK, rather than counting simulated ticks.
 Name injected transport, native server and browser evidence separately.
+
+Fence retained direct bytes with a monotonic local plan/lifetime revision, not
+just current opaque generation equality. The SDK can rebuild per-peer channels
+while retaining its multiplayer peer, and plans can change A→B→A between service
+calls. Same-generation offerer changes can also replace connections. Test queued
+outgoing and incoming work across those transitions; repeated identical plans
+must not fabricate a replacement. Reserve PacketPeer reads for one consumer and
+capture sender/channel/mode before get_packet advances to the next packet.
+Inspect actual browser data channels, not just Godot option dictionaries.
+The pinned engine's legacy maxPacketLifetime spelling is ignored by browsers
+that expect maxPacketLifeTime. Use the production connection factory correction
+and verify the resulting lifetime; do not claim a zero-retransmit policy.
 
 ## Serialization Rules
 
@@ -89,6 +101,8 @@ parseable within hard bounds; endpoint policy must emit specific mismatches.
 The [handshake guide](../../../docs/handshake.md) owns timing and echo policy.
 Audit every queued control message's timer effects, then compare actual packets,
 events and post-transition observations at strict interval boundaries.
+Handle unset timestamp sentinels before elapsed-time subtraction; exercise the
+maximum accepted injected clock so signed overflow cannot suppress recovery.
 Validate scalar and collection cardinality limits before scanning identities or
 allocating lookup tables. Accepted queue minima must permit initialization and
 completion after drains, including the maximum configured roundtrip count.
@@ -96,6 +110,10 @@ For retained checksum histories, trace scheduling, send-floor advancement,
 strict confirmation eligibility, comparison and eviction as one handoff. Accepted
 minimum capacity must retain matching local/remote evidence until comparison can
 consume it. Successful sends and bounded occupancy do not prove this handoff.
+Exercise simultaneous timer expirations at each accepted queue minimum. A
+redundant empty-work trace or optional control packet cannot make essential
+recovery permanently unpublishable; defer optional traffic without deferring
+interruption or timeout decisions.
 Every composed façade must expose drains for all bounded publication queues,
 including diagnostics. Run healthy sessions past each default capacity. A partial
 multi-link publication must consume the accepted clock even when a later link
@@ -103,12 +121,22 @@ backpressures. Keep outgoing local receipt gossip separate from incoming peer
 observations; confirmation must never count local claims as remote evidence.
 Capture receipt status at the compared service boundary. Receiving input before
 retrying another link can change its gossip even when frames and ACKs match.
+Distinguish voluntary input-idle lag from an exhausted-window gossip deadlock.
+When ACKs drain the last input carrier, recover only with bounded fresh remote
+status evidence; never substitute local receipt for remote confirmation. Retain
+an owned acknowledged sample within configured memory and separate input/nudge
+cadence from ACK/control traffic so ordinary heartbeats cannot starve recovery.
 
 Preserve the inbound FIFO head and its generated handshake token when a peer
 returns recoverable queue pressure before committing packet state. The same
 code may also accompany terminal event overflow: inspect committed lifecycle
 before deciding to retry. Continue bounded outgoing service while incoming work
 waits, so pressure cannot starve queued ACKs. Prove both paths using real peers.
+Validate callback tokens as null or exactly 16 owned bytes before copying. Peer
+pressure can occur before protocol token validation; relying on that later
+validation can retain an arbitrary callback object or oversized packed array.
+Recheck lifetime gates immediately after callbacks, before validating their
+return values, so malformed output cannot overwrite a latched teardown failure.
 
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate

@@ -37,3 +37,5 @@ evidence. Facts without evidence do not get in (curation gate).
 - [devcontainer-tooling.md](./devcontainer-tooling.md) — container
   build/runtime facts: feature ordering, volume ownership, npx/Claude Code
   MCP semantics, fail-closed firewall ordering
+- [transport-tooling.md](./transport-tooling.md) — browser SignalFish
+  secure-context and development-hosting facts

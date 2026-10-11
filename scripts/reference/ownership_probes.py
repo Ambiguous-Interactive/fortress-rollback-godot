@@ -22,11 +22,13 @@ EXPECTED = {
 }
 EXPECTED.update({
     'res://tests/unit/test_endpoint_lifecycle.gd': {'control_receive', 'strict_timers', 'liveness', 'quality',
-        'checksum_goodbye', 'capacity', 'pacing', 'long_running', 'retention_failure'},
+        'checksum_goodbye', 'capacity', 'pacing', 'long_running', 'retention_failure', 'status_nudge_capacity'},
     'res://tests/unit/test_peer_lifecycle.gd': {'checksum_export', 'healthy_exchange', 'real_desync', 'terminal_timeout', 'close',
         'checksum_conflict', 'checksum_future', 'stale_checksum', 'interrupted_resume', 'checksum_capacity', 'event_capacity', 'statistics',
         'lockstep_checksums'},
-    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'retry', 'validation', 'retention', 'capacity', 'ownership'},
+    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'retry', 'validation', 'retention', 'capacity', 'ownership',
+        'status_nudge', 'status_nudge_transitions'},
+    'res://tests/unit/test_stalled_gossip.gd': {'drained', 'dropped_reordered', 'missing_receipt', 'step_recovery', 'grouped_locals'},
     'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save'},
     'res://tests/unit/test_peer_session.gd': {'mesh', 'loss', 'multiple_locals', 'backpressure', 'ingress',
         'partial_publication', 'reentry', 'begin_preflight', 'long_runtime', 'request_mismatch', 'low_windows', 'packet_service'},
@@ -50,7 +52,7 @@ FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
           'tests/unit/test_endpoint_lifecycle.gd', 'tests/unit/test_peer_lifecycle.gd',
           'addons/fortress_rollback/protocol/input_endpoint_types.gd',
           'tests/unit/test_input_endpoint.gd', 'tests/unit/test_session_network_seams.gd',
-          'tests/unit/test_peer_session.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
+          'tests/unit/test_peer_session.gd', 'tests/unit/test_stalled_gossip.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -64,8 +66,9 @@ const Seams = preload("res://tests/unit/test_session_network_seams.gd")
 const Peers = preload("res://tests/unit/test_peer_session.gd")
 const Lifecycle = preload("res://tests/unit/test_endpoint_lifecycle.gd")
 const PeerLifecycle = preload("res://tests/unit/test_peer_lifecycle.gd")
+const StalledGossip = preload("res://tests/unit/test_stalled_gossip.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)

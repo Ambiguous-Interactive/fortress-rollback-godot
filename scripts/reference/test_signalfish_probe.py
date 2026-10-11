@@ -25,6 +25,9 @@ class SignalFishProbeControls(unittest.TestCase):
             'source_changed': 'from pathlib import Path\nimport sys\np = Path(sys.argv[sys.argv.index("--path") + 1]) / "probe.gd"\n'
                               'p.write_text("changed source\\n")\nprint("FORTRESS_SIGNALFISH_SDK_OK")\n',
         }
+        for name, relative in [('helper_changed', 'scripts/reference/fetch.py'), ('pins_changed', 'docs/reference/pins.json')]:
+            scripts[name] = ('from pathlib import Path\np = Path(__file__).parent / ' + repr(relative) + '\n'
+                             'p.write_text(p.read_text() + "changed source\\n")\n' + scripts['success'])
         for name, script in scripts.items():
             with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -34,6 +37,10 @@ class SignalFishProbeControls(unittest.TestCase):
                 source = root / 'scripts/reference/signalfish_probe.gd'
                 source.parent.mkdir(parents=True)
                 source.write_text('extends SceneTree\n')
+                (source.parent / 'fetch.py').write_text('# pinned fetch helper\n')
+                pin_manifest = root / 'docs/reference/pins.json'
+                pin_manifest.parent.mkdir(parents=True)
+                pin_manifest.write_text('{"schema_version": 1}\n')
                 (source.parent / 'signalfish_probe_new_peer.gd').write_text('extends RefCounted\n')
                 (source.parent / 'signalfish_probe_relay.gd').write_text('extends RefCounted\n')
                 (source.parent / 'signalfish_probe_relay_controls.gd').write_text('extends RefCounted\n')
@@ -63,10 +70,13 @@ class SignalFishProbeControls(unittest.TestCase):
                         self.assertEqual(result['input_inventory']['addon/core.gd'], result['executed_inventory']['addon/core.gd'])
                         self.assertEqual(result['input_inventory']['probe'], result['executed_inventory']['probe'])
                         self.assertEqual(result['input_inventory']['engine'], result['engine_sha256'])
+                        self.assertEqual(result['input_inventory']['fetch_helper'], hashlib.sha256((source.parent / 'fetch.py').read_bytes()).hexdigest())
+                        self.assertEqual(result['input_inventory']['pin_manifest'], hashlib.sha256(pin_manifest.read_bytes()).hexdigest())
                     else:
                         diagnostic = {'nonzero': 'SDK integration failed', 'invalid_utf8': 'utf-8',
                                       'timeout': 'SDK integration timed out', 'tool_changed': 'inventory changed',
-                                      'source_changed': 'inventory changed'}[name]
+                                      'source_changed': 'inventory changed', 'helper_changed': 'inventory changed',
+                                      'pins_changed': 'inventory changed'}[name]
                         with self.assertRaisesRegex((ValueError, UnicodeDecodeError), diagnostic):
                             probe.main()
                         self.assertIs(json.loads(receipt.read_text())['passed'], False)

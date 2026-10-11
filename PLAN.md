@@ -41,6 +41,7 @@ Local development contracts and evidence entry points:
 - [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
 - [Optional SignalFish membership, agreed UUID slots and plan fences](docs/signalfish-membership.md).
 - [SignalFish binary relay, bounded packet ownership and broadcast filtering](docs/signalfish-relay.md).
+- [SignalFish WebRTC bytes, channel selection and direct-path lifetime](docs/signalfish-webrtc.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).
@@ -253,6 +254,10 @@ No finite test corpus or bounded model establishes whole-program equivalence.
 
 Reuse the existing SDK through an optional adapter.
 The core addon must parse and run without SignalFish installed.
+An exhausted prediction window must retain a bounded receipt-gossip carrier
+after ordinary input ACKs drain. Recovery preserves the same samples and
+conservative remote confirmation evidence; voluntary input-idle tail convergence
+is a separate compatibility decision.
 The [membership seam](docs/signalfish-membership.md) derives frozen UUID slots
 and binds the full roster/configuration into the existing peer handshake.
 Its plan route describes validated setup; byte delivery remains a separate adapter contract.
@@ -273,6 +278,13 @@ Use unreliable unordered WebRTC input delivery with protocol redundancy.
 Inspect actual SDK/Godot channel options; do not claim zero retransmits if the
 mesh uses packet lifetime instead. Reserve packet consumption for the adapter.
 Respect server-selected offerer roles and latest plan generations.
+The direct adapter now provides bounded byte delivery and lifetime fences.
+The exported Chromium witness covers 2/4/8 peers on both pinned engines.
+The witness exercises elapsed transport deadlines and caller-owned handshake
+retries; [#72](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/72)
+records its loss regression and delivery gate.
+Live ICE/replan recovery, automatic fallback and the full browser matrix remain
+acceptance work in S3–S5; keep those task issues open.
 
 Direct and relay paths use the same session identity and deduplication rules.
 Test overlapping delivery, asymmetric failure and mixed paths.
