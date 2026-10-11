@@ -196,6 +196,13 @@ each unfinished peer independently; only monotone game or protocol evidence
 may reset inactivity. Keep separate gameplay and confirmation caps and an
 absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
 prove progress. Fresh execution must still satisfy every acceptance gate.
+Apply each page observation at its completion time before waiting for sibling
+pages. Check that peer's existing deadline first, then rearm the earliest live
+deadline. Exercise asymmetric timely completions and exact expired boundaries;
+an all-pages barrier can otherwise discard valid progress against stale clocks.
+Deactivate an observation synchronously on every failure path. Resolve a sibling
+in the same turn as timeout/evaluation/validation rejection and prove it cannot
+sample or rearm after failure; an awaiting `finally` can run too late.
 Exercise the lowest accepted checksum capacity through repeated eviction, with
 both lockstep and predictive advancement. Require healthy progress and nonzero
 actual comparisons for each peer, then inject a real game mismatch at that same

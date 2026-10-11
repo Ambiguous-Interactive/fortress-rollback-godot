@@ -254,6 +254,10 @@ No finite test corpus or bounded model establishes whole-program equivalence.
 
 Reuse the existing SDK through an optional adapter.
 The core addon must parse and run without SignalFish installed.
+An exhausted prediction window must retain a bounded receipt-gossip carrier
+after ordinary input ACKs drain. Recovery preserves the same samples and
+conservative remote confirmation evidence; voluntary input-idle tail convergence
+is a separate compatibility decision.
 The [membership seam](docs/signalfish-membership.md) derives frozen UUID slots
 and binds the full roster/configuration into the existing peer handshake.
 Its plan route describes validated setup; byte delivery remains a separate adapter contract.

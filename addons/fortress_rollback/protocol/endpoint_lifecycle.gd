@@ -27,9 +27,9 @@ static func token(millis: int) -> PackedByteArray:
 	result.encode_s64(0, millis)
 	return result
 
-static func poll(plan: Dictionary, options: L.Options, packet: Callable, encode: Callable) -> int:
+static func poll(plan: Dictionary, options: L.Options, packet: Callable, encode: Callable, can_send_control: bool = true) -> int:
 	var state: Dictionary = plan.state
-	if state.now_us - state.last_quality_us > options.quality_report_interval_us:
+	if can_send_control and state.now_us - state.last_quality_us > options.quality_report_interval_us:
 		var millis: int = (state.now_us - state.clock_origin_us) / 1000
 		var key: String = token(millis).hex_encode()
 		if not state.quality_pending.has(key) and state.quality_pending.size() >= options.max_pending_quality:
@@ -42,7 +42,7 @@ static func poll(plan: Dictionary, options: L.Options, packet: Callable, encode:
 		plan.outbox.append(encode.call(report))
 		state.last_quality_us = state.now_us
 		state.last_send_us = state.now_us
-	if state.now_us - state.last_send_us > options.keepalive_interval_us:
+	if can_send_control and state.now_us - state.last_send_us > options.keepalive_interval_us:
 		plan.outbox.append(encode.call(packet.call(T.Kind.KEEP_ALIVE)))
 		state.last_send_us = state.now_us
 	var elapsed: int = state.now_us - state.last_recv_us

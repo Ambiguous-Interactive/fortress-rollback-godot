@@ -13,6 +13,7 @@ const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd"
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
 
+var _status_nudge_interval_us: int = 200000
 var _lifecycle: L.Options = null
 var _fatal_event: Dictionary = {}
 var _handshake: Handshake = null
@@ -58,7 +59,7 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 	var overhead: int = 60 + maxi(local_players.size(), remote_players.size()) + 7 * local.config.player_count
 	if handshake_options.max_packet_bytes < overhead + maxi(local_width, remote_width):
 		return I.Code.INVALID_ARGUMENT
-	if options.max_pending_frames * local_width + options.max_received_frames * remote_width > options.max_buffer_bytes:
+	if (options.max_pending_frames + 1) * local_width + options.max_received_frames * remote_width > options.max_buffer_bytes:
 		return I.Code.INVALID_ARGUMENT
 	var handshake: Handshake = Handshake.new()
 	var code: int = handshake.configure(local, remote_sender, handshake_options)
@@ -78,13 +79,15 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 		"max_transitions", "max_buffer_bytes"]:
 		_options.set(field, options.get(field))
 	_lifecycle = L.copy_options(lifecycle_options) if lifecycle_options != null and lifecycle_options.enabled else null
+	_status_nudge_interval_us = lifecycle_options.keepalive_interval_us if lifecycle_options != null else L.Options.new().keepalive_interval_us
 	_handshake = handshake
 	_accept_input = accept_input
 	var statuses: Array[Dictionary] = []
 	for slot: int in range(_limits.player_count):
 		statuses.append({"disconnected": false, "last_frame": -1, "epoch": 0})
 	_state = {"now_us": -1, "last_submitted_frame": -1, "last_sent_frame": -1, "last_received_frame": -1, "last_acked_frame": -1,
-		"last_input_progress_us": -1, "pending": {}, "received": {}, "peer_statuses": statuses, "connect_statuses": statuses.duplicate(true), "terminated": false}
+		"last_input_progress_us": -1, "last_input_send_us": -1, "last_nudge_us": -1, "last_acked_input": PackedByteArray(),
+		"pending": {}, "received": {}, "peer_statuses": statuses, "connect_statuses": statuses.duplicate(true), "terminated": false}
 	if _lifecycle != null:
 		_state.merge(Lifecycle.initial(_lifecycle))
 	return I.Code.OK
@@ -103,11 +106,11 @@ func begin(now_us: Variant, token: Variant) -> int:
 	return code
 
 
-func poll(now_us: Variant, next_token: Variant = null, statuses: Variant = []) -> int:
+func poll(now_us: Variant, next_token: Variant = null, statuses: Variant = [], status_nudge: Variant = false) -> int:
 	var code: int = _gate(now_us)
 	if code != I.Code.OK:
 		return code
-	if not statuses is Array:
+	if not statuses is Array or typeof(status_nudge) != TYPE_BOOL:
 		return I.Code.INVALID_ARGUMENT
 	if not statuses.is_empty():
 		code = _status_code(statuses)
@@ -123,15 +126,23 @@ func poll(now_us: Variant, next_token: Variant = null, statuses: Variant = []) -
 	var plan: Dictionary = _plan(now_us)
 	if not statuses.is_empty():
 		_merge_statuses(plan, statuses, "connect_statuses")
+	var is_nudge_due: bool = status_nudge and plan.state.pending.is_empty() and not plan.state.last_acked_input.is_empty() \
+		and now_us - plan.state.last_input_send_us > _status_nudge_interval_us \
+		and (plan.state.last_nudge_us == -1 or now_us - plan.state.last_nudge_us > _status_nudge_interval_us)
 	if now_us - plan.state.last_input_progress_us > _options.retry_interval_us:
 		if not plan.state.pending.is_empty():
 			_send_pending(plan)
 		plan.state.last_input_progress_us = now_us
-		_trace(plan, "retry", "sent" if not plan.outbox.is_empty() else "empty")
+		if not is_nudge_due:
+			_trace(plan, "retry", "sent" if not plan.outbox.is_empty() else "empty")
+	if is_nudge_due:
+		_send_input(plan, plan.state.last_acked_frame, [plan.state.last_acked_input])
+		plan.state.last_nudge_us = now_us
+		_trace(plan, "status_nudge", "sent")
 	if _lifecycle != null:
 		if not plan.outbox.is_empty():
 			plan.state.last_send_us = now_us
-		Lifecycle.poll(plan, _lifecycle, _packet, _encode)
+		Lifecycle.poll(plan, _lifecycle, _packet, _encode, plan.outbox.is_empty() or _outbox.size() + plan.outbox.size() < _options.max_outbox)
 	return _commit(plan)
 
 
@@ -304,6 +315,19 @@ func _packet(kind: int) -> T.Message:
 
 
 func _send_pending(plan: Dictionary) -> void:
+	var width: int = _local_players.size() * _limits.input_width
+	var overhead: int = 60 + _local_players.size() + 7 * _limits.player_count
+	var count: int = mini(_options.max_input_frames, (_limits.max_packet_bytes - overhead) / width)
+	var frames: Array = plan.state.pending.keys()
+	frames.sort()
+	var inputs: Array[PackedByteArray] = []
+	for index: int in range(mini(count, frames.size())):
+		inputs.append(plan.state.pending[frames[index]])
+	_send_input(plan, frames[0], inputs)
+	plan.state.last_input_send_us = plan.state.now_us
+
+
+func _send_input(plan: Dictionary, start_frame: int, inputs: Array[PackedByteArray]) -> void:
 	var message: T.Message = _packet(T.Kind.INPUT)
 	message.ack_frame = plan.state.last_received_frame
 	message.players = _local_players
@@ -311,16 +335,11 @@ func _send_pending(plan: Dictionary) -> void:
 		var status_value: T.Status = T.Status.new()
 		status_value.last_frame = value.last_frame
 		message.statuses.append(status_value)
-	var width: int = _local_players.size() * _limits.input_width
-	var overhead: int = 60 + _local_players.size() + 7 * _limits.player_count
-	var count: int = mini(_options.max_input_frames, (_limits.max_packet_bytes - overhead) / width)
-	var frames: Array = plan.state.pending.keys()
-	frames.sort()
-	message.start_frame = frames[0]
-	message.frame_count = mini(count, frames.size())
-	for index: int in range(message.frame_count):
-		message.data.append_array(plan.state.pending[frames[index]])
-	plan.state.last_sent_frame = maxi(plan.state.last_sent_frame, message.start_frame + message.frame_count - 1)
+	message.start_frame = start_frame
+	message.frame_count = inputs.size()
+	for data: PackedByteArray in inputs:
+		message.data.append_array(data)
+	plan.state.last_sent_frame = maxi(plan.state.last_sent_frame, start_frame + inputs.size() - 1)
 	plan.outbox.append(Codec.encode(message, _limits).bytes)
 
 
@@ -332,6 +351,7 @@ func _ack(plan: Dictionary, frame: int) -> void:
 	for pending_frame: int in frames:
 		if pending_frame > frame:
 			break
+		plan.state.last_acked_input = plan.state.pending[pending_frame].duplicate()
 		plan.state.pending.erase(pending_frame)
 		plan.state.last_acked_frame = pending_frame
 

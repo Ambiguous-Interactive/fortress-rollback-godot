@@ -103,8 +103,16 @@ cases for 2, 4 and 8 peers. Loss drops the first input and ACK flight. Retry
 checks exactly 200000 microseconds versus 200001, then drops ACKs and checks the
 next exact interval and interval-plus-one. Duplicate packets do not manufacture
 new input progress. Full meshes use the upstream gossip minimum for confirmation;
-idle confirmation can lag the last locally received frame until another input
-packet carries updated gossip. This gate does not claim idle mesh convergence.
+voluntary idle confirmation can lag the last locally received frame until another
+input packet carries updated gossip. Exhausted-window recovery is separately
+covered by `tests/unit/test_stalled_gossip.gd`: drained three/eight-peer meshes,
+dropped/reordered status carriers, repeated ACK drainage, unchanged stalled samples
+and missing actual input. The automatic session predicate follows pinned
+`p2p_session.rs::gossip_holds_confirmation_below_receipts`; the endpoint repeats
+one acknowledged input under the strict `protocol/mod.rs` nudge gates. This is a
+source audit plus production Godot regression, not a separately executed Rust
+reproduction of that schedule. The original differential corpus does not claim
+voluntary idle convergence or disconnect-agreement nudge parity.
 
 The callback game is the existing stateful reference game: accumulators,
 seeded RNG and pending events are saved and restored. Validation reconstructs

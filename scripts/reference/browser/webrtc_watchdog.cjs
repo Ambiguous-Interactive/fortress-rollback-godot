@@ -65,29 +65,42 @@ async function waitGameplay(pages, clock = () => performance.now(), pause = () =
   const watchdog = new ProgressWatchdog(pages.length, clock());
   for (;;) {
     let timer;
-    let snapshots;
+    let completed;
+    let active = true;
     const evaluations = pages.map(() => null);
     const round_started_ms = clock() - watchdog.started;
     try {
-      snapshots = await Promise.race([Promise.all(pages.map((page, index) => page.evaluate(() => ({
-      done: document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
-      frame: document.body.dataset.fortressFrame === undefined ? -1 : Number(document.body.dataset.fortressFrame),
-      progress: document.body.dataset.fortressProgress === undefined ? null : JSON.parse(document.body.dataset.fortressProgress),
-      })).then(snapshot => {
-        evaluations[index] = { elapsed_ms: clock() - watchdog.started, frame: snapshot.frame, done: snapshot.done,
-          progress: boundedFrontier(snapshot.progress, pages.length) };
-        return snapshot;
-      }))), new Promise((resolve, reject) => {
+      let rejectObservation;
+      const observation = new Promise((resolve, reject) => { rejectObservation = reject; });
+      const fail = error => { active = false; throw error; };
+      const arm = () => {
+        clearTimeout(timer);
         timer = setTimeout(() => {
           const diagnostic = { round_started_ms, elapsed_ms: clock() - watchdog.started, deadline_ms: watchdog.deadline() - watchdog.started,
             peers: watchdog.peers.map(peer => ({ frame: peer.frame, changed_ms: peer.changed - watchdog.started,
               final_ms: peer.finalStarted === null ? null : peer.finalStarted - watchdog.started, frontier: peer.frontier, done: peer.done })), evaluations };
-          reject(new Error('page evaluation exceeded active progress deadline ' + JSON.stringify(diagnostic)));
+          active = false;
+          rejectObservation(new Error('page evaluation exceeded active progress deadline ' + JSON.stringify(diagnostic)));
         }, Math.max(0, watchdog.deadline() - clock()));
-      })]);
-    } finally { clearTimeout(timer); }
-    const now = clock();
-    const completed = snapshots.map((snapshot, index) => watchdog.sample(index, snapshot, now));
+      };
+      arm();
+      completed = await Promise.race([Promise.all(pages.map((page, index) => page.evaluate(() => ({
+      done: document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
+      frame: document.body.dataset.fortressFrame === undefined ? -1 : Number(document.body.dataset.fortressFrame),
+      progress: document.body.dataset.fortressProgress === undefined ? null : JSON.parse(document.body.dataset.fortressProgress),
+      })).then(snapshot => {
+        try {
+        if (!active) return false;
+        const now = clock();
+        evaluations[index] = { elapsed_ms: now - watchdog.started, frame: snapshot.frame, done: snapshot.done,
+          progress: boundedFrontier(snapshot.progress, pages.length) };
+        // Apply evidence at its own completion time, before waiting for slower siblings.
+        const done = watchdog.sample(index, snapshot, now);
+        arm();
+        return done;
+        } catch (error) { return fail(error); }
+      }, fail))), observation]);
+    } finally { active = false; clearTimeout(timer); }
     if (completed.every(Boolean)) return;
     await pause();
   }

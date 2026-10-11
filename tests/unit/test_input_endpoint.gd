@@ -31,7 +31,7 @@ class Sink:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["loss_ack", "retry", "validation", "retention", "capacity", "ownership"])
+	return PackedStringArray(["loss_ack", "retry", "validation", "retention", "capacity", "ownership", "status_nudge", "status_nudge_transitions"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -42,6 +42,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		"retention": _retention(context)
 		"capacity": _capacity(context)
 		"ownership": _ownership(context)
+		"status_nudge": _status_nudge(context)
+		"status_nudge_transitions": _status_nudge_transitions(context)
 	context.finish()
 
 
@@ -340,4 +342,140 @@ func _ownership(context: RefCounted) -> void:
 	context.equal(endpoint.status().last_received_frame, 2, "initial delay retained")
 	context.equal(endpoint.submit(2, PackedByteArray([8]), _statuses(), 3), I.Code.OK, "local agreed initial delay allowed")
 	context.equal(endpoint.submit(4, PackedByteArray([8]), _statuses(), 4), I.Code.INVALID_FRAME, "later gap rejected")
+	context.state(0, JSON.stringify(endpoint.status()).to_utf8_buffer())
+
+
+# Value: protects=idle status capacity and clocks; fails_when=ACK traffic postpones carrier or refusal commits it; why_new=pending retry never sends ACKed input; seam=none
+func _status_nudge(context: RefCounted) -> void:
+	# First-carrier clocks include the largest accepted integer, before any nudge timestamp exists.
+	for now_us: int in [200010, 9223372036854775806, 9223372036854775807]:
+		var boundary_options: I.Options = I.Options.new()
+		boundary_options.max_outbox = 1
+		var boundary_sink: Sink = Sink.new()
+		var boundary_endpoint: E = _ready(boundary_sink, boundary_options)
+		var boundary_statuses: Array[T.Status] = _statuses()
+		boundary_endpoint.submit(0, PackedByteArray([7]), boundary_statuses, 9)
+		boundary_endpoint.drain_outbox()
+		boundary_endpoint.receive(_ack_packet(0), _id(2), 10)
+		boundary_endpoint.drain_transitions()
+		boundary_statuses[1].last_frame = 0
+		boundary_endpoint.receive(_encode(_input(0, PackedByteArray([3]))), _id(2), 11)
+		var boundary_before: Dictionary = boundary_endpoint.status()
+		context.equal(boundary_endpoint.poll(now_us, null, boundary_statuses, true), I.Code.BACKPRESSURE, "wide-clock carrier respects queued ACK")
+		context.equal(boundary_endpoint.status(), boundary_before, "wide-clock refusal preserves state and sentinel")
+		context.equal(boundary_endpoint.drain_outbox().size(), 1, "wide-clock refusal preserves owned ACK")
+		context.equal(boundary_endpoint.poll(now_us, null, boundary_statuses, true), I.Code.OK, "first carrier accepts wide clock")
+		var boundary_packets: Array[PackedByteArray] = boundary_endpoint.drain_outbox()
+		context.equal(boundary_packets.size(), 1, "first carrier publishes at wide clock")
+		if boundary_packets.size() == 1:
+			var boundary_message: T.Message = _decoded(boundary_packets[0])
+			context.equal(boundary_message.data, PackedByteArray([7]), "wide-clock carrier preserves original sample")
+			context.equal(boundary_message.statuses[1].last_frame, 0, "wide-clock carrier publishes fresh receipt")
+		context.equal(boundary_endpoint.status().last_nudge_us, now_us, "wide-clock carrier commits nudge timestamp")
+		context.equal(boundary_endpoint.poll(now_us, null, boundary_statuses, true), I.Code.OK, "same-clock repeated carrier poll accepted")
+		context.equal(boundary_endpoint.drain_outbox().size(), 0, "same clock cannot publish a second carrier")
+	var options: I.Options = I.Options.new()
+	options.max_pending_frames = 1
+	options.max_received_frames = 1
+	options.max_outbox = 1
+	options.max_buffer_bytes = 3
+	var sink: Sink = Sink.new()
+	var endpoint: E = _ready(sink, options)
+	var statuses: Array[T.Status] = _statuses()
+	var sample: PackedByteArray = PackedByteArray([7])
+	context.equal(endpoint.submit(0, sample, statuses, 9), I.Code.OK, "minimum retained geometry includes acknowledged frame")
+	sample[0] = 99
+	endpoint.drain_outbox()
+	context.equal(endpoint.receive(_ack_packet(0), _id(2), 10), I.Code.OK, "ACK frees ordinary pending queue")
+	context.equal(endpoint.status().pending_frames, 0, "nudge requires no pending output")
+	context.equal(endpoint.receive(_ack_packet(0), _id(2), 100000), I.Code.OK, "standalone ACK churn")
+	context.equal(endpoint.poll(200009, null, statuses, true), I.Code.OK, "last input send equality excluded")
+	context.equal(endpoint.drain_outbox().size(), 0, "strict nudge boundary")
+	context.equal(endpoint.receive(_encode(_input(0, PackedByteArray([3]))), _id(2), 200009), I.Code.OK, "incoming input fills outbox with ACK")
+	var before: Dictionary = endpoint.status()
+	statuses[1].last_frame = 0
+	context.equal(endpoint.poll(200010, null, statuses, true), I.Code.BACKPRESSURE, "carrier respects full outbox")
+	context.equal(endpoint.status(), before, "failed carrier preserves bytes statuses and clocks")
+	context.equal(endpoint.drain_outbox().size(), 1, "caller owns queued ACK")
+	context.equal(endpoint.poll(200010, null, statuses, true), I.Code.OK, "same clock retry after pressure")
+	var packets: Array[PackedByteArray] = endpoint.drain_outbox()
+	context.equal(packets.size(), 1, "one carrier at minimum capacity")
+	if packets.size() != 1:
+		return
+	var message: T.Message = _decoded(packets[0])
+	context.equal(message.data, PackedByteArray([7]), "carrier retains immutable submitted bytes")
+	context.equal(message.start_frame, 0, "carrier repeats ACKed frame")
+	context.equal(message.frame_count, 1, "carrier has bounded single frame")
+	context.equal(message.ack_frame, 0, "carrier includes actual remote ACK floor")
+	context.equal(message.statuses[1].last_frame, 0, "carrier refreshes receipt gossip")
+	context.equal(endpoint.poll(200011, null, statuses, null), I.Code.INVALID_ARGUMENT, "nudge policy rejects hostile caller")
+	context.equal(endpoint.submit(1, PackedByteArray([8]), statuses, 200012), I.Code.OK, "new traffic takes over carrier")
+	endpoint.drain_outbox()
+	context.equal(endpoint.receive(_ack_packet(1), _id(2), 200013), I.Code.OK, "new traffic fully acknowledged")
+	context.equal(endpoint.poll(400012, null, statuses, true), I.Code.OK, "new input resets last input clock")
+	context.equal(endpoint.drain_outbox().size(), 0, "input send equality suppresses carrier")
+	context.equal(endpoint.poll(400013, null, statuses), I.Code.OK, "default standalone policy remains idle")
+	context.equal(endpoint.drain_outbox().size(), 0, "policy disabled does not publish carrier")
+	context.equal(endpoint.poll(400013, null, statuses, true), I.Code.OK, "explicit policy resumes gossip")
+	packets = endpoint.drain_outbox()
+	context.equal(packets.size(), 1, "repeat nudge survives ACK drainage")
+	if packets.size() == 1:
+		context.equal(_decoded(packets[0]).data, PackedByteArray([8]), "latest ACKed bytes replace prior carrier")
+
+
+# Value: protects=drained minimum transition capacity permits gossip; fails_when=idle retry and carrier need two slots; why_new=carrier test uses default traces; seam=none
+func _status_nudge_transitions(context: RefCounted) -> void:
+	var options: I.Options = I.Options.new()
+	options.max_transitions = 1
+	options.max_outbox = 1
+	var endpoint: E = _ready(Sink.new(), options)
+	var statuses: Array[T.Status] = _statuses()
+	context.equal(endpoint.status().state, "running", "minimum transition capacity accepted")
+	context.equal(endpoint.submit(0, PackedByteArray([7]), statuses, 9), I.Code.OK, "submit original carrier")
+	endpoint.drain_outbox()
+	endpoint.drain_transitions()
+	context.equal(endpoint.receive(_ack_packet(0), _id(2), 10), I.Code.OK, "acknowledge original carrier")
+	endpoint.drain_transitions()
+	statuses[1].last_frame = 0
+	context.equal(endpoint.poll(200010, null, statuses, true), I.Code.OK, "simultaneous idle retry and nudge fit minimum trace capacity")
+	var packets: Array[PackedByteArray] = endpoint.drain_outbox()
+	context.equal(packets.size(), 1, "drained endpoint publishes a carrier")
+	if packets.size() == 1:
+		context.equal(_decoded(packets[0]).data, PackedByteArray([7]), "original acknowledged bytes survive collision")
+		context.equal(_decoded(packets[0]).statuses[1].last_frame, 0, "carrier publishes current gossip")
+	context.equal(endpoint.drain_transitions(), [{"action": "status_nudge", "disposition": "sent", "last_received_frame": -1,
+		"last_acked_frame": 0, "pending_frames": 0}], "one complete nudge transition")
+	context.equal(endpoint.status().last_input_progress_us, 200010, "idle retry clock still advances")
+	context.equal(endpoint.status().last_nudge_us, 200010, "nudge clock commits")
+	context.equal(endpoint.status().last_input_send_us, 9, "nudge preserves ordinary input send clock")
+	context.equal(endpoint.poll(400010, null, statuses, true), I.Code.OK, "strict timer equality with minimum traces")
+	context.equal(endpoint.drain_outbox().size(), 0, "no carrier at equality")
+	context.equal(endpoint.drain_transitions().size(), 0, "no trace at equality")
+	context.equal(endpoint.receive(_ack_packet(0), _id(2), 400010), I.Code.OK, "queue one unrelated transition")
+	var before: Dictionary = endpoint.status()
+	statuses[1].last_frame = 1
+	context.equal(endpoint.poll(400011, null, statuses, true), I.Code.BACKPRESSURE, "undrained transition still bounds publication")
+	context.equal(endpoint.status(), before, "trace pressure preserves gossip and all clocks")
+	context.equal(endpoint.drain_outbox().size(), 0, "trace pressure publishes no carrier")
+	context.equal(endpoint.drain_transitions().size(), 1, "caller drains existing ACK trace")
+	context.equal(endpoint.poll(400011, null, statuses, true), I.Code.OK, "same-clock retry recovers after trace drain")
+	packets = endpoint.drain_outbox()
+	context.equal(packets.size(), 1, "repeated simultaneous deadlines continue gossip")
+	if packets.size() == 1:
+		context.equal(_decoded(packets[0]).statuses[1].last_frame, 1, "recovered carrier publishes advanced gossip")
+	context.equal(endpoint.drain_transitions().size(), 1, "repeated nudge remains one transition")
+	context.equal(endpoint.poll(600012, null, statuses), I.Code.OK, "ordinary idle retry remains available")
+	context.equal(endpoint.drain_outbox().size(), 0, "disabled nudge sends no input")
+	context.equal(endpoint.drain_transitions(), [{"action": "retry", "disposition": "empty", "last_received_frame": -1,
+		"last_acked_frame": 0, "pending_frames": 0}], "ordinary idle retry observation is unchanged")
+	context.equal(endpoint.submit(1, PackedByteArray([8]), statuses, 600013), I.Code.OK, "pending traffic replaces nudge")
+	endpoint.drain_outbox()
+	endpoint.drain_transitions()
+	context.equal(endpoint.poll(800013, null, statuses, true), I.Code.OK, "pending retry remains available with nudge policy")
+	packets = endpoint.drain_outbox()
+	context.equal(packets.size(), 1, "ordinary pending retry publishes one packet")
+	if packets.size() == 1:
+		context.equal(_decoded(packets[0]).start_frame, 1, "pending retry uses unacknowledged input")
+	context.equal(endpoint.drain_transitions(), [{"action": "retry", "disposition": "sent", "last_received_frame": -1,
+		"last_acked_frame": 0, "pending_frames": 1}], "ordinary pending retry observation is unchanged")
 	context.state(0, JSON.stringify(endpoint.status()).to_utf8_buffer())

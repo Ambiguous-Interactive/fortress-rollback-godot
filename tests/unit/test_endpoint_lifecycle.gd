@@ -10,7 +10,8 @@ const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const Fixture = preload("res://tests/unit/test_input_endpoint.gd")
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["control_receive", "strict_timers", "liveness", "quality", "checksum_goodbye", "capacity", "pacing", "long_running", "retention_failure"])
+	return PackedStringArray(["control_receive", "strict_timers", "liveness", "quality", "checksum_goodbye", "capacity", "pacing", "long_running",
+		"retention_failure", "status_nudge_capacity"])
 
 func run_case(_name: String, context: RefCounted) -> void:
 	if _name != "control_receive":
@@ -324,3 +325,43 @@ func _long_running(context: RefCounted) -> void:
 	context.equal(endpoint.poll(9223372036854775807), I.Code.OK, "maximum injected clock cannot overflow timer arithmetic")
 	context.equal(endpoint.status().state, "terminated", "maximum elapsed time closes link")
 	context.equal(before.state, "running", "owned earlier state remains running")
+
+
+# Value: protects=minimum publication capacity permits recovery with liveness; fails_when=overdue controls crowd input; why_new=timers used ample outbox; seam=none
+func _status_nudge_capacity(context: RefCounted) -> void:
+	var f: RefCounted = Fixture.new()
+	for capacity: int in [1, 2]:
+		for pending: bool in [false, true]:
+			var inputs: I.Options = I.Options.new()
+			inputs.max_outbox = capacity
+			inputs.max_transitions = 1
+			var endpoint: E = _ready(f, Fixture.Sink.new(), null, inputs)
+			var statuses: Array[T.Status] = f._statuses()
+			context.equal(endpoint.submit(0, PackedByteArray([7]), statuses, 9), I.Code.OK, "submit carrier with lifecycle")
+			endpoint.drain_outbox()
+			endpoint.drain_transitions()
+			if not pending:
+				context.equal(endpoint.receive(f._ack_packet(0), f._id(2), 10), I.Code.OK, "ACK drains carrier with lifecycle")
+				endpoint.drain_transitions()
+			context.equal(endpoint.poll(200010, null, statuses, true), I.Code.OK, "overdue quality does not block input at accepted capacities")
+			var packets: Array[PackedByteArray] = endpoint.drain_outbox()
+			context.equal(packets.size(), capacity, "input has priority and quality uses remaining capacity")
+			if not packets.is_empty():
+				context.equal(f._decoded(packets[0]).kind, T.Kind.INPUT, "first packet is retained input")
+			context.equal(endpoint.status().last_quality_us, 0 if capacity == 1 else 200010, "deferred quality leaves timer unchanged")
+			context.equal(endpoint.status().quality_pending.size(), 0 if capacity == 1 else 1, "deferred quality allocates no token")
+			context.equal(endpoint.drain_transitions().size(), 1, "one input transition with lifecycle")
+			context.equal(endpoint.poll(200010, null, statuses, true), I.Code.OK, "same clock service can publish deferred control after drain")
+			packets = endpoint.drain_outbox()
+			context.equal(packets.size(), 1 if capacity == 1 else 0, "quality resumes without postponing input cadence")
+			if not packets.is_empty():
+				context.equal(f._decoded(packets[0]).kind, T.Kind.QUALITY_REPORT, "deferred quality is eventually published")
+			context.equal(endpoint.status().last_quality_us, 200010, "quality timer advances only after publication")
+			context.equal(endpoint.poll(600011, null, statuses, true), I.Code.OK, "overdue control cannot block interruption with input")
+			context.equal(endpoint.drain_events(), [{"kind": "network_interrupted", "disconnect_timeout_ms": 1500}], "interruption survives input priority")
+			endpoint.drain_outbox()
+			endpoint.drain_transitions()
+			context.equal(endpoint.poll(2000011, null, statuses, true), I.Code.OK, "overdue control cannot block timeout with input")
+			context.equal(endpoint.status().state, "terminated", "liveness still terminates at original deadline")
+			context.equal(endpoint.drain_events(), [{"kind": "disconnected", "reason": "timeout"}], "timeout diagnostic retained")
+			context.equal(endpoint.drain_outbox().size() <= capacity, true, "terminal publication remains bounded")

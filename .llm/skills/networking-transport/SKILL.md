@@ -101,6 +101,8 @@ parseable within hard bounds; endpoint policy must emit specific mismatches.
 The [handshake guide](../../../docs/handshake.md) owns timing and echo policy.
 Audit every queued control message's timer effects, then compare actual packets,
 events and post-transition observations at strict interval boundaries.
+Handle unset timestamp sentinels before elapsed-time subtraction; exercise the
+maximum accepted injected clock so signed overflow cannot suppress recovery.
 Validate scalar and collection cardinality limits before scanning identities or
 allocating lookup tables. Accepted queue minima must permit initialization and
 completion after drains, including the maximum configured roundtrip count.
@@ -108,6 +110,10 @@ For retained checksum histories, trace scheduling, send-floor advancement,
 strict confirmation eligibility, comparison and eviction as one handoff. Accepted
 minimum capacity must retain matching local/remote evidence until comparison can
 consume it. Successful sends and bounded occupancy do not prove this handoff.
+Exercise simultaneous timer expirations at each accepted queue minimum. A
+redundant empty-work trace or optional control packet cannot make essential
+recovery permanently unpublishable; defer optional traffic without deferring
+interruption or timeout decisions.
 Every composed façade must expose drains for all bounded publication queues,
 including diagnostics. Run healthy sessions past each default capacity. A partial
 multi-link publication must consume the accepted clock even when a later link
@@ -115,6 +121,11 @@ backpressures. Keep outgoing local receipt gossip separate from incoming peer
 observations; confirmation must never count local claims as remote evidence.
 Capture receipt status at the compared service boundary. Receiving input before
 retrying another link can change its gossip even when frames and ACKs match.
+Distinguish voluntary input-idle lag from an exhausted-window gossip deadlock.
+When ACKs drain the last input carrier, recover only with bounded fresh remote
+status evidence; never substitute local receipt for remote confirmation. Retain
+an owned acknowledged sample within configured memory and separate input/nudge
+cadence from ACK/control traffic so ordinary heartbeats cannot starve recovery.
 
 Preserve the inbound FIFO head and its generated handshake token when a peer
 returns recoverable queue pressure before committing packet state. The same

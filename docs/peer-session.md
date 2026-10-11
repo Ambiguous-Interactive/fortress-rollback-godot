@@ -64,10 +64,19 @@ gossip. Outgoing local status never counts as a remote observation. Confirmation
 names immutable input history; predicted game state can require another `step`
 to repair after delivery. Compare game bytes at completed confirmed boundaries.
 
-Gossip travels with retained input packets. With every pending input acknowledged,
-polling emits no input packet; an idle mesh can retain a final confirmation lag.
-This matches the pinned upstream default without its optional status-nudge policy.
-Resume input submission to propagate fresh gossip. Idle convergence and real
+Gossip travels with input packets. When the prediction window is exhausted and
+confirmation falls below every actual receipt, `poll` and identical stalled-sample
+`step` retries automatically refresh remote evidence. Each input-idle endpoint
+repeats one owned acknowledged input strictly after its keepalive interval
+(default 200000 microseconds), carrying current receipts. Lost carriers retry;
+ACKs and lifecycle controls cannot postpone them. Pending input retransmission
+still owns recovery when actual input is missing. Confirmation remains bounded
+by actual receipts and incoming remote gossip.
+
+This matches the pinned upstream exhausted-window nudge arm. The source's
+separate disconnect-agreement arm remains outside fixed-membership support.
+Voluntary idle periods with prediction room can retain a final confirmation lag;
+submitting another input propagates fresh gossip. Final-tail convergence and real
 WebRTC/SignalFish delivery have separate roadmap gates.
 [Lifecycle controls](peer-lifecycle.md) provide timing observations, confirmed
 game checksums and explicit terminal outcomes. This façade is a usable byte
