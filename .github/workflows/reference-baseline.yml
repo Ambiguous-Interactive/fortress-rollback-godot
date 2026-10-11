@@ -104,7 +104,7 @@ jobs:
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
         run: python3 scripts/reference/godot_smoke.py --web
-      - name: Verify integer encoding and snapshot ownership in native and Web
+      - name: Verify integer encoding, snapshot ownership and protocol messages
         run: make representation-probes
       - name: Verify runner failure controls and fresh-process suites
         run: |

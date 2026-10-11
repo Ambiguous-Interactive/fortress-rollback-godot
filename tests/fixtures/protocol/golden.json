@@ -1,0 +1,187 @@
+{
+  "provenance": [
+    "Independent Python struct little-endian fixed-width layout.",
+    "Core/config/status semantics: fortress f13cd5c0f2815926785a395947e18da0dbea0dd8.",
+    "Godot wire v1; no Rust bincode interoperability."
+  ],
+  "config": "02010000003c000000080000003c0000000100000001000000010000000000000000000000000000000000000000",
+  "packets": {
+    "1": [
+      "4652475001000100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f4b000000202122232425262728292a2b2c2d2e2f01000000",
+      "0002010000003c000000080000003c00000001000000010000000100000000000000000000000000000000000000003031323334353637"
+    ],
+    "2": [
+      "4652475001000200000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f4b000000202122232425262728292a2b2c2d2e2f01000000",
+      "0002010000003c000000080000003c00000001000000010000000100000000000000000000000000000000000000003031323334353637"
+    ],
+    "3": [
+      "4652475001000300000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f2400000003000000ffffffff02000200010200ffffffff00",
+      "0001ffffff7fffff0400000000ff8001"
+    ],
+    "4": [
+      "4652475001000400000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f04000000ffffffff"
+    ],
+    "5": [
+      "4652475001000500000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f120000000080202122232425262728292a2b2c2d2e2f"
+    ],
+    "6": [
+      "4652475001000600000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f10000000202122232425262728292a2b2c2d2e2f"
+    ],
+    "7": [
+      "4652475001000700000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f14000000ffffff7f202122232425262728292a2b2c2d2e2f"
+    ],
+    "8": [
+      "4652475001000800000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000"
+    ],
+    "9": [
+      "4652475001000900000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f01000000ff"
+    ],
+    "10": [
+      "4652475001000a00000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f04000000ffffffff"
+    ],
+    "11": [
+      "4652475001000b00000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f0d000000ffffffff02ffffffffffffff7f"
+    ]
+  },
+  "projections": {
+    "1": {
+      "kind": 1,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "token": "202122232425262728292a2b2c2d2e2f",
+      "min_compat_version": 1,
+      "features": 0,
+      "config": {
+        "player_count": 2,
+        "input_width": 1,
+        "fps": 60,
+        "max_prediction": 8,
+        "input_delay": 0,
+        "desync_interval": 60,
+        "input_format": 1,
+        "snapshot_format": 1,
+        "checksum_algorithm": 1,
+        "neutral_input": "00",
+        "roster": [
+          "0000000000000000",
+          "0000000000000000"
+        ]
+      },
+      "config_digest": "3031323334353637"
+    },
+    "2": {
+      "kind": 2,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "token": "202122232425262728292a2b2c2d2e2f",
+      "min_compat_version": 1,
+      "features": 0,
+      "config": {
+        "player_count": 2,
+        "input_width": 1,
+        "fps": 60,
+        "max_prediction": 8,
+        "input_delay": 0,
+        "desync_interval": 60,
+        "input_format": 1,
+        "snapshot_format": 1,
+        "checksum_algorithm": 1,
+        "neutral_input": "00",
+        "roster": [
+          "0000000000000000",
+          "0000000000000000"
+        ]
+      },
+      "config_digest": "3031323334353637"
+    },
+    "3": {
+      "kind": 3,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "start_frame": 3,
+      "ack_frame": -1,
+      "frame_count": 2,
+      "players": [
+        0,
+        1
+      ],
+      "statuses": [
+        {
+          "disconnected": false,
+          "last_frame": -1,
+          "epoch": 0
+        },
+        {
+          "disconnected": true,
+          "last_frame": 2147483647,
+          "epoch": 65535
+        }
+      ],
+      "data": "00ff8001"
+    },
+    "4": {
+      "kind": 4,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "ack_frame": -1
+    },
+    "5": {
+      "kind": 5,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "frame_advantage": -32768,
+      "token": "202122232425262728292a2b2c2d2e2f"
+    },
+    "6": {
+      "kind": 6,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "token": "202122232425262728292a2b2c2d2e2f"
+    },
+    "7": {
+      "kind": 7,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "frame": 2147483647,
+      "checksum": "202122232425262728292a2b2c2d2e2f"
+    },
+    "8": {
+      "kind": 8,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f"
+    },
+    "9": {
+      "kind": 9,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "reason": 255
+    },
+    "10": {
+      "kind": 10,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "round_seq": 4294967295
+    },
+    "11": {
+      "kind": 11,
+      "session_id": "000102030405060708090a0b0c0d0e0f",
+      "sender_id": "1011121314151617",
+      "connection_id": "18191a1b1c1d1e1f",
+      "round_seq": 4294967295,
+      "floors": [
+        -1,
+        2147483647
+      ]
+    }
+  }
+}

@@ -63,7 +63,10 @@ class Game:
 		_reenter()
 		if terminating_session != null and terminating_session.status().lifecycle == Types.Lifecycle.TERMINATED:
 			return false
-		value = reader.read_bytes(8).bytes.decode_s64(0)
+		var restored: RefCounted = reader.read_bytes(8)
+		if restored.code != 0 or not reader.is_complete():
+			return false
+		value = restored.bytes.decode_s64(0)
 		return fail_kind != Types.Kind.LOAD
 
 	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:

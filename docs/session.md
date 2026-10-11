@@ -45,6 +45,9 @@ simulation events. Enabled checksums are exactly 16 bytes in little-endian
 unsigned128 order. Readers reject underflow or trailing bytes; writers reject
 overflow with sticky errors. Views expire on completion or termination.
 Returned bytes are copies. Snapshot slots validate frame and generation.
+Call `reader.is_complete()` after reading a fixed-size snapshot and before
+applying restored fields. It returns false for unread trailing bytes, errors
+or expired views; request completion still belongs to the driver or expert API.
 
 ## Expert request consumption
 

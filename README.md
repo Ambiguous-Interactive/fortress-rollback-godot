@@ -31,6 +31,17 @@ MCP first and authenticated `gh` CLI for capability gaps.
 
 ## Quick Start
 
+Run the [offline example](./docs/offline-example.md) with Godot 4.3 or newer:
+
+```sh
+godot --path . res://examples/offline/offline.tscn
+```
+
+Move the two players with WASD and the arrow keys. The example uses the shipped
+driver and complete integer snapshots while sync-test repeatedly rewinds gameplay.
+
+Contributor tooling:
+
 ```sh
 # Install git hooks (blocks commits that break the harness)
 make hooks
@@ -57,6 +68,8 @@ that a networked rollback session or supported release is available.
 The [session guide](./docs/session.md) documents the shared expert engine,
 bounded snapshots and thin game driver. The [raw input queue](./docs/input-queue.md)
 provides bounded per-player history.
+The [protocol codec](./docs/protocol.md) specifies bounded binary messages for
+the planned P2P layer, with independent native and exported-Web vectors.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
 for direct pinned Rust/Godot queue comparisons. Rust is development-only.
 

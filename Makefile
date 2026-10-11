@@ -51,7 +51,7 @@ test-godot:
 test-focus:
 	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --category $(CATEGORY) $(if $(SUITE),--suite $(SUITE)) $(if $(FILTER),--filter $(FILTER))
 
-## Minimum/current native and exported-Web representation experiments
+## Minimum/current native and exported-Web representation and protocol checks
 representation-probes:
 	$(PY) scripts/reference/ownership_probes.py --web
 

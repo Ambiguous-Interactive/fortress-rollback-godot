@@ -50,6 +50,12 @@ func status() -> int:
 	return _error if _is_live else Code.EXPIRED_VIEW
 
 
+## True only when a live, error-free reader has consumed the complete snapshot.
+## Check before publishing restored game state; this does not complete the request.
+func is_complete() -> bool:
+	return status() == Code.OK and _cursor == _bytes.size()
+
+
 func _completion_code() -> int:
 	var code: int = status()
 	if code == Code.OK and _cursor != _bytes.size():

@@ -31,8 +31,8 @@ Verify actual SDK channel options; do not infer zero retransmits from packet lif
 1. All packets are built with `StreamPeerBuffer` in **explicit little-endian,
    fixed-width** form (`put_u32`, `put_u16`, `put_u8`). Never `put_var` —
    its encoding is engine-version-dependent and kills replay stability.
-2. Versioned bounded protocol layout is owned by P1; the bootstrap sample
-   is illustrative and does not define a shipped wire format.
+2. The [Godot protocol codec](../../../docs/protocol.md) defines the bounded
+   versioned layout. The bootstrap sample is illustrative only.
 3. Floats on the wire only if IEEE-exact ops were used end to end (see
    [determinism](../determinism/SKILL.md)); prefer integers.
 4. Inputs are delta-compressed only *after* correctness: predictability of
@@ -59,6 +59,12 @@ Never change a released format silently.
    shipped degraded mode or packet layout from bootstrap guidance.
 
 ## What Belongs Here vs Elsewhere
+
+Keep layout version separate from semantic compatibility. Audit every supported
+upstream message field before choosing a Godot representation; preserve epochs,
+ACKs and wide token bytes in the semantic projection. Test independent byte
+goldens and malformed bodies through the production decoder on native and Web.
+Round-trip agreement alone cannot establish field preservation or source parity.
 
 - Wire formats, channels, replay layout, checksum exchange: this skill.
 - When to roll back and why: rollback-fundamentals.
