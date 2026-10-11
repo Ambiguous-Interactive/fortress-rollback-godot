@@ -278,8 +278,10 @@ original rejection; actual-module success/hung-page controls fail before and
 pass after this change. Progress caps, retry cadence and channel policy remain
 unchanged. The production adapter's configurable defaults remain unchanged.
 
-A two-CPU historical clean room passes but retains 23–37 physical packets per
-eight-peer instance. Starting a second probe during its final label rewrites the
+A two-CPU historical clean room passes. Its final RTC receive totals exceed
+the earlier Direct result snapshots by 23–37 packets per eight-peer instance;
+these counters straddle teardown-barrier service and do not measure a FIFO
+backlog. The final independent audit corrects that earlier inference. Starting a second probe during its final label rewrites the
 shared browser and causes ETXTBSY; this is a local orchestration error, not a
 transport result. A sole one-CPU 4.7.2 attempt then passes all four labels with
 source bindings. Fresh final witnesses and main delivery gates remain required.
@@ -292,6 +294,9 @@ correctly rejects unequal assertion counts; fresh final-byte runs then pass.
 The first repaired eight-label browser receipt passes both pins. After the
 configuration guard changes from a minimum to the exact exercised 32 budget,
 both staged host tests reject a 14-budget mutation and pass selected 32; another
-source-bound eight-label witness is running. No runtime behavior changes after
-the first repaired browser receipt. Cold final review reports no findings; its focused native test passes 5,484
+source-bound eight-label witness passes. Its independent audit verifies all
+1,067 current input/tool hashes, all 27 logs, both authored executed inventories,
+56 positive peers and eight exact negative peers. Receipt SHA256:
+`0b71ab963893f1e0a0ba25e860e0666ba58521ae8d3b64e8ab14b4c9ba44504a`.
+No runtime behavior changes after the first repaired browser receipt. Cold final review reports no findings; its focused native test passes 5,484
 assertions in each repeat on both launcher runs. Main delivery remains pending.

@@ -39,6 +39,12 @@ Overlapping local probes rewrote the same browser installation and caused
 ETXTBSY. Unique result directories do not isolate executable extraction. The
 existing testing skill now requires serialization of shared bootstrap caches.
 
+The final receipt audit also rejects a counter subtraction across different
+service barriers: RTC totals after teardown wait cannot establish FIFO backlog
+from an earlier Direct result snapshot. Correct the progress record and retain
+the existing same-boundary evidence rule in networking; the deterministic FIFO
+test separately measures contemporaneous actual queue depth.
+
 ## Prune ledger
 
 Extend existing testing/networking guidance rather than create overlapping skills.
