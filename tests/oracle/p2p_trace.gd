@@ -10,6 +10,7 @@ const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const Lifecycle = preload("res://tests/oracle/p2p_lifecycle.gd")
 const Game = preload("res://tests/oracle/p2p_game.gd")
 const REVISION: String = "f13cd5c0f2815926785a395947e18da0dbea0dd8"
 var peers: Array[RefCounted] = []
@@ -17,6 +18,8 @@ var games: Array[RefCounted] = []
 var packets: Array[Dictionary] = []
 var raw_packets: Array[PackedByteArray] = []
 var records: Array[Dictionary] = []
+var scenario_settings: Dictionary = {}
+var observed_events: Array[Dictionary] = []
 var limits: T.Limits
 
 
@@ -35,6 +38,7 @@ func _initialize() -> void:
 		_fail("invalid scenario")
 		return
 	var scenario: Dictionary = _canonical(parser.data)
+	scenario_settings = scenario
 	limits = T.Limits.new()
 	limits.player_count = scenario.players
 	limits.input_width = 4
@@ -61,14 +65,18 @@ func _initialize() -> void:
 		local.config.input_delay = scenario.input_delay
 		local.config.max_prediction = scenario.max_prediction
 		local.config.neutral_input = config.neutral_input.duplicate()
+		local.config.desync_interval = scenario.get("lifecycle", {}).get("checksum_interval", 0)
+		config.checksums_enabled = local.config.desync_interval > 0
 		local.config.roster.clear()
 		for slot: int in range(scenario.players):
 			local.config.roster.append(_id(slot))
 		var options: H.Options = H.Options.new()
 		options.roundtrips = 1
 		var game: RefCounted = Game.new(scenario.players)
+		if scenario.get("lifecycle", {}).get("divergent_peer", -1) == player:
+			game.game.accumulators[0] = 1
 		var peer: RefCounted = Peer.new()
-		if peer.configure(config, local, game, options, I.Options.new()) != I.Code.OK:
+		if peer.configure(config, local, game, options, I.Options.new(), Lifecycle.options(scenario)) != I.Code.OK:
 			_fail("configuration")
 			return
 		peers.append(peer)
@@ -108,6 +116,8 @@ func _operation(op: Dictionary, index: int) -> bool:
 		player = packets[op.packet].to
 	var peer: RefCounted = peers[player]
 	var before: int = peer.status().current_frame
+	var pre_state: String = games[player].game.bytes().hex_encode()
+	var pre_confirmed: int = peer.status().confirmed_frame
 	var code: int = 0
 	var error: Variant = null
 	match op.kind:
@@ -124,7 +134,7 @@ func _operation(op: Dictionary, index: int) -> bool:
 			code = peer.poll(op.now_us)
 		"deliver":
 			code = peer.receive_and_poll(raw_packets[op.packet], _id(packets[op.packet].from), op.now_us)
-	if op.kind != "step" and code != I.Code.OK:
+	if op.kind != "step" and code != I.Code.OK and not (scenario_settings.has("lifecycle") and code == I.Code.TERMINATED):
 		_fail("network operation rejected")
 		return false
 	var outgoing: Array[int] = []
@@ -149,13 +159,17 @@ func _operation(op: Dictionary, index: int) -> bool:
 				"kind": "input", "ack_frame": message.ack_frame, "start_frame": message.start_frame, "players": Array(message.players), "frames": frames, "statuses": statuses
 			}
 		elif message.kind != T.Kind.INPUT_ACK:
-			_fail("unsupported outgoing kind")
-			return false
+			semantic = Lifecycle.semantic(message)
+			if semantic.is_empty() or not scenario_settings.has("lifecycle"):
+				_fail("unsupported outgoing kind")
+				return false
 		var id: int = packets.size()
 		outgoing.append(id)
 		packets.append({"id": id, "from": player, "to": packet.to.decode_u64(0) - 1, "semantic": semantic})
 		raw_packets.append(packet.bytes.duplicate())
 	var game: RefCounted = games[player]
+	observed_events.clear()
+	var extensions: Array[Dictionary] = _events(peer)
 	records.append(
 		{
 			"index": index,
@@ -165,12 +179,16 @@ func _operation(op: Dictionary, index: int) -> bool:
 			"confirmed_frame": peer.status().confirmed_frame,
 			"error": error,
 			"requests": game.requests.duplicate(true),
-			"events": [],
-			"extension_events": _events(peer),
+			"events": observed_events.duplicate(true),
+			"extension_events": extensions,
 			"outgoing": outgoing,
 			"state": game.game.bytes().hex_encode()
 		}
 	)
+	if scenario_settings.has("lifecycle"):
+		records[-1].pre_state = pre_state
+		records[-1].pre_confirmed = pre_confirmed
+		records[-1].metrics = Lifecycle.metrics(peer, player, peers.size(), op.now_us)
 	game.requests.clear()
 	return true
 
@@ -181,7 +199,16 @@ func _events(peer: RefCounted) -> Array[Dictionary]:
 		var copy: Dictionary = event.duplicate(true)
 		if copy.get("peer") is PackedByteArray:
 			copy.peer = copy.peer.decode_u64(0) - 1
-		result.append(copy)
+		if copy.kind == "inputs_received" or (copy.kind == "disconnected" and typeof(copy.get("reason")) == TYPE_INT and copy.reason == 255):
+			result.append(copy)
+		else:
+			if copy.has("disconnect_timeout_ms"):
+				copy.disconnect_timeout = copy.disconnect_timeout_ms
+				copy.erase("disconnect_timeout_ms")
+			for key: String in ["local_checksum", "remote_checksum"]:
+				if copy.get(key) is PackedByteArray:
+					copy[key] = copy[key].hex_encode()
+			observed_events.append(copy)
 	return result
 
 
@@ -240,11 +267,25 @@ func _integer(value: Variant, low: int, high: int) -> bool:
 
 
 func _valid(value: Variant) -> bool:
-	if not _fields(value, ["format", "players", "input_delay", "max_prediction", "operations"]):
+	var required: Array = ["format", "players", "input_delay", "max_prediction", "operations"]
+	if value is Dictionary and value.has("lifecycle"):
+		required.append("lifecycle")
+	if not _fields(value, required):
 		return false
 	for field: String in ["format", "players", "input_delay", "max_prediction"]:
 		var bounds: Array = {"format": [1, 1], "players": [2, 8], "input_delay": [0, 2], "max_prediction": [2, 8]}[field]
 		if not _integer(value[field], bounds[0], bounds[1]):
+			return false
+	if value.has("lifecycle"):
+		var settings: Variant = value.lifecycle
+		if not _fields(settings, ["quality_us", "keepalive_us", "notify_us", "timeout_us", "checksum_interval", "divergent_peer"]):
+			return false
+		for key: String in ["quality_us", "keepalive_us"]:
+			if not _integer(settings[key], 1000, 100000000):
+				return false
+		if not _integer(settings.notify_us, 1, 9999999) or not _integer(settings.timeout_us, int(settings.notify_us) + 1, 10000000):
+			return false
+		if not _integer(settings.checksum_interval, 0, 60) or not _integer(settings.divergent_peer, -1, int(value.players) - 1):
 			return false
 	if not value.operations is Array or value.operations.is_empty() or value.operations.size() > 10000:
 		return false
@@ -278,6 +319,10 @@ func _canonical(source: Dictionary) -> Dictionary:
 			if op.kind == "step":
 				converted.bytes = op.bytes
 		operations.append(converted)
+	if source.has("lifecycle"):
+		result.lifecycle = {}
+		for key: String in source.lifecycle:
+			result.lifecycle[key] = int(source.lifecycle[key])
 	result.operations = operations
 	return result
 

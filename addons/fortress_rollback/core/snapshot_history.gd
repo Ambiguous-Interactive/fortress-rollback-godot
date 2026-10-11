@@ -165,6 +165,18 @@ func inspect(frame: int, generation: int = -1) -> Inspection:
 	return result
 
 
+## Owned checksum metadata only; never duplicates snapshot payloads.
+func retained_checksums() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if _is_busy():
+		return result
+	for slot: Slot in _slots:
+		if slot.frame >= 0 and slot.checksum.size() == 16:
+			result.append({"frame": slot.frame, "generation": slot.generation, "checksum": slot.checksum.duplicate()})
+	result.sort_custom(func(left: Dictionary, right: Dictionary) -> bool: return left.frame < right.frame)
+	return result
+
+
 func generation_for(frame: int) -> Inspection:
 	return inspect(frame)
 

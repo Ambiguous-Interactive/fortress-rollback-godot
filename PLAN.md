@@ -38,6 +38,7 @@ Local development contracts and evidence entry points:
 - [Fixed-peer byte handshake and injected time/token API](docs/handshake.md).
 - [Actual upstream/Godot handshake observations and scoped model refinement](docs/oracle-handshake.md).
 - [Fixed-membership byte sessions and transport-facing API](docs/peer-session.md).
+- [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).
@@ -135,9 +136,10 @@ shared ordered request engine, local sync-test mode and synchronous game driver.
 `make oracle-probes` compares production Godot sync-test requests and canonical
 bytes, including snapshotted PRNG and pending-event games, directly with pinned upstream sessions. External-input tests verify
 asymmetric prediction and corrected replay. `make p2p-probes` compares actual
-upstream and Godot byte sessions across 2–8 slots, delayed inputs and packet faults.
+upstream and Godot byte sessions across 2–8 slots, delayed inputs, packet faults
+and scoped timing, checksum and terminal observations.
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
-retains complete timing/lifecycle vocabulary and broader partition coverage.
+retains long-lived partition/fairness vocabulary and first-divergence shrinking.
 These scoped gates do not establish browser or full-feature release parity.
 
 | Layer | Responsibility |

@@ -13,6 +13,9 @@ from run import setup_rust, rust_environment
 from launch import execute
 from p2p_contract import validate, validate_scenario, compare, REVISION
 from p2p_controls import process_controls
+import p2p_lifecycle_corpus
+import p2p_lifecycle
+import p2p_lifecycle_controls
 
 PREFIX = 'FORTRESS_P2P_RESULT '
 
@@ -47,6 +50,7 @@ def corpus(binary, selected=None):
             name = f'mesh_{players}_{mode}'
             if selected is None or selected == name:
                 cases[name] = build_case(binary, players, 0, mode)
+    cases.update(p2p_lifecycle_corpus.corpus(binary, source, selected))
     return cases
 
 
@@ -110,6 +114,8 @@ def build_case(binary, players, delay, mode):
 
 
 def negative_controls(actual, expected, scenario):
+    if 'lifecycle' in scenario:
+        return p2p_lifecycle_controls.controls(actual, expected, scenario)
     request_op = next(i for i, r in enumerate(actual['records']) if any(q['kind'] == 'advance' for q in r['requests']))
     request_index = next(i for i, q in enumerate(actual['records'][request_op]['requests']) if q['kind'] == 'advance')
     controls = {
@@ -217,13 +223,16 @@ def main():
         if actuals[0] != actuals[1]:
             raise ValueError('Godot repeat mismatch')
         path = args.output / (name + '-actual.json'); path.write_text(json.dumps(actuals[0], indent=2) + '\n')
+        controls = negative_controls(actuals[0], expected, scenario)
+        lifecycle_evidence = p2p_lifecycle.corpus_evidence(name, expected, controls) if 'lifecycle' in scenario else {}
         evidence.append({'name': name, 'operations': len(scenario['operations']), 'packets': len(expected['packets']),
             'scenario_sha256': digest(submitted), 'source_sha256': digest(raw), 'actual_sha256': digest(path),
-            'negative_controls': negative_controls(actuals[0], expected, scenario), 'fresh_process_repeat_equal': True})
+            'negative_controls': controls, 'lifecycle_evidence': lifecycle_evidence, 'fresh_process_repeat_equal': True})
         print(name + ': actual input/ACK packets, ordered callbacks and confirmation match twice', flush=True)
     process_evidence = process_controls(binary, args.godot, cases['mesh_2_delay_0'],
         json.loads((args.output / 'mesh_2_delay_0-source.json').read_text()),
         json.loads((args.output / 'mesh_2_delay_0-actual.json').read_text()), args.output) if 'mesh_2_delay_0' in cases else []
+    process_evidence.extend(p2p_lifecycle_controls.process_controls(binary, args.godot, cases, args.output))
     require_unchanged('local source inventory', hashes, {str(p.relative_to(ROOT)): digest(p) for p in sorted(source_files())})
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(args.godot))

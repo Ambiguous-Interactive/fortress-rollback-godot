@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add peer RTT, pacing hints, interruption and resume events, and confirmed game checksums. Fixed-membership sessions halt on timeout, closure or desync; create a new session to restart.
+
 - Add fixed-membership byte sessions for 2–8 player slots with retained input retries, cumulative ACKs and mesh confirmation. Applications supply delivery and drain bounded outputs.
 
 - Add a playable two-peer packet-loss example with prediction stalls and recovery.

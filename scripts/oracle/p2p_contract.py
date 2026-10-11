@@ -1,16 +1,21 @@
 """Strict multiplayer observations and independent submitted-input canonical prefixes."""
 from copy import deepcopy
+import p2p_lifecycle as lifecycle
 from contract import fields, integer, hex_bytes, checksum, initial_game_state, advance_game_state
 
 REVISION = 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
 
 
 def validate_scenario(value):
-    fields(value, 'format players input_delay max_prediction operations', 'p2p scenario')
+    if type(value) is not dict:
+        raise ValueError('p2p scenario: invalid object')
+    fields(value, 'format players input_delay max_prediction operations' + (' lifecycle' if 'lifecycle' in value else ''), 'p2p scenario')
     integer(value['format'], 1, 1, 'format')
     integer(value['players'], 2, 8, 'players')
     integer(value['input_delay'], 0, 2, 'delay')
     integer(value['max_prediction'], 2, 8, 'prediction')
+    if 'lifecycle' in value:
+        lifecycle.settings(value['lifecycle'], value['players'])
     if type(value['operations']) is not list or not 1 <= len(value['operations']) <= 10000:
         raise ValueError('operation inventory')
     previous = 0
@@ -41,6 +46,11 @@ def packet(value, players, source):
     body = value['semantic']
     if type(body) is not dict or type(body.get('kind')) is not str:
         raise ValueError('semantic packet')
+    if body['kind'] in {'quality_report', 'quality_reply', 'checksum_report', 'keep_alive', 'goodbye'}:
+        if source:
+            _raw_header(value['raw'])
+        lifecycle.control(value, source)
+        return
     fields(body, 'kind ack_frame' if body['kind'] == 'input_ack' else 'kind start_frame ack_frame statuses players frames', 'semantic body')
     integer(body['ack_frame'], -1, 10000, 'ack')
     if body['kind'] == 'input':
@@ -63,14 +73,7 @@ def packet(value, players, source):
     elif body['kind'] != 'input_ack':
         raise ValueError('unsupported packet')
     if source:
-        raw = value['raw']; fields(raw, 'header body', 'raw packet')
-        header = raw['header']; fields(header, 'conn_id flags protocol_version sentinel', 'header')
-        integer(header['conn_id'], 1, 4294967295, 'connection')
-        integer(header['flags'], 0, 0, 'flags'); integer(header['protocol_version'], 2, 2, 'protocol version')
-        if type(header['sentinel']) is not list or len(header['sentinel']) != 2:
-            raise ValueError('sentinel')
-        for actual, expected in zip(header['sentinel'], [245, 82]):
-            integer(actual, expected, expected, 'sentinel byte')
+        raw = value['raw']; _raw_header(raw)
         kind = 'Input' if body['kind'] == 'input' else 'InputAck'
         fields(raw['body'], kind, 'raw body')
         raw_body = raw['body'][kind]
@@ -91,6 +94,17 @@ def packet(value, players, source):
                 integer(byte, 0, 255, 'compressed byte')
 
 
+def _raw_header(raw):
+    fields(raw, 'header body', 'raw packet')
+    header = raw['header']; fields(header, 'conn_id flags protocol_version sentinel', 'header')
+    integer(header['conn_id'], 1, 4294967295, 'connection')
+    integer(header['flags'], 0, 0, 'flags'); integer(header['protocol_version'], 2, 2, 'protocol version')
+    if type(header['sentinel']) is not list or len(header['sentinel']) != 2:
+        raise ValueError('sentinel')
+    for actual, expected in zip(header['sentinel'], [245, 82]):
+        integer(actual, expected, expected, 'sentinel byte')
+
+
 def validate(value, scenario, source=False):
     validate_scenario(scenario)
     fields(value, 'format complete upstream_revision scenario records packets', 'p2p trace')
@@ -106,12 +120,18 @@ def validate(value, scenario, source=False):
         raise ValueError('packet inventory')
     for index, outgoing in enumerate(value['packets']):
         packet(outgoing, scenario['players'], source)
+        if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in {'input', 'input_ack'}:
+            raise ValueError('lifecycle packet outside explicit profile')
         if outgoing['id'] != index:
             raise ValueError('packet position')
     states = [initial_game_state(scenario['players'], 2) for _ in range(scenario['players'])]
+    divergent = scenario.get('lifecycle', {}).get('divergent_peer', -1)
+    if divergent >= 0:
+        states[divergent] = states[divergent][:4] + (1).to_bytes(4, 'little') + states[divergent][8:]
     snapshots = [{} for _ in states]; samples = [{} for _ in states]; next_packet = 0
     for index, record in enumerate(value['records']):
-        fields(record, 'index peer frame_before frame_after confirmed_frame error requests events outgoing state' + ('' if source else ' extension_events'), 'record')
+        fields(record, 'index peer frame_before frame_after confirmed_frame error requests events outgoing state'
+               + ('' if source else ' extension_events') + (' metrics pre_state pre_confirmed' if 'lifecycle' in scenario else ''), 'record')
         integer(record['index'], index, index, 'record index')
         op = scenario['operations'][index]
         peer = op.get('peer')
@@ -130,14 +150,31 @@ def validate(value, scenario, source=False):
             if samples[peer][record['frame_before'] + scenario['input_delay']] != op['bytes']:
                 raise ValueError('changing stalled local sample')
         if record['error'] is not None and (type(record['error']) is not str or record['error'] not in {
-                'PredictionThreshold', 'PREDICTION_STALL'}):
+                'PredictionThreshold', 'PREDICTION_STALL', 'DESYNC'}):
             raise ValueError('unrecognized error')
-        if type(record['events']) is not list or record['events']:
+        if 'lifecycle' in scenario:
+            hex_bytes(record['pre_state'], 4 * (scenario['players'] + 3), 'pre state')
+            integer(record['pre_confirmed'], -1, 10000, 'pre confirmed')
+            if bytes.fromhex(record['pre_state']) != states[peer]:
+                raise ValueError('lifecycle pre state')
+            lifecycle.events(record['events'], scenario['players'])
+            lifecycle.metrics(record['metrics'], peer, scenario['players'])
+        elif type(record['events']) is not list or record['events']:
             raise ValueError('unmodeled event')
         if not source:
             if type(record['extension_events']) is not list:
                 raise ValueError('extension event inventory')
             for event in record['extension_events']:
+                if type(event) is not dict:
+                    raise ValueError('extension event: invalid object')
+                if event.get('kind') == 'disconnected' and event.get('reason') == 255:
+                    fields(event, 'kind peer reason', 'terminal extension')
+                    integer(event['peer'], 0, scenario['players'] - 1, 'terminal extension peer')
+                    integer(event['reason'], 255, 255, 'terminal extension reason')
+                    if (index != len(value['records']) - 1 or event['peer'] == peer
+                            or not any(e['kind'] == 'desync_detected' for e in record['events'])):
+                        raise ValueError('terminal extension outside final desync policy')
+                    continue
                 fields(event, 'kind start_frame frame_count peer', 'extension event')
                 if event['kind'] != 'inputs_received' or op['kind'] != 'deliver':
                     raise ValueError('unmodeled extension event')
@@ -190,10 +227,17 @@ def validate(value, scenario, source=False):
             raise ValueError('outgoing inventory')
         for packet_id in record['outgoing']:
             integer(packet_id, next_packet, next_packet, 'outgoing id'); next_packet += 1
+            if packet_id >= len(value['packets']):
+                raise ValueError('outgoing packet inventory')
+            if value['packets'][packet_id]['semantic']['kind'] == 'goodbye':
+                if source or index != len(value['records']) - 1 or not any(e['kind'] in {'disconnected', 'desync_detected'} for e in record['events']):
+                    raise ValueError('goodbye outside final terminal policy')
             if value['packets'][packet_id]['from'] != peer:
                 raise ValueError('outgoing sender')
     if next_packet != len(value['packets']):
         raise ValueError('unconsumed packet')
+    if not source and 'lifecycle' in scenario:
+        lifecycle.terminal_notifications(value, scenario)
     return value
 
 
@@ -224,6 +268,8 @@ def normalize(value, source=False):
 def compare(actual, expected, scenario):
     validate(expected, scenario, True); validate(actual, scenario)
     actual = normalize(actual); expected = normalize(expected, True)
+    if 'lifecycle' in scenario:
+        lifecycle.terminal_projection(actual, expected, scenario)
     for index, (left, right) in enumerate(zip(actual['records'], expected['records'])):
         for key in right:
             if left[key] != right[key]:

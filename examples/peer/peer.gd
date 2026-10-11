@@ -11,6 +11,7 @@ var _label: Label
 func _ready() -> void:
 	_label = Label.new()
 	_label.position = Vector2(24, 16)
+	_label.add_theme_font_size_override("font_size", 14)
 	add_child(_label)
 	_match.reset()
 	_update_label()
@@ -42,6 +43,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_match.reorder = not _match.reorder
 		KEY_SPACE:
 			_match.is_partitioned = not _match.is_partitioned
+		KEY_X:
+			_match.inject_desync()
 	_update_label()
 
 
@@ -52,7 +55,7 @@ func _buttons(left: Key, right: Key, up: Key, down: Key) -> int:
 
 func _update_label() -> void:
 	_label.text = ("Two peer sessions | actual encoded bytes in this process | failure: %d\n"
-		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets\n"
+		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets | X: wrong game rules\n"
 		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s\n"
 		+ "Sent %d | Dropped %d | Delivered %d | Queued %d / 256") % [
 		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
@@ -64,6 +67,12 @@ func _update_label() -> void:
 		_label.text += "\nPeer %d: %s | frame %d | confirmed %d | ACK %d | pending %d | restores %d | stalls %d" % [
 			player + 1, network.state, session.status().current_frame, session.status().confirmed_frame,
 			peer.last_acked_frame, peer.pending_frames, _match.games[player].restores, _match.stalls[player]]
+		_label.text += "\n  RTT %d ms | ahead %d | interrupted %s | event %s | terminal reason %d" % [
+			peer.get("round_trip_time_ms", 0), network.get("frames_ahead", 0), str(peer.get("interrupted", false)),
+			_match.latest_events[player].get("kind", "none"), session.status().reason]
+		var event: Dictionary = _match.latest_events[player]
+		if event.get("kind", "") == "desync_detected":
+			_label.text += " | mismatch frame %d" % event.frame
 
 
 func _draw() -> void:

@@ -109,8 +109,16 @@ polling, advancement or request completion inside that callback. Status and
 termination remain available; the driver acknowledges only after releasing the
 guard. Test valid request identities as well as terminate-then-reconfigure.
 
-Protocol, P2P event lifecycle and browser support remain separately gated.
-Do not infer those from local request parity or deterministic delivery tests.
+Audit low prediction windows through actual upstream callbacks before claiming
+checksum parity. No SAVE callbacks means no callback-supplied checksum evidence;
+extra product snapshot capture must be tested and labeled as an extension.
+Use the last completed advance's confirmation boundary for exchange, and hide
+snapshots invalidated by pending corrections until actual repair completes.
+The [peer lifecycle guide](../../../docs/peer-lifecycle.md) owns product policy;
+the [P2P oracle](../../../docs/oracle-p2p.md) owns the source comparison scope.
+Protocol and P2P evidence require their own boundary tests and observations.
+Browser support remains separately gated; local request parity and deterministic
+delivery tests cannot establish it.
 
 ## Code Samples
 

@@ -159,6 +159,24 @@ func received_frames() -> PackedInt64Array:
 	return _received.duplicate()
 
 
+## Completed saved boundaries only. Hide snapshots affected by pending repairs and active callbacks.
+## Sending may include the confirmed boundary; comparison requires strictly earlier frames.
+func confirmed_checksums(include_boundary: bool = false) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if _mutation_code() != Code.OK or not _config.checksums_enabled:
+		return result
+	var ceiling: int = mini(_current, _confirmed() if include_boundary else _confirmed() - 1)
+	for queue: Queue in _queues:
+		var incorrect: int = queue.first_incorrect_frame()
+		if incorrect != -1:
+			# State at f precedes input f; only later snapshots require repair.
+			ceiling = mini(ceiling, incorrect)
+	for saved: Dictionary in _history.retained_checksums():
+		if saved.frame <= ceiling:
+			result.append(saved)
+	return result
+
+
 ## Fixed-membership mesh confirmation; enable before simulation, then advance monotonically.
 ## Transport owns the endpoint gossip fold; this engine validates its local receipt ceiling.
 func set_confirmation_limit(frame: int) -> Types.Result:
@@ -217,7 +235,7 @@ func begin_advance() -> Types.Result:
 	if not can_advance and _plan.is_empty() and not save_mesh_boundary:
 		return Types.Result.new(Code.PREDICTION_STALL)
 	if can_advance or save_mesh_boundary:
-		if (_config.sync_test and _config.check_distance > 0) or (not _config.sync_test and _config.max_prediction_frames > 0):
+		if (_config.sync_test and _config.check_distance > 0) or (not _config.sync_test and (_config.max_prediction_frames > 0 or _config.capture_confirmed_snapshots)):
 			_plan.append(Vector2i(Kind.SAVE, _current))
 	if can_advance:
 		_plan.append(Vector2i(Kind.ADVANCE, _current))
@@ -271,6 +289,10 @@ func status() -> Types.Status:
 	result.reason = _reason
 	result.failure_frame = _failure_frame
 	result.failure_kind = _failure_kind
+	for queue: Queue in _queues:
+		var incorrect: int = queue.first_incorrect_frame()
+		if incorrect != -1:
+			result.pending_rollback_frame = incorrect if result.pending_rollback_frame == -1 else mini(result.pending_rollback_frame, incorrect)
 	return result
 
 
@@ -279,9 +301,9 @@ func drain_events() -> Array[RefCounted]:
 
 
 ## Termination is final until explicit configure creates a new session.
-func terminate(reason: int = Code.TERMINATED) -> void:
+func terminate(reason: int = Code.TERMINATED, frame: int = -1) -> void:
 	if _reason == Code.OK:
-		_fatal(reason if reason != Code.OK else Code.TERMINATED)
+		_fatal(reason if reason != Code.OK else Code.TERMINATED, frame if frame >= 0 and frame <= Queue.FRAME_MAX else -1)
 
 
 func _next_request(batch_id: int) -> Types.Request:

@@ -10,6 +10,8 @@ const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
+const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
+const Checksums = preload("res://addons/fortress_rollback/core/peer_checksums.gd")
 const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
 
 
@@ -30,10 +32,18 @@ var _peers: Dictionary = {}
 var _ids: Array[PackedByteArray] = []
 var _busy: bool = false
 var _now: int = -1
+var _lifecycle: L.Options
+var _checksums: Checksums
+var _events: Array[Dictionary] = []
+var _fatal_event: Dictionary = {}
+var _next_wait: int = 0
+var _frames_ahead: int = 0
+var _terminal_notified: bool = false
+var _checksum_confirmation: int = -1
 
 
 ## Caller supplies transport identity, clock, tokens and game callbacks.
-func configure(config: Variant, local: Variant, game: Variant, handshake_options: Variant, input_options: Variant) -> int:
+func configure(config: Variant, local: Variant, game: Variant, handshake_options: Variant, input_options: Variant, lifecycle_options: Variant = null) -> int:
 	if _busy:
 		return I.Code.BUSY
 	if _core != null:
@@ -42,7 +52,10 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		return I.Code.INVALID_ARGUMENT
 	if not local is T.Message or not V.config(local.config) or not game is RefCounted:
 		return I.Code.INVALID_ARGUMENT
-	if not handshake_options is H.Options or not input_options is I.Options:
+	if not handshake_options is H.Options or not H.valid_options(handshake_options) or not input_options is I.Options or not I.valid_options(input_options):
+		return I.Code.INVALID_ARGUMENT
+	var controls: Variant = L.Options.new() if lifecycle_options == null else lifecycle_options
+	if not L.valid_options(controls):
 		return I.Code.INVALID_ARGUMENT
 	var profile: T.Config = local.config
 	if profile.player_count != config.player_count or profile.input_width != config.input_width or profile.input_delay != config.input_delay:
@@ -63,8 +76,10 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		return I.Code.INVALID_ARGUMENT
 	if remotes.size() > 1 and (config.max_prediction_frames == 0 or (config.max_prediction_frames == 1 and config.input_delay == 0)):
 		return I.Code.INVALID_ARGUMENT
+	var core_config: Config = config.owned_copy()
+	core_config.capture_confirmed_snapshots = controls.enabled and config.checksums_enabled and profile.desync_interval > 0
 	var core: Session = Session.new()
-	if core.configure(config) != Types.Code.OK or core.set_confirmation_limit(-1).code != Types.Code.OK:
+	if core.configure(core_config) != Types.Code.OK or core.set_confirmation_limit(-1).code != Types.Code.OK:
 		return I.Code.INVALID_ARGUMENT
 	var driver: Driver = Driver.new()
 	if driver.configure(core, game) != Types.Code.OK:
@@ -78,17 +93,22 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 			if profile.roster[slot] == remotes[key]:
 				slots.append(slot)
 		var endpoint: Endpoint = Endpoint.new()
-		var code: int = endpoint.configure(local, remotes[key], handshake_options, input_options, _accept_remote.bind(slots))
+		var code: int = endpoint.configure(local, remotes[key], handshake_options, input_options, _accept_remote.bind(slots), controls)
 		if code != I.Code.OK:
 			return code
 		peers[key] = endpoint
 	_core = core
 	_driver = driver
-	_config = config.owned_copy()
+	_config = core_config.owned_copy()
 	_config.local_players = locals
 	_peers = peers
 	for key: String in keys:
 		_ids.append(remotes[key].duplicate())
+	_lifecycle = L.copy_options(controls)
+	_checksums = Checksums.new()
+	_checksums.configure(
+		_ids, profile.desync_interval if _lifecycle.enabled and config.checksums_enabled else 0, _lifecycle.max_checksum_frames, config.max_prediction_frames + config.input_delay
+	)
 	return I.Code.OK
 
 
@@ -154,6 +174,13 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	if code != Types.Code.OK:
 		return Driver.StepResult.new(code, before, before)
 	_now = now_us
+	if _lifecycle.enabled:
+		var polled: int = _poll(now_us, [])
+		if polled != I.Code.OK:
+			return Driver.StepResult.new(_step_failure(polled), before, before)
+	var control_code: int = _service_controls(now_us, true)
+	if control_code != I.Code.OK:
+		return Driver.StepResult.new(_step_failure(control_code), before, before)
 	_busy = true
 	var scheduled: int = -1
 	for sample: Driver.LocalInput in local_inputs:
@@ -173,8 +200,9 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 		var sent: int = endpoint.submit(scheduled, data, statuses, now_us)
 		if sent != I.Code.OK:
 			_busy = false
+			_collect_events()
 			_check_failure()
-			return Driver.StepResult.new(_step_code(sent), before, before)
+			return Driver.StepResult.new(_step_failure(sent), before, before)
 	code = _confirmation_code()
 	if code != Types.Code.OK:
 		_busy = false
@@ -182,7 +210,12 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	_now = now_us
 	var empty: Array[Driver.LocalInput] = []
 	var advanced: Driver.StepResult = _driver.step(now_us, empty)
+	if advanced.code in [Types.Code.OK, Types.Code.PREDICTION_STALL]:
+		_checksum_confirmation = _core.status().confirmed_frame
 	_busy = false
+	_service_controls(now_us, false)
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return Driver.StepResult.new(_core.status().reason, before, _core.status().current_frame)
 	return advanced
 
 
@@ -206,7 +239,7 @@ func network_status() -> Dictionary:
 		state = "running" if _running() else "synchronizing"
 		if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 			state = "terminated"
-	return {"state": state, "peers": peers, "last_now_us": _now}
+	return {"state": state, "peers": peers, "last_now_us": _now, "frames_ahead": _frames_ahead, "checksums": _checksums.status() if _checksums != null else {}}
 
 
 func drain_outbox() -> Array[Packet]:
@@ -223,11 +256,32 @@ func drain_events() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	if _busy:
 		return result
-	for index: int in range(_ids.size()):
-		for event: Dictionary in _endpoint(index).drain_events():
-			event["peer"] = _ids[index].duplicate()
-			result.append(event)
+	_collect_events()
+	for event: Dictionary in _events:
+		result.append(_owned_event(event))
+	_events.clear()
+	if not _fatal_event.is_empty():
+		result.append(_owned_event(_fatal_event))
+		_fatal_event.clear()
 	return result
+
+
+## Fixed-membership close queues goodbye on every link and halts advancement.
+func close(now_us: Variant, reason: Variant = 0) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if typeof(reason) != TYPE_INT or reason < 0 or reason > 255:
+		return I.Code.INVALID_ARGUMENT
+	_now = now_us
+	for index: int in range(_ids.size()):
+		var closed: int = _endpoint(index).close(now_us, reason)
+		if closed != I.Code.OK:
+			code = closed
+	_collect_events(true)
+	_core.terminate(Types.Code.TERMINATED)
+	_terminate_links()
+	return code
 
 
 func drain_transitions() -> Array[Dictionary]:
@@ -279,9 +333,11 @@ func _receive(packet: Variant, attributed_sender: PackedByteArray, now_us: int, 
 	_busy = false
 	if code == I.Code.OK:
 		_now = now_us
+	_collect_events()
 	_check_failure()
 	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
 		_confirmation_code()
+		_service_controls(now_us, false)
 	return code
 
 
@@ -290,14 +346,19 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = []) -> int:
 	if statuses.is_empty():
 		statuses = _statuses()
 	for index: int in range(_ids.size()):
+		if _lifecycle.enabled:
+			_endpoint(index).update_local_frame_advantage(_core.status().current_frame)
 		var code: int = _endpoint(index).poll(now_us, null if tokens.is_empty() else tokens[index], statuses)
 		if code != I.Code.OK:
+			_collect_events()
 			_check_failure()
 			return code
 	_now = now_us
+	_collect_events()
 	_check_failure()
 	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
 		_confirmation_code()
+		_service_controls(now_us, false)
 	return I.Code.OK
 
 
@@ -367,6 +428,10 @@ func _check_failure() -> void:
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 
 
+func _step_failure(code: int) -> int:
+	return _core.status().reason if _core.status().lifecycle == Types.Lifecycle.TERMINATED else _step_code(code)
+
+
 func _step_code(code: int) -> int:
 	match code:
 		I.Code.BUSY:
@@ -380,3 +445,137 @@ func _step_code(code: int) -> int:
 		I.Code.TERMINATED:
 			return Types.Code.TERMINATED
 	return Types.Code.PROTOCOL_FAILED
+
+
+func _collect_events(local_close: bool = false) -> void:
+	if _core == null:
+		return
+	for index: int in range(_ids.size()):
+		for event: Dictionary in _endpoint(index).drain_events():
+			event["peer"] = _ids[index].duplicate()
+			if event.kind == "checksum_received":
+				if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+					continue
+				var code: int = _checksums.receive(_ids[index], event.frame, event.checksum, _core.status().current_frame)
+				if code != Types.Code.OK:
+					_fatal_event = _owned_event(_checksums.failure)
+					_core.terminate(code)
+				continue
+			if event.kind == "event_capacity_exceeded" or (event.kind == "disconnected" and not local_close):
+				_core.terminate(Types.Code.PROTOCOL_FAILED)
+			_publish_event(event)
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		_terminate_links()
+
+
+func _publish_event(event: Dictionary) -> void:
+	if _events.size() >= _lifecycle.max_events:
+		if _fatal_event.is_empty():
+			_fatal_event = {"kind": "event_capacity_exceeded", "terminal_cause": [_owned_event(event)]}
+		elif _fatal_event.kind == "event_capacity_exceeded" and event.kind in ["disconnected", "event_capacity_exceeded"]:
+			_retain_terminal_cause(event)
+		_core.terminate(Types.Code.PROTOCOL_FAILED)
+	else:
+		_events.append(_owned_event(event))
+
+
+func _retain_terminal_cause(event: Dictionary) -> void:
+	var causes: Array = _fatal_event.terminal_cause
+	for index: int in range(1, causes.size()):
+		if causes[index].peer == event.peer:
+			causes[index] = _owned_event(event)
+			return
+	if causes.size() <= _ids.size():
+		causes.append(_owned_event(event))
+
+
+func _service_controls(now_us: int, send_reports: bool) -> int:
+	_collect_events()
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return I.Code.TERMINATED
+	if not _lifecycle.enabled:
+		return I.Code.OK
+	var current: int = _core.status().current_frame
+	if send_reports:
+		_frames_ahead = -2147483648
+	for index: int in range(_ids.size()):
+		if send_reports:
+			_frames_ahead = maxi(_frames_ahead, _endpoint(index).status().average_frame_advantage)
+	if send_reports and current > _next_wait and _frames_ahead >= 3:
+		_next_wait = current + 60
+		_publish_event({"kind": "wait_recommendation", "skip_frames": _frames_ahead})
+		if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+			_terminate_links()
+			return I.Code.TERMINATED
+	if send_reports:
+		# Compare retained pairs before scheduling can evict their local/remote inventories.
+		# Publication follows the outgoing report, retaining the source packet order.
+		var prior_comparison: int = _checksums.compare(_core, _ids, _checksum_confirmation)
+		var prior_failure: Dictionary = _owned_event(_checksums.failure) if prior_comparison != Types.Code.OK else {}
+		var scheduled: Dictionary = _checksums.scheduled(_core, _checksum_confirmation)
+		if prior_comparison == Types.Code.OK and not _checksums.failure.is_empty():
+			return _checksum_failure(Types.Code.HISTORY_UNAVAILABLE, _checksums.failure)
+		if not scheduled.is_empty():
+			for index: int in range(_ids.size()):
+				if _checksums.needs_send(_ids[index], scheduled.frame):
+					var sent: int = _endpoint(index).send_checksum(scheduled.frame, scheduled.checksum, now_us)
+					if sent != I.Code.OK:
+						if prior_comparison != Types.Code.OK:
+							return _checksum_failure(prior_comparison, prior_failure)
+						_collect_events()
+						_check_failure()
+						return sent
+					_checksums.sent(_ids[index], scheduled.frame)
+		if prior_comparison != Types.Code.OK:
+			return _checksum_failure(prior_comparison, prior_failure)
+	if not send_reports:
+		return I.Code.OK
+	var compared: int = _checksums.compare(_core, _ids, _checksum_confirmation)
+	if compared != Types.Code.OK:
+		return _checksum_failure(compared, _checksums.failure)
+	return I.Code.OK
+
+
+func _checksum_failure(code: int, diagnostic: Dictionary) -> int:
+	_fatal_event = _owned_event(diagnostic)
+	_core.terminate(code, diagnostic.get("frame", -1))
+	_terminate_links()
+	return I.Code.TERMINATED
+
+
+func _owned_event(event: Dictionary) -> Dictionary:
+	return _owned_value(event)
+
+
+# Variant accommodates bounded event dictionaries, arrays and scalar metadata.
+func _owned_value(value: Variant) -> Variant:
+	if value is PackedByteArray:
+		return value.duplicate()
+	if value is Array:
+		var result: Array = []
+		for entry: Variant in value:
+			result.append(_owned_value(entry))
+		return result
+	if value is Dictionary:
+		var result: Dictionary = {}
+		for key: Variant in value:
+			result[key] = _owned_value(value[key])
+		return result
+	return value
+
+
+func _terminate_links() -> void:
+	if _terminal_notified or not _lifecycle.enabled or _now < 0:
+		return
+	_terminal_notified = true
+	var failures: Array[Dictionary] = []
+	for index: int in range(_ids.size()):
+		if _endpoint(index).status().state == "running":
+			var code: int = _endpoint(index).close(_now, 255)
+			if code != I.Code.OK:
+				failures.append({"peer": _ids[index].duplicate(), "code": code})
+	if not failures.is_empty():
+		if _fatal_event.is_empty():
+			_fatal_event = {"kind": "goodbye_backpressure", "close_failures": failures}
+		else:
+			_fatal_event["close_failures"] = failures

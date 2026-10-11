@@ -19,6 +19,7 @@ var history_slots: int = 9
 var max_snapshot_bytes: int = 0
 var storage_budget_bytes: int = 0
 var checksums_enabled: bool = true
+var capture_confirmed_snapshots: bool = false
 var sync_test: bool = true
 
 
@@ -27,6 +28,8 @@ func validate() -> int:
 	if player_count < 2 or player_count > 8 or input_width < 1 or input_width > 65536 or neutral_input.size() != input_width:
 		return Types.Code.INVALID_CONFIGURATION
 	if max_prediction_frames < 0 or max_prediction_frames > MAX_WINDOW or check_distance < 0 or check_distance > max_prediction_frames:
+		return Types.Code.INVALID_CONFIGURATION
+	if capture_confirmed_snapshots and (sync_test or not checksums_enabled):
 		return Types.Code.INVALID_CONFIGURATION
 	if not sync_test and check_distance != 0:
 		return Types.Code.INVALID_CONFIGURATION
@@ -76,5 +79,6 @@ func owned_copy() -> RefCounted:
 	copy.max_snapshot_bytes = max_snapshot_bytes
 	copy.storage_budget_bytes = storage_budget_bytes
 	copy.checksums_enabled = checksums_enabled
+	copy.capture_confirmed_snapshots = capture_confirmed_snapshots
 	copy.sync_test = sync_test
 	return copy

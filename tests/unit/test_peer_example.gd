@@ -49,9 +49,8 @@ func run_case(name: String, context: RefCounted) -> void:
 
 
 func _recovery(context: RefCounted) -> void:
-	var game: Match = Match.new()
+	var game: Match = _observed_match(context)
 	var expected: Array[PackedByteArray] = _reference(600)
-	context.equal(game.reset(), I.Code.OK, "two independent sessions start")
 	for tick: int in range(240):
 		game.tick(_buttons(game))
 		context.equal(game.failure, I.Code.OK, "loss/reorder advances without protocol failure tick=%d" % tick)
@@ -79,10 +78,12 @@ func _recovery(context: RefCounted) -> void:
 	for tick: int in range(80):
 		game.tick(PackedInt32Array([0, 0]))
 		for peer: int in range(2):
-			var frame: int = game.games[peer].frame
-			if game.sessions[peer].status().confirmed_frame >= frame - 1:
-				snapshots[peer][frame] = game.games[peer].canonical_bytes()
-	var shared: int = mini(game.games[0].frame, game.games[1].frame) - 1
+			var observed: ObservedGame = game.games[peer]
+			var boundary: int = mini(game.sessions[peer].status().confirmed_frame + 1, observed.frame)
+			if boundary > 0 and observed.prefixes.has(boundary):
+				snapshots[peer][boundary] = observed.prefixes[boundary].duplicate()
+	var shared: int = mini(game.sessions[0].status().confirmed_frame, game.sessions[1].status().confirmed_frame) + 1
+	shared = mini(shared, mini(game.games[0].frame, game.games[1].frame))
 	context.equal(snapshots[0].has(shared) and snapshots[1].has(shared), true, "both peers retain a shared confirmed boundary")
 	if snapshots[0].has(shared) and snapshots[1].has(shared):
 		context.bytes_equal(snapshots[0][shared], snapshots[1][shared], shared, "seed=1701 full canonical state agrees after loss and partition")

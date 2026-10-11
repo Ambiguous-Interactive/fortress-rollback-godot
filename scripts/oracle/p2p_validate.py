@@ -12,15 +12,29 @@ def main():
     parser.add_argument('--scenario', required=True, type=Path)
     parser.add_argument('--source', action='store_true')
     parser.add_argument('--expected', type=Path)
+    parser.add_argument('--corpus-case')
     args = parser.parse_args()
     try:
+        if args.corpus_case is not None and args.expected is None:
+            raise ValueError('--corpus-case requires --expected')
+        if args.corpus_case is not None:
+            from p2p_lifecycle import CORPUS_REQUIREMENTS
+            if args.corpus_case not in CORPUS_REQUIREMENTS:
+                raise ValueError('unknown corpus case')
         scenario = json.loads(args.scenario.read_text(encoding='utf-8')); validate_scenario(scenario)
+        if args.corpus_case is not None and 'lifecycle' not in scenario:
+            raise ValueError('--corpus-case requires lifecycle scenario')
         raw = sys.stdin.buffer.read(4000001)
         if len(raw) > 4000000:
             raise ValueError('trace size bound')
         value = json.loads(raw.decode('utf-8')); validate(value, scenario, args.source)
         if args.expected is not None:
-            compare(value, json.loads(args.expected.read_text(encoding='utf-8')), scenario)
+            expected = json.loads(args.expected.read_text(encoding='utf-8'))
+            compare(value, expected, scenario)
+            if args.corpus_case is not None:
+                from p2p_lifecycle import corpus_evidence
+                from p2p_lifecycle_controls import controls
+                corpus_evidence(args.corpus_case, expected, controls(value, expected, scenario))
     except (ValueError, OSError) as error:
         print('p2p validation: ' + str(error), file=sys.stderr)
         return 2

@@ -45,6 +45,11 @@ simulation events. Enabled checksums are exactly 16 bytes in little-endian
 unsigned128 order. Readers reject underflow or trailing bytes; writers reject
 overflow with sticky errors. Views expire on completion or termination.
 Returned bytes are copies. Snapshot slots validate frame and generation.
+`confirmed_checksums(include_boundary = false)` returns owned saved-frame,
+generation and checksum metadata. Active requests and callback reentry return
+an empty inventory. Pending correction excludes affected snapshot boundaries.
+External cores can enable `capture_confirmed_snapshots` to save advancing
+lockstep boundaries; the default is false. Peer checksum exchange enables it.
 Call `reader.is_complete()` after reading a fixed-size snapshot and before
 applying restored fields. It returns false for unread trailing bytes, errors
 or expired views; request completion still belongs to the driver or expert API.
@@ -86,6 +91,8 @@ lower confirmation or implement disconnect convergence.
 the next. No completion may be duplicated, skipped, reordered or borrowed from
 another batch. Poll, submit, configure and advance return `BUSY` during a batch.
 Read-only status remains available. An abandoned batch stays busy until termination.
+`status().pending_rollback_frame` names the earliest incorrect predicted input,
+or `-1` when no correction is pending.
 Driver callbacks keep an independent mutation guard through their return, even
 when a callback explicitly terminates the session; reconfiguration is available
 only after the callback ends.

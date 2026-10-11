@@ -21,6 +21,11 @@ EXPECTED = {
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }
 EXPECTED.update({
+    'res://tests/unit/test_endpoint_lifecycle.gd': {'control_receive', 'strict_timers', 'liveness', 'quality',
+        'checksum_goodbye', 'capacity', 'pacing', 'long_running', 'retention_failure'},
+    'res://tests/unit/test_peer_lifecycle.gd': {'checksum_export', 'healthy_exchange', 'real_desync', 'terminal_timeout', 'close',
+        'checksum_conflict', 'checksum_future', 'stale_checksum', 'interrupted_resume', 'checksum_capacity', 'event_capacity', 'statistics',
+        'lockstep_checksums'},
     'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'retry', 'validation', 'retention', 'capacity', 'ownership'},
     'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save'},
     'res://tests/unit/test_peer_session.gd': {'mesh', 'loss', 'multiple_locals', 'backpressure', 'ingress',
@@ -41,6 +46,8 @@ FILES = [
 ]
 FILES += [str(path.relative_to(ROOT)) for path in sorted((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))]
 FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
+          'addons/fortress_rollback/protocol/lifecycle_types.gd', 'addons/fortress_rollback/protocol/endpoint_lifecycle.gd',
+          'tests/unit/test_endpoint_lifecycle.gd', 'tests/unit/test_peer_lifecycle.gd',
           'addons/fortress_rollback/protocol/input_endpoint_types.gd',
           'tests/unit/test_input_endpoint.gd', 'tests/unit/test_session_network_seams.gd',
           'tests/unit/test_peer_session.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
@@ -55,8 +62,10 @@ const Handshake = preload("res://tests/unit/test_handshake.gd")
 const Endpoint = preload("res://tests/unit/test_input_endpoint.gd")
 const Seams = preload("res://tests/unit/test_session_network_seams.gd")
 const Peers = preload("res://tests/unit/test_peer_session.gd")
+const Lifecycle = preload("res://tests/unit/test_endpoint_lifecycle.gd")
+const PeerLifecycle = preload("res://tests/unit/test_peer_lifecycle.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
