@@ -544,3 +544,39 @@ eleven Node controls. Runtime sources are unchanged. A new full source-bound
 receipt is running in `.cache/session-013/webrtc-default-main-final` because
 the inventoried test changed; the earlier receipt remains historical.
 Hosted final-head CI, squash merge and main CI remain required.
+
+
+The final-head full run `48878` exits zero with receipt SHA-256
+`ed6fa682e1930d865979343b133c756c7bbfb9bedbd824a43817b6413daf34fb`
+in `.cache/session-013/webrtc-default-main-final`. Independent review accepts
+all eight labels and all owned source/log bindings at head `0921395`.
+
+Hosted Reference Baseline run `38171744811` rejects Godot 4.7.2 clean room8
+with `page evaluation exceeded active progress deadline`; rooms2/4 pass.
+Artifact `11714184655` is retained under
+`.cache/session-013/ci-final-47-failure`. Printed step counts end around32/33,
+with no final-confirmation snapshots or engine/page errors. The receipt stays
+false and later labels do not execute. Missing cached watchdog times and
+per-page observation completions prevent distinguishing a renderer stall from
+a delayed all-pages sample. Add bounded diagnostics; no timing-cap or protocol
+repair follows from this evidence. Godot 4.3 browser/native transport passes.
+
+Automated review also finds that single-room negative labels still have a
+three-room outer timeout. Derive each parent timeout from its actual room count
+so cleanup hangs remain inside the reviewed job budget. Both findings remain
+in issue #72 until tested, reviewed and hosted delivery is complete. PR #71
+remains unmerged and main remains at the prior verified revision.
+
+
+The diagnostics/budget candidate freezes at 20:31 UTC. Fresh review identifies
+missing current-round progress for a completed page when its sibling hangs.
+Retain only bounded valid confirmation/receipt/ACK vectors, per-page completion
+times, cached peer state and round/elapsed/deadline times. A deterministic
+partial-round control proves new sibling frontiers survive without updating the
+cached watchdog or extending any deadline. Twelve Node and six Python witness
+controls pass, with 43 reference discovery tests (three expected skips) and
+207 source files. A uniform-1500s timeout mutant fails both single-room cases.
+Full frozen execution is underway in
+`.cache/session-013/webrtc-observation-diagnostic-frozen`. Prior passes are
+historical source-bound evidence. The hosted observation failure remains
+unrepaired until its new diagnostics establish a cause and a validated fix.

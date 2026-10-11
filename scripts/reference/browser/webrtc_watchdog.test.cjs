@@ -80,7 +80,14 @@ test('an unresponsive page evaluation cannot suppress the independent progress d
   let readings = 0;
   const clock = () => readings++ === 0 ? 0 : 19999;
   const never = { evaluate: () => new Promise(() => {}) };
-  await assert.rejects(waitGameplay([never, never], clock), /page evaluation exceeded active progress deadline/);
+  await assert.rejects(waitGameplay([never, never], clock), error => {
+    assert.match(error.message, /page evaluation exceeded active progress deadline/);
+    const diagnostic = JSON.parse(error.message.slice(error.message.indexOf('{')));
+    assert.equal(diagnostic.deadline_ms, 20000);
+    assert.deepEqual(diagnostic.peers.map(peer => peer.frame), [-1, -1]);
+    assert.deepEqual(diagnostic.evaluations, [null, null]);
+    return true;
+  });
 });
 
 test('default factory terminal setup can take over 20s without entering the frame watchdog', async () => {
@@ -168,4 +175,22 @@ test('actual default main orchestration waits for delayed terminal setup before 
   await mainModule.exports.main();
   assert.equal(terminalWaits, 2);
   assert.equal(JSON.parse(output.at(-1)).passed, true);
+});
+
+
+test('observation diagnostic retains only bounded current-round frontiers from completed siblings', async () => {
+  const { waitGameplay } = require('./webrtc_watchdog.cjs');
+  let readings = 0;
+  const clock = () => readings++ === 0 ? 0 : 19999;
+  const ready = { evaluate: async () => ({ frame: 39, done: false,
+    progress: { confirmed: 37, received: [38], acked: [37], arbitrary_history: 'ignored' } }) };
+  const pending = { evaluate: () => new Promise(() => {}) };
+  await assert.rejects(waitGameplay([ready, pending], clock), error => {
+    const diagnostic = JSON.parse(error.message.slice(error.message.indexOf('{')));
+    assert.deepEqual(diagnostic.evaluations[0].progress, { confirmed: 37, received: [38], acked: [37] });
+    assert.equal(diagnostic.evaluations[1], null);
+    assert.deepEqual(diagnostic.peers.map(peer => peer.frame), [-1, -1]);
+    assert.equal(typeof diagnostic.round_started_ms, 'number');
+    return true;
+  });
 });

@@ -1,5 +1,9 @@
 """Value: reject partial browser meshes, missing rollback evidence and unaudited channel claims."""
+import ast
 import copy
+import inspect
+from unittest.mock import patch
+from browser import webrtc_runner
 import unittest
 from pathlib import Path
 import tempfile
@@ -119,6 +123,24 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             changed['records'][0]['peers'][0]['result']['failure'].update(stage=stage, errors=errors)
             with self.subTest(stage=stage, errors=errors), self.assertRaises(ValueError):
                 probe.validate_restore_control(changed, 'default')
+
+    def test_actual_browser_call_uses_room_count_budget_and_routes_capture_timeout(self):
+        source = ast.parse(inspect.getsource(probe.main))
+        calls = [node for node in ast.walk(source) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'run_browser']
+        self.assertEqual(len(calls), 1)
+        arguments = [keyword.value for keyword in calls[0].keywords if keyword.arg == 'rooms']
+        self.assertEqual(len(arguments), 1, 'actual launcher must supply the room budget')
+        expression = compile(ast.Expression(arguments[0]), 'actual_launcher_budget', 'eval')
+        for label, expected in [('clean', 1500), ('faults', 1500), ('corrupt', 540), ('default', 540)]:
+            rooms = eval(expression, {'label': label})
+            with self.subTest(label=label), patch.object(webrtc_runner, 'capture', return_value=(0, 'ok')) as capture:
+                self.assertEqual(webrtc_runner.run_browser(['node', label], {}, Path('owned.log'), rooms), 'ok')
+                capture.assert_called_once_with(['node', label], {}, Path('owned.log'), timeout=expected)
+        with patch.object(webrtc_runner, 'capture') as capture:
+            with self.assertRaises(ValueError):
+                webrtc_runner.run_browser(['node'], {}, Path('owned.log'), True)
+            capture.assert_not_called()
 
 
 if __name__ == '__main__':

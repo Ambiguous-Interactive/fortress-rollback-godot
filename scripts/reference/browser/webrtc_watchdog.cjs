@@ -54,18 +54,36 @@ class ProgressWatchdog {
   }
 }
 
+function boundedFrontier(progress, players) {
+  if (!progress || !Array.isArray(progress.received) || !Array.isArray(progress.acked)
+    || progress.received.length !== players - 1 || progress.acked.length !== players - 1) return null;
+  if ([progress.confirmed, ...progress.received, ...progress.acked].some(value => !Number.isInteger(value) || value < -1 || value > 39)) return null;
+  return { confirmed: progress.confirmed, received: [...progress.received], acked: [...progress.acked] };
+}
+
 async function waitGameplay(pages, clock = () => performance.now(), pause = () => new Promise(resolve => setTimeout(resolve, 250))) {
   const watchdog = new ProgressWatchdog(pages.length, clock());
   for (;;) {
     let timer;
     let snapshots;
+    const evaluations = pages.map(() => null);
+    const round_started_ms = clock() - watchdog.started;
     try {
-      snapshots = await Promise.race([Promise.all(pages.map(page => page.evaluate(() => ({
+      snapshots = await Promise.race([Promise.all(pages.map((page, index) => page.evaluate(() => ({
       done: document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined,
       frame: document.body.dataset.fortressFrame === undefined ? -1 : Number(document.body.dataset.fortressFrame),
       progress: document.body.dataset.fortressProgress === undefined ? null : JSON.parse(document.body.dataset.fortressProgress),
-      })))), new Promise((resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('page evaluation exceeded active progress deadline')), Math.max(0, watchdog.deadline() - clock()));
+      })).then(snapshot => {
+        evaluations[index] = { elapsed_ms: clock() - watchdog.started, frame: snapshot.frame, done: snapshot.done,
+          progress: boundedFrontier(snapshot.progress, pages.length) };
+        return snapshot;
+      }))), new Promise((resolve, reject) => {
+        timer = setTimeout(() => {
+          const diagnostic = { round_started_ms, elapsed_ms: clock() - watchdog.started, deadline_ms: watchdog.deadline() - watchdog.started,
+            peers: watchdog.peers.map(peer => ({ frame: peer.frame, changed_ms: peer.changed - watchdog.started,
+              final_ms: peer.finalStarted === null ? null : peer.finalStarted - watchdog.started, frontier: peer.frontier, done: peer.done })), evaluations };
+          reject(new Error('page evaluation exceeded active progress deadline ' + JSON.stringify(diagnostic)));
+        }, Math.max(0, watchdog.deadline() - clock()));
       })]);
     } finally { clearTimeout(timer); }
     const now = clock();

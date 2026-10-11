@@ -265,7 +265,7 @@ def main():
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
                                            f'ws://127.0.0.1:{port}/v3/ws', label, str(args.output / f'{version}-{label}-events.log')]
-                        output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log')
+                        output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log', rooms=1 if label in ('corrupt', 'default') else 3)
                         result = validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default') else validate_browser(json.loads(output), faults)
                         records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default') else None,
                                         'command': browser_command, 'result': result})
