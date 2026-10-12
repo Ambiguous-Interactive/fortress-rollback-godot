@@ -29,8 +29,29 @@ and dirty flag, pin digest, platform, commands, working directory, seeds, comple
 semantic records, raw engine output, exit status and failure reason. A dirty flag
 means the commit alone does not reproduce the worktree.
 
-Use `--timeout 120` for the complete unit category, as CI and `make test-godot` do. Focused suites
-retain the default budget. Deliberate watchdog controls keep their short limits.
+Use `--timeout 120` for the complete unit category, as CI and `make test-godot` do. Ordinary focused
+suites retain the default budget. The slower integration category uses the budget below.
+Deliberate watchdog controls keep their short limits.
+
+The integration category includes the slower eight-peer transport scheduling regression. Run each
+case separately. The single-poll workload uses 180 seconds; the other cases use 120 seconds.
+Keep the single-poll control, batched workload, and ordering controls in separate processes.
+The 120-second single-poll run completed one repetition but expired during its second on CI.
+The larger bounded budget retains every workload and repeat; CI must verify full completion:
+
+```sh
+for case in default_single default_batched readiness_boundary aborted_wait; do
+  case_timeout=120
+  if [ "$case" = default_single ]; then case_timeout=180; fi
+  python3 scripts/run_godot_tests.py --godot path/to/verified/godot \
+    --category integration --filter "$case" --timeout "$case_timeout" \
+    --results ".cache/tests/integration-$case.json"
+done
+```
+
+It preserves real peer retries, ACKs and receipt gossip through bounded transport work with an
+explicit 300 ms host schedule. Its fake transport delivery queue becomes visible only between host turns;
+this native fixture does not establish browser or physical outage acceptance.
 
 Without explicit suites, the selected category discovers `test_*.gd` recursively
 under `tests/<category>/`, in sorted path order. Unit additionally runs the runner's

@@ -292,9 +292,11 @@ three-peer tests cover overlapping delivery and corrected canonical game history
 Exported Chromium also exercises actual mixed-path packets under injected
 single-link send pressure, using default and selected work budgets on both pins.
 It correlates one input packet across direct and relay receipt, requires restored
-direct sends, and rejects a fallback-disabled stall. Physical outages, relay
-congestion, ICE/replan handling and the full browser matrix remain acceptance
-work in S3–S5 and #75; keep those task issues open.
+direct sends, and rejects a fallback-disabled stall. A physical-outage room also closes one actual unreliable channel at frame four.
+The affected pair continues on relay through confirmed original game history,
+while healthy links stay direct. Idempotent engine peer removal prevents duplicate
+SDK teardown errors. ICE restoration, relay congestion, replan handling and the
+full browser matrix remain acceptance work in S3–S5 and #75; keep those tasks open.
 
 Direct and relay paths use the same session identity and deduplication rules.
 Test overlapping delivery, asymmetric failure and mixed paths.

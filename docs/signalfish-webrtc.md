@@ -76,12 +76,17 @@ Install the shipped connection factory before any mesh plan creates connections:
 
 ```gdscript
 const Connection = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")
+const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
 mesh.peer_connection_factory = Connection.create
+mesh.multiplayer_peer_factory = Multiplayer.create
 ```
 
 The GDScript wrapper delegates to the actual browser peer connection and
 corrects the channel option at creation. The direct adapter verifies channel
-properties before sending. Browser constructor observations, rather than the
+properties before sending. The multiplayer peer factory also makes SDK removal
+idempotent when Godot already removed a failed channel's peer. Present peers still
+use the engine's normal removal path. Install both factories before the first plan.
+Browser constructor observations, rather than the
 configured dictionary alone, establish the resulting reliability policy.
 
 An endpoint must have all default channels open before publication. Queue and
@@ -98,8 +103,11 @@ buffers; the receive budget limits application reads per call, not engine pollin
 Size send and receive work together for the roster and actual polling interval.
 Slow full-mesh service can receive both retry inputs and their ACKs from every
 remote peer. Raising only the send budget can grow a FIFO of stale packets even
-without network loss. The eight-peer browser witness uses 32 sends and 32 receives
-per call; the deterministic slow-poll test exercises that configuration.
+without network loss. The browser witness exercises both default 8-send/8-receive
+and selected 32-send/32-receive budgets, with eight bounded transport polls per
+yielded host turn. The deterministic delayed-delivery integration test exercises
+default budgets at 300 ms host turns. A single poll at that cadence accumulates
+stale retries and ACKs; these measurements do not guarantee arbitrary caller throughput.
 
 ## Identity, lifetime and failures
 
@@ -116,8 +124,9 @@ Call `direct.detach()` before releasing SDK objects, then detach the plan adapte
 
 The [fallback coordinator](signalfish-fallback.md) switches individual failed links
 to relay and restores ready direct links within the same peer session. Exported
-Chromium validates mixed delivery under single-link send pressure. Physical
-outage recovery and SDK mesh replacement remain tracked in
+Chromium validates mixed delivery under single-link send pressure and preserves
+game state through relay after physical channel loss. ICE restoration and SDK
+mesh replacement remain tracked in
 [S4](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).
 Do not treat direct readiness as permission to reset confirmed history or
 restart an old peer. A new SDK connection does not restore simulation state.

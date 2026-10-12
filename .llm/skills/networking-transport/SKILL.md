@@ -16,7 +16,7 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Supported browser target | WebRTC plus optional SignalFish SDK | Direct/relay fallback has live Chromium pressure evidence; physical recovery and release matrix remain planned |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Direct/relay fallback has Chromium pressure and channel-loss evidence; ICE restoration and release matrix remain planned |
 | Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
 | Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
@@ -50,11 +50,18 @@ to fit physical binary receipt totals and the actual remote recipient roster.
 Validate the session before counting decoded relay evidence. Bound diagnostic
 packet inventories, and distinguish synthetic socket pressure from physical loss.
 Validate captured packet headers, declared lengths, INPUT bodies, player/session
-identity, connection incarnation and original samples before correlating equal payloads. Malformed copies
+identity, connection incarnation and original samples before correlating equal payloads. A captured
+retry may contain earlier submitted inputs; validate its actual range rather than assuming the latest frame. Malformed copies
 can agree. Parse structured negative-control diagnostics and reconcile their
 phase, observed frames and actual deadline instead of accepting a text prefix.
 Separate accepted observations from rejected completions; enforce the emitter's
 strict expiry and callback-order relationships across peers.
+Select a failed direct link by its frozen recipient UUID, not packet bytes: the
+same sender input can occur on several outgoing channels. Reconcile source close
+initiation with actual events; its own event cannot precede initiation. Distinguish
+unreliable-channel loss, engine peer removal and ICE/channel replacement. If an SDK
+tears down peers already removed by the engine, verify both dynamic-call removal
+branches with actual present/absent engine peers and require clean live teardown.
 
 Fence retained direct bytes with a monotonic local plan/lifetime revision, not
 just current opaque generation equality. The SDK can rebuild per-peer channels

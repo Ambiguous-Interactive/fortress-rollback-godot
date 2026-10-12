@@ -180,6 +180,14 @@ When every peer must exercise rollback, coordinate an explicit predicted step
 before delivering its original inputs. A fast clean run can otherwise receive
 all inputs before advancing and never restore a snapshot.
 Batch bounded transport polls before yielding an exported host render turn.
+Delayed-delivery fixtures must check readiness before flushing staged packets;
+a successful wait has no render yield. Measure incoming FIFO peaks after every
+active delivery boundary, including post-step and final confirmation drains.
+Skip final drains when the actual host returns immediately after failed gameplay.
+Separate a heavy workload from boundary controls when their combined runtime
+exceeds the process cap; preserve every case and repeat layer with distinct receipts.
+Limit overlap inventories to the decoded packet/frame domain needed by the proof,
+while counting all traffic separately. Late delivery of an early packet stays eligible.
 Repeated timer yields per input can make integration duration depend on
 software rendering, despite unchanged protocol work; verify under CPU limits.
 Real socket witnesses must measure transport deadlines with elapsed monotonic

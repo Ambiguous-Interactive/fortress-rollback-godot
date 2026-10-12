@@ -11,8 +11,9 @@ queues/snapshots, a shared rollback engine and fixed-membership byte sessions.
 Optional SignalFish membership freezes UUID slots and validates SDK plans; its
 binary relay adapter bounds packet ownership, pressure and recipient filtering.
 Direct WebRTC bytes and a bounded per-peer relay fallback coordinator are implemented;
-exported Chromium validates mixed paths under injected send pressure. Physical
-outage recovery and the browser release matrix remain planned.
+exported Chromium validates mixed paths under injected send pressure and preserves
+relay gameplay after actual unreliable-channel loss.
+ICE restoration and the browser release matrix remain planned.
 Treat this file as the canonical operating manual.
 
 ## Skills Index

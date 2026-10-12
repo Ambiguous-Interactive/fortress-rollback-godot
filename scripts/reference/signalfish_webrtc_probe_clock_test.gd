@@ -15,7 +15,13 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 class ClockProbe:
 	extends "res://host.gd"
 	var ticks_us: int = 10000000
+	var service_calls: int = 0
+	var failed_service_call: int = -1
 	var diagnostic_snapshots: Array[Dictionary] = []
+
+	func _service() -> bool:
+		service_calls += 1
+		return false if service_calls == failed_service_call else super._service()
 
 	func _wait_diagnostic(attempt: int) -> void:
 		for peer: Peer in peers:
@@ -27,6 +33,14 @@ class ClockProbe:
 
 func _initialize() -> void:
 	var probe: ClockProbe = ClockProbe.new()
+	probe.service_calls = 0
+	if not _check(await probe._wait(func() -> bool: return true, true), "actual wait services an immediately ready condition"): return
+	if not _check(probe.service_calls == 8, "actual wait selects the tested bounded eight-poll schedule"): return
+	probe.service_calls = 0
+	probe.failed_service_call = 3
+	if not _check(not await probe._wait(func() -> bool: return true, true), "wait preserves a failed transport service"): return
+	if not _check(probe.service_calls == 3, "failed service stops the remaining bounded polls"): return
+	probe.failed_service_call = -1
 	probe.player_count = 8
 	var transport_options: RefCounted = probe._direct_options()
 	# Bind the actual host selection to the independently exercised eight-peer FIFO workload.
