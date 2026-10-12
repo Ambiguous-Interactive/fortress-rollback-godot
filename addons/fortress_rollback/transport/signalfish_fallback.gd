@@ -105,12 +105,16 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 	var work: int = 0
 	for packet: Peer.Packet in _fair_pending():
 		var uuid: String = _uuid(packet.to)
-		if work >= _options.max_routes_per_poll or blocked.has(uuid):
+		if _failure != Code.OK or work >= _options.max_routes_per_poll or blocked.has(uuid):
 			remaining.append(packet)
 			continue
 		work += 1
 		var route: String = _adapter.status().route
 		var readiness: int = _direct.send_readiness(packet.to, packet.bytes.size()) if route == "mesh" else Code.WRONG_STATE
+		if readiness == Code.WRONG_STATE and route == "mesh":
+			_failure = readiness
+			remaining.append(packet)
+			continue
 		if readiness != Code.OK and not _unavailable_since.has(uuid):
 			_unavailable_since[uuid] = now_us
 		if route in ["relay", "relay_required"] or (_unavailable_since.has(uuid) and now_us - int(_unavailable_since[uuid]) >= _options.fallback_after_us):
@@ -129,11 +133,11 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 	var direct_result: Relay.Result = _direct.poll(now_us, next_token_factory)
 	for index: int in direct_result.sent:
 		_unavailable_since.erase(_uuid(direct_batch[index].to))
+	var refused: String = _uuid(_direct.refused_destination())
+	if not refused.is_empty() and not _unavailable_since.has(refused):
+		_unavailable_since[refused] = now_us
 	var reclaimed: Array[Peer.Packet] = _direct.reclaim_pending()
 	for packet: Peer.Packet in reclaimed:
-		var uuid: String = _uuid(packet.to)
-		if direct_result.code != Code.OK and not _unavailable_since.has(uuid):
-			_unavailable_since[uuid] = now_us
 		_pending_bytes += packet.bytes.size()
 	_pending = reclaimed + _pending
 	result.sent += direct_result.sent
@@ -175,6 +179,8 @@ func _gate() -> int:
 		return _failure
 	var state: Dictionary = _adapter.status()
 	if state.route not in ["mesh", "relay", "relay_required"] or (state.route == "mesh" and state.lifetime_revision != _revision):
+		_failure = Code.WRONG_STATE
+	if _failure == Code.OK and state.route == "mesh" and _direct.status().code == Code.WRONG_STATE:
 		_failure = Code.WRONG_STATE
 	if _failure == Code.OK and _relay.status().code != Code.OK:
 		_failure = _relay.status().code

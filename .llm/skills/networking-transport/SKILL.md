@@ -52,10 +52,13 @@ outgoing and incoming work across those transitions; repeated identical plans
 must not fabricate a replacement. Reserve PacketPeer reads for one consumer and
 capture sender/channel/mode before get_packet advances to the next packet.
 Inspect actual browser data channels, not just Godot option dictionaries.
-Composed path switching must preserve each adapter's terminal lifetime fences;
+Composed path switching must preserve each adapter's terminal lifetime fences
+before transferring output, including zero or already-due fallback grace periods;
 relay availability cannot turn a replaced direct transport into a valid lifetime.
 Clear a pre-fallback unavailability timer on demonstrated direct recovery, and
 observe restoration readiness even during polls without outgoing packets.
+Arm refusal timers from the actual refused destination, not an aggregate poll
+error: inbound pressure and another peer's refusal do not implicate healthy tails.
 Exercise minimum routing work with a blocked peer ahead of a healthy peer;
 bounded work alone does not prove fair service. Preserve each peer's FIFO while
 rotating service across the frozen roster.

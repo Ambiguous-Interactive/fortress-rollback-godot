@@ -14,10 +14,17 @@ const E = preload("res://addons/fortress_rollback/transport/signalfish_relay_env
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["overlap", "unready", "busy", "atomic", "clock", "relay_plan", "plan_fence", "room_fence", "reentry", "fatal_relay",
-		"fairness", "restore", "readiness_gap", "transport_replacement", "timer_recovery"])
+		"fairness", "restore", "readiness_gap", "transport_replacement", "timer_recovery", "routing_lifetime", "untried_tail"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name in ["routing_lifetime", "untried_tail"]:
+		if name == "routing_lifetime":
+			_routing_lifetime(context)
+		else:
+			_untried_tail(context)
+		context.finish()
+		return
 	var fixture: Dictionary = build(context, name == "fairness")
 	match name:
 		"overlap":
@@ -64,7 +71,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func build(context: RefCounted, three_peers: bool = false) -> Dictionary:
+func build(context: RefCounted, three_peers: bool = false, grace: int = 10, route_budget: int = -1) -> Dictionary:
 	var helper: RefCounted = M.new()
 	var roster: PackedStringArray = PackedStringArray([M.U, M.V, M.W]) if three_peers else PackedStringArray([M.U, M.V])
 	var membership: RefCounted = helper._membership(context, M.U, roster)
@@ -95,9 +102,9 @@ func build(context: RefCounted, three_peers: bool = false) -> Dictionary:
 	var direct: Direct = Direct.new()
 	context.equal(direct.configure(mesh, membership, adapter, peer, direct_options), F.Code.OK, "direct configured")
 	var options: F.Options = F.Options.new()
-	options.fallback_after_us = 10
+	options.fallback_after_us = grace
 	options.max_pending_packets = 2
-	options.max_routes_per_poll = 1 if three_peers else 2
+	options.max_routes_per_poll = route_budget if route_budget > 0 else (1 if three_peers else 2)
 	options.restore_after_us = 5
 	var fallback: F = F.new()
 	context.equal(fallback.configure(direct, relay, membership, adapter, peer, options), F.Code.OK, "coordinator configured")
@@ -199,6 +206,10 @@ func _restore(context: RefCounted, fixture: Dictionary) -> void:
 
 class SelectiveTransport:
 	extends D.Transport
+	var busy_target: int = 0
+
+	func put_packet(bytes: PackedByteArray) -> Error:
+		return ERR_BUSY if target == busy_target else super.put_packet(bytes)
 
 	func get_peer(id: int) -> Dictionary:
 		return {"connected": connected or id != M.M.uuid_to_peer_id(M.V), "channels": [channel, channel, channel]}
@@ -232,3 +243,32 @@ func _timer_recovery(context: RefCounted, fixture: Dictionary) -> void:
 	context.equal(fixture.fallback.poll(10).sent, 1, "healthy retained tail publishes at former grace deadline")
 	context.equal(fixture.client.sent.size(), 0, "old failure timer cannot relay a recovered channel")
 	context.equal(fixture.mesh.transport.sent, [PackedByteArray([1]), PackedByteArray([2])], "both packets remain direct in original order")
+
+
+func _routing_lifetime(context: RefCounted) -> void:
+	for grace: int in [0, 10]:
+		var fixture: Dictionary = build(context, false, grace)
+		(fixture.fallback as F).enqueue_batch([packet(fixture, 9)])
+		if grace > 0:
+			fixture.mesh.transport.connected = false
+			fixture.fallback.poll(0)
+		fixture.mesh.transport = SelectiveTransport.new()
+		context.equal(fixture.fallback.poll(grace).code, F.Code.WRONG_STATE, "routing lifetime fails before fallback grace=" + str(grace))
+		context.equal(fixture.fallback.status().pending_packets, 1, "lifetime keeps original coordinator owner grace=" + str(grace))
+		context.equal(fixture.relay.status().pending_packets, 0, "lifetime never transfers bytes into relay grace=" + str(grace))
+		context.equal(fixture.client.sent.size(), 0, "lifetime never publishes relay grace=" + str(grace))
+		destroy(fixture)
+
+
+func _untried_tail(context: RefCounted) -> void:
+	for grace: int in [0, 10]:
+		var fixture: Dictionary = build(context, true, grace, 2)
+		fixture.mesh.transport.busy_target = M.M.uuid_to_peer_id(M.V)
+		var packets: Array[P.Packet] = [packet(fixture, 1), P.Packet.new(fixture.membership.identity(M.W), PackedByteArray([2]))]
+		(fixture.fallback as F).enqueue_batch(packets)
+		fixture.fallback.poll(0)
+		fixture.fallback.poll(grace)
+		context.equal(fixture.mesh.transport.sent, [PackedByteArray([2])], "another peer send refusal cannot relay untried tail grace=" + str(grace))
+		for bytes: PackedByteArray in fixture.client.sent:
+			context.equal(E.decode(bytes, 512).recipient, M.V, "only actual refused peer uses relay")
+		destroy(fixture)

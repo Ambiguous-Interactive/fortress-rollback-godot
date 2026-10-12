@@ -30,6 +30,7 @@ var _token_ready: bool = false
 var _failure: int = Code.OK
 var _busy: bool = false
 var _rejected: int = 0
+var _refused_destination: PackedByteArray = PackedByteArray()
 
 
 ## Exclusive PacketPeer consumer: never assign this mesh peer to MultiplayerAPI.
@@ -107,6 +108,7 @@ func enqueue_batch(packets: Array[Peer.Packet]) -> int:
 func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Result:
 	if _busy or now_us < 0:
 		return Types.Result.new(Code.INVALID_ARGUMENT)
+	_refused_destination.clear()
 	var gate: int = _gate()
 	if gate != Code.OK:
 		return Types.Result.new(gate)
@@ -126,12 +128,14 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 			var destination: int = packet.to.decode_u32(0)
 			result.code = _channel_gate(transport, destination, packet.bytes.size())
 			if result.code != Code.OK:
+				_refused_destination = _membership.identity(_membership.uuid_for_peer_id(destination))
 				break
 			transport.call("set_target_peer", destination)
 			transport.call("set_transfer_mode", MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
 			transport.call("set_transfer_channel", 0)
 			var code: Error = transport.call("put_packet", packet.bytes.duplicate())
 			if code != OK:
+				_refused_destination = _membership.identity(_membership.uuid_for_peer_id(destination))
 				result.code = Code.BACKPRESSURE if code == ERR_BUSY else Code.SDK_FAILURE
 				if code != ERR_BUSY:
 					_failure = result.code
@@ -260,6 +264,7 @@ func detach() -> void:
 	_generation = ""
 	_revision = -1
 	_failure = Code.OK
+	_refused_destination.clear()
 
 
 ## Return unsent packets to their owner, including after a transport lifetime ends.
@@ -286,7 +291,9 @@ func send_readiness(identity: PackedByteArray, size: int) -> int:
 		return gate
 	for uuid: String in _membership.roster():
 		if uuid != _membership.local_uuid() and _membership.identity(uuid) == identity:
-			return _channel_gate(_transport.get_ref(), Membership.uuid_to_peer_id(uuid), size)
+			var readiness: int = _channel_gate(_transport.get_ref(), Membership.uuid_to_peer_id(uuid), size)
+			gate = _gate()
+			return readiness if gate == Code.OK else gate
 	return Code.WRONG_SOURCE
 
 
@@ -296,3 +303,8 @@ func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bo
 
 func packet_limit() -> int:
 	return 0 if _options == null else _options.max_packet_bytes
+
+
+## Owned destination of the actual send refusal in the last poll, or empty.
+func refused_destination() -> PackedByteArray:
+	return _refused_destination.duplicate()

@@ -64,7 +64,8 @@ peer's grace period. At its deadline, relay takes that peer's retained output.
 Healthy peers continue through direct channels during the same poll.
 Relay socket pressure retains its accepted FIFO and does not drop packets.
 Successful direct publication resets that peer's failure timer, including when
-the send-work limit retains a healthy tail.
+the send-work limit retains a healthy tail. A refused send arms only its actual
+destination; inbound pressure and untried send-budget tails do not arm timers.
 
 After direct readiness recovers, `restore_after_us` measures a second grace
 period. Restoration waits for all accepted relay output to drain before sending

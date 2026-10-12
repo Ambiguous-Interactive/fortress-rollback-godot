@@ -93,25 +93,25 @@ relay plans remain serviceable. The actual successful direct-send prefix clears
 the pre-fallback timer; a genuinely refused head can start it again.
 No earlier passing coordinator exists before this newly introduced capability.
 
-An independently reconstructed isolated mutant removes both fixes and fails the
+Before automatic-review repairs, an isolated mutant removes both fixes and fails the
 two exact regressions on both pins, twice in process, with exit 1 and no engine
 errors. Logs: `.cache/session-015/review-mutants-root/{4.3,4.7.2}.{stdout,stderr}`.
 Current production passes them. A second fresh review inspects all six attack
 surfaces and the full candidate, executes both fallback suites through the
 fail-closed repeated launcher, and finds no defects.
 
-## Frozen-source verification
+## Verification before automatic-review repairs
 
 Both engine pins pass **174 unit cases and eight determinism cases**, twice in
 fresh processes and twice in process, seed 1701. Commands use the same launcher
 as above, omit `--suite` for full unit selection, retain `--timeout 120`, and use
-`--category determinism` for the deterministic category. Final receipts:
+`--category determinism` for the deterministic category. Superseded candidate receipts:
 `.cache/tests/session-015-{unit,determinism}-{4.3,4.7.2}.json`.
 
 The before/after inventory covers all 81 native addon/test GDScript files.
 `.cache/session-015/native-source-bound.json` retains exact inventories and
 receipt hashes. Both addon-only package audits pass; all 42 archived members
-match current files. Every runtime script loads without the optional SDK.
+matched the `aff0195` candidate files. Every runtime script loads without the optional SDK.
 Package evidence: `.cache/reference/results/session-015-package-{4.3,4.7.2}/`.
 
 Earlier full-native attempts are stopped when source changes during implementation
@@ -129,6 +129,47 @@ mutation signature. Its one stale relay-setup prerequisite is corrected to allow
 standby configuration under an accepted mesh plan.
 
 ## Delivery gate
+
+Automatic review of candidate `aff0195f7518119dbd125fce859d1b6f030ff71a`
+finds two further boundary defects. Zero/already-due grace transfers fenced
+output to relay before terminal refusal; an aggregate receive/send pressure
+result arms timers for untried healthy destinations. Both reproduce RED with
+grace 0 and 10 on 4.7.2. Runtime now fences before routing and after readiness callbacks,
+and Direct reports the actual refused destination for timer attribution.
+An actual inbound ACK-pressure test verifies a retained healthy send-budget tail
+does not report send refusal. Raw RED/GREEN logs and exact commands are retained
+in `.cache/session-015/fallback-review-reproduction.txt` and adjacent logs.
+Both pins pass 61 focused transport cases, repeated in process.
+
+A new fresh adversarial reviewer passes all six surfaces. It independently
+passes 55 transport cases on both engines twice in process and twice across
+fresh processes (9,525 assertions per repetition). Owned-copy probes add 78
+assertions per repetition at empty/oversized input, queue/work minima/maxima,
+zero/maximum grace, backward clocks and `INT64_MAX` boundaries.
+Evidence: `.cache/tests/adversarial-fallback-{4.3,4.7.2}.json` and
+`.cache/tests/fallback_boundary_review/boundaries.gd`.
+
+A separate read-only budget probe reproduces the original 32-send/8-receive
+stall in all four repetitions. Changing sends to default 8 invalidates that
+fixture: it discards batches refused by bounded atomic ownership. Those altered
+runs establish neither default liveness nor a production defect; no default
+change follows. Composed fallback defaults remain outside this Direct-only
+measurement. Exact source inventories, commands and refusal vectors:
+`.cache/session-015/default-budget-probe/report.md`.
+
+After all runtime/test changes freeze, both pins pass **177 unit cases and eight
+determinism cases**, seed 1701, twice in process and twice across fresh processes.
+The same launcher commands use final receipts
+`.cache/tests/session-015-final-{unit,determinism}-{4.3,4.7.2}.json`.
+All 81 source hashes remain unchanged before/after execution. The final binding
+`.cache/session-015/final-native-source-bound.json` has SHA-256
+`066619bb000c40219a5068c0670c53f9b94cb6248d3f492ad9def8b148dee385`.
+Both final addon audits pass, including optional-SDK-free loading and all 42
+archive members matching current files:
+`.cache/reference/results/session-015-final-package-{4.3,4.7.2}/`.
+Gdlint, source width 180, whitespace, harness regeneration/lint and 99 self-tests
+pass. The earlier style-only conditional-call correction is included in this
+final source binding; superseded receipts do not establish final acceptance.
 
 All session work continues in PR #74. The original repair head's hosted live
 transport jobs pass on both engines, but those checks cannot prove the new

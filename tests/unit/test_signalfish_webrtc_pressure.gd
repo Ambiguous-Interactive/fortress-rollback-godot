@@ -11,7 +11,7 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["recoverable", "terminal", "handshake", "inbound_lifetime", "invalid_tokens"])
+	return PackedStringArray(["recoverable", "terminal", "handshake", "inbound_lifetime", "invalid_tokens", "receive_tail"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -27,6 +27,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	var options: W.Options = W.Options.new()
 	options.max_packet_bytes = 512
 	options.max_receives_per_poll = 2
+	options.max_sends_per_poll = 1
 	context.equal(fixture.direct.configure(fixture.mesh, fixture.membership, fixture.adapter, fixture.peer, options), W.Code.OK, "bind direct to real bounded peer")
 	if name == "handshake":
 		_handshake(context, fixture, real)
@@ -56,9 +57,11 @@ func _inputs(context: RefCounted, fixture: Dictionary, real: Dictionary, name: S
 		context.equal(fixture.direct.poll(10).code, W.Code.WRONG_STATE, "queued incoming valid bytes fenced")
 		context.equal(fixture.mesh.transport.incoming.size(), 1, "no packet consumed after transport lifetime")
 		return
-	if name == "recoverable":
+	if name in ["recoverable", "receive_tail"]:
 		_input(fixture, real, 1)
 		var packets: Array[P.Packet] = [F.new().packet(fixture, 91)]
+		if name == "receive_tail":
+			packets.append(F.new().packet(fixture, 92))
 		fixture.direct.enqueue_batch(packets)
 	var tokens: R.TokenFactory = R.TokenFactory.new()
 	var result: W.Result = fixture.direct.poll(201 if name == "terminal" else 20, tokens.next)
@@ -69,6 +72,9 @@ func _inputs(context: RefCounted, fixture: Dictionary, real: Dictionary, name: S
 		return
 	context.equal(result.received, 1, "one committed incoming head")
 	context.equal(result.sent, 1, "outgoing service continues during ACK pressure")
+	if name == "receive_tail":
+		context.equal(fixture.direct.status().pending_packets, 1, "send-work budget retains healthy direct tail")
+		context.equal(fixture.direct.refused_destination().is_empty(), true, "real inbound pressure cannot report send refusal")
 	context.equal(fixture.direct.status().received_packets, 1, "exact refused head retained")
 	context.equal(tokens.calls, 2, "token once per head")
 	tokens.token.clear()
