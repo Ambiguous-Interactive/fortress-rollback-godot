@@ -12,6 +12,9 @@ Configure direct and relay adapters with the same membership, plan adapter and
 peer session. Configure the relay before direct delivery fails. Raw MessagePack
 negotiation and server relay support are required even under a mesh plan.
 The SDK's binary relay API supports sending while a mesh plan is active.
+Install both WebRTC factories from [the direct guide](signalfish-webrtc.md)
+before the first plan. The multiplayer peer factory tolerates automatic engine
+removal after physical channel failure during later SDK teardown.
 
 ```gdscript
 const Fallback = preload("res://addons/fortress_rollback/transport/signalfish_fallback.gd")
@@ -134,8 +137,14 @@ python3 scripts/reference/signalfish_webrtc_probe.py \
   --output .cache/reference/results/signalfish-webrtc
 ```
 
-This scoped witness does not establish physical channel-loss recovery, relay
-congestion, SDK-driven channel replacement, relay-to-mesh server replans, browser
+A separate physical-outage room closes the exact destination's actual unreliable
+channel at source frame four. Godot removes that link and closes its companion
+channels. Both ends keep relay service through final confirmation; healthy links
+continue direct service. The same original-input, rollback, overlap, queue and
+teardown gates apply. No replacement channel is created during this workload.
+
+This scoped witness does not establish ICE restoration, relay congestion,
+SDK-driven channel replacement, relay-to-mesh server replans, browser
 suspension or server restart. These remain
 [S4 follow-up work](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38)
 and [live recovery acceptance](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/75).

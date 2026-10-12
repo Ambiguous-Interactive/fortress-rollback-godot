@@ -5,7 +5,7 @@ const net = require('node:net');
 const path = require('node:path');
 const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchdog.cjs');
 
-function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback }) {
+function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose = false }) {
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
   window.fortressLocal = index;
@@ -15,6 +15,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressMixed = mixed;
   window.fortressMixedDefault = mixedDefault;
   window.fortressDisableFallback = disableFallback;
+  window.fortressPhysicalClose = physicalClose;
   window.fortressRtc = { channels: [], sent: 0, received: 0, dropped: 0, reordered: 0, pending: 0, active: 0 };
   const evidence = window.fortressRtc;
   evidence.binarySent = 0;
@@ -55,6 +56,8 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     const record = { options, label, id: channel.id, ordered: channel.ordered, maxPacketLifeTime: channel.maxPacketLifeTime,
       maxRetransmits: channel.maxRetransmits, negotiated: channel.negotiated, sent: 0, received: 0, closed: false };
     record.blockedReads = 0;
+    record.closeInitiatedFrame = null;
+    record.physicalCloseFrame = null;
     record.mixedSent = 0;
     record.restoredSent = 0;
     record.earlySent = [];
@@ -62,7 +65,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     record.maximumBuffered = 0;
     const buffered = mixed ? Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'bufferedAmount').get : null;
     const unreliableIndex = evidence.channels.filter(value => value.id === 3).length;
-    record.blockedLink = Boolean(mixed && index === 0 && channel.id === 3 && unreliableIndex === 0);
+    record.blockedLink = Boolean(mixed && !physicalClose && index === 0 && channel.id === 3 && unreliableIndex === 0);
     // Inject send pressure on one live channel; all bytes still use real sockets.
     if (record.blockedLink) {
       Object.defineProperty(channel, 'bufferedAmount', { get() {
@@ -81,7 +84,23 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
       record.received++; evidence.received++;
       if (channel.id === 3) remember(record.earlyReceived, event.data);
     });
-    channel.addEventListener('close', () => { record.closed = true; });
+    if (physicalClose) {
+      const close = channel.close.bind(channel);
+      channel.close = () => {
+        const frame = Number(document.body?.dataset.fortressFrame ?? -1);
+        if (physicalClose && index === 0 && channel.id === 3 && frame === 4 && record.closeInitiatedFrame === null) {
+          record.blockedLink = true;
+          record.closeInitiatedFrame = frame;
+        }
+        close();
+      };
+    }
+    channel.addEventListener('close', () => {
+      record.closed = true;
+      const frame = Number(document.body?.dataset.fortressFrame ?? -1);
+      if (physicalClose && channel.id === 3 && document.body?.dataset.fortressGameplayDone !== 'true' && frame >= 0 && frame < 39)
+        record.physicalCloseFrame = frame;
+    });
     const send = channel.send.bind(channel);
     channel.send = bytes => {
       record.sent++;
@@ -147,7 +166,8 @@ async function main() {
   const faults = process.argv[4] === 'faults';
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
-  const mixed = ['mixed', 'mixed-default', 'mixed-disabled'].includes(process.argv[4]);
+  const physicalClose = process.argv[4] === 'mixed-close';
+  const mixed = ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close'].includes(process.argv[4]);
   const mixedDefault = process.argv[4] === 'mixed-default';
   const disableFallback = process.argv[4] === 'mixed-disabled';
   const errors = [];
@@ -206,7 +226,7 @@ async function main() {
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
-            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback });
+            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -270,7 +290,7 @@ async function main() {
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ passed: true, browser: 'Chromium', version: browsers[0].version(), browser_instances: 2,
-      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, records, errors }));
+      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, records, errors }));
   } catch (error) {
     console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs }));
     throw error;

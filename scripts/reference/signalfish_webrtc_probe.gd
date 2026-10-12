@@ -174,7 +174,9 @@ func _wait(condition: Callable, use_transport: bool = false) -> bool:
 	for attempt: int in 3000:
 		for client: SDK in clients: client.poll()
 		for mesh: SDKMesh in meshes: mesh.poll()
-		if use_transport and not _service(): return false
+		if use_transport:
+			for turn: int in 8:
+				if not _service(): return false
 		if not errors.is_empty(): return false
 		if condition.call(): return true
 		_service_wait_diagnostics(attempt, diagnostics)

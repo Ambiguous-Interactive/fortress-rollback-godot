@@ -160,3 +160,42 @@ test('mixed pressure keeps unrelated channels healthy and releases the same phys
     for (const name of ['window', 'document', 'WebSocket', 'RTCPeerConnection', 'RTCDataChannel']) delete global[name];
   }
 });
+
+// Value: physical outage closes only the correlated unreliable link at frame four, with actual close events.
+test('physical close records the explicit channel handle even when payloads match', () => {
+  class Channel {
+    constructor(options) { Object.assign(this, options); this.readyState = 'open'; this.handlers = {}; }
+    get bufferedAmount() { return 0; }
+    addEventListener(name, handler) { this.handlers[name] = handler; }
+    close() { this.readyState = 'closed'; this.handlers.close(); }
+    send() { assert.equal(this.readyState, 'open'); }
+  }
+  class Connection {
+    addEventListener() {}
+    createDataChannel(label, options) { return new Channel({ label, ...options }); }
+  }
+  const context = { window: { RTCPeerConnection: Connection }, RTCPeerConnection: Connection,
+    RTCDataChannel: Channel, WebSocket: class { send() {} }, document: { body: { dataset: { fortressFrame: '2' } } },
+    ArrayBuffer, Uint8Array, console };
+  vm.runInNewContext(`(${instrument.toString()})({ endpoint: 'wss://localhost', count: 4, index: 0,
+    mixed: true, physicalClose: true })`, context);
+  const connection = new context.window.RTCPeerConnection();
+  const first = connection.createDataChannel('unreliable', { id: 3 });
+  const selected = connection.createDataChannel('unreliable', { id: 3 });
+  first.send(new Uint8Array([1]));
+  selected.send(new Uint8Array([1]));
+  const records = context.window.fortressRtc.channels;
+  context.document.body.dataset.fortressFrame = '4';
+  selected.close();
+  assert.equal(first.readyState, 'open');
+  assert.equal(selected.readyState, 'closed');
+  assert.equal(records[1].closeInitiatedFrame, 4);
+  assert.equal(records[1].physicalCloseFrame, 4);
+  assert.equal(records[0].blockedLink, false);
+  assert.equal(records[1].blockedLink, true);
+  assert.equal(records[1].blockedReads, 0);
+  assert.equal(first.readyState, 'open', 'the outage cannot move to another healthy endpoint');
+  context.document.body.dataset.fortressGameplayDone = 'true';
+  first.close();
+  assert.equal(records[0].physicalCloseFrame, null, 'teardown cannot manufacture outage evidence');
+});

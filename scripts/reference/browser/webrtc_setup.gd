@@ -3,6 +3,7 @@ extends RefCounted
 # gdlint: disable=max-returns
 const SDK = preload("res://addons/signal_fish/signal_fish_client.gd")
 const SDKConfig = preload("res://addons/signal_fish/signal_fish_config.gd")
+const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
 const Connection = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")
 const SDKMesh = preload("res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd")
 const Membership = preload("res://addons/fortress_rollback/transport/signalfish_membership.gd")
@@ -67,6 +68,7 @@ func run(host: Node, count: int) -> bool:
 		if membership.configure(host.clients[index].get_player_id(), roster, session, incarnation, profile) != OK: return false
 		host.memberships.append(membership)
 		var mesh: SDKMesh = SDKMesh.new()
+		mesh.multiplayer_peer_factory = Multiplayer.create
 		mesh.peer_connection_factory = raw_connection if JavaScriptBridge.eval("window.fortressDefaultFactory || false") else Connection.create
 		host.meshes.append(mesh)
 		var adapter: Adapter = Adapter.new()

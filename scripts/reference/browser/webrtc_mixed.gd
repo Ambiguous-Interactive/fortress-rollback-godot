@@ -21,6 +21,7 @@ var accepted_binary: int = 0
 var overlap_packets: int = 0
 var overlap: Peer.Packet
 var duplicated: bool = false
+var physical_closed: bool = false
 var send_budget: int = 0
 var receive_budget: int = 0
 var route_budget: int = 0
@@ -65,6 +66,19 @@ func has_pending() -> bool:
 
 func service(host: Node) -> bool:
 	_record_bounds()
+	if not physical_closed and host.local_index == 0 and host.peers[0].status().current_frame == 5 \
+		and JavaScriptBridge.eval("window.fortressPhysicalClose || false"):
+		if overlap == null or overlap_recipient.is_empty():
+			host.errors.append("physical_close_missing_destination")
+			return false
+		var transport: Object = host.meshes[0].get_multiplayer_peer()
+		var destination: int = host.memberships[0].uuid_to_peer_id(overlap_recipient)
+		if not transport.call("has_peer", destination):
+			host.errors.append("physical_close_missing_peer")
+			return false
+		var entry: Dictionary = transport.call("get_peer", destination)
+		entry.channels[2].close()
+		physical_closed = true
 	if pending.is_empty(): pending = host.peers[0].drain_outbox()
 	if not pending.is_empty():
 		var code: int = fallback.enqueue_batch(pending)

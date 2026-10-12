@@ -24,11 +24,11 @@ from run import capture
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
-def validate_browser(result, faults, mixed=False, default_budgets=False):
+def validate_browser(result, faults, mixed=False, default_budgets=False, physical_close=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') != 'Chromium'
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
             or result.get('faults') is not faults or result.get('corrupt') is not False or result.get('errors') != []
-            or result.get('mixed', False) is not mixed or result.get('mixedDefault', False) is not default_budgets):
+            or result.get('physicalClose', False) is not physical_close or result.get('mixed', False) is not mixed or result.get('mixedDefault', False) is not default_budgets):
         raise ValueError('browser WebRTC witness failed or incomplete')
     records = result.get('records')
     if not isinstance(records, list) or len(records) != 3:
@@ -85,20 +85,22 @@ def validate_browser(result, faults, mixed=False, default_budgets=False):
                 if type(rtc.get(key)) is not int or (rtc[key] < 1 if faults else rtc[key] != 0):
                     raise ValueError('data-channel fault controls unobserved')
             if mixed:
-                validate_mixed_peer(row, rtc, index, count, default_budgets)
+                validate_mixed_peer(row, rtc, index, count, default_budgets, physical_close)
                 if row['mixed']['accepted_binary'] > witness['binary_receives']:
                     raise ValueError('addressed receipts exceed physical binary receipts')
-                if index == 0 and row['mixed']['accepted_binary'] != 0:
+                if not physical_close and index == 0 and row['mixed']['accepted_binary'] != 0:
                     raise ValueError('sender cannot receive its own broadcast relay output')
         if mixed and sum(peer['result']['records'][0]['mixed']['accepted_binary'] for peer in record['peers']) < 2:
             raise ValueError('addressed relay packets and overlapping delivery missing')
         if mixed: validate_overlap(record['peers'])
+        if physical_close: validate_physical_close(record['peers'])
     return result
 
-def validate_mixed_peer(row, rtc, index, count, default_budgets):
+def validate_mixed_peer(row, rtc, index, count, default_budgets, physical_close):
     state = row.get('mixed', {})
+    closed = [channel for channel in rtc['channels'] if channel.get('physicalCloseFrame') is not None] if physical_close else []
     work_budget = 8 if default_budgets else 32
-    for key, expected in [('route_budget', 8), ('send_budget', work_budget), ('receive_budget', work_budget), ('caller_pending', 0), ('relay_peers', 0)]:
+    for key, expected in [('route_budget', 8), ('send_budget', work_budget), ('receive_budget', work_budget), ('caller_pending', 0), ('relay_peers', len(closed))]:
         if type(state.get(key)) is not int or state[key] != expected:
             raise ValueError('mixed transport budget or final ownership invalid')
     for key in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received'):
@@ -123,7 +125,7 @@ def validate_mixed_peer(row, rtc, index, count, default_budgets):
     blocked = [channel for channel in channels if channel.get('blockedLink') is True]
     if len(blocked) != (1 if index == 0 else 0):
         raise ValueError('mixed fault must affect exactly one outgoing link')
-    if index == 0:
+    if index == 0 and not physical_close:
         if state.get('switched') is not True or state.get('restored') is not True:
             raise ValueError('fallback or direct restoration unobserved')
         if type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 2:
@@ -134,8 +136,40 @@ def validate_mixed_peer(row, rtc, index, count, default_budgets):
         if count > 2 and any(type(channel.get('mixedSent')) is not int or channel['mixedSent'] < 1 for channel in channels if not channel['blockedLink']):
             raise ValueError('healthy links lost direct service during fallback')
     for channel in channels:
+        if physical_close and channel in closed: continue
         if type(channel.get('restoredSent')) is not int or channel['restoredSent'] < 1:
             raise ValueError('physical direct sends after restoration missing')
+
+def validate_physical_close(peers):
+    overlap = peers[0]['result']['records'][0]['mixed']['overlap']
+    recipient = next(index for index, peer in enumerate(peers) if peer['result']['records'][0]['mixed']['uuid'] == overlap['recipient'])
+    for index, peer in enumerate(peers):
+        state, rtc = peer['result']['records'][0]['mixed'], peer['rtc']
+        affected = index in (0, recipient)
+        closed = [channel for channel in rtc['channels'] if channel.get('physicalCloseFrame') is not None]
+        if len(closed) != int(affected) or state.get('switched') is not affected or state.get('restored') is not False:
+            raise ValueError('physical outage must retain exactly the closed pair on relay')
+        for channel in rtc['channels']:
+            initiated = channel.get('closeInitiatedFrame')
+            if channel in closed:
+                frame = channel['physicalCloseFrame']
+                if channel['id'] != 3 or type(frame) is not int or not (4 if index == 0 else 3) <= frame <= 8:
+                    raise ValueError('physical unreliable channel did not close during active prediction')
+                expected = 4 if index == 0 else None
+                if initiated != expected or (expected is not None and type(initiated) is not int):
+                    raise ValueError('physical close did not originate once at source frame four')
+                if type(channel.get('restoredSent')) is not int or channel['restoredSent'] != 0:
+                    raise ValueError('closed channel unexpectedly carried late gameplay')
+                inventory = channel['earlySent'] if index == 0 else channel['earlyReceived']
+                if overlap['payload'] not in inventory:
+                    raise ValueError('closed pair does not match the correlated original input')
+            elif initiated is not None:
+                raise ValueError('unexpected physical close initiator')
+            elif channel['id'] == 3 and (type(channel.get('mixedSent')) is not int or channel['mixedSent'] < 1):
+                raise ValueError('healthy links lost physical direct service during outage')
+        if affected and (type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 2
+                         or state['accepted_binary'] < 2):
+            raise ValueError('closed pair did not continue bidirectional physical relay traffic')
 
 def validate_payloads(values):
     if (not isinstance(values, list) or len(values) > 128 or any(not isinstance(value, str)
@@ -319,7 +353,7 @@ def main():
     owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
-                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events')]
+                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events', 'mixed-close', 'mixed-close-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -460,7 +494,7 @@ def main():
                             environment, args.output / f'{version}-clock-test.log'): raise ValueError('transport clock regression incomplete')
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
-                    for label in ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled'):
+                    for label in ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close'):
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
                                            f'ws://127.0.0.1:{port}/v3/ws', label, str(args.output / f'{version}-{label}-events.log')]
@@ -470,7 +504,8 @@ def main():
                         else:
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log', rooms=1 if label in ('corrupt', 'default') else 3)
                             result = (validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default')
-                                      else validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'), default_budgets=label == 'mixed-default'))
+                                      else validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
+                                                            default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close'))
                         records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled') else None,
                                         'command': browser_command, 'result': result})
                     if inventory(executed) != frozen or inventory({'export': export}) != export_before:
@@ -496,8 +531,9 @@ def main():
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
                         'synthetic single-link send pressure, with default and selected work budgets and correlated overlapping input bytes. '
+                        'A real unreliable channel closes at frame four; both ends retain relay through final confirmation while healthy links remain direct. '
                         'Disabled fallback fails the gameplay watchdog. Send drops/delays and pressure are synthetic; no WAN/NAT/TURN, '
-                        'native WebRTC, other browsers, physical outage recovery, relay congestion or reconnect/replan claim.'}
+                        'native WebRTC, other browsers, channel replacement, ICE recovery, relay congestion or reconnect/replan claim.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'results': str(receipt), 'engines': versions, 'runs': len(records)}))
 
