@@ -122,6 +122,15 @@ without emitting results. The runner guide and CI specify 120 seconds for the
 complete unit category. Repeating with that documented limit passes 177 cases
 in each of two fresh processes with identical results on 4.7.2. The default
 failure receipt remains `.cache/tests/session-016-default-timeout.json`.
+The official `make test-godot` target and full-suite command example still omit
+that budget. Fix both entry points to use 120 seconds; preserve short focused
+and deliberate failure controls. This repairs a tooling defect, without changing
+simulation or release behavior. The corrected `make test-godot` passes 177 cases
+in each of two fresh processes with identical results. Receipt:
+`.cache/tests/session-016-make-unit-4.7.2.json`. A supplemental fresh adversarial
+review of the three-line entrypoint delta is clean; focused Make and deliberate
+control deadlines remain unchanged. The browser receipt's executed source
+inventory remains unchanged by this Make/docs-only correction.
 
 Local checks pass: 27 Node controls, 53 Python reference controls (three intentional
 skips), 52 oracle controls, 99 harness controls and changed-file GDScript lint.

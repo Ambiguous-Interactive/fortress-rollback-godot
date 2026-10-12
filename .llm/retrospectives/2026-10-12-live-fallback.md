@@ -34,7 +34,11 @@ historical evidence; final-source acceptance must use the final receipt.
 
 Verify-on-touch: regenerate skill discovery files, run harness lint/self-tests,
 source width 180, witness controls and both pinned exported engines.
-No new skill or standalone knowledge entry is needed.
+The native whole-suite timeout also reveals two stale official entry points:
+Make and the runner command example omit the documented CI budget. Fix them at
+source, with the preserved 30-second failure and 120-second identical runs as
+evidence. Existing testing guidance already owns the complete/focused budget
+procedure; no new skill or standalone knowledge entry is needed.
 
 ## Outcome
 

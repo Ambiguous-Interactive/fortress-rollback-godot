@@ -12,7 +12,7 @@ Use a verified editor fetched through the [reference tools](reference/README.md)
 
 ```sh
 python3 scripts/run_godot_tests.py \
-  --godot .cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64
+  --godot .cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64 --timeout 120
 ```
 
 Choose the corresponding verified executable for your host architecture.
@@ -29,7 +29,7 @@ and dirty flag, pin digest, platform, commands, working directory, seeds, comple
 semantic records, raw engine output, exit status and failure reason. A dirty flag
 means the commit alone does not reproduce the worktree.
 
-Use `--timeout 120` for the complete unit category, as CI does. Focused suites
+Use `--timeout 120` for the complete unit category, as CI and `make test-godot` do. Focused suites
 retain the default budget. Deliberate watchdog controls keep their short limits.
 
 Without explicit suites, the selected category discovers `test_*.gd` recursively
