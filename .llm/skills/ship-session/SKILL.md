@@ -32,6 +32,8 @@ the fallback; never print tokens or silently use unauthenticated requests.
    check runs, commit statuses and workflow jobs for that exact SHA. Wait for
    every applicable CI check to finish successfully. No checks, missing expected
    workflows, pending jobs, stale successes, failures or cancellations prove green.
+   Read step conclusions before claiming a phase passed; an always-running
+   artifact upload can follow a failed probe.
    Investigate a skipped job's condition; it is acceptable only when the job
    does not apply to this candidate. Never bypass required checks or protection.
 

@@ -33,12 +33,17 @@ Use `--timeout 120` for the complete unit category, as CI and `make test-godot` 
 suites retain the default budget. The slower integration category uses the budget below.
 Deliberate watchdog controls keep their short limits.
 
-The integration category includes the slower eight-peer transport scheduling regression. Run it
-with the same 120-second process budget used by both pinned-engine CI jobs:
+The integration category includes the slower eight-peer transport scheduling regression. Run each
+case separately with the same 120-second process budget used by both pinned-engine CI jobs.
+Keeping its ordering controls in separate processes avoids combining their runtime with the full
+backlog workload; the complete category exceeded that budget on the Godot 4.3 CI runner:
 
 ```sh
-python3 scripts/run_godot_tests.py --godot path/to/verified/godot \
-  --category integration --timeout 120 --results .cache/tests/integration.json
+for case in default_batched readiness_boundary aborted_wait; do
+  python3 scripts/run_godot_tests.py --godot path/to/verified/godot \
+    --category integration --filter "$case" --timeout 120 \
+    --results ".cache/tests/integration-$case.json"
+done
 ```
 
 It preserves real peer retries, ACKs and receipt gossip through bounded transport work with an

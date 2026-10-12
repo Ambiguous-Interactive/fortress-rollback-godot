@@ -18,6 +18,9 @@ red/green receipts, independent reviews, and the source-bound 16-run browser rec
 | A fake caller dropping refused batches produces a false scheduling diagnosis. | Initial 12-frame stall disappears after exact retained ownership and post-delivery backlog measurement. | Retire the exploratory claim; preserve corrected scheduling evidence in the session log. |
 | A scheduling model must preserve host return boundaries. | Fresh review finds readiness checked after delivery; the rerun also drains after failed gameplay. | Check readiness before yielding, skip work after failure, and measure every active delivery boundary before accepting metrics. |
 | One slow service turn cannot necessarily drain amplified retries and ACKs. | Final both-pin default-budget fixture stalls after 14 frames with incoming peak 430; eight polls complete 16 with peak 28. All repetitions match. | Reuse bounded batching in actual waits, bind it with an executed host mutation, and retain the slower test in CI's integration tier. |
+| Combining a heavy workload with ordering controls can exceed a process budget. | Both native CI jobs print correct backlog comparisons, then expire the combined 120-second watchdog. | Run all three cases separately with unchanged budgets and repeat layers; preserve a receipt for each. |
+| Permanent relay traffic can exceed an inventory meant for one overlap proof. | The eight-peer physical room reaches frame 37 before ordinary ACK/input variants exceed 128 captured payloads. | Capture codec-validated early INPUT candidates, count all addressed envelopes separately, and preserve eligible-sample overflow rejection. |
+| Artifact upload does not prove earlier steps passed. | A failed live probe still reaches its always-running upload step. | Read every step conclusion before claiming successful phase completion. |
 
 ## Prune and verification
 

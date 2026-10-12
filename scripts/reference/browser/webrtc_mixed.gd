@@ -49,17 +49,28 @@ func configure(host: Node, mode: Object) -> bool:
 	if fallback.configure(host.transports[0], relay, host.memberships[0], host.adapters[0], host.peers[0], controls) != 0:
 		host.errors.append("mixed_fallback_configure")
 		return false
+	_observe_relay(host)
+	return true
+
+func _observe_relay(host: Node) -> void:
 	host.clients[0].game_data_binary_received.connect(func(sender: String, encoding: int, bytes: PackedByteArray) -> void:
 		var decoded: RefCounted = Relay.Envelope.decode(bytes, 1024)
 		if encoding == 1 and decoded.code == 0 and decoded.sender == sender and decoded.recipient == uuid \
 			and decoded.session == host.memberships[0].handshake_message().session_id:
 			accepted_binary += 1
+			var limits: T.Limits = T.Limits.new()
+			limits.player_count = host.player_count
+			var input: T.Result = Codec.decode(decoded.payload, limits)
+			if input.code != T.Code.OK or not _early_input(input.message): return
 			var payload: String = decoded.payload.hex_encode()
 			if relay_payloads.size() >= 128 and not relay_payloads.has(payload):
 				host.errors.append("mixed_capture_overflow")
 			else:
 				relay_payloads[payload] = true)
-	return true
+
+func _early_input(message: T.Message) -> bool:
+	return message.kind == T.Kind.INPUT and message.start_frame >= 0 \
+		and message.start_frame + message.frame_count <= 3
 
 func has_pending() -> bool:
 	return not pending.is_empty()
@@ -127,7 +138,7 @@ func _capture_overlap(host: Node) -> void:
 	limits.player_count = host.player_count
 	for packet: Peer.Packet in pending:
 		var decoded: T.Result = Codec.decode(packet.bytes, limits)
-		if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.INPUT: continue
+		if decoded.code != T.Code.OK or not _early_input(decoded.message): continue
 		overlap = Peer.Packet.new(packet.to.duplicate(), packet.bytes.duplicate())
 		for member: String in host.memberships[0].roster():
 			if host.memberships[0].identity(member) == packet.to: overlap_recipient = member

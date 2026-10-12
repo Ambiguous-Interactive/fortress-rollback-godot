@@ -131,7 +131,7 @@ Independent code, adversarial, scheduling and retrospective reviews have no
 remaining findings. Retro: `findings-acted`.
 The 4.3 physical room has passed 2/4/8 peers with corrected confirmation,
 exactly the affected pair on relay, healthy direct links and clean teardown.
-The final source-bound receipt passes all 16 engine/label runs, including physical
+The first-candidate source-bound receipt passes all 16 engine/label runs, including physical
 2/4/8 rooms, selected/default pressure, clean/fault rooms and intended rejection
 controls. Receipt: `.cache/reference/results/session-017-physical-live/signalfish-webrtc.json`.
 SHA-256: `fe5e03e22ccfc39ccc0780dbda9153aa24779ceb6b599ac1703aea2755cd5b0e`.
@@ -141,6 +141,34 @@ frame 38 or 39. All channels/connections close without engine errors.
 Current-head CI and final review/delivery remain gates.
 
 ## Remaining scope and delivery
+
+The first PR head is `23fcf1d84069d483cbd1257c092909ac701c3b53` in #79.
+Reference run `38302431261` exposes two CI-only witness failures. Both native
+unit jobs pass 178 cases, but the combined integration category expires its
+120-second process watchdog after both expected backlog comparisons. Run each
+of its three cases separately with the same process cap and both repeat layers.
+Focused default-workload receipts pass on 4.3/4.7.2 in 170.241/161.148 seconds
+total; 4.3 ordering controls pass separately in 4.727/15.630 seconds total.
+The tests, workloads and watchdogs remain unchanged.
+
+The 4.3 live job passes. The 4.7.2 eight-peer physical room reaches frame 37,
+then its evidence observer exceeds 128 distinct relay payloads. Those include
+ordinary ACKs and later inputs throughout permanent relay service. The first
+observer failure tears down its client; other peers then report `player_left`.
+Retain only codec-validated early INPUT candidates needed by the overlap proof,
+using the same frame predicate for producer and recipient. Count all addressed
+relay envelopes separately and preserve the 128-entry cap/error for eligible
+samples. The four-case actual-signal suite fails before and passes after this fix;
+its unchanged cap control remains green. Both pinned engines pass both repeat layers.
+No transport queue, packet budget, game input, deadline or teardown gate changes.
+
+An artifact upload uses `if: always()` and can follow a failed probe. A progress
+claim inferred from that step was incorrect; inspect every earlier conclusion.
+The second candidate passes the fresh source-bound 16-run browser matrix and an
+independent six-surface review with no findings. Receipt:
+`.cache/reference/results/session-017-capture-final/signalfish-webrtc.json`.
+SHA-256: `72f9a2805b6f9b75e1e1a2bdec96ef61482977621abc97f88e708c4fbc4c9066`.
+Current-head CI and complete feedback scans remain required before merge.
 
 #75 remains open for relay congestion, sustained asymmetric pressure and the
 remaining live acceptance. #38 retains ICE restoration, SDK replacement/replans,
