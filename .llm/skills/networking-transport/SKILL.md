@@ -50,7 +50,8 @@ to fit physical binary receipt totals and the actual remote recipient roster.
 Validate the session before counting decoded relay evidence. Bound diagnostic
 packet inventories, and distinguish synthetic socket pressure from physical loss.
 Validate captured packet headers, declared lengths, INPUT bodies, player/session
-identity, connection incarnation and original samples before correlating equal payloads. Malformed copies
+identity, connection incarnation and original samples before correlating equal payloads. A captured
+retry may contain earlier submitted inputs; validate its actual range rather than assuming the latest frame. Malformed copies
 can agree. Parse structured negative-control diagnostics and reconcile their
 phase, observed frames and actual deadline instead of accepting a text prefix.
 Separate accepted observations from rejected completions; enforce the emitter's

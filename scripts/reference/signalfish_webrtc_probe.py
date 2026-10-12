@@ -172,14 +172,14 @@ def validate_overlap_input(raw, count, sender, slot):
     start = int.from_bytes(raw[44:48], 'little', signed=True)
     ack = int.from_bytes(raw[48:52], 'little', signed=True)
     frames = int.from_bytes(raw[52:54], 'little')
-    if (start < 0 or frames < 1 or start + frames != 3 or not -1 <= ack <= 39 or raw[54:57] != bytes([1, slot, count])
+    if (start < 0 or frames < 1 or start + frames > 3 or not -1 <= ack <= 39 or raw[54:57] != bytes([1, slot, count])
             or len(raw) != size_offset + 4 + frames or int.from_bytes(raw[size_offset:size_offset + 4], 'little') != frames):
         raise ValueError('overlap protocol input layout invalid')
     for index in range(count):
         status = raw[57 + 7 * index:64 + 7 * index]
         if status[0] != 0 or status[5:7] != b'\x00\x00' or not -1 <= int.from_bytes(status[1:5], 'little', signed=True) <= 39:
             raise ValueError('overlap protocol status invalid')
-    expected = bytes((frame * 17 + slot * 31 + 1) & 255 for frame in range(start, 3))
+    expected = bytes((frame * 17 + slot * 31 + 1) & 255 for frame in range(start, start + frames))
     if raw[size_offset + 4:] != expected:
         raise ValueError('overlap original input bytes changed')
 

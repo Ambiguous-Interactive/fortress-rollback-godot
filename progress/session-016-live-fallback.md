@@ -31,7 +31,7 @@ until that retained batch transfers. No production addon algorithm changes.
 The witness compares 38 corrected canonical prefixes per peer against original
 samples, requires rollback loads and monotonic frame/confirmation history, and
 keeps the existing synchronized first prediction and physical teardown gates.
-It independently validates a captured frame-two INPUT's header, body, session,
+It independently validates a captured pre-pressure INPUT's header, body, session,
 sender, player slot and samples. Exact bytes must occur in physical early direct
 send, the recipient's early direct receipt, and later addressed relay receipt.
 Physical binary counts bound addressed receipt counts. Diagnostic inventories,
@@ -135,7 +135,7 @@ inventory remains unchanged by this Make/docs-only correction.
 Local checks pass: 27 Node controls, 53 Python reference controls (three intentional
 skips), 52 oracle controls, 99 harness controls and changed-file GDScript lint.
 
-Final source-bound acceptance passes all 14 engine/label runs on both pins,
+PR #76's merged-source local acceptance passes all 14 engine/label runs on both pins,
 including all 2/4/8-player selected/default mixed rooms and intended rejection
 controls. Receipt: `.cache/reference/results/session-016-release-live/signalfish-webrtc.json`.
 SHA-256: `cfc38df0ef9b7c08c002fb979f9a7abc81e4b8997d5ba4e175012345ee1dba49`.
@@ -146,6 +146,45 @@ Observed mixed maxima: 12 coordinator packets, 0 relay pending packets,
 requested evidence and canonical lesson fixes are applied.
 
 ## Scope and follow-up
+
+PR #76 passed all nine Actions jobs and Bugbot at head
+`e63fd8b941f9a9980044f26b917e4ee859d510d7`. Complete feedback scans after green
+at 04:15:14 UTC and immediately before merge at 04:15:49 UTC read every surface,
+thread and annotation with complete pagination and found no actionable feedback.
+It squash-merged at 04:15:55 UTC as `01f4b052bda6b96329003b4870762c140a3aad12`.
+Fetched local main matches origin/main, but merge-triggered delivery is incomplete.
+
+Main Devcontainer run `38203080244` initially fails both architectures because
+the latest OpenCode 2.0.27 wrapper appears before matching native packages become
+available. A demonstrated fresh install permits an evidence-backed retry; both
+architectures pass attempt 2. #77 records the publication-delay repair follow-up.
+
+Main Reference run `38203080272` attempt 1 fails the 4.7.2 mixed-default eight-peer
+room at a genuine inactivity deadline. Service turns average about 297 ms despite
+a requested 2 ms timer, slower than the 200 ms input resend interval. Physical
+channels remain open and other peers still progress. Capacity saturation is a
+hypothesis, not a proven root cause. #75 retains artifact `11726302358`, exact
+diagnostics and the required controlled scheduling/backlog investigation.
+
+One unchanged diagnostic retry then exposes a separate validator defect in the
+selected-budget mixed eight-peer room. Artifact `11726194042` captures a valid
+frame-1 retry with slot 2 and original byte 80, correlated on both physical paths.
+The batch captured at core frame 3 can include this retry before its frame-2 input.
+The validator wrongly requires every copied packet to end at frame 2. Three
+earlier-range controls fail RED; the two-line repair accepts nonempty ranges within
+frames 0–2 and validates every original byte. All 15 controls and the actual failed
+2/4/8-room artifact pass GREEN. A fresh adversarial review checks 48 boundary
+combinations, truncations and fixed-field/sample mutations and finds no issues.
+The repair's fresh source-bound acceptance passes all 14 engine/label runs on
+both pins, including both work budgets and negative controls. Receipt:
+`.cache/reference/results/session-016-retransmission-live/signalfish-webrtc.json`.
+SHA-256: `ad552f3655f103fa16af166f00c1f65237a68e7c92fcb592e8578bdee85e0ad5`.
+Reference discovery passes 54 controls (three intentional skips); harness 99,
+source width 213 files and instruction lint pass. Runtime and supplemental
+documentation/curation reviews are clean. The repair branch is
+`session-016-overlap-repair`; no corrective PR has been opened.
+Publishing another PR requires direction because the one-session-PR constraint
+cannot be satisfied after #76 has merged. Main CI is still red.
 
 #75 remains open for physical outages/restoration, relay congestion, lifecycle
 changes and sustained workloads. S4 retains SDK channel replacement, replans,

@@ -140,6 +140,19 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 probe.validate_browser(changed, False, mixed=True)
 
+    def test_overlap_accepts_original_inputs_retransmitted_before_pressure(self):
+        sender = '00000000-0000-0000-0000-000000000000'
+        for start, end in [(0, 1), (1, 2), (0, 2), (2, 3), (0, 3)]:
+            raw = bytes.fromhex(mixed_evidence()['records'][0]['peers'][0]['result']['records'][0]['mixed']['overlap']['payload'])
+            body = (struct.pack('<iiH', start, 1, end - start) + raw[54:71]
+                    + struct.pack('<I', end - start) + bytes((frame * 17 + 1) & 255 for frame in range(start, end)))
+            packet = raw[:40] + struct.pack('<I', len(body)) + body
+            with self.subTest(start=start, end=end):
+                probe.validate_overlap_input(packet, 2, sender, 0)
+                corrupted = packet[:-1] + bytes([packet[-1] ^ 1])
+                with self.assertRaisesRegex(ValueError, 'original input bytes'):
+                    probe.validate_overlap_input(corrupted, 2, sender, 0)
+
     def test_disabled_fallback_requires_observed_pressure_at_the_gameplay_stall(self):
         failed = {'failure': 'Error: page evaluation exceeded active progress deadline ' + json.dumps(gameplay_diagnostic()), 'errors': [], 'records': [],
                   'failed_rooms': [{'players': 2, 'peers': [

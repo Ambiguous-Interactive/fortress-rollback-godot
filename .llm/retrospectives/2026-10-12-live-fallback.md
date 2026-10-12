@@ -18,6 +18,7 @@ the full retrospective. Evidence is in
 | Packet identity includes the connection incarnation. | Fresh review three; header offsets 32 and 33 mutate without rejection before repair. | Validate the exact initial connection incarnation alongside the sender/session. |
 | A requested deadline delay can expire before monotonic time reaches the deadline. | Real disabled-control timer fires 0.195449 ms early; deterministic early-callback regression fails RED. | Recheck time inside the callback, rearm early calls, and advance fake clocks through exact expiry. |
 | Synthetic pressure and physical loss need separate claims. | Browser bufferedAmount getter changes; ICE and channel state remain physically open. | Name pressure evidence precisely; retain physical loss and SDK lifecycle work in #75/S4. |
+| A pre-pressure batch can contain an older valid retry before its newest input. | Main attempt 2 captures frame 1, slot 2, original byte 80; the validator wrongly requires an ending frame of 2. | Validate the actual nonempty range within submitted frames 0–2 and every original sample; preserve physical correlation. |
 
 ## Canonical actions and pruning
 
@@ -39,6 +40,12 @@ Make and the runner command example omit the documented CI budget. Fix them at
 source, with the preserved 30-second failure and 120-second identical runs as
 evidence. Existing testing guidance already owns the complete/focused budget
 procedure; no new skill or standalone knowledge entry is needed.
+
+Post-merge main also exposes slow eight-peer default-budget scheduling. Service
+turns average about 297 ms against a 200 ms retry interval; exact queue saturation
+is not established. Preserve the failed artifact and controlled backlog/poll-gap
+investigation in #75. The verified npm native-publication delay and bounded-retry
+follow-up belong in #77, rather than another harness rule.
 
 ## Outcome
 
