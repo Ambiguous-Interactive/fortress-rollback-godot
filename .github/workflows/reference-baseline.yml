@@ -122,7 +122,9 @@ jobs:
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
             python3 scripts/run_godot_tests.py --godot "$editor" --timeout 120 --results ".cache/tests/runner-$version.json"
             for case in default_single default_batched readiness_boundary aborted_wait; do
-              python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout 120 \
+              case_timeout=120
+              if [[ "$case" == default_single ]]; then case_timeout=180; fi
+              python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
                 --results ".cache/tests/integration-$version-$case.json"
             done
             python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"

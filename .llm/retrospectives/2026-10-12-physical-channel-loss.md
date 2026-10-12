@@ -34,8 +34,10 @@ incoming-queue measurement to its bounded host batching guidance.
 The native repro holds time fixed within each batch, while real host calls read
 elapsed monotonic time. The fresh both-pin browser matrix supplies that missing
 boundary. No arbitrary slow-caller throughput guarantee follows from these runs.
-The integration tier keeps the 120-second process budget without enlarging the
-unit or focused hang controls. Minimum/current repeated-process evidence and
+The single-poll integration workload still exceeds 120 seconds on CI after
+partitioning. A bounded 180-second diagnostic retains every repetition; its
+completion remains an acceptance gate. Unit and focused hang controls keep their
+existing caps. Minimum/current repeated-process evidence and
 `make llm-index lint-llm test-llm lint-source` verify touched guidance.
 
 ## Outcome

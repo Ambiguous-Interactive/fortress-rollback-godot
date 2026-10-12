@@ -180,6 +180,20 @@ with distinct receipts and the unchanged 120-second process cap. The browser and
 shipped runtime sources remain identical to the passing source-bound receipt.
 Final-head CI and delivery gates still apply.
 
+The third-head 4.3 unit suite completes in 206.722 seconds total. Both isolated
+single-poll processes still expire at 120 seconds after one correct 430/14
+repetition. All four partitioned cases pass locally on both pins and repeat
+layers; single-poll totals are 147.369/136.597 seconds across two processes.
+Local 4.7.2 unit time is 117.098 seconds. Using this completed-run throughput
+comparison as a rough estimate suggests about 130 seconds per heavy CI process.
+Try a bounded 180-second cap only for `default_single`; keep other integration
+and unit caps at 120 and ordinary hang/browser controls unchanged. This is a
+timing hypothesis, not proof that the second CI repetition finishes. Fresh CI
+must supply all completion records before acceptance. Both live browser jobs
+pass at the third head. The active session limit may leave delivery pending. #80 preserves the exact
+remaining timing investigation and delivery gates. Fresh review accepts the
+bounded diagnostic change while requiring complete final-head CI evidence.
+
 #75 remains open for relay congestion, sustained asymmetric pressure and the
 remaining live acceptance. #38 retains ICE restoration, SDK replacement/replans,
 browser suspension/resume and server restart. #39 retains Firefox, WebKit,

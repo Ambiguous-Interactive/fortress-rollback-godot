@@ -34,14 +34,17 @@ suites retain the default budget. The slower integration category uses the budge
 Deliberate watchdog controls keep their short limits.
 
 The integration category includes the slower eight-peer transport scheduling regression. Run each
-case separately with the same 120-second process budget used by both pinned-engine CI jobs.
+case separately. The single-poll workload uses 180 seconds; the other cases use 120 seconds.
 Keep the single-poll control, batched workload, and ordering controls in separate processes.
-Combining both full workloads into one repeated case exceeded that budget on the Godot 4.3 CI runner:
+The 120-second single-poll run completed one repetition but expired during its second on CI.
+The larger bounded budget retains every workload and repeat; CI must verify full completion:
 
 ```sh
 for case in default_single default_batched readiness_boundary aborted_wait; do
+  case_timeout=120
+  if [ "$case" = default_single ]; then case_timeout=180; fi
   python3 scripts/run_godot_tests.py --godot path/to/verified/godot \
-    --category integration --filter "$case" --timeout 120 \
+    --category integration --filter "$case" --timeout "$case_timeout" \
     --results ".cache/tests/integration-$case.json"
 done
 ```
