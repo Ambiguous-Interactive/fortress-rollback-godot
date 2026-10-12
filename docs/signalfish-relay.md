@@ -20,7 +20,9 @@ sdk_config.max_inbound_frame_bytes = 262144
 ```
 
 Retain the actual public `protocol_info` event object. After authentication,
-room membership and the relay plan are established, configure the relay:
+room membership and an accepted mesh or relay plan are established, configure
+the relay. A mesh plan allows standby delivery for the
+[fallback coordinator](signalfish-fallback.md).
 
 ```gdscript
 const Relay = preload("res://addons/fortress_rollback/transport/signalfish_relay.gd")
@@ -138,7 +140,9 @@ start a new session after an unrecoverable lifetime change.
 
 Binary relay uses a reliable WebSocket. A slow socket can delay every later
 packet behind its head. Bounded queues limit accumulated work; they cannot
-remove head-of-line latency. S3–S4 own direct WebRTC and safe path switching.
+remove head-of-line latency. The [fallback coordinator](signalfish-fallback.md)
+accepts authenticated relay overlap under mesh plans and switches individual links.
+Live browser path recovery remains a separate gate.
 
 ## Evidence limits
 

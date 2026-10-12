@@ -95,6 +95,12 @@ fit that direct-path limit; relay has a different size budget. The adapter retai
 one refused incoming packet. Remaining packets stay in the engine's channel
 buffers; the receive budget limits application reads per call, not engine polling.
 
+Size send and receive work together for the roster and actual polling interval.
+Slow full-mesh service can receive both retry inputs and their ACKs from every
+remote peer. Raising only the send budget can grow a FIFO of stale packets even
+without network loss. The eight-peer browser witness uses 32 sends and 32 receives
+per call; the deterministic slow-poll test exercises that configuration.
+
 ## Identity, lifetime and failures
 
 Packets are attributed by the multiplayer peer's numeric sender ID and resolved
@@ -108,7 +114,9 @@ same generation or change offerer roles. A replacement plan or mesh teardown fen
 room replacement and membership changes require an explicit new rollback session.
 Call `direct.detach()` before releasing SDK objects, then detach the plan adapter.
 
-Automatic direct/relay switching remains tracked in
+The [fallback coordinator](signalfish-fallback.md) switches individual failed links
+to relay and restores ready direct links within the same peer session. Live browser
+recovery and SDK mesh replacement remain tracked in
 [S4](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).
 Do not treat direct readiness as permission to reset confirmed history or
 restart an old peer. A new SDK connection does not restore simulation state.

@@ -231,7 +231,9 @@ behavior remains subject to the pinned differential oracle.
 
 These scenarios settle B3's design acceptance and define later implementation
 tests. The [local session suites](../tests/unit/test_session.gd) exercise the
-implemented subset; P2P mode switching remains a transport implementation gate.
+implemented subset. The [fallback coordinator](signalfish-fallback.md) preserves
+one live peer session across injected mixed-path tests; live browser switching
+remains a separate acceptance gate.
 The pre-ADR negative control is the former high-level plan: it left checksum
 width, request acknowledgement, borrowed-view expiry and partial callback
 failure unresolved. The decisions above settle those ambiguities for review.

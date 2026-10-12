@@ -245,3 +245,58 @@ nonzero rollback and complete physical teardown. The ownership receipt records
 78-case native/Web agreement on both positive and intended-negative pairs.
 The native 97-file supplemental binding remains current. The broad earlier P2P
 inventory limitation above is recorded rather than silently claiming equivalence.
+
+## Post-merge main incident
+
+PR #71 merged as `0bb9a0fcb2c83170cc54ed8b09b2d4cb2d88cb7d` at
+22:00:30 UTC after all ten current-head checks, complete feedback scans and
+expected-head guarded squash merge. Local main equals origin/main. Main workflow
+`38178672790` passes five reference jobs but fails Chromium WebRTC 4.7.2.
+Harness and both devcontainer jobs pass. Reopened #72; delivery is incomplete.
+
+Artifact `11716378005` records all eight peers at submitted frame 28, with
+receipt 27, ACK 26 and retained `[27,28]`. Retry service continues across ten
+seconds of snapshots. DOM observations finish 29–57ms before rejection, excluding
+stale sampler evidence. Physical counters for the failed room were destroyed
+before capture, so the historical failure cannot exclude SCTP expiry separately.
+
+The witness selects 32 sends but defaults to eight receives. Seven remote retry
+inputs plus generated ACKs can outrun that FIFO drain when service is slower
+than the 200ms retry interval. An actual eight-Peer/Direct, lossless bounded-FIFO
+control proves the mechanism on both pins through both repeat layers: 250ms
+service reaches nine of forty frames with eight receives and a 1,139-packet
+backlog; 32 receives completes forty frames with zero backlog and receipt/
+confirmation 39. The retained shorter extreme schedule preserves the exact
+20-second idle bound: eight receives stalls at six frames with backlog 337;
+32 completes twelve inputs and confirms frame 11 on every peer.
+
+The direct witness and analogous native relay witness now pair 32 sends and
+receives. Actual staged browser-host tests fail with eight and pass with 32.
+Fresh review requires explicit confirmation progress and binding the tested
+budget to the actual host selection; both guards pass on both engine pins. Bounded RTC capture precedes failed-room cleanup and preserves the
+original rejection; actual-module success/hung-page controls fail before and
+pass after this change. Progress caps, retry cadence and channel policy remain
+unchanged. The production adapter's configurable defaults remain unchanged.
+
+A two-CPU historical clean room passes. Its final RTC receive totals exceed
+the earlier Direct result snapshots by 23–37 packets per eight-peer instance;
+these counters straddle teardown-barrier service and do not measure a FIFO
+backlog. The final independent audit corrects that earlier inference. Starting a second probe during its final label rewrites the
+shared browser and causes ETXTBSY; this is a local orchestration error, not a
+transport result. A sole one-CPU 4.7.2 attempt then passes all four labels with
+source bindings. Fresh final witnesses and main delivery gates remain required.
+
+Final local repair validation: 158 unit cases and eight determinism cases pass
+on each engine through both process/in-process repeat layers. Harness lint and
+99 self-tests pass; 45 reference controls pass with three expected skips.
+The first full-unit repetition straddles an added confirmation assertion and
+correctly rejects unequal assertion counts; fresh final-byte runs then pass.
+The first repaired eight-label browser receipt passes both pins. After the
+configuration guard changes from a minimum to the exact exercised 32 budget,
+both staged host tests reject a 14-budget mutation and pass selected 32; another
+source-bound eight-label witness passes. Its independent audit verifies all
+1,067 current input/tool hashes, all 27 logs, both authored executed inventories,
+56 positive peers and eight exact negative peers. Receipt SHA256:
+`0b71ab963893f1e0a0ba25e860e0666ba58521ae8d3b64e8ab14b4c9ba44504a`.
+No runtime behavior changes after the first repaired browser receipt. Cold final review reports no findings; its focused native test passes 5,484
+assertions in each repeat on both launcher runs. Main delivery remains pending.

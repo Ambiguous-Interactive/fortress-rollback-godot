@@ -27,6 +27,11 @@ class ClockProbe:
 
 func _initialize() -> void:
 	var probe: ClockProbe = ClockProbe.new()
+	probe.player_count = 8
+	var transport_options: RefCounted = probe._direct_options()
+	# Bind the actual host selection to the independently exercised eight-peer FIFO workload.
+	if not _check(transport_options.max_receives_per_poll == 32,
+		"actual host selects the tested slow-mesh receive budget"): return
 	if not _check(probe._service(), "initial empty transport service"): return
 	var fixture: Fixture = Fixture.new()
 	var sink: Fixture.Sink = Fixture.Sink.new()

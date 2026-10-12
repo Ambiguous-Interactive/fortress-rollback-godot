@@ -129,9 +129,7 @@ func run(host: Node, count: int) -> bool:
 			return false
 		var direct: Direct = Direct.new()
 		host.transports.append(direct)
-		var options: Direct.Options = Direct.Options.new()
-		options.max_packet_bytes = 1024
-		options.max_sends_per_poll = 32
+		var options: Direct.Options = host._direct_options()
 		var connected_code: int = direct.configure(host.meshes[index], host.memberships[index], host.adapters[index], peer, options)
 		if connected_code != 0:
 			host.errors.append("configure_direct_%d" % connected_code)

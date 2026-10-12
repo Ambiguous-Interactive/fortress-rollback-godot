@@ -58,6 +58,34 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory })
   };
 }
 
+async function captureFailure(pages, players) {
+  return Promise.all(pages.slice(0, 8).map(async (page, index) => {
+    let timer;
+    try {
+      return await Promise.race([page.evaluate(limit => {
+        const evidence = window.fortressRtc;
+        const resources = window.fortressResources;
+        return { index: limit.index, captured_ms: performance.now(), frame: document.body.dataset.fortressFrame,
+          rtc: { sent: evidence.sent, received: evidence.received, dropped: evidence.dropped, reordered: evidence.reordered,
+            pending: evidence.pending, active: evidence.active,
+            channels: resources.channels.slice(0, 3 * (limit.players - 1)).map((channel, slot) => ({
+              id: channel.id, label: channel.label, ready_state: channel.readyState, buffered_amount: channel.bufferedAmount,
+              ordered: channel.ordered, max_packet_life_time: channel.maxPacketLifeTime, max_retransmits: channel.maxRetransmits,
+              sent: evidence.channels[slot]?.sent, received: evidence.channels[slot]?.received,
+            })),
+            connections: resources.connections.slice(0, 2 * (limit.players - 1)).map(connection => ({
+              state: connection.connectionState, ice: connection.iceConnectionState, signaling: connection.signalingState,
+            })),
+          } };
+      }, { index, players }), new Promise(resolve => {
+        timer = setTimeout(() => resolve({ index, failure: 'diagnostic_timeout' }), 1000);
+      })]);
+    } catch {
+      return { index, failure: 'diagnostic_evaluation_failed' };
+    } finally { clearTimeout(timer); }
+  }));
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -96,6 +124,7 @@ async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browsers = [];
   const records = [];
+  const failed_rooms = [];
   try {
     for (let index = 0; index < 2; index++) browsers.push(await chromium.launch({
       headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -173,6 +202,10 @@ async function main() {
         }
         records.push({ players: count, peers });
         });
+      } catch (error) {
+        // Preserve live socket evidence before context.close destroys the failed room.
+        failed_rooms.push({ players: count, peers: await captureFailure(pages, count) });
+        throw error;
       } finally {
         await Promise.all(contexts.map(context => context.close()));
       }
@@ -180,7 +213,7 @@ async function main() {
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ passed: true, browser: 'Chromium', version: browsers[0].version(), browser_instances: 2, faults, corrupt, defaultFactory, records, errors }));
   } catch (error) {
-    console.error(JSON.stringify({ failure: String(error), errors, records, logs }));
+    console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs }));
     throw error;
   } finally {
     await Promise.all(browsers.map(browser => browser.close()));

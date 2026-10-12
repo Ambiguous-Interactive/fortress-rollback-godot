@@ -91,7 +91,8 @@ room UUIDs into stable player slots and validates SDK plans before mesh setup.
 The [SignalFish relay adapter](./docs/signalfish-relay.md) delivers opaque binary
 packets with bounded queues, recipient filtering and explicit send pressure.
 The [SignalFish WebRTC adapter](./docs/signalfish-webrtc.md) owns bounded direct
-bytes through the SDK mesh. Automatic fallback and the release browser matrix remain separate gates.
+bytes through the SDK mesh. The [fallback coordinator](./docs/signalfish-fallback.md)
+keeps mixed direct/relay paths in one session and restores ready direct links. Live browser recovery and the release matrix remain separate gates.
 Run `make test-godot` for unit tests or `make queue-probes GODOT=/path/to/godot`
 for direct pinned Rust/Godot queue comparisons. `make handshake-probes` compares
 actual upstream handshake observations with the Godot endpoint.
