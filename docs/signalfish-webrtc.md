@@ -114,7 +114,9 @@ same generation or change offerer roles. A replacement plan or mesh teardown fen
 room replacement and membership changes require an explicit new rollback session.
 Call `direct.detach()` before releasing SDK objects, then detach the plan adapter.
 
-Automatic direct/relay switching remains tracked in
+The [fallback coordinator](signalfish-fallback.md) switches individual failed links
+to relay and restores ready direct links within the same peer session. Live browser
+recovery and SDK mesh replacement remain tracked in
 [S4](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).
 Do not treat direct readiness as permission to reset confirmed history or
 restart an old peer. A new SDK connection does not restore simulation state.

@@ -260,3 +260,39 @@ func detach() -> void:
 	_generation = ""
 	_revision = -1
 	_failure = Code.OK
+
+
+## Return unsent packets to their owner, including after a transport lifetime ends.
+## This does not authorize their transmission on a replacement direct transport.
+func reclaim_pending() -> Array[Peer.Packet]:
+	var packets: Array[Peer.Packet] = []
+	if _busy or _membership == null:
+		return packets
+	for packet: Peer.Packet in _pending:
+		var uuid: String = _membership.uuid_for_peer_id(packet.to.decode_u32(0))
+		packets.append(Peer.Packet.new(_membership.identity(uuid), packet.bytes.duplicate()))
+	_pending.clear()
+	_pending_bytes = 0
+	return packets
+
+
+func send_readiness(identity: PackedByteArray, size: int) -> int:
+	if size < 1:
+		return Code.INVALID_ARGUMENT
+	if _options != null and size > _options.max_packet_bytes:
+		return Code.TOO_LARGE
+	var gate: int = _gate()
+	if gate != Code.OK:
+		return gate
+	for uuid: String in _membership.roster():
+		if uuid != _membership.local_uuid() and _membership.identity(uuid) == identity:
+			return _channel_gate(_transport.get_ref(), Membership.uuid_to_peer_id(uuid), size)
+	return Code.WRONG_SOURCE
+
+
+func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bool:
+	return _membership == membership and _adapter == adapter and _peer == peer and _mesh != null
+
+
+func packet_limit() -> int:
+	return 0 if _options == null else _options.max_packet_bytes

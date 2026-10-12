@@ -11,7 +11,8 @@ The separate [binary relay adapter](signalfish-relay.md) supplies recipient enve
 and bounded send/receive queues. The [WebRTC adapter](signalfish-webrtc.md) owns
 direct packet delivery. The membership seam's `status().byte_delivery_implemented` is always
 `false`. Applications still supply bytes, attributed senders, clocks and tokens,
-and drain the peer's bounded outputs. S4 owns automatic fallback. Do not treat `route == "mesh"` as a connected gameplay session.
+and drain the peer's bounded outputs. The [fallback coordinator](signalfish-fallback.md)
+owns automatic path selection. Do not treat `route == "mesh"` as a connected gameplay session.
 
 ## Freeze membership and configure a peer
 
@@ -138,7 +139,9 @@ collide with a frozen member's Godot peer ID.
 
 After a relay plan detached the mesh, a later mesh plan requires restart.
 The pinned mesh has no public plan-application API, so this seam never invents
-SDK notifications to restore it. S4 owns safe restoration and overlap delivery.
+SDK notifications to restore it. The [fallback coordinator](signalfish-fallback.md)
+restores still-valid direct channels and accepts relay overlap without replacing
+the SDK mesh. SDK relay-to-mesh replans remain S4 work.
 Room baseline replacement, joins, departures, room exit, disconnect, connection
 failure and reconnect latch `restart_required`. A late plan cannot clear this
 fence. Stop the old peer and create a new session; reconnect alone is no proof

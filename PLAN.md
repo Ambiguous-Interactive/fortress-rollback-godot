@@ -42,6 +42,7 @@ Local development contracts and evidence entry points:
 - [Optional SignalFish membership, agreed UUID slots and plan fences](docs/signalfish-membership.md).
 - [SignalFish binary relay, bounded packet ownership and broadcast filtering](docs/signalfish-relay.md).
 - [SignalFish WebRTC bytes, channel selection and direct-path lifetime](docs/signalfish-webrtc.md).
+- [SignalFish per-peer fallback, direct restoration and mixed-path ownership](docs/signalfish-fallback.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).
@@ -285,7 +286,10 @@ live witness send/receive work budgets must match its tested configuration.
 The witness exercises elapsed transport deadlines and caller-owned handshake
 retries; [#72](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/72)
 records its loss regression and delivery gate.
-Live ICE/replan recovery, automatic fallback and the full browser matrix remain
+The bounded fallback coordinator routes individual unready links through relay
+and restores ready direct channels in the same rollback session. Injected
+three-peer tests cover overlapping delivery and corrected canonical game history.
+Live mixed-path recovery, ICE/replan handling and the full browser matrix remain
 acceptance work in S3–S5; keep those task issues open.
 
 Direct and relay paths use the same session identity and deduplication rules.

@@ -141,7 +141,7 @@ func receive_mesh(peer: Peer, packet: PackedByteArray, attributed_peer_id: int, 
 func receive_relay(peer: Peer, packet: PackedByteArray, attributed_uuid: String, now_us: int, next_token: Variant = null) -> int:
 	# next_token carries the core protocol's nullable handshake token.
 	_check_lifetime()
-	if _membership == null or _state.route not in ["relay", "relay_required"]:
+	if _membership == null or _state.route not in ["mesh", "relay", "relay_required"]:
 		return I.Code.WRONG_STATE
 	return _membership.receive(peer, packet, attributed_uuid, now_us, next_token)
 

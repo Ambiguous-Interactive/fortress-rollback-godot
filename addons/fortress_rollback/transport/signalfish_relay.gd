@@ -248,7 +248,7 @@ func _gate() -> int:
 	var config: Object = _sdk_config.get_ref()
 	if not is_instance_valid(client) or not is_instance_valid(config) or not _raw_mode(config) or config.get("max_inbound_packets_per_poll") > 4096:
 		return Code.INCOMPATIBLE_MODE
-	if _adapter.status().route not in ["relay", "relay_required"]:
+	if _adapter.status().route not in ["mesh", "relay", "relay_required"]:
 		return Code.WRONG_STATE
 	return Code.OK
 
@@ -260,3 +260,11 @@ func _reject(code: int) -> void:
 
 static func _raw_mode(config: Object) -> bool:
 	return config.get("game_data_format") == "message_pack" and config.get("decode_msgpack_payloads") == false
+
+
+func matches_session(membership: Membership, adapter: Adapter, peer: Peer) -> bool:
+	return _membership == membership and _adapter == adapter and _peer == peer and _client != null
+
+
+func packet_limit() -> int:
+	return 0 if _options == null else _options.max_packet_bytes

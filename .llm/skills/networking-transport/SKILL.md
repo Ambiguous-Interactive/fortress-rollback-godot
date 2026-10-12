@@ -16,7 +16,7 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay and direct bytes implemented; automatic fallback and release matrix remain planned |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay, direct bytes and injected fallback implemented; live recovery and release matrix remain planned |
 | Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
 | Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
@@ -52,6 +52,13 @@ outgoing and incoming work across those transitions; repeated identical plans
 must not fabricate a replacement. Reserve PacketPeer reads for one consumer and
 capture sender/channel/mode before get_packet advances to the next packet.
 Inspect actual browser data channels, not just Godot option dictionaries.
+Composed path switching must preserve each adapter's terminal lifetime fences;
+relay availability cannot turn a replaced direct transport into a valid lifetime.
+Clear a pre-fallback unavailability timer on demonstrated direct recovery, and
+observe restoration readiness even during polls without outgoing packets.
+Exercise minimum routing work with a blocked peer ahead of a healthy peer;
+bounded work alone does not prove fair service. Preserve each peer's FIFO while
+rotating service across the frozen roster.
 The pinned engine's legacy maxPacketLifetime spelling is ignored by browsers
 that expect maxPacketLifeTime. Use the production connection factory correction
 and verify the resulting lifetime; do not claim a zero-retransmit policy.
