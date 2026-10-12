@@ -289,8 +289,12 @@ records its loss regression and delivery gate.
 The bounded fallback coordinator routes individual unready links through relay
 and restores ready direct channels in the same rollback session. Injected
 three-peer tests cover overlapping delivery and corrected canonical game history.
-Live mixed-path recovery, ICE/replan handling and the full browser matrix remain
-acceptance work in S3–S5; keep those task issues open.
+Exported Chromium also exercises actual mixed-path packets under injected
+single-link send pressure, using default and selected work budgets on both pins.
+It correlates one input packet across direct and relay receipt, requires restored
+direct sends, and rejects a fallback-disabled stall. Physical outages, relay
+congestion, ICE/replan handling and the full browser matrix remain acceptance
+work in S3–S5 and #75; keep those task issues open.
 
 Direct and relay paths use the same session identity and deduplication rules.
 Test overlapping delivery, asymmetric failure and mixed paths.

@@ -75,19 +75,41 @@ test('exact expired boundaries reject late frame transitions, final completion a
   assert.throws(() => finalIdle.sample(0, { done: true }, 30000), /final confirmation stalled/);
 });
 
-test('an unresponsive page evaluation cannot suppress the independent progress deadline', async () => {
-  const { waitGameplay } = require('./webrtc_watchdog.cjs');
-  let readings = 0;
-  const clock = () => readings++ === 0 ? 0 : 19999;
-  const never = { evaluate: () => new Promise(() => {}) };
-  await assert.rejects(waitGameplay([never, never], clock), error => {
-    assert.match(error.message, /page evaluation exceeded active progress deadline/);
-    const diagnostic = JSON.parse(error.message.slice(error.message.indexOf('{')));
+// Value: a timer firing fractionally early must rearm; a hung page still expires at the exact deadline.
+test('an unresponsive page evaluation expires only after the real progress deadline', async () => {
+  const vm = require('node:vm');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const early of [19999.75, 19999.999]) {
+    let now = 0;
+    let callback;
+    let delay;
+    let outcome;
+    let failure;
+    const loaded = { exports: {} };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'webrtc_watchdog.cjs'), 'utf8'), {
+      module: loaded, require: () => ({ performance: { now: () => now } }),
+      setTimeout(operation, milliseconds) { callback = operation; delay = milliseconds; return 1; }, clearTimeout() {},
+    });
+    const never = { evaluate: () => new Promise(() => {}) };
+    const running = loaded.exports.waitGameplay([never, never], () => now).then(
+      () => { outcome = 'fulfilled'; }, error => { outcome = 'rejected'; failure = error; });
+    now = early;
+    callback();
+    for (let turn = 0; turn < 8; turn++) await Promise.resolve();
+    assert.equal(outcome, undefined, 'a fractional early callback must not reject gameplay');
+    assert.equal(delay, 1, 'the remaining fractional wait is rounded up');
+    now = 20000;
+    callback();
+    await running;
+    assert.equal(outcome, 'rejected');
+    assert.match(failure.message, /page evaluation exceeded active progress deadline/);
+    const diagnostic = JSON.parse(failure.message.slice(failure.message.indexOf('{')));
     assert.equal(diagnostic.deadline_ms, 20000);
-    assert.deepEqual(diagnostic.peers.map(peer => peer.frame), [-1, -1]);
-    assert.deepEqual(diagnostic.evaluations, [null, null]);
-    return true;
-  });
+    assert.equal(diagnostic.elapsed_ms, 20000);
+    assert.deepEqual([...diagnostic.peers].map(peer => peer.frame), [-1, -1]);
+    assert.deepEqual([...diagnostic.evaluations], [null, null]);
+  }
 });
 
 test('default factory terminal setup can take over 20s without entering the frame watchdog', async () => {
@@ -179,13 +201,11 @@ test('actual default main orchestration waits for delayed terminal setup before 
 
 
 test('observation diagnostic retains only bounded current-round frontiers from completed siblings', async () => {
-  const { waitGameplay } = require('./webrtc_watchdog.cjs');
-  let readings = 0;
-  const clock = () => readings++ === 0 ? 0 : 19999;
-  const ready = { evaluate: async () => ({ frame: 39, done: false,
-    progress: { confirmed: 37, received: [38], acked: [37], arbitrary_history: 'ignored' } }) };
-  const pending = { evaluate: () => new Promise(() => {}) };
-  await assert.rejects(waitGameplay([ready, pending], clock), error => {
+  await assert.rejects(scheduledGameplay((index, round, later) => {
+    if (index === 1 || round > 1) return new Promise(() => {});
+    return later({ frame: 39, done: false,
+      progress: { confirmed: 37, received: [38], acked: [37], arbitrary_history: 'ignored' } }, 19999);
+  }), error => {
     const diagnostic = JSON.parse(error.message.slice(error.message.indexOf('{')));
     assert.deepEqual(diagnostic.evaluations[0].progress, { confirmed: 37, received: [38], acked: [37] });
     assert.equal(diagnostic.evaluations[1], null);
@@ -294,7 +314,20 @@ test('actual sampler rejects exact expired per-page progress and completion befo
     await assert.rejects(scheduledGameplay((index, round) => {
       if (round === 1) return Promise.resolve(final ? snapshot(39, 37, 37) : observed(0));
       return Promise.resolve(final ? { ...snapshot(39, 38, 38), done } : observed(1, done));
-    }, [limit]), final ? /final confirmation stalled/ : /gameplay stalled/);
+    }, [limit]), error => {
+      assert.match(error.message, final ? /final confirmation stalled/ : /gameplay stalled/);
+      const detail = JSON.parse(error.message.slice(error.message.indexOf('{')));
+      assert.equal(detail.deadline_ms, limit);
+      assert.equal(detail.elapsed_ms, limit);
+      assert.equal(detail.attempts[0].completed_ms, limit);
+      assert.equal(detail.evaluations[0].elapsed_ms, limit);
+      assert.equal(detail.last_samples[0].elapsed_ms, 0);
+      assert.equal(detail.peers[0].done, false);
+      assert.equal(detail.round_started_ms, limit);
+      assert.equal(detail.evaluations.filter((value, index) => value !== null
+        && JSON.stringify(value) !== JSON.stringify(detail.last_samples[index])).length, 1);
+      return true;
+    });
   }
 });
 
@@ -393,6 +426,7 @@ test('continuous observation deadline remains armed while all peers are between 
     assert.equal(detail.elapsed_ms, 20000);
     assert.equal(detail.deadline_ms, 20000);
     assert.deepEqual(detail.attempts, [{ started_ms: 19900, completed_ms: 19900 }, { started_ms: 19900, completed_ms: 19900 }]);
+    assert.equal(detail.round_started_ms, detail.elapsed_ms);
     assert.deepEqual(detail.last_samples.map(sample => sample.elapsed_ms), [19900, 19900]);
     return true;
   });

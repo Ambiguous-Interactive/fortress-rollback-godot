@@ -15,6 +15,7 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Setup = preload("res://webrtc_setup.gd")
 const Game = preload("res://webrtc_game.gd")
+const Mixed = preload("res://webrtc_mixed.gd")
 const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "room_join_failed", "authentication_error", "connection_failed",
 	"reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
@@ -44,8 +45,11 @@ var player_count: int = 0
 var local_index: int = 0
 var membership_frozen: bool = false
 var tearing_down: bool = false
+var mixed_enabled: bool = false
+var mixed: Mixed = Mixed.new()
 
 func _ready() -> void:
+	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
 	endpoint = JavaScriptBridge.eval("window.fortressEndpoint")
 	player_count = int(JavaScriptBridge.eval("window.fortressPlayers"))
 	local_index = int(JavaScriptBridge.eval("window.fortressLocal"))
@@ -139,7 +143,8 @@ func _play(count: int) -> bool:
 			comparisons += 1
 	if not _healthy(true): return false
 	records.append({"players": count, "frames_submitted": 40, "minimum_confirmed": minimum_confirmed, "canonical_comparisons": comparisons,
-		"direct": _transport_totals(), "rollback_loads": games[0].loads, "active_comparisons": active_comparisons})
+		"direct": _transport_totals(), "rollback_loads": games[0].loads, "active_comparisons": active_comparisons,
+		"mixed": mixed.report() if mixed_enabled else {}})
 	return true
 
 static func _expected(frame: int, count: int) -> PackedByteArray:
@@ -158,8 +163,9 @@ func _transport_totals() -> Dictionary:
 func _direct_options() -> Direct.Options:
 	var options: Direct.Options = Direct.Options.new()
 	options.max_packet_bytes = 1024
-	options.max_sends_per_poll = 32
-	options.max_receives_per_poll = 32
+	if not JavaScriptBridge.eval("window.fortressMixedDefault || false"):
+		options.max_sends_per_poll = 32
+		options.max_receives_per_poll = 32
 	return options
 
 func _wait(condition: Callable, use_transport: bool = false) -> bool:
@@ -240,22 +246,25 @@ func _service() -> bool:
 		clients[index].poll()
 		meshes[index].poll()
 		if not errors.is_empty(): return false
-		var polled: int = peers[index].poll(transport_us, _poll_tokens(peers[index]))
+		var polled: int = I.Code.OK if mixed_enabled and mixed.has_pending() else peers[index].poll(transport_us, _poll_tokens(peers[index]))
 		if polled != I.Code.OK:
 			errors.append("peer_poll_%d" % polled)
 			return false
-		var packets: Array[Peer.Packet] = peers[index].drain_outbox()
-		if not packets.is_empty():
-			var accepted: int = transports[index].enqueue_batch(packets)
-			if accepted != 0:
-				errors.append("direct_enqueue_%d" % accepted)
+		if mixed_enabled:
+			if not mixed.service(self): return false
+		else:
+			var packets: Array[Peer.Packet] = peers[index].drain_outbox()
+			if not packets.is_empty():
+				var accepted: int = transports[index].enqueue_batch(packets)
+				if accepted != 0:
+					errors.append("direct_enqueue_%d" % accepted)
+					return false
+			var result: Direct.Result = transports[index].poll(transport_us, _next_token)
+			if result.code != 0:
+				errors.append("direct_poll_%d_peer_%d" % [result.code, result.peer_code])
 				return false
-		var result: Direct.Result = transports[index].poll(transport_us, _next_token)
-		if result.code != 0:
-			errors.append("direct_poll_%d_peer_%d" % [result.code, result.peer_code])
-			return false
-		sent_packets += result.sent
-		received_packets += result.received
+			sent_packets += result.sent
+			received_packets += result.received
 		peers[index].drain_events()
 		peers[index].drain_transitions()
 	if transport_us >= next_progress_us:
@@ -298,6 +307,7 @@ static func _sample(frame: int, slot: int) -> int:
 
 func _cleanup() -> void:
 	tearing_down = true
+	mixed.detach()
 	for direct: Direct in transports: direct.detach()
 	for adapter: Adapter in adapters: adapter.detach()
 	for mesh: SDKMesh in meshes: mesh.free()

@@ -115,8 +115,9 @@ room replacement and membership changes require an explicit new rollback session
 Call `direct.detach()` before releasing SDK objects, then detach the plan adapter.
 
 The [fallback coordinator](signalfish-fallback.md) switches individual failed links
-to relay and restores ready direct links within the same peer session. Live browser
-recovery and SDK mesh replacement remain tracked in
+to relay and restores ready direct links within the same peer session. Exported
+Chromium validates mixed delivery under single-link send pressure. Physical
+outage recovery and SDK mesh replacement remain tracked in
 [S4](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).
 Do not treat direct readiness as permission to reset confirmed history or
 restart an old peer. A new SDK connection does not restore simulation state.
@@ -150,4 +151,7 @@ both engine pins by default; `--godot` requires one matching `--version`.
 Independent Chromium processes run 2/4/8-player matches and observe actual
 channel traffic and closure. Synthetic send drops/delays exercise recovery;
 snapshot corruption must fail at an original-input canonical comparison.
+Mixed runs use both default and selected work budgets. They inject one-link send
+pressure and correlate the same input bytes across physical direct and addressed
+relay delivery. A fallback-disabled control must fail the gameplay watchdog.
 Automatic CI retains source, tool, export and log inventories with its receipts.
