@@ -16,7 +16,7 @@ wire is bytes with an exact, versioned layout.
 
 | Target | Peer | Notes |
 | --- | --- | --- |
-| Supported browser target | WebRTC plus optional SignalFish SDK | Binary relay, direct bytes and injected fallback implemented; live recovery and release matrix remain planned |
+| Supported browser target | WebRTC plus optional SignalFish SDK | Direct/relay fallback has live Chromium pressure evidence; physical recovery and release matrix remain planned |
 | Native validation | Bounded fake transport; WebRTC verified separately | Native availability is not inferred from browser support |
 | Development traces | Explicit scheduler and canonical bytes | Injected time and deterministic delivery decisions |
 
@@ -43,6 +43,18 @@ acceptance. Retain the exact FIFO head on send refusal and count owned queues,
 socket backlog and receive work separately. Verify retry bytes and corrected
 confirmed game state through the actual SDK, rather than counting simulated ticks.
 Name injected transport, native server and browser evidence separately.
+Prove overlapping delivery with the same packet bytes at physical direct send,
+physical direct receipt and addressed relay receipt. An enqueue counter and
+unrelated relay traffic cannot prove overlap. Require addressed receipt counts
+to fit physical binary receipt totals and the actual remote recipient roster.
+Validate the session before counting decoded relay evidence. Bound diagnostic
+packet inventories, and distinguish synthetic socket pressure from physical loss.
+Validate captured packet headers, declared lengths, INPUT bodies, player/session
+identity, connection incarnation and original samples before correlating equal payloads. Malformed copies
+can agree. Parse structured negative-control diagnostics and reconcile their
+phase, observed frames and actual deadline instead of accepting a text prefix.
+Separate accepted observations from rejected completions; enforce the emitter's
+strict expiry and callback-order relationships across peers.
 
 Fence retained direct bytes with a monotonic local plan/lifetime revision, not
 just current opaque generation equality. The SDK can rebuild per-peer channels

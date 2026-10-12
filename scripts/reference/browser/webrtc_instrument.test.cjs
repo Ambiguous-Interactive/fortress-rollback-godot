@@ -18,6 +18,7 @@ test('all constructed peer connections must close, including channel-free orphan
     }
     close() { this.connectionState = 'closed'; this.channels.forEach(channel => { channel.readyState = 'closed'; }); }
   }
+  global.WebSocket = class { send() {} };
   global.RTCPeerConnection = Connection;
   global.window = { RTCPeerConnection: Connection };
   try {
@@ -32,6 +33,7 @@ test('all constructed peer connections must close, including channel-free orphan
     orphan.close();
     assert.equal(window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), true);
   } finally {
+    delete global.WebSocket;
     delete global.window;
     delete global.RTCPeerConnection;
   }
@@ -107,3 +109,54 @@ async function failedRoom(hung = false) {
 test('failed room captures live RTC counters before closing contexts and preserves the original rejection', () => failedRoom());
 
 test('hung RTC diagnostics expire independently after one second without replacing the original rejection', () => failedRoom(true));
+// Value: pressure must block one link only, preserve physical state, and end at the exact frame boundary.
+test('mixed pressure keeps unrelated channels healthy and releases the same physical channel at frame sixteen', () => {
+  class Channel {
+    constructor(options) { Object.assign(this, options); this.nativeBuffered = 7; this.readyState = 'open'; this.sent = []; }
+    get bufferedAmount() { return this.nativeBuffered; }
+    addEventListener() {}
+    send(bytes) { this.sent.push(bytes); }
+  }
+  class Connection {
+    constructor() { this.connectionState = 'connected'; this.iceConnectionState = 'connected'; }
+    addEventListener() {}
+    createDataChannel(label, options) { return new Channel({ label, ...options }); }
+  }
+  global.RTCDataChannel = Channel;
+  global.RTCPeerConnection = Connection;
+  global.WebSocket = class { send() {} };
+  global.window = { RTCPeerConnection: Connection };
+  global.document = { body: { dataset: { fortressFrame: '3' } } };
+  try {
+    instrument({ count: 4, index: 0, mixed: true, mixedDefault: true, faults: false });
+    const blocked = new window.RTCPeerConnection().createDataChannel('unreliable', { id: 3 });
+    const healthy = new window.RTCPeerConnection().createDataChannel('unreliable', { id: 3 });
+    assert.equal(blocked.bufferedAmount, 7);
+    document.body.dataset.fortressFrame = '4';
+    assert.equal(blocked.bufferedAmount, 262144);
+    assert.equal(healthy.bufferedAmount, 7);
+    assert.equal(blocked.readyState, 'open');
+    const bytes = new Uint8Array([1, 2, 3]);
+    healthy.send(bytes);
+    assert.deepEqual(healthy.sent, [bytes]);
+    document.body.dataset.fortressFrame = '15';
+    assert.equal(blocked.bufferedAmount, 262144);
+    document.body.dataset.fortressFrame = '16';
+    assert.equal(blocked.bufferedAmount, 7);
+    document.body.dataset.fortressFrame = '20';
+    blocked.send(bytes);
+    assert.deepEqual(blocked.sent, [bytes]);
+    const rows = window.fortressRtc.channels;
+    assert.equal(rows[0].blockedReads, 2);
+    assert.equal(rows[0].mixedSent, 0);
+    assert.equal(rows[0].restoredSent, 1);
+    assert.equal(rows[1].mixedSent, 1);
+    const socket = new WebSocket();
+    socket.send('control');
+    socket.send(bytes);
+    assert.equal(window.fortressRtc.binarySent, 1);
+    assert.equal(window.fortressMixedDefault, true);
+  } finally {
+    for (const name of ['window', 'document', 'WebSocket', 'RTCPeerConnection', 'RTCDataChannel']) delete global[name];
+  }
+});

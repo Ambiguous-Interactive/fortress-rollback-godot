@@ -2,6 +2,9 @@
 import ast
 import copy
 import inspect
+import json
+import hashlib
+import struct
 from unittest.mock import patch
 from browser import webrtc_runner
 import unittest
@@ -9,6 +12,15 @@ from pathlib import Path
 import tempfile
 
 import signalfish_webrtc_probe as probe
+
+
+def gameplay_diagnostic():
+    samples = [{'elapsed_ms': 19900, 'frame': frame, 'done': False,
+                'progress': {'confirmed': frame - 1, 'received': [frame - 1], 'acked': [frame - 2]}} for frame in (5, 4)]
+    return {'round_started_ms': 20000, 'elapsed_ms': 20000, 'deadline_ms': 20000,
+            'peers': [{'frame': frame, 'changed_ms': 0, 'final_ms': None, 'frontier': None, 'done': False} for frame in (5, 4)],
+            'evaluations': copy.deepcopy(samples), 'last_samples': samples,
+            'attempts': [{'started_ms': 19800, 'completed_ms': 19900} for unused in range(2)]}
 
 
 def evidence(faults):
@@ -31,7 +43,285 @@ def evidence(faults):
     return {'passed': True, 'browser': 'Chromium', 'version': '141', 'browser_instances': 2, 'faults': faults, 'corrupt': False, 'records': records, 'errors': []}
 
 
+def mixed_evidence():
+    result = evidence(False)
+    result['mixed'] = True
+    for record in result['records']:
+        count = record['players']
+        body = struct.pack('<iiH', 2, 1, 1) + bytes([1, 0, count]) + struct.pack('<BiH', 0, 1, 0) * count + struct.pack('<I', 1) + bytes([35])
+        payload = (b'FRGP' + struct.pack('<HBB', 1, 3, 0) + bytes([count]) * 16
+                   + hashlib.sha256(b'00000000-0000-0000-0000-000000000000').digest()[:8]
+                   + bytes([1]) + bytes(7) + struct.pack('<I', len(body)) + body).hex()
+        for index, peer in enumerate(record['peers']):
+            peer['result']['binary_receives'] = 5 if index != 0 else 0
+            peer['result']['records'][0]['mixed'] = {
+                'switched': index == 0, 'restored': index == 0, 'relay_peers': 0, 'maximum_pending': 7,
+                'maximum_relay_pending': 7, 'maximum_relay_received': 7, 'accepted_binary': 5 if index == 1 else 0,
+                'overlap_packets': 1 if index == 0 else 0, 'caller_pending': 0, 'route_budget': 8,
+                'send_budget': 32, 'receive_budget': 32, 'uuid': f'00000000-0000-0000-0000-{index:012x}',
+                'relay_payloads': [payload] if index == 1 else [],
+                'overlap': {'recipient': '00000000-0000-0000-0000-000000000001', 'payload': payload} if index == 0 else {}}
+            peer['rtc']['binarySent'] = 5 if index == 0 else 0
+            peer['rtc']['maximumRelayBuffered'] = 100
+            peer['rtc']['captureError'] = False
+            for slot, channel in enumerate(channel for channel in peer['rtc']['channels'] if channel['id'] == 3):
+                blocked = index == 0 and slot == 0
+                channel.update(blockedLink=blocked, blockedReads=5 if blocked else 0,
+                               mixedSent=0 if blocked else 5, restoredSent=5, maximumBuffered=100,
+                               earlySent=[payload] if index == 0 else [], earlyReceived=[payload] if index == 1 else [])
+    return result
+
+
 class BrowserWebRtcEvidenceControls(unittest.TestCase):
+    def test_mixed_delivery_requires_real_paths_restoration_healthy_links_and_bounded_ownership(self):
+        original = mixed_evidence()
+        self.assertEqual(probe.validate_browser(original, False, mixed=True), original)
+        changes = [
+            (('result', 'records', 0, 'mixed', 'switched'), False),
+            (('result', 'records', 0, 'mixed', 'restored'), False),
+            (('result', 'records', 0, 'mixed', 'route_budget'), True),
+            (('result', 'records', 0, 'mixed', 'send_budget'), 8),
+            (('result', 'records', 0, 'mixed', 'maximum_pending'), 129),
+            (('result', 'records', 0, 'mixed', 'maximum_relay_pending'), -1),
+            (('result', 'records', 0, 'mixed', 'maximum_relay_received'), 129),
+            (('result', 'records', 0, 'mixed', 'caller_pending'), 1),
+            (('result', 'records', 0, 'mixed', 'overlap_packets'), 0),
+            (('result', 'records', 0, 'mixed', 'relay_peers'), 1),
+            (('rtc', 'binarySent'), 0),
+            (('rtc', 'channels', 2, 'blockedReads'), 0),
+            (('rtc', 'channels', 2, 'mixedSent'), 1),
+            (('rtc', 'channels', 2, 'restoredSent'), 0),
+            (('rtc', 'channels', 5, 'mixedSent'), 0),
+        ]
+        for fields, value in changes:
+            changed = copy.deepcopy(original)
+            target = changed['records'][1]['peers'][0]
+            for field in fields[:-1]: target = target[field]
+            target[fields[-1]] = value
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                probe.validate_browser(changed, False, mixed=True)
+        changed = copy.deepcopy(original)
+        changed['records'][0]['peers'][1]['result']['records'][0]['mixed']['accepted_binary'] = 0
+        changed['records'][0]['peers'][1]['result']['records'][0]['mixed']['relay_payloads'] = []
+        with self.assertRaisesRegex(ValueError, 'addressed relay'):
+            probe.validate_browser(changed, False, mixed=True)
+
+    def test_mixed_addressed_receipts_need_remote_physical_delivery(self):
+        original = mixed_evidence()
+        for missing_physical in (True, False):
+            changed = copy.deepcopy(original)
+            for record in changed['records']:
+                if missing_physical:
+                    for peer in record['peers']: peer['result']['binary_receives'] = 0
+                else:
+                    for peer in record['peers']:
+                        peer['result']['records'][0]['mixed']['accepted_binary'] = 0
+                        peer['result']['records'][0]['mixed']['relay_payloads'] = []
+                    record['peers'][0]['result']['binary_receives'] = 5
+                    record['peers'][0]['result']['records'][0]['mixed']['accepted_binary'] = 5
+            with self.subTest(missing_physical=missing_physical), self.assertRaisesRegex(ValueError, 'physical binary' if missing_physical else 'own broadcast'):
+                probe.validate_browser(changed, False, mixed=True)
+
+    def test_mixed_overlap_needs_the_same_bytes_on_both_physical_paths(self):
+        original = mixed_evidence()
+        for index, fields, value in [
+                (0, ('rtc', 'channels', 2, 'earlySent'), []),
+                (1, ('rtc', 'channels', 2, 'earlyReceived'), []),
+                (1, ('result', 'records', 0, 'mixed', 'relay_payloads'), []),
+                (1, ('result', 'records', 0, 'mixed', 'relay_payloads'), ['0304']),
+                (0, ('result', 'records', 0, 'mixed', 'overlap', 'recipient'), 'unknown'),
+                (0, ('result', 'records', 0, 'mixed', 'overlap', 'payload'), 'zz'),
+                (0, ('rtc', 'maximumRelayBuffered'), 262145),
+                (0, ('rtc', 'channels', 2, 'maximumBuffered'), 262145)]:
+            changed = copy.deepcopy(original)
+            target = changed['records'][0]['peers'][index]
+            for field in fields[:-1]: target = target[field]
+            target[fields[-1]] = value
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                probe.validate_browser(changed, False, mixed=True)
+
+    def test_disabled_fallback_requires_observed_pressure_at_the_gameplay_stall(self):
+        failed = {'failure': 'Error: page evaluation exceeded active progress deadline ' + json.dumps(gameplay_diagnostic()), 'errors': [], 'records': [],
+                  'failed_rooms': [{'players': 2, 'peers': [
+                      {'index': 0, 'frame': '5', 'rtc': {'channels': [
+                          {'id': 3, 'blocked_reads': 10, 'buffered_amount': 262144}]}},
+                      {'index': 1, 'frame': '4', 'rtc': {'channels': []}}]}]}
+        output = json.dumps(failed) + '\nError: peer 1 gameplay stalled\n'
+        self.assertEqual(probe.validate_disabled_control(1, output), failed)
+        for code, text in [(0, output), (1, ''), (1, output + output), (True, output)]:
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                probe.validate_disabled_control(code, text)
+        for fields, value in [
+                (('failure',), 'Error: setup timeout'),
+                (('errors',), ['script error']),
+                (('failed_rooms', 0, 'peers', 0, 'frame'), '16'),
+                (('failed_rooms', 0, 'peers', 0, 'rtc', 'channels', 0, 'blocked_reads'), 0),
+                (('failed_rooms', 0, 'peers', 0, 'rtc', 'channels', 0, 'buffered_amount'), 0)]:
+            changed = copy.deepcopy(failed)
+            target = changed
+            for field in fields[:-1]: target = target[field]
+            target[fields[-1]] = value
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                probe.validate_disabled_control(1, json.dumps(changed))
+
+    # Value: protects=actual deadline evidence; fails_when=bare errors or impossible attempt records pass; why_new=old gate ignores attempts; seam=none.
+    def test_disabled_control_reconciles_all_emitted_observation_fields(self):
+        captured = [{'frame': '5'}, {'frame': '4'}]
+        original = gameplay_diagnostic()
+        probe.validate_gameplay_diagnostic(json.dumps(original), captured)
+        pending = copy.deepcopy(original)
+        pending['attempts'][0] = {'started_ms': 19950, 'completed_ms': None}
+        pending['evaluations'][0] = None
+        pending['round_started_ms'] = 19950
+        probe.validate_gameplay_diagnostic(json.dumps(pending), captured)
+        late = copy.deepcopy(original)
+        late['attempts'][0] = {'started_ms': 19950, 'completed_ms': 20000}
+        late['evaluations'][0] = {'elapsed_ms': 20000, 'frame': 39, 'done': True, 'progress': None}
+        probe.validate_gameplay_diagnostic(json.dumps(late), captured, expired_peer=0)
+        for fields, value in [(('round_started_ms',), 19949), (('evaluations', 0), original['evaluations'][0]),
+                              (('attempts', 0, 'started_ms'), 19899)]:
+            changed = copy.deepcopy(pending)
+            target = changed
+            for field in fields[:-1]: target = target[field]
+            target[fields[-1]] = value
+            with self.subTest(pending=fields), self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+                probe.validate_gameplay_diagnostic(json.dumps(changed), captured)
+        mutations = [
+            (('evaluations',), []), (('attempts',), []), (('round_started_ms',), -1),
+            (('round_started_ms',), 20001), (('round_started_ms',), 19000),
+            (('evaluations', 0, 'elapsed_ms'), -1), (('evaluations', 0, 'elapsed_ms'), 20001),
+            (('evaluations', 0, 'frame'), 39), (('evaluations', 0, 'done'), True),
+            (('evaluations', 0, 'progress', 'acked'), [40]), (('last_samples', 0, 'frame'), 5.0),
+            (('last_samples', 0, 'progress', 'received'), [True]),
+            (('attempts', 0, 'started_ms'), 20001), (('attempts', 0, 'started_ms'), 19901),
+            (('attempts', 0, 'completed_ms'), 20001), (('attempts', 0, 'completed_ms'), None),
+            (('attempts', 0, 'completed_ms'), 19899), (('attempts', 0, 'started_ms'), None),
+        ]
+        for fields, value in mutations:
+            changed = copy.deepcopy(original)
+            target = changed
+            for field in fields[:-1]: target = target[field]
+            target[fields[-1]] = value
+            with self.subTest(fields=fields, value=value), self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+                probe.validate_gameplay_diagnostic(json.dumps(changed), captured)
+        for fields in [('evaluations',), ('attempts',), ('round_started_ms',), ('attempts', 0, 'completed_ms')]:
+            changed = copy.deepcopy(original)
+            target = changed
+            for field in fields[:-1]: target = target[field]
+            del target[fields[-1]]
+            with self.subTest(missing=fields), self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+                probe.validate_gameplay_diagnostic(json.dumps(changed), captured)
+        failed = {'failure': 'Error: peer 1 gameplay stalled', 'errors': [], 'records': [],
+                  'failed_rooms': [{'players': 2, 'peers': [
+                      {'index': 0, 'frame': '5', 'rtc': {'channels': [{'id': 3, 'blocked_reads': 10, 'buffered_amount': 262144}]}},
+                      {'index': 1, 'frame': '4'}]}]}
+        with self.assertRaisesRegex(ValueError, 'gameplay watchdog'):
+            probe.validate_disabled_control(1, json.dumps(failed))
+        failed['failure'] = 'Error: peer 0 gameplay stalled ' + json.dumps(late)
+        self.assertEqual(probe.validate_disabled_control(1, json.dumps(failed)), failed)
+        for index in (0, 1):
+            changed = copy.deepcopy(original)
+            changed['peers'][index]['changed_ms'] = 100
+            failed['failure'] = f'Error: peer {index} gameplay stalled ' + json.dumps(changed)
+            with self.subTest(named=index), self.assertRaisesRegex(ValueError, 'named peer'):
+                probe.validate_disabled_control(1, json.dumps(failed))
+
+    # Value: protects=single failure ordering; fails_when=accepted expiry or two rejected siblings pass; why_new=old schema checks only bounds; seam=none.
+    def test_disabled_diagnostic_requires_the_actual_timer_or_sample_failure_order(self):
+        original = gameplay_diagnostic()
+        captured = [{'frame': '5'}, {'frame': '4'}]
+        timely = copy.deepcopy(original)
+        timely['last_samples'][0]['elapsed_ms'] = 19999.999
+        timely['evaluations'][0] = copy.deepcopy(timely['last_samples'][0])
+        timely['attempts'][0]['completed_ms'] = 19999.999
+        probe.validate_gameplay_diagnostic(json.dumps(timely), captured)
+        asymmetric = copy.deepcopy(original)
+        asymmetric['peers'][1]['changed_ms'] = 100
+        asymmetric['last_samples'][1]['elapsed_ms'] = 20000
+        asymmetric['evaluations'][1] = copy.deepcopy(asymmetric['last_samples'][1])
+        asymmetric['attempts'][1]['completed_ms'] = 20000
+        probe.validate_gameplay_diagnostic(json.dumps(asymmetric), captured)
+        mutants = []
+        for elapsed in (20000, 20001):
+            changed = copy.deepcopy(original)
+            changed['elapsed_ms'] = changed['round_started_ms'] = elapsed
+            changed['last_samples'][0]['elapsed_ms'] = elapsed
+            changed['evaluations'][0] = copy.deepcopy(changed['last_samples'][0])
+            changed['attempts'][0]['completed_ms'] = elapsed
+            mutants.append((f'accepted_{elapsed}', changed))
+        changed = copy.deepcopy(original)
+        changed['round_started_ms'] = 19950
+        mutants.append(('stale_round', changed))
+        late = copy.deepcopy(original)
+        late['evaluations'][0] = {'elapsed_ms': 20000, 'frame': 39, 'done': True, 'progress': None}
+        late['attempts'][0] = {'started_ms': 19950, 'completed_ms': 20000}
+        mutants.append(('timer_after_sample_failure', late))
+        both = copy.deepcopy(late)
+        both['evaluations'][1] = copy.deepcopy(both['evaluations'][0])
+        both['attempts'][1] = copy.deepcopy(both['attempts'][0])
+        mutants.append(('two_failed_samples', both))
+        older = copy.deepcopy(late)
+        older['elapsed_ms'] = older['round_started_ms'] = 20001
+        mutants.append(('sample_failure_then_later_diagnostic', older))
+        rejected_pair = copy.deepcopy(late)
+        rejected_pair['evaluations'][1] = copy.deepcopy(rejected_pair['evaluations'][0])
+        rejected_pair['attempts'][1] = copy.deepcopy(rejected_pair['attempts'][0])
+        with self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+            probe.validate_gameplay_diagnostic(json.dumps(rejected_pair), captured, expired_peer=0)
+        with self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+            probe.validate_gameplay_diagnostic(json.dumps(older), captured, expired_peer=0)
+        asymmetric['evaluations'][0] = copy.deepcopy(late['evaluations'][0])
+        asymmetric['attempts'][0] = copy.deepcopy(late['attempts'][0])
+        probe.validate_gameplay_diagnostic(json.dumps(asymmetric), captured, expired_peer=0)
+        for label, changed in mutants:
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+                probe.validate_gameplay_diagnostic(json.dumps(changed), captured)
+        failed = {'failure': '', 'errors': [], 'records': [], 'failed_rooms': [{'players': 2, 'peers': [
+            {'index': 0, 'frame': '5', 'rtc': {'channels': [{'id': 3, 'blocked_reads': 10, 'buffered_amount': 262144}]}},
+            {'index': 1, 'frame': '4'}]}]}
+        for label, changed, index in [('accepted_named_peer', original, 0), ('wrong_named_peer', late, 1),
+                                      ('two_failed_samples', both, 0), ('late_diagnostic', older, 0)]:
+            failed['failure'] = f'Error: peer {index} gameplay stalled ' + json.dumps(changed)
+            with self.subTest(path=label), self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+                probe.validate_disabled_control(1, json.dumps(failed))
+        absolute = copy.deepcopy(late)
+        absolute['elapsed_ms'] = absolute['round_started_ms'] = 240000
+        absolute['evaluations'][0]['elapsed_ms'] = absolute['attempts'][0]['completed_ms'] = 240000
+        failed['failure'] = 'Error: peer 0 gameplay stalled ' + json.dumps(absolute)
+        with self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+            probe.validate_disabled_control(1, json.dumps(failed))
+
+    def test_correlated_overlap_rejects_malformed_protocol_and_changed_original_inputs(self):
+        original = mixed_evidence()
+        payload = original['records'][0]['peers'][0]['result']['records'][0]['mixed']['overlap']['payload']
+        raw = bytes.fromhex(payload)
+        mutants = [('truncated', b'\x00')]
+        for offset, value in [(0, 0), (4, 2), (6, 4), (7, 1), (32, 0), (33, 2), (40, 0), (len(raw) - 1, 0)]:
+            changed = bytearray(raw)
+            changed[offset] = value
+            mutants.append((str(offset), bytes(changed)))
+        for label, changed in mutants:
+            result = copy.deepcopy(original)
+            for peer in result['records'][0]['peers']:
+                state = peer['result']['records'][0]['mixed']
+                if state['overlap']: state['overlap']['payload'] = changed.hex()
+                state['relay_payloads'] = [changed.hex() if value == payload else value for value in state['relay_payloads']]
+                for channel in peer['rtc']['channels']:
+                    for field in ('earlySent', 'earlyReceived'):
+                        if field in channel:
+                            channel[field] = [changed.hex() if value == payload else value for value in channel[field]]
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'overlap protocol|original input'):
+                probe.validate_browser(result, False, mixed=True)
+
+    def test_disabled_control_requires_a_real_gameplay_diagnostic_not_a_prefix(self):
+        failure = {'failure': '', 'errors': [], 'records': [], 'failed_rooms': [{'players': 2, 'peers': [
+            {'index': 0, 'frame': '5', 'rtc': {'channels': [{'id': 3, 'blocked_reads': 10, 'buffered_amount': 262144}]}},
+            {'index': 1, 'frame': '4', 'rtc': {'channels': []}}]}]}
+        for suffix in ['not-json', json.dumps({'peers': [{'frame': 39, 'final_ms': 10, 'done': False}]})]:
+            failure['failure'] = 'Error: page evaluation exceeded active progress deadline ' + suffix
+            with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, 'watchdog diagnostic'):
+                probe.validate_disabled_control(1, json.dumps(failure))
+
     def test_engine_pin_rejects_appended_bytes_despite_unchanged_version_text(self):
         with tempfile.TemporaryDirectory() as directory:
             engine = Path(directory) / "godot"

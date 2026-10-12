@@ -53,7 +53,7 @@ oracle-probes:
 
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:
-	$(PY) scripts/run_godot_tests.py --godot $(GODOT)
+	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --timeout 120
 
 ## Focused local iteration, preserving both fresh-process and in-process repetitions
 test-focus:

@@ -77,17 +77,23 @@ async function waitGameplay(pages, clock = () => performance.now(), pause = () =
     active = false;
     rejectObservation(error);
   };
+  const diagnosticError = (message, now) => {
+    const elapsed = now - watchdog.started;
+    const pending = attempts.filter(attempt => attempt.completed_ms === null && attempt.started_ms !== null);
+    const diagnostic = { round_started_ms: pending.length ? Math.min(...pending.map(attempt => attempt.started_ms)) : elapsed,
+      elapsed_ms: elapsed, deadline_ms: watchdog.deadline() - watchdog.started,
+      peers: watchdog.peers.map(peer => ({ frame: peer.frame, changed_ms: peer.changed - watchdog.started,
+        final_ms: peer.finalStarted === null ? null : peer.finalStarted - watchdog.started, frontier: peer.frontier, done: peer.done })),
+      evaluations, attempts, last_samples };
+    return new Error(message + ' ' + JSON.stringify(diagnostic));
+  };
   const arm = () => {
     clearTimeout(timer);
     timer = setTimeout(() => {
-      const pending = attempts.filter(attempt => attempt.completed_ms === null && attempt.started_ms !== null);
-      const diagnostic = { round_started_ms: pending.length ? Math.min(...pending.map(attempt => attempt.started_ms)) : clock() - watchdog.started,
-        elapsed_ms: clock() - watchdog.started, deadline_ms: watchdog.deadline() - watchdog.started,
-        peers: watchdog.peers.map(peer => ({ frame: peer.frame, changed_ms: peer.changed - watchdog.started,
-          final_ms: peer.finalStarted === null ? null : peer.finalStarted - watchdog.started, frontier: peer.frontier, done: peer.done })),
-        evaluations, attempts, last_samples };
-      fail(new Error('page evaluation exceeded active progress deadline ' + JSON.stringify(diagnostic)));
-    }, Math.max(0, watchdog.deadline() - clock()));
+      const now = clock();
+      if (now < watchdog.deadline()) { arm(); return; }
+      fail(diagnosticError('page evaluation exceeded active progress deadline', now));
+    }, Math.ceil(Math.max(0, watchdog.deadline() - clock())));
   };
   const observe = async (page, index) => {
     while (active) {
@@ -105,7 +111,10 @@ async function waitGameplay(pages, clock = () => performance.now(), pause = () =
         attempts[index].completed_ms = now - watchdog.started;
         evaluations[index] = { elapsed_ms: now - watchdog.started, frame: snapshot.frame, done: snapshot.done,
           progress: boundedFrontier(snapshot.progress, pages.length) };
-        watchdog.sample(index, snapshot, now);
+        try { watchdog.sample(index, snapshot, now); } catch (error) {
+          if (/^peer \d+ (gameplay|final confirmation) stalled$/.test(error.message)) throw diagnosticError(error.message, now);
+          throw error;
+        }
         last_samples[index] = evaluations[index];
         arm();
         if (watchdog.peers.every(peer => peer.done)) { finish(); return; }

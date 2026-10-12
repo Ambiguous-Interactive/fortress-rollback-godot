@@ -3,9 +3,11 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -18,13 +20,15 @@ from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from godot_smoke import run
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
+from run import capture
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
-def validate_browser(result, faults):
+def validate_browser(result, faults, mixed=False, default_budgets=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') != 'Chromium'
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
-            or result.get('faults') is not faults or result.get('corrupt') is not False or result.get('errors') != []):
+            or result.get('faults') is not faults or result.get('corrupt') is not False or result.get('errors') != []
+            or result.get('mixed', False) is not mixed or result.get('mixedDefault', False) is not default_budgets):
         raise ValueError('browser WebRTC witness failed or incomplete')
     records = result.get('records')
     if not isinstance(records, list) or len(records) != 3:
@@ -32,10 +36,11 @@ def validate_browser(result, faults):
     for record, count in zip(records, (2, 4, 8)):
         if type(record.get('players')) is not int or record['players'] != count or len(record.get('peers', [])) != count:
             raise ValueError('WebRTC peer inventory incomplete')
-        for peer in record['peers']:
+        for index, peer in enumerate(record['peers']):
             witness = peer.get('result', {})
             rows = witness.get('records')
-            if witness.get('passed') is not True or type(witness.get('binary_receives')) is not int or witness['binary_receives'] != 0:
+            if (witness.get('passed') is not True or type(witness.get('binary_receives')) is not int
+                    or witness['binary_receives'] < 0 or (not mixed and witness['binary_receives'] != 0)):
                 raise ValueError('gameplay used relay or failed')
             if not isinstance(rows, list) or len(rows) != 1:
                 raise ValueError('peer gameplay result missing')
@@ -79,7 +84,198 @@ def validate_browser(result, faults):
             for key in ('dropped', 'reordered'):
                 if type(rtc.get(key)) is not int or (rtc[key] < 1 if faults else rtc[key] != 0):
                     raise ValueError('data-channel fault controls unobserved')
+            if mixed:
+                validate_mixed_peer(row, rtc, index, count, default_budgets)
+                if row['mixed']['accepted_binary'] > witness['binary_receives']:
+                    raise ValueError('addressed receipts exceed physical binary receipts')
+                if index == 0 and row['mixed']['accepted_binary'] != 0:
+                    raise ValueError('sender cannot receive its own broadcast relay output')
+        if mixed and sum(peer['result']['records'][0]['mixed']['accepted_binary'] for peer in record['peers']) < 2:
+            raise ValueError('addressed relay packets and overlapping delivery missing')
+        if mixed: validate_overlap(record['peers'])
     return result
+
+def validate_mixed_peer(row, rtc, index, count, default_budgets):
+    state = row.get('mixed', {})
+    work_budget = 8 if default_budgets else 32
+    for key, expected in [('route_budget', 8), ('send_budget', work_budget), ('receive_budget', work_budget), ('caller_pending', 0), ('relay_peers', 0)]:
+        if type(state.get(key)) is not int or state[key] != expected:
+            raise ValueError('mixed transport budget or final ownership invalid')
+    for key in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received'):
+        if type(state.get(key)) is not int or not 0 <= state[key] <= 128:
+            raise ValueError('mixed owned queues exceeded their limits')
+    if type(state.get('accepted_binary')) is not int or state['accepted_binary'] < 0:
+        raise ValueError('addressed binary receipt count invalid')
+    if type(state.get('overlap_packets')) is not int or state['overlap_packets'] != (1 if index == 0 else 0):
+        raise ValueError('actual overlapping packet control missing')
+    channels = [channel for channel in rtc['channels'] if channel['id'] == 3]
+    if (rtc.get('captureError') is not False or type(rtc.get('maximumRelayBuffered')) is not int
+            or not 0 <= rtc['maximumRelayBuffered'] <= 262144):
+        raise ValueError('physical relay buffer or packet capture invalid')
+    validate_payloads(state.get('relay_payloads'))
+    if len(state['relay_payloads']) > state['accepted_binary']:
+        raise ValueError('relay payload inventory exceeds addressed receipts')
+    for channel in channels:
+        validate_payloads(channel.get('earlySent'))
+        validate_payloads(channel.get('earlyReceived'))
+        if type(channel.get('maximumBuffered')) is not int or not 0 <= channel['maximumBuffered'] <= 262144:
+            raise ValueError('physical direct buffer exceeded its limit')
+    blocked = [channel for channel in channels if channel.get('blockedLink') is True]
+    if len(blocked) != (1 if index == 0 else 0):
+        raise ValueError('mixed fault must affect exactly one outgoing link')
+    if index == 0:
+        if state.get('switched') is not True or state.get('restored') is not True:
+            raise ValueError('fallback or direct restoration unobserved')
+        if type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 2:
+            raise ValueError('physical binary relay sends missing')
+        if (type(blocked[0].get('blockedReads')) is not int or blocked[0]['blockedReads'] < 1
+                or type(blocked[0].get('mixedSent')) is not int or blocked[0]['mixedSent'] != 0):
+            raise ValueError('direct send pressure did not block the selected link')
+        if count > 2 and any(type(channel.get('mixedSent')) is not int or channel['mixedSent'] < 1 for channel in channels if not channel['blockedLink']):
+            raise ValueError('healthy links lost direct service during fallback')
+    for channel in channels:
+        if type(channel.get('restoredSent')) is not int or channel['restoredSent'] < 1:
+            raise ValueError('physical direct sends after restoration missing')
+
+def validate_payloads(values):
+    if (not isinstance(values, list) or len(values) > 128 or any(not isinstance(value, str)
+            or not 2 <= len(value) <= 2048 or len(value) % 2 or not re.fullmatch('[0-9a-f]+', value) for value in values)):
+        raise ValueError('bounded physical packet inventory invalid')
+
+def validate_overlap(peers):
+    identities = [peer['result']['records'][0]['mixed'].get('uuid') for peer in peers]
+    if (any(not isinstance(identity, str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', identity)
+            for identity in identities) or len(set(identities)) != len(peers)):
+        raise ValueError('mixed physical peer identities invalid')
+    source = peers[0]
+    overlap = source['result']['records'][0]['mixed'].get('overlap', {})
+    if not isinstance(overlap, dict) or overlap.get('recipient') not in identities[1:]:
+        raise ValueError('overlap recipient missing from the remote roster')
+    payload = overlap.get('payload')
+    validate_payloads([payload])
+    validate_overlap_input(bytes.fromhex(payload), len(peers), identities[0], sorted(identities).index(identities[0]))
+    recipient = peers[identities.index(overlap['recipient'])]
+    if (not any(payload in channel['earlySent'] for channel in source['rtc']['channels'] if channel['id'] == 3)
+            or not any(payload in channel['earlyReceived'] for channel in recipient['rtc']['channels'] if channel['id'] == 3)
+            or payload not in recipient['result']['records'][0]['mixed']['relay_payloads']):
+        raise ValueError('the same overlap packet was not delivered by direct and relay')
+    if any(peer['result']['records'][0]['mixed'].get('overlap') != {} for peer in peers[1:]):
+        raise ValueError('unexpected overlap producer')
+
+def validate_overlap_input(raw, count, sender, slot):
+    size_offset = 57 + 7 * count
+    if (len(raw) < size_offset + 5 or raw[:8] != b'FRGP\x01\x00\x03\x00'
+            or int.from_bytes(raw[40:44], 'little') != len(raw) - 44
+            or raw[8:24] != bytes([count]) * 16 or raw[24:32] != hashlib.sha256(sender.encode('ascii')).digest()[:8]
+            or raw[32:40] != b'\x01\x00\x00\x00\x00\x00\x00\x00'):
+        raise ValueError('overlap protocol header or identity invalid')
+    start = int.from_bytes(raw[44:48], 'little', signed=True)
+    ack = int.from_bytes(raw[48:52], 'little', signed=True)
+    frames = int.from_bytes(raw[52:54], 'little')
+    if (start < 0 or frames < 1 or start + frames != 3 or not -1 <= ack <= 39 or raw[54:57] != bytes([1, slot, count])
+            or len(raw) != size_offset + 4 + frames or int.from_bytes(raw[size_offset:size_offset + 4], 'little') != frames):
+        raise ValueError('overlap protocol input layout invalid')
+    for index in range(count):
+        status = raw[57 + 7 * index:64 + 7 * index]
+        if status[0] != 0 or status[5:7] != b'\x00\x00' or not -1 <= int.from_bytes(status[1:5], 'little', signed=True) <= 39:
+            raise ValueError('overlap protocol status invalid')
+    expected = bytes((frame * 17 + slot * 31 + 1) & 255 for frame in range(start, 3))
+    if raw[size_offset + 4:] != expected:
+        raise ValueError('overlap original input bytes changed')
+
+def validate_disabled_control(returncode, output):
+    failures = []
+    for line in output.splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and 'failure' in value: failures.append(value)
+    if type(returncode) is not int or returncode == 0 or len(failures) != 1:
+        raise ValueError('disabled fallback control did not fail once')
+    failure = failures[0]
+    diagnostic = failure.get('failure', '')
+    if (not isinstance(diagnostic, str) or not (diagnostic.startswith('Error: page evaluation exceeded active progress deadline ')
+            or re.match(r'Error: peer [01] gameplay stalled ', diagnostic))
+            or failure.get('errors') != [] or failure.get('records') != []):
+        raise ValueError('disabled fallback failed outside the gameplay watchdog')
+    rooms = failure.get('failed_rooms')
+    if not isinstance(rooms, list) or len(rooms) != 1 or rooms[0].get('players') != 2 or len(rooms[0].get('peers', [])) != 2:
+        raise ValueError('disabled fallback room diagnostics missing')
+    for index, peer in enumerate(rooms[0]['peers']):
+        if peer.get('index') != index or not isinstance(peer.get('frame'), str) or not peer['frame'].isdigit() or not 4 <= int(peer['frame']) < 16:
+            raise ValueError('disabled fallback did not stall in the pressure interval')
+    prefix = re.match(r'Error: (?:page evaluation exceeded active progress deadline|peer [01] gameplay stalled) ', diagnostic).group()
+    expired_peer = re.match(r'Error: peer ([01]) gameplay stalled ', diagnostic)
+    validate_gameplay_diagnostic(diagnostic[len(prefix):], rooms[0]['peers'], int(expired_peer[1]) if expired_peer else None)
+    channels = rooms[0]['peers'][0].get('rtc', {}).get('channels', [])
+    if not any(channel.get('id') == 3 and type(channel.get('blocked_reads')) is int and channel['blocked_reads'] > 0
+               and channel.get('buffered_amount') == 262144 for channel in channels):
+        raise ValueError('disabled fallback channel pressure was not observed')
+    return failure
+
+def validate_gameplay_diagnostic(text, captured, expired_peer=None):
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError('watchdog diagnostic is not JSON') from error
+    numeric = lambda item: type(item) in (int, float) and math.isfinite(item) and item >= 0
+    if (not isinstance(value, dict) or any(not numeric(value.get(field)) for field in ('elapsed_ms', 'deadline_ms', 'round_started_ms'))
+            or value['elapsed_ms'] < value['deadline_ms'] or value['round_started_ms'] > value['elapsed_ms']
+            or any(not isinstance(value.get(field), list) or len(value[field]) != 2
+                   for field in ('peers', 'last_samples', 'evaluations', 'attempts'))):
+        raise ValueError('watchdog diagnostic timing or peer inventory invalid')
+    elapsed = value['elapsed_ms']
+    def valid_sample(sample):
+        if (not isinstance(sample, dict) or type(sample.get('frame')) is not int or not -1 <= sample['frame'] <= 39
+                or type(sample.get('done')) is not bool or not numeric(sample.get('elapsed_ms')) or sample['elapsed_ms'] > elapsed
+                or 'progress' not in sample):
+            return False
+        progress = sample['progress']
+        if progress is None: return True
+        return (isinstance(progress, dict) and all(isinstance(progress.get(field), list) and len(progress[field]) == 1
+                for field in ('received', 'acked')) and type(progress.get('confirmed')) is int
+                and all(type(item) is int and -1 <= item <= 39 for item in [progress['confirmed'], *progress['received'], *progress['acked']]))
+    pending = []
+    unaccepted = []
+    for index, peer in enumerate(value['peers']):
+        sample, current, attempt = (value[field][index] for field in ('last_samples', 'evaluations', 'attempts'))
+        if (not isinstance(peer, dict) or type(peer.get('frame')) is not int or peer['frame'] != int(captured[index]['frame'])
+                or peer.get('done') is not False or peer.get('final_ms', False) is not None or peer.get('frontier', False) is not None
+                or not numeric(peer.get('changed_ms')) or not valid_sample(sample) or sample['frame'] != peer['frame']
+                or sample['done'] is not False or not peer['changed_ms'] <= sample['elapsed_ms'] < min(240000, peer['changed_ms'] + 20000)):
+            raise ValueError('watchdog diagnostic is not the captured gameplay stall')
+        if (not isinstance(attempt, dict) or not numeric(attempt.get('started_ms')) or attempt['started_ms'] > elapsed
+                or 'completed_ms' not in attempt):
+            raise ValueError('watchdog diagnostic attempt timing invalid')
+        started, completed = attempt['started_ms'], attempt['completed_ms']
+        if completed is None:
+            if current is not None or sample['elapsed_ms'] > started:
+                raise ValueError('watchdog diagnostic pending evaluation invalid')
+            pending.append(started)
+        else:
+            if (not numeric(completed) or not started <= completed <= elapsed or not valid_sample(current)
+                    or current['elapsed_ms'] != completed or sample['elapsed_ms'] > completed
+                    or current['frame'] < sample['frame']):
+                raise ValueError('watchdog diagnostic completed evaluation invalid')
+            if current != sample:
+                if (completed < min(240000, peer['changed_ms'] + 20000) or completed != elapsed
+                        or sample['elapsed_ms'] > started):
+                    raise ValueError('watchdog diagnostic unaccepted evaluation timing invalid')
+                unaccepted.append(index)
+    if ((pending and value['round_started_ms'] != min(pending))
+            or (not pending and value['round_started_ms'] != elapsed)):
+        raise ValueError('watchdog diagnostic round start invalid')
+    if expired_peer is None:
+        if unaccepted:
+            raise ValueError('watchdog diagnostic timer followed a rejected sample')
+    elif unaccepted != [expired_peer] or elapsed >= 240000:
+        raise ValueError('watchdog diagnostic named peer did not alone expire before the absolute deadline')
+    expected_deadline = min(240000, min(peer['changed_ms'] for peer in value['peers']) + 20000)
+    if abs(value['deadline_ms'] - expected_deadline) > 0.001:
+        raise ValueError('watchdog diagnostic did not reach the gameplay inactivity deadline')
+    return value
+
 def validate_restore_control(result, kind="corrupt"):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('corrupt') is not (kind == 'corrupt')
             or result.get('defaultFactory') is not (kind == 'default')
@@ -122,7 +318,8 @@ def main():
         raise ValueError('--godot requires exactly one --version')
     owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
-                       'faults-events', 'corrupt-events', 'default', 'default-events')]
+                       'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
+                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -139,6 +336,7 @@ def main():
                'clock_test': ROOT / 'scripts/reference/signalfish_webrtc_probe_clock_test.gd', 'clock_fixture': ROOT / 'tests/unit/test_input_endpoint.gd',
                'host': ROOT / 'scripts/reference/signalfish_webrtc_probe.gd', 'setup': ROOT / 'scripts/reference/browser/webrtc_setup.gd',
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
+               'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
                'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
                'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs',
@@ -234,7 +432,7 @@ def main():
                     shutil.copytree(sources['addon'], project / 'addons/fortress_rollback')
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
                     for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
-                                          ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
+                                          ('mixed', 'webrtc_mixed.gd'), ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
                         shutil.copyfile(sources[key], project / filename)
                     (project / 'project.godot').write_text(
                         'config_version=5\n[application]\nconfig/name="WebRTC witness"\nrun/main_scene="res://main.tscn"\n'
@@ -248,6 +446,7 @@ def main():
                     export.mkdir()
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
+                                'mixed': project / 'webrtc_mixed.gd',
                                 'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
                     frozen = inventory(executed)
@@ -261,13 +460,18 @@ def main():
                             environment, args.output / f'{version}-clock-test.log'): raise ValueError('transport clock regression incomplete')
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
-                    for label in ('clean', 'faults', 'corrupt', 'default'):
+                    for label in ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled'):
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
                                            f'ws://127.0.0.1:{port}/v3/ws', label, str(args.output / f'{version}-{label}-events.log')]
-                        output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log', rooms=1 if label in ('corrupt', 'default') else 3)
-                        result = validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default') else validate_browser(json.loads(output), faults)
-                        records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default') else None,
+                        if label == 'mixed-disabled':
+                            code, output = capture(browser_command, environment, args.output / f'{version}-{label}.log', timeout=540)
+                            result = validate_disabled_control(code, output)
+                        else:
+                            output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log', rooms=1 if label in ('corrupt', 'default') else 3)
+                            result = (validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default')
+                                      else validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'), default_budgets=label == 'mixed-default'))
+                        records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled') else None,
                                         'command': browser_command, 'result': result})
                     if inventory(executed) != frozen or inventory({'export': export}) != export_before:
                         raise ValueError('executed Web sources changed')
@@ -289,9 +493,11 @@ def main():
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
               'limits': 'Real release Web exports in two independent Chromium processes; local host ICE, 2/4/8 peers, '
                         '40 submitted frames per peer and 38 corrected original-input canonical prefixes per peer. '
-                        'All browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
-                        'at the gameplay canonical prefix comparison. Browser data-channel send drops/delays are synthetic; no WAN/NAT/TURN, native WebRTC, '
-                        'other browsers, automatic relay fallback or reconnect/replan claim.'}
+                        'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
+                        'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
+                        'synthetic single-link send pressure, with default and selected work budgets and correlated overlapping input bytes. '
+                        'Disabled fallback fails the gameplay watchdog. Send drops/delays and pressure are synthetic; no WAN/NAT/TURN, '
+                        'native WebRTC, other browsers, physical outage recovery, relay congestion or reconnect/replan claim.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'results': str(receipt), 'engines': versions, 'runs': len(records)}))
 

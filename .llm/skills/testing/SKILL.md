@@ -208,6 +208,9 @@ Observe each page independently with one evaluation in flight per page; slower
 siblings must not block its next sample. Keep a persistent earliest-deadline timer
 active during inter-sample pauses, and test a fast advancing page behind a valid
 slow response that finishes just before its own deadline.
+Recheck the monotonic clock inside a deadline timer callback and rearm if early;
+fractional delays can be truncated by the scheduler. Test just-before and exact
+expiry with an advancing fake clock, rather than expecting a frozen clock to expire.
 Deactivate an observation synchronously on every failure path. Resolve a sibling
 in the same turn as timeout/evaluation/validation rejection and prove it cannot
 sample or rearm after failure; an awaiting `finally` can run too late.

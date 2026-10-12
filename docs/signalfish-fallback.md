@@ -105,8 +105,38 @@ overlap, prediction repair, restoration and canonical game-state equality.
 Unit cases cover exact grace deadlines, send refusal, owned FIFO retry, bounded
 queues, clock exhaustion, accepted relay plans, callback teardown and lifetime fences.
 
-This proves coordinator behavior through injected SDK seams. Live browser mixed
-path recovery, SDK-driven channel replacement, relay-to-mesh server replans and
-browser suspension remain [S4 follow-up work](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).
-[Live mixed-path validation](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/75)
-owns the real packet and confirmed-state witness for the coordinator.
+The exported Chromium witness also runs the coordinator over actual WebRTC and
+raw MessagePack relay sockets on both pinned engines with 2, 4 and 8 peers.
+It injects send pressure on one outgoing data channel during frames 4–15.
+Other links keep direct service; the pressured link uses relay, then returns
+to the same direct channel. This models channel pressure without closing ICE.
+
+The witness compares 38 corrected canonical prefixes per peer against original
+inputs, requires actual rollback loads and monotonic frame/confirmation histories,
+and checks physical direct sends after restoration. One captured input packet
+must appear in its original direct send/receipt and subsequent addressed relay
+receipt. All channels and peer connections close at teardown.
+
+Both default 8-send/8-receive and selected 32-send/32-receive work budgets use
+eight routes per coordinator poll. Refused batches remain caller-owned.
+Owned queues and observed socket buffers are bounded separately. Disabling
+fallback must stall within the pressure interval and fail the gameplay watchdog.
+The existing snapshot-corruption and incompatible-channel controls still run.
+
+Run the full witness with the pinned server built as described in
+[the WebRTC guide](signalfish-webrtc.md):
+
+```sh
+python3 scripts/reference/signalfish_webrtc_probe.py \
+  --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+  --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+  --output .cache/reference/results/signalfish-webrtc
+```
+
+This scoped witness does not establish physical channel-loss recovery, relay
+congestion, SDK-driven channel replacement, relay-to-mesh server replans, browser
+suspension or server restart. These remain
+[S4 follow-up work](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38)
+and [live recovery acceptance](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/75).
+Firefox, WebKit, mixed browsers and sustained release workloads remain in S5.

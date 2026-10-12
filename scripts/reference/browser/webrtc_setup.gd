@@ -35,6 +35,7 @@ func run(host: Node, count: int) -> bool:
 	mode.supported_transports = PackedStringArray(["relay", "webrtc"])
 	mode.supported_topologies = PackedStringArray(["relay", "mesh"])
 	mode.game_data_format = "message_pack"
+	mode.decode_msgpack_payloads = false
 	mode.auto_poll = false
 	if client.configure(mode) != OK or client.connect_to_server() != OK: return false
 	if not await host._wait(func() -> bool: return client.is_authenticated() and host.infos.size() == 1): return false
@@ -134,6 +135,7 @@ func run(host: Node, count: int) -> bool:
 		if connected_code != 0:
 			host.errors.append("configure_direct_%d" % connected_code)
 			return false
+	if host.mixed_enabled and not host.mixed.configure(host, mode): return false
 	return true
 
 
