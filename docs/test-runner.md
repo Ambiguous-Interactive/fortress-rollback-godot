@@ -35,11 +35,11 @@ Deliberate watchdog controls keep their short limits.
 
 The integration category includes the slower eight-peer transport scheduling regression. Run each
 case separately with the same 120-second process budget used by both pinned-engine CI jobs.
-Keeping its ordering controls in separate processes avoids combining their runtime with the full
-backlog workload; the complete category exceeded that budget on the Godot 4.3 CI runner:
+Keep the single-poll control, batched workload, and ordering controls in separate processes.
+Combining both full workloads into one repeated case exceeded that budget on the Godot 4.3 CI runner:
 
 ```sh
-for case in default_batched readiness_boundary aborted_wait; do
+for case in default_single default_batched readiness_boundary aborted_wait; do
   python3 scripts/run_godot_tests.py --godot path/to/verified/godot \
     --category integration --filter "$case" --timeout 120 \
     --results ".cache/tests/integration-$case.json"

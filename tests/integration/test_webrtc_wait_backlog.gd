@@ -1,7 +1,7 @@
 extends "res://tests/unit/test_webrtc_mesh_backlog.gd"
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["default_batched", "readiness_boundary", "aborted_wait"])
+	return PackedStringArray(["default_single", "default_batched", "readiness_boundary", "aborted_wait"])
 
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "aborted_wait":
@@ -21,12 +21,17 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.equal(witness.ready_final_flushes, 0, "ready confirmation returns before host delivery yield")
 		context.finish()
 		return
+	# Value: protects=default eight-peer starvation control; fails_when=slow yields hide retry ACK backlog; why_new=slow_mesh raises sends; seam=render delivery queue
+	if name == "default_single":
+		var single: Dictionary = _run(context, 8, 16, 1)
+		print("SINGLE_BACKLOG_CONTROL ", JSON.stringify(single))
+		context.equal(single.backlog > 128, true, "single service accumulates stale physical packets")
+		context.equal(single.confirmed.min() < 15, true, "single service misses the original input log deadline")
+		context.finish()
+		return
 	# Value: protects=default eight-peer scheduling; fails_when=wait yields before draining retry ACK work; why_new=slow_mesh raises sends; seam=render delivery queue
-	var single: Dictionary = _run(context, 8, 16, 1)
 	var batched: Dictionary = _run(context, 8, 16, 8)
-	print("BATCHED_BACKLOG_CONTROL ", JSON.stringify({"single": single, "batched": batched}))
-	context.equal(single.backlog > 128, true, "single service accumulates stale physical packets")
-	context.equal(single.confirmed.min() < 15, true, "single service misses the original input log deadline")
+	print("BATCHED_BACKLOG_CONTROL ", JSON.stringify(batched))
 	context.equal(batched.frames, 16, "default composed budgets finish with bounded batching")
 	context.equal(batched.backlog < 128, true, "batched receive work bounds physical backlog")
 	for received: int in batched.received:

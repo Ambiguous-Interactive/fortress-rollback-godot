@@ -170,6 +170,16 @@ independent six-surface review with no findings. Receipt:
 SHA-256: `72f9a2805b6f9b75e1e1a2bdec96ef61482977621abc97f88e708c4fbc4c9066`.
 Current-head CI and complete feedback scans remain required before merge.
 
+The second-head 4.7.2 reference job and both live browser jobs pass. On 4.3,
+the 182-case unit suite passes, but each default integration process reaches its
+120-second cap after one correct 430/28 comparison, before the second repetition
+finishes. Partition that case into independently asserted `default_single` and
+`default_batched` workloads. Each retains eight peers, sixteen target frames, all
+original assertions and both repeat layers. CI runs all four cases separately
+with distinct receipts and the unchanged 120-second process cap. The browser and
+shipped runtime sources remain identical to the passing source-bound receipt.
+Final-head CI and delivery gates still apply.
+
 #75 remains open for relay congestion, sustained asymmetric pressure and the
 remaining live acceptance. #38 retains ICE restoration, SDK replacement/replans,
 browser suspension/resume and server restart. #39 retains Firefox, WebKit,
