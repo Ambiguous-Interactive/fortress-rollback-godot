@@ -16,7 +16,7 @@ PREFIX = 'FORTRESS_TEST_RESULT '
 EXPECTED = {
     'res://tests/unit/test_protocol_codec.gd': {'golden', 'truncation', 'malformed', 'limits', 'types', 'ownership', 'semantics', 'hostile_bytes'},
     'res://tests/unit/test_protocol_handshake_fields.gd': {'compatibility', 'geometry', 'bounds'},
-    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'time', 'identity', 'backpressure', 'ownership'},
+    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'time', 'identity', 'backpressure', 'timeout_pressure', 'ownership'},
     'res://tests/determinism/test_buffer_ownership.gd': {'engine_boundaries', 'owned_input', 'snapshot_wraps', 'snapshot_bounds'},
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }

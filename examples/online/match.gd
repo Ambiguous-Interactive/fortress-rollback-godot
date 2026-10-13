@@ -107,11 +107,13 @@ func tick(now_us: int, buttons: int) -> void:
 		return
 	_last_now = now_us
 	for _batch: int in 8:
-		var code: int = Inputs.Code.OK
-		if _pending.is_empty():
-			code = peer.poll(now_us, [next_token()])
+		var code: int = peer.poll(now_us, [next_token()])
 		if code not in [Inputs.Code.OK, Inputs.Code.BACKPRESSURE]:
 			failure = "Protocol stopped (%d). Leave and create a new room." % code
+			break
+		# Expiry precedes buffered traffic even when a refused batch is still owned.
+		_collect_events()
+		if not failure.is_empty():
 			break
 		if not _service(now_us):
 			break
@@ -128,6 +130,10 @@ func tick(now_us: int, buttons: int) -> void:
 			failure = "Game stopped (%d). Leave and create a new room." % result.code
 		if failure.is_empty():
 			_service(now_us)
+	_collect_events()
+
+
+func _collect_events() -> void:
 	for event: Dictionary in peer.drain_events():
 		if event.kind != "inputs_received":
 			latest_event = event.kind

@@ -72,8 +72,25 @@ func poll(now_us: Variant, next_token: Variant = null) -> int:
 		if now_us - plan.state.last_send_us > _options.retry_interval_us:
 			var code: int = _send(plan, next_token)
 			if code != H.Code.OK:
+				if code == H.Code.BACKPRESSURE:
+					_report_pressured_timeout(now_us, plan)
 				return code
-	return _commit(plan)
+	var code: int = _commit(plan)
+	if code == H.Code.BACKPRESSURE:
+		_report_pressured_timeout(now_us, plan)
+	return code
+
+
+func _report_pressured_timeout(now_us: int, refused: Dictionary) -> void:
+	if _state.timeout_sent or not refused.state.timeout_sent:
+		return
+	# Refused retry state stays atomic; its independent deadline diagnostic survives.
+	var timeout: Dictionary = _plan(now_us)
+	timeout.state.timeout_sent = true
+	var elapsed: int = now_us - timeout.state.start_us
+	timeout.events.append({"kind": "sync_timeout", "elapsed_ms": elapsed / 1000})
+	_trace(timeout, "report_timeout", "", "", elapsed / 1000)
+	_commit(timeout)
 
 
 func receive(packet: Variant, attributed_sender: Variant, now_us: Variant, next_token: Variant = null) -> int:

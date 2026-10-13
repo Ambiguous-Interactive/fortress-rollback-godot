@@ -34,6 +34,43 @@ def expected_states(histories, count):
     return states
 
 
+def validate_suspension(record, expired):
+    evidence = record.get('suspension', {})
+    label, duration = ('expired', 2500) if expired else ('short', 750)
+    if (not isinstance(evidence, dict) or evidence.get('label') != label or evidence.get('method') != 'cdp-debugger-pause'
+            or type(evidence.get('requested_ms')) is not int
+            or evidence['requested_ms'] != duration or type(evidence.get('frozen_elapsed_us')) is not int
+            or not duration * 1000 <= evidence['frozen_elapsed_us'] < 30000000):
+        raise ValueError('online example actual page suspension missing')
+    peers = evidence.get('peers')
+    if not isinstance(peers, list) or len(peers) != 2:
+        raise ValueError('online example resumed peers missing')
+    frontiers = {peer['page_index']: peer for peer in record['peers']}
+    for index, peer in enumerate(peers):
+        fields = ('host_before_us', 'host_after_us', 'gap_us', 'protocol_before_us', 'protocol_after_us',
+                  'epoch_us', 'frame_before', 'frame_after')
+        if (not isinstance(peer, dict) or any(type(peer.get(field)) is not int or peer[field] < 0 for field in fields)
+                or peer.get('label') != label or peer.get('session_id') != frontiers[index]['session_id']
+                or peer['host_after_us'] - peer['host_before_us'] != peer['gap_us'] or peer['gap_us'] < duration * 1000
+                or peer['protocol_before_us'] + peer['epoch_us'] != peer['host_before_us']
+                or peer['protocol_after_us'] + peer['epoch_us'] != peer['host_after_us']
+                or peer['frame_before'] < 40 or not peer['frame_before'] <= peer['frame_after'] <= peer['frame_before'] + 1):
+            raise ValueError('online example truthful bounded resume evidence invalid')
+        if expired:
+            if (peer.get('state') != 'failed' or not isinstance(peer.get('message'), str) or 'fresh room' not in peer['message']
+                    or peer['frame_before'] != peer['frame_after'] or peer['frame_before'] < frontiers[index]['frame']):
+                raise ValueError('online example expired suspension advanced or revived gameplay')
+        elif (peer.get('state') != 'playing' or peer['gap_us'] > 2000000
+                or frontiers[index]['frame'] < peer['frame_after'] + 30):
+            raise ValueError('online example short suspension did not recover gameplay')
+    if expired:
+        frozen = record.get('frozen_frames')
+        if (not isinstance(frozen, list) or len(frozen) != 2 or any(not isinstance(frame, dict)
+                or type(frame.get('before')) is not int or type(frame.get('after')) is not int or frame.get('state') != 'failed'
+                or frame['before'] != peers[index]['frame_after'] or frame['after'] != frame['before'] for index, frame in enumerate(frozen))):
+            raise ValueError('online example expired suspension lost its frozen frontier')
+
+
 def validate_result(value, corrupt=False):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
@@ -124,6 +161,8 @@ def validate_result(value, corrupt=False):
             survivor = next(peer for peer in peers if peer['page_index'] == 1)
             if record['terminal']['frame_before'] < survivor['frame']:
                 raise ValueError('online example terminal report lost the completed simulation frontier')
+        if not corrupt:
+            validate_suspension(record, expired=round_index == 1)
     if (not corrupt and (rooms[0] == rooms[1] or identities[0] == identities[1])) or value.get('teardown') is not True:
         raise ValueError('online example reused room or retained connections')
     for frame, expected, state in comparisons:

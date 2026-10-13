@@ -248,8 +248,8 @@ func _service() -> bool:
 		clients[index].poll()
 		meshes[index].poll()
 		if not errors.is_empty(): return false
-		var polled: int = I.Code.OK if mixed_enabled and mixed.has_pending() else peers[index].poll(transport_us, _poll_tokens(peers[index]))
-		if polled != I.Code.OK:
+		var polled: int = peers[index].poll(transport_us, _poll_tokens(peers[index]))
+		if polled not in [I.Code.OK, I.Code.BACKPRESSURE] or peers[index].status().lifecycle == S.Lifecycle.TERMINATED:
 			errors.append("peer_poll_%d" % polled)
 			return false
 		if mixed_enabled:

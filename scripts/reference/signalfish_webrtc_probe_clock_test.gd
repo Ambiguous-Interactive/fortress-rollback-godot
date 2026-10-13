@@ -11,6 +11,19 @@ const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Game = preload("res://webrtc_game.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const Mixed = preload("res://webrtc_mixed.gd")
+
+class RetainedMixed:
+	extends Mixed
+	var calls: int = 0
+	func service(_host: Node) -> bool:
+		calls += 1
+		return true
+
+class RetainedProbe:
+	extends ClockProbe
+	func _healthy(_final: bool = false) -> bool:
+		return errors.is_empty()
 
 class ClockProbe:
 	extends "res://host.gd"
@@ -95,6 +108,21 @@ func _initialize() -> void:
 	var callback_token: Variant = probe._next_token.call("remote-uuid")
 	if not _check(callback_token is PackedByteArray and callback_token.size() == 16 and callback_token.count(0) < 16
 		and callback_token != initial_token and callback_token != request.token, "direct factory UUID callback returns fresh16-byte token"): return
+	var retained: RetainedProbe = RetainedProbe.new()
+	retained.clients.append(retained.SDK.new())
+	retained.meshes.append(retained.SDKMesh.new())
+	retained.peers.append(peer)
+	retained.mixed_enabled = true
+	var mixed: RetainedMixed = RetainedMixed.new()
+	mixed.pending.append(Peer.Packet.new(fixture._id(2), PackedByteArray([1])))
+	retained.mixed = mixed
+	retained.transport_epoch_us = retained.ticks_us - 400000
+	if not _check(retained._service(), "retained mixed transport remains serviceable"): return
+	if not _check(peer.network_status().last_now_us == 400000, "retained mixed output cannot suppress actual peer elapsed time"): return
+	if not _check(mixed.calls == 1 and mixed.has_pending(), "poll preserves caller-owned mixed batch until service"): return
+	retained.meshes[0].free()
+	retained.clients[0].free()
+	retained.free()
 	probe.peers.append(peer)
 	probe.player_count = 2
 	if not _wait_diagnostics(probe): return

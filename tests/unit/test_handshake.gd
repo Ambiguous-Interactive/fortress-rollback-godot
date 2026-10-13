@@ -17,7 +17,7 @@ class CountingEndpoint:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["roundtrips", "echoes", "mismatch", "time", "identity", "backpressure", "ownership"])
+	return PackedStringArray(["roundtrips", "echoes", "mismatch", "time", "identity", "backpressure", "timeout_pressure", "ownership"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -28,6 +28,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		"time": _time(context)
 		"identity": _identity(context)
 		"backpressure": _backpressure(context)
+		"timeout_pressure": _timeout_pressure(context)
 		"ownership": _ownership(context)
 	context.finish()
 
@@ -259,6 +260,33 @@ func _backpressure(context: RefCounted) -> void:
 	endpoint.drain_outbox()
 	context.equal(endpoint.receive(_packet(T.Kind.SYNC_REQUEST, 9, {"fps": 30}), _id(2), 1), H.Code.OK, "retry same request after drain")
 	context.equal(endpoint.status().mismatch.field, "fps", "terminal with reply queued")
+
+
+# Value: protects=deadline diagnostics under retry pressure; fails_when=atomic send refusal also rolls back expiry; why_new=timeout and capacity were tested separately
+func _timeout_pressure(context: RefCounted) -> void:
+	for bound: String in ["max_pending_tokens", "max_outbox"]:
+		var options: H.Options = H.Options.new()
+		options.set(bound, 1)
+		options.timeout_us = 1000
+		var endpoint: Endpoint = _endpoint(options)
+		context.equal(endpoint.begin(0, _id(1, 16)), H.Code.OK, "begin bounded handshake")
+		endpoint.drain_events()
+		endpoint.drain_transitions()
+		context.equal(endpoint.poll(1000, _id(2, 16)), H.Code.BACKPRESSURE, "exact deadline still retries")
+		context.equal(endpoint.drain_events().is_empty(), true, "strict deadline does not expire early")
+		var before: Dictionary = endpoint.status()
+		context.equal(endpoint.poll(1001, PackedByteArray()), H.Code.INVALID_ARGUMENT, "invalid callback token remains refused")
+		context.equal(endpoint.status(), before, "invalid callback keeps atomic state")
+		context.equal(endpoint.poll(1001, _id(2, 16)), H.Code.BACKPRESSURE, "retry refusal remains observable")
+		var events: Array[Dictionary] = endpoint.drain_events()
+		context.equal(events.size(), 1, "exactly one due timeout survives retry pressure")
+		if not events.is_empty():
+			context.equal(events[0].kind, "sync_timeout", "timeout diagnostic retained")
+		context.equal(endpoint.status().timeout_sent, true, "timeout committed without publishing a retry")
+		context.equal(endpoint.status().requests_sent, before.requests_sent, "unsent request never enters state")
+		context.equal(endpoint.status().pending, before.pending, "unsent token never enters history")
+		context.equal(endpoint.poll(2002, _id(3, 16)), H.Code.BACKPRESSURE, "later pressure still refuses")
+		context.equal(endpoint.drain_events().is_empty(), true, "timeout never duplicates")
 
 
 func _ownership(context: RefCounted) -> void:

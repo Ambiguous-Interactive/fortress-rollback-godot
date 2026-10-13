@@ -23,6 +23,16 @@ def evidence():
         for peer in record['peers']:
             peer['room'] = record['room']
             peer['session_id'] = ('01' if index == 0 else '02') * 16
+        expired = index == 1
+        duration, label = (2500, 'expired') if expired else (750, 'short')
+        record['suspension'] = {'label': label, 'method': 'cdp-debugger-pause', 'requested_ms': duration, 'frozen_elapsed_us': duration * 1000, 'peers': [
+            {'label': label, 'session_id': peer['session_id'], 'epoch_us': 100, 'host_before_us': 1000100,
+             'host_after_us': 1000100 + duration * 1000, 'gap_us': duration * 1000,
+             'protocol_before_us': 1000000, 'protocol_after_us': 1000000 + duration * 1000,
+             'frame_before': 110 if expired else 45, 'frame_after': 110 if expired else 46,
+             'state': 'failed' if expired else 'playing', 'message': 'Leave and create a fresh room.'} for peer in record['peers']]}
+        if expired:
+            record['frozen_frames'] = [{'before': 110, 'after': 110, 'state': 'failed'} for _ in range(2)]
     rounds[0]['terminal'] = {'state': 'failed', 'message': 'Leave and create a fresh room.', 'frame_before': 110, 'frame_after': 110}
     return {'passed': True, 'corrupt': False, 'browser_instances': 2, 'errors': [], 'teardown': True, 'rounds': rounds}
 
@@ -75,3 +85,23 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             changed['rounds'][0]['terminal'].update(frame_before=before, frame_after=after)
             with self.subTest(before=before, after=after), self.assertRaises(ValueError):
                 validate_result(changed)
+
+    def test_suspension_requires_elapsed_protocol_clock_recovery_and_actual_frozen_frontier(self):
+        original = evidence()
+        mutations = [(0, 'gap_us', 0), (0, 'protocol_after_us', 1000000), (0, 'frame_after', 60), (0, 'state', 'failed'),
+                     (1, 'state', 'playing'), (1, 'frame_before', 109), (1, 'frame_after', 111), (1, 'session_id', '01' * 16),
+                     (1, 'host_after_us', True)]
+        for index, key, value in mutations:
+            changed = copy.deepcopy(original)
+            changed['rounds'][index]['suspension']['peers'][0][key] = value
+            with self.subTest(index=index, key=key), self.assertRaises(ValueError):
+                validate_result(changed)
+        for key, value in [('frozen_elapsed_us', 0), ('requested_ms', True), ('peers', [])]:
+            changed = copy.deepcopy(original)
+            changed['rounds'][1]['suspension'][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                validate_result(changed)
+        changed = copy.deepcopy(original)
+        changed['rounds'][1]['frozen_frames'][0]['after'] += 1
+        with self.assertRaisesRegex(ValueError, 'lost its frozen frontier'):
+            validate_result(changed)
