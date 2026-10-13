@@ -190,3 +190,11 @@ build receipt; the witness validates that receipt before launching a temporary
 server. All servers stop after the witness. Source/tool inventories and native
 and server logs bind the final gameplay result. Both programs invalidate prior
 success before each attempt. Rust remains development-only.
+
+## Foreign protocol identities
+
+After envelope attribution, a valid inner packet can still belong to a different
+session, sender or connection incarnation. The adapter discards and counts these
+packets in `status().rejected`, releases their bytes and callback token, and
+continues bounded service. They cannot refresh liveness or end the current game.
+Malformed inner packets retain the existing `PEER_FAILURE` policy.

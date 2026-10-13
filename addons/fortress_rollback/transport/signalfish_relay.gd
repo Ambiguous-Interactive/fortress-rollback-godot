@@ -135,6 +135,13 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 		if result.code != Code.OK:
 			break
 		result.peer_code = _adapter.receive_relay(_peer, incoming.payload, incoming.sender, now_us, _receive_token)
+		if result.peer_code in [I.Code.WRONG_SOURCE, I.Code.WRONG_CONNECTION]:
+			_rejected += 1
+			_received.pop_front()
+			_received_bytes -= incoming.payload.size() + Envelope.HEADER_BYTES
+			_receive_token = null
+			_receive_token_ready = false
+			continue
 		if result.peer_code != I.Code.OK:
 			# Event-capacity pressure can commit termination; only a live peer can retry.
 			if result.peer_code == I.Code.BACKPRESSURE and _peer.status().lifecycle == S.Lifecycle.RUNNING:

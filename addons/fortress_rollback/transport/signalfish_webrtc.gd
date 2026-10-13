@@ -189,6 +189,12 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 		if result.code != Code.OK:
 			return
 		result.peer_code = _adapter.receive_mesh(_peer, _incoming.duplicate(), _source, now_us, _token)
+		if result.peer_code in [I.Code.WRONG_SOURCE, I.Code.WRONG_CONNECTION]:
+			_rejected += 1
+			_incoming.clear()
+			_token = null
+			_token_ready = false
+			continue
 		if result.peer_code != I.Code.OK:
 			if result.peer_code == I.Code.BACKPRESSURE and _peer.status().lifecycle == S.Lifecycle.RUNNING:
 				result.code = Code.BACKPRESSURE

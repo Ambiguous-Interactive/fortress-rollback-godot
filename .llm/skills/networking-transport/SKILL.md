@@ -17,6 +17,16 @@ identity and bodies before discarding them without ACKs, receipts or lifecycle
 updates. Test a final handshake reply overtaken by original gameplay on both
 direct and relay paths; verify the retried original bytes after later keys change.
 
+Valid foreign session, sender or connection identities must be discarded with bounded
+work, owned byte/token release and rejection accounting. Check shared session clocks,
+confirmation and control publication too; endpoint rejection alone does not prove
+inert facade behavior. Fence reusable SDK callback owners by their connection lifetime.
+
+Server-restart witnesses must terminate the owned process handle and verify its
+terminal exit. Restart the same verified binary/configuration on the same endpoint;
+check the new live handle with bounded readiness. Socket/proxy outage evidence
+cannot substitute for process death or a fresh service lifetime.
+
 ## Godot Peer Setup
 
 | Target | Peer | Notes |

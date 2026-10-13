@@ -56,6 +56,12 @@ The callback may return `null` or exactly 16 bytes. Other values latch
 Continue polling/stepping the peer, and drain its events and transitions.
 Protocol clocks remain injected and monotonic. WebRTC does not advance gameplay.
 
+Valid packets from a different session, sender or connection incarnation are
+discarded and counted in `status().rejected`. They cannot refresh peer liveness
+or terminate the current match. Receive work remains bounded, and rejected
+bytes and callback tokens are released. Malformed current-channel packets
+retain the existing `PEER_FAILURE` policy.
+
 ## Channels and readiness
 
 The pinned SDK calls `create_mesh()` with default channel configuration and

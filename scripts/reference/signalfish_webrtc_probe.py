@@ -16,6 +16,7 @@ import zipfile
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
+from browser.owned_server import OwnedServer
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from godot_smoke import run
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
@@ -374,6 +375,7 @@ def main():
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
                'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
+               'server_owner': ROOT / 'scripts/reference/browser/owned_server.py',
                'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs',
                'watchdog_test': ROOT / 'scripts/reference/browser/webrtc_watchdog.test.cjs', 'node': Path(shutil.which('node')),
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
@@ -470,14 +472,14 @@ def main():
                 config['rate_limit'][key] = max(config['rate_limit'][key], 1000000)
         server_environment = {'PATH': os.environ.get('PATH', ''), 'SIGNAL_FISH_CONFIG_JSON': json.dumps(config), 'RUST_LOG': 'error'}
         with (args.output / 'server.log').open('wb') as log:
-            server = subprocess.Popen([str(sources['server'])], env=server_environment, stdout=log, stderr=subprocess.STDOUT)
-            try:
-                wait_ready(server, port)
+            with OwnedServer(sources['server'], server_environment, port, log) as server:
+                if args.online_example:
+                    environment['FORTRESS_SERVER_CONTROL'] = server.url
                 for version, engine in engines.items():
                     if args.online_example:
                         from online_example_probe import run_online
                         record, executed_record = run_online(root, version, engine, sdk, sources, environment,
-                                                             args.output, certificate, tls_private_key, port)
+                                                             args.output, certificate, tls_private_key, port, server)
                         records.append(record)
                         executed_records.append(executed_record)
                         continue
@@ -531,20 +533,13 @@ def main():
                     if inventory(executed) != frozen or inventory({'export': export}) != export_before:
                         raise ValueError('executed Web sources changed')
                     executed_records.append({'engine': actual, 'source_inventory': frozen, 'export_inventory': export_before})
-                if server.poll() is not None:
-                    raise ValueError('signaling server exited during gameplay')
-            finally:
-                server.terminate()
-                try:
-                    server.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    server.kill()
-                    server.wait(timeout=5)
+                server.verify_live()
+                server_events = list(server.events)
     if native_inventory(sources) != before or source_inventory(args.server_source) != server_before:
         raise ValueError('source or tool inventory changed during execution')
     report = {'passed': True, 'sdk_revision': sdk_pin['revision'], 'server_revision': server_pin['revision'],
               'input_inventory': before, 'server_source_inventory': server_before, 'executed': executed_records,
-              'server_config': config, 'records': records,
+              'server_config': config, 'server_events': server_events, 'records': records,
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
               'limits': 'Real release Web exports in two independent Chromium processes; local host ICE, 2/4/8 peers, '
                         '40 submitted frames per peer and 38 corrected original-input canonical prefixes per peer. '
@@ -558,8 +553,9 @@ def main():
         report['limits'] = ('Actual shipped online scene in two independent Chromium processes on each selected pinned engine; '
                             'physical keyboard movement, sender-owned original input histories, corrected canonical prefixes, '
                             'actual rollback, suspension/expiry and pre-Leave RTC/WebSocket closure. Both signaling socket pairs '
-                            'are cut during gameplay; a fresh room then establishes a new identity and corrected gameplay. '
-                            'Local ICE and injected input delivery delay; no WAN/NAT/TURN, other browser, server-process restart '
+                            'are cut during gameplay. The owned server then exits with SIGKILL and restarts on the same endpoint; '
+                            'a fifth room establishes a new identity and corrected gameplay after delayed old-room inputs. '
+                            'Local ICE and injected input delivery delay/send pressure; no WAN/NAT/TURN, other browser, transparent reconnect '
                             'or ICE restoration claim.')
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'results': str(receipt), 'engines': versions, 'runs': len(records)}))

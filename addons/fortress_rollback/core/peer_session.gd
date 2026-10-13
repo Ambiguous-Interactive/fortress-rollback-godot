@@ -326,10 +326,14 @@ func _valid_tokens(tokens: Variant, optional: bool) -> bool:
 
 func _receive(packet: Variant, attributed_sender: PackedByteArray, now_us: int, next_token: Variant) -> int:
 	var endpoint: Endpoint = _peers[attributed_sender.hex_encode()]
+	var previous_now: int = _now
 	_now = now_us
 	_busy = true
 	var code: int = endpoint.receive(packet, attributed_sender, now_us, next_token)
 	_busy = false
+	if code in [I.Code.WRONG_SOURCE, I.Code.WRONG_CONNECTION]:
+		_now = previous_now
+		return code
 	if code == I.Code.OK:
 		_now = now_us
 	_collect_events()
