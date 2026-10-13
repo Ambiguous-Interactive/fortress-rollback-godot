@@ -26,6 +26,13 @@ resource leak. Both pins pass all six fail-closed runner controls; both actual
 release exports retain successful gameplay and corruption rejection. This
 remains a scoped implementation finding, not a new general engine rule.
 
+Hosted full-suite watchdogs also require measured workload evidence. A cache-only
+per-case trace completes every case; new cases add six seconds locally. The
+full-suite budget becomes 180 seconds while completeness, repeat equality,
+engine-error rejection and every assertion remain unchanged. No benchmark
+claim follows from worker wall time. The unchanged both-pin ownership gate
+moves to one parallel job, retiring duplicate invocation from each engine job.
+
 ## Actions taken
 
 | Action | Canonical home | Verification |

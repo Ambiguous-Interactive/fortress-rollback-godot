@@ -166,3 +166,19 @@ The final frozen-source browser rerun passes both pins and both corruption
 controls at canonical frame 3. Receipt:
 `.cache/reference/results/session-018-online-leak-repair/online-example.json`.
 SHA-256: `734dd0fbdf94b4cc3751a820ebfdc17c40fe26515fa86ca0a7c34044f50ee4eb`.
+
+The final hosted 4.3 runner controls pass. Its full 192-case suite then reaches
+the old 120-second watchdog twice with no engine error or assertion result.
+A temporary cache-only case trace executes every actual suite in 69.675 seconds
+locally; all 192 cases pass, and the new cases add 6.234 seconds. Prior main
+hosted fresh-process repeats took 182.398 seconds total. Retain every case,
+assertion and repeat; give the full suite a bounded 180-second process budget,
+already used by the longer single-send integration witness. This adjusts the
+worker performance allowance without accepting incomplete or divergent runs.
+
+The ownership entrypoint independently runs both pins and both negative/positive
+native/Web variants. Calling it from each engine matrix job duplicated that
+whole five-minute gate. Move the unchanged entrypoint into one parallel
+workflow job with the same pinned bootstrap and always-uploaded receipt. Both
+engine-specific jobs retain smoke, every runner/integration suite and every
+oracle; whole-workflow success still requires the full ownership gate.

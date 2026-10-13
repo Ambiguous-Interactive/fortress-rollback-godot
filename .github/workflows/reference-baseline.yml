@@ -78,6 +78,38 @@ jobs:
           path: .cache/reference/results/
           if-no-files-found: error
 
+  ownership:
+    name: Native and Chromium snapshot ownership
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.23.3"
+      - name: Restore verified reference downloads
+        uses: actions/cache@v5
+        with:
+          path: .cache/reference/downloads
+          key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+      - name: Install pinned browser runner and operating system dependencies
+        run: |
+          mkdir -p .cache/reference/browser
+          cp scripts/reference/browser/package*.json .cache/reference/browser/
+          npm ci --ignore-scripts --prefix .cache/reference/browser
+          .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
+      - name: Verify integer encoding, snapshot ownership and byte sessions
+        run: make representation-probes
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ownership-reference-results
+          path: .cache/reference/results/
+          if-no-files-found: error
+
   godot:
     name: Godot ${{ matrix.version }} and Chromium
     runs-on: ubuntu-24.04
@@ -112,8 +144,6 @@ jobs:
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
         run: python3 scripts/reference/godot_smoke.py --web
-      - name: Verify integer encoding, snapshot ownership and byte sessions
-        run: make representation-probes
       - name: Verify runner failure controls and fresh-process suites
         run: |
           for version in "${{ matrix.version }}"; do
@@ -122,7 +152,7 @@ jobs:
             python3 scripts/reference/test_package_audit.py --godot "$editor" -v
             python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
             python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
-            python3 scripts/run_godot_tests.py --godot "$editor" --timeout 120 --results ".cache/tests/runner-$version.json"
+            python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
             for case in default_single default_batched readiness_boundary aborted_wait; do
               case_timeout=120
               if [[ "$case" == default_single ]]; then case_timeout=180; fi
