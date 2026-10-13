@@ -107,6 +107,7 @@ func _process(_delta: float) -> void:
 		"direct_rejected": lobby.game_match.direct.status().rejected,
 		"pending": lobby.game_match.fallback.status().pending_packets, "relay_pending": lobby.game_match.relay.status().pending_packets,
 		"frame": current, "confirmed": confirmed, "failure": lobby.game_match.failure, "inputs": inputs, "snapshots": snapshots,
+		"terminal_reason": lobby.game_match.peer.status().reason,
 		"restores": observed.restores if observed != null else 0, "all_ready": lobby.all_ready,
 		"ready_enabled": not scene.ready_button.disabled, "start_enabled": not scene.start_button.disabled, "command_id": command_id,
 		"stale_callbacks": stale_callbacks, "resume": lobby.resume, "host_now_us": lobby._last_now, "epoch_us": lobby._epoch}

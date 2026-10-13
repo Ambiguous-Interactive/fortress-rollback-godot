@@ -141,3 +141,39 @@ WAN/NAT/TURN, Firefox/WebKit and release matrix work remain under #38, #75 and #
 Server restart never restores an old rollback history. The broader roadmap stays
 open; this session advances a verified user-facing restart flow and fixes stale
 traffic that could end its fresh game.
+
+## Post-merge corruption-control incident
+
+PR #92 merged as `869c7d7ed315907028781a682923233a0850e93a` after all eleven
+current-head checks passed. The complete post-green and immediate pre-merge scans
+found no inline comments, reviews, conversation comments, threads or annotations.
+The final scan completed at 2026-10-13T22:55:00.840039+00:00; merge used the exact
+reviewed head. Local main synchronized cleanly. Main run `38480954571` then fails
+the 4.7.2 online corruption control, after its positive five-room flow passes.
+
+Job `115583124211`, artifact `11857946010`, retains the complete corruption output.
+One peer stays playing at frame 44/confirmed 36 with one restore; the other fails
+at frame 36/confirmed 36 with two restores and `Game stopped (18)`. That is the
+production DESYNC reason. Deliberately altered restore bytes can reach the real
+desync gate before the host captures them. Requiring every corrupted peer to
+remain playing is a test bug, not a production recovery failure.
+
+[#93](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/93)
+tracks the repair. The observer records the typed terminal reason. Only the
+corruption control can admit a failed peer with integer DESYNC. All canonical,
+input, rollback, confirmation, physical-channel and teardown gates remain.
+The launcher still requires independent original-input mismatch at frame 3;
+a desync marker alone cannot prove corruption. Unrelated causes, boolean/float
+reasons and failed positive games are rejected.
+
+`.cache/tests/session-021-desync-control-red.log` records the new fixture failing
+before repair with `rollback or confirmation missing`. The repaired validator
+reaches `canonical prefix mismatch at frame 3` on that fixture and the retained
+actual CI record. There is no earlier working terminal-control baseline; the
+playing-only assumption existed since the online witness was introduced.
+
+The repair is shipped in a necessary second PR because the original session PR
+was already merged. This exception satisfies the standing requirement to repair
+merge-triggered main failures. Production addon and online caller behavior are
+unchanged by the repair. Its final browser, review, CI and main outcomes are
+recorded in #93 before session completion.
