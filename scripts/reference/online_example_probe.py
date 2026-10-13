@@ -10,6 +10,8 @@ from browser.webrtc_runner import run_browser
 from godot_smoke import run
 from signalfish_probe import inventory
 
+DESYNC_REASON = 18
+
 
 def expected_states(histories, count):
     """Independent integer game, fed sender-owned input queues, never remote callbacks."""
@@ -253,10 +255,12 @@ def validate_result(value, corrupt=False):
                 raise ValueError('actual physical keyboard submission evidence incomplete')
         expected = expected_states(histories, min(map(len, histories)))
         for peer in peers:
-            if (type(peer.get('restores')) is not int or peer['restores'] < 1 or peer.get('failure') != ''
+            intended_desync = (corrupt and peer.get('state') == 'failed' and type(peer.get('terminal_reason')) is int
+                               and peer['terminal_reason'] == DESYNC_REASON and isinstance(peer.get('failure'), str) and bool(peer['failure']))
+            if (type(peer.get('restores')) is not int or peer['restores'] < 1 or (peer.get('failure') != '' and not intended_desync)
                     or type(peer.get('confirmed')) is not int or not (20 if corrupt else 90) <= peer['confirmed'] <= len(peer['inputs']) - 1
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
-                    or peer.get('state') != 'playing' or peer.get('room') != record['room']):
+                    or (peer.get('state') != 'playing' and not intended_desync) or peer.get('room') != record['room']):
                 raise ValueError('online example rollback or confirmation missing')
             page_index = peer['page_index']
             first, second = (2, 8) if page_index == 0 else (4, 1)

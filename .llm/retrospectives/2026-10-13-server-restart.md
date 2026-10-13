@@ -34,6 +34,16 @@ verification obligations, leaving the testing skill below its 300-line cap.
 No duplicate skill or knowledge entry was added. Old socket-outage evidence remains
 valid and separately gated; it was not relabeled as server-process evidence.
 
+## Post-merge finding
+
+Main CI's altered-restore control legitimately reaches DESYNC before capture.
+The validator's playing-only assumption rejects that intended result before
+canonical comparison. The retained CI peers are frame 44/confirmed 36 (playing)
+and frame 36/confirmed 36 (failed with code 18). The typed-cause repair still
+requires independent altered bytes at frame 3 and rejects unrelated failures.
+This technique is added to the existing testing guidance. The exact red/green
+record and required second-PR exception are recorded in the session log and #93.
+
 ## Outcome
 
 State: `findings-acted`.

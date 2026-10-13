@@ -267,6 +267,7 @@ Their mutants preserve earlier frame/state checks to reach the terminal boundary
 For deliberate gameplay divergence, retain valid serialized-state bounds. Drive
 the game to domain edges and force rollback after divergence; require a genuine
 checksum mismatch rather than accepting an unrelated callback failure.
+A corruption control may desync before capture; require its typed cause and independently verified altered bytes.
 
 ## Faster local iteration
 

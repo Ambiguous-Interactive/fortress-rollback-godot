@@ -86,6 +86,26 @@ def evidence():
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
+    def test_corruption_control_reaches_canonical_comparison_after_an_intended_desync(self):
+        changed = evidence()
+        changed['corrupt'] = True
+        changed['rounds'] = changed['rounds'][:1]
+        peer = changed['rounds'][0]['peers'][1]
+        peer.update(state='failed', failure='Game stopped (18). Leave and create a new room.', terminal_reason=18)
+        snapshot = peer['snapshots']['3']
+        peer['snapshots']['3'] = '00' + snapshot[2:]
+        with self.assertRaisesRegex(ValueError, 'canonical prefix mismatch at frame 3'):
+            validate_result(changed, corrupt=True)
+        for reason in (0, 14, 23, True, 18.0, None):
+            unrelated = copy.deepcopy(changed)
+            unrelated['rounds'][0]['peers'][1]['terminal_reason'] = reason
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
+                validate_result(unrelated, corrupt=True)
+        clean = evidence()
+        clean['rounds'][0]['peers'][1].update(state='failed', failure='desync', terminal_reason=18)
+        with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
+            validate_result(clean)
+
     def test_complete_evidence_and_missing_or_wrong_transport_contracts(self):
         original = evidence()
         self.assertIs(validate_result(original), original)
