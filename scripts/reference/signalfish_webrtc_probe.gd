@@ -248,10 +248,17 @@ func _service() -> bool:
 		clients[index].poll()
 		meshes[index].poll()
 		if not errors.is_empty(): return false
-		var polled: int = I.Code.OK if mixed_enabled and mixed.has_pending() else peers[index].poll(transport_us, _poll_tokens(peers[index]))
-		if polled != I.Code.OK:
-			errors.append("peer_poll_%d" % polled)
-			return false
+		for _attempt: int in 2:
+			var polled: int = peers[index].poll(transport_us, _poll_tokens(peers[index]))
+			if polled not in [I.Code.OK, I.Code.BACKPRESSURE] or peers[index].status().lifecycle == S.Lifecycle.TERMINATED:
+				errors.append("peer_poll_%d" % polled)
+				return false
+			for event: Dictionary in peers[index].drain_events():
+				if event.kind == "sync_timeout":
+					errors.append("peer_sync_timeout")
+					return false
+			peers[index].drain_transitions()
+			if polled == I.Code.OK: break
 		if mixed_enabled:
 			if not mixed.service(self): return false
 		else:

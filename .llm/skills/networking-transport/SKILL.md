@@ -148,6 +148,12 @@ Exercise simultaneous timer expirations at each accepted queue minimum. A
 redundant empty-work trace or optional control packet cannot make essential
 recovery permanently unpublishable; defer optional traffic without deferring
 interruption or timeout decisions.
+Retained caller batches never suppress elapsed-time protocol polling. Adjudicate
+expiry before buffered receive service can renew liveness; keep due timeout
+diagnostics independent of unsent retry state under token or packet pressure.
+Cross pressure with full diagnostic banks and an overdue later roster link.
+After draining publication space, re-poll before accepting buffered traffic;
+service every eligible endpoint despite another endpoint's recoverable refusal.
 Every composed façade must expose drains for all bounded publication queues,
 including diagnostics. Run healthy sessions past each default capacity. A partial
 multi-link publication must consume the accepted clock even when a later link

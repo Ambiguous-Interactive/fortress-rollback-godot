@@ -25,6 +25,17 @@ function delayedInputs() {
   window.fortressOnlineDelayed = 0;
 }
 
+async function pauseElapsed(milliseconds, now = () => process.hrtime.bigint(), sleep = value => new Promise(resolve => setTimeout(resolve, value))) {
+  const started = now();
+  const duration = BigInt(milliseconds) * 1000000n;
+  let elapsed = now() - started;
+  while (elapsed < duration) {
+    await sleep(Math.max(1, Math.ceil(Number(duration - elapsed) / 1000000)));
+    elapsed = now() - started;
+  }
+  return Number(elapsed / 1000n);
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -58,7 +69,7 @@ async function main() {
     socket.on('close', () => upstream.destroy());
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const browsers = [], pages = [], rounds = [];
+  const browsers = [], pages = [], sessions = [], rounds = [];
   let nextCommand = 0;
   const command = async (page, kind, values = {}) => {
     const id = ++nextCommand;
@@ -69,6 +80,21 @@ async function main() {
     await page.waitForFunction(expression, null, { timeout });
     if (errors.length) throw new Error(JSON.stringify(errors));
   };
+  const suspend = async (label, duration) => {
+    await Promise.all(pages.map(page => page.evaluate(value => { window.fortressOnlineResumeLabel = value; }, label)));
+    await Promise.all(sessions.map(async session => {
+      const paused = new Promise(resolve => session.once('Debugger.paused', resolve));
+      await session.send('Debugger.pause');
+      await paused;
+    }));
+    const elapsed = await pauseElapsed(duration);
+    await Promise.all(sessions.map(session => session.send('Debugger.resume')));
+    await Promise.all(pages.map(page => page.waitForFunction(value => window.fortressOnline?.resume?.label === value.label
+      && window.fortressOnline.resume.gap_us >= value.minimum, { label, minimum: duration * 1000 }, { timeout: 30000 })));
+    return { label, method: 'cdp-debugger-pause', requested_ms: duration, frozen_elapsed_us: elapsed,
+      peers: await Promise.all(pages.map(page => page.evaluate(() => ({ ...window.fortressOnline.resume,
+        session_id: window.fortressOnline.session_id, epoch_us: window.fortressOnline.epoch_us })))) };
+  };
   try {
     for (let index = 0; index < 2; index++) {
       const browser = await chromium.launch({ headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -76,6 +102,9 @@ async function main() {
       browsers.push(browser);
       const context = await browser.newContext({ ignoreHTTPSErrors: true });
       const page = await context.newPage();
+      const session = await context.newCDPSession(page);
+      await session.send('Debugger.enable');
+      sessions.push(session);
       page.on('pageerror', error => errors.push(String(error)));
       page.on('console', message => {
         const text = message.text();
@@ -104,6 +133,7 @@ async function main() {
       await pages[1].keyboard.down('KeyW');
       await command(pages[0], 'start');
       await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.frame >= (window.fortressOnlineCorrupt ? 12 : 45), 90000)));
+      const suspension = round === 0 && !corrupt ? await suspend('short', 750) : null;
       await pages[0].keyboard.up('KeyD');
       await pages[1].keyboard.up('KeyW');
       await pages[0].keyboard.down('KeyS');
@@ -114,6 +144,7 @@ async function main() {
       const peers = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({ ...window.fortressOnline, page_index: pageIndex,
         rtc: { ...window.fortressRtc, channels: window.fortressRtc.channels.slice(-3) }, delayed: window.fortressOnlineDelayed }), index)));
       rounds.push({ room, peers });
+      if (suspension) rounds[round].suspension = suspension;
       if (round === 0 && !corrupt) {
         await command(pages[0], 'leave');
         await wait(pages[1], () => window.fortressOnline.state === 'failed');
@@ -123,7 +154,17 @@ async function main() {
         const after = await pages[1].evaluate(() => ({ state: window.fortressOnline.state, frame_after: window.fortressOnline.frame }));
         rounds[round].terminal = { ...before, ...after };
         await command(pages[1], 'leave');
-      } else await Promise.all(pages.map(page => command(page, 'leave')));
+      } else {
+        if (!corrupt) {
+          rounds[round].suspension = await suspend('expired', 2500);
+          await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.state === 'failed')));
+          const before = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline.frame)));
+          await new Promise(resolve => setTimeout(resolve, 250));
+          rounds[round].frozen_frames = await Promise.all(pages.map((page, index) => page.evaluate(frame => ({
+            before: frame, after: window.fortressOnline.frame, state: window.fortressOnline.state }), before[index])));
+        }
+        await Promise.all(pages.map(page => command(page, 'leave')));
+      }
       await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.state === 'offline')));
       await Promise.all(pages.map(page => wait(page, () => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
         && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'))));
@@ -145,4 +186,5 @@ async function main() {
     await new Promise(resolve => server.close(resolve));
   }
 }
-main().catch(error => { console.error(String(error)); process.exitCode = 1; });
+module.exports = { pauseElapsed };
+if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

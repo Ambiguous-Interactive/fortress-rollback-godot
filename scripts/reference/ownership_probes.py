@@ -16,7 +16,7 @@ PREFIX = 'FORTRESS_TEST_RESULT '
 EXPECTED = {
     'res://tests/unit/test_protocol_codec.gd': {'golden', 'truncation', 'malformed', 'limits', 'types', 'ownership', 'semantics', 'hostile_bytes'},
     'res://tests/unit/test_protocol_handshake_fields.gd': {'compatibility', 'geometry', 'bounds'},
-    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'time', 'identity', 'backpressure', 'ownership'},
+    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'time', 'identity', 'backpressure', 'timeout_pressure', 'ownership'},
     'res://tests/determinism/test_buffer_ownership.gd': {'engine_boundaries', 'owned_input', 'snapshot_wraps', 'snapshot_bounds'},
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }
@@ -25,7 +25,7 @@ EXPECTED.update({
         'checksum_goodbye', 'capacity', 'pacing', 'long_running', 'retention_failure', 'status_nudge_capacity'},
     'res://tests/unit/test_peer_lifecycle.gd': {'checksum_export', 'healthy_exchange', 'real_desync', 'terminal_timeout', 'close',
         'checksum_conflict', 'checksum_future', 'stale_checksum', 'interrupted_resume', 'checksum_capacity', 'event_capacity', 'statistics',
-        'lockstep_checksums'},
+        'lockstep_checksums', 'later_peer_expiry'},
     'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'retry', 'validation', 'retention', 'capacity', 'ownership',
         'status_nudge', 'status_nudge_transitions'},
     'res://tests/unit/test_stalled_gossip.gd': {'drained', 'dropped_reordered', 'missing_receipt', 'step_recovery', 'grouped_locals'},

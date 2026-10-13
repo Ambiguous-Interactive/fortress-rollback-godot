@@ -11,6 +11,27 @@ const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Game = preload("res://webrtc_game.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const Mixed = preload("res://webrtc_mixed.gd")
+
+class RetainedMixed:
+	extends Mixed
+	var calls: int = 0
+	func service(_host: Node) -> bool:
+		calls += 1
+		return true
+
+class BufferedCompletionMixed:
+	extends RetainedMixed
+	var reply: PackedByteArray
+	var sender: PackedByteArray
+	func service(host: Node) -> bool:
+		calls += 1
+		return host.peers[0].receive(reply, sender, host.transport_us, host._next_token()) == I.Code.OK
+
+class RetainedProbe:
+	extends ClockProbe
+	func _healthy(_final: bool = false) -> bool:
+		return errors.is_empty()
 
 class ClockProbe:
 	extends "res://host.gd"
@@ -95,6 +116,22 @@ func _initialize() -> void:
 	var callback_token: Variant = probe._next_token.call("remote-uuid")
 	if not _check(callback_token is PackedByteArray and callback_token.size() == 16 and callback_token.count(0) < 16
 		and callback_token != initial_token and callback_token != request.token, "direct factory UUID callback returns fresh16-byte token"): return
+	var retained: RetainedProbe = RetainedProbe.new()
+	retained.clients.append(retained.SDK.new())
+	retained.meshes.append(retained.SDKMesh.new())
+	retained.peers.append(peer)
+	retained.mixed_enabled = true
+	var mixed: RetainedMixed = RetainedMixed.new()
+	mixed.pending.append(Peer.Packet.new(fixture._id(2), PackedByteArray([1])))
+	retained.mixed = mixed
+	retained.transport_epoch_us = retained.ticks_us - 400000
+	if not _check(retained._service(), "retained mixed transport remains serviceable"): return
+	if not _check(peer.network_status().last_now_us == 400000, "retained mixed output cannot suppress actual peer elapsed time"): return
+	if not _check(mixed.calls == 1 and mixed.has_pending(), "poll preserves caller-owned mixed batch until service"): return
+	if not _expired_handshake(fixture, config, lifecycle): return
+	retained.meshes[0].free()
+	retained.clients[0].free()
+	retained.free()
 	probe.peers.append(peer)
 	probe.player_count = 2
 	if not _wait_diagnostics(probe): return
@@ -155,3 +192,47 @@ func _wait_diagnostics(probe: ClockProbe) -> bool:
 	probe._service_wait_diagnostics(1, schedule)
 	if not _check(probe.diagnostic_snapshots.size() == 1, "other waits do not emit stall snapshots"): return false
 	return true
+
+
+# Value: protects=probe expiry before buffered completion; fails_when=timeout diagnostics are discarded; seam=actual peer poll and retained transport
+func _expired_handshake(fixture: Fixture, config: Config, lifecycle: L.Options) -> bool:
+	for full_diagnostics: bool in [false, true]:
+		for now_us: int in [1000, 1001]:
+			if not _handshake_deadline_case(fixture, config, lifecycle, full_diagnostics, now_us): return false
+	return true
+
+func _handshake_deadline_case(fixture: Fixture, config: Config, lifecycle: L.Options, full_diagnostics: bool, now_us: int) -> bool:
+	var probe: RetainedProbe = RetainedProbe.new()
+	var peer: Peer = Peer.new()
+	var options: H.Options = H.Options.new()
+	options.roundtrips = 1
+	options.timeout_us = 1000
+	options.retry_interval_us = 1000
+	options.max_pending_tokens = 1
+	if full_diagnostics: options.max_transitions = 2
+	if not _check(peer.configure(config, fixture._local(), Game.new(2), options, I.Options.new(), lifecycle) == I.Code.OK,
+		"configure bounded expiring handshake"): return false
+	if not _check(peer.begin(0, [probe._next_token()]) == I.Code.OK, "begin expiring handshake"): return false
+	var request: RefCounted = fixture._decoded(peer.drain_outbox()[0].bytes)
+	var reply: RefCounted = fixture._local(2)
+	reply.kind = T.Kind.SYNC_REPLY
+	reply.token = request.token
+	peer.drain_events()
+	if not full_diagnostics: peer.drain_transitions()
+	probe.clients.append(probe.SDK.new())
+	probe.meshes.append(probe.SDKMesh.new())
+	probe.peers.append(peer)
+	probe.mixed_enabled = true
+	var mixed: BufferedCompletionMixed = BufferedCompletionMixed.new()
+	mixed.reply = fixture._encode(reply)
+	mixed.sender = fixture._id(2)
+	mixed.pending.append(Peer.Packet.new(fixture._id(2), PackedByteArray([1])))
+	probe.mixed = mixed
+	probe.transport_epoch_us = probe.ticks_us - now_us
+	var serviced: bool = probe._service()
+	var stopped: bool = not serviced and mixed.calls == 0 and probe.errors.has("peer_sync_timeout")
+	var valid: bool = stopped if now_us > options.timeout_us else serviced and mixed.calls == 1 and peer.network_status().state == "running"
+	probe.meshes[0].free()
+	probe.clients[0].free()
+	probe.free()
+	return _check(valid, "probe handshake deadline=%d full_diagnostics=%s service=%s calls=%d" % [now_us, full_diagnostics, serviced, mixed.calls])

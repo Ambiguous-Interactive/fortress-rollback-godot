@@ -345,6 +345,7 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = []) -> int:
 	if statuses.is_empty():
 		statuses = _statuses()
 	var status_nudge: bool = _gossip_nudge_needed()
+	var result: int = I.Code.OK
 	for index: int in range(_ids.size()):
 		if _lifecycle.enabled:
 			_endpoint(index).update_local_frame_advantage(_core.status().current_frame)
@@ -352,14 +353,16 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = []) -> int:
 		if code != I.Code.OK:
 			_collect_events()
 			_check_failure()
-			return code
+			if code != I.Code.BACKPRESSURE or _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+				return code
+			result = code
 	_now = now_us
 	_collect_events()
 	_check_failure()
 	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
 		_confirmation_code()
 		_service_controls(now_us, false)
-	return I.Code.OK
+	return result
 
 
 func _running() -> bool:

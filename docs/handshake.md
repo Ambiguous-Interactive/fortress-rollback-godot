@@ -25,7 +25,8 @@ Preload `addons/fortress_rollback/protocol/handshake.gd`,
 Every operation returns `HandshakeTypes.Code`. Invalid arguments, wrong state,
 wrong source or connection, unsupported message kinds and queue pressure have
 separate codes. Decoding errors return `INVALID_PACKET`. Failures preserve all
-state, the accepted clock value, and all existing queues. Drain queues and retry
+state, the accepted clock value, and all existing queues, except the independent
+due timeout diagnostic described below. Drain queues and retry
 the same operation after `BACKPRESSURE`; a pending-token or consumed-token limit
 requires a fresh endpoint and session identity when no progress can free space.
 
@@ -93,8 +94,9 @@ bounds to 1–4096, except transitions require at least two slots. Consumed-toke
 history must hold at least the configured roundtrip count; these minima permit
 begin and completion after queue drains. Packet bytes are bounded to
 44–1048576. Request counts saturate at u32 max.
-A packet is bounded before decoding. Every operation plans its complete state
+A packet is bounded before decoding. Packet processing plans its complete state
 and queue changes and publishes them together only if all bounds permit it.
+Polling can publish its independent timeout diagnostic after refusing a retry.
 
 Pinned upstream permits a random-token collision to emit another request while
 retaining one live set entry. This endpoint preserves that behavior and records
@@ -104,6 +106,14 @@ unbounded random request set does not provide. Live and consumed sets have hard
 limits rather than silently evicting tokens; this is an intentional bounded
 Godot policy. Trace queue pressure also rejects the whole operation instead of
 silently dropping a transition.
+
+A due `sync_timeout` diagnostic is independent of a retry refused by token or
+outgoing-packet capacity. The endpoint commits that one diagnostic without
+committing the unsent token, request count or packet. The retry still returns
+`BACKPRESSURE`. Applications must drain events and transitions; their own full
+diagnostic queues still apply backpressure. Invalid callback tokens leave state
+unchanged. Timeout remains diagnostic-only at this expert boundary; the online
+example uses it to stop and require a fresh room.
 
 Transition records use `action`, `token`, `disposition`, `state`, `remaining`,
 `outstanding_request_count`, `remote_connection`, `timeout_sent`, `mismatch` and

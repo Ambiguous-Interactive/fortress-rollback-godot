@@ -11,6 +11,27 @@ const Lobby = preload("res://examples/online/lobby.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 
 
+class ObservedLobby:
+	extends Lobby
+	var resume: Dictionary = {}
+	var label: String = ""
+
+	func tick(now_us: int, buttons: int) -> void:
+		var armed: String = str(JavaScriptBridge.eval("window.fortressOnlineResumeLabel || ''"))
+		if armed != label:
+			label = armed
+			resume.clear()
+		var before: int = game_match.peer.status().current_frame
+		var clock_before: int = _last_now
+		var protocol_before: int = game_match.peer.network_status().last_now_us
+		var was_playing: bool = state == "playing"
+		super.tick(now_us, buttons)
+		if was_playing and not label.is_empty() and now_us - clock_before > int(resume.get("gap_us", 0)):
+			resume = {"label": label, "host_before_us": clock_before, "host_after_us": now_us, "gap_us": now_us - clock_before,
+				"protocol_before_us": protocol_before, "protocol_after_us": game_match.peer.network_status().last_now_us,
+				"frame_before": before, "frame_after": game_match.peer.status().current_frame, "state": state, "message": message}
+
+
 class ObservedGame:
 	extends Simulation
 	var saves: Dictionary = {}
@@ -41,6 +62,7 @@ var command_id: int = 0
 
 func _ready() -> void:
 	scene = Scene.instantiate()
+	scene.controller = ObservedLobby.new()
 	add_child(scene)
 	JavaScriptBridge.eval("window.fortressOnlineReady = true")
 
@@ -53,7 +75,7 @@ func _process(_delta: float) -> void:
 		if value is Dictionary and int(value.get("id", 0)) > command_id:
 			command_id = int(value.id)
 			_command(value)
-	var lobby: Lobby = scene.controller
+	var lobby: ObservedLobby = scene.controller as ObservedLobby
 	if not lobby.has_readied and not lobby.game_match.game is ObservedGame:
 		observed = ObservedGame.new()
 		observed.is_corrupt = JavaScriptBridge.eval("window.fortressOnlineCorrupt || false")
@@ -80,7 +102,8 @@ func _process(_delta: float) -> void:
 	var result: Dictionary = {"state": lobby.state, "message": lobby.message, "room": lobby.room_code(), "slot": slot, "session_id": session_id,
 		"frame": current, "confirmed": confirmed, "failure": lobby.game_match.failure, "inputs": inputs, "snapshots": snapshots,
 		"restores": observed.restores if observed != null else 0, "all_ready": lobby.all_ready,
-		"ready_enabled": not scene.ready_button.disabled, "start_enabled": not scene.start_button.disabled, "command_id": command_id}
+		"ready_enabled": not scene.ready_button.disabled, "start_enabled": not scene.start_button.disabled, "command_id": command_id,
+		"resume": lobby.resume, "host_now_us": lobby._last_now, "epoch_us": lobby._epoch}
 	JavaScriptBridge.eval("window.fortressOnline = " + JSON.stringify(result))
 
 

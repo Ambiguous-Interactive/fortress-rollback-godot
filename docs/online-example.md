@@ -64,6 +64,25 @@ fully snapshotted integer game; host clock and transport entropy never enter its
 state. Keyboard input is retained across prediction or queue stalls until that
 original frame is accepted.
 
+## Suspension and expiry
+
+The caller polls elapsed monotonic protocol time before retrying retained output
+or receiving buffered gameplay. Refused output never freezes that clock.
+After a brief scheduling pause, a live session can resume through prediction
+repair without replacing its identity or input history. Each caller tick advances
+at most one new simulation frame; elapsed seconds never become invented inputs.
+Godot also bounds physics catch-up to eight ticks per rendered frame by default.
+Each of the eight service rounds permits one additional protocol poll after
+draining diagnostic pressure, before receiving buffered bytes. Freeing a full
+event or trace bank must not allow a completion reply to overtake expiry.
+
+The running protocol expires after more than two seconds without an accepted
+remote packet. Initial rollback synchronization has a 30-second application
+deadline. Exact deadline boundaries remain eligible. A due handshake timeout
+remains observable when token or outgoing-packet capacity prevents another retry.
+An expired game stops before buffered packets can refresh liveness. Leave and
+create a fresh room; returning to the tab cannot resurrect old history.
+
 ## Verification
 
 `tests/unit/test_online_example.gd` covers optional SDK scene loading, room
@@ -77,3 +96,11 @@ application behavior; exported browser evidence is a separate verification gate.
 behind original gameplay on both direct and relay paths. Later keys change;
 both peers must recover the exact earlier bytes. Valid early traffic is inert
 until synchronization completes, and malformed traffic remains rejected.
+
+`tests/unit/test_online_lifecycle.gd` covers exact expiry boundaries, retained
+send pressure, saturated handshake tokens and bounded short-suspension recovery.
+The browser witness pauses both actual Chromium page threads through acknowledged
+CDP debugger commands. It measures host/protocol clock gaps, corrected original-input
+prefixes after a short pause, and actual frozen frames after an overdue pause.
+This controlled execution pause does not establish hidden-tab policies, operating
+system sleep, Firefox/WebKit behavior or server-restart recovery.
