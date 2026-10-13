@@ -261,8 +261,9 @@ can hide its immediate difference until a later scheduled event exposes it.
 Before projecting intentional source/product differences, validate the excluded
 inventory's exact peer membership, payload, count, order and allowed position.
 Keep controls for invented local-peer events and duplicate notification suffixes.
-Mutants of terminal freeze must preserve earlier frame/state consistency checks
-so they reach the intended terminal boundary.
+Terminal freeze witnesses read the actual retained simulation frame after teardown,
+require the completed frontier, and reject zero display defaults or later advancement.
+Their mutants preserve earlier frame/state checks to reach the terminal boundary.
 For deliberate gameplay divergence, retain valid serialized-state bounds. Drive
 the game to domain edges and force rollback after divergence; require a genuine
 checksum mismatch rather than accepting an unrelated callback failure.
