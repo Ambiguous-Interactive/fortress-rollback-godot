@@ -62,6 +62,11 @@ not promise an atomic transaction across all peers. Callback reentry returns
 `BUSY`; drains inside callbacks return empty. Protocol mismatch or inability to
 retain accepted remote input terminates the core explicitly.
 
+Recoverable pressure on one link does not suppress polling later links. Their
+elapsed clocks and disconnect deadlines still apply. `poll` retains its
+`BACKPRESSURE` result when another link progresses or expires; inspect committed
+lifecycle and drain events before delivering buffered traffic.
+
 For local slots, confirmation uses the local scheduled receipt. For remote slots,
 it requires both local receipt and every remote endpoint's incoming receipt
 gossip. Outgoing local status never counts as a remote observation. Confirmation

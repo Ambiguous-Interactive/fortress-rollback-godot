@@ -142,3 +142,61 @@ SDK replacement/replans, actual relay congestion and server-restart recovery.
 Controlled page-thread suspension does not close those broader gates.
 
 Retro: `findings-acted`.
+
+## First-head CI and combined pressure repair
+
+The first pushed head is `03a02d6e3f799ef5cb885e4c0fc77fb538d50211`, PR #86.
+Harness, containers, native/reference/oracle controls, ownership and both
+direct/mixed transport phases pass. Both online phases reject the parent
+pause-duration measurement. Hosted 4.7.2 artifact 11836399672 records a
+2,499,802 µs parent wait against a 2,500,000 µs requirement, although the actual
+game correctly expires at frames 121/122 after approximately 2.546 seconds.
+Issue #87 tracks this early Node timer callback. The witness now waits until
+monotonic elapsed duration reaches the requested bound; it retains the strict
+validator. Controlled early callbacks fail before repair and pass afterward.
+Node instrumentation/watchdog controls pass 29 tests.
+
+Automatic review comment 4262326743 motivates independent public-API reproduction.
+Two combined-pressure defects are valid: a minimum two-slot handshake diagnostic
+bank permits a buffered final reply after timeout, and a fresh first remote's
+full outbox prevents polling a later overdue remote. The online and older mixed
+callers drain and repoll before service; Peer polls every eligible link despite
+recoverable pressure. The old caller consumes the final reply and advances
+frame 0 to 1. The repaired caller stops at frame 0 without consuming it.
+The three-player regression uses 128 valid QUALITY_REPORT packets: exact expiry
+is still live; deadline + 1 terminates the overdue second link and rejects its
+late KEEP_ALIVE without renewing last-receive time. Both regressions fail
+meaningfully on old source and pass after repair.
+
+The review's proposed failure for an expired running endpoint's own pressured
+outbox is independently disproved: its commit path preserves termination and
+terminal events under outbox/trace pressure; event overflow is fatal.
+No change is needed for that path. A fresh adversarial review passes all 19
+focused cases on both pins with both repeat layers and finds no remaining issue.
+
+Final native suites pass 199 cases on both pins, and eight determinism cases
+pass both repeat layers. Actual upstream/Godot P2P receipts each pass 34
+scenarios with formal and process controls:
+`.cache/reference/results/session-019-p2p-final/receipt.json` and
+`.cache/reference/results/session-019-p2p-final-4.3/receipt.json`.
+Native/Web ownership receipt `.cache/reference/results/ownership.json` is
+`passed` with four engine/target records. Harness controls pass 99 tests;
+source lint checks 230 files with zero violations at width 180.
+
+Additional red/green evidence:
+
+- `.cache/reference/session-019-timer-red.log` and `session-019-timer-green.log`
+- `.cache/tests/session-019-diagnostic-pressure-red.json` and `session-019-diagnostic-pressure-green.json`
+- `.cache/tests/session-019-multi-pressure-red.json`; both full green native receipts cover the repaired case
+
+The reviewed full browser rerun reaches 4.7.2's mixed eight-player room but
+rejects a WebGL shader/context failure; its in-progress receipt is not a pass.
+Starting the next browser bootstrap before the previous browser had fully
+released its executable also rejects with ETXTBSY. A separate serial online
+rerun and final-head CI provide the remaining browser evidence.
+
+The separate final reviewed online run passes both engine exports:
+`.cache/reference/results/session-019-online-reviewed-final/online-example.json`.
+SHA-256: `8c3252b0bdb0d0227103e5c0011b9eea1f02a88af4c126a3377495db67644e25`.
+It inventories the repaired runtime and timer sources and passes the original
+canonical, suspension, expired-frame, corruption and physical teardown gates.

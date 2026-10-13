@@ -72,6 +72,9 @@ After a brief scheduling pause, a live session can resume through prediction
 repair without replacing its identity or input history. Each caller tick advances
 at most one new simulation frame; elapsed seconds never become invented inputs.
 Godot also bounds physics catch-up to eight ticks per rendered frame by default.
+Each of the eight service rounds permits one additional protocol poll after
+draining diagnostic pressure, before receiving buffered bytes. Freeing a full
+event or trace bank must not allow a completion reply to overtake expiry.
 
 The running protocol expires after more than two seconds without an accepted
 remote packet. Initial rollback synchronization has a 30-second application

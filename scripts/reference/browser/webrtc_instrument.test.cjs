@@ -5,6 +5,21 @@ const { instrument } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const { pauseElapsed } = require('./online.cjs');
+
+// Value: suspension duration follows the monotonic clock even when a timer callback runs early.
+test('actual suspension wait cannot finish early after timer truncation', async () => {
+  for (const milliseconds of [750, 2500]) {
+    let ticks = 1000000000n;
+    const waits = [];
+    const elapsed = await pauseElapsed(milliseconds, () => ticks, async value => {
+      waits.push(value);
+      ticks += BigInt(value) * 1000000n - 198000n;
+    });
+    assert.ok(elapsed >= milliseconds * 1000, 'the actual pause must meet its strict observation threshold');
+    assert.deepEqual(waits, [milliseconds, 1], 'an early callback rearms only the remaining duration');
+  }
+});
 
 test('all constructed peer connections must close, including channel-free orphans', () => {
   class Connection {

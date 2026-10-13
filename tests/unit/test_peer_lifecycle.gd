@@ -28,12 +28,17 @@ func cases() -> PackedStringArray:
 			"checksum_capacity",
 			"event_capacity",
 			"statistics",
-			"lockstep_checksums"
+			"lockstep_checksums",
+			"later_peer_expiry"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "later_peer_expiry":
+		_later_peer_expiry(context)
+		context.finish()
+		return
 	if name == "lockstep_checksums":
 		_lockstep(context)
 		context.finish()
@@ -81,6 +86,43 @@ func run_case(name: String, context: RefCounted) -> void:
 		reports[0].checksum.fill(0)
 		context.equal(core.confirmed_checksums()[0].checksum != reports[0].checksum, true, "checksum export owns bytes")
 	context.finish()
+
+
+# Value: protects=expiry on every peer; fails_when=an earlier full outbox suppresses later clocks; why_new=single-link pressure cannot expose poll starvation
+func _later_peer_expiry(context: RefCounted) -> void:
+	var fixture: RefCounted = Fixture.new()
+	var mesh: Dictionary = fixture._build(context, 3, 0, false, 128, true, false, 8, L.Options.new(), 0)
+	for peer: RefCounted in mesh.peers:
+		peer.drain_outbox()
+		peer.drain_transitions()
+	var control: T.Message = T.Message.new()
+	control.kind = T.Kind.QUALITY_REPORT
+	control.session_id = fixture._id(90, 16)
+	control.sender_id = fixture._id(1)
+	control.connection_id = fixture._id(21)
+	control.token = fixture._id(7, 16)
+	var limits: T.Limits = T.Limits.new()
+	limits.player_count = 3
+	limits.input_width = 4
+	var encoded: T.Result = Codec.encode(control, limits)
+	context.equal(encoded.code, T.Code.OK, "valid real pressure packet")
+	var peer: RefCounted = mesh.peers[0]
+	for _packet: int in 128:
+		context.equal(peer.receive(encoded.bytes, control.sender_id, 2000000), I.Code.OK, "fresh first peer fills bounded reply queue")
+		peer.drain_events()
+		peer.drain_transitions()
+	context.equal(peer.poll(2000000), I.Code.BACKPRESSURE, "first peer refuses new output at later peer exact timeout")
+	context.equal(peer.status().lifecycle, Types.Lifecycle.RUNNING, "exact timeout stays eligible despite earlier pressure")
+	context.equal(peer.poll(2000001), I.Code.BACKPRESSURE, "earlier refusal remains visible while all clocks are polled")
+	context.equal(peer.status().lifecycle, Types.Lifecycle.TERMINATED, "later overdue peer terminates whole session")
+	var events: Array[Dictionary] = peer.drain_events()
+	context.equal(events.any(func(event: Dictionary) -> bool: return event.kind == "disconnected" and event.peer == fixture._id(2)), true,
+		"later timeout preserves actual peer attribution")
+	control.kind = T.Kind.KEEP_ALIVE
+	control.sender_id = fixture._id(2)
+	control.connection_id = fixture._id(22)
+	context.equal(peer.receive(Codec.encode(control, limits).bytes, control.sender_id, 2000001), I.Code.TERMINATED, "buffered late keepalive cannot revive session")
+	context.equal(peer.network_status().peers[control.sender_id.hex_encode()].last_recv_us, 0, "expired peer clock never refreshes")
 
 
 func _mesh_case(name: String, context: RefCounted) -> void:

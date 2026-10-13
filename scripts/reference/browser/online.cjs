@@ -25,6 +25,17 @@ function delayedInputs() {
   window.fortressOnlineDelayed = 0;
 }
 
+async function pauseElapsed(milliseconds, now = () => process.hrtime.bigint(), sleep = value => new Promise(resolve => setTimeout(resolve, value))) {
+  const started = now();
+  const duration = BigInt(milliseconds) * 1000000n;
+  let elapsed = now() - started;
+  while (elapsed < duration) {
+    await sleep(Math.max(1, Math.ceil(Number(duration - elapsed) / 1000000)));
+    elapsed = now() - started;
+  }
+  return Number(elapsed / 1000n);
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -76,9 +87,7 @@ async function main() {
       await session.send('Debugger.pause');
       await paused;
     }));
-    const started = process.hrtime.bigint();
-    await new Promise(resolve => setTimeout(resolve, duration));
-    const elapsed = Number((process.hrtime.bigint() - started) / 1000n);
+    const elapsed = await pauseElapsed(duration);
     await Promise.all(sessions.map(session => session.send('Debugger.resume')));
     await Promise.all(pages.map(page => page.waitForFunction(value => window.fortressOnline?.resume?.label === value.label
       && window.fortressOnline.resume.gap_us >= value.minimum, { label, minimum: duration * 1000 }, { timeout: 30000 })));
@@ -177,4 +186,5 @@ async function main() {
     await new Promise(resolve => server.close(resolve));
   }
 }
-main().catch(error => { console.error(String(error)); process.exitCode = 1; });
+module.exports = { pauseElapsed };
+if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

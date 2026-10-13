@@ -121,7 +121,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _fixture(context: RefCounted, uuid: String) -> Dictionary:
+func _fixture(context: RefCounted, uuid: String, configured_peer: Peer = null) -> Dictionary:
 	var client: Client = Client.new()
 	client.local = uuid
 	var mesh: DirectFixture.FakeMesh = DirectFixture.FakeMesh.new()
@@ -129,6 +129,8 @@ func _fixture(context: RefCounted, uuid: String) -> Dictionary:
 	transport.local = uuid
 	mesh.transport = transport
 	var game_match: Match = Match.new()
+	if configured_peer != null:
+		game_match.peer = configured_peer
 	game_match.game = ObservedGame.new()
 	context.equal(game_match.freeze(client, mesh, PackedStringArray([V, U]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])), OK, "freeze real game membership")
 	var plan: MembershipFixture.Plan = MembershipFixture.Plan.new()
