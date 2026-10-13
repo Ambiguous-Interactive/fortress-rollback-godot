@@ -149,8 +149,8 @@ redundant empty-work trace or optional control packet cannot make essential
 recovery permanently unpublishable; defer optional traffic without deferring
 interruption or timeout decisions.
 Retained caller batches never suppress elapsed-time protocol polling. Adjudicate
-expiry before buffered receive service can renew liveness; keep due timeout
-diagnostics independent of unsent retry state under token or packet pressure.
+expiry before servicing buffered receives or SDK lifetime callbacks. Keep due
+timeout diagnostics independent of unsent retry state under token or packet pressure.
 Cross pressure with full diagnostic banks and an overdue later roster link.
 After draining publication space, re-poll before accepting buffered traffic;
 service every eligible endpoint despite another endpoint's recoverable refusal.
@@ -181,6 +181,12 @@ pressure can occur before protocol token validation; relying on that later
 validation can retain an arbitrary callback object or oversized packed array.
 Recheck lifetime gates immediately after callbacks, before validating their
 return values, so malformed output cannot overwrite a latched teardown failure.
+Terminal application failure must close signaling as well as detach game transports.
+Keep callback-owning objects alive while their callbacks execute; finish asynchronous
+close handshakes without servicing gameplay. Test physical socket closure before
+user cleanup, since a later Leave can hide a leaked connection or room membership.
+When busy adapters defer detach, retry cleanup after the active operation unwinds;
+a latched fatal status does not prove that retained packet queues were released.
 
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate

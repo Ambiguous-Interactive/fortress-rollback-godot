@@ -5,7 +5,7 @@ const { instrument } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const { pauseElapsed } = require('./online.cjs');
+const { pauseElapsed, registerOnlineInit } = require('./online.cjs');
 
 // Value: suspension duration follows the monotonic clock even when a timer callback runs early.
 test('actual suspension wait cannot finish early after timer truncation', async () => {
@@ -213,4 +213,38 @@ test('physical close records the explicit channel handle even when payloads matc
   context.document.body.dataset.fortressGameplayDone = 'true';
   first.close();
   assert.equal(records[0].physicalCloseFrame, null, 'teardown cannot manufacture outage evidence');
+});
+
+
+// Value: dependent browser instrumentation must initialize in one registration; Playwright leaves separate script order undefined.
+test('online initialization registers once and initializes native RTC, sockets and delayed input in dependency order', async () => {
+  const registrations = [];
+  const page = { async addInitScript(operation, argument) { registrations.push({ operation, argument }); } };
+  const options = { endpoint: 'wss://local.test', count: 2, index: 0, faults: false, corrupt: false, onlineCorrupt: true };
+  await registerOnlineInit(page, options);
+  assert.equal(registrations.length, 1);
+  class Socket { static CLOSED = 3; constructor(url) { this.url = url; this.readyState = 1; } send() {} }
+  class Connection {
+    addEventListener() {}
+    createDataChannel(label, configuration) {
+      return { label, ...configuration, readyState: 'open', addEventListener() {}, send() {} };
+    }
+  }
+  const context = vm.createContext({ WebSocket: Socket, RTCPeerConnection: Connection });
+  context.window = context;
+  for (const { operation, argument } of registrations.reverse()) {
+    context.options = argument;
+    vm.runInContext(`(${operation.toString()})(options)`, context);
+  }
+  assert.equal(context.fortressOnlineCorrupt, true);
+  assert.equal(context.fortressOnlineDelayed, 0);
+  assert.equal(context.fortressResources.websockets.length, 0);
+  assert.equal(context.fortressResources.connections.length, 0);
+  vm.runInContext(`new WebSocket('wss://local.test'); new RTCPeerConnection().createDataChannel('input', { id: 3 });`, context);
+  assert.equal(context.fortressResources.websockets.length, 1);
+  assert.equal(context.fortressResources.connections.length, 1);
+  assert.equal(context.fortressResources.channels.length, 1);
+  const source = fs.readFileSync(path.join(__dirname, 'online.cjs'), 'utf8');
+  assert.equal((source.match(/await page\.addInitScript\(/g) || []).length, 1, 'the production registration boundary must stay singular');
+  assert.equal((source.match(/await registerOnlineInit\(page,/g) || []).length, 1, 'each production page must use the controlled initializer');
 });

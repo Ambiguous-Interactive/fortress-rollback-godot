@@ -71,16 +71,61 @@ def validate_suspension(record, expired):
             raise ValueError('online example expired suspension lost its frozen frontier')
 
 
+def validate_resources(evidence, round_index):
+    if not isinstance(evidence, list) or len(evidence) != 2:
+        raise ValueError('online example physical teardown missing')
+    for closed in evidence:
+        fields = ('channels', 'channels_closed', 'connections', 'connections_closed', 'ice_closed', 'websockets', 'websockets_closed')
+        if (not isinstance(closed, dict) or any(type(closed.get(field)) is not int or closed[field] < 0 for field in fields)
+                or closed['channels'] != 3 * (round_index + 1) or closed['channels_closed'] != closed['channels']
+                or closed['connections'] < round_index + 1 or closed['connections_closed'] != closed['connections']
+                or closed['ice_closed'] != closed['connections'] or closed['websockets'] != round_index + 1
+                or closed['websockets_closed'] != closed['websockets']):
+            raise ValueError('online example retained physical channels, ICE connections or websockets')
+
+
+def validate_socket_loss(record):
+    loss = record.get('socket_loss')
+    if (not isinstance(loss, dict) or loss.get('kind') != 'signaling-websocket-socket-loss'
+            or loss.get('method') != 'tls-proxy-destroy-both-pairs'
+            or any(type(loss.get(key)) is not int or loss[key] != expected for key, expected in
+                   (('proxy_pairs_before', 2), ('destroyed_pairs', 2), ('proxy_pairs_after', 0)))
+            or loss.get('open_websockets_before') != [1, 1]
+            or any(type(count) is not int for count in loss.get('open_websockets_before', []))
+            or loss.get('upgrades_refused') is not True or loss.get('reopened') is not True
+            or loss.get('before_user_leave') is not True or type(loss.get('refused_upgrade_attempts')) is not int
+            or not 1 <= loss['refused_upgrade_attempts'] <= 100
+            or any(type(loss.get(key)) is not int or not minimum <= loss[key] < 30000000
+                   for key, minimum in (('held_elapsed_us', 750000), ('reopened_elapsed_us', 250000)))):
+        raise ValueError('online example actual signaling socket loss missing')
+    terminal = loss.get('terminal')
+    if not isinstance(terminal, list) or len(terminal) != 2:
+        raise ValueError('online example socket loss terminal peers missing')
+    peers = {peer['page_index']: peer for peer in record['peers']}
+    for index, observation in enumerate(terminal):
+        if (not isinstance(observation, dict) or observation.get('state') != 'failed'
+                or not isinstance(observation.get('message'), str) or 'fresh room' not in observation['message']
+                or any(type(observation.get(key)) is not int for key in ('frame_before', 'frame_after'))
+                or not peers[index]['frame'] <= observation['frame_before'] <= 256
+                or observation['frame_after'] != observation['frame_before']
+                or observation.get('session_before') != peers[index]['session_id']
+                or observation.get('session_after') != peers[index]['session_id']):
+            raise ValueError('online example socket loss advanced or revived gameplay')
+    validate_resources(loss.get('resources'), 2)
+
+
 def validate_result(value, corrupt=False):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
         raise ValueError('online example browser flow failed')
     rounds = value.get('rounds')
-    if not isinstance(rounds, list) or len(rounds) != (1 if corrupt else 2):
+    if not isinstance(rounds, list) or len(rounds) != (1 if corrupt else 4):
         raise ValueError('online example did not restart in a fresh room')
+    if any(not isinstance(record, dict) for record in rounds):
+        raise ValueError('online example round evidence malformed')
     if not corrupt:
         terminal = rounds[0].get('terminal', {})
-        if (terminal.get('state') != 'failed' or not isinstance(terminal.get('message'), str)
+        if (not isinstance(terminal, dict) or terminal.get('state') != 'failed' or not isinstance(terminal.get('message'), str)
                 or 'fresh room' not in terminal['message'] or type(terminal.get('frame_before')) is not int
                 or type(terminal.get('frame_after')) is not int or not 100 <= terminal['frame_before'] <= 256
                 or terminal['frame_after'] != terminal['frame_before']):
@@ -88,7 +133,8 @@ def validate_result(value, corrupt=False):
     rooms, identities, comparisons = [], [], []
     for round_index, record in enumerate(rounds):
         peers = record.get('peers', [])
-        if (len(peers) != 2 or any(type(peer.get('slot')) is not int or type(peer.get('page_index')) is not int for peer in peers)
+        if (not isinstance(peers, list) or len(peers) != 2 or any(not isinstance(peer, dict) for peer in peers)
+                or any(type(peer.get('slot')) is not int or type(peer.get('page_index')) is not int for peer in peers)
                 or sorted(peer['slot'] for peer in peers) != [0, 1] or sorted(peer.get('page_index') for peer in peers) != [0, 1]
                 or not isinstance(record.get('room'), str) or not re.fullmatch('[A-Z0-9]{6}', record['room'])):
             raise ValueError('online example frozen player slots invalid')
@@ -99,16 +145,8 @@ def validate_result(value, corrupt=False):
                 or session_ids[0] != session_ids[1]):
             raise ValueError('online example peers disagree on the frozen rollback identity')
         identities.append(session_ids[0])
-        teardown = record.get('teardown')
-        if not isinstance(teardown, list) or len(teardown) != 2:
-            raise ValueError('online example physical teardown missing')
-        for closed in teardown:
-            if (not isinstance(closed, dict) or any(type(closed.get(field)) is not int for field in
-                    ('channels', 'channels_closed', 'connections', 'connections_closed'))
-                    or closed['channels'] != 3 * (round_index + 1) or closed['channels_closed'] != closed['channels']
-                    or closed['connections'] < round_index + 1 or closed['connections_closed'] != closed['connections']):
-                raise ValueError('online example retained physical channels or ICE connections')
-        histories = [peer['inputs'] for peer in peers]
+        validate_resources(record.get('teardown'), round_index)
+        histories = [peer.get('inputs') for peer in peers]
         for history in histories:
             if (not isinstance(history, list) or len(history) < (20 if corrupt else 100) or len(history) > 256
                     or any(type(buttons) is not int or not 0 <= buttons <= 15 for buttons in history)
@@ -161,9 +199,13 @@ def validate_result(value, corrupt=False):
             survivor = next(peer for peer in peers if peer['page_index'] == 1)
             if record['terminal']['frame_before'] < survivor['frame']:
                 raise ValueError('online example terminal report lost the completed simulation frontier')
-        if not corrupt:
+        if not corrupt and round_index < 2:
             validate_suspension(record, expired=round_index == 1)
-    if (not corrupt and (rooms[0] == rooms[1] or identities[0] == identities[1])) or value.get('teardown') is not True:
+            if round_index == 1:
+                validate_resources(record.get('failure_resources'), round_index)
+        elif not corrupt and round_index == 2:
+            validate_socket_loss(record)
+    if (not corrupt and (len(set(rooms)) != 4 or len(set(identities)) != 4)) or value.get('teardown') is not True:
         raise ValueError('online example reused room or retained connections')
     for frame, expected, state in comparisons:
         if expected != state:
@@ -199,7 +241,7 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     exported = inventory({'export': export})
     browser = [str(sources['node']), str(sources['online_browser']), str(export), f'ws://127.0.0.1:{port}/v3/ws']
     clean_command = browser + ['clean', str(output / f'{version}-online-events.log')]
-    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=1)))
+    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=4)))
     control_command = browser + ['corrupt', str(output / f'{version}-online-corrupt-events.log')]
     control = json.loads(run_browser(control_command, environment, output / f'{version}-online-corrupt.log', rooms=1))
     try:
