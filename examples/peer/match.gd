@@ -192,11 +192,7 @@ func _deliver() -> void:
 			dropped += 1
 			continue
 		var code: int = sessions[1 - source].receive(packet.bytes, _ids[source], now_us, _token())
-		if (code == I.Code.WRONG_STATE and sessions[1 - source].network_status().state == "synchronizing"
-			and packet.bytes.size() >= 8 and packet.bytes.decode_u16(6) not in [T.Kind.SYNC_REQUEST, T.Kind.SYNC_REPLY]):
-			# The sender retries gameplay and control traffic after synchronization.
-			dropped += 1
-		elif code != I.Code.OK and sessions[1 - source].status().lifecycle == Types.Lifecycle.TERMINATED:
+		if code != I.Code.OK and sessions[1 - source].status().lifecycle == Types.Lifecycle.TERMINATED:
 			delivered += 1
 		elif code != I.Code.OK:
 			failure = code

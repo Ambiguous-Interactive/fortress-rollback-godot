@@ -105,7 +105,9 @@ def validate_result(value, corrupt=False):
                 raise ValueError('online example physical unreliable channel contract missing')
             snapshots = peer.get('snapshots', {})
             if not isinstance(snapshots, dict) or not (8 if corrupt else 60) <= len(snapshots) <= 256:
-                raise ValueError('online example corrected prefix coverage incomplete')
+                count = len(snapshots) if isinstance(snapshots, dict) else 'invalid'
+                raise ValueError(f'online example corrected prefix coverage incomplete: page {page_index}, '
+                                 f'frame {peer["frame"]}, confirmed {peer["confirmed"]}, snapshots {count}')
             for key, state in snapshots.items():
                 if (not isinstance(key, str) or not re.fullmatch('0|[1-9][0-9]{0,2}', key)
                         or not isinstance(state, str) or not re.fullmatch('[a-f0-9]{272}', state)):

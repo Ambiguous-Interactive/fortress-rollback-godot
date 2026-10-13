@@ -12,6 +12,9 @@ const MembershipFixture = preload("res://tests/unit/test_signalfish_membership.g
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
+const Bridge = preload("res://scripts/reference/browser/online_bridge.gd")
+const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const U: String = MembershipFixture.U
 const V: String = MembershipFixture.V
 const ROOM: String = "10000000-0000-0000-0000-000000000001"
@@ -25,6 +28,16 @@ class ObservedGame:
 			return false
 		samples[input_frame] = PackedInt32Array([inputs.read(0).bytes[0], inputs.read(1).bytes[0]])
 		return true
+
+
+class CallbackGame:
+	extends Bridge.ObservedGame
+	var core_ref: WeakRef
+	var callback_visible: int = -1
+	func save_state(saved_frame: int, writer: Bridge.Writer) -> Driver.SaveResult:
+		var result: Driver.SaveResult = super.save_state(saved_frame, writer)
+		callback_visible = Bridge.confirmed_snapshots(core_ref.get_ref(), saves).size()
+		return result
 
 
 class RefusedCoordinator:
@@ -48,11 +61,13 @@ class Client:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "terminal_callbacks", "handshake_timeout"])
+	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "terminal_callbacks", "handshake_timeout", "observer_history"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"observer_history":
+			_observer_history(context)
 		"identity":
 			var identity: PackedByteArray = Match.session_identity(ROOM, PackedStringArray([U, V]))
 			context.equal(identity.size(), 16, "domain separated application match identity")
@@ -200,3 +215,60 @@ func _retained_batch(context: RefCounted) -> void:
 	game_match.detach()
 	fixture.mesh.free()
 	fixture.client.free()
+
+
+# Value: protects=confirmed callback history; fails_when=render gaps evict evidence; why_new=browser load depends on host cadence; seam=actual session/driver
+func _observer_history(context: RefCounted) -> void:
+	var config: Config = Config.new()
+	config.sync_test = false
+	config.check_distance = 0
+	config.max_snapshot_bytes = Simulation.SNAPSHOT_BYTES
+	config.storage_budget_bytes = config.required_storage_bytes()
+	var core: Session = Session.new()
+	context.equal(core.configure(config), Types.Code.OK, "bounded production snapshot ring")
+	var game: CallbackGame = CallbackGame.new()
+	game.core_ref = weakref(core)
+	var driver: Driver = Driver.new(core, game)
+	# One render observation follows one hundred completed physical ticks.
+	for frame: int in 100:
+		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([2])), Driver.LocalInput.new(1, frame, PackedByteArray([4]))]
+		context.equal(driver.step(frame, samples).code, Types.Code.OK, "real driver advances without rendering")
+	context.equal(core.confirmed_checksums().size(), 8, "real core has evicted earlier corrected callback boundaries")
+	context.equal(game.saves.size(), 100, "observer owns every real save callback")
+	context.equal(game.callback_visible, 0, "active real callback hides owned history")
+	context.equal(Bridge.confirmed_snapshots(core, game.saves).size(), 99, "render cadence cannot erase confirmed callback evidence")
+	context.state(100, game.canonical_bytes())
+	config.local_players = PackedInt32Array([0])
+	core = Session.new()
+	context.equal(core.configure(config), Types.Code.OK, "external inputs for actual pending correction")
+	game = CallbackGame.new()
+	game.core_ref = weakref(core)
+	driver = Driver.new(core, game)
+	for frame: int in 4:
+		context.equal(driver.step(frame, [Driver.LocalInput.new(0, frame, PackedByteArray([2]))]).code, Types.Code.OK, "predict remote original input")
+	var predicted: String = game.saves[3]
+	for frame: int in 5:
+		context.equal(core.receive_input(1, frame, PackedByteArray([4])).code, Types.Code.OK, "actual remote original causes earliest correction")
+	context.equal(core.status().pending_rollback_frame, 0, "actual first predicted frame requires repair")
+	context.equal(Bridge.confirmed_snapshots(core, game.saves).keys(), ["0"], "hide owned but uncorrected snapshots after receipt")
+	context.equal(driver.step(5, [Driver.LocalInput.new(0, 4, PackedByteArray([2]))]).code, Types.Code.OK, "actual driver repairs predicted callbacks")
+	context.equal(game.restores, 1, "actual rollback load executed")
+	context.equal(game.saves[3] != predicted, true, "resimulation overwrites speculative snapshot bytes")
+	context.equal(Bridge.confirmed_snapshots(core, game.saves)["3"], game.saves[3], "only repaired canonical prefix becomes visible")
+	context.equal(core.submit_local_input(0, 5, PackedByteArray([2])).code, Types.Code.OK, "prepare active expert batch")
+	context.equal(core.begin_advance().code, Types.Code.READY, "open ordered request batch")
+	context.equal(Bridge.confirmed_snapshots(core, game.saves).is_empty(), true, "open batch hides callback-owned history")
+	core.terminate()
+	context.equal(Bridge.confirmed_snapshots(core, game.saves).is_empty(), true, "terminal core cannot publish fresh evidence")
+	config.local_players = PackedInt32Array([0, 1])
+	config.checksums_enabled = false
+	core = Session.new()
+	context.equal(core.configure(config), Types.Code.OK, "checksums-disabled configuration remains valid")
+	game = CallbackGame.new()
+	game.core_ref = weakref(core)
+	driver = Driver.new(core, game)
+	for frame: int in 4:
+		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([2])), Driver.LocalInput.new(1, frame, PackedByteArray([4]))]
+		context.equal(driver.step(frame, samples).code, Types.Code.OK, "actual callbacks without public checksum evidence")
+	context.equal(game.saves.size(), 4, "actual callback bytes exist with checksums disabled")
+	context.equal(Bridge.confirmed_snapshots(core, game.saves).is_empty(), true, "disabled checksum domain cannot publish evidence")

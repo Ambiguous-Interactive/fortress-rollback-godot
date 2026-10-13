@@ -72,3 +72,8 @@ prediction stalls and held input recovery, caller-owned refusal retries and
 terminal callback ordering. It runs through the ordinary headless test runner
 with deterministic and fresh-process repeats. These injected tests establish
 application behavior; exported browser evidence is a separate verification gate.
+
+`tests/unit/test_online_startup.gd` delays one peer's final handshake reply
+behind original gameplay on both direct and relay paths. Later keys change;
+both peers must recover the exact earlier bytes. Valid early traffic is inert
+until synchronization completes, and malformed traffic remains rejected.

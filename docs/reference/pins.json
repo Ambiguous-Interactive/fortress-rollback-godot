@@ -81,6 +81,7 @@
     },
     "tla2tools-1.8.0.jar": {
       "url": "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar",
+      "repository_path": "scripts/oracle/tools/tla2tools-94d0c507.jar",
       "digest": "7beec0f04818732a62fa193731711a99aa4f11279499b2360a7d156c519ea78d",
       "algorithm": "sha256"
     },
@@ -122,6 +123,7 @@
   },
   "formal": {
     "tlc_version": "1.8.0",
+    "tlc_build_revision": "94d0c5070852b37b801bb8998c436383ab7ee37b",
     "status": "pinned; model execution pending"
   }
 }

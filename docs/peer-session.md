@@ -39,8 +39,12 @@ Separate `receive` and `poll` calls publish the receipt bank from after delivery
 
 Call `poll` during stalls and drain **all three** publication queues each service
 iteration. They are bounded independently. A sender can enter running state
-before its receiver; the receiver rejects early INPUT packets with `WRONG_STATE`.
-The sender retains those inputs and retries after synchronization.
+before its receiver. During compatible synchronization, the receiver validates
+early gameplay/control bytes and discards them with `OK`; it does not retain
+inputs, acknowledge receipt or change gameplay. The sender retains its inputs
+and retries after synchronization. Malformed bytes, wrong session/sender, known
+connection mismatch and inputs claiming another player's slot remain errors.
+This permits independent handshake completion over unordered delivery.
 
 `step` requires the complete local sample set and validates it before submission.
 It transmits the actual delayed frame returned by the core, retaining the packed

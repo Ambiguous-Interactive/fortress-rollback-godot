@@ -48,6 +48,24 @@ class ReferenceContracts(unittest.TestCase):
             path.write_bytes(b'valid')
             self.assertEqual(fetch(pin, 'artifact', offline=True, cache=cache), path)
 
+    def test_repository_artifact_is_authoritative_even_with_warm_cache(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            fixture = root / 'reviewed.jar'
+            fixture.write_bytes(b'reviewed')
+            pin = {'algorithm': 'sha256', 'digest': hashlib.sha256(b'reviewed').hexdigest(),
+                   'url': 'https://invalid.example/provenance-only', 'repository_path': 'reviewed.jar'}
+            with patch('fetch.ROOT', root), patch('urllib.request.urlopen') as network:
+                cached = fetch(pin, 'artifact', offline=True, cache=root / 'cache')
+                self.assertEqual(cached.read_bytes(), b'reviewed')
+                fixture.write_bytes(b'changed')
+                with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+                    fetch(pin, 'artifact', cache=root / 'cache')
+                fixture.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    fetch(pin, 'artifact', offline=True, cache=root / 'cache')
+                network.assert_not_called()
+
     def test_verified_extraction_retains_mtimes_and_repairs_all_cache_mutations(self):
         # Value: verified warm sources avoid rebuilds; byte, mode, extra/missing and symlink mutations still repair.
         with tempfile.TemporaryDirectory() as folder:

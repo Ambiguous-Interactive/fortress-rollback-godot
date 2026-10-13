@@ -12,6 +12,11 @@ The session logic (see
 whether it is talking to ENet, WebRTC, or a replay file. Everything on the
 wire is bytes with an exact, versioned layout.
 
+Peers can finish synchronization independently. Validate early input/control
+identity and bodies before discarding them without ACKs, receipts or lifecycle
+updates. Test a final handshake reply overtaken by original gameplay on both
+direct and relay paths; verify the retried original bytes after later keys change.
+
 ## Godot Peer Setup
 
 | Target | Peer | Notes |

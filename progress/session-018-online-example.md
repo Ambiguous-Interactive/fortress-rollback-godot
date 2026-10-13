@@ -89,3 +89,68 @@ Retro: `findings-acted`.
 Current-head CI, complete feedback scans, squash merge, local synchronization
 and merge-triggered main CI remain required. #38/#75 retain advanced recovery,
 #39 the release browser matrix, and #41 the remaining integration documentation.
+
+## First-head CI investigation and repairs
+
+PR #82 opens at `da1f9677e2cc22a36ad33cef4079dab33edd90e6`.
+Harness and both container builds pass; automatic Bugbot review reports no
+findings. Reference run `38349365726` reveals three independent failures.
+
+Godot 4.3's actual online UI/game flows finish healthy, but observed prefixes
+number 83/47/36/64. Every captured prefix matches the original input oracle.
+The observer samples the core's nine-slot physical checksum bank once per
+rendered turn, after multiple fixed ticks may have evicted frames. It already
+owns all save-callback bytes. The deterministic 100-step real Session/Driver
+regression returns 8 prefixes against the required 99 before repair, then 99
+afterward. The repaired collector keeps the same completed/confirmed/pending
+rollback ceiling, callback/open-batch/terminal gates and checksum-enabled gate.
+The 60-prefix/common-50 browser thresholds remain unchanged. Pending correction
+controls require actual LOAD and resimulation before publishing affected bytes.
+
+Godot 4.7.2 instead stops at frame zero with transport 12 (PEER_FAILURE), while
+the other peer reaches frame eight before protocol termination. Reordering the
+final SYNC_REPLY behind valid INPUT reproduces that exact signature through
+actual direct and relay callers. The endpoint now validates early wire shape,
+session, sender, nonzero/known incarnation, input ownership and statuses before
+an inert discard during compatible synchronization. It emits no ACK, receipt,
+confirmation or lifecycle update. Original unacknowledged inputs retry normally.
+Initializing, incompatible, terminal and hostile packet cases stay refused.
+The old peer example workaround is removed; the production boundary owns the
+whole failure class. #83 records reproduction and acceptance.
+
+Fresh review requires stronger recovery evidence. The final direct/relay cases
+capture actual early packet fields, change subsequent RIGHT inputs to LEFT,
+and compare every original early byte against both peers' corrected simulation
+samples. Later LEFT inputs must remain distinct. Both native pins pass; a
+second review accepts the exact source hashes with no remaining findings.
+
+The native 4.7.2 job also rejects fresh TLC download bytes. Upstream replaces
+and deletes the v1.8.0 prerelease jar on master builds. Stable 1.7.4 does not
+satisfy the existing negative-control protocol, so a downgrade is rejected.
+Preserve the previously reviewed 4,501,960-byte jar at
+`scripts/oracle/tools/tla2tools-94d0c507.jar`, with its embedded revision and
+licenses. Its SHA-256 remains
+`7beec0f04818732a62fa193731711a99aa4f11279499b2360a7d156c519ea78d`.
+Both fetch paths verify the authoritative fixture before caches; offline and
+fresh runs use identical bytes without changing checker semantics. #84 owns
+the repair. Four artifact controls are red against the old helper and green
+afterward. The full 26-scenario native handshake gate and formal positive/
+duplicate controls pass at `.cache/reference/results/session-018-tlc-repair/receipt.json`.
+
+The repaired full native target passes 192 cases through both repeat layers.
+Receipt: `.cache/tests/session-018-repaired-unit-4.7.2.json`; final startup
+assertions also pass through focused repeat layers on 4.3 and 4.7.2.
+All 61 reference controls and 56 oracle controls pass. Fresh repair review
+covers all six attack surfaces with no remaining findings. Final exported
+source-bound reruns and new-head CI/delivery remain gates.
+
+The repaired final source-bound run passes both release exports with 425/426
+canonical comparisons (851 total), original physical keys, actual rollback
+on every peer, actual frozen departure frames 116/114, fresh-room identities
+and complete physical teardown. Both altered-load controls still reject exactly
+at canonical frame 3. The server build receipt is refreshed against final
+fetch/pin sources. Receipt:
+`.cache/reference/results/session-018-online-repaired/online-example.json`.
+SHA-256: `21728f6cf60e6e85169b90b803e73edf1b10da06be631e502e0c1614038663c9`.
+The screenshot is refreshed from this run. Source lint checks 229 files at 180
+columns; harness lint and all 99 harness tests pass after retrospective updates.

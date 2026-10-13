@@ -8,6 +8,7 @@ const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Lobby = preload("res://examples/online/lobby.gd")
+const Session = preload("res://addons/fortress_rollback/core/session.gd")
 
 
 class ObservedGame:
@@ -75,14 +76,27 @@ func _process(_delta: float) -> void:
 			if actual.code != Queue.Code.OK:
 				break
 			inputs.append(actual.bytes[0])
-		for saved: Dictionary in core.confirmed_checksums():
-			if saved.frame < 256 and observed.saves.has(saved.frame):
-				snapshots[str(saved.frame)] = observed.saves[saved.frame]
+		snapshots.merge(confirmed_snapshots(core, observed.saves), true)
 	var result: Dictionary = {"state": lobby.state, "message": lobby.message, "room": lobby.room_code(), "slot": slot, "session_id": session_id,
 		"frame": current, "confirmed": confirmed, "failure": lobby.game_match.failure, "inputs": inputs, "snapshots": snapshots,
 		"restores": observed.restores if observed != null else 0, "all_ready": lobby.all_ready,
 		"ready_enabled": not scene.ready_button.disabled, "start_enabled": not scene.start_button.disabled, "command_id": command_id}
 	JavaScriptBridge.eval("window.fortressOnline = " + JSON.stringify(result))
+
+
+static func confirmed_snapshots(core: Session, saves: Dictionary) -> Dictionary:
+	var result: Dictionary = {}
+	if core._mutation_code() != Session.Code.OK or not core._config.checksums_enabled:
+		return result
+	var status: Session.Types.Status = core.status()
+	var ceiling: int = mini(status.current_frame, status.confirmed_frame - 1)
+	if status.pending_rollback_frame != -1:
+		ceiling = mini(ceiling, status.pending_rollback_frame)
+	# Callback bytes outlive the nine-slot game ring; receipt alone never proves repair.
+	for frame: int in saves:
+		if frame >= 0 and frame < 256 and frame <= ceiling:
+			result[str(frame)] = saves[frame]
+	return result
 
 
 func _command(value: Dictionary) -> void:
