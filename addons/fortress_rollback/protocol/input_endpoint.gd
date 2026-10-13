@@ -171,10 +171,23 @@ func receive(packet: Variant, attributed_sender: Variant, now_us: Variant, next_
 				return _commit(sync_plan)
 		return code
 	var handshake_status: Dictionary = _handshake.status()
-	if handshake_status.state != "running":
-		return I.Code.WRONG_STATE
-	if message.connection_id.hex_encode() != handshake_status.remote_connection:
+	var connection: String = message.connection_id.hex_encode()
+	if connection == "0000000000000000" or (not handshake_status.remote_connection.is_empty() and connection != handshake_status.remote_connection):
 		return I.Code.WRONG_CONNECTION
+	if message.kind == T.Kind.INPUT:
+		if message.players != _remote_players:
+			return I.Code.INVALID_PACKET
+		code = _status_code(message.statuses)
+		if code != I.Code.OK:
+			return code
+	elif message.kind != T.Kind.INPUT_ACK and _lifecycle == null:
+		return I.Code.UNSUPPORTED_KIND
+	if handshake_status.state != "running":
+		# Unordered final replies can arrive after a synchronized sender's gameplay.
+		# Validate identity and shape, then discard; normal input retries repair it.
+		if handshake_status.state == "synchronizing" and handshake_status.mismatch.is_empty():
+			return I.Code.OK
+		return I.Code.WRONG_STATE
 	var plan: Dictionary = _plan(now_us)
 	if message.kind not in [T.Kind.INPUT, T.Kind.INPUT_ACK]:
 		if _lifecycle == null:

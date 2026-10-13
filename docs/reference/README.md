@@ -122,6 +122,13 @@ not release publication or supported browser/networking evidence.
 
 B1 requires formal-tool pinning, not model execution. The TLC 1.8.0 jar was
 downloaded and its manifest digest verified; scoped formal execution belongs to V5.
+The reviewed October 6 build is preserved at
+[`scripts/oracle/tools/tla2tools-94d0c507.jar`](../../scripts/oracle/tools/tla2tools-94d0c507.jar).
+Its SHA256 remains `7beec0f04818732a62fa193731711a99aa4f11279499b2360a7d156c519ea78d`.
+The artifact's `repository_path` is authoritative; its original URL records provenance.
+Upstream's prerelease workflow deletes and replaces the `v1.8.0` artifact and tag
+on master builds. Fresh online and offline runs verify the repository fixture before
+using a cache. See the [tool provenance and licenses](../../scripts/oracle/tools/README.md).
 B1's baseline and packaging evidence is now available for closure review.
 The selected baseline does not cover optional Rust features, the full upstream
 suite, all player counts, SignalFish runtime, mixed browsers or Safari devices.

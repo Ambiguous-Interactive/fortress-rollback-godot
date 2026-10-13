@@ -50,6 +50,14 @@ godot --path . res://examples/peer/peer.tscn
 Move players with WASD and the arrow keys. Toggle packet loss, reordering or a
 partition to observe prediction stalls and recovery. Delivery runs in process.
 
+For a browser game, follow the [online example guide](./docs/online-example.md)
+to install the optional SignalFish SDK and export `examples/online/online.tscn`.
+
+Create a room and share its code with another player. Both players ready up;
+the host starts the game. WASD or arrow keys move your player. The scene uses
+WebRTC with relay fallback and shows confirmation, stalls and terminal failures.
+Leave and create a fresh room to restart.
+
 Contributor tooling:
 
 ```sh

@@ -39,14 +39,21 @@ def digest(path, algorithm='sha256'):
 def fetch(pin, name, offline=False, cache=CACHE):
     destination = cache / 'downloads' / name
     destination.parent.mkdir(parents=True, exist_ok=True)
+    repository_source = ROOT / pin['repository_path'] if 'repository_path' in pin else None
+    if repository_source is not None:
+        verify(repository_source, pin)
     if not destination.exists():
-        if offline:
+        if offline and repository_source is None:
             raise FileNotFoundError(f'offline cache miss: {destination}')
         with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
             temporary = Path(output.name)
             try:
-                with urllib.request.urlopen(pin['url'], timeout=60) as response:
-                    shutil.copyfileobj(response, output)
+                if repository_source is not None:
+                    with repository_source.open('rb') as source:
+                        shutil.copyfileobj(source, output)
+                else:
+                    with urllib.request.urlopen(pin['url'], timeout=60) as response:
+                        shutil.copyfileobj(response, output)
                 output.close()
                 verify(temporary, pin)
                 temporary.replace(destination)

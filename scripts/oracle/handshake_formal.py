@@ -3,15 +3,17 @@ import json
 from copy import deepcopy
 from pathlib import Path
 import subprocess
-from urllib.request import urlopen
+import shutil
 
-from fetch import CACHE, digest
+from fetch import CACHE, ROOT, digest, load_manifest
 from handshake_contract import strict_shape
 
 REVISION = 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
 UPSTREAM = CACHE / ('fortress-rollback-' + REVISION)
-# TLC1.8.0 release artifact, audited alongside pinned upstream's .tla-tools-version.
-JAR_SHA256 = '7beec0f04818732a62fa193731711a99aa4f11279499b2360a7d156c519ea78d'
+# Preserve the reviewed prerelease build: upstream replaces its version-labelled asset daily.
+JAR_PIN = load_manifest()['artifacts']['tla2tools-1.8.0.jar']
+JAR_SOURCE = ROOT / JAR_PIN['repository_path']
+JAR_SHA256 = JAR_PIN['digest']
 
 
 def check(actual, output, jar):
@@ -87,16 +89,16 @@ def check(actual, output, jar):
 
 
 def ensure_jar(path, offline):
+    # Verify the authoritative fixture even when a valid cache already exists.
+    if not JAR_SOURCE.is_file() or digest(JAR_SOURCE) != JAR_SHA256:
+        raise ValueError('repository TLC artifact missing or hash mismatch')
     if not path.exists():
-        if offline:
-            raise ValueError('missing pinned TLC jar; run without --offline once')
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix('.download')
         try:
-            with urlopen('https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar', timeout=60) as response:
-                temporary.write_bytes(response.read(8 * 1024 * 1024))
+            shutil.copyfile(JAR_SOURCE, temporary)
             if digest(temporary) != JAR_SHA256:
-                raise ValueError('downloaded TLC artifact hash mismatch')
+                raise ValueError('copied TLC artifact hash mismatch')
             temporary.replace(path)
         finally:
             temporary.unlink(missing_ok=True)

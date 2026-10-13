@@ -28,6 +28,7 @@ Local development contracts and evidence entry points:
 - [Session/driver/state/transport interface ADR](docs/contracts.md).
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).
+- [Playable online room setup and controls](docs/online-example.md).
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).

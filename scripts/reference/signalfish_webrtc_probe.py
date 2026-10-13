@@ -337,9 +337,10 @@ def main():
     parser.add_argument('--godot', type=Path, help='supplied pinned editor; requires exactly one --version')
     parser.add_argument('--version', action='append', help='pinned engine version; defaults to minimum and current')
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--online-example', action='store_true', help='export and drive the shipped two-player online example')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    receipt = args.output / 'signalfish-webrtc.json'
+    receipt = args.output / ('online-example.json' if args.online_example else 'signalfish-webrtc.json')
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
     pins = load_manifest()
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
@@ -376,6 +377,18 @@ def main():
                'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs',
                'watchdog_test': ROOT / 'scripts/reference/browser/webrtc_watchdog.test.cjs', 'node': Path(shutil.which('node')),
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
+    if args.online_example:
+        sources.update(online_example=ROOT / 'examples/online', offline_example=ROOT / 'examples/offline',
+                       online_launcher=ROOT / 'scripts/reference/online_example_probe.py',
+                       online_browser=ROOT / 'scripts/reference/browser/online.cjs',
+                       online_bridge=ROOT / 'scripts/reference/browser/online_bridge.gd')
+        online_labels = ('online', 'online-corrupt', 'online-events', 'online-corrupt-events')
+        owned_logs.extend(f'{version}-{label}.log' for version in versions for label in online_labels)
+        owned_logs.extend(f'{version}-online.png' for version in versions)
+        for version in versions:
+            (args.output / f'{version}-online.png').unlink(missing_ok=True)
+            for label in online_labels:
+                (args.output / f'{version}-{label}.log').unlink(missing_ok=True)
     for module in sorted((CACHE / 'browser/node_modules').rglob('*')):
         relative = module.relative_to(CACHE / 'browser/node_modules')
         if relative.parts[0] == '.bin':
@@ -461,6 +474,13 @@ def main():
             try:
                 wait_ready(server, port)
                 for version, engine in engines.items():
+                    if args.online_example:
+                        from online_example_probe import run_online
+                        record, executed_record = run_online(root, version, engine, sdk, sources, environment,
+                                                             args.output, certificate, tls_private_key, port)
+                        records.append(record)
+                        executed_records.append(executed_record)
+                        continue
                     project = root / version
                     project.mkdir()
                     shutil.copytree(sources['addon'], project / 'addons/fortress_rollback')
@@ -534,6 +554,11 @@ def main():
                         'A real unreliable channel closes at frame four; both ends retain relay through final confirmation while healthy links remain direct. '
                         'Disabled fallback fails the gameplay watchdog. Send drops/delays and pressure are synthetic; no WAN/NAT/TURN, '
                         'native WebRTC, other browsers, channel replacement, ICE recovery, relay congestion or reconnect/replan claim.'}
+    if args.online_example:
+        report['limits'] = ('Actual shipped online scene in two independent Chromium processes on each selected pinned engine; '
+                            'physical keyboard movement, sender-owned original input histories, corrected canonical prefixes, '
+                            'actual rollback, disconnect and a fresh room restart. Local ICE and injected input delivery delay; '
+                            'no WAN/NAT/TURN, other browser or ICE restoration claim.')
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'results': str(receipt), 'engines': versions, 'runs': len(records)}))
 
