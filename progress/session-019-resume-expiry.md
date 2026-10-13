@@ -200,3 +200,25 @@ The separate final reviewed online run passes both engine exports:
 SHA-256: `8c3252b0bdb0d0227103e5c0011b9eea1f02a88af4c126a3377495db67644e25`.
 It inventories the repaired runtime and timer sources and passes the original
 canonical, suspension, expired-frame, corruption and physical teardown gates.
+
+## Probe diagnostic follow-up
+
+Automatic review comment 4262646186 identifies discarded `sync_timeout`
+diagnostics in the older verification caller. Independent investigation scopes
+this correctly: its ordinary setup leaves timeout disabled (`-1`), so the
+finding does not reproduce in its default room. With an accepted finite timeout,
+however, it services a buffered valid final reply after the diagnostic.
+The expert Peer intentionally remains diagnostic-only. The verification caller
+now treats that event as a failure before mixed/direct service.
+
+The existing actual-host clock fixture tests four combinations: exact 1000 µs
+and 1001 µs expiry, with ordinary or minimum two-slot diagnostic banks, under
+one-token retry pressure. Its retained transport submits a real attributed
+SYNC_REPLY through Peer.receive. Old source fails at 1001 µs with service=true
+and calls=1; the repaired caller preserves equality completion and never
+services the overdue reply. Both native pins pass.
+Red: `.cache/reference/session-019-probe-timeout-red.log`.
+Green: `.cache/reference/session-019-probe-timeout-green-4.3.log` and
+`.cache/reference/session-019-probe-timeout-green-4.7.2.log`.
+The earlier final online receipt precedes this probe-only follow-up; final-head
+CI supplies source-bound browser coverage after the complete source freeze.
