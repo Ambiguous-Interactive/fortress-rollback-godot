@@ -20,6 +20,12 @@
 | Render-time observation cannot rely on a short-lived rollback snapshot ring. | Technique | Hosted 4.3 keeps only 83/47/36/64 prefixes. The actual 100-step Session regression returns 8 before repair and 99 afterward. |
 | A version-labelled prerelease URL can overwrite and delete its reviewed bytes. | Fact | Fresh TLC hash differs; upstream master workflow deletes old jar assets and moves the tag. The exact reviewed fixture retains the existing formal controls. |
 
+A final runner-control incident is reduced to two unused suites. Loading the
+optional connection factory only during SDK-backed setup repairs its script
+resource leak. Both pins pass all six fail-closed runner controls; both actual
+release exports retain successful gameplay and corruption rejection. This
+remains a scoped implementation finding, not a new general engine rule.
+
 ## Actions taken
 
 | Action | Canonical home | Verification |

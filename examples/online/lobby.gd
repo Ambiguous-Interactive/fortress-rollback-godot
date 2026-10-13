@@ -3,7 +3,6 @@ extends RefCounted
 
 const Match = preload("res://examples/online/match.gd")
 const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
-const Connection = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
 const CONFIG_PATH: String = "res://addons/signal_fish/signal_fish_config.gd"
 const MESH_PATH: String = "res://addons/signal_fish/webrtc/sf_webrtc_mesh.gd"
@@ -53,7 +52,8 @@ func connect_room(endpoint: String, player_name: String, room: String, now_us: i
 	_config.set("decode_msgpack_payloads", false)
 	_config.set("auto_poll", false)
 	mesh.set("multiplayer_peer_factory", Multiplayer.create)
-	mesh.set("peer_connection_factory", Connection.create)
+	var connection_script: Script = load("res://addons/fortress_rollback/transport/signalfish_webrtc_connection.gd")
+	mesh.set("peer_connection_factory", Callable(connection_script, "create"))
 	client.call("set_auto_reconnect", false)
 	_name = player_name.strip_edges()
 	_room = room.strip_edges()

@@ -154,3 +154,15 @@ fetch/pin sources. Receipt:
 SHA-256: `21728f6cf60e6e85169b90b803e73edf1b10da06be631e502e0c1614038663c9`.
 The screenshot is refreshed from this run. Source lint checks 229 files at 180
 columns; harness lint and all 99 harness tests pass after retrospective updates.
+
+A hosted 4.3 runner control exposes a separate unused-resource leak before
+any matching case runs. The minimum graph is online_example plus
+webrtc_mesh_backlog; either alone is clean. Lazy scene loading and a callable
+change with the eager Connection preload both fail to repair it. Loading the
+optional connection script only after SDK validation removes that unused
+compile dependency. Both pins pass all six existing runner controls; engine
+errors remain fail-closed. Fresh incremental review reports no blockers.
+The final frozen-source browser rerun passes both pins and both corruption
+controls at canonical frame 3. Receipt:
+`.cache/reference/results/session-018-online-leak-repair/online-example.json`.
+SHA-256: `734dd0fbdf94b4cc3751a820ebfdc17c40fe26515fa86ca0a7c34044f50ee4eb`.
