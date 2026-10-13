@@ -99,6 +99,17 @@ func next_token(_remote_uuid: String = "") -> PackedByteArray:
 	return token
 
 
+## Service elapsed protocol deadlines before SDK callbacks, without receiving bytes or advancing gameplay.
+func poll_protocol_time(now_us: int) -> bool:
+	if not failure.is_empty() or not has_started:
+		return false
+	if now_us < 0 or now_us < _last_now:
+		failure = "Invalid clock or input. Leave and create a new room."
+		return false
+	_last_now = now_us
+	return _poll_protocol(now_us)
+
+
 func tick(now_us: int, buttons: int) -> void:
 	if not failure.is_empty() or not has_started:
 		return

@@ -30,6 +30,7 @@ Local development contracts and evidence entry points:
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Playable online room setup and controls](docs/online-example.md).
 - [Online suspension, elapsed-time expiry and fresh-room restart](docs/online-example.md#suspension-and-expiry).
+- [Online terminal connection cleanup and fresh-room recovery](docs/online-example.md#leave-and-restart).
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).

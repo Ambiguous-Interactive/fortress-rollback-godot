@@ -22,6 +22,7 @@ var _name: String = ""
 var _room: String = ""
 var _joined: bool = false
 var _closing: bool = false
+var _cleanup_pending: bool = false
 var _deadline: int = -1
 var _epoch: int = 0
 var _last_now: int = -1
@@ -59,6 +60,7 @@ func connect_room(endpoint: String, player_name: String, room: String, now_us: i
 	_room = room.strip_edges()
 	is_creator = _room.is_empty()
 	game_match = Match.new()
+	_cleanup_pending = false
 	all_ready = false
 	has_readied = false
 	_joined = false
@@ -73,16 +75,20 @@ func connect_room(endpoint: String, player_name: String, room: String, now_us: i
 	for signal_name: String in ["connection_failed", "authentication_error", "room_join_failed", "server_error", "reconnection_failed",
 		"disconnected", "going_away", "room_left", "reconnected"]:
 		client.connect(signal_name, _on_failure)
+	state = "connecting"
+	message = "Connecting to SignalFish…"
 	var configured: Error = client.call("configure", _config)
 	if configured != OK:
 		_fail("SDK configuration failed (%d)." % configured)
 		return configured
+	if state == "failed":
+		return ERR_UNAVAILABLE
 	var connected: Error = client.call("connect_to_server")
 	if connected != OK:
 		_fail("Connection failed (%d)." % connected)
 		return connected
-	state = "connecting"
-	message = "Connecting to SignalFish…"
+	if state == "failed":
+		return ERR_UNAVAILABLE
 	return OK
 
 
@@ -102,10 +108,14 @@ func ready() -> Error:
 	if frozen != OK:
 		_fail("Could not freeze the two-player room (%d)." % frozen)
 		return frozen
+	if state == "failed":
+		return ERR_UNAVAILABLE
 	var code: Error = client.call("set_ready")
 	if code != OK:
 		_fail("Ready failed (%d)." % code)
 		return code
+	if state == "failed":
+		return ERR_UNAVAILABLE
 	has_readied = true
 	message = "Ready. The room creator can start when both players are ready."
 	return OK
@@ -119,21 +129,34 @@ func start() -> Error:
 	var code: Error = client.call("start_game")
 	if code != OK:
 		_fail("Start failed (%d)." % code)
+	elif state == "failed":
+		return ERR_UNAVAILABLE
 	return code
 
 
 ## Monotonic host time services networking; gameplay advances only whole fixed ticks.
 func tick(now_us: int, buttons: int) -> void:
-	if client == null or state == "failed":
+	if client == null:
+		return
+	if state == "failed":
+		# The SDK needs polling to finish its WebSocket close handshake.
+		_finish_cleanup()
+		client.call("poll")
 		return
 	if now_us < _last_now:
 		_fail("Host clock moved backwards.")
 		return
 	_last_now = now_us
+	if state == "playing" and not game_match.poll_protocol_time(now_us - _epoch):
+		_fail(game_match.failure)
+		_finish_cleanup()
+		return
 	client.call("poll")
 	if state == "failed":
 		return
 	mesh.call("poll")
+	if state == "failed":
+		return
 	if state == "connecting" and client.call("is_authenticated") and _info != null:
 		var params: RefCounted = _sdk.JoinRoomParams.new()
 		params.set("game_name", "fortress-online-integer")
@@ -145,8 +168,11 @@ func tick(now_us: int, buttons: int) -> void:
 		var code: Error = client.call("join_room", params)
 		if code != OK:
 			_fail("Room join failed (%d)." % code)
+		if state == "failed":
+			return
 	if state in ["connecting", "joining"] and now_us >= _deadline:
 		_fail("Connection or room join timed out.")
+		return
 	if has_readied:
 		var route: String = game_match.adapter.status().route
 		if route in ["blocked", "restart_required"]:
@@ -160,12 +186,14 @@ func tick(now_us: int, buttons: int) -> void:
 			var transport: Object = mesh.call("get_multiplayer_peer")
 			if transport != null:
 				transport.call("poll")
+				if state == "failed":
+					return
 				var peers: Dictionary = transport.call("get_peers")
 				if peers.size() == 1 and peers.values()[0].get("connected", false):
 					var started: Error = game_match.start_transport(client, mesh, _config, _info, now_us - _epoch)
 					if started != OK:
 						_fail("Transport setup failed (%d)." % started)
-					else:
+					elif state != "failed":
 						state = "playing"
 						message = "Move with WASD or arrow keys. Leave to start a fresh room."
 		if state == "starting" and now_us >= _deadline:
@@ -174,11 +202,13 @@ func tick(now_us: int, buttons: int) -> void:
 		game_match.tick(now_us - _epoch, buttons)
 		if not game_match.failure.is_empty():
 			_fail(game_match.failure)
+		_finish_cleanup()
 
 
 func disconnect_room() -> void:
 	_closing = true
 	game_match.detach()
+	_cleanup_pending = false
 	if mesh != null:
 		mesh.free()
 		mesh = null
@@ -232,4 +262,14 @@ func _fail(reason: String) -> void:
 		return
 	state = "failed"
 	message = reason + " Leave, then create or join a fresh room."
+	_cleanup_pending = true
 	game_match.detach()
+	if client != null:
+		client.call("close", 1000, "Online example failed")
+
+
+func _finish_cleanup() -> void:
+	if _cleanup_pending:
+		# Busy adapters fence callbacks immediately and release owned queues after unwind.
+		game_match.detach()
+		_cleanup_pending = false

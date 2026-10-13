@@ -52,8 +52,12 @@ the creator creates a fresh room and shares its new code. Join that fresh room,
 ready again and start again. The scene does not restart inside the old room.
 
 A connection failure, membership change, reconnect or terminal rollback error
-stops the old game and asks players to leave and establish a fresh room. Automatic
-SDK reconnect is disabled. Rejoining a server room cannot recover rollback
+stops the old game, detaches its transport queues and WebRTC mesh, and closes its
+SignalFish connection. A failure during an active send finishes queue cleanup
+after the send unwinds. Failed ticks service the SDK close handshake without
+advancing gameplay. The first failure message remains visible until Leave;
+then establish a fresh room. Automatic SDK reconnect is disabled.
+Rejoining a server room cannot recover rollback
 history or authorize a new session over old packet queues.
 
 The application match identity is a domain-separated 16-byte SHA-256 prefix
@@ -67,7 +71,8 @@ original frame is accepted.
 ## Suspension and expiry
 
 The caller polls elapsed monotonic protocol time before retrying retained output
-or receiving buffered gameplay. Refused output never freezes that clock.
+or receiving buffered gameplay. Running games also service their protocol clock
+before SDK callbacks can end the room. Refused output never freezes that clock.
 After a brief scheduling pause, a live session can resume through prediction
 repair without replacing its identity or input history. Each caller tick advances
 at most one new simulation frame; elapsed seconds never become invented inputs.
@@ -104,3 +109,11 @@ CDP debugger commands. It measures host/protocol clock gaps, corrected original-
 prefixes after a short pause, and actual frozen frames after an overdue pause.
 This controlled execution pause does not establish hidden-tab policies, operating
 system sleep, Firefox/WebKit behavior or server-restart recovery.
+
+The same exported witness verifies that overdue games close their signaling
+sockets before Leave. It then cuts both actual signaling socket pairs during
+another active game, requires frozen terminal frames and physical connection
+cleanup before Leave, and plays a fresh room with a new rollback identity.
+This proves explicit recovery after a signaling socket outage. Restarting the
+server process, restoring ICE and reconnecting an existing match remain separate
+acceptance cases under [the lifecycle issue](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).

@@ -557,8 +557,10 @@ def main():
     if args.online_example:
         report['limits'] = ('Actual shipped online scene in two independent Chromium processes on each selected pinned engine; '
                             'physical keyboard movement, sender-owned original input histories, corrected canonical prefixes, '
-                            'actual rollback, disconnect and a fresh room restart. Local ICE and injected input delivery delay; '
-                            'no WAN/NAT/TURN, other browser or ICE restoration claim.')
+                            'actual rollback, suspension/expiry and pre-Leave RTC/WebSocket closure. Both signaling socket pairs '
+                            'are cut during gameplay; a fresh room then establishes a new identity and corrected gameplay. '
+                            'Local ICE and injected input delivery delay; no WAN/NAT/TURN, other browser, server-process restart '
+                            'or ICE restoration claim.')
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'results': str(receipt), 'engines': versions, 'runs': len(records)}))
 

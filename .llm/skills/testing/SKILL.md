@@ -143,9 +143,9 @@ with no success marker. Correct game state can outlive a late connection failure
 
 Duck-typed engine doubles must expose only publicly bound methods. Check the
 real engine method list before treating a native double as interface evidence.
-A passing fake getter cannot prove an exported PacketPeer supports it. Verify
-browser constructor options and resulting properties: an ignored option can
-leave healthy gameplay on the wrong reliability policy.
+A passing fake getter cannot prove an exported PacketPeer supports it. Verify browser
+constructor options and resulting properties; ignored options can violate channel policy.
+Group dependent browser observers in one init script; separate registration calls do not define execution order.
 
 Validate embedded scenarios/results independently before comparing their identity
 to submitted artifacts. Python equality treats booleans, integral floats and
