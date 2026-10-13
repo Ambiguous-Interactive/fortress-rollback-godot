@@ -58,6 +58,8 @@ var observed: ObservedGame
 var inputs: Array[int] = []
 var snapshots: Dictionary = {}
 var command_id: int = 0
+var old_callbacks: Array[Dictionary] = []
+var stale_callbacks: Dictionary = {}
 
 
 func _ready() -> void:
@@ -100,10 +102,14 @@ func _process(_delta: float) -> void:
 			inputs.append(actual.bytes[0])
 		snapshots.merge(confirmed_snapshots(core, observed.saves), true)
 	var result: Dictionary = {"state": lobby.state, "message": lobby.message, "room": lobby.room_code(), "slot": slot, "session_id": session_id,
+		"uuid": lobby.game_match.membership.local_uuid() if lobby.has_readied else "",
+		"room_id": lobby.client.call("get_room_id") if lobby.client != null else "",
+		"direct_rejected": lobby.game_match.direct.status().rejected,
+		"pending": lobby.game_match.fallback.status().pending_packets, "relay_pending": lobby.game_match.relay.status().pending_packets,
 		"frame": current, "confirmed": confirmed, "failure": lobby.game_match.failure, "inputs": inputs, "snapshots": snapshots,
 		"restores": observed.restores if observed != null else 0, "all_ready": lobby.all_ready,
 		"ready_enabled": not scene.ready_button.disabled, "start_enabled": not scene.start_button.disabled, "command_id": command_id,
-		"resume": lobby.resume, "host_now_us": lobby._last_now, "epoch_us": lobby._epoch}
+		"stale_callbacks": stale_callbacks, "resume": lobby.resume, "host_now_us": lobby._last_now, "epoch_us": lobby._epoch}
 	JavaScriptBridge.eval("window.fortressOnline = " + JSON.stringify(result))
 
 
@@ -137,6 +143,41 @@ func _command(value: Dictionary) -> void:
 		"start":
 			if not scene.start_button.disabled:
 				scene.start_button.pressed.emit()
+		"capture_callbacks":
+			var lobby: Lobby = scene.controller as Lobby
+			old_callbacks.clear()
+			for signal_name: String in ["protocol_info", "room_joined", "lobby_state_changed", "protocol_error"]:
+				for connection: Dictionary in lobby.client.get_signal_connection_list(signal_name):
+					if connection.callable.get_object() != lobby._callbacks:
+						continue
+					old_callbacks.append({"kind": signal_name, "callable": connection.callable, "receiver": connection.callable.get_object(), "info": lobby._info})
+		"old_callbacks":
+			var lobby: Lobby = scene.controller as Lobby
+			var before: Dictionary = callback_boundary(lobby)
+			var calls: int = 0
+			var kinds: PackedStringArray = PackedStringArray()
+			for callback: Dictionary in old_callbacks:
+				if callback.callable.is_valid():
+					match callback.kind:
+						"protocol_info":
+							callback.callable.call(callback.info)
+						"room_joined":
+							callback.callable.call(null)
+						"lobby_state_changed":
+							callback.callable.call(0, PackedStringArray(), false)
+						"protocol_error":
+							callback.callable.call("delayed old-room error")
+					calls += 1
+					kinds.append(callback.kind)
+			stale_callbacks = {"calls": calls, "kinds": kinds, "before": before, "after": callback_boundary(lobby)}
 		"leave":
 			if not scene.leave_button.disabled:
 				scene.leave_button.pressed.emit()
+
+
+func callback_boundary(lobby: Lobby) -> Dictionary:
+	return {"state": lobby.state, "message": lobby.message, "all_ready": lobby.all_ready, "has_readied": lobby.has_readied,
+		"session_id": lobby.game_match.membership.handshake_message().session_id.hex_encode(),
+		"room_id": lobby.client.call("get_room_id"), "frame": lobby.game_match.peer.status().current_frame,
+		"canonical": lobby.game_match.game.canonical_bytes().hex_encode(), "failure": lobby.game_match.failure,
+		"info_id": str(lobby._info.get_instance_id()) if lobby._info != null else ""}

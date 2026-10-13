@@ -141,11 +141,11 @@ recheck latched errors after the final event drain and before publishing success
 Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
-Duck-typed engine doubles must expose only publicly bound methods. Check the
-real engine method list before treating a native double as interface evidence.
-A passing fake getter cannot prove an exported PacketPeer supports it. Verify browser
-constructor options and resulting properties; ignored options can violate channel policy.
+Engine doubles expose only public methods; verify the real method list and exported interface.
+Inspect browser constructor options and resulting properties; ignored options can violate channel policy.
 Group dependent browser observers in one init script; separate registration calls do not define execution order.
+Retain RefCounted targets when replaying captured old callbacks; select only bindings from the original owner.
+Challenge foreign packet rejection at a later clock through the shared session; same-time samples can hide clock mutation.
 
 Validate embedded scenarios/results independently before comparing their identity
 to submitted artifacts. Python equality treats booleans, integral floats and

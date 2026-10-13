@@ -230,7 +230,7 @@ test('online initialization registers once and initializes native RTC, sockets a
       return { label, ...configuration, readyState: 'open', addEventListener() {}, send() {} };
     }
   }
-  const context = vm.createContext({ WebSocket: Socket, RTCPeerConnection: Connection });
+  const context = vm.createContext({ WebSocket: Socket, RTCPeerConnection: Connection, RTCDataChannel: class {} });
   context.window = context;
   for (const { operation, argument } of registrations.reverse()) {
     context.options = argument;

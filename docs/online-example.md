@@ -108,12 +108,25 @@ The browser witness pauses both actual Chromium page threads through acknowledge
 CDP debugger commands. It measures host/protocol clock gaps, corrected original-input
 prefixes after a short pause, and actual frozen frames after an overdue pause.
 This controlled execution pause does not establish hidden-tab policies, operating
-system sleep, Firefox/WebKit behavior or server-restart recovery.
+system sleep or Firefox/WebKit behavior.
 
 The same exported witness verifies that overdue games close their signaling
 sockets before Leave. It then cuts both actual signaling socket pairs during
 another active game, requires frozen terminal frames and physical connection
 cleanup before Leave, and plays a fresh room with a new rollback identity.
-This proves explicit recovery after a signaling socket outage. Restarting the
-server process, restoring ICE and reconnecting an existing match remain separate
-acceptance cases under [the lifecycle issue](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).
+A separate fourth-room stage kills the owned server process during gameplay,
+with retained relay sends and one delayed original input per peer. It verifies
+the process exit, frozen failed frontiers, unchanged recovery messages and full
+connection cleanup before Leave. The same binary/configuration restarts on the
+same endpoint with a different live process handle and bounded readiness checks.
+Both players explicitly Leave, then play a fifth room with fresh room and rollback
+identities. Original old-room bytes sent over the new direct channels are counted
+and discarded; corrected prefixes still match the new original keyboard inputs.
+The witness also invokes captured old SDK info, room, ready and error callbacks
+after the fifth game starts. Connection revisions fence those callbacks; they
+cannot change the fresh game, readiness, protocol configuration or message.
+
+This proves explicit fresh-room recovery after socket outage and server-process
+death. It does not reconnect or restore an existing match. Restoring ICE, SDK
+replans, WAN/NAT/TURN and the full browser matrix remain separate acceptance
+cases under [the lifecycle issue](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38).

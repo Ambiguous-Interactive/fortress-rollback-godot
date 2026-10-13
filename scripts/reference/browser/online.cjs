@@ -6,15 +6,35 @@ const path = require('node:path');
 const { instrument } = require('./webrtc.cjs');
 
 function delayedInputs() {
+  window.fortressRestartFault = { armed: false, pressure: false, held: [], dropped: 0, pending: 0, reads: 0 };
   const create = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function(label, options) {
     const channel = create.call(this, label, options);
     const send = channel.send.bind(channel);
+    channel.addEventListener('message', event => {
+      if (!window.fortressStaleExpected) return;
+      const hex = Array.from(new Uint8Array(event.data), byte => byte.toString(16).padStart(2, '0')).join('');
+      if (hex === window.fortressStaleExpected) window.fortressStaleReceived = (window.fortressStaleReceived || 0) + 1;
+    });
     let held = 0;
+    const buffered = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'bufferedAmount')?.get;
+    if (channel.id === 3 && buffered) Object.defineProperty(channel, 'bufferedAmount', { get() {
+      if (window.fortressRestartFault.pressure) { window.fortressRestartFault.reads++; return 262144; }
+      return buffered.call(channel);
+    } });
     channel.send = bytes => {
       const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
         : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
-      if (view && view.length >= 8 && view[6] === 3 && held++ < 25) {
+      const fault = window.fortressRestartFault;
+      if (view && view.length >= 8 && view[6] === 3 && fault.armed && fault.held.length < 1) {
+        const owned = view.slice();
+        fault.held.push(Array.from(owned, byte => byte.toString(16).padStart(2, '0')).join(''));
+        fault.pending++;
+        setTimeout(() => {
+          if (channel.readyState === 'open') send(owned); else fault.dropped++;
+          fault.pending--;
+        }, 5000);
+      } else if (view && view.length >= 8 && view[6] === 3 && held++ < 25) {
         const owned = view.slice();
         window.fortressOnlineDelayed++;
         setTimeout(() => { if (channel.readyState === 'open') send(owned); }, 250);
@@ -32,6 +52,11 @@ function instrumentSockets() {
     construct(target, args, newTarget) {
       const socket = Reflect.construct(target, args, newTarget);
       window.fortressResources.websockets.push(socket);
+      const buffered = Object.getOwnPropertyDescriptor(nativeSocket.prototype, 'bufferedAmount')?.get;
+      if (buffered) Object.defineProperty(socket, 'bufferedAmount', { get() {
+        if (window.fortressRestartFault?.pressure) { window.fortressRestartFault.reads++; return 262144; }
+        return buffered.call(socket);
+      } });
       return socket;
     },
   });
@@ -160,7 +185,7 @@ async function main() {
       await wait(page, () => window.fortressOnlineReady === true);
     }
     const socketEndpoint = `wss://127.0.0.1:${server.address().port}/v3/ws`;
-    for (let round = 0; round < (corrupt ? 1 : 4); round++) {
+    for (let round = 0; round < (corrupt ? 1 : 5); round++) {
       await command(pages[0], 'create', { endpoint: socketEndpoint, name: 'Creator' });
       await wait(pages[0], () => window.fortressOnline.state === 'lobby' && window.fortressOnline.room !== '');
       const room = await pages[0].evaluate(() => window.fortressOnline.room);
@@ -172,6 +197,20 @@ async function main() {
       await pages[1].keyboard.down('KeyW');
       await command(pages[0], 'start');
       await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.frame >= (window.fortressOnlineCorrupt ? 12 : 45), 90000)));
+      if (round === 3 && !corrupt) await Promise.all(pages.map(page => command(page, 'capture_callbacks')));
+      if (round === 4 && !corrupt) {
+        const payloads = rounds[3].server_restart.boundary.map(value => value.fault.held[0]);
+        await Promise.all(pages.map((page, index) => page.evaluate(payload => {
+          window.fortressStaleExpected = payload; window.fortressStaleReceived = 0;
+        }, payloads[1 - index])));
+        await Promise.all(pages.map((page, index) => page.evaluate(payload => {
+          const channel = window.fortressResources.channels.slice(-3).find(value => value.id === 3);
+          const bytes = Uint8Array.from(payload.match(/../g), value => parseInt(value, 16));
+          window.fortressStaleSent = payload;
+          channel.send(bytes);
+        }, payloads[index])));
+        await Promise.all(pages.map(page => command(page, 'old_callbacks')));
+      }
       const suspension = round === 0 && !corrupt ? await suspend('short', 750) : null;
       await pages[0].keyboard.up('KeyD');
       await pages[1].keyboard.up('KeyW');
@@ -183,6 +222,10 @@ async function main() {
       const peers = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({ ...window.fortressOnline, page_index: pageIndex,
         rtc: { ...window.fortressRtc, channels: window.fortressRtc.channels.slice(-3) }, delayed: window.fortressOnlineDelayed }), index)));
       rounds.push({ room, peers });
+      if (round === 4 && !corrupt) {
+        rounds[round].stale_sent = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleSent)));
+        rounds[round].stale_received = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleReceived)));
+      }
       if (suspension) rounds[round].suspension = suspension;
       if (round === 0 && !corrupt) {
         await command(pages[0], 'leave');
@@ -245,6 +288,49 @@ async function main() {
             proxy_pairs_after: proxyPairs.size, open_websockets_before: openSockets, upgrades_refused: true,
             refused_upgrade_attempts: refusedUpgrades - refusedBefore, held_elapsed_us: heldElapsed, reopened_elapsed_us: reopenedElapsed,
             reopened: true, before_user_leave: true, terminal, resources: closed };
+        }
+        if (!corrupt && round === 3) {
+          const control = async kind => {
+            const response = await fetch(process.env.FORTRESS_SERVER_CONTROL + '/' + kind, { method: 'POST', body: '', signal: AbortSignal.timeout(30000) });
+            const value = await response.json();
+            if (!response.ok) throw new Error(JSON.stringify(value));
+            return value;
+          };
+          await Promise.all(pages.map(page => page.evaluate(() => { window.fortressRestartFault.armed = true; })));
+          await Promise.all(pages.map(page => wait(page, () => window.fortressRestartFault.pending > 0)));
+          await Promise.all(pages.map(page => page.evaluate(() => { window.fortressRestartFault.pressure = true; })));
+          await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.relay_pending > 0)));
+          const boundary = await Promise.all(pages.map(page => page.evaluate(() => ({
+            frame: window.fortressOnline.frame, session_id: window.fortressOnline.session_id,
+            pending: window.fortressOnline.pending, relay_pending: window.fortressOnline.relay_pending,
+            inputs: window.fortressOnline.inputs,
+            fault: { ...window.fortressRestartFault },
+          }))));
+          const stopped = await control('stop');
+          await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.state === 'failed')));
+          const first = await Promise.all(pages.map(page => page.evaluate(() => ({ ...window.fortressOnline }))));
+          await Promise.all(pages.map(page => wait(page, () =>
+            window.fortressResources.channels.every(channel => channel.readyState === 'closed')
+            && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'
+              && connection.iceConnectionState === 'closed')
+            && window.fortressResources.websockets.every(socket => socket.readyState === WebSocket.CLOSED))));
+          const heldElapsed = await pauseElapsed(750);
+          await Promise.all(pages.map(page => wait(page, () => window.fortressRestartFault.pending === 0)));
+          const started = await control('start');
+          const restartedElapsed = await pauseElapsed(250);
+          const terminal = await Promise.all(pages.map((page, index) => page.evaluate(before => ({
+            state: window.fortressOnline.state, first_message: before.message, message: window.fortressOnline.message,
+            frame_before: before.frame, frame_after: window.fortressOnline.frame,
+            session_before: before.session_id, session_after: window.fortressOnline.session_id,
+            pending: window.fortressOnline.pending, relay_pending: window.fortressOnline.relay_pending,
+            delayed_pending: window.fortressRestartFault.pending, delayed_dropped: window.fortressRestartFault.dropped,
+          }), first[index])));
+          rounds[round].server_restart = { stopped, started, boundary, terminal, held_elapsed_us: heldElapsed,
+            restarted_elapsed_us: restartedElapsed, before_user_leave: true,
+            resources: await Promise.all(pages.map(page => page.evaluate(resourceCounts))) };
+          await Promise.all(pages.map(page => page.evaluate(() => {
+            window.fortressRestartFault.armed = false; window.fortressRestartFault.pressure = false;
+          })));
         }
         await Promise.all(pages.map(page => command(page, 'leave')));
       }

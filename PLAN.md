@@ -31,6 +31,7 @@ Local development contracts and evidence entry points:
 - [Playable online room setup and controls](docs/online-example.md).
 - [Online suspension, elapsed-time expiry and fresh-room restart](docs/online-example.md#suspension-and-expiry).
 - [Online terminal connection cleanup and fresh-room recovery](docs/online-example.md#leave-and-restart).
+- [Actual server-process restart and old-room packet rejection](docs/online-example.md#verification).
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
@@ -308,7 +309,9 @@ SignalFish authority/reconnection is not rollback authority/state recovery.
 
 On resume, bound catch-up and enforce timeout/history limits.
 Before advanced reactivation is supported, unrecoverable sessions require
-explicit termination/restart. Server restart is not a transparent resume.
+explicit termination/restart. Server-process death requires terminal cleanup and an explicit fresh-room restart.
+The exported online witness verifies that flow on both pinned engines, including
+old-room input delivered over new channels; server restart is not a transparent resume.
 Native WebRTC availability is verified independently of browser support.
 
 ## Test tiers and release acceptance

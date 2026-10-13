@@ -1,4 +1,5 @@
 """Export the shipped online scene and validate original local input prefixes."""
+import hashlib
 import json
 import re
 import shutil
@@ -114,12 +115,101 @@ def validate_socket_loss(record):
     validate_resources(loss.get('resources'), 2)
 
 
+def validate_held_input(payload, before, peer):
+    raw = bytes.fromhex(payload)
+    if (len(raw) < 76 or raw[:8] != b'FRGP\x01\x00\x03\x00'
+            or raw[8:24].hex() != before['session_id'] or raw[24:32] != hashlib.sha256(peer['uuid'].encode('ascii')).digest()[:8]
+            or raw[32:40] == bytes(8) or int.from_bytes(raw[40:44], 'little') != len(raw) - 44
+            or raw[54:57] != bytes([1, peer['slot'], 2])):
+        raise ValueError('online example delayed original input header invalid')
+    start, ack, count = struct.unpack('<iiH', raw[44:54])
+    histories = before.get('inputs')
+    if (not isinstance(histories, list) or not 100 <= len(histories) <= 256
+            or any(type(value) is not int or not 0 <= value <= 15 for value in histories)
+            or not 0 <= start < len(histories) or not 1 <= count <= len(histories) - start or not -1 <= ack <= 255
+            or len(raw) != 75 + count or int.from_bytes(raw[71:75], 'little') != count
+            or raw[75:] != bytes(histories[start:start + count])):
+        raise ValueError('online example delayed packet differs from original submitted inputs')
+    for offset in (57, 64):
+        status, received, flags = struct.unpack('<BiH', raw[offset:offset + 7])
+        if status != 0 or not -1 <= received <= 255 or flags != 0:
+            raise ValueError('online example delayed input status invalid')
+
+
+def validate_server_restart(record):
+    restart = record.get('server_restart')
+    if not isinstance(restart, dict) or restart.get('before_user_leave') is not True:
+        raise ValueError('online example owned server restart missing')
+    stopped, started = restart.get('stopped', {}), restart.get('started', {})
+    if (not isinstance(stopped, dict) or not isinstance(started, dict) or stopped.get('kind') != 'stop' or stopped.get('method') != 'sigkill'
+            or started.get('kind') != 'start' or type(stopped.get('pid')) is not int or stopped['pid'] <= 0
+            or type(stopped.get('exit_code')) is not int or stopped['exit_code'] != -9 or stopped.get('terminal') is not True
+            or type(started.get('pid')) is not int or started['pid'] <= 0 or started['pid'] == stopped['pid']
+            or type(started.get('previous_pid')) is not int or started['previous_pid'] != stopped['pid']
+            or started.get('live') is not True or started.get('ready') is not True
+            or type(started.get('port')) is not int or not 1 <= started['port'] <= 65535
+            or any(not isinstance(started.get(key), str) or not re.fullmatch('[a-f0-9]{64}', started[key])
+                   for key in ('binary_sha256', 'config_sha256'))):
+        raise ValueError('online example owned process termination or ready restart invalid')
+    for key, minimum in [('held_elapsed_us', 750000), ('restarted_elapsed_us', 250000)]:
+        if type(restart.get(key)) is not int or not minimum <= restart[key] < 30000000:
+            raise ValueError('online example server restart observation gap invalid')
+    boundary, terminal = restart.get('boundary'), restart.get('terminal')
+    if any(not isinstance(values, list) or len(values) != 2 for values in (boundary, terminal)):
+        raise ValueError('online example restart peer observations missing')
+    peers = {peer['page_index']: peer for peer in record['peers']}
+    for index, (before, after) in enumerate(zip(boundary, terminal)):
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise ValueError('online example restart peer observations invalid')
+        fault = before.get('fault', {})
+        held = fault.get('held', [])
+        if (type(before.get('pending')) is not int or not 0 <= before['pending'] <= 128
+                or type(before.get('relay_pending')) is not int or not 1 <= before['relay_pending'] <= 128
+                or type(before.get('frame')) is not int or not peers[index]['frame'] <= before['frame'] <= 256
+                or before.get('session_id') != peers[index]['session_id'] or fault.get('armed') is not True or fault.get('pressure') is not True
+                or type(fault.get('pending')) is not int or fault['pending'] != 1
+                or type(fault.get('reads')) is not int or fault['reads'] < 1 or not isinstance(held, list) or len(held) != 1
+                or not isinstance(held[0], str) or not re.fullmatch('[a-f0-9]{2,2048}', held[0]) or len(held[0]) % 2
+                or bytes.fromhex(held[0])[:8] != b'FRGP\x01\x00\x03\x00'
+                or bytes.fromhex(held[0])[8:24].hex() != before['session_id']):
+            raise ValueError('online example restart did not retain pressure and original old-room input')
+        validate_held_input(held[0], before, peers[index])
+        if (after.get('state') != 'failed' or not isinstance(after.get('message'), str) or 'fresh room' not in after['message']
+                or after.get('first_message') != after['message']
+                or any(type(after.get(key)) is not int for key in ('frame_before', 'frame_after'))
+                or not before['frame'] <= after['frame_before'] <= 256 or after['frame_after'] != after['frame_before']
+                or after.get('session_before') != before['session_id'] or after.get('session_after') != before['session_id']
+                or any(type(after.get(key)) is not int or after[key] != expected for key, expected in
+                       [('pending', 0), ('relay_pending', 0), ('delayed_pending', 0), ('delayed_dropped', 1)])):
+            raise ValueError('online example server restart advanced, revived or retained failed gameplay')
+    validate_resources(restart.get('resources'), 3)
+
+
+def validate_stale_callbacks(peer):
+    evidence = peer.get('stale_callbacks')
+    if (not isinstance(evidence, dict) or type(evidence.get('calls')) is not int or evidence['calls'] != 4
+            or evidence.get('kinds') != ['protocol_info', 'room_joined', 'lobby_state_changed', 'protocol_error']
+            or not isinstance(evidence.get('before'), dict) or not isinstance(evidence.get('after'), dict)):
+        raise ValueError('online example old SDK callback delivery missing')
+    before = evidence['before']
+    if (before.get('state') != 'playing' or before.get('failure') != '' or before.get('has_readied') is not True
+            or before.get('all_ready') is not True or before.get('session_id') != peer['session_id'] or before.get('room_id') != peer['room_id']
+            or type(before.get('frame')) is not int or not 45 <= before['frame'] <= peer['frame']
+            or not isinstance(before.get('message'), str) or not before['message']
+            or not isinstance(before.get('info_id'), str) or not re.fullmatch('-?[1-9][0-9]{0,18}', before['info_id'])
+            or not -(1 << 63) <= int(before['info_id']) < (1 << 63)
+            or not isinstance(before.get('canonical'), str) or not re.fullmatch('[a-f0-9]{272}', before['canonical'])
+            or struct.unpack('<17q', bytes.fromhex(before['canonical']))[1] != before['frame']
+            or evidence['after'] != before or any(type(evidence['after'].get(key)) is not type(value) for key, value in before.items())):
+        raise ValueError('online example old SDK callbacks mutated the fresh match')
+
+
 def validate_result(value, corrupt=False):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
         raise ValueError('online example browser flow failed')
     rounds = value.get('rounds')
-    if not isinstance(rounds, list) or len(rounds) != (1 if corrupt else 4):
+    if not isinstance(rounds, list) or len(rounds) != (1 if corrupt else 5):
         raise ValueError('online example did not restart in a fresh room')
     if any(not isinstance(record, dict) for record in rounds):
         raise ValueError('online example round evidence malformed')
@@ -130,7 +220,7 @@ def validate_result(value, corrupt=False):
                 or type(terminal.get('frame_after')) is not int or not 100 <= terminal['frame_before'] <= 256
                 or terminal['frame_after'] != terminal['frame_before']):
             raise ValueError('online example peer departure did not stop simulation with actionable recovery')
-    rooms, identities, comparisons = [], [], []
+    rooms, room_ids, identities, comparisons = [], [], [], []
     for round_index, record in enumerate(rounds):
         peers = record.get('peers', [])
         if (not isinstance(peers, list) or len(peers) != 2 or any(not isinstance(peer, dict) for peer in peers)
@@ -140,11 +230,20 @@ def validate_result(value, corrupt=False):
             raise ValueError('online example frozen player slots invalid')
         peers.sort(key=lambda peer: peer['slot'])
         rooms.append(record['room'])
+        uuids = [peer.get('room_id') for peer in peers]
+        if (any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value) for value in uuids)
+                or uuids[0] != uuids[1]):
+            raise ValueError('online example actual room UUID evidence invalid')
+        room_ids.append(uuids[0])
         session_ids = [peer.get('session_id') for peer in peers]
         if (any(not isinstance(identity, str) or not re.fullmatch('[a-f0-9]{32}', identity) for identity in session_ids)
                 or session_ids[0] != session_ids[1]):
             raise ValueError('online example peers disagree on the frozen rollback identity')
         identities.append(session_ids[0])
+        uuids = [peer.get('uuid') for peer in peers]
+        if (any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value) for value in uuids)
+                or uuids != sorted(uuids) or len(set(uuids)) != 2):
+            raise ValueError('online example actual player UUID slots invalid')
         validate_resources(record.get('teardown'), round_index)
         histories = [peer.get('inputs') for peer in peers]
         for history in histories:
@@ -205,7 +304,17 @@ def validate_result(value, corrupt=False):
                 validate_resources(record.get('failure_resources'), round_index)
         elif not corrupt and round_index == 2:
             validate_socket_loss(record)
-    if (not corrupt and (len(set(rooms)) != 4 or len(set(identities)) != 4)) or value.get('teardown') is not True:
+        elif not corrupt and round_index == 3:
+            validate_server_restart(record)
+        elif not corrupt and round_index == 4:
+            held = [value['fault']['held'][0] for value in rounds[3]['server_restart']['boundary']]
+            for peer in peers:
+                validate_stale_callbacks(peer)
+            if (record.get('stale_sent') != held or record.get('stale_received') != [1, 1]
+                    or any(type(count) is not int for count in record.get('stale_received', []))
+                    or any(type(peer.get('direct_rejected')) is not int or peer['direct_rejected'] != 1 for peer in peers)):
+                raise ValueError('online example omitted old-room input delivery in the fresh match')
+    if (not corrupt and (len(set(rooms)) != 5 or len(set(room_ids)) != 5 or len(set(identities)) != 5)) or value.get('teardown') is not True:
         raise ValueError('online example reused room or retained connections')
     for frame, expected, state in comparisons:
         if expected != state:
@@ -213,7 +322,7 @@ def validate_result(value, corrupt=False):
     return value
 
 
-def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port):
+def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
     project, export = root / version, root / ('export-' + version)
     project.mkdir()
     export.mkdir()
@@ -241,7 +350,12 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     exported = inventory({'export': export})
     browser = [str(sources['node']), str(sources['online_browser']), str(export), f'ws://127.0.0.1:{port}/v3/ws']
     clean_command = browser + ['clean', str(output / f'{version}-online-events.log')]
-    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=4)))
+    offset = len(server.events)
+    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=5)))
+    restart = result['rounds'][3]['server_restart']
+    if server.events[offset:] != [restart['stopped'], restart['started']]:
+        raise ValueError('browser process evidence disagrees with owned handles')
+    server.verify_live()
     control_command = browser + ['corrupt', str(output / f'{version}-online-corrupt-events.log')]
     control = json.loads(run_browser(control_command, environment, output / f'{version}-online-corrupt.log', rooms=1))
     try:

@@ -1,6 +1,7 @@
 class_name FortressOnlineLobby
 extends RefCounted
 
+const Callbacks = preload("res://examples/online/callbacks.gd")
 const Match = preload("res://examples/online/match.gd")
 const Multiplayer = preload("res://addons/fortress_rollback/transport/signalfish_webrtc_multiplayer_peer.gd")
 const SDK_PATH: String = "res://addons/signal_fish/signal_fish_client.gd"
@@ -26,6 +27,8 @@ var _cleanup_pending: bool = false
 var _deadline: int = -1
 var _epoch: int = 0
 var _last_now: int = -1
+var _connection_revision: int = 0
+var _callbacks: Callbacks
 
 
 func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
@@ -68,13 +71,7 @@ func connect_room(endpoint: String, player_name: String, room: String, now_us: i
 	_epoch = now_us
 	_last_now = now_us
 	_deadline = now_us + 30000000
-	client.connect("protocol_info", _on_info)
-	client.connect("room_joined", _on_room)
-	client.connect("lobby_state_changed", _on_lobby)
-	client.connect("protocol_error", _on_protocol_error)
-	for signal_name: String in ["connection_failed", "authentication_error", "room_join_failed", "server_error", "reconnection_failed",
-		"disconnected", "going_away", "room_left", "reconnected"]:
-		client.connect(signal_name, _on_failure)
+	_connect_callbacks()
 	state = "connecting"
 	message = "Connecting to SignalFish…"
 	var configured: Error = client.call("configure", _config)
@@ -206,6 +203,7 @@ func tick(now_us: int, buttons: int) -> void:
 
 
 func disconnect_room() -> void:
+	_connection_revision += 1
 	_closing = true
 	game_match.detach()
 	_cleanup_pending = false
@@ -223,6 +221,18 @@ func disconnect_room() -> void:
 	has_readied = false
 	all_ready = false
 	_closing = false
+
+
+func _connect_callbacks() -> void:
+	_connection_revision += 1
+	_callbacks = Callbacks.new(self, _connection_revision)
+	client.connect("protocol_info", _callbacks.on_info)
+	client.connect("room_joined", _callbacks.on_room)
+	client.connect("lobby_state_changed", _callbacks.on_lobby)
+	client.connect("protocol_error", _callbacks.on_protocol_error)
+	for signal_name: String in ["connection_failed", "authentication_error", "room_join_failed", "server_error", "reconnection_failed",
+		"disconnected", "going_away", "room_left", "reconnected"]:
+		client.connect(signal_name, _callbacks.on_failure)
 
 
 func _on_info(info: RefCounted) -> void:
