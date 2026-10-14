@@ -28,6 +28,7 @@ Local development contracts and evidence entry points:
 - [Session/driver/state/transport interface ADR](docs/contracts.md).
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).
+- [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Playable online room setup and controls](docs/online-example.md).
 - [Online suspension, elapsed-time expiry and fresh-room restart](docs/online-example.md#suspension-and-expiry).
 - [Online terminal connection cleanup and fresh-room recovery](docs/online-example.md#leave-and-restart).

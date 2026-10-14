@@ -101,6 +101,20 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             unrelated['rounds'][0]['peers'][1]['terminal_reason'] = reason
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
                 validate_result(unrelated, corrupt=True)
+        # CI run 38512087955: a desynced peer stops capturing at termination. At frame 107 with delay 2 it may confirm
+        # through 109, never 110. A playing peer's capture must cover its confirmation.
+        accepted = 'canonical prefix mismatch at frame 3'
+        missing = 'rollback or confirmation missing'
+        for slot, confirmed, message in ((1, 108, accepted), (1, 109, accepted), (1, 110, missing), (0, 108, missing)):
+            early = copy.deepcopy(changed)
+            failed = early['rounds'][0]['peers'][1]
+            failed.update(inputs=failed['inputs'][:108], frame=107, confirmed=107)
+            peer = early['rounds'][0]['peers'][slot]
+            peer.update(inputs=peer['inputs'][:108], frame=107, confirmed=confirmed)
+            for peer in early['rounds'][0]['peers']:
+                peer['snapshots'] = {frame: state for frame, state in peer['snapshots'].items() if int(frame) < 107}
+            with self.subTest(slot=slot, confirmed=confirmed), self.assertRaisesRegex(ValueError, message):
+                validate_result(early, corrupt=True)
         clean = evidence()
         clean['rounds'][0]['peers'][1].update(state='failed', failure='desync', terminal_reason=18)
         with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):

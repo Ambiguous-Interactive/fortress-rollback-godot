@@ -50,6 +50,9 @@ godot --path . res://examples/peer/peer.tscn
 Move players with WASD and the arrow keys. Toggle packet loss, reordering or a
 partition to observe prediction stalls and recovery. Delivery runs in process.
 
+To add rollback to your own game, follow the [integration guide](./docs/integration.md).
+It covers inputs, snapshots, the frame loop, stalls, errors and sounds that must not replay after rollback.
+
 For a browser game, follow the [online example guide](./docs/online-example.md)
 to install the optional SignalFish SDK and export `examples/online/online.tscn`.
 

@@ -39,6 +39,12 @@ submit current sample (the queue schedules input delay)
   -> reconcile presentation from the final simulation state
 ```
 
+Predicted frames can show input-driven events that rollback later removes.
+Draw reversible visuals from corrected state. Start irreversible effects only
+for simulated frames at or below `confirmed_frame` and before any
+`pending_rollback_frame` (delivery confirms before correction), deduplicated by stable IDs
+([integration guide](../../../docs/integration.md#presentation-and-effects)).
+
 ## GDScript Mapping (from the Rust crate)
 
 | Rust (fortress-rollback) | GDScript equivalent |
