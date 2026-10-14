@@ -90,15 +90,17 @@ five-room flow passed; the Python validator rejected the corruption control with
 frame 39/confirmed 31 and the other failed with intended DESYNC (18) at frame 31,
 confirmed 32, with 32 submitted samples.
 
-The validator required `confirmed <= len(inputs) - 1`. The online example schedules
-local input two frames ahead, so confirmation can legitimately reach
-`len(inputs) + 1`. A peer that stops early on the intended desync exposes this.
-This is a test bug; production behavior is unchanged. The bound now adds the
-example's input delay. A fixture mirroring the CI record accepts 108 and 109
-confirmed frames for 108 samples and rejects 110. Against the old bound, both
-valid rows fail (`.cache/tests/session-022-confirm-bound-red.log`); all 72
-reference tests pass after the fix. No other probe bounds confirmation by sample
-count.
+The validator required `confirmed <= len(inputs) - 1` for every peer. The bridge
+records inputs by scheduled frame, so that bound is right for a complete capture.
+A desynced peer stops capturing at termination, so its last confirmed frame can
+lack a captured input. For that peer only, the bound is now the session invariant
+`confirmed <= frame + INPUT_DELAY` (delay 2); playing peers keep the strict bound.
+Cursor Bugbot flagged an earlier looser draft that relaxed both peers.
+The fixture accepts 108 and 109 for the desynced peer at frame 107, rejects 110,
+and rejects 108 for a playing peer with 108 inputs. The old bound fails the valid
+rows (`.cache/tests/session-022-confirm-bound-red.log`). The retained CI record
+now reaches the intended `canonical prefix mismatch at frame 3`. All 72 reference
+tests pass. No other probe bounds confirmation by sample count.
 
 ## Remaining scope
 
