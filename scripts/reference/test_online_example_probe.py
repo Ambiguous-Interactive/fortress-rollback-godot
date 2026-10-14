@@ -101,6 +101,17 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             unrelated['rounds'][0]['peers'][1]['terminal_reason'] = reason
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
                 validate_result(unrelated, corrupt=True)
+        # Input delay 2 lets confirmation pass the last submitted sample, as in CI run 38512087955.
+        # 108 samples cover frames 0-107; delay 2 allows confirmation through 109, never 110.
+        accepted = 'canonical prefix mismatch at frame 3'
+        for confirmed, message in ((108, accepted), (109, accepted), (110, 'rollback or confirmation missing')):
+            early = copy.deepcopy(changed)
+            failed = early['rounds'][0]['peers'][1]
+            failed.update(inputs=failed['inputs'][:108], frame=107, confirmed=confirmed)
+            for peer in early['rounds'][0]['peers']:
+                peer['snapshots'] = {frame: state for frame, state in peer['snapshots'].items() if int(frame) < 107}
+            with self.subTest(confirmed=confirmed), self.assertRaisesRegex(ValueError, message):
+                validate_result(early, corrupt=True)
         clean = evidence()
         clean['rounds'][0]['peers'][1].update(state='failed', failure='desync', terminal_reason=18)
         with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):

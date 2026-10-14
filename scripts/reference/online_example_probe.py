@@ -11,6 +11,8 @@ from godot_smoke import run
 from signalfish_probe import inventory
 
 DESYNC_REASON = 18
+# examples/online/match.gd schedules local input this many frames ahead, so confirmation can pass the last sample.
+INPUT_DELAY = 2
 
 
 def expected_states(histories, count):
@@ -258,7 +260,7 @@ def validate_result(value, corrupt=False):
             intended_desync = (corrupt and peer.get('state') == 'failed' and type(peer.get('terminal_reason')) is int
                                and peer['terminal_reason'] == DESYNC_REASON and isinstance(peer.get('failure'), str) and bool(peer['failure']))
             if (type(peer.get('restores')) is not int or peer['restores'] < 1 or (peer.get('failure') != '' and not intended_desync)
-                    or type(peer.get('confirmed')) is not int or not (20 if corrupt else 90) <= peer['confirmed'] <= len(peer['inputs']) - 1
+                    or type(peer.get('confirmed')) is not int or not (20 if corrupt else 90) <= peer['confirmed'] <= len(peer['inputs']) - 1 + INPUT_DELAY
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
                     or (peer.get('state') != 'playing' and not intended_desync) or peer.get('room') != record['room']):
                 raise ValueError('online example rollback or confirmation missing')

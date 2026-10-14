@@ -82,6 +82,24 @@ unit reruns hit the 120-second watchdog in existing WebRTC backlog suites while 
 reviewer ran Godot concurrently; their cases did not fail. CI runs these with a
 180-second budget. The new suite passes on both engines after every fix.
 
+## PR corruption-control failure
+
+PR run `38512087955` passed every job except SignalFish WebRTC 4.7.2. Its positive
+five-room flow passed; the Python validator rejected the corruption control with
+`rollback or confirmation missing`. The retained record shows one peer playing at
+frame 39/confirmed 31 and the other failed with intended DESYNC (18) at frame 31,
+confirmed 32, with 32 submitted samples.
+
+The validator required `confirmed <= len(inputs) - 1`. The online example schedules
+local input two frames ahead, so confirmation can legitimately reach
+`len(inputs) + 1`. A peer that stops early on the intended desync exposes this.
+This is a test bug; production behavior is unchanged. The bound now adds the
+example's input delay. A fixture mirroring the CI record accepts 108 and 109
+confirmed frames for 108 samples and rejects 110. Against the old bound, both
+valid rows fail (`.cache/tests/session-022-confirm-bound-red.log`); all 72
+reference tests pass after the fix. No other probe bounds confirmation by sample
+count.
+
 ## Remaining scope
 
 #41 stays open: clean-install command runs on both engines, SignalFish setup
