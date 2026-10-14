@@ -19,7 +19,7 @@ const MAX_FRAME: int = 2147483647
 const COOLDOWN: int = 6
 const MIN_X: int = 0
 const MAX_X: int = 400
-## Must exceed the shots awaiting confirmation: 2 players x ceil((prediction 8 + 1) / 6) = 4.
+## Must be at least the shots awaiting confirmation: 2 players x ceil((prediction 8 + 1) / 6) = 4.
 const SHOT_SLOTS: int = 8
 const SNAPSHOT_BYTES: int = (7 + SHOT_SLOTS) * 8
 

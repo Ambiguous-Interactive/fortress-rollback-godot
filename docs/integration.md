@@ -64,6 +64,7 @@ Avoid float math in simulation: results can differ between platforms.
 ## The frame loop
 
 Call `driver.step(now_us, samples)` once per physics frame with one `Driver.LocalInput` per local player.
+Peer sessions call `FortressPeerSession.step` with the same arguments and add two results.
 `now_us` comes from `Time.get_ticks_usec()` and only drives session timers. The simulation never sees it.
 
 | Step result | Meaning and what to do |
@@ -78,7 +79,7 @@ Sample local input once per frame. While stalled, keep submitting that same samp
 a different sample for the same frame is rejected with `INPUT_ALREADY_SUBMITTED`.
 `loop.gd` keeps the sample until the frame advances.
 
-A failed callback stops the session for good. Do not keep stepping a stopped session; create a new one.
+A failed callback stops the session for good. Do not keep stepping a stopped session. Configure it again or create a new one.
 
 ## Presentation and effects
 
@@ -92,16 +93,17 @@ See the [offline example](offline-example.md#presentation-after-rollback).
 **Play one-time effects only after confirmation.** `session.status().confirmed_frame` is the latest frame
 whose inputs are final for every player. A predicted shot can disappear when the real input arrives.
 Sounds, score popups, achievements and network messages cannot be undone, so `effects.gd` plays a shot only
-when its frame is confirmed and already corrected. Each shot has a stable ID derived from its frame and player,
-and the ledger remembers the highest ID played, so a shot never plays twice.
+when its frame is confirmed and already corrected. Each shot has a stable ID derived from its frame and player.
+The ledger remembers the highest ID played, so a shot never plays twice.
 
-Call `reconcile` after a step. Remote input can raise `confirmed_frame` before the next step runs the rollback,
-so the ledger also skips frames at or after `status().pending_rollback_frame`.
+Call `reconcile` after each step. Remote input can raise `confirmed_frame` before the next step runs the rollback.
+The ledger therefore also skips frames at or after `status().pending_rollback_frame`.
 
-The test shows why this matters. When the remote player releases fire and the input arrives 3 or more frames late,
-prediction repeats the old input and predicted state shows a shot that was never fired. A ledger that plays shots
-as soon as they appear plays those wrong shots. The confirmed ledger plays each actual shot once, on the first
-frame it becomes final.
+The test shows why this matters. Prediction repeats a player's last known input.
+Suppose the remote player releases fire, but the release arrives late.
+Predicted state can then show a shot that was never fired.
+A ledger that plays shots as soon as they appear plays those wrong shots.
+The confirmed ledger plays each actual shot once, on the first frame it becomes final.
 
 If an effect must start immediately, such as a muzzle flash, draw it from current state so rollback can remove it.
 Keep snapshotted event records long enough for presentation to confirm them: `game.gd` sizes its shot ring
@@ -110,7 +112,7 @@ from the prediction window.
 ## Test for desyncs early
 
 Run your game in a sync-test session before going online. Sync-test keeps every player local,
-rolls back `check_distance` frames on every step and compares the resimulated snapshots.
+rolls back `check_distance` frames on each step after the first `check_distance` frames and compares the resimulated snapshots.
 
 ```gdscript
 var config := FortressConfig.new()

@@ -10,7 +10,6 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 ## Highest shot ID already played. IDs increase with frame, so one number suffices.
 var last_played_id: int = 0
-var played_count: int = 0
 
 
 ## Call after a driver step returns OK or PREDICTION_STALL, never from a callback.
@@ -26,7 +25,6 @@ func reconcile(game: Game, status: Types.Status) -> void:
 		var shot_frame: int = Game.shot_frame(id)
 		if id > last_played_id and shot_frame <= final_frame and shot_frame < game.frame:
 			last_played_id = id
-			played_count += 1
 			play(id)
 
 

@@ -47,8 +47,9 @@ were never fired. The test also reconciles right after each delivery, before the
 step. After every tick, played IDs must equal the replay's shots whose frames are
 final. After a final delivery tick, canonical bytes must equal a direct replay
 without a session. Each lagged row must roll back. Sync-test with the cooldown
-omitted from snapshots stops with `DESYNC`. Fifteen malformed snapshots are
-rejected with complete state unchanged.
+omitted from snapshots stops with `DESYNC`. Sixteen malformed snapshots are
+rejected with complete state unchanged, including a future ring ID and a shot total
+above one shot per player per frame.
 
 Mutation controls, each restored afterwards:
 
@@ -59,7 +60,7 @@ Mutation controls, each restored afterwards:
 | Play one frame early (`<= final + 1`) or late (`< final`) | Per-tick playback check fails |
 | Resample input on every tick | Stalled rows stop with `INPUT_ALREADY_SUBMITTED` |
 | Shrink the shot ring to three slots | Lost confirmed shots; four slots (the derived bound) pass |
-| Remove ring-order or position lower-bound validation | Malformed snapshots load |
+| Remove ring-order, future-ID, total-bound or position lower-bound validation | Malformed snapshots load |
 
 Earlier logs: `.cache/tests/session-022-ungated-effects-red.log` and
 `.cache/tests/session-022-resample-red.log`.
@@ -67,8 +68,19 @@ Earlier logs: `.cache/tests/session-022-ungated-effects-red.log` and
 Fresh adversarial review found the missing pending-rollback clamp, an untested
 boundary, a vacuous lag-3 misprediction claim, incomplete validation and inaccurate
 step-result advice. All were fixed and are covered by the controls above.
+A second fresh review confirmed the ledger logic and found test-pinning and wording
+gaps; those are fixed. One limit remains: a pending-rollback clamp one frame too
+strict only delays a shot until the next step, and no scenario pins it.
 The first resample control passed vacuously because test keys depended on frame;
 stalled ticks now press different keys.
+
+## Native suites
+
+Before the review fixes, Godot 4.3 passed all unit, integration and determinism
+categories, and 4.7.2 passed determinism. Later local 4.7.2 integration and 4.3
+unit reruns hit the 120-second watchdog in existing WebRTC backlog suites while a
+reviewer ran Godot concurrently; their cases did not fail. CI runs these with a
+180-second budget. The new suite passes on both engines after every fix.
 
 ## Remaining scope
 

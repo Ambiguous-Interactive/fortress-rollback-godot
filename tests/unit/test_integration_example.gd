@@ -137,6 +137,8 @@ func _confirmed_effects(context: RefCounted) -> void:
 					delivered += 1
 			# Delivery can raise confirmed_frame before rollback runs; reconciling here must not play wrong shots.
 			effects.reconcile(loop.game, loop.session.status())
+			if effects.ids != _final_shots(expected_ids, loop.game, loop.session.status()):
+				early_or_late += 1
 			# A real player keeps pressing keys while stalled; the loop must keep its first sample.
 			var buttons: int = _local(loop.session.status().current_frame) ^ (Game.FIRE if stalled else 0)
 			var code: int = loop.tick(tick, buttons)
@@ -150,6 +152,7 @@ func _confirmed_effects(context: RefCounted) -> void:
 				early_or_late += 1
 			eager.observe(loop.game)
 			tick += 1
+		context.equal(loop.game.frame, FRAMES, label + " reaches the last frame")
 		context.equal(early_or_late, 0, label + " plays each shot on the first tick its frame is final")
 		# Deliver the remaining remote input; one more tick corrects and confirms everything.
 		while delivered <= loop.session.status().current_frame:
@@ -216,7 +219,7 @@ func _malformed_snapshots(context: RefCounted) -> void:
 		PackedInt64Array([48, 21]),
 		PackedInt64Array([48, 9223372036854775807]),
 		PackedInt64Array([56, -1]),
-		PackedInt64Array([56, 10 * 2 + 1]),
+		PackedInt64Array([64, 10 * 2 + 1]),
 		PackedInt64Array([64, 3]),
 		PackedInt64Array([72, 2]),
 	]
@@ -224,6 +227,12 @@ func _malformed_snapshots(context: RefCounted) -> void:
 		var bytes: PackedByteArray = valid.duplicate()
 		bytes.encode_s64(mutation[0], mutation[1])
 		cases.append(bytes)
+	# 21 rising IDs fit the ring but exceed one shot per player per frame before frame 10.
+	var crowded: PackedByteArray = valid.duplicate()
+	crowded.encode_s64(48, 21)
+	for age: int in range(Game.SHOT_SLOTS):
+		crowded.encode_s64(56 + ((21 - Game.SHOT_SLOTS + age) % Game.SHOT_SLOTS) * 8, 3 + age * 2)
+	cases.append(crowded)
 	for bytes: PackedByteArray in cases:
 		var target: Game = Game.new()
 		target.x[0] = 7
