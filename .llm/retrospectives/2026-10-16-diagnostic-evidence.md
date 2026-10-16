@@ -14,6 +14,7 @@ The trigger is a new capability and a verification incident.
 | Hashing repository sources only when publishing cannot prove which bytes an earlier staged export executed. | The #99 main-boundary regression accepted four changed source/copy/manifest/helper cases before repair. `/tmp/session025-source-red.log` records four failures. | Freeze source hashes before staging; validate copies and recheck before publication. |
 | A later relocated copy can bypass an otherwise checked staging loop. | Fresh reviewer reproduced a changed `reference_checksum.gd` publishing success. `/tmp/relocated-copy-red.log` records the new failing control. | Relocate verified staged bytes, verify the destination, and check exact preload adaptation. |
 | Presentation callbacks need the same recursion discipline as game callbacks. | Driver notification tests check completed rollback, expired views, failed callbacks, repair-only stalls and recursive advancement. Both engine pins pass. | Keep the driver guard held until every synchronous notification handler returns. Existing callback guidance and the public session guide own the contract. |
+| Argument parsing can reject an attempt before invalidating its old success receipt. | #102 subprocess controls reproduce stale success after invalid browser choices, missing required options and unsupported mode combinations. Review also reproduces malformed valued help bypassing rejection. | Invalidate only the selected mode on parser errors; let argparse retain normal help semantics. Refine the existing receipt guidance in place. |
 
 ## Actions and verification
 
@@ -31,8 +32,8 @@ native trace cases pass with a clean independent adversarial review.
 Final source-bound browser receipts and shipping gates remain pending in
 [the session log](../../progress/session-025-diagnostics-and-browsers.md).
 Final exported native/Chromium ownership evidence passes all four records.
-Firefox 4.3 clean/fault rooms pass on the reviewed runtime; the full Firefox and
-mixed-browser matrices and shipping gates remain pending.
+Firefox 4.3 clean/fault rooms pass on the reviewed runtime; full Firefox and
+mixed-browser qualification is deferred to #104. Shipping gates remain pending.
 
 ## Prune ledger
 
@@ -53,8 +54,21 @@ SDP on closed connections; the throwing-getter regression and guarded collector
 preserve the original failure evidence. This operational fact now lives beside
 the X11 fact in transport knowledge. These lessons reinforce existing root-cause,
 bounded-diagnostic and post-callback lifetime guidance rather than creating new skills.
+The final installation check also exposed Firefox's empty `.parentlock` runtime
+file. Its archive comparison and strict preseed/mutation controls live in the
+session log and transport knowledge; executable and update changes remain hashed.
+The #102 argument failure reinforces existing receipt invalidation guidance,
+which now explicitly includes parse rejection and mode/help subprocess controls.
+Viewport and FPS controls fail to repair the constrained-CPU Firefox witness.
+The session log retains those falsified hypotheses. Reading the established
+backlog tests also prevents treating a single-poll experiment as a shipping fix:
+the existing eight-poll workload protects real bounded-queue progress.
+The unproved adaptive prototype and experimental Firefox CI axes are deferred
+to #104. The original Chromium, backlog and deadline gates remain unchanged;
+the manual browser-pair launcher explicitly retains experimental status.
 
 ## Outcome
 
 State: findings-acted. Broader replay tooling, browser lifecycle behavior and the
-remaining release matrix stay with #42, #38 and #39.
+remaining release matrix stay with #42, #38 and #39. The cross-launcher receipt
+sweep and remaining non-browser repairs are recorded in #103.

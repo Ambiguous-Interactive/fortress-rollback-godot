@@ -33,6 +33,19 @@ def validate_identity(result, pair, pins):
                 raise ValueError('peer browser allocation differs from the selected pair')
 
 
+def seed_firefox_runtime_lock(installation):
+    # Firefox leaves this empty regular file after clean exit. Hash it from the
+    # initial installation inventory instead of excluding runtime paths later.
+    lock = installation / 'firefox/.parentlock'
+    if installation.is_symlink() or lock.parent.is_symlink():
+        raise ValueError('Firefox runtime lock parent must not be symlinked')
+    try:
+        with lock.open('xb'):
+            pass
+    except FileExistsError as failure:
+        raise ValueError('Firefox runtime lock unexpectedly present in fresh archive') from failure
+
+
 def prepare_firefox(pins, arch, offline, sources, environment):
     if not os.environ.get('DISPLAY'):
         raise ValueError('Firefox WebGL witness requires DISPLAY; launch with xvfb-run -a')
@@ -50,6 +63,7 @@ def prepare_firefox(pins, arch, offline, sources, environment):
         for member in package.infolist():
             if not member.is_dir():
                 (installation / member.filename).chmod((member.external_attr >> 16) & 0o777 or 0o644)
+    seed_firefox_runtime_lock(installation)
     sources.update(firefox_archive=archive, firefox_installation=installation,
                    firefox_executable=installation / 'firefox/firefox')
     xdotool = shutil.which('xdotool')

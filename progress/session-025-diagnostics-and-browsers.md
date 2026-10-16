@@ -137,8 +137,9 @@ The raw-channel negative control now inherits production ICE handling and omits
 only channel-option correction. This keeps Firefox from failing at ICE before
 reaching the intended policy rejection. Final 4.3 Firefox clean and fault logs
 both pass complete 2/4/8-player rooms; the corruption and raw-channel controls
-fail at their intended canonical-prefix and channel-policy boundaries. The full
-both-engine and mixed-browser receipts remain delivery gates.
+fail at their intended canonical-prefix and channel-policy boundaries. Full
+Firefox and mixed-browser qualification remains #39/#104 work, with the final
+scope decision recorded below.
 
 ## Local verification before push
 
@@ -182,3 +183,74 @@ The diagnostic repair supersedes that candidate and requires fresh current-head
 CI and source-bound browser receipts before merge. Parent issues #39, #40 and #42
 now contain precise progress and remaining acceptance. #99 and #100 track the
 proven defects repaired by this PR.
+
+## Final matrix investigation
+
+All sixteen local Firefox labels pass their original gameplay and negative
+control gates across both engine pins. The final installation inventory then
+correctly rejects an added `firefox/.parentlock`. An independent archive-byte
+comparison finds no missing or changed archive members, only that empty regular
+file, with no live Firefox process or open owner. The repair must account for
+this known runtime file before freezing inventory and continue hashing it;
+excluding installation changes would hide unrelated mutations.
+
+CI at `a6430a5978a931649120c2b2062a4a9abdb1a8c9` finishes with ten successful
+jobs: both Godot and Chromium jobs, ownership, reference controls, Rust, harness
+and both container builds. All four Firefox
+and mixed-browser jobs pass two- and four-player clean rooms, then fail at eight
+players. Firefox-only evidence contains pending page evaluations and stalled
+frames; mixed rooms report ICE failures. The artifact diagnostics contain no
+explicit OOM or signal error. Resource pressure is an investigation hypothesis,
+not yet a proven cause. Their complete original logs are retained under
+`.cache/tests/session025-ci-artifacts/`.
+
+A subprocess control also finds that rejected launcher arguments leave a prior
+passing receipt intact. Issue #102 records the reproduction and acceptance:
+invalidate the selected output/mode before rejecting arguments, preserve the
+sibling receipt, and keep help read-only. Both parse and post-parse rejection
+paths require coverage. The review and repair are included in this session.
+A wider sweep confirms analogous stale receipts in nine other verification
+launchers using isolated temporary outputs. Issue #103 lists every reproduced
+entry point and the shared-boundary acceptance; those non-browser entry points
+remain follow-up work. The browser repair does not claim to fix them.
+
+The complete paginated feedback scan at this head finds no conversation,
+submitted-review or inline comments; MCP finds no review threads. Bugbot
+completes with no findings. The four failed-job exit annotations remain active
+delivery blockers. New code requires a new push, CI and feedback scan.
+
+The two-CPU original-viewport control reproduces an eight-player failure: peer 4
+stays at frame 29 for twenty seconds, hitting the active progress deadline just
+before the separate 240-second cap. A sole viewport change to 320 by 180 also
+fails, so it is not shipped as a repair. Exact runner hashes, literal differences,
+generated project bytes and timings live in
+`.cache/reference/results/session-025-resource-experiment.json`.
+A second sole-variable control uses the original viewport and a generated
+`application/run/max_fps=10` setting. It also fails the eight-player progress
+deadline. No viewport or FPS change is included in the repair.
+
+The existing eight-poll schedule is intentional. Session 017's independent
+default-budget FIFO workload proves single polling accumulates 430 packets and
+stops after fourteen frames; eight polls bound it at 28 and confirm all sixteen.
+The staged clock fixture binds the actual host to that schedule. Removing those
+assertions would weaken an established starvation gate, so a poll-frequency
+experiment alone cannot justify replacing the schedule.
+
+## Delivery scope
+
+Issue #104 preserves the complete CI failures, all controlled outcomes and the
+unproved adaptive prototype. The prototype is excluded from this PR; actual
+host polling and its clock/backlog controls remain unchanged. The experimental
+Firefox CI axes are deferred. The final workflow retains every original
+Chromium eight-player, online example, native relay and Godot suite gate.
+Firefox and mixed browser selection remains available as a manual experimental
+probe with every original gameplay validator and deadline. The guide explicitly
+states the incomplete qualification; no passing final Firefox receipt is claimed.
+
+The production Firefox ICE fix, completed-step notification and opt-in canonical
+desync evidence remain the three user-facing advances. Strict source receipts,
+argument rejection and the Firefox lock preseed are reviewed repairs. Final
+reference verification passes 88 Python cases with three environment skips,
+57 Node controls and 106 harness cases; final native unit evidence remains 234
+cases on each engine pin. Immutable final-head CI, feedback, merge and main CI
+remain required before completion.

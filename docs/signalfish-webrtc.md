@@ -205,7 +205,12 @@ only the launcher's own windows before navigation. Receipts record the verified
 window geometry, display bounds and WebGL preferences. Hidden-tab suspension and
 operating-system behavior remain separate lifecycle acceptance work.
 
-CI runs Chromium, Firefox and mixed Chromium/Firefox against both engine pins.
-WebKit, actual Safari and devices remain separate acceptance work in
+CI gates the complete Chromium witness against both engine pins. Firefox and
+mixed browser selection remains experimental manual coverage: their clean two-
+and four-player CI rooms passed, but eight-player rooms failed progress watchdogs
+or ICE under the CI workload. A complete current-source Firefox matrix receipt
+has not been established. The launcher retains every eight-player gate and all
+controls; it does not skip failed rooms. Resource investigation and WebKit,
+actual Safari and devices remain open acceptance work in
 [S5](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
 A Firefox or mixed receipt does not establish those targets.

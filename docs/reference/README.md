@@ -135,8 +135,9 @@ suite, all player counts, SignalFish runtime, mixed browsers or Safari devices.
 This baseline does not claim a model execution.
 Firefox/WebKit revisions are recorded from the pinned Playwright registry.
 The baseline executes Chromium; the separate [WebRTC witness](../signalfish-webrtc.md)
-also selects Firefox and mixed Chromium/Firefox peers. Platform-specific overrides remain in that
-registry. Rust-specific Kani/Z3/Loom gates belong to the later scoped verification
+also offers experimental manual Firefox and mixed Chromium/Firefox selection;
+eight-player CI acceptance remains unresolved. Platform-specific overrides remain
+in that registry. Rust-specific Kani/Z3/Loom gates belong to the later scoped verification
 work, not this representative native test selection.
 
 Artifacts use upstream published hashes when available (Godot 4.3 uses its

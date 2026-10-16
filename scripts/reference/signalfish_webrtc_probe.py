@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Verify exported Godot rollback gameplay through real Chromium and Firefox WebRTC meshes."""
-import argparse
 import hashlib
 import json
 import math
@@ -16,6 +15,7 @@ import tempfile
 import zipfile
 
 from browser.webrtc_import import freeze_after_import
+from browser.webrtc_arguments import ReceiptParser
 from browser.webrtc_runner import run_browser
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
@@ -332,7 +332,7 @@ def validate_restore_control(result, kind="corrupt"):
             raise ValueError('snapshot corruption rejected outside canonical gameplay prefix comparison')
     return result
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__)
     parser.add_argument('--server', type=Path, required=True)
     parser.add_argument('--server-source', type=Path, required=True)
     parser.add_argument('--build-receipt', type=Path, required=True)
@@ -381,6 +381,7 @@ def main():
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
                'browser_matrix': ROOT / 'scripts/reference/browser/webrtc_matrix.py',
+               'browser_arguments': ROOT / 'scripts/reference/browser/webrtc_arguments.py',
                'browser_display': ROOT / 'scripts/reference/browser/webrtc_display.cjs',
                'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
                'server_owner': ROOT / 'scripts/reference/browser/owned_server.py',

@@ -175,14 +175,13 @@ jobs:
           if-no-files-found: error
 
   signalfish:
-    name: SignalFish WebRTC ${{ matrix.version }} ${{ matrix.pair }}
+    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        pair: ["chromium", "firefox", "chromium-firefox"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -204,8 +203,7 @@ jobs:
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
-          .cache/reference/browser/node_modules/.bin/playwright install-deps chromium firefox
-          sudo apt-get install -y xdotool
+          .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Build the pinned local SignalFish server
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
@@ -222,14 +220,13 @@ jobs:
             --output .cache/reference/results/signalfish-server-build
       - name: Verify real browser WebRTC on the pinned engine
         run: |
-          xvfb-run -a python3 scripts/reference/signalfish_webrtc_probe.py \
-            --version "${{ matrix.version }}" --browser-pair "${{ matrix.pair }}" \
+          python3 scripts/reference/signalfish_webrtc_probe.py \
+            --version "${{ matrix.version }}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
             --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-            --output ".cache/reference/results/signalfish-webrtc-${{ matrix.pair }}"
+            --output .cache/reference/results/signalfish-webrtc
       - name: Play the shipped online example in two independent browsers
-        if: matrix.pair == 'chromium'
         run: |
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --online-example --version "${{ matrix.version }}" \
@@ -238,7 +235,6 @@ jobs:
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/online-example
       - name: Verify native relay and late-event controls
-        if: matrix.pair == 'chromium'
         run: |
           for version in "${{ matrix.version }}"; do
             editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
@@ -252,6 +248,6 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.pair }}
+          name: signalfish-live-reference-results-${{ matrix.version }}
           path: .cache/reference/results/
           if-no-files-found: error

@@ -276,8 +276,8 @@ for one suite while changing it. This retains both in-process and fresh-process
 repeat layers. Final delivery still runs all applicable suites and controls.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
-Clear owned success receipts before validating new execution options, including
-malformed worker values; real subprocess controls protect that failure path.
+Clear owned success receipts on parse and execution-option rejection, including
+malformed worker values; real subprocess controls verify mode isolation and help.
 
 Keep verified source timestamps when bytes, modes, entry inventories and symlinks
 match freshly extracted pinned archives. A timestamp-only cache or a hash of an
