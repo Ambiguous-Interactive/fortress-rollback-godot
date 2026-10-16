@@ -48,8 +48,11 @@ The initial blank-page timing result was insufficient; the actual export still
 failed until its windows were partly exposed. ICE needed a separate production
 media-ID repair, without changing browser privacy settings. A fresh review then
 found stale publication across reentrant extension callbacks; a revision fence
-and public-signal regression repaired it. These lessons reinforce existing
-root-cause and post-callback lifetime guidance rather than creating new skills.
+and public-signal regression repaired it. Firefox also throws when inspecting
+SDP on closed connections; the throwing-getter regression and guarded collector
+preserve the original failure evidence. This operational fact now lives beside
+the X11 fact in transport knowledge. These lessons reinforce existing root-cause,
+bounded-diagnostic and post-callback lifetime guidance rather than creating new skills.
 
 ## Outcome
 
