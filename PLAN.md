@@ -47,6 +47,7 @@ Local development contracts and evidence entry points:
 - [Fixed-membership byte sessions and transport-facing API](docs/peer-session.md).
 - [Peer timing, confirmed game checksums and terminal events](docs/peer-lifecycle.md).
 - [Owned rollback statistics and private diagnostic downloads](docs/peer-lifecycle.md#downloadable-observations).
+- [Opt-in online canonical state/input downloads](docs/online-example.md#diagnostics).
 - [Optional SignalFish membership, agreed UUID slots and plan fences](docs/signalfish-membership.md).
 - [SignalFish binary relay, bounded packet ownership and broadcast filtering](docs/signalfish-relay.md).
 - [SignalFish WebRTC bytes, channel selection and direct-path lifetime](docs/signalfish-webrtc.md).

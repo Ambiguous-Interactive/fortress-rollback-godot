@@ -117,9 +117,20 @@ or copy JSON to the clipboard natively. Download before leaving a failed match.
 
 The report includes frame/confirmation, completed-work counters, per-link backlog/RTT,
 engine version and retained terminal causes. It excludes names, room/player/connection IDs,
-SDK configuration, tokens, game state and input payloads. It uses no browser storage.
-A checksum mismatch includes both checksum hex strings and the first mismatching frame;
-[bounded replay traces remain separate work](peer-lifecycle.md#downloadable-observations).
+SDK configuration and tokens. It uses no browser storage.
+
+Game payloads stay excluded by default. To collect canonical evidence, select
+**Include game state and inputs in diagnostics** before pressing **Ready**.
+The choice freezes for that match. It retains at most 120 frames of local saved
+state and applied inputs, with the game's seed and version. The first checksum
+mismatch freezes that window; download it before leaving the failed match.
+Review the game bytes before sharing. The checkbox affects only local diagnostics,
+so the other player can keep capture disabled. New rooms use the checkbox's current
+choice when you press Ready. See the [trace contract](peer-lifecycle.md#opt-in-canonical-divergence-evidence)
+for payload bounds and missing-history limits. This example has no standalone replay command.
+A checksum mismatch includes both checksum hex strings and the first mismatching frame.
+The local canonical window is diagnostic evidence; full gameplay recording and replay
+remain [separate work](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45).
 
 ## Leave and restart
 

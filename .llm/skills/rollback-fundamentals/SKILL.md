@@ -95,6 +95,9 @@ observations from session guarantees. `confirmed_input` checks a physical frame
 tag even after logical discard; session recovery must check retained history.
 Raw duplicate submission is rejected; stalled-sample idempotence belongs to the
 session. Prediction uses a frozen per-player episode, not global confirmation.
+Applied input statuses describe execution time: a matching late actual input can
+confirm history without replaying it, so retained trace rows may still say predicted.
+Validate their bytes against original inputs below the corrected confirmation boundary.
 Capacity failures must preserve Godot state even when the pinned upstream
 startup gap path partially inserts default inputs. Keep that divergence explicit
 and verify retained bytes after failure; a rejected result alone is insufficient.

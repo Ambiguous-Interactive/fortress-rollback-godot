@@ -1,6 +1,9 @@
 class_name FortressPeerSession
 extends RefCounted
 
+## Final outer-step outcome after game callbacks and peer controls. Mutating reentry remains BUSY.
+signal step_completed(code: int, frame_before: int, frame_after: int)
+
 # gdlint: disable=max-returns
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
@@ -163,8 +166,19 @@ func receive_and_poll(packet: Variant, attributed_sender: Variant, now_us: Varia
 	return _poll(now_us, tokens, statuses) if code == I.Code.OK else code
 
 
-## Every endpoint retains the scheduled sample before the game can advance.
+## Configured attempts emit once, including stalls and errors; unconfigured and BUSY calls emit nothing.
 func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
+	if _busy or _core == null:
+		return _step(now_us, local_inputs)
+	var result: Driver.StepResult = _step(now_us, local_inputs)
+	_busy = true
+	step_completed.emit(result.code, result.frame_before, result.frame_after)
+	_busy = false
+	return result
+
+
+## Every endpoint retains the scheduled sample before the game can advance.
+func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	var before: int = status().current_frame
 	var gate: int = _gate(now_us)
 	if gate != I.Code.OK:

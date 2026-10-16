@@ -192,7 +192,7 @@ async function main() {
       const room = await pages[0].evaluate(() => window.fortressOnline.room);
       await command(pages[1], 'join', { endpoint: socketEndpoint, name: 'Joiner', room });
       await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.ready_enabled)));
-      await Promise.all(pages.map(page => command(page, 'ready')));
+      await Promise.all(pages.map((page, index) => command(page, 'ready', { capture_trace: !corrupt && round === 0 && index === 0 })));
       await wait(pages[0], () => window.fortressOnline.start_enabled);
       await pages[0].keyboard.down('KeyD');
       await pages[1].keyboard.down('KeyW');

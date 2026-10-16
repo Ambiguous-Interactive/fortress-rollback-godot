@@ -27,6 +27,8 @@ var failure: String = ""
 var latest_event: String = "none"
 var stalls: int = 0
 var has_started: bool = false
+## Choose before freeze. Captures local canonical state and inputs for diagnostic export.
+var capture_trace: bool = false
 var _held: int = -1
 var _tokens: int = 0
 var _pending: Array[Peer.Packet] = []
@@ -64,6 +66,10 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 	config.check_distance = 0
 	config.input_delay = 2
 	config.max_snapshot_bytes = Simulation.SNAPSHOT_BYTES
+	if capture_trace:
+		config.diagnostic_trace_frames = 120
+		config.diagnostic_seed = str(game.rng_state)
+		config.diagnostic_version = "fortress-online-integer-v1"
 	config.storage_budget_bytes = config.required_storage_bytes()
 	var handshake: Handshake.Options = Handshake.Options.new()
 	handshake.timeout_us = 30000000

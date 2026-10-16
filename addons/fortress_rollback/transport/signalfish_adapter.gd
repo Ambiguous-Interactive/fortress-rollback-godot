@@ -5,13 +5,25 @@ extends RefCounted
 const Membership = preload("res://addons/fortress_rollback/transport/signalfish_membership.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
-const LIFETIME_SIGNALS: Array[String] = ["room_left", "disconnected", "connection_failed", "reconnected", "room_joined", "player_left", "player_joined",
-	"authentication_error", "reconnection_failed", "spectator_joined"]
+const LIFETIME_SIGNALS: Array[String] = [
+	"room_left",
+	"disconnected",
+	"connection_failed",
+	"reconnected",
+	"room_joined",
+	"player_left",
+	"player_joined",
+	"authentication_error",
+	"reconnection_failed",
+	"spectator_joined"
+]
 
 var _client: WeakRef = null
 var _mesh: WeakRef = null
 var _membership: Membership = null
 var _mesh_attached: bool = false
+var _is_detaching: bool = false
+var _is_stopping_mesh: bool = false
 var _restart_required: bool = false
 var _room_id: String = ""
 var _lifetime_revision: int = 0
@@ -21,7 +33,7 @@ var _state: Dictionary = {"route": "unconfigured", "generation": "", "offerers":
 ## Supply installed SDK objects. No SDK class names or resources are loaded here.
 ## Attach after joining the room, before its first session plan. Keep both Nodes alive.
 func attach(client: Object, mesh: Object, membership: Membership) -> Error:
-	if _client != null:
+	if _client != null or _is_detaching or _is_stopping_mesh:
 		return ERR_ALREADY_IN_USE
 	if client == null or mesh == null or membership == null or membership.local_uuid().is_empty():
 		return ERR_INVALID_PARAMETER
@@ -43,16 +55,22 @@ func attach(client: Object, mesh: Object, membership: Membership) -> Error:
 	for signal_name: String in LIFETIME_SIGNALS:
 		if client.has_signal(signal_name):
 			client.connect(signal_name, _on_transport_ended)
+	var attached_client: WeakRef = _client
+	_mesh_attached = true
+	_state = {"route": "awaiting_plan", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 	var code: Error = mesh.call("attach", client)
+	if _client != attached_client or _restart_required or _state.route == "blocked":
+		return ERR_UNAVAILABLE
 	if code != OK:
 		detach()
 		return code
-	_mesh_attached = true
-	_state = {"route": "awaiting_plan", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 	return OK
 
 
 func detach() -> void:
+	if _is_detaching:
+		return
+	_is_detaching = true
 	_lifetime_revision += 1
 	_stop_mesh()
 	var client: Object = _client.get_ref() if _client != null else null
@@ -72,18 +90,24 @@ func detach() -> void:
 	_membership = null
 	_room_id = ""
 	_state = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
+	_is_detaching = false
 
 
 ## Plans replace routing and offerer roles without changing player slots or session IDs.
 ## Relay selection requires the separate byte-delivery adapter; it does not send bytes.
 func _apply_plan(plan: Object) -> Error:
+	if _is_detaching or _is_stopping_mesh:
+		return ERR_UNAVAILABLE
 	_check_lifetime()
 	if _restart_required:
 		return _refuse(ERR_UNAVAILABLE)
 	if _membership == null or plan == null or not plan.has_method("to_dict"):
 		return _refuse(ERR_INVALID_PARAMETER)
+	var revision: int = _lifetime_revision
 	# Variant is the optional SDK's public, JSON-shaped value-object boundary.
 	var value: Variant = plan.call("to_dict")
+	if revision != _lifetime_revision:
+		return ERR_UNAVAILABLE
 	if not value is Dictionary:
 		return _refuse(ERR_INVALID_DATA)
 	var data: Dictionary = value
@@ -112,6 +136,8 @@ func _apply_plan(plan: Object) -> Error:
 		return _refuse(ERR_UNAVAILABLE)
 	if route != "mesh":
 		_stop_mesh()
+		if revision != _lifetime_revision:
+			return ERR_UNAVAILABLE
 	elif not _mesh_attached:
 		_restart_required = true
 		return _refuse(ERR_UNAVAILABLE)
@@ -161,15 +187,18 @@ func _on_new_peer(peer_uuid: String, you_initiate: bool) -> void:
 
 func _stop_mesh() -> void:
 	var mesh: Object = _mesh.get_ref() if _mesh != null else null
-	if _mesh_attached and is_instance_valid(mesh):
-		mesh.call("detach")
+	var was_attached: bool = _mesh_attached
 	_mesh_attached = false
+	if was_attached and is_instance_valid(mesh):
+		_is_stopping_mesh = true
+		mesh.call("detach")
+		_is_stopping_mesh = false
 
 
 func _refuse(code: Error) -> Error:
 	_lifetime_revision += 1
-	_stop_mesh()
 	_state = {"route": "restart_required" if _restart_required else "blocked", "generation": "", "offerers": {}, "error": code, "byte_delivery_implemented": false}
+	_stop_mesh()
 	return code
 
 
@@ -194,9 +223,11 @@ func _check_lifetime() -> void:
 		return
 	var client: Object = _client.get_ref()
 	# Closing can precede disconnected; AuthenticationError clears the room without closing.
-	if (client.has_method("is_connected_to_server") and not client.call("is_connected_to_server")) \
-		or (client.has_method("is_authenticated") and not client.call("is_authenticated")) \
-		or client.call("get_player_id") != _membership.local_uuid() \
-		or (not _room_id.is_empty() and client.call("get_room_id") != _room_id):
+	if (
+		(client.has_method("is_connected_to_server") and not client.call("is_connected_to_server"))
+		or (client.has_method("is_authenticated") and not client.call("is_authenticated"))
+		or client.call("get_player_id") != _membership.local_uuid()
+		or (not _room_id.is_empty() and client.call("get_room_id") != _room_id)
+	):
 		_restart_required = true
 		_refuse(ERR_UNAVAILABLE)

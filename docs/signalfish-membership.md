@@ -147,6 +147,12 @@ failure and reconnect latch `restart_required`. A late plan cannot clear this
 fence. Stop the old peer and create a new session; reconnect alone is no proof
 that rollback history or membership remains recoverable.
 
+Synchronous SDK callbacks cannot replace an ended lifetime while attach, plan
+conversion or mesh teardown returns. Teardown marks the mesh released before calling
+the SDK, and refuses nested plan acceptance or replacement attach until it returns.
+An initial plan emitted during attach remains accepted. This guards lifecycle
+ownership; it does not add transparent replan or ICE-restart support.
+
 ## Evidence and pinned sources
 
 Unit tests cover independent digest bytes, roster order and ownership,
