@@ -247,10 +247,10 @@ a strict cross-language trace. Godot 4.3 and 4.7.2 stringify integral floats
 differently; never weaken the Python integer schema to compensate. The production
 session oracle's canonical scenario conversion protects this boundary.
 
-A mutation must fail at its intended boundary. Require the diagnostic and
-consumed-record position so an unrelated parser or later-request failure cannot
-satisfy the negative control. Declare expected diagnostics independently before
-running the mutant; learning them from the validator makes rejection circular.
+Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
+Declare expected diagnostics independently; learning them from the validator makes rejection circular.
+For idempotent input delivery, state equality can hide duplicate work. Also assert
+exact queue occupancy, due-frame timing and once-per-frame sampling with a resampling mutant.
 Select mutated records by semantic kind. Require scenario-specific nonzero
 observations and an expected control inventory before publishing success. A
 shortened corpus that never reaches its named event must fail those gates.

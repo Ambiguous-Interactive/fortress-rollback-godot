@@ -6,9 +6,49 @@ The code lives in [`examples/integration/`](../examples/integration/):
 - [`game.gd`](../examples/integration/game.gd): two players move left/right and fire shots.
 - [`loop.gd`](../examples/integration/loop.gd): one local player against one remote player.
 - [`effects.gd`](../examples/integration/effects.gd): plays each shot's sound exactly once.
+- [`integration.tscn`](../examples/integration/integration.tscn): playable shots with delayed remote input.
 
 [`test_integration_example.gd`](../tests/unit/test_integration_example.gd) runs this code with late remote input,
 prediction stalls and rollback. It compares the result with a straight replay of the actual inputs.
+
+## Try the effects example
+
+```sh
+godot --path . res://examples/integration/integration.tscn
+```
+
+Move with **A/D** or the **arrow keys** and hold **Space** to fire. The blue player follows scripted inputs.
+Press **1**, **2** or **3** for remote-input delivery delays of **0**, **3** or **12** physics ticks.
+Press **R** to restart with the selected delay and a fresh effects ledger.
+This example delivers input in process and needs no server or SignalFish SDK.
+
+Hollow flashes show recent shots from the current, corrected simulation. Prediction can create a flash
+that disappears when the remote player's actual input arrives. Filled pulses below each lane represent
+one-time confirmed effects; each is labeled with its stable shot ID. They wait for confirmation and correction,
+then play once. The effect counter never rewinds or counts resimulation as another shot.
+At 12 ticks of delay, the eight-frame prediction window fills and movement waits for input.
+The queued input, rollback-load and stalled-tick counters show that recovery continues.
+Changing delay preserves already queued deliveries; reducing delay can take time to clear the old queue.
+
+`demo.gd` drives the same game, loop and effects ledger as the guide. It keeps a bounded delivery queue
+and a bounded recent-effects history. The renderer reads corrected state after each step, including a stall
+that corrected earlier frames. Its filled pulses replace audio so the confirmation behavior is visible without speakers.
+
+![Playable rollback-safe shots](images/integration-effects.png)
+
+To run it from a clean project containing only the addon and this example, run from the repository root:
+
+```sh
+DEMO_DIR=$(mktemp -d)
+mkdir -p "$DEMO_DIR/addons" "$DEMO_DIR/examples"
+cp project.godot "$DEMO_DIR/"
+cp -R addons/fortress_rollback "$DEMO_DIR/addons/"
+cp -R examples/integration "$DEMO_DIR/examples/"
+godot --headless --path "$DEMO_DIR" --editor --import
+godot --path "$DEMO_DIR" res://examples/integration/integration.tscn
+```
+
+Use a Godot 4.3 or newer executable for both commands. No Rust toolchain or native extension is needed.
 
 ## Install
 

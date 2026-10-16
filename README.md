@@ -53,6 +53,15 @@ partition to observe prediction stalls and recovery. Delivery runs in process.
 To add rollback to your own game, follow the [integration guide](./docs/integration.md).
 It covers inputs, snapshots, the frame loop, stalls, errors and sounds that must not replay after rollback.
 
+Try its [playable effects example](./docs/integration.md#try-the-effects-example):
+
+```sh
+godot --path . res://examples/integration/integration.tscn
+```
+
+Move with A/D or arrows and fire with Space. Press 1/2/3 to delay remote input;
+watch predicted flashes disappear while confirmed effects play once. R restarts.
+
 For a browser game, follow the [online example guide](./docs/online-example.md)
 to install the optional SignalFish SDK and export `examples/online/online.tscn`.
 
