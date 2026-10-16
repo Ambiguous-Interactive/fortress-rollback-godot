@@ -85,3 +85,30 @@ This terminal policy differs deliberately from the pinned source's callback and
 continued drop-player behavior. Membership repair and continued play after a
 peer leaves require a separate policy. See [source observations](oracle-p2p.md)
 for the comparison boundary and [the example](peer-example.md) for visible faults.
+
+## Downloadable observations
+
+`peer.diagnostics()` returns a fresh JSON-compatible dictionary with schema
+`fortress-peer-diagnostics-v1`. It includes current/confirmed frames, lifecycle,
+terminal reason, pending correction, the shared engine's
+[completed work statistics](session.md#completed-work-statistics), per-link retained
+input backlog, RTT and pacing. Links use stable indices in `peer_ids()` order;
+the report contains no transport identities or handshake tokens.
+
+A terminal diagnostic retains its cause and both checksum hex strings on a real
+desync. Event drains do not erase that diagnostic, and modifying a returned report
+cannot change it. Reports omit SDK configuration, room codes, player names/UUIDs,
+connection identities, game state and input payloads. Failed agreement reports
+identify the incompatible field without exporting either value.
+
+The online example's **Diagnostics** button downloads `fortress-diagnostics.json`
+in browsers and copies JSON to the clipboard natively. It adds engine version,
+active relay count and retained transport queue counts. It requires neither
+`user://` persistence nor browser storage. Share the file alongside the visible
+failure and reproduction steps. Export before choosing **Leave / new room**,
+which replaces the application match and its diagnostics.
+
+This report is a bounded observation snapshot. It does not contain a replay or a
+canonical state/input trace. Capturing a bounded first-divergence replay window,
+seed and application versions remains tracked in issue #42. The game owns those
+payloads; a checksum pair alone cannot reconstruct them.

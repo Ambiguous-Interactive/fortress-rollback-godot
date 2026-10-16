@@ -18,3 +18,10 @@ Operational facts learned while building this repo's devcontainer
 | For fail-closed firewall setup, DROP policies must be the immediate successors of the filter-table flush: every fallible statement (chain deletes, NAT replay, network fetches) belongs either before the flush (gather phase) or guarded behind the policies. | Adversarial review rounds 2-4 each found a residual flush→policy window (mangle flush, xargs NAT replay, `iptables -X`); final ordering verified in `.devcontainer/init-firewall.sh`. | 2026-10-09 |
 | OpenCode 2.0.26 initializes its runtime MCP catalog asynchronously, so a successful `debug config` followed immediately by `mcp list` can still report no servers in a fresh daemon. | PR #54 first fresh image runs: all three discovery checks failed on both architectures; isolated fresh-service reproduction: first list empty, second list names pending; `.devcontainer/verify-tools.sh` now polls within a fixed deadline. | 2026-10-10 |
 | Devcontainers CLI 0.89.0 uses `--build-no-cache`, not `--no-cache`, to rebuild image layers without cache. | `npx @devcontainers/cli@0.89.0 up --help`; corrected `.devcontainer/README.md` command and maintenance table. | 2026-10-10 |
+
+## Native CLI publication
+
+| Fact | Evidence | Verified |
+| --- | --- | --- |
+| npm latest wrappers can precede their exact native dependencies; Codex uses npm aliases and npm can resolve foreign optional dependencies before platform filtering. | `.devcontainer/install-native-cli.py`; `python3 -m unittest discover -s scripts/tests -p test_native_cli_install.py` covers delayed metadata and install-time ETARGET/E404 with frozen latest. | 2026-10-16 |
+| Retry matching requires a complete package/version token; version-prefix substring matching accepts unrelated releases. | `test_native_cli_install.py` rejects numeric, prerelease, build and path suffix lookalikes for both CLIs. | 2026-10-16 |

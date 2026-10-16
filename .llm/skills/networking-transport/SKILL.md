@@ -207,6 +207,9 @@ server epoch. Prove refusal with a valid queued packet and no outgoing work.
 Audit committed lifecycle state against published events on callback failure,
 including a retained input prefix followed by refusal. Preserve accepted liveness
 transitions before terminal failure; exclude speculative input-success events.
+Normalize exported event metadata by type as well as field name. A reason can
+contain nested roster IDs or input bytes; export only bounded scalar tags.
+Capture the terminal cause when lifecycle commits, before any public event drain.
 Reserve bounded fatal diagnostics independently of normal event capacity. Fill
 the reserve with a recoverable overflow first, then inject terminal events from
 every remote link. Each actual fatal cause must survive with owned peer metadata;

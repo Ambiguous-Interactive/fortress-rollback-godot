@@ -58,7 +58,10 @@ Use a Godot 4.3 or newer executable for both commands. No Rust toolchain or nati
 3. Set **Physics > Common > Physics Ticks Per Second** to **60** and call the library from `_physics_process`.
 
 Preload `core/config.gd`, `core/session.gd` and `core/driver.gd`.
-Online play adds a transport: see the [byte session guide](peer-session.md) and the [online example](online-example.md).
+Online play adds a transport: see the [byte session guide](peer-session.md).
+The [online example setup](online-example.md#install-and-run) creates a separate project,
+installs the optional SDK, configures a local server, exports Web and hosts HTTPS/WSS.
+It includes a missing-SDK check before adding online dependencies.
 
 ## What your game provides
 

@@ -70,6 +70,15 @@ uses `@opencode/cli`; the older `opencode-ai` package is the v1 line. The
 image requires major version 2. (Claude Code comes from a devcontainer
 feature instead, locked by digest in `devcontainer-lock.json`.)
 
+The build resolves each CLI's latest wrapper once and keeps that exact version.
+If matching native packages are still publishing, it retries readiness and installation
+up to 30 times within a ten-minute total budget per CLI. Build output retains the
+first npm failure, each retry, and the final installed version. Authentication,
+permissions, unsupported package metadata, and runtime failures stop immediately.
+An expired budget fails the build; it never substitutes an older release.
+Codex's native npm aliases use the same checks. The pinned Godot MCP package and
+digest-locked Claude Code feature keep their separate installation paths.
+
 VS Code extensions are declared in `devcontainer.json` (`customizations`):
 Godot Tools, Godot Files, Godot Format, Claude Code, GitLens, EditorConfig,
 Makefile Tools, Code Spell Checker, Error Lens, Even Better TOML.
@@ -229,7 +238,7 @@ are neutralized inside the script. It is **off by default**. To enable:
 | Bump godot-mcp | pinned npm install in `Dockerfile` |
 | Refresh Codex / OpenCode | nothing to edit — they track latest; rebuild with `--build-no-cache` (see Version policy) |
 | Refresh Claude Code | it is digest-pinned in `devcontainer-lock.json`; drop that entry and rebuild — `--build-no-cache` does not affect it |
-| Pin Codex / OpenCode | replace `@latest` with an exact version in the `npm install -g` line in `Dockerfile` |
+| Change CLI publication budget | `--timeout`, `--attempts`, and `--interval` on the installer calls in `Dockerfile` |
 | Add a VS Code extension | `customizations.vscode.extensions` |
 | Add an MCP server | both `.mcp.json` and `opencode.json` |
 

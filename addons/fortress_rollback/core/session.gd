@@ -34,6 +34,7 @@ var _originals: Dictionary = {}
 var _is_driver_callback: bool = false
 var _has_confirmation_limit: bool = false
 var _confirmation_limit: int = -1
+var _statistics: Types.Statistics = Types.Statistics.new()
 
 
 ## Creates owned validated configuration and fresh history; never replaces an open batch.
@@ -75,6 +76,7 @@ func configure(config: Config) -> int:
 	_originals.clear()
 	_has_confirmation_limit = false
 	_confirmation_limit = -1
+	_statistics = Types.Statistics.new()
 	return Code.OK
 
 
@@ -233,6 +235,7 @@ func begin_advance() -> Types.Result:
 	var can_advance: bool = _config.sync_test or _can_advance()
 	var save_mesh_boundary: bool = _has_confirmation_limit and _config.max_prediction_frames > 0
 	if not can_advance and _plan.is_empty() and not save_mesh_boundary:
+		_count_stall()
 		return Types.Result.new(Code.PREDICTION_STALL)
 	if can_advance or save_mesh_boundary:
 		if (_config.sync_test and _config.check_distance > 0) or (not _config.sync_test and (_config.max_prediction_frames > 0 or _config.capture_confirmed_snapshots)):
@@ -265,11 +268,22 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		snapshot_code = _history.finish_load(_reader, true)
 	if snapshot_code != History.Code.OK:
 		return _fatal(Code.SNAPSHOT_FAILED, frame, kind)
+	if kind == Kind.LOAD:
+		_statistics.rollback_count = _increment(_statistics.rollback_count)
+		_statistics.last_rollback_depth = _current - frame
+		_statistics.max_rollback_depth = maxi(_statistics.max_rollback_depth, _current - frame)
+	elif kind == Kind.ADVANCE:
+		if frame < _current:
+			_statistics.resimulated_frames = _increment(_statistics.resimulated_frames)
+		else:
+			_statistics.advanced_frames = _increment(_statistics.advanced_frames)
 	if kind == Kind.SAVE and _config.sync_test and not _originals.has(frame):
 		_originals[frame] = _history.inspect(frame)
 	_expire_request()
 	_index += 1
 	if _index == _plan.size():
+		if _outcome == Code.PREDICTION_STALL:
+			_count_stall()
 		_current = _target
 		_batch = null
 		if _outcome == Code.OK:
@@ -294,6 +308,27 @@ func status() -> Types.Status:
 		if incorrect != -1:
 			result.pending_rollback_frame = incorrect if result.pending_rollback_frame == -1 else mini(result.pending_rollback_frame, incorrect)
 	return result
+
+
+## Owned completed-callback counters, outside game snapshots. Counts saturate at signed-64 maximum.
+## A repair-only batch counts one stall when completed; rejected and aborted calls do not.
+func statistics() -> Types.Statistics:
+	var result: Types.Statistics = Types.Statistics.new()
+	result.rollback_count = _statistics.rollback_count
+	result.resimulated_frames = _statistics.resimulated_frames
+	result.advanced_frames = _statistics.advanced_frames
+	result.prediction_stalls = _statistics.prediction_stalls
+	result.last_rollback_depth = _statistics.last_rollback_depth
+	result.max_rollback_depth = _statistics.max_rollback_depth
+	return result
+
+
+func _count_stall() -> void:
+	_statistics.prediction_stalls = _increment(_statistics.prediction_stalls)
+
+
+func _increment(value: int) -> int:
+	return value + 1 if value < 9223372036854775807 else value
 
 
 func drain_events() -> Array[RefCounted]:

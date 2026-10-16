@@ -3,13 +3,18 @@ import ast
 import copy
 import inspect
 import hashlib
+import json
 import struct
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 import unittest
 
 from browser import webrtc_runner
 from online_example_probe import expected_states, run_online, validate_result
+from test_online_diagnostics import diagnostic_download
+from online_install import ROOT, create_project, install_sdk, server_config
+from signalfish_probe import inventory
 
 
 def evidence():
@@ -34,6 +39,7 @@ def evidence():
             peer['room'] = record['room']
             peer['session_id'] = f'{index + 1:02}' * 16
             peer['room_id'] = f'00000000-0000-0000-0000-{index + 1:012}'
+        record['diagnostics'] = [diagnostic_download(), diagnostic_download()]
         if index >= 2:
             continue
         expired = index == 1
@@ -86,6 +92,44 @@ def evidence():
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
+    # Value: protects=standalone runtime-only install; fails_when=missing licenses/files or overwrites; why_new=browser staging was handwritten; seam=none
+    def test_clean_installer_copies_complete_runtime_and_licenses_without_repository_tools(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / 'game'
+            create_project(project)
+            expected = {}
+            for directory in ('addons/fortress_rollback', 'examples/offline', 'examples/online'):
+                expected.update(inventory({directory: ROOT / directory}))
+            expected.update(inventory({'LICENSE': ROOT / 'LICENSE'}))
+            actual = inventory({'project': project})
+            self.assertEqual(set(actual), {'project/' + name for name in expected} | {'project/project.godot', 'project/export_presets.cfg'})
+            for name, value in expected.items():
+                self.assertEqual(actual['project/' + name], value)
+            self.assertNotIn('res://icon.svg', (project / 'project.godot').read_text())
+            before = inventory({'project': project})
+            with self.assertRaisesRegex(ValueError, 'empty directory'):
+                create_project(project)
+            self.assertEqual(inventory({'project': project}), before)
+            with self.assertRaisesRegex(ValueError, 'incomplete'):
+                install_sdk(project, Path(temporary) / 'absent')
+            self.assertFalse((project / 'addons/signal_fish').exists())
+
+    def test_local_server_configuration_matches_the_online_application_and_has_no_external_ice(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            config = {'session': {}, 'turn': {}, 'security': {'allowed_apps': [{}]}}
+            (source / 'config.example.json').write_text(json.dumps(config))
+            result = server_config(source, 8080)
+            self.assertEqual(result['port'], 8080)
+            self.assertEqual(result['security']['allowed_apps'][0]['app_id'], 'fortress-live-webrtc')
+            self.assertEqual(result['security']['allowed_apps'][0]['max_players_per_room'], 2)
+            self.assertEqual(result['session']['ice_servers'], [])
+            self.assertFalse(result['session']['enable_direct'])
+            self.assertFalse(result['turn']['enabled'])
+            for port in (True, 0, 65536):
+                with self.subTest(port=port), self.assertRaises(ValueError):
+                    server_config(source, port)
+
     def test_corruption_control_reaches_canonical_comparison_after_an_intended_desync(self):
         changed = evidence()
         changed['corrupt'] = True

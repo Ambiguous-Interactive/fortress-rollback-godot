@@ -87,17 +87,16 @@ RUN case "${TARGETARCH}" in \
 
 # OpenCode v2 uses the @opencode/cli package. Check the installed major so
 # a future package-channel change cannot silently install another version.
+# Resolve latest once, then wait up to ten minutes for matching native packages.
+# Missing native versions are retried; authentication/configuration errors fail.
+COPY install-native-cli.py /usr/local/lib/install-native-cli.py
 
-RUN npm install -g "@opencode/cli@latest" \
-    && opencode --version \
-    && node -e 'const v=require("/usr/local/lib/node_modules/@opencode/cli/package.json").version; \
-        if(!v.startsWith("2.")) {console.error("expected OpenCode v2, got "+v); process.exit(1)}'
+RUN python3 /usr/local/lib/install-native-cli.py "@opencode/cli" "${TARGETARCH}"
 
 # Codex CLI (latest), using the global npm layout checked by verify-tools.sh.
 # Check the package root offline without parsing human-readable diagnostics.
 
-RUN npm install -g "@openai/codex@latest" \
-    && codex --version \
+RUN python3 /usr/local/lib/install-native-cli.py "@openai/codex" "${TARGETARCH}" \
     && test -f "$(npm root -g)/@openai/codex/package.json"
 
 # godot-mcp server: installed globally and pinned so MCP sessions never
