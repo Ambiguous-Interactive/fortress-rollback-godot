@@ -105,8 +105,8 @@ The online example's **Diagnostics** button downloads `fortress-diagnostics.json
 in browsers and copies JSON to the clipboard natively. It adds engine version,
 active relay count and retained transport queue counts. It requires neither
 `user://` persistence nor browser storage. Share the file alongside the visible
-failure and reproduction steps. Export before choosing **Leave / new room**,
-which replaces the application match and its diagnostics.
+failure and reproduction steps. Export before **Leave / new room** to retain current transport queue counts.
+The next connection creates a fresh application match and resets its diagnostics.
 
 This report is a bounded observation snapshot. It does not contain a replay or a
 canonical state/input trace. Capturing a bounded first-divergence replay window,

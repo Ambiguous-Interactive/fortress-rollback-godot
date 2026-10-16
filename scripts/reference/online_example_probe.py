@@ -237,6 +237,10 @@ def validate_result(value, corrupt=False):
             raise ValueError('online example missing real diagnostic downloads')
         for download in downloads:
             validate_download(download)
+            before, after = download['before'], download['after']
+            if (before.get('state') != 'offline' or after.get('state') != 'offline'
+                    or before['frame'] != after['frame'] or before['restores'] != after['restores']):
+                raise ValueError('online example diagnostic export crossed offline boundary')
         peers = record.get('peers', [])
         if (not isinstance(peers, list) or len(peers) != 2 or any(not isinstance(peer, dict) for peer in peers)
                 or any(type(peer.get('slot')) is not int or type(peer.get('page_index')) is not int for peer in peers)

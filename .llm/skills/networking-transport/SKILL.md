@@ -210,6 +210,8 @@ transitions before terminal failure; exclude speculative input-success events.
 Normalize exported event metadata by type as well as field name. A reason can
 contain nested roster IDs or input bytes; export only bounded scalar tags.
 Capture the terminal cause when lifecycle commits, before any public event drain.
+Collect diagnostic downloads after verified termination or physical teardown.
+Awaited downloads can advance a live witness beyond its retained-history bound.
 Reserve bounded fatal diagnostics independently of normal event capacity. Fill
 the reserve with a recoverable overflow first, then inject terminal events from
 every remote link. Each actual fatal cause must survive with owned peer metadata;

@@ -40,6 +40,9 @@ def evidence():
             peer['session_id'] = f'{index + 1:02}' * 16
             peer['room_id'] = f'00000000-0000-0000-0000-{index + 1:012}'
         record['diagnostics'] = [diagnostic_download(), diagnostic_download()]
+        for download in record['diagnostics']:
+            download['before']['state'] = 'offline'
+            download['after']['state'] = 'offline'
         if index >= 2:
             continue
         expired = index == 1
@@ -92,6 +95,31 @@ def evidence():
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
+    # Value: protects=bounded fault timing during slow downloads; fails_when=exports run live or advance stopped matches; why_new=CI reached289; seam=none
+    def test_downloads_observe_only_a_frozen_offline_match(self):
+        original = evidence()
+        self.assertIs(validate_result(original), original)
+        for boundary in ('before', 'after'):
+            for state in ('playing', 'failed', None):
+                changed = evidence()
+                changed['rounds'][0]['diagnostics'][0][boundary]['state'] = state
+                with self.subTest(boundary=boundary, state=state), self.assertRaisesRegex(ValueError, 'diagnostic export crossed offline boundary'):
+                    validate_result(changed)
+        for field, value in (('frame', 111), ('restores', 2)):
+            changed = evidence()
+            changed['rounds'][0]['diagnostics'][0]['after'][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'diagnostic export crossed offline boundary'):
+                validate_result(changed)
+        changed = evidence()
+        changed['rounds'][0]['diagnostics'][0]['before']['frame'] = 109
+        with self.assertRaisesRegex(ValueError, 'diagnostic export crossed offline boundary'):
+            validate_result(changed)
+        for downloads in ([], [diagnostic_download()], [diagnostic_download()] * 3):
+            changed = evidence()
+            changed['rounds'][0]['diagnostics'] = downloads
+            with self.subTest(count=len(downloads)), self.assertRaisesRegex(ValueError, 'missing real diagnostic downloads'):
+                validate_result(changed)
+
     # Value: protects=standalone runtime-only install; fails_when=missing licenses/files or overwrites; why_new=browser staging was handwritten; seam=none
     def test_clean_installer_copies_complete_runtime_and_licenses_without_repository_tools(self):
         with tempfile.TemporaryDirectory() as temporary:

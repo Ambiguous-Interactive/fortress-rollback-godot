@@ -96,6 +96,37 @@ async function pauseElapsed(milliseconds, now = () => process.hrtime.bigint(), s
   return Number(elapsed / 1000n);
 }
 
+async function collectDiagnostics(pages, command) {
+  const diagnostics = [];
+  for (const page of pages) {
+    const before = await page.evaluate(() => ({ state: window.fortressOnline.state, restores: window.fortressOnline.restores, frame: window.fortressOnline.frame }));
+    if (before.state !== 'offline') throw new Error('diagnostic export requires a stopped offline match');
+    await page.evaluate(() => {
+      window.fortressStorageCalls = 0;
+      window.fortressStorageOriginals = [Storage.prototype.setItem, IDBFactory.prototype.open];
+      const unavailable = () => { window.fortressStorageCalls++; throw new Error('storage unavailable'); };
+      Storage.prototype.setItem = unavailable;
+      IDBFactory.prototype.open = unavailable;
+    });
+    try {
+      const pending = page.waitForEvent('download', { timeout: 10000 });
+      await command(page, 'diagnostics');
+      const download = await pending;
+      const report = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+      const after = await page.evaluate(() => ({ state: window.fortressOnline.state, restores: window.fortressOnline.restores, frame: window.fortressOnline.frame,
+        storage_calls: window.fortressStorageCalls }));
+      if (after.state !== 'offline' || after.frame !== before.frame || after.restores !== before.restores)
+        throw new Error('diagnostic export advanced or resumed an offline match');
+      diagnostics.push({ before, after, filename: download.suggestedFilename(), report });
+    } finally {
+      await page.evaluate(() => {
+        [Storage.prototype.setItem, IDBFactory.prototype.open] = window.fortressStorageOriginals;
+      });
+    }
+  }
+  return diagnostics;
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -191,31 +222,7 @@ async function main() {
       if (round === 0 && !corrupt) await pages[0].screenshot({ path: diagnostic.replace('-events.log', '.png') });
       const peers = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({ ...window.fortressOnline, page_index: pageIndex,
         rtc: { ...window.fortressRtc, channels: window.fortressRtc.channels.slice(-3) }, delayed: window.fortressOnlineDelayed }), index)));
-      const diagnostics = [];
-      for (const page of pages) {
-        const before = await page.evaluate(() => ({ restores: window.fortressOnline.restores, frame: window.fortressOnline.frame }));
-        await page.evaluate(() => {
-          window.fortressStorageCalls = 0;
-          window.fortressStorageOriginals = [Storage.prototype.setItem, IDBFactory.prototype.open];
-          const unavailable = () => { window.fortressStorageCalls++; throw new Error('storage unavailable'); };
-          Storage.prototype.setItem = unavailable;
-          IDBFactory.prototype.open = unavailable;
-        });
-        try {
-          const pending = page.waitForEvent('download', { timeout: 10000 });
-          await command(page, 'diagnostics');
-          const download = await pending;
-          const report = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
-          const after = await page.evaluate(() => ({ restores: window.fortressOnline.restores, frame: window.fortressOnline.frame,
-            storage_calls: window.fortressStorageCalls }));
-          diagnostics.push({ before, after, filename: download.suggestedFilename(), report });
-        } finally {
-          await page.evaluate(() => {
-            [Storage.prototype.setItem, IDBFactory.prototype.open] = window.fortressStorageOriginals;
-          });
-        }
-      }
-      rounds.push({ room, peers, diagnostics });
+      rounds.push({ room, peers, diagnostics: [] });
       if (round === 4 && !corrupt) {
         rounds[round].stale_sent = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleSent)));
         rounds[round].stale_received = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleReceived)));
@@ -333,6 +340,7 @@ async function main() {
         && window.fortressResources.connections.every(connection => connection.connectionState === 'closed' && connection.iceConnectionState === 'closed')
         && window.fortressResources.websockets.every(socket => socket.readyState === WebSocket.CLOSED))));
       rounds[round].teardown = await Promise.all(pages.map(page => page.evaluate(resourceCounts)));
+      rounds[round].diagnostics = await collectDiagnostics(pages, command);
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, errors, teardown: true }));
@@ -346,5 +354,5 @@ async function main() {
     await new Promise(resolve => server.close(resolve));
   }
 }
-module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit };
+module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

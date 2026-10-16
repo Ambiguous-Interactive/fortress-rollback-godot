@@ -87,9 +87,9 @@ connectivity nor a supported full browser release.
 
 Retro: findings-acted.
 
-## Final local evidence
+## Local evidence before CI
 
-The final source-bound clean browser receipt is
+The pre-CI source-bound clean browser receipt is
 `.cache/reference/results/session024-clean-online-final/online-example.json`.
 It binds the final reviewed runtime, installation/hosting/validation helpers,
 Python/editor/browser/server tools, both user guides, exports and owned logs.
@@ -132,3 +132,47 @@ and the expanded actual-handshake privacy/ownership assertions. No probe process
 remains running. Source-width lint checks all 252 tracked source files at 180
 columns; harness lint and the 106 tooling tests pass. The final browser receipt
 also binds the actual Python executable used for clean installation.
+
+## CI download-timing incident
+
+Final-head CI run `38835699249`, job `116764215997`, passed the real browser
+WebRTC phase but rejected the online peer-departure observation. The uploaded
+artifact `12019008558` shows correct terminal state/message and an unchanged
+frontier at frame 289. Serial diagnostic downloads ran during active gameplay:
+peer observations advanced 175→207 and 217→257 while those downloads completed.
+The departure boundary then exceeded the deliberately bounded 256-frame witness.
+Three local two-pin runs did not expose the slower CI download path.
+
+The test fixture must collect reports after verified physical teardown, where
+the retained match and diagnostic button remain available. Leave detaches the
+network; the next connection replaces the match. The repair preserves every
+gameplay and terminal frame bound, and requires offline, unchanged frame/restore
+observations during downloads. This is a test orchestration defect; no game or
+protocol behavior is changed to hide it. Subsequent source-bound browser receipts
+and current-head CI must supersede the earlier passing local observations.
+
+The repair's negative control shows the old validator accepting nine live or
+advancing download observations. The repaired Python observer rejects those
+cases and still requires exactly two real downloads per room. The actual Node
+collector is independently exercised with delayed completion, live invocation,
+resumed state and changed frame/restore counters; storage methods are restored
+on success and failure. All eight Node and 80 reference Python tests pass
+(three environment skips in the latter). A fresh adversarial review reports no
+actionable finding. Frame-256, terminal freeze, canonical-history and corrupted
+load gates are unchanged; no process budget is increased.
+
+## Final repair verification
+
+`.cache/reference/results/session024-download-repair-final/online-example.json`
+supersedes the pre-CI local browser receipt. Both pins pass all five rooms, twenty
+real downloads and sixteen stale callback invocations. Every download observes
+offline state with exactly unchanged frame and restore counts. Departure freezes
+at frame 118 on 4.3 and 112 on 4.7.2; the failed CI froze at 289. Corrected canonical
+prefixes, original inputs, actual rollback, all frame-256 guards and intended
+frame-3 corruption rejection remain required and pass. No runtime source changes
+are part of this CI repair. The fresh reviewer independently ran eight Node and
+sixteen focused Python tests and found no issue.
+
+Reproduce with the browser command above, selecting
+`--output .cache/reference/results/session024-download-repair-final`.
+Final-head CI and post-green/pre-merge feedback must pass after this repair.
