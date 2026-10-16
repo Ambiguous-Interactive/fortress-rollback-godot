@@ -29,6 +29,7 @@ Local development contracts and evidence entry points:
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
+- [Playable input-driven shots, confirmation and prediction stalls](docs/integration.md#try-the-effects-example).
 - [Playable online room setup and controls](docs/online-example.md).
 - [Online suspension, elapsed-time expiry and fresh-room restart](docs/online-example.md#suspension-and-expiry).
 - [Online terminal connection cleanup and fresh-room recovery](docs/online-example.md#leave-and-restart).
