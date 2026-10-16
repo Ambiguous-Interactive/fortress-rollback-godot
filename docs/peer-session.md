@@ -55,6 +55,12 @@ inputs. `PREDICTION_STALL` preserves the current frame but can still repair old
 predictions and save that boundary. Save/load callbacks must therefore tolerate
 repeated frames. Changing an already submitted sample is rejected.
 
+`step_completed(code, frame_before, frame_after)` emits synchronously after all
+game callbacks and peer controls finish. It reports configured stalls, not-ready
+attempts and errors too. Unconfigured and BUSY calls emit nothing. Read the final
+state for presentation inside the handler; mutating peer calls stay BUSY and drains
+return empty until handlers finish. Drain packets, events and transitions after `step` returns.
+
 Clock values are nonnegative, nondecreasing integers. A valid operation consumes
 its supplied clock before component mutations, including a partially published
 multi-link operation. Link publication is independently atomic; the façade does

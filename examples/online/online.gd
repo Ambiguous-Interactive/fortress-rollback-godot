@@ -13,6 +13,7 @@ var ready_button: Button
 var start_button: Button
 var leave_button: Button
 var diagnostics_button: Button
+var trace_checkbox: CheckBox
 var _status: Label
 
 
@@ -35,6 +36,9 @@ func _ready() -> void:
 	start_button = _button(buttons, "Start", _start_game)
 	leave_button = _button(buttons, "Leave / new room", _leave)
 	diagnostics_button = _button(buttons, "Diagnostics", _export_diagnostics)
+	trace_checkbox = CheckBox.new()
+	trace_checkbox.text = "Include game state and inputs in diagnostics (choose before Ready)"
+	panel.add_child(trace_checkbox)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -100,8 +104,10 @@ func _join() -> void:
 
 
 func _ready_player() -> void:
-	controller.ready()
-	get_viewport().gui_release_focus()
+	if not controller.has_readied:
+		controller.game_match.capture_trace = trace_checkbox.button_pressed
+	if controller.ready() == OK:
+		get_viewport().gui_release_focus()
 	_update_status()
 
 
@@ -123,6 +129,7 @@ func _update_status() -> void:
 	join_button.disabled = connected
 	leave_button.disabled = not connected
 	diagnostics_button.disabled = controller.game_match.local_slot < 0
+	trace_checkbox.disabled = controller.has_readied
 	endpoint.editable = not connected
 	player_name.editable = not connected
 	room_code.editable = not connected
@@ -145,7 +152,7 @@ func _update_status() -> void:
 		)
 
 
-## Export only selected observations; no SDK configuration, room/player IDs or game inputs.
+## Export selected observations and explicitly enabled game evidence; no SDK config or room/player identities.
 func diagnostic_report() -> Dictionary:
 	var game: Lobby.Match = controller.game_match
 	var report: Dictionary = game.peer.diagnostics()
@@ -164,7 +171,7 @@ func _export_diagnostics() -> void:
 
 
 func _draw() -> void:
-	var origin: Vector2 = Vector2(24, 310)
+	var origin: Vector2 = Vector2(24, maxf(310, to_local(_status.get_global_rect().end).y + 16))
 	draw_rect(Rect2(origin, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
 	var game: Simulation = controller.game_match.game
 	for player: int in 2:

@@ -154,5 +154,7 @@ Opt-in exports intentionally disclose the game's saved bytes, input bytes and
 these application-supplied metadata strings. Review their content before sharing;
 they can themselves contain sensitive data. The library automatically excludes
 SDK configuration, room/player identities, connection IDs and handshake tokens.
-The online example keeps tracing disabled. Broader replay tooling and the complete
+The online example offers an explicit checkbox before Ready and defaults to disabled.
+Its 120-frame local capture includes the integer game's seed and version.
+Broader replay tooling and the complete
 cross-platform diagnostic workflow remain tracked in issue #42.

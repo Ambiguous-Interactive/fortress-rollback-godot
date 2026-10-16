@@ -143,6 +143,7 @@ func _command(value: Dictionary) -> void:
 				scene.diagnostics_button.pressed.emit()
 		"ready":
 			if not scene.ready_button.disabled:
+				scene.trace_checkbox.button_pressed = value.get("capture_trace", false) == true
 				scene.ready_button.pressed.emit()
 		"start":
 			if not scene.start_button.disabled:

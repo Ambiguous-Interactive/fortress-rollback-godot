@@ -8,7 +8,7 @@ import struct
 import sys
 import zipfile
 
-from online_diagnostics import validate_download
+from online_diagnostics import validate_download, validate_trace_history
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
@@ -235,8 +235,8 @@ def validate_result(value, corrupt=False):
         downloads = record.get('diagnostics')
         if not isinstance(downloads, list) or len(downloads) != 2:
             raise ValueError('online example missing real diagnostic downloads')
-        for download in downloads:
-            validate_download(download)
+        for page_index, download in enumerate(downloads):
+            validate_download(download, trace_enabled=not corrupt and round_index == 0 and page_index == 0)
             before, after = download['before'], download['after']
             if (before.get('state') != 'offline' or after.get('state') != 'offline'
                     or before['frame'] != after['frame'] or before['restores'] != after['restores']):
@@ -344,6 +344,10 @@ def validate_result(value, corrupt=False):
     for frame, expected, state in comparisons:
         if expected != state:
             raise ValueError(f'online example canonical prefix mismatch at frame {frame}')
+    if not corrupt:
+        histories = [peer['inputs'] for peer in rounds[0]['peers']]
+        expected = expected_states(histories, min(map(len, histories)))
+        validate_trace_history(rounds[0]['diagnostics'][0]['report'], expected, histories)
     return value
 
 

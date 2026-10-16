@@ -1,5 +1,6 @@
 """Validate public diagnostic downloads against independent browser callback observations."""
 import json
+import re
 
 COUNTERS = {'rollback_count', 'resimulated_frames', 'advanced_frames', 'prediction_stalls', 'last_rollback_depth', 'max_rollback_depth'}
 PEER_FIELDS = {'index', 'state', 'pending_frames', 'last_received_frame', 'last_acked_frame', 'round_trip_time_ms', 'average_frame_advantage'}
@@ -38,13 +39,14 @@ def event(value, peers, depth=0):
             event(cause, peers, depth + 1)
 
 
-def validate_download(value):
+def validate_download(value, trace_enabled=False):
     if not isinstance(value, dict) or value.get('filename') != 'fortress-diagnostics.json':
         raise ValueError('missing real diagnostic download')
     report = value.get('report')
-    if not isinstance(report, dict) or report.keys() != REPORT_FIELDS or report['schema'] != 'fortress-peer-diagnostics-v1':
+    fields = REPORT_FIELDS | ({'trace'} if trace_enabled else set())
+    if not isinstance(report, dict) or report.keys() != fields or report['schema'] != 'fortress-peer-diagnostics-v1':
         raise ValueError('diagnostic schema or privacy fields differ')
-    if len(json.dumps(report).encode('utf-8')) > 32768:
+    if len(json.dumps(report).encode('utf-8')) > 32768 + (198752 if trace_enabled else 0):
         raise ValueError('diagnostic download exceeds byte bound')
     if not isinstance(report['engine'], str) or not 1 <= len(report['engine']) <= 128:
         raise ValueError('diagnostic engine identity missing')
@@ -87,3 +89,70 @@ def validate_download(value):
         raise ValueError('diagnostic rollback count differs from real game callbacks')
     if not before['frame'] <= report['current_frame'] <= after['frame']:
         raise ValueError('diagnostic frame differs from game observation')
+    if trace_enabled:
+        validate_trace(report['trace'], report['current_frame'])
+
+
+def game_checksum(state):
+    lanes = []
+    for lane in range(4):
+        value = 2166136261 + lane
+        for byte in bytes.fromhex(state):
+            value = ((value ^ byte) * 16777619) & 0xffffffff
+        lanes.append(value.to_bytes(4, 'little'))
+    return b''.join(lanes).hex()
+
+
+def validate_trace(trace, current_frame):
+    fields = {'schema', 'seed', 'application_version', 'replay_command', 'max_frames', 'max_payload_bytes',
+              'max_export_bytes', 'retained_payload_bytes', 'first_divergence', 'frames'}
+    if (not isinstance(trace, dict) or trace.keys() != fields or trace['schema'] != 'fortress-canonical-trace-v1'
+            or trace['seed'] != '1701' or trace['application_version'] != 'fortress-online-integer-v1'
+            or trace['replay_command'] != '' or trace['first_divergence'] != {}):
+        raise ValueError('online trace schema or metadata differs')
+    for field, expected in [('max_frames', 120), ('max_payload_bytes', 18480), ('max_export_bytes', 198752)]:
+        integer(trace[field], expected, expected)
+    frames = trace['frames']
+    if not isinstance(frames, list) or not frames or len(frames) != min(current_frame, 120):
+        raise ValueError('online trace window missing or unbounded')
+    last, payload = -1, 0
+    for row in frames:
+        if not isinstance(row, dict) or row.keys() != {'frame', 'state', 'state_available', 'checksum', 'inputs'}:
+            raise ValueError('online trace row privacy fields differ')
+        expected_frame = max(0, current_frame - 120) if last < 0 else last + 1
+        integer(row['frame'], expected_frame, expected_frame)
+        last = row['frame']
+        if (row['state_available'] is not True or not isinstance(row['state'], str)
+                or not re.fullmatch('[0-9a-f]{272}', row['state']) or row['checksum'] != game_checksum(row['state'])):
+            raise ValueError('online trace canonical snapshot or checksum invalid')
+        inputs = row['inputs']
+        if not isinstance(inputs, list) or len(inputs) != 2:
+            raise ValueError('online trace applied inputs missing')
+        for player, sample in enumerate(inputs):
+            if not isinstance(sample, dict) or sample.keys() != {'player', 'bytes', 'status'}:
+                raise ValueError('online trace input privacy fields differ')
+            integer(sample['player'], player, player)
+            integer(sample['status'], 1, 2)
+            if not isinstance(sample['bytes'], str) or not re.fullmatch('0[0-9a-f]', sample['bytes']):
+                raise ValueError('online trace input bytes invalid')
+        payload += 154
+    integer(trace['retained_payload_bytes'], payload, payload)
+    if len(json.dumps(trace, separators=(',', ':')).encode('utf-8')) > trace['max_export_bytes']:
+        raise ValueError('online trace exceeds compact export bound')
+
+
+def validate_trace_history(report, expected, histories):
+    limit = min(report['confirmed_frame'], report['current_frame'], min(map(len, histories)))
+    if report['pending_rollback_frame'] >= 0:
+        limit = min(limit, report['pending_rollback_frame'])
+    compared = 0
+    for row in report['trace']['frames']:
+        frame = row['frame']
+        if frame >= limit:
+            continue
+        if row['state'] != expected[frame] or any(sample['bytes'] != bytes([histories[player][frame]]).hex()
+                for player, sample in enumerate(row['inputs'])):
+            raise ValueError('online trace differs from original confirmed history')
+        compared += 1
+    if compared < 50:
+        raise ValueError('online trace confirmed history coverage incomplete')

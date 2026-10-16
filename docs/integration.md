@@ -126,7 +126,9 @@ For a local driver, you can connect `driver.step_completed(code, frame_before, f
 to update presentation after all callbacks finish. It also runs after a repair-only stall,
 when the frame number stays the same but the corrected game state has changed.
 Keep this handler for presentation: recursive calls to this driver return `BUSY`.
-Peer callers update presentation after `peer.step` returns.
+Peer callers can use `peer.step_completed` with the same scalar arguments.
+It runs after peer control processing too. Mutating peer calls return `BUSY`
+until handlers return; drain peer packets, events and transitions after `peer.step` returns.
 
 A failed callback stops the session for good. Do not keep stepping a stopped session. Configure it again or create a new one.
 

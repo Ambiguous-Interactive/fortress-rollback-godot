@@ -12,7 +12,7 @@ import unittest
 
 from browser import webrtc_runner
 from online_example_probe import expected_states, run_online, validate_result
-from test_online_diagnostics import diagnostic_download
+from test_online_diagnostics import diagnostic_download, trace_evidence
 from online_install import ROOT, create_project, install_sdk, server_config
 from signalfish_probe import inventory
 
@@ -40,6 +40,8 @@ def evidence():
             peer['session_id'] = f'{index + 1:02}' * 16
             peer['room_id'] = f'00000000-0000-0000-0000-{index + 1:012}'
         record['diagnostics'] = [diagnostic_download(), diagnostic_download()]
+        if index == 0:
+            record['diagnostics'][0]['report']['trace'] = trace_evidence(states, histories)
         for download in record['diagnostics']:
             download['before']['state'] = 'offline'
             download['after']['state'] = 'offline'
@@ -161,6 +163,7 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
     def test_corruption_control_reaches_canonical_comparison_after_an_intended_desync(self):
         changed = evidence()
         changed['corrupt'] = True
+        changed['rounds'][0]['diagnostics'][0]['report'].pop('trace')
         changed['rounds'] = changed['rounds'][:1]
         peer = changed['rounds'][0]['peers'][1]
         peer.update(state='failed', failure='Game stopped (18). Leave and create a new room.', terminal_reason=18)
@@ -221,6 +224,7 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
     def test_corruption_cannot_hide_later_invalid_peer_or_unclosed_transport(self):
         changed = evidence()
         changed['corrupt'] = True
+        changed['rounds'][0]['diagnostics'][0]['report'].pop('trace')
         changed['rounds'] = changed['rounds'][:1]
         snapshot = changed['rounds'][0]['peers'][0]['snapshots']['3']
         changed['rounds'][0]['peers'][0]['snapshots']['3'] = '00' + snapshot[2:]

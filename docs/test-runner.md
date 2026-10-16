@@ -12,7 +12,7 @@ Use a verified editor fetched through the [reference tools](reference/README.md)
 
 ```sh
 python3 scripts/run_godot_tests.py \
-  --godot .cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64 --timeout 120
+  --godot .cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64 --timeout 180
 ```
 
 Choose the corresponding verified executable for your host architecture.
@@ -29,8 +29,9 @@ and dirty flag, pin digest, platform, commands, working directory, seeds, comple
 semantic records, raw engine output, exit status and failure reason. A dirty flag
 means the commit alone does not reproduce the worktree.
 
-Use `--timeout 120` for the complete unit category, as CI and `make test-godot` do. Ordinary focused
-suites retain the default budget. The slower integration category uses the budget below.
+CI uses `--timeout 180` for the complete unit category; `make test-godot` uses 120 seconds.
+Use the CI command above for the full verification budget. Ordinary focused suites retain
+the default budget. The slower integration category uses the budget below.
 Deliberate watchdog controls keep their short limits.
 
 The integration category includes the slower eight-peer transport scheduling regression. Run each

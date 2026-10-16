@@ -2,7 +2,7 @@
 import copy
 import unittest
 
-from online_diagnostics import validate_download
+from online_diagnostics import validate_download, game_checksum
 
 
 def diagnostic_download():
@@ -19,6 +19,35 @@ def diagnostic_download():
 
 
 class DiagnosticDownloadTests(unittest.TestCase):
+    def test_opt_in_trace_requires_consent_and_checks_original_history(self):
+        from online_example_probe import expected_states
+        from online_diagnostics import validate_trace_history
+        histories = [[0, 0] + [2] * 110, [0, 0] + [4] * 110]
+        states = expected_states(histories, 110)
+        value = diagnostic_download()
+        value['report']['trace'] = trace_evidence(states, histories)
+        validate_download(value, trace_enabled=True)
+        validate_trace_history(value['report'], states, histories)
+        predicted = copy.deepcopy(value)
+        predicted['report']['trace']['frames'][0]['inputs'][0]['status'] = 2
+        validate_download(predicted, trace_enabled=True)
+        validate_trace_history(predicted['report'], states, histories)
+        with self.assertRaises(ValueError):
+            validate_download(value)
+        for mutate in (lambda v: v['report'].pop('trace'),
+                       lambda v: v['report']['trace'].update(seed='room-secret'),
+                       lambda v: v['report']['trace'].update(max_frames=True),
+                       lambda v: v['report']['trace']['frames'][0].update(auth_token='secret'),
+                       lambda v: v['report']['trace']['frames'][0]['inputs'][0].update(bytes='0f'),
+                       lambda v: v['report']['trace']['frames'][0].update(state='00' * 136),
+                       lambda v: v['report']['trace'].update(retained_payload_bytes=0),
+                       lambda v: v['report']['trace'].update(frames=[])):
+            changed = copy.deepcopy(value)
+            mutate(changed)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                validate_download(changed, trace_enabled=True)
+                validate_trace_history(changed['report'], states, histories)
+
     def test_valid_download_with_real_callback_brackets(self):
         validate_download(diagnostic_download())
         value = diagnostic_download()
@@ -69,3 +98,12 @@ class DiagnosticDownloadTests(unittest.TestCase):
             mutate(invalid['report']['failure'])
             with self.assertRaises(ValueError):
                 validate_download(invalid)
+
+
+def trace_evidence(states, histories):
+    frames = [{'frame': frame, 'state': state, 'state_available': True, 'checksum': game_checksum(state),
+               'inputs': [{'player': player, 'bytes': bytes([histories[player][frame]]).hex(), 'status': 1} for player in range(2)]}
+              for frame, state in states.items() if frame < 110]
+    return {'schema': 'fortress-canonical-trace-v1', 'seed': '1701', 'application_version': 'fortress-online-integer-v1',
+            'replay_command': '', 'max_frames': 120, 'max_payload_bytes': 18480, 'max_export_bytes': 198752,
+            'retained_payload_bytes': len(frames) * 154, 'first_divergence': {}, 'frames': frames}

@@ -43,8 +43,11 @@ explicit callback failures. Request views have expired. `BUSY` and unconfigured
 calls emit no completion signal; they did not own a step. Recursive `step` and
 `configure` calls on this driver return `BUSY` until all signal handlers return.
 Use the scalar notification for presentation and the returned `StepResult` for
-the owned event list. Peer callers continue to reconcile after `peer.step`
-returns, after peer control processing has finished.
+the owned event list. Peer callers use `peer.step_completed` or reconcile after
+`peer.step` returns; both observe finished peer control processing. Peer signals
+report every configured attempt, including not-ready/error outcomes. Unconfigured
+and recursive BUSY attempts emit nothing. Mutating peer calls remain BUSY inside
+handlers, and publication drains return empty until the outer call returns.
 
 A failed callback terminates the session. GDScript exceptions or malformed
 callback return types are application programming errors; use the typed result
