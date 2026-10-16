@@ -189,6 +189,12 @@ func _mesh_case(name: String, context: RefCounted) -> void:
 		for peer: RefCounted in mesh.peers:
 			if peer.status().reason == Types.Code.DESYNC:
 				context.equal(peer.status().failure_frame, 60, "terminal status localizes actual mismatching boundary")
+				var report: Dictionary = peer.diagnostics()
+				context.equal(report.failure.kind, "desync_detected", "diagnostic survives event drain")
+				context.equal(report.failure.frame, 60, "diagnostic localizes first mismatching snapshot")
+				context.equal(report.failure.local_checksum != report.failure.remote_checksum, true, "JSON report retains both checksum domains")
+				report.failure.local_checksum = "changed"
+				context.equal(peer.diagnostics().failure.local_checksum != "changed", true, "returned failure is owned")
 	else:
 		context.equal(detected.is_empty(), true, "confirmed repaired histories agree")
 		for peer: RefCounted in mesh.peers:
@@ -508,6 +514,17 @@ func _overflow_timeout(context: RefCounted, count: int, local_close: bool = fals
 		event.peer.fill(0)
 	context.equal(mesh.peers[0].network_status().peers.has(fixture._id(1).hex_encode()), true, "drained cause mutation preserves session identity")
 	context.equal(mesh.peers[0].drain_events().size(), 0, "fatal cause drains once without duplicate close events")
+	var report: Dictionary = mesh.peers[0].diagnostics()
+	context.equal(report.failure.kind, "event_capacity_exceeded", "publication overflow survives every event drain")
+	var reported: Array = report.failure.terminal_cause.filter(
+		func(event: Dictionary) -> bool: return event.kind == "disconnected" and event.get("reason") == (7 if local_close else "timeout")
+	)
+	context.equal(reported.size(), count - 1, "diagnostic retains every terminal peer cause")
+	for cause: Dictionary in reported:
+		context.equal(cause.peer_index >= 0 and cause.peer_index < count - 1, true, "failure identifies ordinal without transport UUID")
+	context.equal(JSON.stringify(report).length() < 8192, true, "terminal report stays bounded independently of game history")
+	report.failure.terminal_cause.clear()
+	context.equal(mesh.peers[0].diagnostics().failure.terminal_cause.is_empty(), false, "nested diagnostic arrays are owned")
 
 func _statistics(context: RefCounted) -> void:
 	var fixture: RefCounted = Fixture.new()
@@ -528,6 +545,16 @@ func _statistics(context: RefCounted) -> void:
 			context.equal(mesh.peers[0].receive(packet.bytes, fixture._id(1), mesh.now), I.Code.OK, "receive actual pong")
 	var observed: Dictionary = mesh.peers[0].network_status().peers[fixture._id(1).hex_encode()]
 	context.equal(observed.round_trip_time_ms, 37, "injected integer round-trip statistic")
+	var report: Dictionary = mesh.peers[0].diagnostics()
+	context.equal(report.peers[0].round_trip_time_ms, 37, "safe report exposes measured RTT")
+	context.equal(report.statistics.advanced_frames, 1, "safe report uses the shared engine counters")
+	context.equal(report.peers[0].pending_frames, observed.pending_frames, "safe report exposes real retained backlog")
+	context.equal(report.peers[0].has("remote_connection"), false, "safe report excludes protocol identities")
+	context.equal(report.peers[0].has("handshake"), false, "safe report excludes request tokens")
+	context.equal(report.has("peer_ids"), false, "safe report excludes remote UUIDs")
+	report.peers[0].pending_frames = 999
+	context.equal(mesh.peers[0].diagnostics().peers[0].pending_frames, observed.pending_frames, "report cannot mutate endpoint state")
+	context.equal(JSON.parse_string(JSON.stringify(report)) is Dictionary, true, "report needs no filesystem or object serialization")
 	context.equal(mesh.peers[1].poll(mesh.now), I.Code.OK, "remote quality report observation")
 	var limits: T.Limits = T.Limits.new()
 	limits.input_width = 4

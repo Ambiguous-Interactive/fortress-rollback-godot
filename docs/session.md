@@ -133,3 +133,24 @@ and request kind where applicable. The [ADR](contracts.md) remains the target
 contract for future transport/events and release interfaces. This implementation
 uses `complete_request(..., callback_ok, checksum)` and driver-local callback
 records as the current typed completion boundary.
+
+## Completed work statistics
+
+`session.statistics()` returns a new `FortressSessionTypes.Statistics` value.
+The peer facade exposes the same counters with `peer.statistics()`. Both the
+manual request API and `FortressDriver` update this single engine inventory:
+
+| Field | Meaning |
+| --- | --- |
+| `rollback_count` | Successfully completed LOAD callbacks, including sync-test rewinds. |
+| `resimulated_frames` | Successfully completed ADVANCE callbacks below the current frontier. |
+| `advanced_frames` | Successfully completed ADVANCE callbacks at the current frontier. |
+| `prediction_stalls` | Attempts that finish with PREDICTION_STALL, including repair-only batches. |
+| `last_rollback_depth` | Frontier minus restored frame for the last successful LOAD. |
+| `max_rollback_depth` | Largest successful LOAD depth in this configured session. |
+
+Rejected calls and failed callbacks do not count as successful work. A successful
+restore followed by a later callback failure still counts that completed restore.
+Repeated reads do not drain or reset counters. Returned values cannot change the
+session. A successful fresh `configure` resets every counter; rejected configuration
+does not. Counts saturate at signed 64-bit maximum and stay outside game snapshots.

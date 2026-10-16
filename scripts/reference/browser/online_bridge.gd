@@ -138,6 +138,9 @@ func _command(value: Dictionary) -> void:
 			var button: Button = scene.create_button if value.kind == "create" else scene.join_button
 			if not button.disabled:
 				button.pressed.emit()
+		"diagnostics":
+			if not scene.diagnostics_button.disabled:
+				scene.diagnostics_button.pressed.emit()
 		"ready":
 			if not scene.ready_button.disabled:
 				scene.ready_button.pressed.emit()

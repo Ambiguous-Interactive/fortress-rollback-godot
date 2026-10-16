@@ -1,9 +1,14 @@
 """Export the shipped online scene and validate original local input prefixes."""
 import hashlib
 import json
+from pathlib import Path
 import re
 import shutil
 import struct
+import sys
+import zipfile
+
+from online_diagnostics import validate_download
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
@@ -208,6 +213,7 @@ def validate_stale_callbacks(peer):
         raise ValueError('online example old SDK callbacks mutated the fresh match')
 
 
+
 def validate_result(value, corrupt=False):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
@@ -226,6 +232,15 @@ def validate_result(value, corrupt=False):
             raise ValueError('online example peer departure did not stop simulation with actionable recovery')
     rooms, room_ids, identities, comparisons = [], [], [], []
     for round_index, record in enumerate(rounds):
+        downloads = record.get('diagnostics')
+        if not isinstance(downloads, list) or len(downloads) != 2:
+            raise ValueError('online example missing real diagnostic downloads')
+        for download in downloads:
+            validate_download(download)
+            before, after = download['before'], download['after']
+            if (before.get('state') != 'offline' or after.get('state') != 'offline'
+                    or before['frame'] != after['frame'] or before['restores'] != after['restores']):
+                raise ValueError('online example diagnostic export crossed offline boundary')
         peers = record.get('peers', [])
         if (not isinstance(peers, list) or len(peers) != 2 or any(not isinstance(peer, dict) for peer in peers)
                 or any(type(peer.get('slot')) is not int or type(peer.get('page_index')) is not int for peer in peers)
@@ -334,26 +349,67 @@ def validate_result(value, corrupt=False):
 
 def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
     project, export = root / version, root / ('export-' + version)
-    project.mkdir()
     export.mkdir()
-    for source, destination in [(sources['addon'], 'addons/fortress_rollback'), (sdk / 'addons/signal_fish', 'addons/signal_fish'),
-                                (sources['offline_example'], 'examples/offline'), (sources['online_example'], 'examples/online')]:
-        shutil.copytree(source, project / destination)
-    shutil.copyfile(sources['online_bridge'], project / 'bridge.gd')
-    (project / 'project.godot').write_text('config_version=5\n[application]\nconfig/name="Online example witness"\n'
-        'run/main_scene="res://main.tscn"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
-    (project / 'main.tscn').write_text('[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://bridge.gd" id="1"]\n'
-        '[node name="ExampleWitness" type="Node"]\nscript = ExtResource("1")\n')
-    (project / 'export_presets.cfg').write_text('[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\nexport_filter="all_resources"\n'
-        'include_filter=""\nexclude_filter=""\n[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
-    executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish', 'examples': project / 'examples',
-                'bridge': project / 'bridge.gd', 'project': project / 'project.godot', 'scene': project / 'main.tscn',
-                'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': private_key}
-    frozen = inventory(executed)
+    install_command = [sys.executable, str(sources['online_installer']), '--project', str(project)]
+    run(install_command, environment, output / f'{version}-install.log')
+    installed = {'addon': project / 'addons/fortress_rollback', 'examples': project / 'examples', 'license': project / 'LICENSE',
+                 'project': project / 'project.godot', 'preset': project / 'export_presets.cfg'}
+    installed_inventory = inventory(installed)
+    if (project / '.godot').exists() or (project / 'addons/signal_fish').exists():
+        raise ValueError('clean installation contains development cache or optional SDK')
+    environment = environment.copy()
+    for kind in ('CONFIG', 'CACHE', 'DATA'):
+        location = root / f'{version}-user-{kind.lower()}'
+        location.mkdir()
+        environment['XDG_' + kind + '_HOME'] = str(location)
     command = [str(engine), '--headless', '--path', str(project)]
     actual = run([str(engine), '--version'], environment, output / f'{version}-version.log').strip()
     if not actual.startswith(version + '.stable.'):
         raise ValueError('unexpected online example engine version')
+    run(command + ['--editor', '--quit'], environment, output / f'{version}-no-sdk-import.log')
+    installed_frozen = freeze_after_import(installed, installed_inventory)
+    no_sdk_command = command + ['--script', str(sources['online_install_check'])]
+    no_sdk = run(no_sdk_command, environment, output / f'{version}-no-sdk.log')
+    markers = [line.removeprefix('FORTRESS_CLEAN_INSTALL:') for line in no_sdk.splitlines() if line.startswith('FORTRESS_CLEAN_INSTALL:')]
+    if len(markers) != 1:
+        raise ValueError('clean install did not complete missing-SDK and offline checks')
+    no_sdk = json.loads(markers[0])
+    if (no_sdk.get('offline_frame') != 24 or type(no_sdk.get('offline_frame')) is not int
+            or no_sdk.get('offline_state') != expected_states([[0] * 25, [0] * 25], 25)[24]
+            or not isinstance(no_sdk.get('missing_sdk_message'), str)
+            or 'SignalFish SDK is missing' not in no_sdk['missing_sdk_message']):
+        raise ValueError('clean install local game differs from the independent canonical replay')
+    if inventory(installed) != installed_frozen:
+        raise ValueError('clean install runtime sources changed during missing-SDK checks')
+    sdk_command = install_command + ['--sdk', str(sdk)]
+    run(sdk_command, environment, output / f'{version}-install-sdk.log')
+    # Templates are verified tools, copied into a fresh user directory rather than a cached editor profile.
+    template_target = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')
+    template_target.mkdir(parents=True)
+    with zipfile.ZipFile(sources['templates_' + version]) as package:
+        for member in package.namelist():
+            if Path(member).name.startswith('web_'):
+                (template_target / Path(member).name).write_bytes(package.read(member))
+    documented_export = root / ('documented-export-' + version)
+    documented_export.mkdir()
+    installed['sdk'] = project / 'addons/signal_fish'
+    before_sdk_import = inventory(installed)
+    run(command + ['--editor', '--quit'], environment, output / f'{version}-sdk-import.log')
+    installed_frozen = freeze_after_import(installed, before_sdk_import)
+    documented_command = command + ['--export-release', 'Web', str(documented_export / 'index.html')]
+    run(documented_command, environment, output / f'{version}-documented-export.log')
+    if inventory(installed) != installed_frozen:
+        raise ValueError('documented export changed installed runtime sources')
+    documented_inventory = inventory({'export': documented_export})
+    shutil.copyfile(sources['online_bridge'], project / 'bridge.gd')
+    project_text = (project / 'project.godot').read_text()
+    (project / 'project.godot').write_text(project_text.replace('res://examples/online/online.tscn', 'res://main.tscn'))
+    (project / 'main.tscn').write_text('[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://bridge.gd" id="1"]\n'
+        '[node name="ExampleWitness" type="Node"]\nscript = ExtResource("1")\n')
+    executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish', 'examples': project / 'examples',
+                'bridge': project / 'bridge.gd', 'project': project / 'project.godot', 'scene': project / 'main.tscn',
+                'preset': project / 'export_presets.cfg', 'license': project / 'LICENSE', 'certificate': certificate, 'private_key': private_key}
+    frozen = inventory(executed)
     run(command + ['--editor', '--quit'], environment, output / f'{version}-import.log')
     frozen = freeze_after_import(executed, frozen)
     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, output / f'{version}-export.log')
@@ -376,7 +432,14 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
         result['restore_mutation'] = {'rejected': True, 'reason': str(error), 'teardown': control['teardown'], 'command': control_command}
     else:
         raise ValueError('online example accepted altered restored game state')
-    if inventory(executed) != frozen or inventory({'export': export}) != exported:
+    if (inventory(executed) != frozen or inventory({'export': export}) != exported
+            or inventory({'export': documented_export}) != documented_inventory):
         raise ValueError('online example executed sources changed')
-    return ({'engine': actual, 'command': clean_command, 'result': result},
+    return ({'engine': actual, 'command': clean_command, 'result': result,
+             'clean_install': {'install_command': install_command, 'sdk_command': sdk_command, 'no_sdk_command': no_sdk_command,
+                               'import_commands': [command + ['--editor', '--quit']],
+                               'engine_user_directories': {key: environment[key] for key in ('XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME')},
+                               'no_sdk': no_sdk, 'documented_export_command': documented_command, 'fresh_user_directories': True,
+                               'installed_inventory': installed_inventory, 'documented_inventory': installed_frozen,
+                               'documented_export_inventory': documented_inventory}},
             {'engine': actual, 'source_inventory': frozen, 'export_inventory': exported})

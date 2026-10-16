@@ -53,6 +53,16 @@ class Status:
 	var pending_rollback_frame: int = -1
 
 
+class Statistics:
+	extends RefCounted
+	var rollback_count: int = 0
+	var resimulated_frames: int = 0
+	var advanced_frames: int = 0
+	var prediction_stalls: int = 0
+	var last_rollback_depth: int = 0
+	var max_rollback_depth: int = 0
+
+
 class InputResult:
 	extends RefCounted
 	var frame: int = -1

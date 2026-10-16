@@ -40,6 +40,7 @@ var _next_wait: int = 0
 var _frames_ahead: int = 0
 var _terminal_notified: bool = false
 var _checksum_confirmation: int = -1
+var _diagnostic_failure: Dictionary = {}
 
 
 ## Caller supplies transport identity, clock, tokens and game callbacks.
@@ -220,6 +221,72 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 
 func status() -> Types.Status:
 	return _core.status() if _core != null else Types.Status.new()
+
+
+## Shared expert-engine counters. Returned values belong to the caller.
+func statistics() -> Types.Statistics:
+	return _core.statistics() if _core != null else Types.Statistics.new()
+
+
+## Bounded JSON-compatible observations without transport identities, tokens or game payloads.
+## Reading does not drain publication queues. The terminal cause survives event drains.
+func diagnostics() -> Dictionary:
+	var observed: Types.Status = status()
+	var counts: Types.Statistics = statistics()
+	var peers: Array[Dictionary] = []
+	for index: int in range(_ids.size()):
+		var endpoint: Dictionary = _endpoint(index).status()
+		var row: Dictionary = {"index": index, "state": endpoint.state}
+		for field: String in ["pending_frames", "last_received_frame", "last_acked_frame", "round_trip_time_ms", "average_frame_advantage"]:
+			row[field] = endpoint.get(field, 0)
+		peers.append(row)
+	return {
+		"schema": "fortress-peer-diagnostics-v1",
+		"current_frame": observed.current_frame,
+		"confirmed_frame": observed.confirmed_frame,
+		"lifecycle": observed.lifecycle,
+		"reason": observed.reason,
+		"failure_frame": observed.failure_frame,
+		"pending_rollback_frame": observed.pending_rollback_frame,
+		"frames_ahead": _frames_ahead,
+		"statistics":
+		{
+			"rollback_count": counts.rollback_count,
+			"resimulated_frames": counts.resimulated_frames,
+			"advanced_frames": counts.advanced_frames,
+			"prediction_stalls": counts.prediction_stalls,
+			"last_rollback_depth": counts.last_rollback_depth,
+			"max_rollback_depth": counts.max_rollback_depth
+		},
+		"peers": peers,
+		"failure": _owned_event(_diagnostic_failure)
+	}
+
+
+func _diagnostic_event(event: Dictionary, depth: int = 0) -> Dictionary:
+	var result: Dictionary = {}
+	for field: String in ["kind", "frame"]:
+		if event.has(field):
+			result[field] = event[field]
+	if event.has("reason"):
+		# Agreement reasons contain private negotiated values; retain only the field name.
+		if event.reason is Dictionary:
+			result["field"] = str(event.reason.get("field", "unknown")).left(64)
+		elif event.reason is String:
+			result["reason"] = event.reason.left(64)
+		elif typeof(event.reason) == TYPE_INT:
+			result["reason"] = event.reason
+	if event.has("peer"):
+		result["peer_index"] = _ids.find(event.peer)
+	for field: String in ["local_checksum", "remote_checksum"]:
+		if event.has(field):
+			result[field] = event[field].hex_encode()
+	if depth < 2 and event.has("terminal_cause"):
+		var causes: Array[Dictionary] = []
+		for cause: Dictionary in event.terminal_cause:
+			causes.append(_diagnostic_event(cause, depth + 1))
+		result["terminal_cause"] = causes
+	return result
 
 
 func peer_ids() -> Array[PackedByteArray]:
@@ -444,6 +511,8 @@ func _check_failure() -> void:
 		var observed: Dictionary = _peers[key].status()
 		if observed.state in ["terminated", "failed"] or not observed.handshake.mismatch.is_empty():
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		_remember_diagnostic()
 
 
 func _step_failure(code: int) -> int:
@@ -582,7 +651,19 @@ func _owned_value(value: Variant) -> Variant:
 	return value
 
 
+func _remember_diagnostic() -> void:
+	if _diagnostic_failure.is_empty():
+		if not _fatal_event.is_empty():
+			_diagnostic_failure = _diagnostic_event(_fatal_event)
+		else:
+			for index: int in range(_events.size() - 1, -1, -1):
+				if _events[index].kind in ["disconnected", "incompatible", "sync_timeout", "input_failed"]:
+					_diagnostic_failure = _diagnostic_event(_events[index])
+					break
+
+
 func _terminate_links() -> void:
+	_remember_diagnostic()
 	if _terminal_notified or not _lifecycle.enabled or _now < 0:
 		return
 	_terminal_notified = true

@@ -1,7 +1,7 @@
 // Value: runs the shipped online scene; real keyboard, SDK sockets, recovery and new-room lifecycle.
 const fs = require('node:fs');
 const https = require('node:https');
-const net = require('node:net');
+const { createHost } = require('./online_host.cjs');
 const path = require('node:path');
 const { instrument } = require('./webrtc.cjs');
 
@@ -96,6 +96,37 @@ async function pauseElapsed(milliseconds, now = () => process.hrtime.bigint(), s
   return Number(elapsed / 1000n);
 }
 
+async function collectDiagnostics(pages, command) {
+  const diagnostics = [];
+  for (const page of pages) {
+    const before = await page.evaluate(() => ({ state: window.fortressOnline.state, restores: window.fortressOnline.restores, frame: window.fortressOnline.frame }));
+    if (before.state !== 'offline') throw new Error('diagnostic export requires a stopped offline match');
+    await page.evaluate(() => {
+      window.fortressStorageCalls = 0;
+      window.fortressStorageOriginals = [Storage.prototype.setItem, IDBFactory.prototype.open];
+      const unavailable = () => { window.fortressStorageCalls++; throw new Error('storage unavailable'); };
+      Storage.prototype.setItem = unavailable;
+      IDBFactory.prototype.open = unavailable;
+    });
+    try {
+      const pending = page.waitForEvent('download', { timeout: 10000 });
+      await command(page, 'diagnostics');
+      const download = await pending;
+      const report = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+      const after = await page.evaluate(() => ({ state: window.fortressOnline.state, restores: window.fortressOnline.restores, frame: window.fortressOnline.frame,
+        storage_calls: window.fortressStorageCalls }));
+      if (after.state !== 'offline' || after.frame !== before.frame || after.restores !== before.restores)
+        throw new Error('diagnostic export advanced or resumed an offline match');
+      diagnostics.push({ before, after, filename: download.suggestedFilename(), report });
+    } finally {
+      await page.evaluate(() => {
+        [Storage.prototype.setItem, IDBFactory.prototype.open] = window.fortressStorageOriginals;
+      });
+    }
+  }
+  return diagnostics;
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -104,37 +135,7 @@ async function main() {
   const diagnostic = process.argv[5];
   const errors = [];
   const logs = [];
-  const server = https.createServer({ cert: fs.readFileSync(process.env.FORTRESS_TLS_CERT),
-    key: fs.readFileSync(process.env.FORTRESS_TLS_KEY) }, (request, response) => {
-    const filename = path.resolve(root, '.' + decodeURIComponent(new URL(request.url, 'http://localhost').pathname));
-    if (!filename.startsWith(root + path.sep)) { response.writeHead(403); response.end(); return; }
-    response.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    response.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-    response.setHeader('Content-Type', { '.wasm': 'application/wasm', '.js': 'application/javascript', '.html': 'text/html' }[path.extname(filename)]
-      || 'application/octet-stream');
-    fs.readFile(filename, (error, bytes) => { response.writeHead(error ? 404 : 200); response.end(error ? '' : bytes); });
-  });
-  const proxyPairs = new Set();
-  let refuseUpgrades = false, refusedUpgrades = 0;
-  server.on('upgrade', (request, socket, head) => {
-    if (refuseUpgrades) { refusedUpgrades++; socket.destroy(); return; }
-    const backend = new URL(endpoint);
-    const upstream = net.connect(Number(backend.port), '127.0.0.1', () => {
-      let headers = `${request.method} ${backend.pathname} HTTP/${request.httpVersion}\r\n`;
-      for (let index = 0; index < request.rawHeaders.length; index += 2)
-        headers += `${request.rawHeaders[index]}: ${request.rawHeaders[index + 1]}\r\n`;
-      upstream.write(headers + '\r\n');
-      if (head.length) upstream.write(head);
-      upstream.pipe(socket); socket.pipe(upstream);
-    });
-    const pair = { socket, upstream };
-    proxyPairs.add(pair);
-    upstream.on('close', () => { socket.destroy(); proxyPairs.delete(pair); });
-    upstream.on('error', () => socket.destroy());
-    socket.on('error', () => upstream.destroy());
-    socket.on('close', () => upstream.destroy());
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { server, proxyPairs, proxy } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const browsers = [], pages = [], sessions = [], rounds = [];
   let nextCommand = 0;
   const command = async (page, kind, values = {}) => {
@@ -221,7 +222,7 @@ async function main() {
       if (round === 0 && !corrupt) await pages[0].screenshot({ path: diagnostic.replace('-events.log', '.png') });
       const peers = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({ ...window.fortressOnline, page_index: pageIndex,
         rtc: { ...window.fortressRtc, channels: window.fortressRtc.channels.slice(-3) }, delayed: window.fortressOnlineDelayed }), index)));
-      rounds.push({ room, peers });
+      rounds.push({ room, peers, diagnostics: [] });
       if (round === 4 && !corrupt) {
         rounds[round].stale_sent = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleSent)));
         rounds[round].stale_received = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleReceived)));
@@ -255,8 +256,8 @@ async function main() {
           if (pairs.length !== 2) throw new Error('socket loss requires both live signaling proxy pairs');
           const openSockets = await Promise.all(pages.map(page => page.evaluate(() =>
             window.fortressResources.websockets.filter(socket => socket.readyState === WebSocket.OPEN).length)));
-          refuseUpgrades = true;
-          const refusedBefore = refusedUpgrades;
+          proxy.refuseUpgrades = true;
+          const refusedBefore = proxy.refusedUpgrades;
           for (const pair of pairs) { pair.socket.destroy(); pair.upstream.destroy(); }
           await new Promise((resolve, reject) => {
             const probe = https.request({ host: '127.0.0.1', port: server.address().port, path: '/v3/ws', rejectUnauthorized: false,
@@ -275,7 +276,7 @@ async function main() {
           const before = await Promise.all(pages.map(page => page.evaluate(() => ({
             frame: window.fortressOnline.frame, session_id: window.fortressOnline.session_id }))));
           const heldElapsed = await pauseElapsed(750);
-          refuseUpgrades = false;
+          proxy.refuseUpgrades = false;
           const reopenedElapsed = await pauseElapsed(250);
           const terminal = await Promise.all(pages.map((page, index) => page.evaluate(value => ({
             state: window.fortressOnline.state, message: window.fortressOnline.message,
@@ -286,7 +287,7 @@ async function main() {
           rounds[round].socket_loss = { kind: 'signaling-websocket-socket-loss', method: 'tls-proxy-destroy-both-pairs',
             proxy_pairs_before: pairs.length, destroyed_pairs: pairs.filter(pair => pair.socket.destroyed && pair.upstream.destroyed).length,
             proxy_pairs_after: proxyPairs.size, open_websockets_before: openSockets, upgrades_refused: true,
-            refused_upgrade_attempts: refusedUpgrades - refusedBefore, held_elapsed_us: heldElapsed, reopened_elapsed_us: reopenedElapsed,
+            refused_upgrade_attempts: proxy.refusedUpgrades - refusedBefore, held_elapsed_us: heldElapsed, reopened_elapsed_us: reopenedElapsed,
             reopened: true, before_user_leave: true, terminal, resources: closed };
         }
         if (!corrupt && round === 3) {
@@ -339,6 +340,7 @@ async function main() {
         && window.fortressResources.connections.every(connection => connection.connectionState === 'closed' && connection.iceConnectionState === 'closed')
         && window.fortressResources.websockets.every(socket => socket.readyState === WebSocket.CLOSED))));
       rounds[round].teardown = await Promise.all(pages.map(page => page.evaluate(resourceCounts)));
+      rounds[round].diagnostics = await collectDiagnostics(pages, command);
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, errors, teardown: true }));
@@ -352,5 +354,5 @@ async function main() {
     await new Promise(resolve => server.close(resolve));
   }
 }
-module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit };
+module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

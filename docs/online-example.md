@@ -16,33 +16,110 @@ rollback session when an established direct link falls back to relay.
 
 ## Install and run
 
-1. Obtain the pinned SDK revision
-   `db7d30f228d8d564adcb2eb38d5983bf6b9877ac` from
-   [signal-fish-client-godot](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/db7d30f228d8d564adcb2eb38d5983bf6b9877ac).
-   Copy its `addons/signal_fish` directory into your project's `addons/`.
-   Preserve its license. The example loads SDK scripts at runtime and does not
-   require its editor plugin or autoload.
-2. Run a SignalFish v3 server with an application entry whose ID is
-   `fortress-live-webrtc`. Configure mesh/WebRTC and MessagePack binary relay.
-   The [WebRTC guide](signalfish-webrtc.md) documents the pinned local server
-   build and browser prerequisites. Configure ICE servers for your deployment;
-   loopback tests do not prove connectivity across public networks.
-3. Select this scene as the main scene for a Web export. Use the compatibility renderer and
-   a Web export without threads. Serve the export over HTTP on localhost for
-   local development, or HTTPS for hosting. The SDK requires a `wss://` endpoint
-   whenever the browser reports a secure context, including localhost HTTP
-   in Chromium. A typical server route is `/v3/ws`. Configure WSS locally
-   when testing the exported browser scene. The verified gameplay path uses
-   exported browsers; native editor networking needs separately installed WebRTC support.
-4. In the first browser, enter the WebSocket endpoint and player name, then
+Start from this checkout, with Python 3 and a Godot **4.3** or **4.7.2** executable.
+Install that editor's matching standard export templates using **Editor > Manage Export Templates**.
+Set `GODOT` to its absolute executable path. Repeat the flow with each editor when checking both pins.
+The following commands use a new project and a separate tools directory:
+
+```sh
+GODOT=/absolute/path/to/godot
+EXAMPLE_DIR=$(mktemp -d)
+TOOLS_DIR=$(mktemp -d)
+python3 scripts/reference/online_install.py --project "$EXAMPLE_DIR"
+"$GODOT" --headless --path "$EXAMPLE_DIR" --editor --quit
+"$GODOT" --path "$EXAMPLE_DIR"
+```
+
+The installer copies only the runtime addon, online/offline scenes and their dependencies,
+licenses, a minimal project, and a Web export preset. It does not copy this checkout's
+`.godot`, `.cache`, tests, server, compiler, scripts or native extensions. The project uses
+60 physics ticks per second, the Compatibility renderer and a Web export without threads.
+No plugin or autoload needs activation.
+
+Before installing the SDK, press **Create room**. The scene must explain that SignalFish
+is missing and name this guide. The [offline scene](offline-example.md) still runs:
+
+```sh
+"$GODOT" --path "$EXAMPLE_DIR" res://examples/offline/offline.tscn
+```
+
+Close the editor/game before adding files. Download and verify the optional SDK,
+then install only its addon directory, including its license:
+
+```sh
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/db7d30f228d8d564adcb2eb38d5983bf6b9877ac -o "$TOOLS_DIR/sdk.tar.gz"
+echo "0854f8c778a118defe95bd8887e227c8bc8c194c54d2e501c6d74094fa43ec12  $TOOLS_DIR/sdk.tar.gz" | sha256sum -c -
+tar -xzf "$TOOLS_DIR/sdk.tar.gz" -C "$TOOLS_DIR"
+python3 scripts/reference/online_install.py --project "$EXAMPLE_DIR" \
+  --sdk "$TOOLS_DIR/signal-fish-client-godot-db7d30f228d8d564adcb2eb38d5983bf6b9877ac"
+"$GODOT" --headless --path "$EXAMPLE_DIR" --editor --quit
+```
+
+The pinned SDK needs no editor plugin or autoload. Use an existing compatible SignalFish
+v3 deployment, or build the pinned local server below. Rust is needed only to build that
+separate server; the installed Godot project needs neither Rust nor native WebRTC extensions.
+Local browser ICE uses no STUN/TURN server and proves no public-network connectivity.
+
+```sh
+curl -fL https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/9c2fb8fa635a69241b8ccf38be651d561fef7434 -o "$TOOLS_DIR/server.tar.gz"
+echo "1c618785dd93e1a69f27687f1f8f75fbfb15e49f3a3a0f130aa3ee17af40a076  $TOOLS_DIR/server.tar.gz" | sha256sum -c -
+tar -xzf "$TOOLS_DIR/server.tar.gz" -C "$TOOLS_DIR"
+SERVER_SOURCE="$TOOLS_DIR/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434"
+rustup toolchain install 1.94.0 --profile minimal
+cargo +1.94.0 build --manifest-path "$SERVER_SOURCE/Cargo.toml" --locked --no-default-features \
+  --bin signal-fish-server --target-dir "$TOOLS_DIR/server-target"
+python3 scripts/reference/online_install.py --server-source "$SERVER_SOURCE" --port 8080 > "$TOOLS_DIR/server.json"
+SIGNAL_FISH_CONFIG_JSON="$(cat "$TOOLS_DIR/server.json")" "$TOOLS_DIR/server-target/debug/signal-fish-server"
+```
+
+Keep that server running in its terminal. The generated configuration sets the application's
+ID to `fortress-live-webrtc`, selects mesh/WebRTC, allows binary relay and removes external
+ICE servers. The scene requests MessagePack binary game data. If the build needs system
+packages, see the [server prerequisites](reference/README.md#setup-and-reproduction).
+
+In another terminal with the same `GODOT`, `EXAMPLE_DIR` and `TOOLS_DIR` values,
+export the production scene and generate a local development certificate:
+
+```sh
+EXPORT_DIR="$TOOLS_DIR/web"
+mkdir -p "$EXPORT_DIR"
+"$GODOT" --headless --path "$EXAMPLE_DIR" --export-release Web "$EXPORT_DIR/index.html"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost \
+  -addext subjectAltName=IP:127.0.0.1 -keyout "$TOOLS_DIR/localhost.key" -out "$TOOLS_DIR/localhost.crt"
+node scripts/reference/browser/online_host.cjs "$EXPORT_DIR" ws://127.0.0.1:8080/v3/ws \
+  "$TOOLS_DIR/localhost.crt" "$TOOLS_DIR/localhost.key" 8443
+```
+
+The development host needs Node.js, but has no npm dependencies. It serves the correct
+WebAssembly MIME type and proxies WSS to the separate loopback server. Open
+`https://127.0.0.1:8443/index.html` in two Chromium windows. Accept your own generated
+local certificate in each browser profile. Use `wss://127.0.0.1:8443/v3/ws` in both clients.
+A secure page, including Chromium's localhost secure context, requires WSS.
+For public hosting, replace this loopback helper with trusted HTTPS/WSS hosting and
+configure ICE/STUN/TURN for your deployment. Native editor networking needs a separately
+installed WebRTC implementation.
+
+1. In the first browser, enter the WebSocket endpoint and player name, then
    press **Create room**. Copy the displayed room code.
-5. In the second browser, enter the same endpoint, a player name and that code,
+2. In the second browser, enter the same endpoint, a player name and that code,
    then press **Join room**. The room is limited to two players.
-6. Both players press **Ready**. The creator presses **Start** once both are
+3. Both players press **Ready**. The creator presses **Start** once both are
    ready. Network synchronization must complete before movement advances.
    Click outside text fields if a field still has keyboard focus.
-7. Move with WASD or the arrow keys. The display reports your player number,
+4. Move with WASD or the arrow keys. The display reports your player number,
    frame, confirmed frame, stalls, latest event and active relay links.
+
+## Diagnostics
+
+The display shows completed rollback count, maximum restore depth, replayed frames and
+active relay links. Press **Diagnostics** to download `fortress-diagnostics.json` in a browser
+or copy JSON to the clipboard natively. Download before leaving a failed match.
+
+The report includes frame/confirmation, completed-work counters, per-link backlog/RTT,
+engine version and retained terminal causes. It excludes names, room/player/connection IDs,
+SDK configuration, tokens, game state and input payloads. It uses no browser storage.
+A checksum mismatch includes both checksum hex strings and the first mismatching frame;
+[bounded replay traces remain separate work](peer-lifecycle.md#downloadable-observations).
 
 ## Leave and restart
 
@@ -89,6 +166,38 @@ An expired game stops before buffered packets can refresh liveness. Leave and
 create a fresh room; returning to the tab cannot resurrect old history.
 
 ## Verification
+
+The existing browser launcher now starts with the same `online_install.py` command above.
+It uses a new project and empty engine configuration, cache and data directories for each
+engine. Before installing the SDK, it checks the actual missing-SDK status label and runs
+24 offline frames against an independent canonical replay. It then installs the optional
+SDK, imports and exports the unmodified production scene using the documented preset.
+Only afterward does it add a development observer for the five-room browser flow below.
+The observer records original submitted inputs and corrected state; it does not replace
+simulation or transport implementation. The fixture uses the same HTTPS/WSS host as the
+manual commands. Its owned server uses the same generated configuration with higher
+traffic ceilings for repeated fault scenarios.
+
+Run the regression after the [source-bound server build](signalfish-relay.md#reproduce-native-server-delivery):
+
+```sh
+python3 scripts/reference/signalfish_webrtc_probe.py --online-example \
+  --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+  --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+  --output .cache/reference/results/online-example
+```
+
+Both pinned engines run by default. Receipts record the exact install/export commands,
+engine versions, source/tool hashes, clean installation inventories, offline canonical
+state, browser input/rollback evidence and rendered `VERSION-online.png` screenshots.
+CI runs the same command for Godot **4.3** and **4.7.2** with pinned Playwright **1.56.1**
+and Chromium **141.0.7390.37** on Linux. Firefox, WebKit, mixed browsers, native WebRTC,
+public hosting and WAN/NAT/TURN remain unverified release gates under
+[browser coverage #39](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
+The harness can reuse verified tool archives; none of that development cache enters the
+installed project or its fresh engine user directories.
+
 
 `tests/unit/test_online_example.gd` covers optional SDK scene loading, room
 identity validation, real two-peer protocol startup over SDK transport doubles,

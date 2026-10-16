@@ -375,6 +375,11 @@ func _long_runtime(context: RefCounted) -> void:
 
 
 func _request_mismatch(context: RefCounted) -> void:
+	for field: String in ["fps", "roster", "neutral_input"]:
+		_request_mismatch_field(context, field)
+
+
+func _request_mismatch_field(context: RefCounted, field: String) -> void:
 	var mesh: Dictionary = _build(context, 2, 0, false, 128, false)
 	var tokens: Array[PackedByteArray] = [_id(1, 16)]
 	context.equal(mesh.peers[0].begin(0, tokens), I.Code.OK, "begin before incompatible request")
@@ -387,13 +392,29 @@ func _request_mismatch(context: RefCounted) -> void:
 	message.config.input_width = 4
 	message.config.neutral_input = PackedByteArray([0, 0, 0, 0])
 	message.config.roster = [_id(0), _id(1)]
-	message.config.fps = 61
+	match field:
+		"fps":
+			message.config.fps = 61
+		"roster":
+			message.config.roster = [_id(1), _id(0)]
+		"neutral_input":
+			message.config.neutral_input = PackedByteArray([1, 1, 1, 1])
 	var limits: T.Limits = T.Limits.new()
 	limits.input_width = 4
 	var packet: T.Result = Codec.encode(message, limits)
 	context.equal(packet.code, T.Code.OK, "encode semantically incompatible but valid request")
 	context.equal(mesh.peers[0].receive(packet.bytes, _id(1), 1), I.Code.OK, "endpoint records request mismatch")
 	context.equal(mesh.peers[0].network_status().state, "terminated", "request mismatch terminates gameplay facade")
+	var report: Dictionary = mesh.peers[0].diagnostics()
+	context.equal(report.failure.get("kind"), "incompatible", "terminal cause captured before an event drain")
+	context.equal(report.failure.get("field"), field, "incompatible field without either negotiated value")
+	mesh.peers[0].drain_events()
+	report = mesh.peers[0].diagnostics()
+	context.equal(report.failure.has("reason"), false, "incompatible report excludes raw negotiation payload")
+	context.equal(report.failure.get("field"), field, "field survives normal event drains")
+	report.failure["field"] = "changed"
+	context.equal(mesh.peers[0].diagnostics().failure.get("field"), field, "returned mismatch cannot change retained evidence")
+	context.equal(JSON.stringify(mesh.peers[0].diagnostics()).length() < 8192, true, "mismatch report stays bounded")
 	context.equal(mesh.peers[0].status().reason, Types.Code.PROTOCOL_FAILED, "mismatch reports protocol failure")
 	context.equal(mesh.peers[0].step(1, _inputs(mesh, 0)).code, Types.Code.TERMINATED, "failed handshake cannot advance game")
 

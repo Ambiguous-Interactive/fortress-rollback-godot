@@ -5,7 +5,54 @@ const { instrument } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const { pauseElapsed, registerOnlineInit } = require('./online.cjs');
+const { pauseElapsed, registerOnlineInit, collectDiagnostics } = require('./online.cjs');
+
+// Value: download latency cannot extend gameplay; the real collector accepts only retained offline matches and restores storage methods on failure.
+test('diagnostic downloads require an offline match that stays frozen throughout completion', async () => {
+  const temporary = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'fortress-download-'));
+  const filename = path.join(temporary, 'report.json');
+  fs.writeFileSync(filename, '{"observed":true}');
+  try {
+    for (const mutation of ['none', 'live-before', 'frame', 'restores', 'state']) {
+      const storage = () => {};
+      const context = vm.createContext({ window: { fortressOnline: {
+        state: mutation === 'live-before' ? 'playing' : 'offline', frame: 110, restores: 2,
+      } }, Storage: class {}, IDBFactory: class {} });
+      context.Storage.prototype.setItem = storage;
+      context.IDBFactory.prototype.open = storage;
+      let commands = 0, downloads = 0;
+      const page = {
+        async evaluate(operation) { return vm.runInContext(`(${operation.toString()})()`, context); },
+        waitForEvent(kind) {
+          assert.equal(kind, 'download');
+          downloads++;
+          return Promise.resolve({ suggestedFilename: () => 'fortress-diagnostics.json', async path() {
+            await Promise.resolve();
+            if (mutation === 'frame') context.window.fortressOnline.frame++;
+            if (mutation === 'restores') context.window.fortressOnline.restores++;
+            if (mutation === 'state') context.window.fortressOnline.state = 'playing';
+            return filename;
+          } });
+        },
+      };
+      const result = collectDiagnostics([page], async (_page, kind) => { assert.equal(kind, 'diagnostics'); commands++; });
+      if (mutation === 'none') {
+        const reports = await result;
+        assert.equal(reports.length, 1);
+        assert.equal(reports[0].report.observed, true);
+        assert.equal(reports[0].before.frame, reports[0].after.frame);
+      } else {
+        await assert.rejects(result, /diagnostic export (?:requires|advanced or resumed)/);
+      }
+      assert.equal(commands, mutation === 'live-before' ? 0 : 1);
+      assert.equal(downloads, commands);
+      assert.equal(context.Storage.prototype.setItem, storage);
+      assert.equal(context.IDBFactory.prototype.open, storage);
+    }
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
 
 // Value: suspension duration follows the monotonic clock even when a timer callback runs early.
 test('actual suspension wait cannot finish early after timer truncation', async () => {

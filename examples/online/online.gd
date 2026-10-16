@@ -12,6 +12,7 @@ var join_button: Button
 var ready_button: Button
 var start_button: Button
 var leave_button: Button
+var diagnostics_button: Button
 var _status: Label
 
 
@@ -33,6 +34,7 @@ func _ready() -> void:
 	ready_button = _button(buttons, "Ready", _ready_player)
 	start_button = _button(buttons, "Start", _start_game)
 	leave_button = _button(buttons, "Leave / new room", _leave)
+	diagnostics_button = _button(buttons, "Diagnostics", _export_diagnostics)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -43,8 +45,12 @@ func _physics_process(_delta: float) -> void:
 	var focused: Control = get_viewport().gui_get_focus_owner()
 	var buttons: int = 0
 	if not focused is LineEdit:
-		buttons = (_pressed(KEY_A, KEY_LEFT) * Simulation.LEFT + _pressed(KEY_D, KEY_RIGHT) * Simulation.RIGHT
-			+ _pressed(KEY_W, KEY_UP) * Simulation.UP + _pressed(KEY_S, KEY_DOWN) * Simulation.DOWN)
+		buttons = (
+			_pressed(KEY_A, KEY_LEFT) * Simulation.LEFT
+			+ _pressed(KEY_D, KEY_RIGHT) * Simulation.RIGHT
+			+ _pressed(KEY_W, KEY_UP) * Simulation.UP
+			+ _pressed(KEY_S, KEY_DOWN) * Simulation.DOWN
+		)
 	controller.tick(Time.get_ticks_usec(), buttons)
 	_update_status()
 	queue_redraw()
@@ -116,6 +122,7 @@ func _update_status() -> void:
 	create_button.disabled = connected
 	join_button.disabled = connected
 	leave_button.disabled = not connected
+	diagnostics_button.disabled = controller.game_match.local_slot < 0
 	endpoint.editable = not connected
 	player_name.editable = not connected
 	room_code.editable = not connected
@@ -128,9 +135,32 @@ func _update_status() -> void:
 	var game: Lobby.Match = controller.game_match
 	if game.local_slot >= 0:
 		var state: Lobby.Match.Types.Status = game.peer.status()
-		_status.text += "\nYou: player %d | frame %d | confirmed %d | stalls %d | event %s" % [
-			game.local_slot + 1, state.current_frame, state.confirmed_frame, game.stalls, game.latest_event]
-		_status.text += "\nRelay links: %d | protocol: %s" % [game.fallback.status().relay_peers.size(), game.peer.network_status().state]
+		_status.text += (
+			"\nYou: player %d | frame %d | confirmed %d | stalls %d | event %s" % [game.local_slot + 1, state.current_frame, state.confirmed_frame, game.stalls, game.latest_event]
+		)
+		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
+		_status.text += (
+			"\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d"
+			% [counts.rollback_count, counts.max_rollback_depth, counts.resimulated_frames, game.fallback.status().relay_peers.size()]
+		)
+
+
+## Export only selected observations; no SDK configuration, room/player IDs or game inputs.
+func diagnostic_report() -> Dictionary:
+	var game: Lobby.Match = controller.game_match
+	var report: Dictionary = game.peer.diagnostics()
+	report["engine"] = Engine.get_version_info().string
+	var transport: Dictionary = game.fallback.status()
+	report["transport"] = {"relay_links": transport.relay_peers.size(), "pending_packets": transport.pending_packets, "pending_bytes": transport.pending_bytes}
+	return report
+
+
+func _export_diagnostics() -> void:
+	var text: String = JSON.stringify(diagnostic_report(), "\t")
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(text.to_utf8_buffer(), "fortress-diagnostics.json", "application/json")
+	else:
+		DisplayServer.clipboard_set(text)
 
 
 func _draw() -> void:

@@ -11,6 +11,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import zipfile
 
@@ -382,9 +383,16 @@ def main():
     if args.online_example:
         sources.update(online_example=ROOT / 'examples/online', offline_example=ROOT / 'examples/offline',
                        online_launcher=ROOT / 'scripts/reference/online_example_probe.py',
+                       online_diagnostics=ROOT / 'scripts/reference/online_diagnostics.py',
+                       online_installer=ROOT / 'scripts/reference/online_install.py',
+                       python=Path(sys.executable).resolve(),
+                       online_install_check=ROOT / 'scripts/reference/browser/online_install_check.gd',
+                       online_host=ROOT / 'scripts/reference/browser/online_host.cjs', license=ROOT / 'LICENSE',
+                       online_guide=ROOT / 'docs/online-example.md', integration_guide=ROOT / 'docs/integration.md',
                        online_browser=ROOT / 'scripts/reference/browser/online.cjs',
                        online_bridge=ROOT / 'scripts/reference/browser/online_bridge.gd')
-        online_labels = ('online', 'online-corrupt', 'online-events', 'online-corrupt-events')
+        online_labels = ('online', 'online-corrupt', 'online-events', 'online-corrupt-events', 'install', 'no-sdk-import',
+                         'no-sdk', 'install-sdk', 'sdk-import', 'documented-export')
         owned_logs.extend(f'{version}-{label}.log' for version in versions for label in online_labels)
         owned_logs.extend(f'{version}-online.png' for version in versions)
         for version in versions:
@@ -462,11 +470,15 @@ def main():
         with socket.socket() as selection:
             selection.bind(('127.0.0.1', 0))
             port = selection.getsockname()[1]
+        if args.online_example:
+            from online_install import server_config
+            config = server_config(server_source, port)
         config['port'] = port
         config['session'].update(default_topology='mesh', enable_webrtc=True, enable_direct=False, enable_ice_pregather=False, ice_servers=[])
         config['turn'].update(enabled=False, urls=[], stun_urls=[])
-        config['security']['allowed_apps'][0].update(app_id='fortress-live-webrtc', app_name='Local WebRTC rollback witness',
-                                                    max_players_per_room=8, rate_limit_per_minute=100000)
+        if not args.online_example:
+            config['security']['allowed_apps'][0].update(app_id='fortress-live-webrtc', app_name='Local WebRTC rollback witness',
+                                                        max_players_per_room=8, rate_limit_per_minute=100000)
         for key in config['rate_limit']:
             if key.startswith('max_'):
                 config['rate_limit'][key] = max(config['rate_limit'][key], 1000000)
@@ -550,7 +562,9 @@ def main():
                         'Disabled fallback fails the gameplay watchdog. Send drops/delays and pressure are synthetic; no WAN/NAT/TURN, '
                         'native WebRTC, other browsers, channel replacement, ICE recovery, relay congestion or reconnect/replan claim.'}
     if args.online_example:
-        report['limits'] = ('Actual shipped online scene in two independent Chromium processes on each selected pinned engine; '
+        report['limits'] = ('Clean runtime installation without repository cache, fresh engine user directories, missing-SDK guidance '
+                            'and offline canonical replay, then optional SDK installation and the documented production-scene export. '
+                            'The observation wrapper runs the shipped online scene in two independent Chromium processes on each selected pinned engine; '
                             'physical keyboard movement, sender-owned original input histories, corrected canonical prefixes, '
                             'actual rollback, suspension/expiry and pre-Leave RTC/WebSocket closure. Both signaling socket pairs '
                             'are cut during gameplay. The owned server then exits with SIGKILL and restarts on the same endpoint; '
