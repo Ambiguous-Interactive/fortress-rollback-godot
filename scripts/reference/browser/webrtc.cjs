@@ -4,6 +4,8 @@ const https = require('node:https');
 const net = require('node:net');
 const path = require('node:path');
 const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchdog.cjs');
+const { placeFirefox } = require('./webrtc_display.cjs');
+const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false };
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose = false }) {
   window.fortressEndpoint = endpoint;
@@ -21,6 +23,23 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   evidence.binarySent = 0;
   evidence.maximumRelayBuffered = 0;
   evidence.captureError = false;
+  window.fortressScheduling = { frames: 0, first: performance.now(), last: null };
+  if (typeof requestAnimationFrame === 'function') {
+    const frame = now => { window.fortressScheduling.frames++; window.fortressScheduling.last = now; requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
+  }
+  window.fortressSockets = [];
+  const nativeSocket = WebSocket;
+  window.WebSocket = new Proxy(nativeSocket, { construct(target, args, newTarget) {
+    const socket = Reflect.construct(target, args, newTarget);
+    const record = { socket, received: 0, opened: false, failed: false, close_code: null };
+    window.fortressSockets.push(record);
+    socket.addEventListener('message', () => { record.received++; });
+    socket.addEventListener('open', () => { record.opened = true; });
+    socket.addEventListener('error', () => { record.failed = true; });
+    socket.addEventListener('close', event => { record.close_code = event.code; });
+    return socket;
+  } });
   const websocketSend = WebSocket.prototype.send;
   WebSocket.prototype.send = function(bytes) {
     if (typeof bytes !== 'string') evidence.binarySent++;
@@ -138,6 +157,9 @@ async function captureFailure(pages, players) {
         const evidence = window.fortressRtc;
         const resources = window.fortressResources;
         return { index: limit.index, captured_ms: performance.now(), frame: document.body.dataset.fortressFrame,
+          scheduling: { ...window.fortressScheduling, hidden: document.hidden, focused: document.hasFocus?.() },
+          sockets: (window.fortressSockets || []).slice(0, 4).map(record => ({ opened: record.opened, failed: record.failed,
+            close_code: record.close_code, received: record.received, state: record.socket.readyState, buffered: record.socket.bufferedAmount })),
           rtc: { sent: evidence.sent, received: evidence.received, dropped: evidence.dropped, reordered: evidence.reordered,
             pending: evidence.pending, active: evidence.active,
             channels: resources.channels.slice(0, 3 * (limit.players - 1)).map((channel, slot) => ({
@@ -148,6 +170,8 @@ async function captureFailure(pages, players) {
             })),
             connections: resources.connections.slice(0, 2 * (limit.players - 1)).map(connection => ({
               state: connection.connectionState, ice: connection.iceConnectionState, signaling: connection.signalingState,
+              local_candidates: (connection.localDescription?.sdp || '').split('\r\n').filter(row => row.startsWith('a=candidate:')).slice(0, 16),
+              remote_candidates: (connection.remoteDescription?.sdp || '').split('\r\n').filter(row => row.startsWith('a=candidate:')).slice(0, 16),
             })),
           } };
       }, { index, players }), new Promise(resolve => {
@@ -160,7 +184,10 @@ async function captureFailure(pages, players) {
 }
 
 async function main() {
-  const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+  const engines = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+  const browserPair = JSON.parse(process.env.FORTRESS_BROWSER_PAIR || '["chromium","chromium"]');
+  if (!Array.isArray(browserPair) || browserPair.length !== 2 || browserPair.some(name => !['chromium', 'firefox'].includes(name)))
+    throw new Error('invalid browser pair');
   const root = path.resolve(process.argv[2]);
   const endpoint = process.argv[3];
   const faults = process.argv[4] === 'faults';
@@ -203,13 +230,16 @@ async function main() {
   const records = [];
   const failed_rooms = [];
   try {
-    for (let index = 0; index < 2; index++) browsers.push(await chromium.launch({
+    for (const name of browserPair) browsers.push(await engines[name].launch(name === 'chromium' ? {
       headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-background-timer-throttling', '--ignore-certificate-errors'],
+    } : { headless: false, timeout: 30000, executablePath: process.env.FORTRESS_FIREFOX_EXECUTABLE,
+      firefoxUserPrefs: FIREFOX_PREFS,
     }));
     for (const count of ((corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {
       const contexts = [];
       const pages = [];
+      const displays = [];
       try {
         await boundedRoom(async () => {
         await boundedRoom(async () => {
@@ -218,6 +248,7 @@ async function main() {
           contexts.push(context);
           const page = await context.newPage();
           pages.push(page);
+          displays.push(browserPair[index % 2] === 'firefox' ? await placeFirefox(page, index) : null);
           page.on('pageerror', error => errors.push({ count, index, error: error.message }));
           page.on('console', message => {
             const entry = { count, index, type: message.type(), text: message.text() };
@@ -278,6 +309,7 @@ async function main() {
             || JSON.stringify(peer.result.failure.errors) !== JSON.stringify(['direct_poll_3_peer_0'])))
             throw new Error(JSON.stringify({ control: 'wrong_channel_policy_boundary', peers }));
         }
+        peers.forEach((peer, index) => { peer.browser = browserPair[index % 2]; peer.display = displays[index]; });
         records.push({ players: count, peers });
         });
       } catch (error) {
@@ -289,10 +321,14 @@ async function main() {
       }
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
-    console.log(JSON.stringify({ passed: true, browser: 'Chromium', version: browsers[0].version(), browser_instances: 2,
+    console.log(JSON.stringify({ passed: true, browser: browserPair.join('/'),
+      browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
+      version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, records, errors }));
   } catch (error) {
-    console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs }));
+    console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
+      version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
+      browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })) }));
     throw error;
   } finally {
     await Promise.all(browsers.map(browser => browser.close()));

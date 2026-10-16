@@ -133,13 +133,14 @@ B1's baseline and packaging evidence is now available for closure review.
 The selected baseline does not cover optional Rust features, the full upstream
 suite, all player counts, SignalFish runtime, mixed browsers or Safari devices.
 This baseline does not claim a model execution.
-Firefox/WebKit revisions are recorded from the pinned Playwright registry;
-only Chromium is executed here. Platform-specific overrides remain in that
+Firefox/WebKit revisions are recorded from the pinned Playwright registry.
+The baseline executes Chromium; the separate [WebRTC witness](../signalfish-webrtc.md)
+also selects Firefox and mixed Chromium/Firefox peers. Platform-specific overrides remain in that
 registry. Rust-specific Kani/Z3/Loom gates belong to the later scoped verification
 work, not this representative native test selection.
 
 Artifacts use upstream published hashes when available (Godot 4.3 uses its
 published SHA512 sums; newer Godot/TLC use release API SHA256 digests). Source
-and Chromium archive SHA256 hashes were measured from the fetched immutable
+and browser archive SHA256 hashes were measured from the fetched immutable
 revision/build URLs. This establishes reproducible integrity, not a signature
 or independent trust proof. Review intentional pin updates together with evidence.

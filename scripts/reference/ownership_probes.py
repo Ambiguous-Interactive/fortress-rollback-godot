@@ -33,6 +33,10 @@ EXPECTED.update({
     'res://tests/unit/test_peer_session.gd': {'mesh', 'loss', 'multiple_locals', 'backpressure', 'ingress',
         'partial_publication', 'reentry', 'begin_preflight', 'long_runtime', 'request_mismatch', 'low_windows', 'packet_service'},
 })
+EXPECTED.update({
+    'res://tests/unit/test_diagnostic_trace.gd': {'owned_window', 'disabled_equality', 'bounds', 'failed_callback', 'local_divergence'},
+    'res://tests/unit/test_peer_diagnostic_trace.gd': {'real_divergence', 'healthy_equality'},
+})
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -53,6 +57,7 @@ FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
           'addons/fortress_rollback/protocol/input_endpoint_types.gd',
           'tests/unit/test_input_endpoint.gd', 'tests/unit/test_session_network_seams.gd',
           'tests/unit/test_peer_session.gd', 'tests/unit/test_stalled_gossip.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
+FILES += ['tests/unit/test_diagnostic_trace.gd', 'tests/unit/test_peer_diagnostic_trace.gd', 'tests/unit/test_driver.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -66,9 +71,11 @@ const Seams = preload("res://tests/unit/test_session_network_seams.gd")
 const Peers = preload("res://tests/unit/test_peer_session.gd")
 const Lifecycle = preload("res://tests/unit/test_endpoint_lifecycle.gd")
 const PeerLifecycle = preload("res://tests/unit/test_peer_lifecycle.gd")
+const DiagnosticTrace = preload("res://tests/unit/test_diagnostic_trace.gd")
+const PeerTrace = preload("res://tests/unit/test_peer_diagnostic_trace.gd")
 const StalledGossip = preload("res://tests/unit/test_stalled_gossip.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace, PeerTrace]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
@@ -135,6 +142,20 @@ def validate(result, negative):
     return result
 
 
+def source_inventory():
+    helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+               'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
+               'docs/reference/pins.json']
+    return {filename: digest(ROOT / filename) for filename in FILES + helpers}
+
+
+def verify_sources(expected):
+    for filename, checksum in expected.items():
+        path = ROOT / filename
+        if not path.is_file() or digest(path) != checksum:
+            raise ValueError(f'ownership source changed during execution: {filename}')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--offline', action='store_true')
@@ -142,6 +163,7 @@ def main():
     args = parser.parse_args()
     results = CACHE / 'results'
     begin_results(results, 'ownership.json', [p.name for p in results.glob('ownership-*.log')])
+    frozen_sources = source_inventory()
     data = load_manifest()
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
     if platform.system() != 'Linux' or arch is None:
@@ -171,13 +193,27 @@ def main():
                 target = project / filename
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / filename, target)
+                if digest(target) != frozen_sources[filename]:
+                    raise ValueError(f'ownership copied source changed before execution: {filename}')
             # Godot exports exclude hidden .llm directories: relocate identical
             # sample bytes and adapt only the preload resource path in both hosts.
             checksum_source = '.llm/code-samples/state_checksum.gd'
             checksum_target = 'tests/determinism/reference_checksum.gd'
-            shutil.copyfile(ROOT / checksum_source, project / checksum_target)
-            integers = project / 'tests/determinism/test_integer_encoding.gd'
-            integers.write_text(integers.read_text().replace('res://' + checksum_source, 'res://' + checksum_target))
+            shutil.copyfile(project / checksum_source, project / checksum_target)
+            if digest(project / checksum_target) != frozen_sources[checksum_source]:
+                raise ValueError(f'ownership copied source changed before execution: {checksum_target}')
+            integers_source = 'tests/determinism/test_integer_encoding.gd'
+            integers = project / integers_source
+            if digest(integers) != frozen_sources[integers_source]:
+                raise ValueError(f'ownership copied source changed before adaptation: {integers_source}')
+            preload = ('res://' + checksum_source).encode('utf-8')
+            original_integers = integers.read_bytes()
+            if original_integers.count(preload) != 1:
+                raise ValueError('checksum preload adaptation no longer applicable')
+            adapted_integers = original_integers.replace(preload, ('res://' + checksum_target).encode('utf-8'))
+            integers.write_bytes(adapted_integers)
+            if integers.read_bytes() != adapted_integers:
+                raise ValueError(f'ownership copied source changed after adaptation: {integers_source}')
             if negative:
                 suite = project / FILES[3]
                 text = suite.read_text()
@@ -243,9 +279,10 @@ def main():
                 record.update(browser=browser, browser_artifact=browser_name, template_artifact=template_name)
             records.append(record)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
+    verify_sources(frozen_sources)
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
-              'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'),
-              'sources': {p: digest(ROOT / p) for p in FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs']},
+              'manifest_sha256': frozen_sources['docs/reference/pins.json'],
+              'sources': frozen_sources,
               'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery and 2–8-player gameplay; '
               'no real transport, performance or other-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')

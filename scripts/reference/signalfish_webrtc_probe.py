@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify exported Godot rollback gameplay through real Chromium WebRTC meshes."""
+"""Verify exported Godot rollback gameplay through real Chromium and Firefox WebRTC meshes."""
 import argparse
 import hashlib
 import json
@@ -17,6 +17,7 @@ import zipfile
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
+from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from godot_smoke import run
@@ -27,7 +28,7 @@ def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
 def validate_browser(result, faults, mixed=False, default_budgets=False, physical_close=False):
-    if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') != 'Chromium'
+    if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') not in ('chromium/chromium', 'firefox/firefox', 'chromium/firefox')
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
             or result.get('faults') is not faults or result.get('corrupt') is not False or result.get('errors') != []
             or result.get('physicalClose', False) is not physical_close or result.get('mixed', False) is not mixed or result.get('mixedDefault', False) is not default_budgets):
@@ -339,8 +340,12 @@ def main():
     parser.add_argument('--godot', type=Path, help='supplied pinned editor; requires exactly one --version')
     parser.add_argument('--version', action='append', help='pinned engine version; defaults to minimum and current')
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--browser-pair', choices=PAIRS, default='chromium', help='two independent browser processes; default chromium')
     parser.add_argument('--online-example', action='store_true', help='export and drive the shipped two-player online example')
     args = parser.parse_args()
+    pair = PAIRS[args.browser_pair]
+    if args.online_example and args.browser_pair != 'chromium':
+        parser.error('--browser-pair applies to the transport witness; online example currently requires Chromium')
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / ('online-example.json' if args.online_example else 'signalfish-webrtc.json')
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
@@ -375,9 +380,12 @@ def main():
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
+               'browser_matrix': ROOT / 'scripts/reference/browser/webrtc_matrix.py',
+               'browser_display': ROOT / 'scripts/reference/browser/webrtc_display.cjs',
                'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
                'server_owner': ROOT / 'scripts/reference/browser/owned_server.py',
                'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs',
+               'display_test': ROOT / 'scripts/reference/browser/webrtc_display.test.cjs',
                'watchdog_test': ROOT / 'scripts/reference/browser/webrtc_watchdog.test.cjs', 'node': Path(shutil.which('node')),
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
     if args.online_example:
@@ -425,7 +433,10 @@ def main():
     engines = {}
     environment = os.environ.copy()
     environment.update(XDG_DATA_HOME=str(CACHE / 'godot-data'), FORTRESS_CHROMIUM_EXECUTABLE=str(sources['browser_executable']),
-                       FORTRESS_PLAYWRIGHT_PACKAGE=str(CACHE / 'browser/node_modules/@playwright/test'))
+                       FORTRESS_PLAYWRIGHT_PACKAGE=str(CACHE / 'browser/node_modules/@playwright/test'),
+                       FORTRESS_BROWSER_PAIR=json.dumps(pair))
+    if 'firefox' in pair:
+        prepare_firefox(pins, arch, args.offline, sources, environment)
     for version in versions:
         name = f'Godot_v{version}-stable_linux.{arch}.zip'
         archive = fetch(pins['artifacts'][name], name, args.offline)
@@ -453,7 +464,8 @@ def main():
     expected = {name: before[name] for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'cargo', 'rustc')}
     expected['archive'] = before['server_archive']
     validate_build_receipt(build, server_pin['revision'], server_before, before['server'], expected, before['build_log'])
-    run([str(sources['node']), '--test', str(sources['instrument_test']), str(sources['watchdog_test'])], environment, args.output / 'instrument-controls.log')
+    run([str(sources['node']), '--test', str(sources['instrument_test']), str(sources['watchdog_test']), str(sources['display_test'])],
+        environment, args.output / 'instrument-controls.log')
     records, executed_records = [], []
     with tempfile.TemporaryDirectory(prefix='fortress-real-webrtc-') as temporary:
         root = Path(temporary)
@@ -535,8 +547,10 @@ def main():
                         if label == 'mixed-disabled':
                             code, output = capture(browser_command, environment, args.output / f'{version}-{label}.log', timeout=540)
                             result = validate_disabled_control(code, output)
+                            validate_identity(result, pair, pins)
                         else:
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log', rooms=1 if label in ('corrupt', 'default') else 3)
+                            validate_identity(json.loads(output), pair, pins)
                             result = (validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default')
                                       else validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
                                                             default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close'))
@@ -550,17 +564,17 @@ def main():
     if native_inventory(sources) != before or source_inventory(args.server_source) != server_before:
         raise ValueError('source or tool inventory changed during execution')
     report = {'passed': True, 'sdk_revision': sdk_pin['revision'], 'server_revision': server_pin['revision'],
-              'input_inventory': before, 'server_source_inventory': server_before, 'executed': executed_records,
+              'browser_pair': list(pair), 'input_inventory': before, 'server_source_inventory': server_before, 'executed': executed_records,
               'server_config': config, 'server_events': server_events, 'records': records,
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
-              'limits': 'Real release Web exports in two independent Chromium processes; local host ICE, 2/4/8 peers, '
+              'limits': 'Real release Web exports in two independent selected pinned browser processes; local host ICE, 2/4/8 peers, '
                         '40 submitted frames per peer and 38 corrected original-input canonical prefixes per peer. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
                         'synthetic single-link send pressure, with default and selected work budgets and correlated overlapping input bytes. '
                         'A real unreliable channel closes at frame four; both ends retain relay through final confirmation while healthy links remain direct. '
                         'Disabled fallback fails the gameplay watchdog. Send drops/delays and pressure are synthetic; no WAN/NAT/TURN, '
-                        'native WebRTC, other browsers, channel replacement, ICE recovery, relay congestion or reconnect/replan claim.'}
+                        'native WebRTC, unselected browsers, channel replacement, ICE recovery, relay congestion or reconnect/replan claim.'}
     if args.online_example:
         report['limits'] = ('Clean runtime installation without repository cache, fresh engine user directories, missing-SDK guidance '
                             'and offline canonical replay, then optional SDK installation and the documented production-scene export. '

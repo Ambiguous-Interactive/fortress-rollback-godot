@@ -40,7 +40,7 @@ def evidence(faults):
                 'rtc': {'teardown': {'channels': 3 * (count - 1), 'connections': count - 1, 'connections_created': count - 1}, 'channels': channels, 'sent': 40, 'received': 40,
                         'dropped': 2 if faults else 0, 'reordered': 1 if faults else 0}})
         records.append({'players': count, 'peers': peers})
-    return {'passed': True, 'browser': 'Chromium', 'version': '141', 'browser_instances': 2, 'faults': faults, 'corrupt': False, 'records': records, 'errors': []}
+    return {'passed': True, 'browser': 'chromium/chromium', 'version': '141', 'browser_instances': 2, 'faults': faults, 'corrupt': False, 'records': records, 'errors': []}
 
 
 def mixed_evidence():

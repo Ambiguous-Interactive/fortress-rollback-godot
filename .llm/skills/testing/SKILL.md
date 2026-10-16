@@ -231,8 +231,8 @@ Validate original numeric tokens when parsing erases integer versus float syntax
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Verify preload dependencies are copied;
 exercise the affected probe, since the root unit runner cannot prove its staging.
-Bind evidence to all executed source inventories, including imported helpers,
-and tool identities before use and before publishing a success receipt.
+Freeze source/helper hashes before staging; verify copied and relocated authored bytes before adapting them.
+Verify tools before use and recheck sources/tools before publication; end-only hashes cannot identify executed bytes.
 When engine import creates metadata, first verify authored sources are unchanged.
 Allow only metadata paired with existing inputs, then freeze the complete
 post-import inventory through export and execution.

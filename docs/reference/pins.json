@@ -94,6 +94,16 @@
       "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1194/chromium-linux.zip",
       "digest": "5ad70cf662e7090354edbe84e1a01ac531fd217f37f5001f0d2efbe0d152b396",
       "algorithm": "sha256"
+    },
+    "firefox-1495-ubuntu24.04-arm64.zip": {
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1495/firefox-ubuntu-24.04-arm64.zip",
+      "digest": "1032e82ec99f8327d571494e24f88fd1069e106eed6c15ddb0a3ea224fd4d87a",
+      "algorithm": "sha256"
+    },
+    "firefox-1495-ubuntu24.04-x86_64.zip": {
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1495/firefox-ubuntu-24.04.zip",
+      "digest": "b4b37ec057c56b8d26a3374a106fc994eb85621b32b93a006661a18d096bce60",
+      "algorithm": "sha256"
     }
   },
   "rust": {
@@ -113,13 +123,14 @@
     "package": "@playwright/test",
     "version": "1.56.1",
     "npm_integrity": "sha512-vSMYtL/zOcFpvJCW71Q/OEGQb7KYBPAdKh35WNSkaZA75JlAO8ED8UN6GUNTm3drWomcbcqRPFqQbLae8yBTdg==",
-    "status": "Chromium pinned for Linux arm64/x86_64; Firefox/WebKit execution pending",
+    "status": "Chromium and Firefox pinned for Linux Ubuntu 24.04 arm64/x86_64; WebKit execution pending",
     "chromium_revision": "1194",
     "chromium_version": "141.0.7390.37",
     "firefox_revision": "1495",
     "webkit_revision": "2215",
     "node_version": "22.23.3",
-    "browser_registry_sha256": "1387ec667390e31e49040aa2c81d27720b38d32c7892d1a50c7f85b187e926c1"
+    "browser_registry_sha256": "1387ec667390e31e49040aa2c81d27720b38d32c7892d1a50c7f85b187e926c1",
+    "firefox_version": "142.0.1"
   },
   "formal": {
     "tlc_version": "1.8.0",
