@@ -228,7 +228,7 @@ func statistics() -> Types.Statistics:
 	return _core.statistics() if _core != null else Types.Statistics.new()
 
 
-## Bounded JSON-compatible observations without transport identities, tokens or game payloads.
+## Bounded observations without transport identities or tokens. Trace payloads require explicit configuration opt-in.
 ## Reading does not drain publication queues. The terminal cause survives event drains.
 func diagnostics() -> Dictionary:
 	var observed: Types.Status = status()
@@ -240,7 +240,7 @@ func diagnostics() -> Dictionary:
 		for field: String in ["pending_frames", "last_received_frame", "last_acked_frame", "round_trip_time_ms", "average_frame_advantage"]:
 			row[field] = endpoint.get(field, 0)
 		peers.append(row)
-	return {
+	var report: Dictionary = {
 		"schema": "fortress-peer-diagnostics-v1",
 		"current_frame": observed.current_frame,
 		"confirmed_frame": observed.confirmed_frame,
@@ -261,6 +261,10 @@ func diagnostics() -> Dictionary:
 		"peers": peers,
 		"failure": _owned_event(_diagnostic_failure)
 	}
+
+	if _config != null and _config.diagnostic_trace_frames > 0:
+		report["trace"] = _core.diagnostic_trace()
+	return report
 
 
 func _diagnostic_event(event: Dictionary, depth: int = 0) -> Dictionary:
@@ -624,6 +628,8 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 
 
 func _checksum_failure(code: int, diagnostic: Dictionary) -> int:
+	if code == Types.Code.DESYNC:
+		_core._freeze_diagnostic_trace(diagnostic.frame, _ids.find(diagnostic.peer), diagnostic.local_checksum, diagnostic.remote_checksum)
 	_fatal_event = _owned_event(diagnostic)
 	_core.terminate(code, diagnostic.get("frame", -1))
 	_terminate_links()

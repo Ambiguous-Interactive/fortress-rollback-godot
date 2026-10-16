@@ -1,6 +1,9 @@
 class_name FortressDriver
 extends RefCounted
 
+## Completed outer step, after ordered callbacks and event collection. Reentrant driver calls remain BUSY.
+signal step_completed(code: int, frame_before: int, frame_after: int)
+
 # gdlint: disable=max-returns
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -122,5 +125,6 @@ func _finish(code: int, before: int) -> StepResult:
 	# An externally opened expert batch owns its events until completion.
 	if code != Types.Code.BUSY:
 		result.events = _session.drain_events()
+		step_completed.emit(result.code, result.frame_before, result.frame_after)
 	_is_stepping = false
 	return result

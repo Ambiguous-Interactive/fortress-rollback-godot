@@ -71,7 +71,7 @@ func _id(value: int, width: int = 8) -> PackedByteArray:
 
 
 func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = false, pending: int = 128, start: bool = true,
-	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60) -> Dictionary:
+	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60, trace_frames: int = 0) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
 		lifecycle_options = L.Options.new()
@@ -98,6 +98,10 @@ func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = fa
 		config.sync_test = false
 		config.max_snapshot_bytes = 4 * (count + 3)
 		config.storage_budget_bytes = 1048576
+		config.diagnostic_trace_frames = trace_frames
+		config.diagnostic_seed = "2"
+		config.diagnostic_version = "p2p-reference-v1"
+		config.diagnostic_replay_command = ""
 		var local: T.Message = T.Message.new()
 		local.kind = T.Kind.SYNC_REQUEST
 		local.sender_id = _id(player)

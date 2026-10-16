@@ -98,7 +98,7 @@ the report contains no transport identities or handshake tokens.
 A terminal diagnostic retains its cause and both checksum hex strings on a real
 desync. Event drains do not erase that diagnostic, and modifying a returned report
 cannot change it. Reports omit SDK configuration, room codes, player names/UUIDs,
-connection identities, game state and input payloads. Failed agreement reports
+connection identities, game state and input payloads by default. Failed agreement reports
 identify the incompatible field without exporting either value.
 
 The online example's **Diagnostics** button downloads `fortress-diagnostics.json`
@@ -108,7 +108,51 @@ active relay count and retained transport queue counts. It requires neither
 failure and reproduction steps. Export before **Leave / new room** to retain current transport queue counts.
 The next connection creates a fresh application match and resets its diagnostics.
 
-This report is a bounded observation snapshot. It does not contain a replay or a
-canonical state/input trace. Capturing a bounded first-divergence replay window,
-seed and application versions remains tracked in issue #42. The game owns those
-payloads; a checksum pair alone cannot reconstruct them.
+## Opt-in canonical divergence evidence
+
+Set `Config.diagnostic_trace_frames` before `configure` to retain a local canonical
+window (1–128 frame boundaries; default zero). The peer report then includes
+`trace` with schema `fortress-canonical-trace-v1`. The expert session exposes the
+same window through `diagnostic_trace()`. Disabled sessions retain no trace
+payloads and preserve the default diagnostic report shape and game callbacks.
+
+Each sorted frame contains hex-encoded canonical `SAVE` bytes and its checksum,
+plus successful `ADVANCE` input bytes and prediction/confirmation status for every
+player. State at frame F precedes input F. `state_available` distinguishes an
+empty saved state from a frame without a SAVE callback. Tracing adds no game
+callbacks; profiles without SAVE callbacks can therefore contain only inputs.
+Rollback removes invalidated later states and replaces replayed inputs with their
+corrected values. Failed callbacks never claim completed input application.
+
+The first detected peer mismatch freezes the window with its frame, peer index,
+both checksum domains and `source = "peer_checksum"`. A local sync-test canonical
+snapshot mismatch also freezes it, with `source = "sync_test_snapshot"` and peer
+index -1; its remote checksum field is the original local comparison checksum.
+Canonical mismatch detection can catch equal checksums. This local evidence
+survives termination, event saturation and event drains, and every report belongs
+to its caller. It is not an exchanged remote snapshot or a complete replay file.
+The first reported mismatch need not be the earliest divergent simulation tick.
+
+Choose history long enough for the checksum interval and delivery delay. When
+the mismatch boundary has already left the window, `snapshot_available = false`
+explicitly identifies the missing evidence. A late mismatch never expands history.
+The exact canonical payload ceiling is
+`frames * (max_snapshot_bytes + 16 + player_count * input_width)` bytes, exposed as
+`max_payload_bytes`; `retained_payload_bytes` reports actual ownership. The explicit
+session storage budget also reserves bounded record metadata and application
+metadata. This is a payload reservation, not an engine heap-size guarantee.
+Compact trace JSON is bounded by `max_export_bytes` (hex doubles payload bytes, with
+bounded metadata and JSON escaping overhead); pretty-printing adds whitespace.
+
+Applications may set `diagnostic_seed` and `diagnostic_version` (128 UTF-8 bytes
+each), and `diagnostic_replay_command` (512 UTF-8 bytes). Seeds are strings to
+preserve wide integer values. The command is descriptive text and is never run.
+Leave it empty when the application has no exact replay command. The library
+cannot infer application versions, seeds or how to restore an application's state.
+
+Opt-in exports intentionally disclose the game's saved bytes, input bytes and
+these application-supplied metadata strings. Review their content before sharing;
+they can themselves contain sensitive data. The library automatically excludes
+SDK configuration, room/player identities, connection IDs and handshake tokens.
+The online example keeps tracing disabled. Broader replay tooling and the complete
+cross-platform diagnostic workflow remain tracked in issue #42.

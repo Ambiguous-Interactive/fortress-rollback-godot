@@ -83,7 +83,7 @@ class Game:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure"])
+	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure", "notifications"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -100,6 +100,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_stall(context)
 		"terminate_reconfigure":
 			_terminate_reconfigure(context)
+		"notifications":
+			_notifications(context)
 	context.finish()
 
 
@@ -230,6 +232,8 @@ func _stall(context: RefCounted) -> void:
 	context.equal(session.configure(config), Types.Code.OK, "external-input session")
 	var game: Game = Game.new()
 	var driver: RefCounted = Driver.new(session, game)
+	var notices: Array[PackedInt32Array] = []
+	driver.step_completed.connect(func(code: int, before: int, after: int) -> void: notices.append(PackedInt32Array([code, before, after])))
 	for frame: int in range(2):
 		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([1]))]
 		context.equal(driver.step(frame, samples).code, Types.Code.OK, "predict")
@@ -239,12 +243,15 @@ func _stall(context: RefCounted) -> void:
 	context.equal(stalled.code, Types.Code.PREDICTION_STALL, "prediction boundary")
 	context.equal(stalled.frame_after, 2, "stall keeps frame")
 	context.equal(game.trace.size(), count, "immediate stall no callback")
+	context.equal(notices[-1], PackedInt32Array([Types.Code.PREDICTION_STALL, 2, 2]), "immediate stall notification")
 	context.equal(session.receive_input(1, 0, PackedByteArray([7])).code, Types.Code.OK, "mismatch")
 	var recovered: RefCounted = driver.step(3, stalled_sample)
 	context.equal(recovered.code, Types.Code.PREDICTION_STALL, "recovery-only outcome")
 	context.equal(recovered.frame_after, 2, "recovery keeps frame")
 	context.equal(game.trace[count], "load:0", "recovery starts with load")
 	context.equal(game.trace[game.trace.size() - 1], "advance:1", "recovery stops before stalled new frame")
+	context.equal(notices[-1], PackedInt32Array([Types.Code.PREDICTION_STALL, 2, 2]), "repair-only completion notification")
+	context.equal(notices.size(), 4, "one signal for whole recovery batch")
 	context.equal(session.receive_input(1, 1, PackedByteArray([7])).code, Types.Code.OK, "confirmation permits retry")
 	var resumed: RefCounted = driver.step(4, stalled_sample)
 	context.equal(resumed.code, Types.Code.OK, "stalled sample survives")
@@ -277,3 +284,48 @@ func _terminate_reconfigure(context: RefCounted) -> void:
 		context.equal(session.status().current_frame, frame, "no replacement-frame exposure")
 		context.equal(game.trace.size() - count, 2 if kind == Types.Kind.ADVANCE else 1, "later callbacks skipped")
 		context.equal(session.configure(config), Types.Code.OK, "callback lock released after return")
+
+
+# Value: protects=notification sees completed state and cannot recurse; fails_when=emit is early or unguarded; why_new=callback tests run inside requests; seam=none
+func _notifications(context: RefCounted) -> void:
+	var game: Game = Game.new()
+	var session: RefCounted = _session()
+	var driver: RefCounted = Driver.new(session, game)
+	context.equal(driver.has_signal("step_completed"), true, "typed completion notification exists")
+	if not driver.has_signal("step_completed"):
+		return
+	var notices: Array[PackedInt32Array] = []
+	var driver_ref: WeakRef = weakref(driver)
+	driver.connect(
+		"step_completed",
+		func(code: int, before: int, after: int) -> void:
+			var current_driver: RefCounted = driver_ref.get_ref()
+			notices.append(PackedInt32Array([code, before, after]))
+			context.equal(session.status().current_frame, after, "published final frame")
+			context.equal(session.drain_events().size(), 0, "events already drained")
+			if game.retained_inputs != null:
+				context.equal(game.retained_inputs.read(0).code, Types.Code.EXPIRED_VIEW, "request views expired before notification")
+			var empty: Array[Driver.LocalInput] = []
+			context.equal(current_driver.step(0, empty).code, Types.Code.BUSY, "notification cannot advance recursively")
+			context.equal(current_driver.configure(session, game), Types.Code.BUSY, "notification cannot replace callbacks")
+	)
+	for frame: int in range(5):
+		var result: Driver.StepResult = driver.step(frame, _samples(frame))
+		context.equal(notices.size(), frame + 1, "one notice per outer step including rewinds")
+		context.equal(notices[-1], PackedInt32Array([result.code, frame, frame + 1]), "notice matches returned result")
+	context.equal("load:1" in game.trace, true, "notification follows actual rollback")
+	game.fail_kind = Types.Kind.ADVANCE
+	context.equal(driver.step(5, _samples(5)).code, Types.Code.CALLBACK_FAILED, "explicit callback failure")
+	context.equal(notices[-1], PackedInt32Array([Types.Code.CALLBACK_FAILED, 5, 5]), "failed batch has final notification")
+	context.equal(notices.size(), 6, "failure only once")
+	context.equal(driver.configure(_session(), Game.new()), Types.Code.OK, "guard released after notification")
+	var busy_session: RefCounted = _session()
+	var busy_driver: RefCounted = Driver.new(busy_session, Game.new())
+	var busy_notices: Array[int] = []
+	busy_driver.step_completed.connect(func(code: int, _before: int, _after: int) -> void: busy_notices.append(code))
+	for sample: Driver.LocalInput in _samples(0):
+		busy_session.submit_local_input(sample.player, sample.sample_frame, sample.bytes)
+	context.equal(busy_session.begin_advance().code, Types.Code.READY, "expert owns open batch")
+	context.equal(busy_driver.step(0, _samples(0)).code, Types.Code.BUSY, "external batch rejects driver")
+	context.equal(busy_notices.size(), 0, "no completion for someone else's batch")
+	busy_session.terminate()

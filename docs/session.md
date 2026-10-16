@@ -36,6 +36,16 @@ A game supplies these synchronous methods:
 Construct `Driver.new(session, game)` and call `step(now_us, samples)` per tick.
 `StepResult` reports code, before/after frame and drained events. The driver
 consumes the expert engine's requests in order; it has no rollback algorithm.
+Connect `driver.step_completed(code, frame_before, frame_after)` to update
+presentation after an outer step finishes. The signal runs synchronously after
+all game callbacks and event collection, including repair-only stalls and
+explicit callback failures. Request views have expired. `BUSY` and unconfigured
+calls emit no completion signal; they did not own a step. Recursive `step` and
+`configure` calls on this driver return `BUSY` until all signal handlers return.
+Use the scalar notification for presentation and the returned `StepResult` for
+the owned event list. Peer callers continue to reconcile after `peer.step`
+returns, after peer control processing has finished.
+
 A failed callback terminates the session. GDScript exceptions or malformed
 callback return types are application programming errors; use the typed result
 contracts and return explicit failure for runtime errors.
