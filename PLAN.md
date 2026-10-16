@@ -40,6 +40,7 @@ Local development contracts and evidence entry points:
 - [Audited raw input queue and prediction contracts](docs/input-queue.md).
 - [Actual upstream and production Godot sync-test differential traces](docs/oracle.md).
 - [Shared session engine, bounded snapshots and game driver](docs/session.md).
+- [Opt-in bounded canonical first-divergence evidence](docs/peer-lifecycle.md#opt-in-canonical-divergence-evidence).
 - [Bounded protocol message layout and source audit](docs/protocol.md).
 - [Fixed-peer byte handshake and injected time/token API](docs/handshake.md).
 - [Actual upstream/Godot handshake observations and scoped model refinement](docs/oracle-handshake.md).

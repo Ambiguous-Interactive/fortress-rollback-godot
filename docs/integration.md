@@ -122,6 +122,12 @@ Sample local input once per frame. While stalled, keep submitting that same samp
 a different sample for the same frame is rejected with `INPUT_ALREADY_SUBMITTED`.
 `loop.gd` keeps the sample until the frame advances.
 
+For a local driver, you can connect `driver.step_completed(code, frame_before, frame_after)`
+to update presentation after all callbacks finish. It also runs after a repair-only stall,
+when the frame number stays the same but the corrected game state has changed.
+Keep this handler for presentation: recursive calls to this driver return `BUSY`.
+Peer callers update presentation after `peer.step` returns.
+
 A failed callback stops the session for good. Do not keep stepping a stopped session. Configure it again or create a new one.
 
 ## Presentation and effects

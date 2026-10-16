@@ -18,6 +18,7 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Game = preload("res://webrtc_game.gd")
 
+
 func run(host: Node, count: int) -> bool:
 	host.membership_frozen = false
 	host.tearing_down = false
@@ -38,8 +39,10 @@ func run(host: Node, count: int) -> bool:
 	mode.game_data_format = "message_pack"
 	mode.decode_msgpack_payloads = false
 	mode.auto_poll = false
-	if client.configure(mode) != OK or client.connect_to_server() != OK: return false
-	if not await host._wait(func() -> bool: return client.is_authenticated() and host.infos.size() == 1): return false
+	if client.configure(mode) != OK or client.connect_to_server() != OK:
+		return false
+	if not await host._wait(func() -> bool: return client.is_authenticated() and host.infos.size() == 1):
+		return false
 	host.stage = "room_join"
 	var params: SDK.JoinRoomParams = SDK.JoinRoomParams.new()
 	params.game_name = "fortress-webrtc-%d" % count
@@ -47,16 +50,21 @@ func run(host: Node, count: int) -> bool:
 	params.max_players = count
 	params.supports_authority = false
 	if host.local_index != 0:
-		if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressRoom || ''") != ""): return false
+		if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressRoom || ''") != ""):
+			return false
 		params.room_code = JavaScriptBridge.eval("window.fortressRoom")
-	if client.join_room(params) != OK: return false
-	if not await host._wait(func() -> bool: return not client.get_room_code().is_empty()): return false
+	if client.join_room(params) != OK:
+		return false
+	if not await host._wait(func() -> bool: return not client.get_room_code().is_empty()):
+		return false
 	JavaScriptBridge.eval("document.body.dataset.fortressRoom = " + JSON.stringify(client.get_room_code()))
-	if not await host._wait(func() -> bool: return client.get_players().size() == count): return false
+	if not await host._wait(func() -> bool: return client.get_players().size() == count):
+		return false
 	host.stage = "freeze_membership"
 	host.membership_frozen = true
 	var roster: PackedStringArray = PackedStringArray()
-	for player: RefCounted in host.clients[0].get_players(): roster.append(player.id)
+	for player: RefCounted in host.clients[0].get_players():
+		roster.append(player.id)
 	var session: PackedByteArray = PackedByteArray()
 	session.resize(16)
 	session.fill(count)
@@ -65,7 +73,8 @@ func run(host: Node, count: int) -> bool:
 		profile.player_count = count
 		var membership: Membership = Membership.new()
 		var incarnation: PackedByteArray = PackedByteArray([host.local_index + 1, 0, 0, 0, 0, 0, 0, 0])
-		if membership.configure(host.clients[index].get_player_id(), roster, session, incarnation, profile) != OK: return false
+		if membership.configure(host.clients[index].get_player_id(), roster, session, incarnation, profile) != OK:
+			return false
 		host.memberships.append(membership)
 		var mesh: SDKMesh = SDKMesh.new()
 		mesh.multiplayer_peer_factory = Multiplayer.create
@@ -73,36 +82,62 @@ func run(host: Node, count: int) -> bool:
 		host.meshes.append(mesh)
 		var adapter: Adapter = Adapter.new()
 		host.adapters.append(adapter)
-		if adapter.attach(host.clients[index], mesh, membership) != OK: return false
+		if adapter.attach(host.clients[index], mesh, membership) != OK:
+			return false
 	host.stage = "ready"
 	for sdk_client: SDK in host.clients:
-		if sdk_client.set_ready() != OK: return false
-	if not await host._wait(func() -> bool:
-		for index: int in host.clients.size():
-			if not host.lobby_ready.get(index, false): return false
-		return true): return false
+		if sdk_client.set_ready() != OK:
+			return false
+	if not await host._wait(
+		func() -> bool:
+			for index: int in host.clients.size():
+				if not host.lobby_ready.get(index, false):
+					return false
+			return true
+	):
+		return false
 	host.stage = "start_game"
-	if host.local_index == 0 and host.clients[0].start_game() != OK: return false
-	if not await host._wait(func() -> bool:
-		for adapter: Adapter in host.adapters:
-			if adapter.status().route != "mesh": return false
-		return true): return false
+	if host.local_index == 0 and host.clients[0].start_game() != OK:
+		return false
+	if not await host._wait(
+		func() -> bool:
+			for adapter: Adapter in host.adapters:
+				if adapter.status().route != "mesh":
+					return false
+			return true
+	):
+		return false
 	host.stage = "connect_mesh"
-	if not await host._wait(func() -> bool:
-		var mp: Object = host.meshes[0].get_multiplayer_peer()
-		if mp == null: return false
-		mp.call("poll")
-		var connected: Dictionary = mp.call("get_peers")
-		if connected.size() != count - 1: return false
-		for info: Dictionary in connected.values():
-			if not info.get("connected", false): return false
-		return true): return false
+	if not await host._wait(
+		func() -> bool:
+			var mp: Object = host.meshes[0].get_multiplayer_peer()
+			if mp == null:
+				return false
+			mp.call("poll")
+			var connected: Dictionary = mp.call("get_peers")
+			if connected.size() != count - 1:
+				return false
+			for info: Dictionary in connected.values():
+				if not info.get("connected", false):
+					return false
+			return true
+	):
+		return false
 	var observed: Dictionary = host.meshes[0].get_multiplayer_peer().call("get_peers")
 	for connection: Dictionary in observed.values():
 		for channel: Object in connection.channels:
-			print("GODOT_CHANNEL ", JSON.stringify({"label": channel.call("get_label"), "ordered": channel.call("is_ordered"),
-				"life": channel.call("get_max_packet_life_time"), "retransmits": channel.call("get_max_retransmits"),
-				"max_packet_size_method": channel.has_method("get_max_packet_size")}))
+			print(
+				"GODOT_CHANNEL ",
+				JSON.stringify(
+					{
+						"label": channel.call("get_label"),
+						"ordered": channel.call("is_ordered"),
+						"life": channel.call("get_max_packet_life_time"),
+						"retransmits": channel.call("get_max_retransmits"),
+						"max_packet_size_method": channel.has_method("get_max_packet_size")
+					}
+				)
+			)
 	host.stage = "configure_rollback"
 	for index: int in host.clients.size():
 		var config: Config = Config.new()
@@ -124,7 +159,8 @@ func run(host: Node, count: int) -> bool:
 			host.errors.append("configure_peer_%d" % configured)
 			return false
 		var tokens: Array[PackedByteArray] = []
-		for remote: int in count - 1: tokens.append(host._next_token())
+		for remote: int in count - 1:
+			tokens.append(host._next_token())
 		host._reset_transport_clock()
 		var begun: int = peer.begin(0, tokens)
 		if begun != I.Code.OK:
@@ -137,20 +173,26 @@ func run(host: Node, count: int) -> bool:
 		if connected_code != 0:
 			host.errors.append("configure_direct_%d" % connected_code)
 			return false
-	if host.mixed_enabled and not host.mixed.configure(host, mode): return false
+	if host.mixed_enabled and not host.mixed.configure(host, mode):
+		return false
 	return true
 
 
-
 static func raw_connection() -> WebRTCPeerConnection:
-	# Preserve the engine's original channel options while closing its unused default connection.
-	var connection: WebRTCPeerConnection = WebRTCPeerConnection.new()
-	connection.close()
-	return connection
+	return RawConnection.new(WebRTCPeerConnection.new())
+
+
+class RawConnection:
+	extends Connection
+
+	func _create_data_channel(label: String, config: Dictionary) -> WebRTCDataChannel:
+		# Isolate the channel-option control while retaining production ICE identity and cleanup.
+		return _inner.create_data_channel(label, config)
 
 
 static func publish_progress(host: Node) -> void:
-	if host.peers.is_empty(): return
+	if host.peers.is_empty():
+		return
 	var peer: Peer = host.peers[0]
 	var received: Array[int] = []
 	var acked: Array[int] = []

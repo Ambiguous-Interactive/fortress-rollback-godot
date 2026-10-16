@@ -102,7 +102,8 @@ test('all constructed peer connections must close, including channel-free orphan
 });
 
 // Value: protects=failed-room socket evidence; fails_when=context cleanup precedes capture; why_new=successful teardown tests omit rejection; seam=actual main in VM.
-async function failedRoom(hung = false) {
+async function failedRoom(hung = false, pair = ['chromium', 'chromium']) {
+  const launches = [];
   const output = [];
   const timers = new Map();
   const delays = [];
@@ -123,28 +124,37 @@ async function failedRoom(hung = false) {
             channels: [{ sent: 88, received: 77 }] }, fortressResources: {
             channels: [{ id: 3, label: 'unreliable', readyState: 'open', bufferedAmount: 17,
               ordered: false, maxPacketLifeTime: 1, maxRetransmits: null }],
-            connections: [{ connectionState: 'connected', iceConnectionState: 'connected', signalingState: 'stable' }],
+            connections: [{ connectionState: 'closed', iceConnectionState: 'closed', signalingState: 'closed',
+              get localDescription() { throw new Error('Peer connection is closed'); },
+              get remoteDescription() { throw new Error('Peer connection is closed'); } },
+              { connectionState: 'connected', iceConnectionState: 'connected', signalingState: 'stable',
+                localDescription: { sdp: 'v=0\r\na=candidate:owned\r\n' }, remoteDescription: null }],
           } },
         }));
       }
       return Promise.resolve('ROOM');
     },
   };
-  const browser = { async close() {}, async newContext() {
+  const browser = { version() { return '141.0.7390.37'; }, async close() {}, async newContext() {
     return { async newPage() { return page; }, async close() { closed = true; } };
   } };
   const server = { on() {}, listen(port, host, ready) { ready(); }, address() { return { port: 123 }; }, close() {} };
   const moduleValue = { exports: {} };
   const fakeRequire = name => {
+    if (name === './webrtc_display.cjs') return { async placeFirefox() { return { x: 0, y: 0 }; } };
     if (name === './webrtc_watchdog.cjs') return { boundedRoom: operation => operation(), async waitGameplay() { throw original; } };
-    if (name === 'fake-playwright') return { chromium: { async launch() { return browser; } } };
+    if (name === 'fake-playwright') return Object.fromEntries(['chromium', 'firefox'].map(engine => [engine, { async launch(options) {
+      launches.push({ engine, options });
+      return { ...browser, version() { return engine === 'chromium' ? '141.0.7390.37' : '142.0.1'; } };
+    } }]));
     if (name === 'node:https') return { createServer() { return server; } };
     if (name === 'node:fs') return { readFileSync() { return ''; } };
     return require(name);
   };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'webrtc.cjs'), 'utf8') + '\nmodule.exports.main = main;', {
     module: moduleValue, require: fakeRequire, setTimeout: setTimer, clearTimeout: clearTimer,
-    process: { argv: ['node', 'probe', '/export', 'ws://127.0.0.1:1/v3/ws', 'clean'], env: { FORTRESS_PLAYWRIGHT_PACKAGE: 'fake-playwright' } },
+    process: { argv: ['node', 'probe', '/export', 'ws://127.0.0.1:1/v3/ws', 'clean'],
+      env: { FORTRESS_PLAYWRIGHT_PACKAGE: 'fake-playwright', FORTRESS_BROWSER_PAIR: JSON.stringify(pair) } },
     console: { log() {}, error(value) { output.push(value); } },
   });
   const running = moduleValue.exports.main();
@@ -158,17 +168,28 @@ async function failedRoom(hung = false) {
   assert.equal(timers.size, 0, 'capture timers are released');
   const failure = JSON.parse(output[0]);
   assert.equal(failure.failure, String(original));
+  assert.deepEqual(launches.map(value => value.engine), pair);
+  for (const value of launches) {
+    assert.equal(value.options.headless, value.engine === 'chromium');
+    if (value.engine === 'firefox') assert.equal(value.options.firefoxUserPrefs['webgl.force-enabled'], true);
+  }
+  assert.deepEqual(failure.browsers, pair.map(name => ({ name, version: name === 'chromium' ? '141.0.7390.37' : '142.0.1' })));
   assert.equal(failure.failed_rooms.length, 1);
   const peers = failure.failed_rooms[0].peers;
   assert.equal(peers.length, 2);
   for (const peer of peers) {
     if (hung) assert.equal(peer.failure, 'diagnostic_timeout');
     else { assert.equal(peer.rtc.sent, 88); assert.equal(peer.rtc.received, 77);
+      assert.equal(peer.rtc.connections[0].local_candidates, null);
+      assert.deepEqual(peer.rtc.connections[1].local_candidates, ['a=candidate:owned']);
       assert.equal(peer.rtc.channels[0].buffered_amount, 17); assert.equal(peer.rtc.channels[0].ready_state, 'open'); }
   }
 }
 
 test('failed room captures live RTC counters before closing contexts and preserves the original rejection', () => failedRoom());
+
+test('browser pair selects independent Firefox launches with an available display', () => failedRoom(false, ['firefox', 'firefox']));
+test('mixed browser pair launches Chromium and Firefox separately', () => failedRoom(false, ['chromium', 'firefox']));
 
 test('hung RTC diagnostics expire independently after one second without replacing the original rejection', () => failedRoom(true));
 // Value: pressure must block one link only, preserve physical state, and end at the exact frame boundary.
@@ -238,7 +259,7 @@ test('physical close records the explicit channel handle even when payloads matc
   }
   const context = { window: { RTCPeerConnection: Connection }, RTCPeerConnection: Connection,
     RTCDataChannel: Channel, WebSocket: class { send() {} }, document: { body: { dataset: { fortressFrame: '2' } } },
-    ArrayBuffer, Uint8Array, console };
+    ArrayBuffer, Uint8Array, console, performance };
   vm.runInNewContext(`(${instrument.toString()})({ endpoint: 'wss://localhost', count: 4, index: 0,
     mixed: true, physicalClose: true })`, context);
   const connection = new context.window.RTCPeerConnection();
@@ -270,14 +291,14 @@ test('online initialization registers once and initializes native RTC, sockets a
   const options = { endpoint: 'wss://local.test', count: 2, index: 0, faults: false, corrupt: false, onlineCorrupt: true };
   await registerOnlineInit(page, options);
   assert.equal(registrations.length, 1);
-  class Socket { static CLOSED = 3; constructor(url) { this.url = url; this.readyState = 1; } send() {} }
+  class Socket { static CLOSED = 3; constructor(url) { this.url = url; this.readyState = 1; } addEventListener() {} send() {} }
   class Connection {
     addEventListener() {}
     createDataChannel(label, configuration) {
       return { label, ...configuration, readyState: 'open', addEventListener() {}, send() {} };
     }
   }
-  const context = vm.createContext({ WebSocket: Socket, RTCPeerConnection: Connection, RTCDataChannel: class {} });
+  const context = vm.createContext({ WebSocket: Socket, RTCPeerConnection: Connection, RTCDataChannel: class {}, performance });
   context.window = context;
   for (const { operation, argument } of registrations.reverse()) {
     context.options = argument;

@@ -2,6 +2,12 @@
 import ast
 import copy
 import re
+import json
+from pathlib import Path
+import shutil
+import tempfile
+import zipfile
+from unittest import mock
 import unittest
 
 import ownership_probes as probes
@@ -45,6 +51,74 @@ class OwnershipReceiptTests(unittest.TestCase):
                 source = (probes.ROOT / filename).read_text(encoding='utf-8')
                 for dependency in re.findall(r'preload\("res://([^"\n]+)"\)', source):
                     self.assertIn(dependency, probes.FILES, 'copied resource lacks a preload dependency')
+
+    def test_source_changes_cannot_publish_success(self):
+        for mutation in ('source', 'staged_copy', 'relocated_copy', 'manifest', 'imported_helper'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / 'root'
+                cache = Path(directory) / 'cache'
+                files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+                                       'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
+                                       'docs/reference/pins.json']
+                for filename in files:
+                    target = root / filename
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(probes.ROOT / filename, target)
+                archive = Path(directory) / 'editor.zip'
+                with zipfile.ZipFile(archive, 'w') as package:
+                    package.writestr('Godot_v4.3-stable_linux.x86_64', 'fake editor')
+                output = cache / 'results'
+                output.mkdir(parents=True)
+                receipt = output / 'ownership.json'
+                receipt.write_text('stale success', encoding='utf-8')
+                changed = []
+                original_copy = shutil.copyfile
+
+                def copy_file(source, target):
+                    original_copy(source, target)
+                    if not changed and (mutation == 'staged_copy' or
+                                        (mutation == 'relocated_copy' and Path(target).name == 'reference_checksum.gd')):
+                        Path(target).write_bytes(Path(target).read_bytes() + b'changed staged copy')
+                        changed.append(True)
+
+                def capture(command, environment, log, timeout):
+                    value = result()
+                    negative = '-negative' in command[3]
+                    if negative:
+                        value['passed'] = False
+                        record = next(row for row in value['records'] if row['case'] == 'owned_input')
+                        for repetition in record['runs']:
+                            repetition['failures'] = [
+                                {'label': label, 'kind': 'bytes', 'frame': 0, 'byte': 0, 'expected': '0100', 'actual': '0909'}
+                                for label in ('copied submission survives caller mutation', 'callback copy cannot edit history')]
+                    if mutation not in ('staged_copy', 'relocated_copy') and not changed:
+                        filename = {'source': probes.FILES[0], 'manifest': 'docs/reference/pins.json',
+                                    'imported_helper': 'scripts/reference/fetch.py'}[mutation]
+                        target = root / filename
+                        target.write_bytes(target.read_bytes() + b'changed after capture')
+                        changed.append(True)
+                    log.write_text('preserved owned diagnostics', encoding='utf-8')
+                    return int(negative), probes.PREFIX + json.dumps(value)
+
+                def run(command, environment, log):
+                    return '4.3.stable.fixture' if '--version' in command else ''
+
+                data = {'godot': {'minimum': '4.3', 'current_stable': '4.3'},
+                        'artifacts': {'Godot_v4.3-stable_linux.x86_64.zip': {}}}
+                with (mock.patch.object(probes, 'ROOT', root), mock.patch.object(probes, 'CACHE', cache),
+                      mock.patch.object(probes, 'load_manifest', return_value=data),
+                      mock.patch.object(probes, 'fetch', return_value=archive), mock.patch.object(probes, 'run', side_effect=run),
+                      mock.patch.object(probes, 'capture', side_effect=capture),
+                      mock.patch.object(probes.shutil, 'copyfile', side_effect=copy_file),
+                      mock.patch.object(probes.platform, 'machine', return_value='x86_64'),
+                      mock.patch.object(probes.platform, 'system', return_value='Linux'),
+                      mock.patch('sys.argv', ['ownership_probes.py', '--offline'])):
+                    with self.assertRaisesRegex(ValueError, 'source.*changed|copied.*changed'):
+                        probes.main()
+                self.assertTrue(changed, 'fault must reach the staging/execution boundary')
+                self.assertFalse(receipt.exists(), 'failed attempt must remove stale success')
+                if mutation not in ('staged_copy', 'relocated_copy'):
+                    self.assertTrue(list(output.glob('ownership-*-native.log')), 'execution logs survive rejection')
 
     def test_complete_inventory(self):
         self.assertEqual(probes.validate(result(), False)['count'], probes.EXPECTED_COUNT)

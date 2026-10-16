@@ -231,8 +231,8 @@ Validate original numeric tokens when parsing erases integer versus float syntax
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Verify preload dependencies are copied;
 exercise the affected probe, since the root unit runner cannot prove its staging.
-Bind evidence to all executed source inventories, including imported helpers,
-and tool identities before use and before publishing a success receipt.
+Freeze source/helper hashes before staging; verify copied and relocated authored bytes before adapting them.
+Verify tools before use and recheck sources/tools before publication; end-only hashes cannot identify executed bytes.
 When engine import creates metadata, first verify authored sources are unchanged.
 Allow only metadata paired with existing inputs, then freeze the complete
 post-import inventory through export and execution.
@@ -276,8 +276,8 @@ for one suite while changing it. This retains both in-process and fresh-process
 repeat layers. Final delivery still runs all applicable suites and controls.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
-Clear owned success receipts before validating new execution options, including
-malformed worker values; real subprocess controls protect that failure path.
+Clear owned success receipts on parse and execution-option rejection, including
+malformed worker values; real subprocess controls verify mode isolation and help.
 
 Keep verified source timestamps when bytes, modes, entry inventories and symlinks
 match freshly extracted pinned archives. A timestamp-only cache or a hash of an

@@ -6,6 +6,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const History = preload("res://addons/fortress_rollback/core/snapshot_history.gd")
+const Trace = preload("res://addons/fortress_rollback/core/diagnostic_trace.gd")
 const Code = Types.Code
 const Kind = Types.Kind
 const Lifecycle = Types.Lifecycle
@@ -34,6 +35,7 @@ var _originals: Dictionary = {}
 var _is_driver_callback: bool = false
 var _has_confirmation_limit: bool = false
 var _confirmation_limit: int = -1
+var _trace: Trace = Trace.new()
 var _statistics: Types.Statistics = Types.Statistics.new()
 
 
@@ -77,6 +79,8 @@ func configure(config: Config) -> int:
 	_has_confirmation_limit = false
 	_confirmation_limit = -1
 	_statistics = Types.Statistics.new()
+	_trace = Trace.new()
+	_trace.configure(_config)
 	return Code.OK
 
 
@@ -268,6 +272,14 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		snapshot_code = _history.finish_load(_reader, true)
 	if snapshot_code != History.Code.OK:
 		return _fatal(Code.SNAPSHOT_FAILED, frame, kind)
+	if _config.diagnostic_trace_frames > 0:
+		if kind == Kind.SAVE:
+			var saved_trace: History.Inspection = _history.inspect(frame)
+			_trace.save(frame, saved_trace.bytes, saved_trace.checksum)
+		elif kind == Kind.LOAD:
+			_trace.load_frame(frame)
+		elif kind == Kind.ADVANCE:
+			_trace.advance(frame, _inputs)
 	if kind == Kind.LOAD:
 		_statistics.rollback_count = _increment(_statistics.rollback_count)
 		_statistics.last_rollback_depth = _current - frame
@@ -321,6 +333,15 @@ func statistics() -> Types.Statistics:
 	result.last_rollback_depth = _statistics.last_rollback_depth
 	result.max_rollback_depth = _statistics.max_rollback_depth
 	return result
+
+
+## Explicitly opted-in canonical payloads; fresh JSON-compatible caller-owned evidence.
+func diagnostic_trace() -> Dictionary:
+	return _trace.report()
+
+
+func _freeze_diagnostic_trace(frame: int, peer_index: int, local: PackedByteArray, remote: PackedByteArray) -> void:
+	_trace.freeze(frame, peer_index, local, remote)
 
 
 func _count_stall() -> void:
@@ -394,6 +415,7 @@ func _consistent() -> bool:
 			var original: History.Inspection = _originals[frame]
 			if saved.code != History.Code.OK or saved.bytes != original.bytes or (_config.checksums_enabled and saved.checksum != original.checksum):
 				_failure_frame = frame
+				_trace.freeze(frame, -1, saved.checksum, original.checksum, "sync_test_snapshot")
 				return false
 	return true
 

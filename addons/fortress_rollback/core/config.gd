@@ -21,10 +21,19 @@ var storage_budget_bytes: int = 0
 var checksums_enabled: bool = true
 var capture_confirmed_snapshots: bool = false
 var sync_test: bool = true
+## Canonical game payloads are private unless explicitly opted in with a positive bound.
+var diagnostic_trace_frames: int = 0
+var diagnostic_seed: String = ""
+var diagnostic_version: String = ""
+var diagnostic_replay_command: String = ""
 
 
 ## Validate bounded storage before allocating. Snapshot size and budget are explicit.
 func validate() -> int:
+	if diagnostic_trace_frames < 0 or diagnostic_trace_frames > MAX_WINDOW:
+		return Types.Code.INVALID_CONFIGURATION
+	if diagnostic_seed.to_utf8_buffer().size() > 128 or diagnostic_version.to_utf8_buffer().size() > 128 or diagnostic_replay_command.to_utf8_buffer().size() > 512:
+		return Types.Code.INVALID_CONFIGURATION
 	if player_count < 2 or player_count > 8 or input_width < 1 or input_width > 65536 or neutral_input.size() != input_width:
 		return Types.Code.INVALID_CONFIGURATION
 	if max_prediction_frames < 0 or max_prediction_frames > MAX_WINDOW or check_distance < 0 or check_distance > max_prediction_frames:
@@ -58,11 +67,23 @@ func validate() -> int:
 ## Runtime object metadata adds bounded overhead; this is not a heap-size guarantee.
 func required_storage_bytes() -> int:
 	return (
-		(history_slots + 2) * max_snapshot_bytes
+		diagnostic_trace_storage_bytes()
+		+ (history_slots + 2) * max_snapshot_bytes
 		+ history_slots * 40
 		+ history_slots * (max_snapshot_bytes + 16)
 		+ player_count * ((queue_capacity + 1) * input_width + queue_capacity * 8 + 6 * input_width)
 	)
+
+
+## Exact canonical payload ceiling; bounded object metadata is reserved separately.
+func diagnostic_trace_payload_bytes() -> int:
+	return diagnostic_trace_frames * (max_snapshot_bytes + 16 + player_count * input_width)
+
+
+func diagnostic_trace_storage_bytes() -> int:
+	if diagnostic_trace_frames == 0:
+		return 0
+	return diagnostic_trace_payload_bytes() + diagnostic_trace_frames * (40 + player_count * 16) + 1024
 
 
 func owned_copy() -> RefCounted:
@@ -81,4 +102,8 @@ func owned_copy() -> RefCounted:
 	copy.checksums_enabled = checksums_enabled
 	copy.capture_confirmed_snapshots = capture_confirmed_snapshots
 	copy.sync_test = sync_test
+	copy.diagnostic_trace_frames = diagnostic_trace_frames
+	copy.diagnostic_seed = diagnostic_seed
+	copy.diagnostic_version = diagnostic_version
+	copy.diagnostic_replay_command = diagnostic_replay_command
 	return copy

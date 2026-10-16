@@ -1,7 +1,13 @@
 class_name FortressSignalFishWebRTCConnection
 extends WebRTCPeerConnectionExtension
 
+const MAX_MEDIA_SECTIONS: int = 64
+const MAX_MID_CHARACTERS: int = 256
+const MAX_SDP_CHARACTERS: int = 65536
+
 var _inner: WebRTCPeerConnection = null
+var _remote_media_ids: PackedStringArray = PackedStringArray()
+var _remote_revision: int = 0
 
 
 ## Install as SFWebRTCMesh.peer_connection_factory before its first plan.
@@ -17,21 +23,29 @@ func _init(inner: WebRTCPeerConnection = null) -> void:
 		return
 	# Weak forwarding avoids a connection -> signal callback -> wrapper cycle.
 	var owner: WeakRef = weakref(self)
-	_inner.session_description_created.connect(func(kind: String, sdp: String) -> void:
-		var target: Object = owner.get_ref()
-		if is_instance_valid(target):
-			target.session_description_created.emit(kind, sdp))
-	_inner.ice_candidate_created.connect(func(mid: String, index: int, candidate: String) -> void:
-		var target: Object = owner.get_ref()
-		if is_instance_valid(target):
-			target.ice_candidate_created.emit(mid, index, candidate))
+	_inner.session_description_created.connect(
+		func(kind: String, sdp: String) -> void:
+			var target: Object = owner.get_ref()
+			if is_instance_valid(target):
+				target.session_description_created.emit(kind, sdp)
+	)
+	_inner.ice_candidate_created.connect(
+		func(mid: String, index: int, candidate: String) -> void:
+			var target: Object = owner.get_ref()
+			if is_instance_valid(target):
+				target.ice_candidate_created.emit(mid, index, candidate)
+	)
 
-	_inner.data_channel_received.connect(func(channel: WebRTCDataChannel) -> void:
-		var target: Object = owner.get_ref()
-		if is_instance_valid(target):
-			target.data_channel_received.emit(channel))
+	_inner.data_channel_received.connect(
+		func(channel: WebRTCDataChannel) -> void:
+			var target: Object = owner.get_ref()
+			if is_instance_valid(target):
+				target.data_channel_received.emit(channel)
+	)
+
 
 func _initialize(config: Dictionary) -> Error:
+	_invalidate_remote_media_ids()
 	if _inner == null:
 		return ERR_UNCONFIGURED
 	# Godot 4.3 initialize removes the old browser handle without closing its connection.
@@ -71,13 +85,53 @@ func _set_local_description(kind: String, sdp: String) -> Error:
 
 
 func _set_remote_description(kind: String, sdp: String) -> Error:
-	return ERR_UNCONFIGURED if _inner == null else _inner.set_remote_description(kind, sdp)
+	_invalidate_remote_media_ids()
+	if _inner == null:
+		return ERR_UNCONFIGURED
+	var revision: int = _remote_revision
+	var code: Error = _inner.set_remote_description(kind, sdp)
+	# Native signals may synchronously replace or close this description's lifetime.
+	if code == OK and revision == _remote_revision:
+		_remote_media_ids = _media_ids(sdp)
+	return code
+
+
+static func _media_ids(sdp: String) -> PackedStringArray:
+	var result: PackedStringArray = PackedStringArray()
+	if sdp.length() > MAX_SDP_CHARACTERS:
+		return result
+	var offset: int = 0
+	while offset < sdp.length():
+		var end: int = sdp.find("\n", offset)
+		if end == -1:
+			end = sdp.length()
+		var line: String = sdp.substr(offset, end - offset).trim_suffix("\r")
+		offset = end + 1
+		if line.begins_with("m="):
+			if result.size() == MAX_MEDIA_SECTIONS:
+				return PackedStringArray()
+			result.append("")
+		elif line.begins_with("a=mid:") and not result.is_empty():
+			var mid: String = line.substr(6)
+			if mid.is_empty() or mid.length() > MAX_MID_CHARACTERS or result.has(mid) or not result[-1].is_empty():
+				return PackedStringArray()
+			for character: int in mid.length():
+				if mid.unicode_at(character) < 33 or mid.unicode_at(character) > 126:
+					return PackedStringArray()
+			result[-1] = mid
+	return result
 
 
 func _add_ice_candidate(mid: String, index: int, candidate: String) -> Error:
 	if _inner == null:
 		return ERR_UNCONFIGURED
-	return _inner.add_ice_candidate(mid, index, candidate)
+	# SignalFish relays only candidate bytes; Firefox requires the negotiated SDP media ID.
+	var resolved: String = mid
+	if resolved.is_empty():
+		if index < 0 or index >= _remote_media_ids.size() or _remote_media_ids[index].is_empty():
+			return ERR_INVALID_PARAMETER
+		resolved = _remote_media_ids[index]
+	return _inner.add_ice_candidate(resolved, index, candidate)
 
 
 func _poll() -> Error:
@@ -85,5 +139,11 @@ func _poll() -> Error:
 
 
 func _close() -> void:
+	_invalidate_remote_media_ids()
 	if _inner != null:
 		_inner.close()
+
+
+func _invalidate_remote_media_ids() -> void:
+	_remote_media_ids.clear()
+	_remote_revision = 0 if _remote_revision == 9223372036854775807 else _remote_revision + 1

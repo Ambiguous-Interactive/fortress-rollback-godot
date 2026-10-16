@@ -95,6 +95,21 @@ use the engine's normal removal path. Install both factories before the first pl
 Browser constructor observations, rather than the
 configured dictionary alone, establish the resulting reliability policy.
 
+SignalFish relays ICE candidate strings without their media identifier. The
+connection wrapper resolves an omitted identifier from the current remote SDP
+section at the supplied index after Godot accepts the description call. Firefox requires this identifier; Chromium's
+acceptance of an empty identifier does not establish interoperable delivery.
+Explicit identifiers and native error codes keep their normal delegation.
+Initialization, close and synchronous description refusals clear the lookup.
+Godot's Web API returns before the browser finishes applying SDP. The wrapper
+preserves that asynchronous error contract; an accepted call does not prove
+that the browser later accepted the description.
+
+The lookup retains at most 64 sections, 256 ASCII characters per identifier and
+65,536 SDP characters. These bounds govern omitted-identifier recovery; an
+explicit identifier still goes directly to the engine. Missing, duplicate,
+malformed or out-of-range mappings return `ERR_INVALID_PARAMETER`.
+
 An endpoint must have all default channels open before publication. Queue and
 socket pressure preserve the exact outgoing FIFO head for retry. Packet and byte
 limits bound application ownership; send and receive budgets bound each service
@@ -161,7 +176,7 @@ python3 scripts/reference/signalfish_webrtc_probe.py \
   --output .cache/reference/results/signalfish-webrtc
 ```
 
-The launcher verifies pinned engines, templates and Chromium archives. It runs
+The launcher verifies pinned engines, templates and selected browser archives. It runs
 both engine pins by default; `--godot` requires one matching `--version`.
 Independent Chromium processes run 2/4/8-player matches and observe actual
 channel traffic and closure. Synthetic send drops/delays exercise recovery;
@@ -170,3 +185,32 @@ Mixed runs use both default and selected work budgets. They inject one-link send
 pressure and correlate the same input bytes across physical direct and addressed
 relay delivery. A fallback-disabled control must fail the gameplay watchdog.
 Automatic CI retains source, tool, export and log inventories with its receipts.
+
+Select `--browser-pair firefox` for two independent Firefox processes or
+`--browser-pair chromium-firefox` for alternating Chromium and Firefox peers.
+Both selections retain every player count, fault control, canonical comparison,
+rollback, bounded-queue check and physical teardown gate described above.
+The receipt records both pinned process versions and each peer's browser.
+
+Firefox uses the pinned Playwright Ubuntu 24.04 archive and needs a display for
+WebGL. Install dependencies with `playwright install-deps chromium firefox`, then
+install `xdotool`, then prefix the command above with `xvfb-run -a` and select the desired browser pair.
+Chromium continues to use headless rendering. Firefox headless mode lacks WebGL
+in the tested Linux environment. Xvfb changes display availability, while all
+WebRTC and signaling traffic still uses real browser sockets. The launcher places
+each owned Firefox window 80 pixels to the right of the previous client. This
+keeps a visible strip of every window, since fully obscured X11 WebGL windows
+stop rendering even when `document.hidden` is false. A unique page title selects
+only the launcher's own windows before navigation. Receipts record the verified
+window geometry, display bounds and WebGL preferences. Hidden-tab suspension and
+operating-system behavior remain separate lifecycle acceptance work.
+
+CI gates the complete Chromium witness against both engine pins. Firefox and
+mixed browser selection remains experimental manual coverage: their clean two-
+and four-player CI rooms passed, but eight-player rooms failed progress watchdogs
+or ICE under the CI workload. A complete current-source Firefox matrix receipt
+has not been established. The launcher retains every eight-player gate and all
+controls; it does not skip failed rooms. Resource investigation and WebKit,
+actual Safari and devices remain open acceptance work in
+[S5](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/39).
+A Firefox or mixed receipt does not establish those targets.
