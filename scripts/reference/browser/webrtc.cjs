@@ -156,6 +156,10 @@ async function captureFailure(pages, players) {
       return await Promise.race([page.evaluate(limit => {
         const evidence = window.fortressRtc;
         const resources = window.fortressResources;
+        const candidates = (connection, field) => {
+          if (connection.connectionState === 'closed') return null;
+          return (connection[field]?.sdp || '').split('\r\n').filter(row => row.startsWith('a=candidate:')).slice(0, 16).map(row => row.slice(0, 512));
+        };
         return { index: limit.index, captured_ms: performance.now(), frame: document.body.dataset.fortressFrame,
           scheduling: { ...window.fortressScheduling, hidden: document.hidden, focused: document.hasFocus?.() },
           sockets: (window.fortressSockets || []).slice(0, 4).map(record => ({ opened: record.opened, failed: record.failed,
@@ -170,8 +174,8 @@ async function captureFailure(pages, players) {
             })),
             connections: resources.connections.slice(0, 2 * (limit.players - 1)).map(connection => ({
               state: connection.connectionState, ice: connection.iceConnectionState, signaling: connection.signalingState,
-              local_candidates: (connection.localDescription?.sdp || '').split('\r\n').filter(row => row.startsWith('a=candidate:')).slice(0, 16),
-              remote_candidates: (connection.remoteDescription?.sdp || '').split('\r\n').filter(row => row.startsWith('a=candidate:')).slice(0, 16),
+              local_candidates: candidates(connection, 'localDescription'),
+              remote_candidates: candidates(connection, 'remoteDescription'),
             })),
           } };
       }, { index, players }), new Promise(resolve => {

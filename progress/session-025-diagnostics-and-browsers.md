@@ -160,3 +160,25 @@ The final browser process remains live while the reviewed candidate is prepared
 for one PR. Current-head CI, complete feedback, guarded merge, local sync and
 merge-triggered main CI remain required. CI evidence will supplement the local
 receipts and bind validation to immutable commits.
+
+## Final source verification and browser diagnostic repair
+
+Both final native unit inventories now pass all 234 cases on 4.3 and 4.7.2,
+including the ICE reentry regression, with both repeat layers. The complete
+integration/determinism results above remain applicable to the unchanged core.
+
+A later Firefox fallback-disabled control exposed an error in newly added
+failure diagnostics: Firefox throws when reading SDP properties on a closed
+connection, including the deliberately closed orphan. Both snapshots lost their
+otherwise useful failure evidence. The collector now avoids those getters for
+verified closed connections and retains null candidate inventories for them.
+Active candidate diagnostics remain bounded to sixteen 512-character lines.
+A throwing-getter fixture fails before repair; all 57 Node controls pass afterward.
+Fresh adversarial review finds no remaining issue. The original watchdog failure,
+canonical comparisons and setup/gameplay deadlines are unchanged.
+
+PR #101 initially opened at `2a0fb4929fd769ede0ff596d4adb7ad59649715f`.
+The diagnostic repair supersedes that candidate and requires fresh current-head
+CI and source-bound browser receipts before merge. Parent issues #39, #40 and #42
+now contain precise progress and remaining acceptance. #99 and #100 track the
+proven defects repaired by this PR.

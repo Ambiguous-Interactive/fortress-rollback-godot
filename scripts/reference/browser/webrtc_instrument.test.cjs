@@ -124,7 +124,11 @@ async function failedRoom(hung = false, pair = ['chromium', 'chromium']) {
             channels: [{ sent: 88, received: 77 }] }, fortressResources: {
             channels: [{ id: 3, label: 'unreliable', readyState: 'open', bufferedAmount: 17,
               ordered: false, maxPacketLifeTime: 1, maxRetransmits: null }],
-            connections: [{ connectionState: 'connected', iceConnectionState: 'connected', signalingState: 'stable' }],
+            connections: [{ connectionState: 'closed', iceConnectionState: 'closed', signalingState: 'closed',
+              get localDescription() { throw new Error('Peer connection is closed'); },
+              get remoteDescription() { throw new Error('Peer connection is closed'); } },
+              { connectionState: 'connected', iceConnectionState: 'connected', signalingState: 'stable',
+                localDescription: { sdp: 'v=0\r\na=candidate:owned\r\n' }, remoteDescription: null }],
           } },
         }));
       }
@@ -176,6 +180,8 @@ async function failedRoom(hung = false, pair = ['chromium', 'chromium']) {
   for (const peer of peers) {
     if (hung) assert.equal(peer.failure, 'diagnostic_timeout');
     else { assert.equal(peer.rtc.sent, 88); assert.equal(peer.rtc.received, 77);
+      assert.equal(peer.rtc.connections[0].local_candidates, null);
+      assert.deepEqual(peer.rtc.connections[1].local_candidates, ['a=candidate:owned']);
       assert.equal(peer.rtc.channels[0].buffered_amount, 17); assert.equal(peer.rtc.channels[0].ready_state, 'open'); }
   }
 }
