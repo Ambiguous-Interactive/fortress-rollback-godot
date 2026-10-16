@@ -8,6 +8,8 @@ import struct
 import sys
 import zipfile
 
+from online_diagnostics import validate_download
+
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
 from godot_smoke import run
@@ -211,7 +213,6 @@ def validate_stale_callbacks(peer):
         raise ValueError('online example old SDK callbacks mutated the fresh match')
 
 
-from online_diagnostics import validate_download
 
 def validate_result(value, corrupt=False):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int

@@ -45,8 +45,12 @@ func _physics_process(_delta: float) -> void:
 	var focused: Control = get_viewport().gui_get_focus_owner()
 	var buttons: int = 0
 	if not focused is LineEdit:
-		buttons = (_pressed(KEY_A, KEY_LEFT) * Simulation.LEFT + _pressed(KEY_D, KEY_RIGHT) * Simulation.RIGHT
-			+ _pressed(KEY_W, KEY_UP) * Simulation.UP + _pressed(KEY_S, KEY_DOWN) * Simulation.DOWN)
+		buttons = (
+			_pressed(KEY_A, KEY_LEFT) * Simulation.LEFT
+			+ _pressed(KEY_D, KEY_RIGHT) * Simulation.RIGHT
+			+ _pressed(KEY_W, KEY_UP) * Simulation.UP
+			+ _pressed(KEY_S, KEY_DOWN) * Simulation.DOWN
+		)
 	controller.tick(Time.get_ticks_usec(), buttons)
 	_update_status()
 	queue_redraw()
@@ -131,11 +135,14 @@ func _update_status() -> void:
 	var game: Lobby.Match = controller.game_match
 	if game.local_slot >= 0:
 		var state: Lobby.Match.Types.Status = game.peer.status()
-		_status.text += "\nYou: player %d | frame %d | confirmed %d | stalls %d | event %s" % [
-			game.local_slot + 1, state.current_frame, state.confirmed_frame, game.stalls, game.latest_event]
+		_status.text += (
+			"\nYou: player %d | frame %d | confirmed %d | stalls %d | event %s" % [game.local_slot + 1, state.current_frame, state.confirmed_frame, game.stalls, game.latest_event]
+		)
 		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
-		_status.text += "\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d" % [
-			counts.rollback_count, counts.max_rollback_depth, counts.resimulated_frames, game.fallback.status().relay_peers.size()]
+		_status.text += (
+			"\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d"
+			% [counts.rollback_count, counts.max_rollback_depth, counts.resimulated_frames, game.fallback.status().relay_peers.size()]
+		)
 
 
 ## Export only selected observations; no SDK configuration, room/player IDs or game inputs.

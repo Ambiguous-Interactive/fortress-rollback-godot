@@ -242,15 +242,24 @@ func diagnostics() -> Dictionary:
 		peers.append(row)
 	return {
 		"schema": "fortress-peer-diagnostics-v1",
-		"current_frame": observed.current_frame, "confirmed_frame": observed.confirmed_frame,
-		"lifecycle": observed.lifecycle, "reason": observed.reason, "failure_frame": observed.failure_frame,
-		"pending_rollback_frame": observed.pending_rollback_frame, "frames_ahead": _frames_ahead,
-		"statistics": {
-			"rollback_count": counts.rollback_count, "resimulated_frames": counts.resimulated_frames,
-			"advanced_frames": counts.advanced_frames, "prediction_stalls": counts.prediction_stalls,
-			"last_rollback_depth": counts.last_rollback_depth, "max_rollback_depth": counts.max_rollback_depth
+		"current_frame": observed.current_frame,
+		"confirmed_frame": observed.confirmed_frame,
+		"lifecycle": observed.lifecycle,
+		"reason": observed.reason,
+		"failure_frame": observed.failure_frame,
+		"pending_rollback_frame": observed.pending_rollback_frame,
+		"frames_ahead": _frames_ahead,
+		"statistics":
+		{
+			"rollback_count": counts.rollback_count,
+			"resimulated_frames": counts.resimulated_frames,
+			"advanced_frames": counts.advanced_frames,
+			"prediction_stalls": counts.prediction_stalls,
+			"last_rollback_depth": counts.last_rollback_depth,
+			"max_rollback_depth": counts.max_rollback_depth
 		},
-		"peers": peers, "failure": _owned_event(_diagnostic_failure)
+		"peers": peers,
+		"failure": _owned_event(_diagnostic_failure)
 	}
 
 

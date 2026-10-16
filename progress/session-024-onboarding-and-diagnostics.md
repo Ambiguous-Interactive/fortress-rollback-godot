@@ -75,7 +75,7 @@ The initial both-pin clean browser run passes ten rooms and twenty real report
 downloads. Every peer-room record requires actual restores and independently
 compared corrected canonical state; both altered-load controls fail at frame 3.
 A final run includes the reviewed privacy/latch fix and guide changes.
-Final receipts, native suite counts and delivery gates are recorded below.
+Local receipts and native suite counts are recorded below. PR #98 records final delivery gates.
 
 ## Remaining scope
 
@@ -90,7 +90,7 @@ Retro: findings-acted.
 ## Final local evidence
 
 The final source-bound clean browser receipt is
-`.cache/reference/results/session-022-clean-online-final/online-example.json`.
+`.cache/reference/results/session024-clean-online-final/online-example.json`.
 It binds the final reviewed runtime, installation/hosting/validation helpers,
 Python/editor/browser/server tools, both user guides, exports and owned logs.
 Both pins pass five rooms, at least 100 confirmed frames per peer, real rollback,
@@ -106,10 +106,29 @@ python3 scripts/reference/signalfish_webrtc_probe.py --online-example --offline 
   --server .cache/reference/results/session-013-server-build/target/debug/signal-fish-server \
   --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
   --build-receipt .cache/reference/results/session-013-server-build/build-receipt.json \
-  --output .cache/reference/results/session-022-clean-online-final
+  --output .cache/reference/results/session024-clean-online-final
 ```
 
 All 106 harness/tooling tests and all 79 reference tests pass (three environment
-skips in the latter). Source-width and harness lint pass. Native unit/integration/
-determinism and ownership receipts are completing under the final reviewed source;
-CI supplies independent current-head and architecture evidence before merge.
+skips in the latter). Source-width and harness lint pass. Both engine pins pass all 224 unit, four integration and eight determinism cases,
+with in-process and fresh-process repetition. Receipts:
+`.cache/tests/session024-final-{4.3,4.7.2}-{unit,integration,determinism}.json`.
+Final formatting passes for changed production GDScript and the new statistics suite;
+existing unrelated fixture formatting is preserved. Independent current-head CI and
+complete feedback gates remain required before the authorized squash merge.
+The linked PR records reviewed head, feedback times, merge SHA and main CI.
+
+The first PR head's full x64/ARM64 container builds passed. Its automatic review
+also found no issues. The final formatting pass changes only GDScript whitespace
+and Python import placement; source-bound browser receipts were refreshed on both
+pins afterward. The final screenshot reflects that exact run. It observes ten
+rooms, sixteen rejected stale SDK callback invocations and twenty downloaded
+reports, with real rollback in every peer-room record.
+
+The final `python3 scripts/reference/ownership_probes.py --offline --web` also
+passes on both engine pins. `.cache/reference/results/ownership.json` contains
+four positive/negative native+Chromium records, with exact native/browser equality
+and the expanded actual-handshake privacy/ownership assertions. No probe process
+remains running. Source-width lint checks all 252 tracked source files at 180
+columns; harness lint and the 106 tooling tests pass. The final browser receipt
+also binds the actual Python executable used for clean installation.
