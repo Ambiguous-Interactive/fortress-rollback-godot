@@ -84,6 +84,18 @@ class ReceiptControls(unittest.TestCase):
                 self.assertEqual(report['failure'], failure)
                 self.assertEqual(report['version_probe']['stdout'], output.decode(errors='replace'))
 
+    # Value: a rejected attempt must not leave an earlier pass at the results it names; help writes nothing.
+    def test_rejected_arguments_invalidate_selected_results(self) -> None:
+        for arguments, invalidated in [(['--category', 'bogus'], True), (['--timeout', '-1'], True), (['--jobs', '0'], True),
+                                       (['--seed', str(2**63)], True), (['--bogus'], True), (['--help'], False)]:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / 'receipt.json'
+                receipt.write_text('{"passed":true}')
+                process = subprocess.run([sys.executable, str(ROOT / 'scripts/run_godot_tests.py'), '--godot', 'unused',
+                                          f'--results={receipt}', *arguments], cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(process.returncode, 2 if invalidated else 0, process.stderr)
+                self.assertEqual(json.loads(receipt.read_text())['passed'], not invalidated)
+
     def test_malformed_engine_stream_is_a_captured_failure(self) -> None:
         result = RUNNER.invoke([sys.executable, '-c', "import sys;sys.stdout.buffer.write(b'bad\\xff')"], 10)
         self.assertEqual(result.get('failure'), 'invalid_utf8_output', result)

@@ -17,6 +17,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
+DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
 ENGINE_ERROR = re.compile(r"(?m)^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)")
 
 
@@ -177,15 +178,31 @@ def _invalid_utf8(*streams: bytes | str | None) -> bool:
     return False
 
 
+class _Parser(argparse.ArgumentParser):
+    """Replace a stale passing receipt at the selected --results when arguments are rejected."""
+
+    def error(self, message: str) -> None:
+        preview = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+        preview.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
+        try:
+            results = preview.parse_known_args(self.arguments)[0].results
+            results.parent.mkdir(parents=True, exist_ok=True)
+            results.write_text(json.dumps({"format": 1, "passed": False, "failure": "invalid_arguments"}) + "\n", encoding="utf-8")
+        except (argparse.ArgumentError, OSError):
+            message += "; unable to invalidate the selected results"
+        super().error(message)
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = _Parser(description=__doc__, allow_abbrev=False)
+    parser.arguments = sys.argv[1:] if argv is None else argv
     parser.add_argument("--godot", required=True, type=Path)
     parser.add_argument("--category", choices=("unit", "determinism", "integration"), default="unit")
     parser.add_argument("--suite", action="append", default=[])
     parser.add_argument("--filter", default="")
     parser.add_argument("--seed", type=int, default=1701)
     parser.add_argument("--timeout", type=float, default=30)
-    parser.add_argument("--results", type=Path, default=ROOT / ".cache/tests/latest.json")
+    parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
     args = parser.parse_args(argv)
