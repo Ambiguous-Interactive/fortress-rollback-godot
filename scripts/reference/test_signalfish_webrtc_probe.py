@@ -12,6 +12,7 @@ from pathlib import Path
 import tempfile
 
 import signalfish_webrtc_probe as probe
+from wire import INPUT_HEADER, VERSION
 
 
 def gameplay_diagnostic():
@@ -49,7 +50,7 @@ def mixed_evidence():
     for record in result['records']:
         count = record['players']
         body = struct.pack('<iiH', 2, 1, 1) + bytes([1, 0, count]) + struct.pack('<BiH', 0, 1, 0) * count + struct.pack('<I', 1) + bytes([35])
-        payload = (b'FRGP' + struct.pack('<HBB', 1, 3, 0) + bytes([count]) * 16
+        payload = (INPUT_HEADER + bytes([count]) * 16
                    + hashlib.sha256(b'00000000-0000-0000-0000-000000000000').digest()[:8]
                    + bytes([1]) + bytes(7) + struct.pack('<I', len(body)) + body).hex()
         for index, peer in enumerate(record['peers']):
@@ -309,7 +310,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         payload = original['records'][0]['peers'][0]['result']['records'][0]['mixed']['overlap']['payload']
         raw = bytes.fromhex(payload)
         mutants = [('truncated', b'\x00')]
-        for offset, value in [(0, 0), (4, 2), (6, 4), (7, 1), (32, 0), (33, 2), (40, 0), (len(raw) - 1, 0)]:
+        for offset, value in [(0, 0), (4, VERSION + 1), (6, 4), (7, 1), (32, 0), (33, 2), (40, 0), (len(raw) - 1, 0)]:
             changed = bytearray(raw)
             changed[offset] = value
             mutants.append((str(offset), bytes(changed)))

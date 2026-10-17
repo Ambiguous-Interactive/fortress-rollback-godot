@@ -58,7 +58,7 @@ unacknowledged input; an equal retained duplicate is idempotent and a differing
 one returns `CONFLICT`. An acknowledged old sample cannot be resubmitted.
 
 Each send takes the oldest consecutive pending prefix that fits both the frame
-batch cap and packet byte cap. It piggybacks the actual retained remote ACK floor.
+batch cap and packet byte cap. The byte cap is the smaller of the local and the remote's advertised `max_packet_bytes`. It piggybacks the actual retained remote ACK floor.
 Only receiving new input refreshes the running input-progress clock. Duplicate
 inputs, standalone ACKs and fresh local sends cannot postpone retransmission.
 `poll` retries strictly after the configured interval, then resets that retry
@@ -95,7 +95,7 @@ by default.
 ## Bounds and evidence
 
 Input options bound pending and received history (1–4096 frames each), packet
-batches (1–128 frames) and each publication queue (1–4096 entries). Configuration
+batches (1–128 frames sent; received batches may always hold up to 128) and each publication queue (1–4096 entries). Configuration
 checks cardinalities before allocating lookup state and rejects history geometry
 above the configured retained-byte budget, capped at 16 MiB. Geometry includes
 one extra locally packed frame for the last acknowledged input:

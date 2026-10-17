@@ -21,6 +21,9 @@ if code != Direct.Code.OK:
     return ERR_UNAVAILABLE
 ```
 
+Set the handshake options' `max_packet_bytes` no higher than the transport's. The peer session sizes input
+batches from it, and the transport refuses larger packets, which stalls the match after a long backlog.
+
 Keep SDK Nodes alive. The application owns SDK and mesh polling; direct delivery
 services the multiplayer peer. Reserve packet consumption for this adapter.
 Assigning the peer to a `MultiplayerAPI`, or calling `get_packet()` elsewhere,

@@ -63,7 +63,7 @@ func _packet(kind: int, token: int, changes: Dictionary = {}, connection: int = 
 	message.kind = kind
 	message.token = _id(token, 16)
 	for field: String in changes:
-		if field in ["min_compat_version", "features", "config_digest", "session_id", "sender_id"]:
+		if field in ["min_compat_version", "features", "config_digest", "session_id", "sender_id", "max_packet_bytes"]:
 			message.set(field, changes[field])
 		elif field == "roster":
 			var roster: Array[PackedByteArray] = []
@@ -81,8 +81,12 @@ func _roundtrips(context: RefCounted) -> void:
 	var endpoint: Endpoint = _endpoint(options)
 	context.equal(endpoint.begin(0, _id(1, 16)), H.Code.OK, "start")
 	endpoint.drain_outbox()
+	context.equal(endpoint.remote_packet_bytes(), 65536, "local packet limit before any reply")
+	var advertised: Array[int] = [9000, 4000, 70000]
 	for token: int in range(1, 4):
-		context.equal(endpoint.receive(_packet(T.Kind.SYNC_REPLY, token), _id(2), token, _id(token + 1, 16)), H.Code.OK, "valid echo")
+		var reply: PackedByteArray = _packet(T.Kind.SYNC_REPLY, token, {"max_packet_bytes": advertised[token - 1]})
+		context.equal(endpoint.receive(reply, _id(2), token, _id(token + 1, 16)), H.Code.OK, "valid echo")
+		context.equal(endpoint.remote_packet_bytes(), [9000, 4000, 4000][token - 1], "smallest advertised packet limit kept")
 		context.equal(endpoint.status().remaining, 3 - token, "single decrement")
 		context.equal(endpoint.status().remote_connection, _id(20).hex_encode(), "first roundtrip binds")
 		var packets: Array[PackedByteArray] = endpoint.drain_outbox()
@@ -94,6 +98,9 @@ func _roundtrips(context: RefCounted) -> void:
 	context.equal(endpoint.receive(_packet(T.Kind.SYNC_REQUEST, 90, {"fps": 30}), _id(2), 4), H.Code.OK, "running answers foreign config")
 	context.equal(endpoint.drain_outbox().size(), 1, "running reply")
 	context.equal(endpoint.drain_events().size(), 0, "no running config poison")
+	context.equal(endpoint.receive(_packet(T.Kind.SYNC_REQUEST, 91, {"max_packet_bytes": 100}), _id(2), 5), H.Code.OK, "running answers a request")
+	endpoint.drain_outbox()
+	context.equal(endpoint.remote_packet_bytes(), 4000, "a remote request does not change the packet limit")
 	context.state(0, JSON.stringify(endpoint.drain_transitions()).to_utf8_buffer())
 
 
@@ -120,10 +127,10 @@ func _echoes(context: RefCounted) -> void:
 func _mismatch(context: RefCounted) -> void:
 	var changes: Array[Dictionary] = [{"min_compat_version": 2}, {"player_count": 3, "roster": [_id(1), _id(2), _id(3)]},
 		{"input_width": 2, "neutral_input": PackedByteArray([0, 0])}, {"fps": 30}, {"max_prediction": 4}, {"desync_interval": 0}, {"features": 1},
-		{"input_delay": 1}, {"input_format": 2}, {"snapshot_format": 2}, {"checksum_algorithm": 2}, {"neutral_input": PackedByteArray([1])},
+		{"input_delay": 1}, {"input_format": 2}, {"snapshot_format": 2}, {"checksum_algorithm": 2}, {"queue_capacity": 256}, {"neutral_input": PackedByteArray([1])},
 		{"roster": [_id(2), _id(1)]}, {"config_digest": _id(1)}]
 	var expected: Array[String] = ["min_compat_version", "player_count", "input_width", "fps", "max_prediction", "desync_interval", "features",
-		"input_delay", "input_format", "snapshot_format", "checksum_algorithm", "neutral_input", "roster", "config_digest"]
+		"input_delay", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster", "config_digest"]
 	for index: int in range(changes.size()):
 		var endpoint: Endpoint = _endpoint()
 		endpoint.begin(0, _id(1, 16))

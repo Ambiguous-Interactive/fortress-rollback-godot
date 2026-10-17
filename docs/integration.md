@@ -236,8 +236,37 @@ as ordinary input and stay in agreement. Replays record them like any other inpu
 | `PROTOCOL_FAILED` | Sending the added frames failed. The match ends rather than let peers disagree. |
 
 Before the first sample, a plain `FortressSession` accepts any delay that fits, including a lower one.
-Give every peer the same `queue_capacity`. The handshake does not compare capacities yet: a peer with a
-larger one can raise past the other peer's limit, and that match ends with `PROTOCOL_FAILED`.
+Every peer must use the same `queue_capacity`, because it sets how far delay can rise. Set the handshake
+profile's `queue_capacity` to the session's. Peers with different capacities refuse to synchronize and report
+an `incompatible` failure for `queue_capacity`, instead of ending the match later.
+
+### Suggested input delay
+
+Peer sessions publish an `input_delay_recommendation` event when the measured connection needs more delay.
+The suggestion is the delay that covers one-way latency, which removes most rollbacks: half the largest peer RTT, in frames,
+rounded up. Large RTTs give large suggestions, so your game may cap what it applies.
+The library never applies it. Your game decides, for example after asking the player:
+
+```gdscript
+for event: Dictionary in peer.drain_events():
+	if event.kind == "input_delay_recommendation":
+		peer.set_input_delay(event.player, event.suggested_delay)
+```
+
+| Field | Meaning |
+| --- | --- |
+| `player` | The local slot the suggestion is for. |
+| `current_delay` | That player's delay when the event was published. |
+| `suggested_delay` | Larger than `current_delay` and at most `FortressPeerSession.max_input_delay(config)`. |
+| `round_trip_time_ms` | The largest peer RTT at that moment. |
+
+A raise must hold for 60 consecutive steps; the event suggests the smallest delay seen in that window.
+Each suggestion is larger than the last one, so an ignored suggestion is not repeated and suggestions never flap.
+Keep the value if `set_input_delay` does not return `OK`, for example `NETWORK_BACKPRESSURE`, and try again later.
+A suggestion can go out of date when latency recovers. The online example offers each one for 10 seconds.
+Sessions with several local players, or with lifecycle controls disabled, publish none.
+RTT comes from the clock your game passes to the session, so peers can receive different suggestions.
+That is safe: the suggestion never reaches the simulation, and `set_input_delay` keeps peers in agreement.
 
 ## Coming from Rust
 

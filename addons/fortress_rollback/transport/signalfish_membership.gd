@@ -145,7 +145,10 @@ static func valid_uuid(uuid: String) -> bool:
 
 static func _copy_profile(profile: T.Config) -> T.Config:
 	var owned: T.Config = T.Config.new()
-	for field: String in ["player_count", "input_width", "fps", "max_prediction", "input_delay", "desync_interval", "input_format", "snapshot_format", "checksum_algorithm"]:
+	var fields: Array[String] = [
+		"player_count", "input_width", "fps", "max_prediction", "input_delay", "desync_interval", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity"
+	]
+	for field: String in fields:
 		owned.set(field, profile.get(field))
 	owned.neutral_input = profile.neutral_input.duplicate()
 	owned.roster.clear()

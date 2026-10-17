@@ -16,6 +16,7 @@ const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.g
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Checksums = preload("res://addons/fortress_rollback/core/peer_checksums.gd")
 const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
+const Advisor = preload("res://addons/fortress_rollback/core/delay_advisor.gd")
 
 
 class Packet:
@@ -45,6 +46,8 @@ var _terminal_notified: bool = false
 var _checksum_confirmation: int = -1
 var _diagnostic_failure: Dictionary = {}
 var _max_pending: int = 0
+var _fps: int = 60
+var _advisor: Advisor = Advisor.new()
 
 
 ## Caller supplies transport identity, clock, tokens and game callbacks.
@@ -65,7 +68,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	var profile: T.Config = local.config
 	if profile.player_count != config.player_count or profile.input_width != config.input_width or profile.input_delay != config.input_delay:
 		return I.Code.INVALID_ARGUMENT
-	if profile.max_prediction != config.max_prediction_frames or profile.neutral_input != config.neutral_input:
+	if profile.max_prediction != config.max_prediction_frames or profile.queue_capacity != config.queue_capacity or profile.neutral_input != config.neutral_input:
 		return I.Code.INVALID_ARGUMENT
 	var locals: PackedInt32Array = PackedInt32Array()
 	var remotes: Dictionary = {}
@@ -106,6 +109,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		peers[key] = endpoint
 	_core = core
 	_max_pending = input_options.max_pending_frames
+	_fps = profile.fps
 	_driver = driver
 	_config = core_config.owned_copy()
 	_config.local_players = locals
@@ -681,6 +685,9 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 		if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 			_terminate_links()
 			return I.Code.TERMINATED
+	if send_reports and _publish_delay_recommendation():
+		_terminate_links()
+		return I.Code.TERMINATED
 	if send_reports:
 		# Compare retained pairs before scheduling can evict their local/remote inventories.
 		# Publication follows the outgoing report, retaining the source packet order.
@@ -708,6 +715,22 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 	if compared != Types.Code.OK:
 		return _checksum_failure(compared, _checksums.failure)
 	return I.Code.OK
+
+
+## Returns true when publication overflowed the event queue and ended the match.
+func _publish_delay_recommendation() -> bool:
+	var player: int = _config.local_players[0]
+	var round_trip_ms: int = 0
+	for index: int in range(_ids.size()):
+		round_trip_ms = maxi(round_trip_ms, _endpoint(index).status().round_trip_time_ms)
+	var current: int = _core.input_delay(player)
+	# set_input_delay needs a prior sample, so none is suggested before one.
+	var local_count: int = _config.local_players.size() if _core.received_frames()[player] != -1 else 0
+	var suggested: int = _advisor.observe(local_count, current, max_input_delay(_config), round_trip_ms, _fps)
+	if suggested == -1:
+		return false
+	_publish_event({"kind": "input_delay_recommendation", "player": player, "current_delay": current, "suggested_delay": suggested, "round_trip_time_ms": round_trip_ms})
+	return _core.status().lifecycle == Types.Lifecycle.TERMINATED
 
 
 func _checksum_failure(code: int, diagnostic: Dictionary) -> int:

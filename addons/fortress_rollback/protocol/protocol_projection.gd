@@ -18,6 +18,7 @@ static func project(message: T.Message) -> Dictionary:
 			record["min_compat_version"] = message.min_compat_version
 			record["features"] = message.features
 			record["config_digest"] = message.config_digest.hex_encode()
+			record["max_packet_bytes"] = message.max_packet_bytes
 			var roster: Array[String] = []
 			for peer: PackedByteArray in message.config.roster:
 				roster.append(peer.hex_encode())
@@ -31,6 +32,7 @@ static func project(message: T.Message) -> Dictionary:
 				"input_format": message.config.input_format,
 				"snapshot_format": message.config.snapshot_format,
 				"checksum_algorithm": message.config.checksum_algorithm,
+				"queue_capacity": message.config.queue_capacity,
 				"neutral_input": message.config.neutral_input.hex_encode(),
 				"roster": roster,
 			}

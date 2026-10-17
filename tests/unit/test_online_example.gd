@@ -193,6 +193,22 @@ func _live_driver(context: RefCounted) -> void:
 		now += 16667
 	context.equal(fixtures[0].driver.peer.input_delay(fixtures[0].driver.local_slot), 3, "raised delay is in effect")
 	context.equal(fixtures[1].driver.peer.status().confirmed_frame > raised_at + 30, true, "the other player confirms past the change")
+	var suggested: Match = fixtures[0].driver
+	context.equal(suggested.apply_suggested_delay(), Match.Types.Code.INVALID_CONFIGURATION, "nothing to apply without a suggestion")
+	suggested.suggested_delay = 4
+	suggested.suggested_frame = suggested.peer.status().current_frame
+	context.equal(suggested.apply_suggested_delay(), Match.Types.Code.OK, "player applies a suggested delay")
+	context.equal([suggested.peer.input_delay(suggested.local_slot), suggested.suggested_delay], [4, -1], "applied suggestion is in effect and cleared")
+	suggested.suggested_delay = 3
+	_deliver(fixtures)
+	suggested.tick(now, Simulation.LEFT)
+	context.equal(suggested.suggested_delay, -1, "a suggestion the current delay already covers is dropped")
+	for age: int in [Match.SUGGESTION_FRAMES - 1, Match.SUGGESTION_FRAMES + 1]:
+		suggested.suggested_delay = 5
+		suggested.suggested_frame = suggested.peer.status().current_frame - age
+		_deliver(fixtures)
+		suggested.tick(now, Simulation.LEFT)
+		context.equal(suggested.suggested_delay, 5 if age < Match.SUGGESTION_FRAMES else -1, "a suggestion expires after %d frames" % Match.SUGGESTION_FRAMES)
 	for index: int in 2:
 		var fixture: Dictionary = fixtures[index]
 		context.equal(fixture.driver.peer.status().confirmed_frame > held_frames[index], true, "confirmed gameplay recovers beyond stalled input")

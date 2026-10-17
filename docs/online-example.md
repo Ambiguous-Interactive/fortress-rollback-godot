@@ -110,6 +110,8 @@ installed WebRTC implementation.
    frame, confirmed frame, input delay, stalls, latest event and active relay links.
 5. On a laggy connection, press **=** to raise your input delay by one frame.
    Moves then take effect a frame later, with fewer corrections. Raises cannot be undone in this match.
+   When the measured connection needs more delay, the display shows a suggested delay.
+   Press **R** to apply it.
 
 ## Diagnostics
 

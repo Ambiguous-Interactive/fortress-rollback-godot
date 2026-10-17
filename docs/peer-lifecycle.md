@@ -31,6 +31,11 @@ pending inventory. `network_status().frames_ahead` reports the largest peer
 recommendation. A `wait_recommendation` event carries `skip_frames`; applications
 choose how to pace local frame submission. The library does not sleep.
 
+An `input_delay_recommendation` event suggests a higher local input delay from the
+largest peer RTT. It carries `player`, `current_delay`, `suggested_delay` and
+`round_trip_time_ms`. The [integration guide](integration.md#suggested-input-delay)
+explains when it fires and how to apply it.
+
 ## Game checksums
 
 The profile's `desync_interval` selects saved frame boundaries; zero disables

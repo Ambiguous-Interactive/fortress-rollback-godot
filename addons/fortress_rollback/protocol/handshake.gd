@@ -40,7 +40,7 @@ func configure(local: Variant, remote_sender: Variant, options: Variant) -> int:
 		"max_outbox", "max_events", "max_transitions"]:
 		_options.set(field, options.get(field))
 	_state = {"state": "initializing", "remaining": options.roundtrips, "requests_sent": 0, "pending": {}, "consumed": {}, "remote_connection": "", "mismatch": {},
-		"timeout_sent": false, "now_us": -1, "start_us": 0, "last_send_us": 0}
+		"timeout_sent": false, "now_us": -1, "start_us": 0, "last_send_us": 0, "remote_packet_bytes": options.max_packet_bytes}
 	return H.Code.OK
 
 
@@ -127,6 +127,11 @@ func status() -> Dictionary:
 	return _state.duplicate(true)
 
 
+## The smaller of the local limit and every receive limit the remote advertised in an accepted reply.
+func remote_packet_bytes() -> int:
+	return _state.remote_packet_bytes
+
+
 func drain_outbox() -> Array[PackedByteArray]:
 	var result: Array[PackedByteArray] = []
 	for packet: PackedByteArray in _outbox:
@@ -170,6 +175,7 @@ func _reply(plan: Dictionary, message: T.Message, next_token: Variant) -> int:
 				disposition = "accepted"
 				if plan.state.remote_connection.is_empty():
 					plan.state.remote_connection = message.connection_id.hex_encode()
+				plan.state.remote_packet_bytes = mini(plan.state.remote_packet_bytes, message.max_packet_bytes)
 				plan.state.remaining -= 1
 				if plan.state.remaining == 0:
 					plan.state.state = "running"
@@ -219,6 +225,7 @@ func _packet(kind: int, token: PackedByteArray) -> PackedByteArray:
 	message.features = _local.features
 	message.config = _local.config
 	message.config_digest = _local.config_digest
+	message.max_packet_bytes = _options.max_packet_bytes
 	return Codec.encode(message, _limits).bytes
 
 

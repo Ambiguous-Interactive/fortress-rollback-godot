@@ -78,7 +78,7 @@ func _statuses(count: int = 2, last_frame: int = -1) -> Array[T.Status]:
 	return result
 
 
-func _ready(sink: Sink, options: I.Options = null, roster: Array[PackedByteArray] = [], delay: int = 0, max_packet: int = 65536) -> E:
+func _ready(sink: Sink, options: I.Options = null, roster: Array[PackedByteArray] = [], delay: int = 0, max_packet: int = 65536, remote_packet: int = 65536) -> E:
 	var endpoint: E = E.new()
 	var handshake_options: H.Options = H.Options.new()
 	handshake_options.roundtrips = 1
@@ -89,6 +89,7 @@ func _ready(sink: Sink, options: I.Options = null, roster: Array[PackedByteArray
 	var reply: T.Message = _local(2, roster, delay)
 	reply.kind = T.Kind.SYNC_REPLY
 	reply.token = _id(1, 16)
+	reply.max_packet_bytes = remote_packet
 	var limits: T.Limits = T.Limits.new()
 	limits.player_count = reply.config.player_count
 	endpoint.receive(Codec.encode(reply, limits).bytes, _id(2), 1)
@@ -296,16 +297,26 @@ func _capacity(context: RefCounted) -> void:
 	context.equal(large_sink.frames.size(), 128, "all maximum batch callbacks accounted")
 	context.equal(endpoint.status().pending_frames, 0, "maximum batch ACK releases full prefix")
 	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 127, "maximum batch cumulative ACK")
-	endpoint = _ready(large_sink, large, [], 0, 119)
-	for frame: int in range(45):
-		context.equal(endpoint.submit(frame, PackedByteArray([frame]), _statuses(), 2 + frame), I.Code.OK, "packet byte cap retains unsent suffix")
-		var packets: Array[PackedByteArray] = endpoint.drain_outbox()
-		context.equal(packets[0].size() <= 119, true, "every batch respects packet byte cap")
-		context.equal(_decoded(packets[0]).frame_count, mini(44, frame + 1), "packet cap truncates oldest prefix")
-	context.equal(endpoint.receive(_ack_packet(44), _id(2), 50), I.Code.OK, "packet-cap unsent ACK ignored")
-	context.equal(endpoint.status().pending_frames, 45, "packet-cap suffix protected")
-	endpoint.receive(_ack_packet(43), _id(2), 51)
-	context.equal(endpoint.status().pending.keys(), [44], "inclusive transmitted prefix removed")
+	# max_input_frames caps what this peer sends. A peer with a larger cap must still be heard.
+	var narrow: I.Options = I.Options.new()
+	narrow.max_input_frames = 4
+	var narrow_sink: Sink = Sink.new()
+	endpoint = _ready(narrow_sink, narrow)
+	context.equal(endpoint.receive(_encode(_input(0, PackedByteArray([0, 1, 2, 3, 4, 5]))), _id(2), 2), I.Code.OK, "larger remote batch accepted")
+	context.equal(narrow_sink.frames.size(), 6, "every frame of a larger remote batch delivered")
+	# 127 bytes is the exact two-player handshake size, which leaves room for 52 one-byte frames.
+	# Either side's limit applies: a remote advertising 127 bytes caps a local 65536-byte endpoint the same way.
+	for limits: Array in [[127, 65536], [65536, 127]]:
+		endpoint = _ready(large_sink, large, [], 0, limits[0], limits[1])
+		for frame: int in range(53):
+			context.equal(endpoint.submit(frame, PackedByteArray([frame]), _statuses(), 2 + frame), I.Code.OK, "packet byte cap retains unsent suffix")
+			var packets: Array[PackedByteArray] = endpoint.drain_outbox()
+			context.equal(packets[0].size() <= 127, true, "every batch respects the smaller packet byte cap")
+			context.equal(_decoded(packets[0]).frame_count, mini(52, frame + 1), "packet cap truncates oldest prefix")
+		context.equal(endpoint.receive(_ack_packet(52), _id(2), 58), I.Code.OK, "packet-cap unsent ACK ignored")
+		context.equal(endpoint.status().pending_frames, 53, "packet-cap suffix protected")
+		endpoint.receive(_ack_packet(51), _id(2), 59)
+		context.equal(endpoint.status().pending.keys(), [52], "inclusive transmitted prefix removed")
 
 
 func _ownership(context: RefCounted) -> void:

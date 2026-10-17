@@ -98,7 +98,7 @@ func _mutated(context: RefCounted, kind: int, offset: int, replacement: PackedBy
 
 func _malformed(context: RefCounted) -> void:
 	_mutated(context, 8, 0, PackedByteArray([0]), "bad magic")
-	_mutated(context, 8, 4, PackedByteArray([2, 0]), "unsupported version")
+	_mutated(context, 8, 4, PackedByteArray([Codec.VERSION + 1, 0]), "unsupported version")
 	_mutated(context, 8, 6, PackedByteArray([0]), "zero kind")
 	_mutated(context, 8, 6, PackedByteArray([255]), "unknown kind")
 	_mutated(context, 8, 7, PackedByteArray([1]), "reserved flags")
@@ -170,6 +170,7 @@ func _limits(context: RefCounted) -> void:
 	config.input_format = 4294967295
 	config.snapshot_format = 4294967295
 	config.checksum_algorithm = 4294967295
+	config.queue_capacity = 65536
 	message = _message(1)
 	message.config = config
 	var encoded: RefCounted = Codec.encode(message, limits)
@@ -181,6 +182,10 @@ func _limits(context: RefCounted) -> void:
 			context.equal(Codec.configuration_matches(config, decoded.message.config, limits), true, "maximum config semantic projection")
 	config.input_delay = 65536
 	context.equal(Codec.encode(message, limits).code != 0, true, "config u16 overflow")
+	config.input_delay = 0
+	for capacity: int in [1, 65537]:
+		config.queue_capacity = capacity
+		context.equal(Codec.encode(message, limits).code != 0, true, "queue capacity outside the session range")
 
 
 func _types(context: RefCounted) -> void:
@@ -251,7 +256,7 @@ func _semantics(context: RefCounted) -> void:
 	var first: RefCounted = Types.Config.new()
 	var second: RefCounted = Types.Config.new()
 	context.equal(Codec.configuration_matches(first, second, limits), true, "equal configuration")
-	for field: String in ["fps", "max_prediction", "input_delay", "desync_interval", "input_format", "snapshot_format", "checksum_algorithm"]:
+	for field: String in ["fps", "max_prediction", "input_delay", "desync_interval", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity"]:
 		second = Types.Config.new()
 		second.set(field, second.get(field) + 1)
 		context.equal(Codec.configuration_matches(first, second, limits), false, "config mismatch " + field)

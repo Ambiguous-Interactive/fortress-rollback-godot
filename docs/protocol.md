@@ -54,7 +54,7 @@ roster slots to authenticated transport senders belong to the endpoint.
 | Offset | Field | Width |
 | --- | --- | --- |
 | 0 | ASCII `FRGP` | 4 bytes |
-| 4 | Layout version, exactly 1 | u16 |
+| 4 | Layout version, exactly 2 | u16 |
 | 6 | Message kind | u8 |
 | 7 | Flags, exactly 0 | u8 |
 | 8 | Session identity | 16 bytes |
@@ -67,8 +67,10 @@ The header length is 44 bytes. The declared payload must consume the complete
 packet. Unknown versions, kinds, flags and trailing bytes are rejected.
 Layout-version agreement is separate from the synchronization payload's
 minimum semantic compatibility version. The codec preserves all u8 semantic
-versions so the endpoint can diagnose incompatibility. Layout version stays 1;
-no fallback negotiation is implemented.
+versions so the endpoint can diagnose incompatibility. Layout version 2 adds
+`queue_capacity` to the configuration and `max_packet_bytes` to synchronization
+messages, so version 1 peers are rejected. No
+fallback negotiation is implemented.
 
 ## Message payloads
 
@@ -78,7 +80,7 @@ values are invalid. A checksum frame and an input start frame are never null.
 
 | Kind | Name | Payload |
 | --- | --- | --- |
-| 1 | `SYNC_REQUEST` | token[16], min_compat_version:u8, features:u32, configuration, config_digest[8] |
+| 1 | `SYNC_REQUEST` | token[16], min_compat_version:u8, features:u32, configuration, config_digest[8], max_packet_bytes:u32 |
 | 2 | `SYNC_REPLY` | Same layout; token echoes the request token |
 | 3 | `INPUT` | start_frame:i32, ack_frame:i32, frame_count:u16, player_count:u8, players[player_count], status_count:u8, statuses[status_count], data_length:u32, data[data_length] |
 | 4 | `INPUT_ACK` | ack_frame:i32, nullable |
@@ -124,6 +126,7 @@ round sequence and lifecycle checks remain endpoint responsibilities.
 | input_format | u32 | Positive application input format version |
 | snapshot_format | u32 | Positive application snapshot format version |
 | checksum_algorithm | u32 | Positive application checksum algorithm identifier |
+| queue_capacity | u32 | 2–65536; must equal the session `queue_capacity` |
 | neutral_input | input_width bytes | Exact width, owned bytes |
 | roster | player_count × 8 bytes | Slot-ordered peer identities |
 
@@ -132,7 +135,7 @@ kind. Wide byte fields use lowercase hex strings; bounded numeric fields stay
 integers. Slots/statuses/floors retain array order. Returned nested arrays and
 dictionaries are newly constructed; no record storage is exposed.
 
-The fixed configuration part is 29 bytes. Roster entries can repeat because one endpoint
+The fixed configuration part is 33 bytes. Roster entries can repeat because one endpoint
 may own several player slots. Transport identities are never renumbered during
 a live session. The input width uses u32 so the local engine's supported
 65536-byte input domain remains representable.
@@ -147,6 +150,11 @@ without hashing, integer conversion or inferred authentication. The endpoint
 must compare both canonical configuration bytes and this digest, alongside
 version/features and a matching echoed token, before declaring synchronization.
 Equal digests do not replace exact comparison of the explicit configuration.
+
+`max_packet_bytes` (44–1048576) is the largest packet the sender accepts. Peers
+may differ: each endpoint sizes input batches to fit the smaller of its own
+limit and the smallest limit in the remote's accepted replies.
+
 The codec validates representation and bounds; it does not declare a peer's
 configuration agreed or a cryptographic checksum valid.
 
@@ -173,7 +181,7 @@ The semantic reference is Fortress
 | --- | --- |
 | Header sentinel/version/flags/conn_id | Explicit Godot header, plus session and sender; connection identity widened to opaque 8 bytes |
 | SyncRequest/SyncReply | Preserve challenge/echo, minimum compatibility, features, configuration and wide digest; injected challenge widened to 16 bytes |
-| SessionConfigBlock | Preserve player count/input width/fps/prediction/desync interval; add delay, game formats, neutral bytes and ordered roster |
+| SessionConfigBlock | Preserve player count/input width/fps/prediction/desync interval; add delay, game formats, queue capacity, neutral bytes and ordered roster |
 | Input/InputAck/ConnectionStatus | Preserve input start, cumulative ACK and every roster status including epoch; complete uncompressed samples replace Rust compressed bytes |
 | QualityReport/QualityReply | Preserve signed i16 advantage and full 128-bit ping/pong token |
 | ChecksumReport | Preserve full frame domain and u128 checksum bytes |

@@ -379,8 +379,14 @@ func _long_runtime(context: RefCounted) -> void:
 
 
 func _request_mismatch(context: RefCounted) -> void:
-	for field: String in ["fps", "roster", "neutral_input"]:
+	for field: String in ["fps", "queue_capacity", "roster", "neutral_input"]:
 		_request_mismatch_field(context, field)
+	# Raises are bounded by queue capacity, so the advertised capacity must match the session's.
+	var setup: Dictionary = _build(context, 2, 0, false, 128, false)
+	var config: Config = setup.peers[0]._config.owned_copy()
+	config.queue_capacity = 256
+	context.equal(Peer.new().configure(config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new()), I.Code.INVALID_ARGUMENT,
+		"advertised queue capacity must match the session")
 
 
 func _request_mismatch_field(context: RefCounted, field: String) -> void:
@@ -399,6 +405,8 @@ func _request_mismatch_field(context: RefCounted, field: String) -> void:
 	match field:
 		"fps":
 			message.config.fps = 61
+		"queue_capacity":
+			message.config.queue_capacity = 256
 		"roster":
 			message.config.roster = [_id(1), _id(0)]
 		"neutral_input":

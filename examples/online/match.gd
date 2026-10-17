@@ -26,6 +26,15 @@ var local_slot: int = -1
 var failure: String = ""
 var latest_event: String = "none"
 var stalls: int = 0
+## Largest packet the transports carry. Input batches are sized to fit it.
+const PACKET_BYTES: int = 1024
+## Frames a suggestion stays on offer. Latency can recover, and a raise cannot be undone.
+const SUGGESTION_FRAMES: int = 600
+
+## Latest measured delay suggestion for this player, or -1 when there is none to apply.
+var suggested_delay: int = -1
+## Frame the suggestion arrived on.
+var suggested_frame: int = 0
 var has_started: bool = false
 ## Choose before freeze. Captures local canonical state and inputs for diagnostic export.
 var capture_trace: bool = false
@@ -73,6 +82,7 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 	config.storage_budget_bytes = config.required_storage_bytes()
 	var handshake: Handshake.Options = Handshake.Options.new()
 	handshake.timeout_us = 30000000
+	handshake.max_packet_bytes = PACKET_BYTES
 	if membership.configure_peer(peer, config, game, handshake, Inputs.Options.new()) != Inputs.Code.OK:
 		return ERR_INVALID_DATA
 	return adapter.attach(client, mesh, membership)
@@ -82,11 +92,11 @@ func start_transport(client: Object, mesh: Object, sdk_config: Object, info: Obj
 	if has_started or adapter.status().route != "mesh":
 		return ERR_UNAVAILABLE
 	var options: Direct.Options = Direct.Options.new()
-	options.max_packet_bytes = 1024
+	options.max_packet_bytes = PACKET_BYTES
 	if direct.configure(mesh, membership, adapter, peer, options) != Direct.Code.OK:
 		return ERR_UNAVAILABLE
 	var relay_options: Relay.Options = Relay.Options.new()
-	relay_options.max_packet_bytes = 1024
+	relay_options.max_packet_bytes = PACKET_BYTES
 	if relay.configure(client, sdk_config, info, membership, adapter, peer, relay_options) != Relay.Code.OK:
 		return ERR_UNAVAILABLE
 	if fallback.configure(direct, relay, membership, adapter, peer) != Fallback.Code.OK:
@@ -151,6 +161,16 @@ func raise_input_delay() -> int:
 	return peer.set_input_delay(local_slot, peer.input_delay(local_slot) + 1)
 
 
+## Apply the latest suggestion. The library only suggests; the game chooses whether to raise.
+func apply_suggested_delay() -> int:
+	if suggested_delay < 0:
+		return Types.Code.INVALID_CONFIGURATION
+	var code: int = peer.set_input_delay(local_slot, suggested_delay)
+	if code == Types.Code.OK:
+		suggested_delay = -1
+	return code
+
+
 func _poll_protocol(now_us: int) -> bool:
 	for _attempt: int in 2:
 		var code: int = peer.poll(now_us, [next_token()])
@@ -170,9 +190,14 @@ func _collect_events() -> void:
 	for event: Dictionary in peer.drain_events():
 		if event.kind != "inputs_received":
 			latest_event = event.kind
+		if event.kind == "input_delay_recommendation":
+			suggested_delay = event.suggested_delay
+			suggested_frame = peer.status().current_frame
 		if event.kind in ["sync_timeout", "incompatible"] and failure.is_empty():
 			failure = "Rollback synchronization failed (%s). Leave and create a new room." % event.kind
 	peer.drain_transitions()
+	if suggested_delay <= peer.input_delay(local_slot) or peer.status().current_frame - suggested_frame > SUGGESTION_FRAMES:
+		suggested_delay = -1
 	if peer.status().lifecycle == Types.Lifecycle.TERMINATED and failure.is_empty():
 		failure = "Session ended (%d). Leave and create a new room." % peer.status().reason
 

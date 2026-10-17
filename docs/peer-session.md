@@ -9,7 +9,7 @@ runs two sessions through an in-process transport with packet faults.
 Preload `addons/fortress_rollback/core/peer_session.gd`. Configure the existing
 core configuration, a protocol `SYNC_REQUEST` profile, game callbacks, handshake
 options and input endpoint options. Core/profile player count, local roster
-ownership, input width, neutral bytes, delay and prediction window must agree.
+ownership, input width, neutral bytes, delay, prediction window and queue capacity must agree.
 Use external-input mode (`sync_test = false`, `check_distance = 0`).
 With three or more distinct identities, lockstep (prediction zero) and prediction
 one without input delay are rejected. Those pinned-upstream profiles cannot

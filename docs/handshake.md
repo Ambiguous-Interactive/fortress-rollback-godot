@@ -18,6 +18,7 @@ Preload `addons/fortress_rollback/protocol/handshake.gd`,
 | `poll(now_us, next_token = null)` | Checks timeout and retry; a token is required only when a retry is actually due. |
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Decodes complete packet bytes and checks transport attribution, header identity and connection era. A fresh token is required only when a valid reply advances an unfinished handshake. |
 | `status()` | Returns an owned state dictionary, including remaining roundtrips, live/consumed token sets, connection binding and sticky mismatch. |
+| `remote_packet_bytes()` | The smaller of the local `max_packet_bytes` and every limit the remote advertised in an accepted reply. Input batches must fit it. |
 | `drain_outbox()` | Returns owned packet bytes and empties the outgoing queue. |
 | `drain_events()` | Returns owned event dictionaries after state publication. |
 | `drain_transitions()` | Returns owned post-transition records and empties the bounded observation queue. |
@@ -65,7 +66,7 @@ satisfy attribution; these checks do not provide cryptographic authentication.
 Mismatch precedence is minimum compatibility version, player count, input width,
 FPS, prediction window, checksum interval and feature mask. These seven checks
 match pinned upstream `HandshakeConfig::first_mismatch`. Godot then checks input
-delay, input format, snapshot format, checksum algorithm, neutral input and roster
+delay, input format, snapshot format, checksum algorithm, queue capacity, neutral input and roster
 before checking the opaque configuration digest. The extra fields belong to the
 Godot session agreement. A mismatch event retains the field and locally oriented
 `ours`/`theirs` values; bytes and rosters use canonical hexadecimal strings.

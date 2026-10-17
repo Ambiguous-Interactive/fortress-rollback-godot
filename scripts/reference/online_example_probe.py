@@ -14,6 +14,7 @@ from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
 from godot_smoke import run
 from signalfish_probe import inventory
+from wire import INPUT_HEADER
 
 DESYNC_REASON = 18
 # examples/online/match.gd schedules local input this many frames ahead of the current frame.
@@ -126,7 +127,7 @@ def validate_socket_loss(record):
 
 def validate_held_input(payload, before, peer):
     raw = bytes.fromhex(payload)
-    if (len(raw) < 76 or raw[:8] != b'FRGP\x01\x00\x03\x00'
+    if (len(raw) < 76 or raw[:8] != INPUT_HEADER
             or raw[8:24].hex() != before['session_id'] or raw[24:32] != hashlib.sha256(peer['uuid'].encode('ascii')).digest()[:8]
             or raw[32:40] == bytes(8) or int.from_bytes(raw[40:44], 'little') != len(raw) - 44
             or raw[54:57] != bytes([1, peer['slot'], 2])):
@@ -179,7 +180,7 @@ def validate_server_restart(record):
                 or type(fault.get('pending')) is not int or fault['pending'] != 1
                 or type(fault.get('reads')) is not int or fault['reads'] < 1 or not isinstance(held, list) or len(held) != 1
                 or not isinstance(held[0], str) or not re.fullmatch('[a-f0-9]{2,2048}', held[0]) or len(held[0]) % 2
-                or bytes.fromhex(held[0])[:8] != b'FRGP\x01\x00\x03\x00'
+                or bytes.fromhex(held[0])[:8] != INPUT_HEADER
                 or bytes.fromhex(held[0])[8:24].hex() != before['session_id']):
             raise ValueError('online example restart did not retain pressure and original old-room input')
         validate_held_input(held[0], before, peers[index])
