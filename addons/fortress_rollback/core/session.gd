@@ -7,6 +7,7 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const History = preload("res://addons/fortress_rollback/core/snapshot_history.gd")
 const Trace = preload("res://addons/fortress_rollback/core/diagnostic_trace.gd")
+const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Code = Types.Code
 const Kind = Types.Kind
 const Lifecycle = Types.Lifecycle
@@ -37,6 +38,7 @@ var _has_confirmation_limit: bool = false
 var _confirmation_limit: int = -1
 var _trace: Trace = Trace.new()
 var _statistics: Types.Statistics = Types.Statistics.new()
+var _replay: Replay
 
 
 ## Creates owned validated configuration and fresh history; never replaces an open batch.
@@ -81,6 +83,10 @@ func configure(config: Config) -> int:
 	_statistics = Types.Statistics.new()
 	_trace = Trace.new()
 	_trace.configure(_config)
+	_replay = null
+	if _config.replay_max_frames > 0:
+		_replay = Replay.new()
+		_replay._start(_config.player_count, _config.input_width)
 	return Code.OK
 
 
@@ -301,6 +307,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		if _outcome == Code.OK:
 			for player: int in _config.local_players:
 				_samples[player] = PackedByteArray()
+		_record_replay()
 		for queue: Queue in _queues:
 			queue.discard_confirmed_frames(_floor())
 		return Types.Result.new(_outcome)
@@ -338,6 +345,33 @@ func statistics() -> Types.Statistics:
 ## Explicitly opted-in canonical payloads; fresh JSON-compatible caller-owned evidence.
 func diagnostic_trace() -> Dictionary:
 	return _trace.report()
+
+
+## Caller-owned copy of the confirmed frames recorded by completed steps; null unless replay_max_frames > 0.
+func replay() -> Replay:
+	return _replay.owned_copy() if _replay != null else null
+
+
+## Runs after each completed batch, which leaves no repair pending. Records only frames whose inputs
+## are confirmed and already simulated. Confirmation never trails the discard floor, so none are lost.
+func _record_replay() -> void:
+	if _replay == null:
+		return
+	var last: int = mini(mini(_confirmed(), _current - 1), _config.replay_max_frames - 1)
+	var saved: Dictionary = {}
+	if _config.checksums_enabled:
+		for entry: Dictionary in _history.retained_checksums():
+			saved[entry.frame] = entry.checksum
+	for frame: int in range(_replay.frame_count(), last + 1):
+		var row: PackedByteArray = PackedByteArray()
+		var neutral: PackedByteArray = PackedByteArray()
+		for queue: Queue in _queues:
+			var input: Queue.Result = queue.retained_confirmed_input(frame)
+			row.append_array(input.bytes if input.code == Queue.Code.OK else PackedByteArray())
+			neutral.append_array(_config.neutral_input)
+		# Defensive: a missing input keeps frame alignment with a neutral, checksum-free row, as upstream does.
+		var skipped: bool = row.size() != neutral.size()
+		_replay._append(neutral if skipped else row, PackedByteArray() if skipped else saved.get(frame, PackedByteArray()), skipped)
 
 
 func _freeze_diagnostic_trace(frame: int, peer_index: int, local: PackedByteArray, remote: PackedByteArray) -> void:

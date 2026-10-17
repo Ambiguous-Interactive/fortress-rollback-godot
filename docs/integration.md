@@ -176,6 +176,38 @@ A snapshot that leaves out state stops the session with `DESYNC` and a `failure_
 The test drops the shot cooldown from the snapshot and confirms sync-test catches it.
 The [offline example](offline-example.md) is a complete sync-test scene.
 
+## Record and replay a match
+
+Set `config.replay_max_frames` before `configure` to record confirmed inputs as the match runs.
+Recording keeps the first frames and stops when full. At 60 frames per second, 216000 frames
+cover an hour; memory is about `replay_max_frames * (player_count * input_width + 17)` bytes,
+outside `storage_budget_bytes`.
+
+```gdscript
+config.replay_max_frames = 216000
+# ... play ...
+var bytes: PackedByteArray = session.replay().to_bytes()  # or peer.replay()
+```
+
+`session.replay()` returns a copy holding every frame whose inputs are confirmed and already simulated.
+Predicted input is never recorded. Each frame also keeps the state checksum when the session still had it.
+
+To watch it, start from the same initial game state and step a `FortressReplayPlayer` once per physics frame:
+
+```gdscript
+var replay := FortressReplay.new()
+if not replay.decode(bytes):
+	return  # truncated, corrupt or from an unsupported format version
+var player := FortressReplayPlayer.new()
+player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES)
+```
+
+`step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
+With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
+`DESYNC` means this game build simulates differently from the recording one; playback stops at `failure_frame()`.
+Pass `0` to play inputs without checking. The file stores inputs, not game rules or seeds:
+keep your own game version and setup alongside it.
+
 ## Coming from Rust
 
 The concepts match [fortress-rollback](https://github.com/wallstop/fortress-rollback).
@@ -188,7 +220,9 @@ Differences in this port:
 | `SaveGameState` / `LoadGameState` / `AdvanceFrame` | `save_state` / `load_state` / `simulate_frame` |
 | Game state cells holding Rust values | Your own byte format through bounded readers and writers |
 | `PredictionThreshold` error | `PREDICTION_STALL` result |
+| `with_recording` + `into_replay` | `config.replay_max_frames`, then `session.replay()` |
+| `ReplaySession` with validation | `FortressReplayPlayer`; a checksum mismatch stops playback with `DESYNC` instead of queuing an event |
 
 The manual request API remains available: see the [session guide](session.md#expert-request-consumption).
-Rust and Godot peers cannot join the same session. Replays, spectators, runtime input-delay changes,
+Rust and Godot peers cannot join the same session, and replay files are not interchangeable. Spectators, runtime input-delay changes,
 dropping peers mid-game and joining mid-game are not available yet; the [plan](../PLAN.md) tracks them.
