@@ -107,7 +107,9 @@ installed WebRTC implementation.
    ready. Network synchronization must complete before movement advances.
    Click outside text fields if a field still has keyboard focus.
 4. Move with WASD or the arrow keys. The display reports your player number,
-   frame, confirmed frame, stalls, latest event and active relay links.
+   frame, confirmed frame, input delay, stalls, latest event and active relay links.
+5. On a laggy connection, press **=** to raise your input delay by one frame.
+   Moves then take effect a frame later, with fewer corrections. Raises cannot be undone in this match.
 
 ## Diagnostics
 

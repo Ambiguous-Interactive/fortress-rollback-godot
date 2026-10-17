@@ -183,6 +183,16 @@ func _live_driver(context: RefCounted) -> void:
 			fixture.driver.tick(now, Simulation.LEFT)
 			context.equal(fixture.driver.failure, "", "partition recovery retains protocol and input ownership")
 		now += 16667
+	var raised_at: int = fixtures[0].driver.peer.status().confirmed_frame
+	context.equal(fixtures[0].driver.raise_input_delay(), Match.Types.Code.OK, "player raises input delay mid-match")
+	for _round: int in 60:
+		_deliver(fixtures)
+		for fixture: Dictionary in fixtures:
+			fixture.driver.tick(now, Simulation.LEFT)
+			context.equal(fixture.driver.failure, "", "raised delay keeps both players running")
+		now += 16667
+	context.equal(fixtures[0].driver.peer.input_delay(fixtures[0].driver.local_slot), 3, "raised delay is in effect")
+	context.equal(fixtures[1].driver.peer.status().confirmed_frame > raised_at + 30, true, "the other player confirms past the change")
 	for index: int in 2:
 		var fixture: Dictionary = fixtures[index]
 		context.equal(fixture.driver.peer.status().confirmed_frame > held_frames[index], true, "confirmed gameplay recovers beyond stalled input")

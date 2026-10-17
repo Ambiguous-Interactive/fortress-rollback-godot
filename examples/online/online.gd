@@ -60,6 +60,12 @@ func _physics_process(_delta: float) -> void:
 	queue_redraw()
 
 
+func _unhandled_key_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_EQUAL, KEY_KP_ADD]:
+		var code: int = controller.game_match.raise_input_delay()
+		controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+
+
 func _exit_tree() -> void:
 	controller.disconnect_room()
 
@@ -143,7 +149,8 @@ func _update_status() -> void:
 	if game.local_slot >= 0:
 		var state: Lobby.Match.Types.Status = game.peer.status()
 		_status.text += (
-			"\nYou: player %d | frame %d | confirmed %d | stalls %d | event %s" % [game.local_slot + 1, state.current_frame, state.confirmed_frame, game.stalls, game.latest_event]
+			"\nYou: player %d | frame %d | confirmed %d | delay %d (= raises) | stalls %d | event %s"
+			% [game.local_slot + 1, state.current_frame, state.confirmed_frame, game.peer.input_delay(game.local_slot), game.stalls, game.latest_event]
 		)
 		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
 		_status.text += (
