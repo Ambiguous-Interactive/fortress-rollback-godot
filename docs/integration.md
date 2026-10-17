@@ -187,6 +187,8 @@ outside `storage_budget_bytes`.
 
 ```gdscript
 config.replay_max_frames = 216000
+config.diagnostic_seed = str(match_seed)  # stored in the replay; printable ASCII, at most 128 bytes
+config.diagnostic_version = "my-game 1.4.0"
 # ... play ...
 var bytes: PackedByteArray = session.replay().to_bytes()  # or peer.replay()
 ```
@@ -200,8 +202,8 @@ To watch it, start from the same initial game state and step a `FortressReplayPl
 
 ```gdscript
 var replay := FortressReplay.new()
-if not replay.decode(bytes):
-	return  # truncated, corrupt or from an unsupported format version
+if replay.decode(bytes) != FortressReplay.DecodeCode.OK:
+	return  # MALFORMED, UNSUPPORTED_VERSION or TOO_LARGE
 var player := FortressReplayPlayer.new()
 player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES)
 ```
@@ -209,8 +211,40 @@ player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES)
 `step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
 With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
 `DESYNC` means this game build simulates differently from the recording one; playback stops at `failure_frame()`.
-Pass `0` to play inputs without checking. The file stores inputs, not game rules or seeds:
-keep your own game version and setup alongside it.
+Pass `0` to play inputs without checking. The file stores inputs, not game rules.
+Check `game_version()` and `game_seed()` before playing, and set up the game to match.
+
+### Replay file format
+
+Version 2 is little-endian with fixed-width fields. `decode` checks every count and length against
+the bytes present before it allocates. It returns `MALFORMED` for truncated, corrupt or trailing bytes.
+It returns `UNSUPPORTED_VERSION` for any other version, and `TOO_LARGE` above the caller's `max_bytes`.
+
+| Field | Bytes | Accessor |
+| --- | --- | --- |
+| Magic `FRRP` | 4 | |
+| Format version, 2 | u16 | |
+| Players (2–8) | u8 | `player_count()` |
+| Input width (1–65536) | u32 | `input_width()` |
+| Frames | u32 | `frame_count()` |
+| Skipped frames | u32 | `skipped_frames()` |
+| Starting input delay | u16 | `input_delay()` |
+| Prediction window (0–128) | u8 | `max_prediction_frames()` |
+| Sync-test (0 or 1) | u8 | `sync_test()` |
+| Neutral input | width | `neutral_input()` |
+| Five texts: u8 length (0–128), then printable ASCII | varies | `engine_version()`, `addon_version()`, `upstream_revision()`, `game_seed()`, `game_version()` |
+| Per frame: every player's input, a flag, then a 16-byte checksum when the flag is 1 | varies | `inputs()`, `checksum()`, `is_skipped_frame()` |
+
+The flag is 0 for no checksum, 1 for a checksum and 2 for a skipped frame, which must hold neutral input.
+The skipped count must equal the number of flag-2 frames. Every recorded input is confirmed.
+Metadata describes the recording; `decode` does not compare it with the running build.
+
+Released format versions never change. A new version either reads older files with explicit
+defaults or rejects them with `UNSUPPORTED_VERSION`; this guide states which. Version 1 never
+shipped in a release and has no engine, addon, seed or configuration fields. Inventing them would
+give a migrated file a false origin, so version 2 rejects version 1 files. Record them again.
+The [golden fixture](../tests/fixtures/replay/golden.json) comes from an independent
+[Python generator](../scripts/reference/replay_golden.py); `make test-reference` checks that they match.
 
 ## Change input delay during a match
 

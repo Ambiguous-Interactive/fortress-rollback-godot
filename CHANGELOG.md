@@ -8,7 +8,7 @@
 
 - Add `set_input_delay` so a player can raise input delay mid-match. Replays record the change. Press = in the online example to try it.
 
-- Add match recording and playback. Set `replay_max_frames` to record confirmed inputs, save the bytes, then play them with `FortressReplayPlayer`. Playback checks recorded state checksums and stops at the first frame that differs.
+- Add match recording and playback. Set `replay_max_frames` to record confirmed inputs with engine, addon, seed and session details, then play the bytes with `FortressReplayPlayer`. Playback checks recorded state checksums and stops at the first frame that differs.
 
 - Add peer completion notifications after game callbacks and network controls. Reentrant peer mutations remain blocked until handlers return.
 

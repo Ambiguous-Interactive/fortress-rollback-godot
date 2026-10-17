@@ -29,6 +29,7 @@ var diagnostic_version: String = ""
 var diagnostic_replay_command: String = ""
 ## Record up to this many confirmed frames for FortressReplay; 0 disables recording.
 ## Recording keeps the first frames and stops when full; its memory is outside storage_budget_bytes.
+## Replays store diagnostic_seed and diagnostic_version, which must then be printable ASCII.
 var replay_max_frames: int = 0
 
 
@@ -39,6 +40,8 @@ func validate() -> int:
 	if diagnostic_seed.to_utf8_buffer().size() > 128 or diagnostic_version.to_utf8_buffer().size() > 128 or diagnostic_replay_command.to_utf8_buffer().size() > 512:
 		return Types.Code.INVALID_CONFIGURATION
 	if replay_max_frames < 0 or not Replay.valid_shape(player_count, input_width, replay_max_frames):
+		return Types.Code.INVALID_CONFIGURATION
+	if replay_max_frames > 0 and not (Replay.valid_text(diagnostic_seed) and Replay.valid_text(diagnostic_version)):
 		return Types.Code.INVALID_CONFIGURATION
 	if player_count < 2 or player_count > 8 or input_width < 1 or input_width > 65536 or neutral_input.size() != input_width:
 		return Types.Code.INVALID_CONFIGURATION

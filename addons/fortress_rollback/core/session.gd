@@ -86,7 +86,7 @@ func configure(config: Config) -> int:
 	_replay = null
 	if _config.replay_max_frames > 0:
 		_replay = Replay.new()
-		_replay._start(_config.player_count, _config.input_width)
+		_replay._start(_config)
 	return Code.OK
 
 
