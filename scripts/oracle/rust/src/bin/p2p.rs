@@ -1,7 +1,7 @@
 //! Actual upstream multiplayer session, fake transport and application callbacks.
 #![forbid(unsafe_code)]
 use fortress_rollback::{Config, FortressRequest, InputStatus, PlayerHandle, SessionBuilder, Message, NonBlockingSocket, PlayerType,
- ProtocolConfig, SyncConfig, DesyncDetection, FortressEvent};
+ ProtocolConfig, SyncConfig, DesyncDetection, FortressEvent, FortressError, InvalidRequestKind};
 use fortress_rollback::network::compression::decode_with_max_len;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -23,6 +23,8 @@ enum Operation {
  Step {peer:usize, now_us:u64, bytes:String},
  Poll {peer:usize, now_us:u64},
  Deliver {packet:usize, now_us:u64},
+ // Runtime set_input_delay; it reuses the previous operation's clock.
+ Delay {peer:usize, delay:usize},
 }
 #[derive(Default)]
 struct Buffers { incoming:Vec<(String,Message)>, outgoing:Vec<(String,Message)> }
@@ -154,6 +156,13 @@ fn event(e:FortressEvent<OracleConfig>)->Result<Value,String>{Ok(match e {
   "local_checksum":format!("{local_checksum:032x}"),"remote_checksum":format!("{remote_checksum:032x}"),"peer":addr.parse::<usize>().unwrap()}),
  _=>return Err(format!("unmodeled lifecycle event {e:?}")),
 })}
+/// Compared delays: Godot's peer bound (queue 128) or above upstream's bound; the band between them differs by design.
+fn comparable_delay(delay:usize,max_prediction:usize)->bool{delay<=(126-2*max_prediction)/2||(delay>127-max_prediction&&delay<=1000)}
+fn delay_error(e:FortressError)->String{match e {
+ FortressError::InvalidRequestStructured{kind:InvalidRequestKind::InputDelayDecreaseUnsupported{..}}=>"InputDelayDecreaseUnsupported".into(),
+ FortressError::InvalidRequestStructured{kind:InvalidRequestKind::FrameDelayTooLarge{..}}=>"FrameDelayTooLarge".into(),
+ FortressError::InvalidRequestStructured{kind:InvalidRequestKind::ConfigValueOutOfRange{..}}=>"ConfigValueOutOfRange".into(),
+ other=>format!("{other:?}")}}
 fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let scenario:Scenario=serde_json::from_value(original.clone()).map_err(|e|e.to_string())?;
  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
@@ -161,11 +170,16 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  if let Some(l)=&scenario.lifecycle {if l.quality_us<1000||l.keepalive_us<1000||l.notify_us==0||l.notify_us>=l.timeout_us||l.timeout_us>10000000
   ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
   ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
- let mut previous=0;
+ let mut previous=0;let mut stepped=vec![false;scenario.players];let mut addressed=None;
  for op in &scenario.operations {
   let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
-   Operation::Deliver{now_us,..}=>(0,*now_us)};
+   Operation::Deliver{now_us,..}=>(0,*now_us),Operation::Delay{peer,delay}=>{
+    // Godot's agreed config owns the pre-input delay, so only changes after the peer's first step compare.
+    if *peer>=scenario.players||!stepped[*peer]||addressed!=Some(*peer)||!comparable_delay(*delay,scenario.max_prediction){return Err("delay bounds".into());}(*peer,previous)}};
   if peer>=scenario.players||time<previous||time>10000000{return Err("operation bounds".into());}previous=time;
+  if let Operation::Step{peer,..}=op{stepped[*peer]=true;}
+  // The shared source clock equals Godot's per-peer clock only after an operation addressed to that peer.
+  addressed=match op {Operation::Deliver{..}=>None,_=>Some(peer)};
  }
  let time=Arc::new(Mutex::new(0u64));let origin=web_time::Instant::now();
  let mut sessions=Vec::new();let mut buffers=Vec::new();let mut games=Vec::new();
@@ -197,6 +211,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let mut decoded:BTreeMap<(usize,usize,i32),Vec<u8>>=BTreeMap::new();
  for (index,op) in scenario.operations.iter().enumerate(){
   let (peer,now)=match op {Operation::Step{peer,now_us,..}|Operation::Poll{peer,now_us}=>(*peer,*now_us),
+   Operation::Delay{peer,..}=>(*peer,*time.lock().unwrap()),
    Operation::Deliver{packet,now_us}=>{let (sender,destination,message)=packets.get(*packet).ok_or("unknown observed packet")?;
     buffers[*destination].lock().unwrap().incoming.push((sender.to_string(),message.clone()));(*destination,*now_us)}};
   *time.lock().unwrap()=now;let before=sessions[peer].current_frame().as_i32();let pre_state=hex(&games[peer].bytes());
@@ -204,7 +219,8 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   match op {Operation::Step{bytes,..}=>{
    error=sessions[peer].add_local_input(PlayerHandle::new(peer),input_bytes(bytes)?).err().map(|e|format!("{e:?}"));
    if error.is_none(){(requests,error)=apply(&mut sessions[peer],&mut games[peer])?;}
-  },_=>sessions[peer].poll_remote_clients()}
+  },Operation::Delay{delay,..}=>{error=sessions[peer].set_input_delay(PlayerHandle::new(peer),*delay).err().map(delay_error);},
+  _=>sessions[peer].poll_remote_clients()}
   let mut outgoing=Vec::new();
   for (destination,message) in std::mem::take(&mut buffers[peer].lock().unwrap().outgoing){
    let destination=destination.parse::<usize>().unwrap();let raw=serde_json::to_value(&message).unwrap();

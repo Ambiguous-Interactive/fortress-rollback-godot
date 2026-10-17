@@ -23,7 +23,13 @@ receives the same explicit seed (default `1701`, signed 64-bit).
 
 Options: `--category unit|determinism|integration`, `--filter <case-substring>`,
 `--suite res://path.gd` (repeatable), `--seed <integer>`, `--timeout <seconds>`
-(per process, default 30), and `--results <path>`. Default results live in ignored
+(per process, default 30), `--jobs <count>` (default: CPU count) and `--results <path>`.
+
+Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. The launcher joins
+the shard results in sorted suite order, so the record is the same as one process running every
+suite; `--jobs 1` keeps that single process. With `--filter`, suites with no matching case are
+dropped, and the whole selection must still match at least one case. Each report run lists its
+shard processes under `shards`. Default results live in ignored
 `.cache/tests/latest.json`. They contain engine version/digest, repository commit
 and dirty flag, pin digest, platform, commands, working directory, seeds, complete
 semantic records, raw engine output, exit status and failure reason. A dirty flag
@@ -70,7 +76,7 @@ Select the owning suite while changing one subsystem:
 
 ```sh
 make test-focus GODOT=path/to/verified/godot SUITE=res://tests/unit/test_input_queue.gd
-make test-focus GODOT=path/to/verified/godot CATEGORY=determinism FILTER=restore
+make test-focus GODOT=path/to/verified/godot CATEGORY=determinism FILTER=snapshot
 ```
 
 This uses the same fail-closed launcher and both repetition layers. Empty selections fail.

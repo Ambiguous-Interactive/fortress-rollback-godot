@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run actual pinned upstream P2P handshake and production Godot byte endpoint twice."""
-import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -11,6 +10,7 @@ from handshake_contract import compare, project, negative_controls, raw_negative
 from launch import ROOT, execute
 from handshake_formal import check as check_formal, ensure_jar
 from fetch import digest, load_manifest, sources
+from receipt_arguments import ReceiptParser
 from run import CACHE, setup_rust, rust_environment
 
 
@@ -69,7 +69,7 @@ def malformed_controls(fixture, engine, output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, type=Path)
     parser.add_argument('--tlc-jar', type=Path, default=CACHE / 'tla2tools.jar')
     parser.add_argument('--offline', action='store_true')

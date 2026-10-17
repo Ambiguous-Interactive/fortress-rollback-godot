@@ -1,6 +1,7 @@
 extends RefCounted
 
-# Value: protects=match recording and playback; fails_when=recorded inputs follow predictions, frames drop at discard, or corrupt files load; why_new=no replay support; seam=none
+# Value: protects=match recording, playback and the replay file format; fails_when=recorded inputs follow predictions, frames drop at discard,
+# corrupt or unsupported files load, or the layout drifts from the independent golden; why_new=no replay support; seam=none
 const Game = preload("res://examples/integration/game.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
@@ -30,15 +31,21 @@ class FailingGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["records_corrected_match", "detects_changed_rules", "rejects_malformed_files", "bounds_recording", "lockstep_confirmation_limit"])
+	return PackedStringArray(
+		["records_corrected_match", "records_metadata", "detects_changed_rules", "golden", "rejects_malformed_files", "bounds_recording", "lockstep_confirmation_limit"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
 		"records_corrected_match":
 			_records_corrected_match(context)
+		"records_metadata":
+			_records_metadata(context)
 		"detects_changed_rules":
 			_detects_changed_rules(context)
+		"golden":
+			_golden(context)
 		"rejects_malformed_files":
 			_rejects_malformed_files(context)
 		"bounds_recording":
@@ -69,6 +76,8 @@ static func _config(sync_test: bool, max_frames: int, delay: int = 0) -> Config:
 	config.check_distance = 4 if sync_test else 0
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
 	config.replay_max_frames = max_frames
+	config.diagnostic_seed = "1701"
+	config.diagnostic_version = "replay-test v1"
 	config.storage_budget_bytes = config.required_storage_bytes()
 	return config
 
@@ -112,7 +121,15 @@ func _match(context: RefCounted, row: Dictionary, max_frames: int) -> Session:
 
 static func _decode(bytes: PackedByteArray, max_bytes: int = Replay.MAX_BYTES) -> Replay:
 	var replay: Replay = Replay.new()
-	return replay if replay.decode(bytes, max_bytes) else null
+	return replay if replay.decode(bytes, max_bytes) == Replay.DecodeCode.OK else null
+
+
+## Golden bytes and fields from scripts/reference/replay_golden.py.
+static func _fixture() -> Dictionary:
+	var fixture: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/replay/golden.json"))
+	for version: String in ["v1", "v2"]:
+		fixture[version] = "".join(fixture[version]).hex_decode()
+	return fixture
 
 
 ## Straight simulation of the actual inputs: canonical state before each frame.
@@ -186,27 +203,78 @@ func _detects_changed_rules(context: RefCounted) -> void:
 	context.equal(Player.new().step(), Types.Code.NOT_CONFIGURED, "unconfigured player refuses to step")
 
 
+func _records_metadata(context: RefCounted) -> void:
+	var session: Session = _match(context, {"lag": 2, "burst": 1, "delay": 2}, 6)
+	var replay: Replay = _decode(session.replay().to_bytes())
+	var info: Dictionary = Engine.get_version_info()
+	context.equal(replay.engine_version(), "%d.%d.%d.%s %s" % [info.major, info.minor, info.patch, info.status, info.hash], "records the engine build")
+	context.equal(replay.addon_version(), ProjectSettings.get_setting("application/config/version"), "addon version matches the project version")
+	context.equal(replay.upstream_revision(), "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8", "records the pinned upstream")
+	context.equal([replay.game_seed(), replay.game_version()], ["1701", "replay-test v1"], "records the game seed and version")
+	context.equal([replay.input_delay(), replay.max_prediction_frames(), replay.sync_test()], [2, 8, false], "records the session configuration")
+	context.equal(replay.neutral_input(), PackedByteArray([0]), "records the neutral input")
+
+
+## Independent golden: decode every field, then re-encode the same bytes.
+func _golden(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture()
+	var replay: Replay = Replay.new()
+	context.equal(replay.decode(fixture.v2), Replay.DecodeCode.OK, "decodes the golden")
+	var fields: Dictionary = fixture.fields
+	for field: String in fields:
+		var actual: Variant = replay.call(field)
+		context.equal(actual.hex_encode() if actual is PackedByteArray else actual, fields[field], field)
+	for frame: int in range(replay.frame_count()):
+		var expected: String = fixture.checksums.get(str(frame), "")
+		context.equal(replay.checksum(frame).hex_encode(), expected, "checksum %d" % frame)
+		context.equal(replay.is_skipped_frame(frame), frame == 2, "skipped flag %d" % frame)
+	context.equal(replay.inputs(2).read(1).bytes, PackedByteArray([0x00, 0x80]), "a skipped frame holds neutral input")
+	context.equal(replay.inputs(1).read(1).bytes, PackedByteArray([0x7f, 0x80]), "second player's input")
+	context.bytes_equal(replay.to_bytes(), fixture.v2, 0, "re-encodes the golden")
+	context.bytes_equal(replay.owned_copy().to_bytes(), fixture.v2, 0, "copies keep every field")
+	context.equal(Replay.new().decode(fixture.v1), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the unreleased v1 layout explicitly")
+
+
 func _rejects_malformed_files(context: RefCounted) -> void:
-	var valid: PackedByteArray = _match(context, {"lag": 2, "burst": 1}, 6).replay().to_bytes()
-	context.equal(_decode(valid) != null, true, "accepts the original")
+	var golden: PackedByteArray = _fixture().v2
 	var truncated: int = 0
-	for size: int in range(valid.size()):
-		truncated += int(_decode(valid.slice(0, size)) != null)
-	context.equal(truncated, 0, "rejects every truncation")
-	# Each row patches one header field: [offset, encoder width, value].
+	for size: int in range(golden.size()):
+		truncated += int(Replay.new().decode(golden.slice(0, size)) != Replay.DecodeCode.MALFORMED)
+	context.equal(truncated, 0, "every truncation is malformed")
+	const MALFORMED: int = Replay.DecodeCode.MALFORMED
+	const UNSUPPORTED: int = Replay.DecodeCode.UNSUPPORTED_VERSION
+	# Golden frames: 4 input bytes and a flag each; frames 0 and 3 add a checksum.
+	var body: int = golden.size() - 4 * 5 - 2 * Replay.CHECKSUM_BYTES
+	var engine_text: int = Replay.FIXED_BYTES + 2
+	# Each row patches one field: [offset, encoder width, value].
 	var rows: Array[Dictionary] = [
-		{"label": "magic", "patch": [0, 1, 0x58]},
-		{"label": "future version", "patch": [4, 2, 2]},
-		{"label": "one player", "patch": [6, 1, 1]},
-		{"label": "nine players", "patch": [6, 1, 9]},
-		{"label": "zero width", "patch": [7, 4, 0]},
-		{"label": "extra frame", "patch": [11, 4, 7]},
-		{"label": "frame-count bomb", "patch": [11, 4, Replay.MAX_FRAMES]},
-		{"label": "skipped beyond frames", "patch": [15, 4, 7]},
-		{"label": "checksum flag", "patch": [Replay.HEADER_BYTES + 2, 1, 2]},
+		{"label": "magic", "patch": [0, 1, 0x58], "code": MALFORMED},
+		{"label": "v1", "patch": [4, 2, 1], "code": UNSUPPORTED},
+		{"label": "version 0", "patch": [4, 2, 0], "code": UNSUPPORTED},
+		{"label": "future version", "patch": [4, 2, 3], "code": UNSUPPORTED},
+		{"label": "largest version", "patch": [4, 2, 0xffff], "code": UNSUPPORTED},
+		{"label": "one player", "patch": [6, 1, 1], "code": MALFORMED},
+		{"label": "nine players", "patch": [6, 1, 9], "code": MALFORMED},
+		{"label": "zero width", "patch": [7, 4, 0], "code": MALFORMED},
+		{"label": "width bomb", "patch": [7, 4, 0xffffffff], "code": MALFORMED},
+		{"label": "extra frame", "patch": [11, 4, 5], "code": MALFORMED},
+		{"label": "frame-count bomb", "patch": [11, 4, Replay.MAX_FRAMES], "code": MALFORMED},
+		{"label": "skipped beyond frames", "patch": [15, 4, 5], "code": MALFORMED},
+		{"label": "skipped count disagrees with flags", "patch": [15, 4, 0], "code": MALFORMED},
+		{"label": "prediction window", "patch": [21, 1, 129], "code": MALFORMED},
+		{"label": "sync-test flag", "patch": [22, 1, 2], "code": MALFORMED},
+		{"label": "text length", "patch": [engine_text, 1, Replay.MAX_TEXT_BYTES + 1], "code": MALFORMED},
+		{"label": "text past the end", "patch": [engine_text, 1, Replay.MAX_TEXT_BYTES], "code": MALFORMED},
+		{"label": "control character", "patch": [engine_text + 1, 1, 0x0a], "code": MALFORMED},
+		{"label": "delete character", "patch": [engine_text + 1, 1, 0x7f], "code": MALFORMED},
+		{"label": "non-ASCII text", "patch": [engine_text + 1, 1, 0xc3], "code": MALFORMED},
+		{"label": "unknown frame flag", "patch": [body + 4, 1, 4], "code": MALFORMED},
+		{"label": "checksum and skipped together", "patch": [body + 4, 1, 3], "code": MALFORMED},
+		{"label": "skipped frame with real input", "patch": [body + 25, 1, 2], "code": MALFORMED},
+		{"label": "non-neutral skipped row", "patch": [body + 26, 1, 1], "code": MALFORMED},
 	]
 	for row: Dictionary in rows:
-		var bytes: PackedByteArray = valid.duplicate()
+		var bytes: PackedByteArray = golden.duplicate()
 		match int(row.patch[1]):
 			1:
 				bytes.encode_u8(row.patch[0], row.patch[2])
@@ -214,14 +282,14 @@ func _rejects_malformed_files(context: RefCounted) -> void:
 				bytes.encode_u16(row.patch[0], row.patch[2])
 			4:
 				bytes.encode_u32(row.patch[0], row.patch[2])
-		context.equal(_decode(bytes), null, "rejects " + row.label)
-	var trailing: PackedByteArray = valid.duplicate()
+		context.equal(Replay.new().decode(bytes), row.code, row.label)
+	var trailing: PackedByteArray = golden.duplicate()
 	trailing.append(0)
-	context.equal(_decode(trailing), null, "rejects trailing bytes")
-	context.equal(_decode(valid, valid.size() - 1), null, "honors the caller's size limit")
-	var kept: Replay = _decode(valid)
-	context.equal(kept.decode(trailing), false, "a failed decode reports failure")
-	context.equal(kept.to_bytes(), valid, "a failed decode keeps the previous replay")
+	context.equal(Replay.new().decode(trailing), MALFORMED, "rejects trailing bytes")
+	context.equal(Replay.new().decode(golden, golden.size() - 1), Replay.DecodeCode.TOO_LARGE, "honors the caller's size limit")
+	var kept: Replay = _decode(golden)
+	context.equal(kept.decode(trailing), MALFORMED, "a failed decode reports its reason")
+	context.equal(kept.to_bytes(), golden, "a failed decode keeps the previous replay")
 
 
 func _bounds_recording(context: RefCounted) -> void:
@@ -235,6 +303,10 @@ func _bounds_recording(context: RefCounted) -> void:
 	context.equal(disabled.replay(), null, "no replay when disabled")
 	for max_frames: int in [-1, Replay.MAX_FRAMES + 1]:
 		context.equal(_config(true, max_frames).validate(), Types.Code.INVALID_CONFIGURATION, "rejects replay limit %d" % max_frames)
+	for text: String in ["sé", "line\n", "x".repeat(Replay.MAX_TEXT_BYTES + 1)]:
+		var config: Config = _config(true, 10)
+		config.diagnostic_version = text
+		context.equal(config.validate(), Types.Code.INVALID_CONFIGURATION, "rejects replay text %s" % text.c_escape().left(12))
 	var wide: Config = _config(true, Replay.MAX_FRAMES)
 	wide.input_width = 65536
 	wide.neutral_input.resize(65536)

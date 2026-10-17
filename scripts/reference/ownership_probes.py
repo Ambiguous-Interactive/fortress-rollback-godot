@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Verify integer, ownership and production byte sessions on pinned native/Web engines."""
-import argparse
 import json
 import os
 from pathlib import Path
@@ -9,6 +8,7 @@ import shutil
 import zipfile
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
+from receipt_arguments import ReceiptParser
 from godot_smoke import run
 from run import begin_results, capture
 
@@ -144,7 +144,7 @@ def validate(result, negative):
 
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
-               'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
+               'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
                'docs/reference/pins.json']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
 
@@ -157,7 +157,7 @@ def verify_sources(expected):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='ownership.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--web', action='store_true')
     args = parser.parse_args()

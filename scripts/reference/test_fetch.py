@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import tarfile
 import os
@@ -178,6 +179,64 @@ class ReferenceContracts(unittest.TestCase):
                     self.assertFalse((results / report_name).exists(), 'prior success survived failed rerun')
                     self.assertFalse((results / owned_log).exists(), 'prior runner log survived failed rerun')
                     self.assertEqual((results / other_log).read_text(), 'OTHER_RUNNER')
+
+    def test_rejected_launcher_arguments_invalidate_only_the_selected_receipt(self):
+        # Launcher: receipt, default output under the copied cache, fixed output. The copy keeps real cache receipts untouched.
+        launchers = {'reference/package_audit.py': ('package-audit.json', None, False),
+                     'reference/signalfish_live_probe.py': ('signalfish-live.json', None, False),
+                     'reference/signalfish_probe.py': ('signalfish-sdk.json', None, False),
+                     'reference/signalfish_build_server.py': ('build-receipt.json', None, False),
+                     'reference/signalfish_webrtc_probe.py': ('signalfish-webrtc.json', None, False),
+                     'reference/run.py': ('rust-baseline.json', 'results', False),
+                     'oracle/launch.py': ('receipt.json', 'results/oracle', False),
+                     'oracle/p2p_launch.py': ('receipt.json', 'results/p2p-oracle', False),
+                     'oracle/queue_launch.py': ('receipt.json', 'results/queue', False),
+                     'oracle/handshake_launch.py': ('receipt.json', 'results/handshake-oracle', False),
+                     'reference/ownership_probes.py': ('ownership.json', 'results', True),
+                     'reference/godot_smoke.py': ('godot-baseline.json', 'results', True)}
+        repository = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for pattern in ('scripts/reference/*.py', 'scripts/reference/browser/*.py', 'scripts/oracle/*.py', 'addons/fortress_rollback/protocol/*.gd',
+                            'docs/reference/pins.json'):
+                for source in repository.glob(pattern):
+                    (root / source.relative_to(repository)).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, root / source.relative_to(repository))
+            selected, other = root / 'selected', root / 'other'
+            webrtc = ['--server', 'x', '--server-source', 'x', '--build-receipt', 'x', '--online-example', '--browser-pair', 'firefox']
+            validation = {'oracle/launch.py': (['--godot', 'godot', '--jobs', '9'], 'receipt.json'),
+                          'reference/signalfish_webrtc_probe.py': (webrtc, 'online-example.json')}
+            for launcher, (receipt, default, fixed) in launchers.items():
+                default = default and root / '.cache/reference' / default
+                chosen = (lambda directory: default) if fixed else (lambda directory: directory)
+                forms = [([f'--output={selected}', '--unknown-option'], chosen(selected), receipt, 2),
+                         (['--output', str(other), '--output', str(selected), '--unknown-option'], chosen(selected), receipt, 2),
+                         (['--output', str(other), '--unknown-option', '--output'], chosen(other), receipt, 2),
+                         (['--unknown-option'], default, receipt, 2), (['--output'], chosen(None), receipt, 2),
+                         (['--output=', '--unknown-option'], chosen(None), receipt, 2),
+                         (['--help=yes', '--output', str(selected)], chosen(selected), receipt, 2),
+                         (['--output', str(selected), '--help'], None, receipt, 0), (['--help'], None, receipt, 0)]
+                if launcher in validation:
+                    forms.append(([*validation[launcher][0], '--output', str(selected)], selected, validation[launcher][1], 2))
+                helps = set()
+                for arguments, invalidated, name, code in forms:
+                    with self.subTest(launcher=launcher, arguments=arguments):
+                        directories = [path for path in (selected, other, default) if path]
+                        for directory in directories:
+                            directory.mkdir(parents=True, exist_ok=True)
+                            for stale in (name, 'unrelated.json'):
+                                (directory / stale).write_text('{"passed": true}\n')
+                        process = subprocess.run([sys.executable, str(root / 'scripts' / launcher), *arguments], capture_output=True, text=True,
+                                                 cwd=folder, timeout=60)
+                        self.assertEqual(process.returncode, code, process.stderr)
+                        if code == 0:
+                            helps.add(process.stdout)
+                            self.assertTrue(process.stdout.startswith('usage: ') and not process.stderr)
+                        for directory in directories:
+                            expected = {'passed': directory != invalidated}
+                            self.assertEqual({'passed': json.loads((directory / name).read_text())['passed']}, expected, directory)
+                            self.assertEqual((directory / 'unrelated.json').read_text(), '{"passed": true}\n')
+                self.assertEqual(len(helps), 1, launcher)
 
     def test_timeout_replaces_old_log_with_partial_diagnostics(self):
         for command in (rust_runner.command, godot_runner.run):

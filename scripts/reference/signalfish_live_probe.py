@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run native relay gameplay against an explicitly supplied local SignalFish server."""
-import argparse
 import hashlib
 import json
 import os
@@ -14,6 +13,7 @@ import tempfile
 import time
 
 from fetch import fetch, load_manifest
+from receipt_arguments import ReceiptParser
 from signalfish_probe import inventory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -128,7 +128,7 @@ def validate_build_receipt(build, revision, source, binary_digest, expected_inpu
             or build.get('binary_sha256') != binary_digest or not valid_tools
             or not isinstance(exits, list) or len(exits) != 2 or any(type(code) is not int or code != 0 for code in exits)):
         raise ValueError('server build receipt does not bind the pinned source and executable')
-    names = {'builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'archive', 'cargo', 'rustc'}
+    names = {'builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'archive', 'cargo', 'rustc'}
     inputs = build.get('input_inventory')
     if (not isinstance(inputs, dict) or set(inputs) != names or inputs != expected_inputs
             or any(not isinstance(value, str) or len(value) != 64 or set(value) - set('0123456789abcdef') for value in inputs.values())
@@ -158,7 +158,7 @@ def native_inventory(paths):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='signalfish-live.json')
     parser.add_argument('--godot', required=True, type=Path)
     parser.add_argument('--server', required=True, type=Path)
     parser.add_argument('--server-source', required=True, type=Path)
@@ -180,7 +180,8 @@ def main():
                'sdk_archive': sdk_archive, 'server_archive': server_archive, 'launcher': Path(__file__).resolve(), 'build_receipt': args.build_receipt,
                'inventory_helper': ROOT / 'scripts/reference/signalfish_probe.py', 'fetch_helper': ROOT / 'scripts/reference/fetch.py',
                'pin_manifest': ROOT / 'docs/reference/pins.json', 'builder': ROOT / 'scripts/reference/signalfish_build_server.py',
-               'run_helper': ROOT / 'scripts/reference/run.py', 'build_log': args.build_receipt.parent / 'build.log'}
+               'run_helper': ROOT / 'scripts/reference/run.py', 'receipt_arguments': ROOT / 'scripts/reference/receipt_arguments.py',
+               'build_log': args.build_receipt.parent / 'build.log'}
     helpers = ('signalfish_live_probe.gd', 'signalfish_probe_relay.gd', 'signalfish_probe_relay_controls.gd')
     for helper in helpers:
         sources[helper] = ROOT / 'scripts/reference' / helper
@@ -192,7 +193,7 @@ def main():
     before = native_inventory(sources)
     expected_inputs = {'builder': before['builder'], 'fetch': before['fetch_helper'], 'pins': before['pin_manifest'], 'run': before['run_helper'],
                        'native_launcher': before['launcher'], 'sdk_launcher': before['inventory_helper'], 'archive': before['server_archive'],
-                       'cargo': before['cargo'], 'rustc': before['rustc']}
+                       'receipt_arguments': before['receipt_arguments'], 'cargo': before['cargo'], 'rustc': before['rustc']}
     validate_build_receipt(build, server_pin['revision'], source_before, before['server'], expected_inputs, before['build_log'])
     with tempfile.TemporaryDirectory(prefix='fortress-signalfish-live-') as temporary:
         project = Path(temporary)

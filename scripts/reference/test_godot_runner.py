@@ -84,6 +84,18 @@ class ReceiptControls(unittest.TestCase):
                 self.assertEqual(report['failure'], failure)
                 self.assertEqual(report['version_probe']['stdout'], output.decode(errors='replace'))
 
+    # Value: a rejected attempt must not leave an earlier pass at the results it names; help writes nothing.
+    def test_rejected_arguments_invalidate_selected_results(self) -> None:
+        for arguments, invalidated in [(['--category', 'bogus'], True), (['--timeout', '-1'], True), (['--jobs', '0'], True),
+                                       (['--seed', str(2**63)], True), (['--bogus'], True), (['--help'], False)]:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
+                receipt = Path(directory) / 'receipt.json'
+                receipt.write_text('{"passed":true}')
+                process = subprocess.run([sys.executable, str(ROOT / 'scripts/run_godot_tests.py'), '--godot', 'unused',
+                                          f'--results={receipt}', *arguments], cwd=ROOT, capture_output=True, text=True)
+                self.assertEqual(process.returncode, 2 if invalidated else 0, process.stderr)
+                self.assertEqual(json.loads(receipt.read_text())['passed'], not invalidated)
+
     def test_malformed_engine_stream_is_a_captured_failure(self) -> None:
         result = RUNNER.invoke([sys.executable, '-c', "import sys;sys.stdout.buffer.write(b'bad\\xff')"], 10)
         self.assertEqual(result.get('failure'), 'invalid_utf8_output', result)
@@ -149,6 +161,25 @@ class EngineControls(unittest.TestCase):
                     self.assertTrue(report["passed"])
                     self.assertEqual(report["runs"][0]["result"], report["runs"][1]["result"])
                     self.assertEqual(report["runs"][0]["result"]["count"], 1)
+
+    # Value: sharded runs must record exactly what one process records, so parallelism cannot
+    # reorder, drop or duplicate cases. A filter must still fail when no suite matches.
+    def test_sharded_runs_match_one_process(self) -> None:
+        suites = ["--suite", "res://tests/unit/test_snapshot_history.gd", "--suite", "res://tests/runner/self_suite.gd"]
+        cases = [("all", [], True), ("filtered", ["--filter", "fixture_reset"], True), ("unmatched", ["--filter", "no-such-case"], False)]
+        with tempfile.TemporaryDirectory() as directory:
+            for label, arguments, passed in cases:
+                with self.subTest(case=label):
+                    results = []
+                    for jobs in ("1", "4"):
+                        output = Path(directory) / f"{label}-{jobs}.json"
+                        process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(GODOT),
+                            *suites, *arguments, "--jobs", jobs, "--results", str(output)], cwd=ROOT, capture_output=True, text=True)
+                        self.assertEqual(process.returncode, 0 if passed else 1, process.stdout + process.stderr)
+                        results.append(json.loads(output.read_text())["runs"][0].get("result"))
+                    self.assertEqual(results[0], results[1])
+                    if passed:
+                        self.assertEqual(len({record["suite"] for record in results[0]["records"]}), 1 if arguments else 2)
 
 
 if __name__ == "__main__":

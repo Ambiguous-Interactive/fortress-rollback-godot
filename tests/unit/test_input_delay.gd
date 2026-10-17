@@ -9,11 +9,12 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const PeerMatch = preload("res://examples/peer/match.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const FRAMES: int = 90
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["validates_changes", "repeats_latest_input", "peers_agree_after_changes"])
+	return PackedStringArray(["validates_changes", "repeats_latest_input", "peers_agree_after_changes", "raise_sends_one_packet"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -24,6 +25,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_repeats_latest_input(context)
 		"peers_agree_after_changes":
 			_peers_agree_after_changes(context)
+		"raise_sends_one_packet":
+			_raise_sends_one_packet(context)
 	context.finish()
 
 
@@ -245,3 +248,54 @@ func _peers_agree_after_changes(context: RefCounted) -> void:
 			for slot: int in range(2):
 				differing += int(first.inputs(frame).read(slot).bytes != second.inputs(frame).read(slot).bytes)
 		context.equal(differing, 0, label + " records the same inputs on both peers")
+
+
+## Like upstream, a raise flushes one input packet per remote, and the added frames add no time-sync sample.
+## "raise" adds frames through the session; "inputs" submits straight to the endpoint and must be refused whole.
+func _raise_sends_one_packet(context: RefCounted) -> void:
+	var rows: Array[Dictionary] = [
+		{"label": "raise by one", "raise": 1},
+		{"label": "raise by three", "raise": 3},
+		{"label": "wrong-width frame mid-batch", "inputs": [PackedByteArray([1]), PackedByteArray([1, 2]), PackedByteArray([1])]},
+		{"label": "empty frame mid-batch", "inputs": [PackedByteArray([1]), PackedByteArray()]},
+	]
+	var timing: PackedStringArray = PackedStringArray(["local_advantages", "remote_advantages", "local_advantage_sum", "remote_advantage_sum",
+		"average_frame_advantage"])
+	for row: Dictionary in rows:
+		var label: String = row.label
+		var peers: PeerMatch = PeerMatch.new()
+		peers.drop_every = 0
+		context.equal(peers.reset(), PeerMatch.I.Code.OK, label + " starts")
+		for tick: int in range(60):
+			peers.tick(PackedInt32Array([tick % 13 % 16, (tick * 7) % 11 % 16]))
+		var session: PeerMatch.Peer = peers.sessions[0]
+		var key: String = session.peer_ids()[0].hex_encode()
+		var before: Dictionary = session.network_status().peers[key]
+		var code: int = Types.Code.OK
+		if row.has("raise"):
+			code = session.set_input_delay(0, session.input_delay(0) + row.raise)
+		else:
+			var statuses: Array[PeerMatch.T.Status] = [PeerMatch.T.Status.new(), PeerMatch.T.Status.new()]
+			code = session._endpoint(0).submit_frames(before.last_submitted_frame + 1, row.inputs, statuses, peers.now_us, before.last_submitted_frame)
+		var after: Dictionary = session.network_status().peers[key]
+		var packets: Array[PeerMatch.Peer.Packet] = session.drain_outbox()
+		for field: String in timing:
+			context.equal(after[field], before[field], label + " keeps " + field)
+		if not row.has("raise"):
+			context.equal(code, PeerMatch.I.Code.INVALID_ARGUMENT, label + " is refused")
+			context.equal(after, before, label + " leaves the endpoint unchanged")
+			context.equal(packets.size(), 0, label + " sends nothing")
+			continue
+		context.equal(code, Types.Code.OK, label + " accepts the raise")
+		context.equal(after.last_submitted_frame, before.last_submitted_frame + row.raise, label + " schedules every added frame")
+		context.equal(packets.size(), 1, label + " sends one packet")
+		if packets.size() != 1:
+			continue
+		var limits: PeerMatch.T.Limits = PeerMatch.T.Limits.new()
+		limits.player_count = 2
+		var sent: PeerMatch.T.Message = Codec.decode(packets[0].bytes, limits).message
+		var frames: Array = after.pending.keys()
+		frames.sort()
+		context.equal([sent.start_frame, sent.frame_count], [frames[0], frames.size()], label + " carries every pending frame")
+		context.equal(sent.start_frame + sent.frame_count - 1, after.last_submitted_frame, label + " ends at the raised frame")
+		context.equal(sent.statuses[0].last_frame, after.last_submitted_frame, label + " carries the raised connect status")

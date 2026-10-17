@@ -135,6 +135,68 @@ bytes through the actual upstream decoder. Controls require their intended
 diagnostic and exit code rather than accepting unrelated engine parse errors.
 
 
+## Runtime input-delay changes
+
+A `delay` operation, `{"kind": "delay", "peer": p, "delay": d}`, calls upstream
+`P2PSession::set_input_delay` and Godot `FortressPeerSession.set_input_delay`
+for the peer's local slot. It has no `now_us`: Godot's API takes no clock, and
+the source reuses the shared injected clock. The schema therefore requires the
+operation to follow a step, poll or delay addressed to the same peer, so both
+clocks agree. Godot stamps the raise's send with that peer's last step or poll
+time and upstream with its live clock, so only send timestamps could differ:
+retries and keepalives may fire one tick earlier in Godot. This is an accepted
+timing difference, not a semantic one. It must also follow that peer's first step: upstream accepts any
+fitting delay before the first input, while Godot's agreed config owns the
+starting delay and returns `UNSUPPORTED`. Before-first-input changes are a
+documented divergence, not compared.
+
+Accepted raises and no-op repeats must report no error, no callbacks and an
+unchanged frame. Refusals compare by outcome. Upstream
+`InputDelayDecreaseUnsupported` maps to Godot `UNSUPPORTED`, and
+`FrameDelayTooLarge` or `ConfigValueOutOfRange` map to `INVALID_CONFIGURATION`.
+Validation recomputes every expected outcome independently. The bounds differ:
+upstream accepts up to `127 - max_prediction`, while Godot's peer bound is
+`(126 - 2 * max_prediction) / 2` for these 128-slot queues. The tighter Godot
+bound is intended: every peer's queue must hold both delays, which upstream does
+not enforce. With `max_prediction` 8 the band is 56–119 frames, about one to two
+seconds at 60 Hz. Delays in that band
+are rejected by all three schema validators. Values up to Godot's bound, and
+from upstream's bound plus one through 1000, are compared. The confirmed-input
+model adds each raise's gap frames, which repeat the latest scheduled sample.
+
+Each accepted raise sends one input packet per remote in both programs, with
+every pending frame and the raised connect-status frame. Gap frames do not add
+a time-sync sample, matching upstream `enqueue_replicated_input`. Before this
+gate, Godot sent one packet per added frame. Its intermediate packets announced
+the final status frame before they carried it. Operation 1 of a two-peer raise
+failed with `outgoing mismatch`.
+
+Three cases cover lossy, rapid and stalled changes:
+
+- `mesh_2_delay_change_loss` drops every third packet for four frames. It
+  raises both peers repeatedly and includes refused decreases, a refused 500,
+  and a repeated raise.
+- `mesh_4_delay_change_rapid` starts at delay two with a reordered flight. It
+  makes three consecutive raises, a raise to Godot's largest delay of 59, a
+  refused decrease, a no-op and a refused 1000.
+- `mesh_3_delay_change_stall` raises while stalled at the prediction window.
+  It repeats the raise as a no-op, then makes later raises on other peers.
+
+Mutation controls fail. If Godot ignores the operation, it stops at an
+unobserved packet. If Godot drops refusal codes, validation fails at
+`delay change outcome`. Per-frame gap packets fail with `outgoing mismatch`.
+
+One upstream receiver behavior is excluded from the corpus. With a nonzero
+initial delay `D`, a resend whose start frame is `D` arrives after frame `D`.
+Upstream decodes it against frame `D - 1`, which the receiver never stored, so
+it silently drops the packet. A raise before frame zero's flight is
+acknowledged produces such a resend. Upstream ACKs only `D` until a later
+retransmission, while Godot accepts the overlapping frames. The first
+divergence is the ACK frame, then `confirmed_frame`. This is an ordinary
+retransmission difference, not a delay-change rule: any resend from frame `D`
+would show it. The rapid case therefore raises only after frame zero is
+acknowledged.
+
 ## Lifecycle observations
 
 Eight additional two-peer scenarios compare real quality reports, echoed replies,

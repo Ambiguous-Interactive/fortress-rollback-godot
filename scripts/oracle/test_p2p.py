@@ -11,6 +11,7 @@ import p2p_launch
 from p2p_launch import upstream_inventory, executable_identity, require_unchanged
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
+from p2p_contract import DELAY_ERRORS, comparable_delay, expected_delay_error, godot_max_delay
 
 
 def timeout_fixture():
@@ -265,6 +266,31 @@ class P2PContractTests(unittest.TestCase):
             mutant = deepcopy(original); mutate(mutant)
             with self.assertRaises(ValueError):
                 validate_scenario(mutant)
+
+    # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
+    def test_delay_change_schema(self):
+        step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '00000000'}
+        original = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4,
+                    'operations': [step, {'kind': 'delay', 'peer': 0, 'delay': 59}, {'kind': 'delay', 'peer': 0, 'delay': 124}]}
+        validate_scenario(original)
+        for mutate in (lambda x: x['operations'].pop(0), lambda x: x['operations'][1].update(delay=60),
+                       lambda x: x['operations'][1].update(delay=123), lambda x: x['operations'][1].update(delay=1001),
+                       lambda x: x['operations'][1].update(delay=True), lambda x: x['operations'][1].update(delay=2.0),
+                       lambda x: x['operations'][1].update(now_us=0), lambda x: x['operations'][1].update(peer=1),
+                       lambda x: x['operations'].insert(1, {'kind': 'poll', 'peer': 1, 'now_us': 0}),
+                       lambda x: x['operations'].insert(1, {'kind': 'deliver', 'packet': 0, 'now_us': 0})):
+            mutant = deepcopy(original); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate_scenario(mutant)
+
+    # Value: protects=independent delay outcome and gap-fill model; fails_when=refusal or gap sample drift passes; why_new=X2 oracle op; seam=none
+    def test_delay_change_outcome_model(self):
+        self.assertEqual(expected_delay_error(2, 2, 4), None)
+        self.assertEqual(expected_delay_error(2, 1, 4), 'UNSUPPORTED')
+        self.assertEqual(expected_delay_error(2, 124, 4), 'INVALID_CONFIGURATION')
+        self.assertEqual(godot_max_delay(4), 59)
+        self.assertTrue(comparable_delay(59, 4) and comparable_delay(124, 4) and not comparable_delay(123, 4))
+        self.assertEqual(set(DELAY_ERRORS.values()), {'UNSUPPORTED', 'INVALID_CONFIGURATION'})
 
     # Value: protects=upstream-only duplicate-save exception; fails_when=Godot extra callbacks disappear; why_new=source API asymmetry; seam=none
     def test_initial_save_exception_is_source_only(self):

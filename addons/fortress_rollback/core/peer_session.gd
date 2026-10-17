@@ -304,14 +304,17 @@ func set_input_delay(player: int, delay: int) -> int:
 		return changed.code
 	var statuses: Array[T.Status] = _statuses()
 	for index: int in range(_ids.size()):
+		var inputs: Array[PackedByteArray] = []
 		for frame: int in range(starts[index], changed.value + 1):
-			var sent: int = _endpoint(index).submit(frame, _core.retained_local_input(player, frame), statuses, _now)
-			if sent != I.Code.OK:
-				# Peers would disagree about the added frames, so the match cannot continue.
-				_core.terminate(Types.Code.PROTOCOL_FAILED)
-				_collect_events()
-				_check_failure()
-				return _step_failure(sent)
+			inputs.append(_core.retained_local_input(player, frame))
+		# One packet per remote carries the catch-up and added frames, as upstream flushes once.
+		var sent: int = _endpoint(index).submit_frames(starts[index], inputs, statuses, _now, last)
+		if sent != I.Code.OK:
+			# Peers would disagree about the added frames, so the match cannot continue.
+			_core.terminate(Types.Code.PROTOCOL_FAILED)
+			_collect_events()
+			_check_failure()
+			return _step_failure(sent)
 	return Types.Code.OK
 
 

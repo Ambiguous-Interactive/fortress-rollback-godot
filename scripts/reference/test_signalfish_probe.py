@@ -38,6 +38,7 @@ class SignalFishProbeControls(unittest.TestCase):
                 source.parent.mkdir(parents=True)
                 source.write_text('extends SceneTree\n')
                 (source.parent / 'fetch.py').write_text('# pinned fetch helper\n')
+                (source.parent / 'receipt_arguments.py').write_text('# shared argument helper\n')
                 pin_manifest = root / 'docs/reference/pins.json'
                 pin_manifest.parent.mkdir(parents=True)
                 pin_manifest.write_text('{"schema_version": 1}\n')
