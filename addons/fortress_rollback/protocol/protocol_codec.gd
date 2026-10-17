@@ -137,6 +137,7 @@ static func _write_body(writer: StreamPeerBuffer, message: T.Message) -> void:
 			writer.put_u32(message.features)
 			_write_config(writer, message.config)
 			writer.put_data(message.config_digest)
+			writer.put_u32(message.max_packet_bytes)
 		T.Kind.INPUT:
 			writer.put_32(message.start_frame)
 			writer.put_32(message.ack_frame)
@@ -200,6 +201,7 @@ static func _read_body(reader: Reader, message: T.Message, limits: T.Limits) -> 
 			message.features = reader.number(4)
 			message.config = _read_config(reader)
 			message.config_digest = reader.take(8)
+			message.max_packet_bytes = reader.number(4)
 		T.Kind.INPUT:
 			_read_input(reader, message, limits)
 		T.Kind.INPUT_ACK:

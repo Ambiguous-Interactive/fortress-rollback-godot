@@ -24,6 +24,9 @@ static func limits(value: T.Limits) -> bool:
 	)
 
 
+## Bounds for the receive packet limit a peer advertises while connecting.
+const MIN_PACKET_BYTES: int = 44
+const MAX_PACKET_BYTES: int = 1048576
 ## Fixed-width configuration bytes before the neutral input and roster.
 const CONFIG_FIXED_BYTES: int = 33
 
@@ -68,7 +71,9 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 				return -1
 			if message.features < 0 or message.features > 4294967295 or message.config_digest.size() != 8 or not config(message.config):
 				return -1
-			return 29 + CONFIG_FIXED_BYTES + message.config.input_width + message.config.player_count * 8
+			if message.max_packet_bytes < MIN_PACKET_BYTES or message.max_packet_bytes > MAX_PACKET_BYTES:
+				return -1
+			return 33 + CONFIG_FIXED_BYTES + message.config.input_width + message.config.player_count * 8
 		T.Kind.INPUT:
 			if not frame(message.start_frame, false) or not frame(message.ack_frame):
 				return -1

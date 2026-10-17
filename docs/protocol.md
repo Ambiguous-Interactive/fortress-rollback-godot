@@ -68,7 +68,8 @@ packet. Unknown versions, kinds, flags and trailing bytes are rejected.
 Layout-version agreement is separate from the synchronization payload's
 minimum semantic compatibility version. The codec preserves all u8 semantic
 versions so the endpoint can diagnose incompatibility. Layout version 2 adds
-`queue_capacity` to the configuration, so version 1 peers are rejected. No
+`queue_capacity` to the configuration and `max_packet_bytes` to synchronization
+messages, so version 1 peers are rejected. No
 fallback negotiation is implemented.
 
 ## Message payloads
@@ -79,7 +80,7 @@ values are invalid. A checksum frame and an input start frame are never null.
 
 | Kind | Name | Payload |
 | --- | --- | --- |
-| 1 | `SYNC_REQUEST` | token[16], min_compat_version:u8, features:u32, configuration, config_digest[8] |
+| 1 | `SYNC_REQUEST` | token[16], min_compat_version:u8, features:u32, configuration, config_digest[8], max_packet_bytes:u32 |
 | 2 | `SYNC_REPLY` | Same layout; token echoes the request token |
 | 3 | `INPUT` | start_frame:i32, ack_frame:i32, frame_count:u16, player_count:u8, players[player_count], status_count:u8, statuses[status_count], data_length:u32, data[data_length] |
 | 4 | `INPUT_ACK` | ack_frame:i32, nullable |
@@ -149,6 +150,10 @@ without hashing, integer conversion or inferred authentication. The endpoint
 must compare both canonical configuration bytes and this digest, alongside
 version/features and a matching echoed token, before declaring synchronization.
 Equal digests do not replace exact comparison of the explicit configuration.
+
+`max_packet_bytes` (44–1048576) is the largest packet the sender accepts. Peers
+may differ: each endpoint sizes input batches to fit the smaller of its own
+limit and the limit in the remote's accepted reply.
 The codec validates representation and bounds; it does not declare a peer's
 configuration agreed or a cryptographic checksum valid.
 

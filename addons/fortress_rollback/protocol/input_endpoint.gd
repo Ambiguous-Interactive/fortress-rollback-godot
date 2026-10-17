@@ -330,7 +330,9 @@ func _packet(kind: int) -> T.Message:
 func _send_pending(plan: Dictionary) -> void:
 	var width: int = _local_players.size() * _limits.input_width
 	var overhead: int = 60 + _local_players.size() + 7 * _limits.player_count
-	var count: int = mini(_options.max_input_frames, (_limits.max_packet_bytes - overhead) / width)
+	# Each peer can have a different limit, so batches fit the smaller one. An honest remote limit always holds one frame.
+	var packet_bytes: int = mini(_limits.max_packet_bytes, _handshake.remote_packet_bytes())
+	var count: int = clampi((packet_bytes - overhead) / width, 1, _options.max_input_frames)
 	var frames: Array = plan.state.pending.keys()
 	frames.sort()
 	var inputs: Array[PackedByteArray] = []

@@ -50,6 +50,7 @@ class Message:
 	var features: int = 0
 	var config: Config = Config.new()
 	var config_digest: PackedByteArray = PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0])
+	var max_packet_bytes: int = 65536
 	var start_frame: int = 0
 	var ack_frame: int = -1
 	var frame_count: int = 1
