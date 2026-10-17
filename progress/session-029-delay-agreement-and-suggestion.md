@@ -54,6 +54,12 @@ and the endpoint sends batches that fit the smaller limit. This joins the unrele
 - The online example now sets its handshake limit to its 1024-byte transports, and the WebRTC guide says
   to keep the handshake limit no higher than the transport's.
 
+The #111 review also found that the online and WebRTC browser probes matched a hard-coded version 1
+input header. Their unit tests built version 1 packets too, so `make test-reference` stayed green while
+the live probes would have rejected every real packet. `scripts/reference/wire.py` now reads the version
+from `protocol_codec.gd`. The handshake keeps the smallest packet limit across replies, and
+`test_handshake.gd` `roundtrips` checks it, including a running request that must not change it.
+
 ## Suggest an input delay (#109)
 
 `FortressDelayAdvisor` turns the largest peer RTT into frames of one-way latency:
