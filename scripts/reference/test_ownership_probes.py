@@ -59,7 +59,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 cache = Path(directory) / 'cache'
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
-                                       'docs/reference/pins.json']
+                                       'scripts/reference/receipt_arguments.py', 'docs/reference/pins.json']
                 for filename in files:
                     target = root / filename
                     target.parent.mkdir(parents=True, exist_ok=True)

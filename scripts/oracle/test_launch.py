@@ -79,7 +79,7 @@ class LauncherTests(unittest.TestCase):
                         launch.main()
             self.assertFalse(receipt.exists())
 
-    def test_invalid_workers_remove_stale_receipt_without_starting_setup(self):
+    def test_invalid_workers_invalidate_stale_receipt_without_starting_setup(self):
         for value in ('0', '9', '-1', 'bad', '1.5'):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
                 receipt = Path(directory) / 'receipt.json'
@@ -88,8 +88,8 @@ class LauncherTests(unittest.TestCase):
                                          '--output', directory, '--jobs', value], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn('workers must be an integer in 1..8', result.stderr)
-                self.assertFalse(receipt.exists())
-                self.assertEqual(list(Path(directory).iterdir()), [])
+                self.assertEqual(json.loads(receipt.read_text()), {'passed': False, 'failure': 'invalid_arguments'})
+                self.assertEqual(list(Path(directory).iterdir()), [receipt])
 
     def test_game_controls_cannot_pass_at_schema_failure_or_wrong_boundary(self):
         prefix = 'FORTRESS_ORACLE_GAME_RESULT '

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run a representative pinned upstream baseline twice; retain raw logs and results."""
-import argparse
 import hashlib
 import json
 import os
@@ -10,6 +9,7 @@ import re
 import subprocess
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, sources
+from receipt_arguments import ReceiptParser
 
 # Existing upstream tests exercise real sync, queue and seeded P2P implementations.
 CASES = [
@@ -97,7 +97,7 @@ def setup_rust(data, offline):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='rust-baseline.json')
     parser.add_argument('--offline', action='store_true', help='require cached sources, compiler and crates')
     parser.add_argument('--setup-rust', action='store_true')
     parser.add_argument('--output', type=Path, default=CACHE / 'results')

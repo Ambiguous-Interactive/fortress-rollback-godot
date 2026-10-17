@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Build the pinned local game relay server and record source/tool provenance."""
-import argparse
 import hashlib
 import json
 import os
@@ -10,6 +9,7 @@ import subprocess
 import tempfile
 
 from fetch import CACHE, MANIFEST, fetch, load_manifest
+from receipt_arguments import ReceiptParser
 from signalfish_live_probe import extract, source_inventory
 from signalfish_probe import inventory
 from run import rust_environment
@@ -20,7 +20,7 @@ def digest(path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='build-receipt.json')
     parser.add_argument('--cargo', required=True, type=Path)
     parser.add_argument('--source', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
@@ -37,7 +37,8 @@ def main():
     tools = {'cargo': digest(cargo), 'rustc': digest(cargo.parent / 'rustc')}
     inputs = {'builder': Path(__file__).resolve(), 'fetch': Path(__file__).with_name('fetch.py'), 'pins': MANIFEST,
               'run': Path(__file__).with_name('run.py'), 'native_launcher': Path(__file__).with_name('signalfish_live_probe.py'),
-              'sdk_launcher': Path(__file__).with_name('signalfish_probe.py'), 'archive': archive, 'cargo': cargo, 'rustc': cargo.parent / 'rustc'}
+              'sdk_launcher': Path(__file__).with_name('signalfish_probe.py'),
+              'receipt_arguments': Path(__file__).with_name('receipt_arguments.py'), 'archive': archive, 'cargo': cargo, 'rustc': cargo.parent / 'rustc'}
     input_before = inventory(inputs)
     before = source_inventory(source)
     commands = [[str(cargo), 'clean', '-p', 'signal-fish-server'],

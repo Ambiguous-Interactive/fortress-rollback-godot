@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Compare pinned upstream requests with the production Godot session and independent game."""
-import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
@@ -16,6 +15,7 @@ from session_compare import compare_result, negative_controls as session_negativ
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
 from fetch import CACHE, digest, load_manifest, sources  # noqa: E402
+from receipt_arguments import ReceiptParser  # noqa: E402
 from run import rust_environment, setup_rust  # noqa: E402
 
 
@@ -128,7 +128,7 @@ def versioned_controls(binary, engine, control_cases, output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, type=Path)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--jobs', default='4', help='independent scenario workers (default: 4)')
@@ -179,7 +179,7 @@ def main():
         'binary_sha256': digest(binary), 'engine': engine_version.strip(), 'engine_sha256': digest(engine),
         'platform': platform.platform(), 'features': [], 'default_features': False, 'cases': cases, 'negative_controls': controls['1'], 'versioned_negative_controls': controls,
         'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
-            list((ROOT / 'scripts/oracle').rglob('*.py')) + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
+            list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
             + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')))},
         'limitations': ['Sync-test public API only; no P2P, transport or protocol parity.',
                         'Production Godot sync-test session parity only; P2P parity remains a separate gate.',

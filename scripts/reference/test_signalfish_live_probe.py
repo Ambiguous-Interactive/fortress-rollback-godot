@@ -64,7 +64,7 @@ class LiveRelayEvidenceControls(unittest.TestCase):
                  'binary_sha256': digest, 'exit_codes': [0, 0], 'tool_sha256': {'cargo': 'd' * 64, 'rustc': 'e' * 64},
                  'commands': [['/toolchain/cargo', 'clean', '-p', 'signal-fish-server'],
                               ['/toolchain/cargo', 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']]}
-        inputs = {name: 'f' * 64 for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'archive', 'cargo', 'rustc')}
+        inputs = {name: 'f' * 64 for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'archive', 'cargo', 'rustc')}
         inputs.update(cargo='d' * 64, rustc='e' * 64)
         log_digest = '1' * 64
         build.update(binary='/build/server', builder_sha256=inputs['builder'], server_archive_sha256=inputs['archive'],
@@ -85,7 +85,7 @@ class LiveRelayEvidenceControls(unittest.TestCase):
     def test_build_provenance_fields_are_required(self):
         revision, digest = 'a' * 40, 'b' * 64
         source = {'Cargo.toml': 'c' * 64}
-        inputs = {name: 'f' * 64 for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'archive', 'cargo', 'rustc')}
+        inputs = {name: 'f' * 64 for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'archive', 'cargo', 'rustc')}
         inputs.update(cargo='d' * 64, rustc='e' * 64)
         log_digest = '1' * 64
         build = {'format': 1, 'passed': True, 'source_revision': revision, 'source_inventory': source,

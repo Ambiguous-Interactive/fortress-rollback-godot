@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Compare actual pinned Rust and production Godot queues in fresh processes."""
-import argparse
 import copy
 import json
 from pathlib import Path
@@ -12,6 +11,7 @@ import tempfile
 
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
 from fetch import retain_verified_tree
+from receipt_arguments import ReceiptParser
 from queue_contract import compare, validate_bundle
 from queue_corpus import bundle
 
@@ -110,7 +110,7 @@ def startup_divergence(binary, game_command, output):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, type=Path)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/queue')
@@ -186,7 +186,7 @@ def main():
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),
               'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
                   list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py'))
-                  + [ROOT / 'scripts/oracle/rust/src/bin/queue.rs', ROOT / 'tests/oracle/queue_trace.gd'])},
+                  + [ROOT / 'scripts/oracle/rust/src/bin/queue.rs', ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py'])},
               'limitations': ['Raw queue only; no session confirmation, prediction window, transport or rollback history.',
                               'Zero neutral input in differential corpus; custom neutral verified independently.',
                               'Upstream partial initial-gap capacity failure intentionally diverges: Godot rejects atomically.']}

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run minimum/current pinned editors and optionally real Chromium web exports."""
-import argparse
 import json
 import os
 from pathlib import Path
@@ -9,6 +8,7 @@ import shutil
 import zipfile
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
+from receipt_arguments import ReceiptParser
 from run import begin_results, capture
 
 MARKER = 'FORTRESS_BASELINE_SMOKE_OK:78563412'
@@ -22,7 +22,7 @@ def run(cmd, environment, log):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='godot-baseline.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--web', action='store_true', help='require templates and installed pinned Playwright Chromium')
     args = parser.parse_args()
