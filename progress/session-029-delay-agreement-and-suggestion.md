@@ -108,3 +108,26 @@ acceptance criteria.
 The [retrospective](../.llm/retrospectives/2026-10-17-delay-agreement.md) adds the agree-or-exchange
 rule for per-peer limits to the networking skill.
 Retro: findings-acted.
+
+## Delivery
+
+#112 merged as `010bad4581933226870f7d34fd842f42a53ca061` from reviewed head
+`b767b4870466752f615a0bfd7c420852be2d6e72`. All 11 PR checks passed on that head. A feedback scan at
+21:56 UTC found no inline comments, reviews, conversation comments, threads or annotations. Main CI for
+the merge commit passed: Harness Lint, Devcontainer Verify and Reference Baseline (17m26s).
+
+## Scope decisions
+
+- **#104 (eight-player Firefox CI):** not taken. Session 027 showed every eight-player page focused
+  and visible, rendering 8–10 frames per second on two runner CPUs. It is CI capacity, not a stall
+  players see, and its acceptance needs a measured bottleneck and immutable CI receipts, which take
+  longer than this session had left.
+- **#46 (runtime delay):** the remaining row is a differential comparison of delay changes under
+  packet loss against the pinned Rust oracle. That needs a new oracle scenario operation and a Rust
+  driver change. It stays open on #46 for a future session, with sessions 028 and 029 recorded there.
+
+## PLAN.md review
+
+PLAN.md holds durable decisions and navigation; GitHub issues own the task backlog. This session added
+the measured input-delay suggestion link. No entry became stale or completed: the runtime input-delay
+link still points at the updated guide, and the protocol and handshake links cover the version 2 layout.
