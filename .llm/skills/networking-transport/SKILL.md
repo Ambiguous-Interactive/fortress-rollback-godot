@@ -221,6 +221,10 @@ Size per-peer limits against the remote's resources too. A queue for a remote sl
 remote's delay, the local delay and two prediction windows; a local-only check let two peers at
 the limit overflow each other. Any API that emits frames outside `step` must resume each endpoint
 from its own `last_submitted_frame`: a backpressured step leaves the core one sample ahead.
+A limit that bounds what one peer sends another must be agreed or exchanged in the handshake.
+Refuse a mismatch when it shapes the session (`queue_capacity`). Send to the smaller value when
+peers may differ (`max_packet_bytes`). Check received batches against the protocol maximum, never
+the local send cap (`max_input_frames`). An unagreed cap fails later as a silent stall.
 
 - Wire formats, channels, replay layout, checksum exchange: this skill.
 - When to roll back and why: rollback-fundamentals.
