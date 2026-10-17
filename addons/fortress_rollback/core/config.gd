@@ -4,6 +4,7 @@ extends RefCounted
 # gdlint: disable=max-returns
 
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const MAX_WINDOW: int = 128
 const MAX_STORAGE_BYTES: int = 67108864
 
@@ -26,6 +27,9 @@ var diagnostic_trace_frames: int = 0
 var diagnostic_seed: String = ""
 var diagnostic_version: String = ""
 var diagnostic_replay_command: String = ""
+## Record up to this many confirmed frames for FortressReplay; 0 disables recording.
+## Recording keeps the first frames and stops when full; its memory is outside storage_budget_bytes.
+var replay_max_frames: int = 0
 
 
 ## Validate bounded storage before allocating. Snapshot size and budget are explicit.
@@ -33,6 +37,8 @@ func validate() -> int:
 	if diagnostic_trace_frames < 0 or diagnostic_trace_frames > MAX_WINDOW:
 		return Types.Code.INVALID_CONFIGURATION
 	if diagnostic_seed.to_utf8_buffer().size() > 128 or diagnostic_version.to_utf8_buffer().size() > 128 or diagnostic_replay_command.to_utf8_buffer().size() > 512:
+		return Types.Code.INVALID_CONFIGURATION
+	if replay_max_frames < 0 or not Replay.valid_shape(player_count, input_width, replay_max_frames):
 		return Types.Code.INVALID_CONFIGURATION
 	if player_count < 2 or player_count > 8 or input_width < 1 or input_width > 65536 or neutral_input.size() != input_width:
 		return Types.Code.INVALID_CONFIGURATION
@@ -106,4 +112,5 @@ func owned_copy() -> RefCounted:
 	copy.diagnostic_seed = diagnostic_seed
 	copy.diagnostic_version = diagnostic_version
 	copy.diagnostic_replay_command = diagnostic_replay_command
+	copy.replay_max_frames = replay_max_frames
 	return copy

@@ -242,6 +242,11 @@ func statistics() -> Types.Statistics:
 	return _core.statistics() if _core != null else Types.Statistics.new()
 
 
+## Confirmed frames recorded so far; null unless config.replay_max_frames > 0.
+func replay() -> RefCounted:
+	return _core.replay() if _core != null else null
+
+
 ## Bounded observations without transport identities or tokens. Trace payloads require explicit configuration opt-in.
 ## Reading does not drain publication queues. The terminal cause survives event drains.
 func diagnostics() -> Dictionary:

@@ -48,6 +48,30 @@ class DiagnosticDownloadTests(unittest.TestCase):
                 validate_download(changed, trace_enabled=True)
                 validate_trace_history(changed['report'], states, histories)
 
+    def test_trace_captured_at_a_stall_ends_with_the_saved_boundary(self):
+        from online_example_probe import expected_states
+        from online_diagnostics import validate_trace_history
+        histories = [[0, 0] + [2] * 180, [0, 0] + [4] * 180]
+        states = expected_states(histories, 181)
+        value = diagnostic_download()
+        value['report'].update(current_frame=180, confirmed_frame=172)
+        value['before']['frame'] = value['after']['frame'] = 180
+        value['report']['statistics']['advanced_frames'] = 180
+        value['report']['trace'] = trace_evidence(states, histories, 180, boundary=True)
+        validate_download(value, trace_enabled=True)
+        validate_trace_history(value['report'], states, histories)
+        frames = value['report']['trace']['frames']
+        self.assertEqual((len(frames), frames[0]['frame'], frames[-1]['frame'], frames[-1]['inputs']), (120, 61, 180, []))
+        for label, mutate in (('boundary row with inputs', lambda t: t['frames'][-1].update(inputs=t['frames'][-2]['inputs'])),
+                              ('inputless row before the end', lambda t: t['frames'][0].update(inputs=[])),
+                              ('boundary without its state', lambda t: t['frames'][-1].update(state_available=False)),
+                              ('window starting one frame late', lambda t: t.update(frames=t['frames'][1:])),
+                              ('boundary payload counted with inputs', lambda t: t.update(retained_payload_bytes=120 * 154))):
+            changed = copy.deepcopy(value)
+            mutate(changed['report']['trace'])
+            with self.subTest(label), self.assertRaises(ValueError):
+                validate_download(changed, trace_enabled=True)
+
     def test_valid_download_with_real_callback_brackets(self):
         validate_download(diagnostic_download())
         value = diagnostic_download()
@@ -100,10 +124,13 @@ class DiagnosticDownloadTests(unittest.TestCase):
                 validate_download(invalid)
 
 
-def trace_evidence(states, histories):
+def trace_evidence(states, histories, current=110, boundary=False):
+    """A stalled step saves the state at current_frame before simulating it, so that last row has no inputs."""
+    end = current if boundary else current - 1
     frames = [{'frame': frame, 'state': state, 'state_available': True, 'checksum': game_checksum(state),
-               'inputs': [{'player': player, 'bytes': bytes([histories[player][frame]]).hex(), 'status': 1} for player in range(2)]}
-              for frame, state in states.items() if frame < 110]
+               'inputs': [] if frame == current else
+               [{'player': player, 'bytes': bytes([histories[player][frame]]).hex(), 'status': 1} for player in range(2)]}
+              for frame, state in states.items() if end - 120 < frame <= end]
     return {'schema': 'fortress-canonical-trace-v1', 'seed': '1701', 'application_version': 'fortress-online-integer-v1',
             'replay_command': '', 'max_frames': 120, 'max_payload_bytes': 18480, 'max_export_bytes': 198752,
-            'retained_payload_bytes': len(frames) * 154, 'first_divergence': {}, 'frames': frames}
+            'retained_payload_bytes': len(frames) * 154 - (2 if boundary else 0), 'first_divergence': {}, 'frames': frames}

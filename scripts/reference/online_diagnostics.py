@@ -113,19 +113,27 @@ def validate_trace(trace, current_frame):
     for field, expected in [('max_frames', 120), ('max_payload_bytes', 18480), ('max_export_bytes', 198752)]:
         integer(trace[field], expected, expected)
     frames = trace['frames']
-    if not isinstance(frames, list) or not frames or len(frames) != min(current_frame, 120):
+    if not isinstance(frames, list) or not frames or not isinstance(frames[-1], dict):
+        raise ValueError('online trace window missing or unbounded')
+    # A stalled step saves the state at current_frame before simulating it; only that final row has no inputs.
+    boundary = frames[-1].get('frame') == current_frame and frames[-1].get('inputs') == []
+    end = current_frame if boundary else current_frame - 1
+    if len(frames) != min(end + 1, 120):
         raise ValueError('online trace window missing or unbounded')
     last, payload = -1, 0
-    for row in frames:
+    for index, row in enumerate(frames):
         if not isinstance(row, dict) or row.keys() != {'frame', 'state', 'state_available', 'checksum', 'inputs'}:
             raise ValueError('online trace row privacy fields differ')
-        expected_frame = max(0, current_frame - 120) if last < 0 else last + 1
+        expected_frame = max(0, end - 119) if last < 0 else last + 1
         integer(row['frame'], expected_frame, expected_frame)
         last = row['frame']
         if (row['state_available'] is not True or not isinstance(row['state'], str)
                 or not re.fullmatch('[0-9a-f]{272}', row['state']) or row['checksum'] != game_checksum(row['state'])):
             raise ValueError('online trace canonical snapshot or checksum invalid')
         inputs = row['inputs']
+        if boundary and index == len(frames) - 1:
+            payload += 152
+            continue
         if not isinstance(inputs, list) or len(inputs) != 2:
             raise ValueError('online trace applied inputs missing')
         for player, sample in enumerate(inputs):

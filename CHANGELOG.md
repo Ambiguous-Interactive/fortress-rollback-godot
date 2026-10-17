@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add match recording and playback. Set `replay_max_frames` to record confirmed inputs, save the bytes, then play them with `FortressReplayPlayer`. Playback checks recorded state checksums and stops at the first frame that differs.
+
 - Add peer completion notifications after game callbacks and network controls. Reentrant peer mutations remain blocked until handlers return.
 
 - Add an online checkbox to include bounded game state and inputs in diagnostic downloads. Choose before Ready; capture stays off by default.
