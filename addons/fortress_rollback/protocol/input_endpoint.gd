@@ -67,7 +67,7 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 		return code
 	_limits = T.Limits.new()
 	_limits.max_packet_bytes = handshake_options.max_packet_bytes
-	_limits.max_input_frames = options.max_input_frames
+	_limits.max_input_frames = I.MAX_INPUT_FRAMES
 	_limits.player_count = local.config.player_count
 	_limits.input_width = local.config.input_width
 	_local = Codec.decode(Codec.encode(local, _limits).bytes, _limits).message

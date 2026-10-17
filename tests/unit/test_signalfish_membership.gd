@@ -59,7 +59,7 @@ func _ownership(context: RefCounted) -> void:
 	var other: M = _membership(context, V, PackedStringArray([U, V]))
 	context.equal(membership.handshake_message().config_digest, other.handshake_message().config_digest, "order independent full roster digest")
 	context.equal(membership.handshake_message().config.roster, other.handshake_message().config.roster, "canonical core roster")
-	context.equal(membership.handshake_message().config_digest.hex_encode(), "cee2305a945aa10e", "independent Python SHA256 full-roster/config golden")
+	context.equal(membership.handshake_message().config_digest.hex_encode(), "27d8470a909b9d1d", "independent Python SHA256 full-roster/config golden")
 	context.equal(membership.slot(U), 0, "stable UUID order")
 	roster[0] = W
 	var exposed: T.Message = membership.handshake_message()

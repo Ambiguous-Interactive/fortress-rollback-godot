@@ -5,7 +5,7 @@ const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
 const Projector = preload("res://addons/fortress_rollback/protocol/protocol_projection.gd")
 const Reader = preload("res://addons/fortress_rollback/protocol/protocol_reader.gd")
-const VERSION: int = 1
+const VERSION: int = 2
 const HEADER_BYTES: int = 44
 const MAGIC: Array[int] = [70, 82, 71, 80]
 
@@ -83,7 +83,7 @@ static func encode_config(config: Variant, limits: Variant) -> T.Result:
 		return T.Result.new(T.Code.INVALID_LIMITS)
 	if not V.config(config):
 		return T.Result.new(T.Code.INVALID_MESSAGE)
-	if 29 + config.input_width + config.player_count * 8 > limits.max_packet_bytes:
+	if V.CONFIG_FIXED_BYTES + config.input_width + config.player_count * 8 > limits.max_packet_bytes:
 		return T.Result.new(T.Code.LIMIT_EXCEEDED)
 	var writer: StreamPeerBuffer = _writer()
 	_write_config(writer, config)
@@ -123,6 +123,7 @@ static func _write_config(writer: StreamPeerBuffer, config: T.Config) -> void:
 	writer.put_u32(config.input_format)
 	writer.put_u32(config.snapshot_format)
 	writer.put_u32(config.checksum_algorithm)
+	writer.put_u32(config.queue_capacity)
 	writer.put_data(config.neutral_input)
 	for identity: PackedByteArray in config.roster:
 		writer.put_data(identity)
@@ -180,6 +181,7 @@ static func _read_config(reader: Reader) -> T.Config:
 	config.input_format = reader.number(4)
 	config.snapshot_format = reader.number(4)
 	config.checksum_algorithm = reader.number(4)
+	config.queue_capacity = reader.number(4)
 	if config.player_count < 2 or config.player_count > 8 or config.input_width < 1 or config.input_width > 65536:
 		reader.valid = false
 		return config

@@ -35,14 +35,14 @@ func _compatibility(context: RefCounted) -> void:
 			context.equal(result.message.min_compat_version, version, "semantic version preserved")
 			context.equal(result.message.features, features, "unsigned feature bits preserved")
 			context.bytes_equal(Codec.encode(result.message, Types.Limits.new()).bytes, packet, version, "canonical compatibility bytes")
-			packet[4] = 2
+			packet[4] = Codec.VERSION + 1
 			context.equal(Codec.decode(packet, Types.Limits.new()).code, Types.Code.UNSUPPORTED_VERSION, "layout version remains strict")
 
 
 func _geometry(context: RefCounted) -> void:
 	for players: int in [2, 3, 8]:
 		for width: int in [1, 2, 65536]:
-			var packet: PackedByteArray = _golden().slice(0, 94)
+			var packet: PackedByteArray = _golden().slice(0, 98)
 			packet[65] = players
 			packet.encode_u32(66, width)
 			var neutral: PackedByteArray = PackedByteArray()

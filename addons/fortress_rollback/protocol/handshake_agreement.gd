@@ -12,7 +12,7 @@ static func mismatch(ours: T.Message, theirs: T.Message) -> Dictionary:
 		var second: Variant = theirs.get(field) if field in ["min_compat_version", "features"] else theirs.config.get(field)
 		if first != second:
 			return {"field": field, "ours": first, "theirs": second}
-	for field: String in ["input_delay", "input_format", "snapshot_format", "checksum_algorithm", "neutral_input", "roster"]:
+	for field: String in ["input_delay", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster"]:
 		if ours.config.get(field) != theirs.config.get(field):
 			return {"field": field, "ours": _owned(ours.config.get(field)), "theirs": _owned(theirs.config.get(field))}
 	if ours.config_digest != theirs.config_digest:

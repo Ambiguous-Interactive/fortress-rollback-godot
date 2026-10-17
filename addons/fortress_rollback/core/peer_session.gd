@@ -65,7 +65,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	var profile: T.Config = local.config
 	if profile.player_count != config.player_count or profile.input_width != config.input_width or profile.input_delay != config.input_delay:
 		return I.Code.INVALID_ARGUMENT
-	if profile.max_prediction != config.max_prediction_frames or profile.neutral_input != config.neutral_input:
+	if profile.max_prediction != config.max_prediction_frames or profile.queue_capacity != config.queue_capacity or profile.neutral_input != config.neutral_input:
 		return I.Code.INVALID_ARGUMENT
 	var locals: PackedInt32Array = PackedInt32Array()
 	var remotes: Dictionary = {}

@@ -296,16 +296,24 @@ func _capacity(context: RefCounted) -> void:
 	context.equal(large_sink.frames.size(), 128, "all maximum batch callbacks accounted")
 	context.equal(endpoint.status().pending_frames, 0, "maximum batch ACK releases full prefix")
 	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 127, "maximum batch cumulative ACK")
-	endpoint = _ready(large_sink, large, [], 0, 119)
-	for frame: int in range(45):
+	# max_input_frames caps what this peer sends. A peer with a larger cap must still be heard.
+	var narrow: I.Options = I.Options.new()
+	narrow.max_input_frames = 4
+	var narrow_sink: Sink = Sink.new()
+	endpoint = _ready(narrow_sink, narrow)
+	context.equal(endpoint.receive(_encode(_input(0, PackedByteArray([0, 1, 2, 3, 4, 5]))), _id(2), 2), I.Code.OK, "larger remote batch accepted")
+	context.equal(narrow_sink.frames.size(), 6, "every frame of a larger remote batch delivered")
+	# 123 bytes is the exact two-player handshake size, which leaves room for 48 one-byte frames.
+	endpoint = _ready(large_sink, large, [], 0, 123)
+	for frame: int in range(49):
 		context.equal(endpoint.submit(frame, PackedByteArray([frame]), _statuses(), 2 + frame), I.Code.OK, "packet byte cap retains unsent suffix")
 		var packets: Array[PackedByteArray] = endpoint.drain_outbox()
-		context.equal(packets[0].size() <= 119, true, "every batch respects packet byte cap")
-		context.equal(_decoded(packets[0]).frame_count, mini(44, frame + 1), "packet cap truncates oldest prefix")
-	context.equal(endpoint.receive(_ack_packet(44), _id(2), 50), I.Code.OK, "packet-cap unsent ACK ignored")
-	context.equal(endpoint.status().pending_frames, 45, "packet-cap suffix protected")
-	endpoint.receive(_ack_packet(43), _id(2), 51)
-	context.equal(endpoint.status().pending.keys(), [44], "inclusive transmitted prefix removed")
+		context.equal(packets[0].size() <= 123, true, "every batch respects packet byte cap")
+		context.equal(_decoded(packets[0]).frame_count, mini(48, frame + 1), "packet cap truncates oldest prefix")
+	context.equal(endpoint.receive(_ack_packet(48), _id(2), 54), I.Code.OK, "packet-cap unsent ACK ignored")
+	context.equal(endpoint.status().pending_frames, 49, "packet-cap suffix protected")
+	endpoint.receive(_ack_packet(47), _id(2), 55)
+	context.equal(endpoint.status().pending.keys(), [48], "inclusive transmitted prefix removed")
 
 
 func _ownership(context: RefCounted) -> void:

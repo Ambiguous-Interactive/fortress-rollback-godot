@@ -16,6 +16,7 @@ class Config:
 	var input_format: int = 1
 	var snapshot_format: int = 1
 	var checksum_algorithm: int = 1
+	var queue_capacity: int = 128
 	var neutral_input: PackedByteArray = PackedByteArray([0])
 	var roster: Array[PackedByteArray] = [PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0]), PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0])]
 

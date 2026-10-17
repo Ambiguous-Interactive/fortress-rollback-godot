@@ -236,8 +236,9 @@ as ordinary input and stay in agreement. Replays record them like any other inpu
 | `PROTOCOL_FAILED` | Sending the added frames failed. The match ends rather than let peers disagree. |
 
 Before the first sample, a plain `FortressSession` accepts any delay that fits, including a lower one.
-Give every peer the same `queue_capacity`. The handshake does not compare capacities yet: a peer with a
-larger one can raise past the other peer's limit, and that match ends with `PROTOCOL_FAILED`.
+Every peer must use the same `queue_capacity`, because it sets how far delay can rise. Set the handshake
+profile's `queue_capacity` to the session's. Peers with different capacities refuse to synchronize and report
+an `incompatible` failure for `queue_capacity`, instead of ending the match later.
 
 ## Coming from Rust
 

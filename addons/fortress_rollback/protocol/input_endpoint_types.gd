@@ -4,6 +4,9 @@ extends RefCounted
 enum Code { OK, INVALID_ARGUMENT, WRONG_STATE, INVALID_PACKET, WRONG_SOURCE, WRONG_CONNECTION, UNSUPPORTED_KIND, BACKPRESSURE, TOKEN_REUSED,
 	BUSY, CONFLICT, INVALID_FRAME, INPUT_FAILED, TERMINATED }
 
+## Largest input batch any peer may send. Received batches are checked against this, not the local send cap.
+const MAX_INPUT_FRAMES: int = 128
+
 
 class Options:
 	extends RefCounted
@@ -18,7 +21,7 @@ class Options:
 
 
 static func valid_options(value: Options) -> bool:
-	if value.retry_interval_us < 0 or value.max_input_frames < 1 or value.max_input_frames > 128:
+	if value.retry_interval_us < 0 or value.max_input_frames < 1 or value.max_input_frames > MAX_INPUT_FRAMES:
 		return false
 	if value.max_buffer_bytes < 1 or value.max_buffer_bytes > 16777216:
 		return false

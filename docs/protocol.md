@@ -54,7 +54,7 @@ roster slots to authenticated transport senders belong to the endpoint.
 | Offset | Field | Width |
 | --- | --- | --- |
 | 0 | ASCII `FRGP` | 4 bytes |
-| 4 | Layout version, exactly 1 | u16 |
+| 4 | Layout version, exactly 2 | u16 |
 | 6 | Message kind | u8 |
 | 7 | Flags, exactly 0 | u8 |
 | 8 | Session identity | 16 bytes |
@@ -67,8 +67,9 @@ The header length is 44 bytes. The declared payload must consume the complete
 packet. Unknown versions, kinds, flags and trailing bytes are rejected.
 Layout-version agreement is separate from the synchronization payload's
 minimum semantic compatibility version. The codec preserves all u8 semantic
-versions so the endpoint can diagnose incompatibility. Layout version stays 1;
-no fallback negotiation is implemented.
+versions so the endpoint can diagnose incompatibility. Layout version 2 adds
+`queue_capacity` to the configuration, so version 1 peers are rejected. No
+fallback negotiation is implemented.
 
 ## Message payloads
 
@@ -124,6 +125,7 @@ round sequence and lifecycle checks remain endpoint responsibilities.
 | input_format | u32 | Positive application input format version |
 | snapshot_format | u32 | Positive application snapshot format version |
 | checksum_algorithm | u32 | Positive application checksum algorithm identifier |
+| queue_capacity | u32 | 2–65536; must equal the session `queue_capacity` |
 | neutral_input | input_width bytes | Exact width, owned bytes |
 | roster | player_count × 8 bytes | Slot-ordered peer identities |
 
@@ -132,7 +134,7 @@ kind. Wide byte fields use lowercase hex strings; bounded numeric fields stay
 integers. Slots/statuses/floors retain array order. Returned nested arrays and
 dictionaries are newly constructed; no record storage is exposed.
 
-The fixed configuration part is 29 bytes. Roster entries can repeat because one endpoint
+The fixed configuration part is 33 bytes. Roster entries can repeat because one endpoint
 may own several player slots. Transport identities are never renumbered during
 a live session. The input width uses u32 so the local engine's supported
 65536-byte input domain remains representable.

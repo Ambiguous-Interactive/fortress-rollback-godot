@@ -31,6 +31,7 @@ static func project(message: T.Message) -> Dictionary:
 				"input_format": message.config.input_format,
 				"snapshot_format": message.config.snapshot_format,
 				"checksum_algorithm": message.config.checksum_algorithm,
+				"queue_capacity": message.config.queue_capacity,
 				"neutral_input": message.config.neutral_input.hex_encode(),
 				"roster": roster,
 			}

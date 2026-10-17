@@ -120,10 +120,10 @@ func _echoes(context: RefCounted) -> void:
 func _mismatch(context: RefCounted) -> void:
 	var changes: Array[Dictionary] = [{"min_compat_version": 2}, {"player_count": 3, "roster": [_id(1), _id(2), _id(3)]},
 		{"input_width": 2, "neutral_input": PackedByteArray([0, 0])}, {"fps": 30}, {"max_prediction": 4}, {"desync_interval": 0}, {"features": 1},
-		{"input_delay": 1}, {"input_format": 2}, {"snapshot_format": 2}, {"checksum_algorithm": 2}, {"neutral_input": PackedByteArray([1])},
+		{"input_delay": 1}, {"input_format": 2}, {"snapshot_format": 2}, {"checksum_algorithm": 2}, {"queue_capacity": 256}, {"neutral_input": PackedByteArray([1])},
 		{"roster": [_id(2), _id(1)]}, {"config_digest": _id(1)}]
 	var expected: Array[String] = ["min_compat_version", "player_count", "input_width", "fps", "max_prediction", "desync_interval", "features",
-		"input_delay", "input_format", "snapshot_format", "checksum_algorithm", "neutral_input", "roster", "config_digest"]
+		"input_delay", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster", "config_digest"]
 	for index: int in range(changes.size()):
 		var endpoint: Endpoint = _endpoint()
 		endpoint.begin(0, _id(1, 16))
