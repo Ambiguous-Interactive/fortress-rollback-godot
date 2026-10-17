@@ -58,7 +58,7 @@ unacknowledged input; an equal retained duplicate is idempotent and a differing
 one returns `CONFLICT`. An acknowledged old sample cannot be resubmitted.
 
 Each send takes the oldest consecutive pending prefix that fits both the frame
-batch cap and packet byte cap. It piggybacks the actual retained remote ACK floor.
+batch cap and packet byte cap. The byte cap is the smaller of the local and the remote's advertised `max_packet_bytes`. It piggybacks the actual retained remote ACK floor.
 Only receiving new input refreshes the running input-progress clock. Duplicate
 inputs, standalone ACKs and fresh local sends cannot postpone retransmission.
 `poll` retries strictly after the configured interval, then resets that retry

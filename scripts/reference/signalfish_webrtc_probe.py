@@ -24,6 +24,7 @@ from godot_smoke import run
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
 from run import capture
+from wire import INPUT_HEADER
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
@@ -201,7 +202,7 @@ def validate_overlap(peers):
 
 def validate_overlap_input(raw, count, sender, slot):
     size_offset = 57 + 7 * count
-    if (len(raw) < size_offset + 5 or raw[:8] != b'FRGP\x01\x00\x03\x00'
+    if (len(raw) < size_offset + 5 or raw[:8] != INPUT_HEADER
             or int.from_bytes(raw[40:44], 'little') != len(raw) - 44
             or raw[8:24] != bytes([count]) * 16 or raw[24:32] != hashlib.sha256(sender.encode('ascii')).digest()[:8]
             or raw[32:40] != b'\x01\x00\x00\x00\x00\x00\x00\x00'):

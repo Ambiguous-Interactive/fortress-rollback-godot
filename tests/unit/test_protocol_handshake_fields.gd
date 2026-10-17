@@ -86,6 +86,11 @@ func _bounds(context: RefCounted) -> void:
 		var packet: PackedByteArray = _golden()
 		packet.encode_u32(packet.size() - 4, limit)
 		context.equal(Codec.decode(packet, Types.Limits.new()).code, Types.Code.INVALID_PACKET, "reject invalid advertised packet limit")
+	for limit: int in [44, 1048576]:
+		var packet: PackedByteArray = _golden()
+		packet.encode_u32(packet.size() - 4, limit)
+		var decoded: RefCounted = Codec.decode(packet, Types.Limits.new())
+		context.equal([decoded.code, decoded.message.max_packet_bytes if decoded.code == 0 else -1], [0, limit], "accept boundary advertised packet limit")
 	for field: String in ["min_compat_version", "features"]:
 		for value: int in [-1, 256 if field == "min_compat_version" else 4294967296]:
 			var message: RefCounted = Types.Message.new()

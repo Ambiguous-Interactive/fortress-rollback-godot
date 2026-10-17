@@ -127,7 +127,7 @@ func status() -> Dictionary:
 	return _state.duplicate(true)
 
 
-## Receive limit the remote advertised, or the local limit before a reply is accepted.
+## The smaller of the local limit and every receive limit the remote advertised in an accepted reply.
 func remote_packet_bytes() -> int:
 	return _state.remote_packet_bytes
 
@@ -175,7 +175,7 @@ func _reply(plan: Dictionary, message: T.Message, next_token: Variant) -> int:
 				disposition = "accepted"
 				if plan.state.remote_connection.is_empty():
 					plan.state.remote_connection = message.connection_id.hex_encode()
-				plan.state.remote_packet_bytes = message.max_packet_bytes
+				plan.state.remote_packet_bytes = mini(plan.state.remote_packet_bytes, message.max_packet_bytes)
 				plan.state.remaining -= 1
 				if plan.state.remaining == 0:
 					plan.state.state = "running"

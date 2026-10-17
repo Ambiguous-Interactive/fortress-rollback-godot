@@ -15,6 +15,7 @@ from online_example_probe import expected_states, run_online, validate_result
 from test_online_diagnostics import diagnostic_download, trace_evidence
 from online_install import ROOT, create_project, install_sdk, server_config
 from signalfish_probe import inventory
+from wire import INPUT_HEADER
 
 
 def evidence():
@@ -69,7 +70,7 @@ def evidence():
     for peer in peers:
         body = (struct.pack('<iiH', 100, 99, 1) + bytes([1, peer['slot'], 2])
                 + struct.pack('<BiH', 0, 99, 0) * 2 + struct.pack('<I', 1) + bytes([peer['inputs'][100]]))
-        payloads.append((b'FRGP\x01\x00\x03\x00' + bytes.fromhex('04' * 16)
+        payloads.append((INPUT_HEADER + bytes.fromhex('04' * 16)
                          + hashlib.sha256(peer['uuid'].encode('ascii')).digest()[:8] + bytes([1]) + bytes(7)
                          + struct.pack('<I', len(body)) + body).hex())
     rounds[3]['server_restart'] = {

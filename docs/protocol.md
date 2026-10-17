@@ -153,7 +153,8 @@ Equal digests do not replace exact comparison of the explicit configuration.
 
 `max_packet_bytes` (44–1048576) is the largest packet the sender accepts. Peers
 may differ: each endpoint sizes input batches to fit the smaller of its own
-limit and the limit in the remote's accepted reply.
+limit and the smallest limit in the remote's accepted replies.
+
 The codec validates representation and bounds; it does not declare a peer's
 configuration agreed or a cryptographic checksum valid.
 
