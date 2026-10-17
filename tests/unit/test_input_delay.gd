@@ -191,32 +191,57 @@ func _check_replay(context: RefCounted, label: String, session: Session, applied
 	context.bytes_equal(game.canonical_bytes(), live, frames, label + " replays to the live final state")
 
 
-## Two real peer sessions over a lossy, reordering link; both raise their delay several times.
+## Two real peer sessions over a lossy, reordering link raise their delay while running.
+## "block" withholds packets and "hold" delivers without stepping, for the listed tick ranges.
+## Each raise retries from its tick until accepted, since interruptions and backpressure refuse it for a while.
 func _peers_agree_after_changes(context: RefCounted) -> void:
-	var peers: PeerMatch = PeerMatch.new()
-	peers.replay_frames = 400
-	context.equal(peers.reset(), PeerMatch.I.Code.OK, "peers start")
-	var raises: Dictionary = {40: [0, 3], 41: [0, 4], 60: [1, 5], 90: [0, 16], 91: [1, 16]}
-	var refused: int = 0
-	for tick: int in range(260):
-		if raises.has(tick):
-			var raise: Array = raises[tick]
-			context.equal(peers.sessions[raise[0]].set_input_delay(raise[0], raise[1]), Types.Code.OK, "peer %d raises to %d" % raise)
-		if peers.sessions[0].network_status().state == "running":
-			refused += int(peers.sessions[0].set_input_delay(0, 1) != Types.Code.UNSUPPORTED)
-		peers.tick(PackedInt32Array([tick % 13 % 16, (tick * 7) % 11 % 16]))
-	context.equal(refused, 0, "a lowered delay is always refused")
-	context.equal(peers.failure, PeerMatch.I.Code.OK, "no peer fails")
-	for player: int in range(2):
-		context.equal(peers.sessions[player].status().lifecycle, Types.Lifecycle.RUNNING, "peer %d keeps running" % player)
-		context.equal(peers.event_counts[player].get("desync_detected", 0), 0, "peer %d sees no desync" % player)
-		context.equal(peers.sessions[player].input_delay(player), 16, "peer %d ends at the raised delay" % player)
-	var first: Replay = peers.sessions[0].replay()
-	var second: Replay = peers.sessions[1].replay()
-	var common: int = mini(first.frame_count(), second.frame_count())
-	context.equal(common > 120, true, "both peers confirm frames past every change")
-	var differing: int = 0
-	for frame: int in range(common):
-		for slot: int in range(2):
-			differing += int(first.inputs(frame).read(slot).bytes != second.inputs(frame).read(slot).bytes)
-	context.equal(differing, 0, "both peers record the same inputs for every frame")
+	var largest: int = PeerMatch.Peer.max_input_delay(Config.new())
+	var rows: Array[Dictionary] = [
+		{"label": "repeated raises", "raises": {40: [0, 3], 41: [0, 4], 60: [1, 5], 90: [0, 16], 91: [1, 16]}, "final": [16, 16]},
+		{"label": "both peers at the largest delay", "raises": {40: [0, largest], 41: [1, largest]}, "final": [largest, largest]},
+		{"label": "raise after a backpressured step", "pending": 6, "block": [40, 60], "hold": [60, 160], "raises": {61: [0, 3]}, "by": 160, "final": [3, 2]},
+	]
+	for row: Dictionary in rows:
+		var label: String = row.label
+		var peers: PeerMatch = PeerMatch.new()
+		peers.replay_frames = 600
+		peers.max_pending_frames = row.get("pending", 128)
+		context.equal(peers.reset(), PeerMatch.I.Code.OK, label + " starts")
+		context.equal(peers.sessions[0].set_input_delay(0, 3), Types.Code.NOT_SYNCHRONIZED, label + " refuses before synchronizing")
+		var refused: int = 0
+		var backpressured: int = 0
+		var waiting: Array = []
+		var last_raise: int = -1
+		for tick: int in range(400):
+			var block: Array = row.get("block", [-1, -1])
+			var hold: Array = row.get("hold", [-1, -1])
+			peers.is_partitioned = tick >= block[0] and tick < block[1]
+			if row.raises.has(tick):
+				waiting.append(row.raises[tick])
+			if not waiting.is_empty() and peers.sessions[waiting[0][0]].set_input_delay(waiting[0][0], waiting[0][1]) == Types.Code.OK:
+				waiting.pop_front()
+				last_raise = tick
+			if peers.sessions[0].network_status().state == "running":
+				refused += int(peers.sessions[0].set_input_delay(0, 1) != Types.Code.UNSUPPORTED)
+				refused += int(peers.sessions[0].set_input_delay(0, -1) != Types.Code.INVALID_CONFIGURATION)
+				refused += int(peers.sessions[0].set_input_delay(0, largest + 1) != Types.Code.INVALID_CONFIGURATION)
+				refused += int(peers.sessions[0].set_input_delay(1, 9) != Types.Code.INVALID_PLAYER)
+			peers.tick(PackedInt32Array([tick % 13 % 16, (tick * 7) % 11 % 16]), tick < hold[0] or tick >= hold[1])
+			backpressured += int(peers.last_codes[0] == Types.Code.NETWORK_BACKPRESSURE)
+		context.equal(waiting.is_empty() and last_raise < row.get("by", 400), true, label + " accepts every raise in time")
+		context.equal(refused, 0, label + " refuses lower, out-of-range and remote changes on every tick")
+		context.equal(backpressured > 0, row.has("pending"), label + " reaches backpressure only when limited")
+		context.equal(peers.failure, PeerMatch.I.Code.OK, label + " has no failure")
+		for player: int in range(2):
+			context.equal(peers.sessions[player].status().lifecycle, Types.Lifecycle.RUNNING, label + " peer %d keeps running" % player)
+			context.equal(peers.event_counts[player].get("desync_detected", 0), 0, label + " peer %d sees no desync" % player)
+			context.equal(peers.sessions[player].input_delay(player), row.final[player], label + " peer %d ends at its delay" % player)
+		var first: Replay = peers.sessions[0].replay()
+		var second: Replay = peers.sessions[1].replay()
+		var common: int = mini(first.frame_count(), second.frame_count())
+		context.equal(common > 150, true, label + " confirms frames past every change")
+		var differing: int = 0
+		for frame: int in range(common):
+			for slot: int in range(2):
+				differing += int(first.inputs(frame).read(slot).bytes != second.inputs(frame).read(slot).bytes)
+		context.equal(differing, 0, label + " records the same inputs on both peers")

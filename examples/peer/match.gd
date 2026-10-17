@@ -45,6 +45,8 @@ var reorder: bool = true
 var is_partitioned: bool = false
 ## Confirmed frames each peer records; 0 disables recording.
 var replay_frames: int = 0
+## Unacknowledged local frames each peer retains before steps report NETWORK_BACKPRESSURE.
+var max_pending_frames: int = 128
 var now_us: int = 0
 var sent: int = 0
 var dropped: int = 0
@@ -96,7 +98,9 @@ func reset() -> int:
 		handshake.roundtrips = 2
 		var game: Game = Game.new()
 		var session: Peer = Peer.new()
-		failure = session.configure(config, profile, game, handshake, I.Options.new())
+		var inputs: I.Options = I.Options.new()
+		inputs.max_pending_frames = max_pending_frames
+		failure = session.configure(config, profile, game, handshake, inputs)
 		if failure != I.Code.OK:
 			return failure
 		sessions.append(session)

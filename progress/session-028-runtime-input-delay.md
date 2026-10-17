@@ -63,3 +63,27 @@ Mutation controls on Godot 4.7.2:
 
 Because of the third row, the lookahead is now static and bounded instead of a runtime update that
 no test exercises.
+
+## Review
+
+A fresh adversarial review reproduced two failures:
+
+- **Raise after a backpressured step.** The core had taken the sample, but the endpoint refused it.
+  The added frames then broke endpoint contiguity, and the session ended with `PROTOCOL_FAILED`.
+  The peer path now sends each endpoint its missing frames first and counts them in the
+  backpressure check. The `raise after a backpressured step` row fails without the catch-up and
+  passes with it.
+- **Remote queue overflow.** A peer's queue for a remote slot spans that remote's delay, its own
+  delay and two prediction windows. Two peers at the old local limit overflowed each other: the
+  reviewer reproduced it with capacity 24 at delay 14, and capacity 128 at delay 118. A large
+  starting `input_delay` on main fails the same way. `FortressPeerSession.max_input_delay(config)` =
+  `(queue_capacity - 2 * max_prediction - 2) / 2` now bounds both runtime raises and `configure`.
+  The checksum lookahead is `max_prediction + max_input_delay` (63 by default), not
+  `queue_capacity - 2`. Both peers at that limit run clean.
+
+The reviewer also flagged a negative delay returning `UNSUPPORTED` in peer sessions. It is now
+`INVALID_CONFIGURATION`, and every running tick checks it, along with lower, too-large and remote-slot
+requests.
+
+Limit: the bound is derived from the worst case. A mutation to a one-sided bound of 110 still passes
+the suite, because realistic spans stay smaller. The public API cannot construct the worst case.

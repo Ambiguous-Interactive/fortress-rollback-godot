@@ -229,11 +229,12 @@ as ordinary input and stay in agreement. Replays record them like any other inpu
 | --- | --- |
 | `OK` | The new delay applies to the next sample. Asking for the current delay is also `OK`. |
 | `UNSUPPORTED` | A decrease after the first sample. Peer sessions also refuse changes before the first step and with several local players. |
-| `INVALID_CONFIGURATION` | `delay + max(max_prediction_frames, check_distance) + 2` exceeds `queue_capacity`. |
+| `INVALID_CONFIGURATION` | `delay + max(max_prediction_frames, check_distance) + 2` exceeds `queue_capacity`. Peer sessions allow at most `FortressPeerSession.max_input_delay(config)`, which leaves room for every peer's delay. |
 | `NETWORK_BACKPRESSURE` | A peer still holds too many unacknowledged frames to send the added ones. Try again later. |
 | `INVALID_PLAYER` | The slot is not a local player. |
 
 Before the first sample, a plain `FortressSession` accepts any delay that fits, including a lower one.
+Give every peer the same `queue_capacity` and `max_prediction_frames` so they share one limit.
 
 ## Coming from Rust
 

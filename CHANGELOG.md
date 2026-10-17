@@ -52,6 +52,8 @@
 
 ### Fixed
 
+- Fix peer sessions ending with `PROTOCOL_FAILED` when a large `input_delay` overflowed the other peer's input queue. `configure` now refuses a starting delay above `FortressPeerSession.max_input_delay(config)`.
+
 - Fix SignalFish plan callbacks reviving ended adapters or recursively detaching meshes. Replacement attachment waits until teardown returns.
 
 - Fix Firefox WebRTC connections failing when SignalFish omits ICE media IDs. The connection factory resolves missing IDs from the remote SDP while preserving explicit IDs.
