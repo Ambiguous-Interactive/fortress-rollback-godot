@@ -4,6 +4,25 @@ import p2p_lifecycle as lifecycle
 from contract import fields, integer, hex_bytes, checksum, initial_game_state, advance_game_state
 
 REVISION = 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
+# Source delay refusals and the matching production Godot codes.
+DELAY_ERRORS = {'InputDelayDecreaseUnsupported': 'UNSUPPORTED', 'FrameDelayTooLarge': 'INVALID_CONFIGURATION',
+                'ConfigValueOutOfRange': 'INVALID_CONFIGURATION'}
+
+
+def godot_max_delay(max_prediction):
+    """FortressPeerSession.max_input_delay for the oracle's 128-slot queues."""
+    return (128 - 2 * max_prediction - 2) // 2
+
+
+def comparable_delay(delay, max_prediction):
+    """Upstream accepts up to 127 - max_prediction; Godot's peer bound is lower. Only values outside that band compare."""
+    return delay <= godot_max_delay(max_prediction) or 127 - max_prediction < delay <= 1000
+
+
+def expected_delay_error(current, delay, max_prediction):
+    if delay > godot_max_delay(max_prediction):
+        return 'INVALID_CONFIGURATION'
+    return 'UNSUPPORTED' if delay < current else None
 
 
 def validate_scenario(value):
@@ -18,21 +37,34 @@ def validate_scenario(value):
         lifecycle.settings(value['lifecycle'], value['players'])
     if type(value['operations']) is not list or not 1 <= len(value['operations']) <= 10000:
         raise ValueError('operation inventory')
-    previous = 0
+    previous = 0; stepped = set(); addressed = None
     for op in value['operations']:
         if type(op) is not dict or type(op.get('kind')) is not str:
             raise ValueError('operation kind')
         kind = op['kind']
-        fields(op, {'step': 'kind peer now_us bytes', 'poll': 'kind peer now_us', 'deliver': 'kind packet now_us'}.get(kind, ''), 'operation')
+        fields(op, {'step': 'kind peer now_us bytes', 'poll': 'kind peer now_us', 'deliver': 'kind packet now_us',
+                    'delay': 'kind peer delay'}.get(kind, ''), 'operation')
+        if kind == 'delay':
+            # A delay change reuses the previous operation's clock; Godot's API takes no time.
+            integer(op['peer'], 0, value['players'] - 1, 'peer'); integer(op['delay'], 0, 1000, 'delay change')
+            if op['peer'] not in stepped:
+                raise ValueError('delay change precedes first step')
+            # Source time is shared and Godot's is per peer; they agree after a step/poll/delay on this peer.
+            if addressed != op['peer']:
+                raise ValueError('delay change must follow a step, poll or delay on its peer')
+            if not comparable_delay(op['delay'], value['max_prediction']):
+                raise ValueError('delay change outside comparable profile')
+            continue
         integer(op['now_us'], previous, 10000000, 'time'); previous = op['now_us']
         if kind == 'deliver':
             integer(op['packet'], 0, 100000, 'packet')
         elif kind in {'step', 'poll'}:
             integer(op['peer'], 0, value['players'] - 1, 'peer')
             if kind == 'step':
-                hex_bytes(op['bytes'], 4, 'input')
+                hex_bytes(op['bytes'], 4, 'input'); stepped.add(op['peer'])
         else:
             raise ValueError('unknown kind')
+        addressed = op.get('peer')
     return value
 
 
@@ -129,6 +161,7 @@ def validate(value, scenario, source=False):
     if divergent >= 0:
         states[divergent] = states[divergent][:4] + (1).to_bytes(4, 'little') + states[divergent][8:]
     snapshots = [{} for _ in states]; samples = [{} for _ in states]; next_packet = 0
+    delays = [scenario['input_delay']] * len(states); scheduled = [-1] * len(states)
     for index, record in enumerate(value['records']):
         fields(record, 'index peer frame_before frame_after confirmed_frame error requests events outgoing state'
                + ('' if source else ' extension_events') + (' metrics pre_state pre_confirmed' if 'lifecycle' in scenario else ''), 'record')
@@ -146,10 +179,25 @@ def validate(value, scenario, source=False):
         if record['frame_before'] != int.from_bytes(states[peer][:4], 'little'):
             raise ValueError('game/session before frame')
         if op['kind'] == 'step':
-            samples[peer].setdefault(record['frame_before'] + scenario['input_delay'], op['bytes'])
-            if samples[peer][record['frame_before'] + scenario['input_delay']] != op['bytes']:
+            frame = record['frame_before'] + delays[peer]
+            samples[peer].setdefault(frame, op['bytes']); scheduled[peer] = max(scheduled[peer], frame)
+            if samples[peer][frame] != op['bytes']:
                 raise ValueError('changing stalled local sample')
-        if record['error'] is not None and (type(record['error']) is not str or record['error'] not in {
+        if op['kind'] == 'delay':
+            allowed = set(DELAY_ERRORS) if source else set(DELAY_ERRORS.values())
+            if record['error'] is not None and (type(record['error']) is not str or record['error'] not in allowed):
+                raise ValueError(f'operation {index}: unrecognized delay error')
+            error = DELAY_ERRORS[record['error']] if source and record['error'] is not None else record['error']
+            if error != expected_delay_error(delays[peer], op['delay'], scenario['max_prediction']):
+                raise ValueError(f'operation {index}: delay change outcome')
+            if record['requests'] or record['frame_before'] != record['frame_after']:
+                raise ValueError(f'operation {index}: delay change advanced')
+            if error is None:
+                # Added frames repeat the latest scheduled sample; no earlier frame changes meaning.
+                for frame in range(scheduled[peer] + 1, scheduled[peer] + 1 + op['delay'] - delays[peer]):
+                    samples[peer][frame] = samples[peer][scheduled[peer]]
+                scheduled[peer] += max(0, op['delay'] - delays[peer]); delays[peer] = op['delay']
+        elif record['error'] is not None and (type(record['error']) is not str or record['error'] not in {
                 'PredictionThreshold', 'PREDICTION_STALL', 'DESYNC'}):
             raise ValueError('unrecognized error')
         if 'lifecycle' in scenario:
@@ -248,6 +296,8 @@ def normalize(value, source=False):
     first_successes = set()
     for record in result['records']:
         record.pop('extension_events', None)
+        if source and result['scenario']['operations'][record['index']]['kind'] == 'delay' and record['error'] is not None:
+            record['error'] = DELAY_ERRORS[record['error']]
         if (source and record['error'] is None
                 and result['scenario']['operations'][record['index']]['kind'] == 'step'
                 and record['frame_before'] == record['frame_after']):

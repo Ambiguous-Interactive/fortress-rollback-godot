@@ -50,8 +50,22 @@ def corpus(binary, selected=None):
             name = f'mesh_{players}_{mode}'
             if selected is None or selected == name:
                 cases[name] = build_case(binary, players, 0, mode)
+    for name, (players, delay, mode) in DELAY_CASES.items():
+        if selected is None or selected == name:
+            cases[name] = build_case(binary, players, delay, mode)
     cases.update(p2p_lifecycle_corpus.corpus(binary, source, selected))
     return cases
+
+
+# Runtime set_input_delay after each listed (frame, peer) step: raises, repeats, refused decreases and too-large values.
+DELAY_CASES = {'mesh_2_delay_change_loss': (2, 0, 'delay_loss'), 'mesh_4_delay_change_rapid': (4, 2, 'delay_rapid'),
+               'mesh_3_delay_change_stall': (3, 0, 'delay_stall')}
+DELAY_CHANGES = {
+    'delay_loss': {(0, 1): [1], (1, 0): [2], (2, 1): [1, 3], (3, 0): [1, 500, 2, 3], (4, 1): [4, 0]},
+    # Raises start after frame zero's flight is acknowledged: upstream drops a resend that starts at a nonzero initial delay (see docs).
+    'delay_rapid': {**{(1, peer): [3] for peer in range(4)}, (2, 1): [4, 5, 6], (3, 2): [59, 58], (4, 3): [4, 4, 1000], (5, 0): [5]},
+    'delay_stall': {(1, 1): [2], (2, 2): [1, 2]},
+}
 
 
 def build_case(binary, players, delay, mode):
@@ -65,6 +79,9 @@ def build_case(binary, players, delay, mode):
     def step(peer):
         frame = next((r['frame_after'] for r in reversed(latest['records']) if r['peer'] == peer), 0) if latest else 0
         append('step', peer=peer, bytes=((frame + 1) * (peer + 1) * 17).to_bytes(4, 'little').hex())
+    def change(peer, delay):
+        nonlocal latest
+        scenario['operations'].append({'kind': 'delay', 'peer': peer, 'delay': delay}); latest = source(binary, scenario)
     def flush(reverse=False, lose=False):
         nonlocal latest
         while True:
@@ -75,13 +92,15 @@ def build_case(binary, players, delay, mode):
                 pending.reverse()
             for p in pending:
                 delivered.add(p['id'])
-                if lose and p['id'] < players * (players - 1) + 1:
+                if lose and (p['id'] % 3 == 1 if mode == 'delay_loss' else p['id'] < players * (players - 1) + 1):
                     continue
                 append('deliver', refresh=False, packet=p['id'])
             latest = source(binary, scenario)
-    if mode == 'stall':
+    if mode in {'stall', 'delay_stall'}:
         for _ in range(6):
             step(0)
+            if mode == 'delay_stall' and latest['records'][-1]['frame_before'] == latest['records'][-1]['frame_after']:
+                change(0, 2)
         for peer in range(1, players):
             step(peer)
         flush(reverse=True)
@@ -101,12 +120,14 @@ def build_case(binary, players, delay, mode):
     for frame in range(6):
         for peer in range(players):
             step(peer)
-        if mode == 'reorder' and frame == 1:
+            for delay in DELAY_CHANGES.get(mode, {}).get((frame, peer), []):
+                change(peer, delay)
+        if mode in {'reorder', 'delay_rapid'} and frame == 1:
             initial = [p['id'] for p in latest['packets'] if p['semantic']['kind'] == 'input']
             flush(reverse=True)
             append('deliver', packet=initial[0])
         else:
-            flush(lose=mode == 'loss' and frame == 0)
+            flush(lose=(mode == 'loss' and frame == 0) or (mode == 'delay_loss' and frame < 4))
     for peer in range(players):
         append('poll', peer=peer)
     validate_scenario(scenario)

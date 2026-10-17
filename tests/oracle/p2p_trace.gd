@@ -134,7 +134,12 @@ func _operation(op: Dictionary, index: int) -> bool:
 			code = peer.poll(op.now_us)
 		"deliver":
 			code = peer.receive_and_poll(raw_packets[op.packet], _id(packets[op.packet].from), op.now_us)
-	if op.kind != "step" and code != I.Code.OK and not (scenario_settings.has("lifecycle") and code == I.Code.TERMINATED):
+		"delay":
+			# Production API; it takes no clock, so the source reuses the previous operation's time.
+			code = peer.set_input_delay(player, op.delay)
+			if code != Types.Code.OK:
+				error = Types.Code.find_key(code)
+	if op.kind not in ["step", "delay"] and code != I.Code.OK and not (scenario_settings.has("lifecycle") and code == I.Code.TERMINATED):
 		_fail("network operation rejected")
 		return false
 	var outgoing: Array[int] = []
@@ -290,13 +295,30 @@ func _valid(value: Variant) -> bool:
 	if not value.operations is Array or value.operations.is_empty() or value.operations.size() > 10000:
 		return false
 	var previous: int = 0
+	var stepped: Dictionary = {}
+	var addressed: int = -1
 	for op: Variant in value.operations:
-		if not op is Dictionary or not op.get("kind") is String or op.kind not in ["step", "poll", "deliver"]:
+		if not op is Dictionary or not op.get("kind") is String or op.kind not in ["step", "poll", "deliver", "delay"]:
 			return false
-		var names: Array = {"step": ["kind", "peer", "now_us", "bytes"], "poll": ["kind", "peer", "now_us"], "deliver": ["kind", "packet", "now_us"]}[op.kind]
-		if not _fields(op, names) or not _integer(op.now_us, previous, 10000000):
+		var names: Array = {
+			"step": ["kind", "peer", "now_us", "bytes"], "poll": ["kind", "peer", "now_us"], "deliver": ["kind", "packet", "now_us"], "delay": ["kind", "peer", "delay"]
+		}[op.kind]
+		if not _fields(op, names):
+			return false
+		if op.kind == "delay":
+			# Only changes after the peer's first step, outside the band where the two bounds differ.
+			if not _integer(op.peer, 0, int(value.players) - 1) or not stepped.has(int(op.peer)) or addressed != int(op.peer) or not _integer(op.delay, 0, 1000):
+				return false
+			var window: int = int(value.max_prediction)
+			if int(op.delay) > (128 - 2 * window - 2) / 2 and int(op.delay) <= 127 - window:
+				return false
+			continue
+		if not _integer(op.now_us, previous, 10000000):
 			return false
 		previous = int(op.now_us)
+		if op.kind == "step" and _integer(op.peer, 0, int(value.players) - 1):
+			stepped[int(op.peer)] = true
+		addressed = int(op.peer) if op.kind != "deliver" and _integer(op.peer, 0, int(value.players) - 1) else -1
 		if op.kind == "deliver":
 			if not _integer(op.packet, 0, 100000):
 				return false
@@ -311,6 +333,9 @@ func _canonical(source: Dictionary) -> Dictionary:
 		result[field] = int(source[field])
 	var operations: Array[Dictionary] = []
 	for op: Dictionary in source.operations:
+		if op.kind == "delay":
+			operations.append({"kind": op.kind, "peer": int(op.peer), "delay": int(op.delay)})
+			continue
 		var converted: Dictionary = {"kind": op.kind, "now_us": int(op.now_us)}
 		if op.kind == "deliver":
 			converted.packet = int(op.packet)
