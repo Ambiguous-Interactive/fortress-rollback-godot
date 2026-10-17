@@ -44,6 +44,7 @@ var _frames_ahead: int = 0
 var _terminal_notified: bool = false
 var _checksum_confirmation: int = -1
 var _diagnostic_failure: Dictionary = {}
+var _max_pending: int = 0
 
 
 ## Caller supplies transport identity, clock, tokens and game callbacks.
@@ -102,6 +103,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 			return code
 		peers[key] = endpoint
 	_core = core
+	_max_pending = input_options.max_pending_frames
 	_driver = driver
 	_config = core_config.owned_copy()
 	_config.local_players = locals
@@ -110,8 +112,9 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		_ids.append(remotes[key].duplicate())
 	_lifecycle = L.copy_options(controls)
 	_checksums = Checksums.new()
+	# Peers can confirm up to max_prediction + delay frames ahead; runtime raises keep that within queue_capacity - 2.
 	_checksums.configure(
-		_ids, profile.desync_interval if _lifecycle.enabled and config.checksums_enabled else 0, _lifecycle.max_checksum_frames, config.max_prediction_frames + config.input_delay
+		_ids, profile.desync_interval if _lifecycle.enabled and config.checksums_enabled else 0, _lifecycle.max_checksum_frames, config.queue_capacity - 2
 	)
 	return I.Code.OK
 
@@ -245,6 +248,51 @@ func statistics() -> Types.Statistics:
 ## Confirmed frames recorded so far; null unless config.replay_max_frames > 0.
 func replay() -> RefCounted:
 	return _core.replay() if _core != null else null
+
+
+## Local delay now in effect, or -1 before configuration or for a slot that is not local.
+func input_delay(player: int) -> int:
+	return _core.input_delay(player) if _core != null else -1
+
+
+## Raises one local player's delay mid-match, between steps or while stalled. Peers receive the
+## added frames, which repeat that player's latest input, as ordinary input. The agreed config owns
+## the starting delay, so decreases, changes before the first step and several local players are UNSUPPORTED.
+func set_input_delay(player: int, delay: int) -> int:
+	if _busy:
+		return Types.Code.BUSY
+	if _core == null:
+		return Types.Code.NOT_CONFIGURED
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return Types.Code.TERMINATED
+	if not _running():
+		return Types.Code.NOT_SYNCHRONIZED
+	if not _config.local_players.has(player):
+		return Types.Code.INVALID_PLAYER
+	var current: int = _core.input_delay(player)
+	if delay == current:
+		return Types.Code.OK
+	var last: int = _core.received_frames()[player]
+	if _config.local_players.size() > 1 or last == -1 or delay < current:
+		return Types.Code.UNSUPPORTED
+	for index: int in range(_ids.size()):
+		if _endpoint(index).status().pending_frames + delay - current > _max_pending:
+			return Types.Code.NETWORK_BACKPRESSURE
+	var changed: Types.Result = _core.set_input_delay(player, delay)
+	if changed.code != Types.Code.OK:
+		return changed.code
+	var repeated: PackedByteArray = _core.retained_local_input(player, last)
+	var statuses: Array[T.Status] = _statuses()
+	for frame: int in range(last + 1, changed.value + 1):
+		for index: int in range(_ids.size()):
+			var sent: int = _endpoint(index).submit(frame, repeated, statuses, _now)
+			if sent != I.Code.OK:
+				# Peers would disagree about the added frames, so the match cannot continue.
+				_core.terminate(Types.Code.PROTOCOL_FAILED)
+				_collect_events()
+				_check_failure()
+				return _step_failure(sent)
+	return Types.Code.OK
 
 
 ## Bounded observations without transport identities or tokens. Trace payloads require explicit configuration opt-in.
