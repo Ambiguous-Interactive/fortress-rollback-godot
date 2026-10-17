@@ -20,6 +20,8 @@ godot --path . res://examples/integration/integration.tscn
 Move with **A/D** or the **arrow keys** and hold **Space** to fire. The blue player follows scripted inputs.
 Press **1**, **2** or **3** for remote-input delivery delays of **0**, **3** or **12** physics ticks.
 Press **R** to restart with the selected delay and a fresh effects ledger.
+Press **P** to pause and watch a replay of the confirmed frames so far. It starts from a fresh game,
+checks every recorded checksum and ends on the corrected state. Press **P** again to return to the match.
 This example delivers input in process and needs no server or SignalFish SDK.
 
 Hollow flashes show recent shots from the current, corrected simulation. Prediction can create a flash
@@ -191,6 +193,8 @@ var bytes: PackedByteArray = session.replay().to_bytes()  # or peer.replay()
 
 `session.replay()` returns a copy holding every frame whose inputs are confirmed and already simulated.
 Predicted input is never recorded. Each frame also keeps the state checksum when the session still had it.
+`skipped_frames()` counts frames recorded as neutral input because their real input was unavailable.
+It stays zero in normal play; treat a nonzero count as an incomplete replay.
 
 To watch it, start from the same initial game state and step a `FortressReplayPlayer` once per physics frame:
 

@@ -50,18 +50,18 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> bool:
 	var inputs: PackedByteArray = PackedByteArray()
 	var checksums: PackedByteArray = PackedByteArray()
 	var flags: PackedByteArray = PackedByteArray()
-	inputs.resize(frames * row)
-	checksums.resize(frames * CHECKSUM_BYTES)
-	flags.resize(frames)
 	var cursor: int = HEADER_BYTES
 	for frame: int in range(frames):
 		var flag: int = bytes[cursor + row] if cursor + row < bytes.size() else 2
 		var end: int = cursor + row + 1 + (CHECKSUM_BYTES if flag == 1 else 0)
 		if flag > 1 or end > bytes.size():
 			return false
-		_copy_into(inputs, frame * row, bytes, cursor, row)
-		_copy_into(checksums, frame * CHECKSUM_BYTES, bytes, cursor + row + 1, end - cursor - row - 1)
-		flags[frame] = flag
+		inputs.append_array(bytes.slice(cursor, cursor + row))
+		flags.append(flag)
+		if flag == 1:
+			checksums.append_array(bytes.slice(cursor + row + 1, end))
+		else:
+			checksums.resize(checksums.size() + CHECKSUM_BYTES)
 		cursor = end
 	if cursor != bytes.size():
 		return false
@@ -158,8 +158,3 @@ func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: boo
 	_frames += 1
 	if skipped:
 		_skipped += 1
-
-
-static func _copy_into(target: PackedByteArray, offset: int, source: PackedByteArray, from: int, count: int) -> void:
-	for index: int in range(count):
-		target[offset + index] = source[from + index]

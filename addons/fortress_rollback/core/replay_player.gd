@@ -9,6 +9,7 @@ extends RefCounted
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 
 var _replay: Replay
 var _game: RefCounted
@@ -49,23 +50,30 @@ func step() -> int:
 	if _frame >= _replay.frame_count():
 		return Types.Code.FRAME_EXHAUSTED
 	_is_stepping = true
+	var code: int = _play_frame()
+	_is_stepping = false
+	if code != Types.Code.OK:
+		_reason = code
+		_failure_frame = _frame
+		return code
+	_frame += 1
+	return Types.Code.OK
+
+
+func _play_frame() -> int:
 	var expected: PackedByteArray = _replay.checksum(_frame)
 	if _max_snapshot_bytes > 0 and not expected.is_empty():
 		var writer: Writer = Writer.new(_max_snapshot_bytes)
-		var saved: RefCounted = _game.save_state(_frame, writer)
+		var saved: Variant = _game.save_state(_frame, writer)
 		writer._expire()
-		if saved == null or not saved.ok:
-			return _stop(Types.Code.CALLBACK_FAILED)
+		if not (saved is Driver.SaveResult) or not saved.ok:
+			return Types.Code.CALLBACK_FAILED
 		if saved.checksum != expected:
-			return _stop(Types.Code.DESYNC)
+			return Types.Code.DESYNC
 	var inputs: Types.FrameInputs = _replay.inputs(_frame)
-	var ok: bool = _game.simulate_frame(_frame, inputs)
+	var ok: Variant = _game.simulate_frame(_frame, inputs)
 	inputs._expire()
-	if not ok:
-		return _stop(Types.Code.CALLBACK_FAILED)
-	_frame += 1
-	_is_stepping = false
-	return Types.Code.OK
+	return Types.Code.OK if (ok is bool) and ok else Types.Code.CALLBACK_FAILED
 
 
 ## The next frame to simulate.
@@ -79,10 +87,3 @@ func is_complete() -> bool:
 
 func failure_frame() -> int:
 	return _failure_frame
-
-
-func _stop(code: int) -> int:
-	_reason = code
-	_failure_frame = _frame
-	_is_stepping = false
-	return code

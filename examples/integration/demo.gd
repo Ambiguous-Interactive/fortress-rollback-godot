@@ -9,6 +9,7 @@ const Game = preload("res://examples/integration/game.gd")
 const Effects = preload("res://examples/integration/effects.gd")
 const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const ReplayPlayer = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const RECENT_EFFECT_LIMIT: int = 32
 const MAX_PENDING_INPUTS: int = 13
 const TICK_US: int = 16667
@@ -18,6 +19,10 @@ var effects: DemoEffects
 var tick_count: int = 0
 var stall_count: int = 0
 var lag_ticks: int = 3
+## Non-null while watching the recorded match; the live match stays paused.
+var replay_player: ReplayPlayer
+var replay_game: Game
+var replay_frames: int = 0
 var _remote_sample_frame: int = -1
 var _pending: Array[RemoteInput] = []
 
@@ -74,7 +79,38 @@ func start(delay_ticks: int = 3) -> int:
 
 ## Clears snapshots, samples, pending deliveries and presentation history.
 func reset() -> int:
+	stop_replay()
 	return start(lag_ticks)
+
+
+## Watches the confirmed frames recorded so far from a fresh game, checking each recorded checksum.
+func start_replay() -> int:
+	if loop == null:
+		return Types.Code.INVALID_CONFIGURATION
+	var player: ReplayPlayer = ReplayPlayer.new()
+	var game: Game = Game.new()
+	var replay: RefCounted = loop.session.replay()
+	var code: int = player.configure(replay, game, Game.SNAPSHOT_BYTES)
+	if code == Types.Code.OK:
+		replay_player = player
+		replay_game = game
+		replay_frames = replay.frame_count()
+	return code
+
+
+func stop_replay() -> void:
+	replay_player = null
+	replay_game = null
+	replay_frames = 0
+
+
+## OK plays one recorded frame; FRAME_EXHAUSTED holds the last frame; DESYNC means the rules differ.
+func replay_tick() -> int:
+	return replay_player.step() if replay_player != null else Types.Code.NOT_CONFIGURED
+
+
+func shown_game() -> Game:
+	return replay_game if replay_game != null else loop.game
 
 
 ## Changes lag for new samples; already queued inputs retain their delivery times.

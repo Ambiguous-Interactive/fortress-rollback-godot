@@ -24,7 +24,8 @@ advance when validating. Skipped frames keep alignment with default inputs.
   frame count against the bytes present before allocating, rejects trailing bytes and leaves the
   replay unchanged on failure.
 - `config.replay_max_frames` turns recording on. After each completed batch the session records
-  frames through `min(confirmed, current - 1)` from retained confirmed input, never predictions.
+  frames through `min(received by every player, current - 1)` from retained actual input, never
+  predictions. Received input is final; the mesh confirmation limit only tracks peer acknowledgement.
   Recording keeps the first frames and stops when full. `session.replay()` and `peer.replay()`
   return copies.
 - `FortressReplayPlayer` steps the game's own callbacks. It stops at the first checksum mismatch
@@ -44,7 +45,28 @@ Mutation controls on Godot 4.3:
 | --- | --- |
 | Record through `current - 1`, ignoring confirmation | Fails actual-input, skip and checksum checks in three late-input rows |
 | Accept trailing bytes | Fails trailing-byte and failed-decode checks |
-| Record after discard instead of before | Passes: confirmation never trails the discard floor, so the order is equivalent; the comment states this |
+| Record after discard instead of before | Passes: receipts never trail the discard floor, so the order is equivalent; the comment states this |
+| Record through the mesh confirmation limit (first draft) | Fails the lockstep case: 30 frames, nonzero skipped, wrong final state |
+
+## Review
+
+A fresh adversarial review reproduced lost frames in lockstep peer sessions: the first draft
+recorded only through the mesh confirmation limit, which trails receipts while lockstep discards
+each simulated frame. Recording now follows receipts, and `lockstep_confirmation_limit` fails
+before the repair and passes after it. The review also led to slice-based decoding, type-checked
+callback results with one exit path in the player, and documentation for `skipped_frames()`.
+
+## Playable demo
+
+The shots example records its match. **P** pauses it and replays the confirmed frames from a fresh
+game, checking every checksum. `replays_corrected_match` plays a rolled-back match and requires the
+replay to end on the live corrected state.
 
 Limits: replays across native/browser builds, a format golden with provenance, and spectator or
 seek support remain open under #45 and later tasks.
+
+## Retrospective
+
+The [retrospective](../.llm/retrospectives/2026-10-17-match-replays.md) adds the headless
+`class_name` and constant-expression rules to the GDScript style skill.
+Retro: findings-acted.

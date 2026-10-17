@@ -11,6 +11,7 @@ var _code: int = Types.Code.OK
 var _label: Label
 var _last_effect: int = 0
 var _pulses: Array[Vector2i] = []
+var _replay_code: int = Types.Code.OK
 
 
 func _ready() -> void:
@@ -22,6 +23,10 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if _demo.replay_player != null:
+		_replay_code = _demo.replay_tick()
+		_update_label()
+		return
 	if _code != Types.Code.OK and _code != Types.Code.PREDICTION_STALL:
 		return
 	var buttons: int = 0
@@ -58,6 +63,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_demo.set_lag(3)
 		KEY_3:
 			_demo.set_lag(12)
+		KEY_P:
+			if _demo.replay_player != null:
+				_demo.stop_replay()
+			else:
+				_replay_code = _demo.start_replay()
 		KEY_R:
 			_code = _demo.reset()
 			_last_effect = 0
@@ -70,9 +80,15 @@ func _update_label() -> void:
 	var state: String = "WAITING FOR INPUT" if _code == Types.Code.PREDICTION_STALL else "RUNNING"
 	if _code != Types.Code.OK and _code != Types.Code.PREDICTION_STALL:
 		state = "STOPPED: code %d, failure frame %d" % [_code, status.failure_frame]
+	if _demo.replay_player != null:
+		state = "REPLAY frame %d of %d" % [_demo.replay_player.current_frame(), _demo.replay_frames]
+		if _replay_code == Types.Code.FRAME_EXHAUSTED:
+			state = "REPLAY FINISHED, %d frames | P: back to the match" % _demo.replay_frames
+		elif _replay_code != Types.Code.OK:
+			state = "REPLAY STOPPED: code %d at frame %d" % [_replay_code, _demo.replay_player.failure_frame()]
 	_label.text = (
 		"Rollback-safe shots | %s\n" % state
-		+ "A/D or arrows: move | Space: fire | R: restart\n"
+		+ "A/D or arrows: move | Space: fire | P: watch replay | R: restart\n"
 		+ "Remote delay: 1 = 0 ticks | 2 = 3 ticks | 3 = 12 ticks\n\n"
 		+ "Frame %d | Confirmed %d | Delay %d | Queued %d\n" % [status.current_frame, status.confirmed_frame, _demo.lag_ticks, _demo.pending_input_count()]
 		+ "Rollback loads %d | Stalled ticks %d | Confirmed effects %d\n\n" % [_demo.load_count(), _demo.stall_count, _demo.effects.total_count]
@@ -85,7 +101,7 @@ func _update_label() -> void:
 func _draw() -> void:
 	if _demo.loop.driver == null:
 		return
-	var game: Game = _demo.loop.game
+	var game: Game = _demo.shown_game()
 	for player: int in range(2):
 		var y: float = 330.0 + player * 140.0
 		draw_rect(Rect2(24, y - 28, 712, 104), Color(0.08, 0.10, 0.15))
@@ -96,7 +112,7 @@ func _draw() -> void:
 			var id: int = game.shot_ids[index % Game.SHOT_SLOTS]
 			if Game.shot_player(id) == player and game.frame - Game.shot_frame(id) <= 6:
 				draw_arc(position, 25, 0, TAU, 32, COLORS[player], 3)
-		for pulse: Vector2i in _pulses:
+		for pulse: Vector2i in _pulses if _demo.replay_player == null else []:
 			if Game.shot_player(pulse.x) == player:
 				var age: float = float(_demo.tick_count - pulse.y) / PULSE_TICKS
 				var tint: Color = COLORS[player]

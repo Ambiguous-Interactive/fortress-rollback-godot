@@ -18,6 +18,11 @@ Boring, typed, reviewable GDScript. The reference formatter is `gdformat`
 - Prefer `class_name` for anything reused; keep one class per file and name
   the file after the class (`session_events.gd` holds `class_name
   SessionEvents`).
+- Headless test runs skip the editor import, so `class_name` is not global.
+  Reference other scripts through `preload` constants. A script builds its own
+  instances with `get_script().new()` and returns `RefCounted`, not its own name.
+  On Godot 4.3, `PackedByteArray([...])` is not a constant expression; use a
+  `String` constant and convert it at runtime.
 - Use `@onready` (not `_ready` assignments) for node refs; prefer `%` unique
   names over long `get_node("A/B/C")` chains.
 

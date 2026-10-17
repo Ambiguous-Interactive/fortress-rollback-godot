@@ -10,6 +10,8 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Effects = preload("res://examples/integration/effects.gd")
+## Ten minutes at 60 frames per second; about 200 KB for two one-byte players.
+const REPLAY_FRAMES: int = 36000
 
 var session: Session = Session.new()
 var game: Game = Game.new()
@@ -35,6 +37,7 @@ func start() -> int:
 	config.history_slots = 9
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
 	config.storage_budget_bytes = config.required_storage_bytes()
+	config.replay_max_frames = REPLAY_FRAMES
 	var code: int = session.configure(config)
 	if code == Types.Code.OK:
 		driver = Driver.new(session, game)

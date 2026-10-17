@@ -352,12 +352,13 @@ func replay() -> Replay:
 	return _replay.owned_copy() if _replay != null else null
 
 
-## Runs after each completed batch, which leaves no repair pending. Records only frames whose inputs
-## are confirmed and already simulated. Confirmation never trails the discard floor, so none are lost.
+## Runs after each completed batch, which leaves no repair pending. Records frames whose actual inputs
+## every player has received and that are already simulated. The mesh confirmation limit can trail
+## receipts in lockstep; receipts never trail the discard floor, so no frame is lost.
 func _record_replay() -> void:
 	if _replay == null:
 		return
-	var last: int = mini(mini(_confirmed(), _current - 1), _config.replay_max_frames - 1)
+	var last: int = mini(mini(_receipt_minimum(), _current - 1), _config.replay_max_frames - 1)
 	var saved: Dictionary = {}
 	if _config.checksums_enabled:
 		for entry: Dictionary in _history.retained_checksums():

@@ -7,7 +7,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["delayed_matches", "reset_and_validation"])
+	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -16,6 +16,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_delayed_matches(context)
 		"reset_and_validation":
 			_reset_and_validation(context)
+		"replays_corrected_match":
+			_replays_corrected_match(context)
 	context.finish()
 
 
@@ -140,3 +142,31 @@ func _reset_and_validation(context: RefCounted) -> void:
 		context.equal(demo.tick(buttons), fresh.tick(buttons), "reset has fresh match behavior")
 		context.bytes_equal(demo.loop.game.canonical_bytes(), fresh.loop.game.canonical_bytes(), demo.loop.game.frame, "reset does not deliver stale input")
 		context.equal(demo.effects.recent_ids, fresh.effects.recent_ids, "reset does not replay stale effects")
+
+
+## The P key's replay must end on the live corrected state, including frames repaired by rollback.
+func _replays_corrected_match(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.replay_tick(), Types.Code.NOT_CONFIGURED, "no replay before a match")
+	context.equal(demo.start(3), Types.Code.OK, "starts with late remote input")
+	for tick: int in range(150):
+		demo.tick(Game.RIGHT | Game.FIRE if tick % 9 < 5 else Game.LEFT)
+	context.equal(demo.set_lag(0), Types.Code.OK, "removes lag")
+	for tick: int in range(8):
+		demo.tick(0)
+	context.equal(demo.load_count() > 0, true, "the match rolled back")
+	context.equal(demo.pending_input_count(), 0, "all remote input arrived")
+	var live: PackedByteArray = demo.loop.game.canonical_bytes()
+	context.equal(demo.start_replay(), Types.Code.OK, "starts the replay")
+	context.equal(demo.replay_frames, demo.loop.game.frame, "records every simulated frame")
+	var code: int = Types.Code.OK
+	var steps: int = 0
+	while code == Types.Code.OK:
+		code = demo.replay_tick()
+		steps += 1
+	context.equal(code, Types.Code.FRAME_EXHAUSTED, "validates every recorded checksum")
+	context.equal(steps, demo.replay_frames + 1, "plays each frame once")
+	context.bytes_equal(demo.shown_game().canonical_bytes(), live, demo.replay_frames, "ends on the corrected live state")
+	context.equal(demo.loop.game.canonical_bytes(), live, "the live match stays paused")
+	demo.stop_replay()
+	context.equal(demo.shown_game(), demo.loop.game, "returns to the live match")

@@ -30,7 +30,7 @@ class FailingGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["records_corrected_match", "detects_changed_rules", "rejects_malformed_files", "bounds_recording"])
+	return PackedStringArray(["records_corrected_match", "detects_changed_rules", "rejects_malformed_files", "bounds_recording", "lockstep_confirmation_limit"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -43,6 +43,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_rejects_malformed_files(context)
 		"bounds_recording":
 			_bounds_recording(context)
+		"lockstep_confirmation_limit":
+			_lockstep_confirmation_limit(context)
 	context.finish()
 
 
@@ -50,12 +52,18 @@ static func _local(frame: int) -> int:
 	return (Game.RIGHT | Game.FIRE) if frame % 11 < 8 else Game.LEFT
 
 
+## Local samples take effect `delay` frames later; earlier frames use neutral input.
+static func _applied_local(frame: int, delay: int) -> int:
+	return 0 if frame < delay else _local(frame - delay)
+
+
 static func _remote(frame: int) -> int:
 	return (Game.FIRE if frame % 8 < 4 else 0) | (Game.LEFT if frame % 7 < 3 else Game.RIGHT)
 
 
-static func _config(sync_test: bool, max_frames: int) -> Config:
+static func _config(sync_test: bool, max_frames: int, delay: int = 0) -> Config:
 	var config: Config = Config.new()
+	config.input_delay = delay
 	config.sync_test = sync_test
 	config.local_players = PackedInt32Array([0, 1] if sync_test else [0])
 	config.check_distance = 4 if sync_test else 0
@@ -70,7 +78,7 @@ static func _config(sync_test: bool, max_frames: int) -> Config:
 func _match(context: RefCounted, row: Dictionary, max_frames: int) -> Session:
 	var session: Session = Session.new()
 	var sync_test: bool = row.get("sync_test", false)
-	context.equal(session.configure(_config(sync_test, max_frames)), Types.Code.OK, "configures")
+	context.equal(session.configure(_config(sync_test, max_frames, row.get("delay", 0))), Types.Code.OK, "configures")
 	var driver: Driver = Driver.new(session, Game.new())
 	var delivered: int = 0
 	var tick: int = 0
@@ -108,11 +116,12 @@ static func _decode(bytes: PackedByteArray, max_bytes: int = Replay.MAX_BYTES) -
 
 
 ## Straight simulation of the actual inputs: canonical state before each frame.
-func _reference(frames: int) -> Array[PackedByteArray]:
+func _reference(frames: int, delay: int) -> Array[PackedByteArray]:
 	var game: Game = Game.new()
 	var states: Array[PackedByteArray] = [game.canonical_bytes()]
 	for frame: int in range(frames):
-		game.simulate_frame(frame, Types.FrameInputs.new([PackedByteArray([_local(frame)]), PackedByteArray([_remote(frame)])], PackedInt32Array([1, 1])))
+		var inputs: Array[PackedByteArray] = [PackedByteArray([_applied_local(frame, delay)]), PackedByteArray([_remote(frame)])]
+		game.simulate_frame(frame, Types.FrameInputs.new(inputs, PackedInt32Array([1, 1])))
 		states.append(game.canonical_bytes())
 	return states
 
@@ -123,6 +132,7 @@ func _records_corrected_match(context: RefCounted) -> void:
 		{"label": "late corrections", "lag": 3, "burst": 1},
 		{"label": "bursts and stalls", "lag": 3, "burst": 6},
 		{"label": "beyond the prediction window", "lag": 12, "burst": 1},
+		{"label": "local input delay", "lag": 3, "burst": 2, "delay": 2},
 		{"label": "sync-test", "sync_test": true},
 	]
 	for row: Dictionary in rows:
@@ -136,14 +146,14 @@ func _records_corrected_match(context: RefCounted) -> void:
 		var checksums: int = 0
 		for frame: int in range(replay.frame_count()):
 			var inputs: Types.FrameInputs = replay.inputs(frame)
-			if inputs.read(0).bytes != PackedByteArray([_local(frame)]) or inputs.read(1).bytes != PackedByteArray([_remote(frame)]):
+			if inputs.read(0).bytes != PackedByteArray([_applied_local(frame, row.get("delay", 0))]) or inputs.read(1).bytes != PackedByteArray([_remote(frame)]):
 				wrong_inputs += 1
 			checksums += int(not replay.checksum(frame).is_empty())
 		context.equal(wrong_inputs, 0, label + " records actual inputs, never predictions")
 		context.equal(checksums > frames / 2, true, label + " records state checksums")
 		var decoded: Replay = _decode(replay.to_bytes())
 		context.equal(decoded != null and decoded.to_bytes() == replay.to_bytes(), true, label + " round-trips bytes")
-		var expected: Array[PackedByteArray] = _reference(frames)
+		var expected: Array[PackedByteArray] = _reference(frames, row.get("delay", 0))
 		var game: Game = Game.new()
 		var player: Player = Player.new()
 		context.equal(player.configure(decoded, game, Game.SNAPSHOT_BYTES), Types.Code.OK, label + " player configures")
@@ -229,3 +239,33 @@ func _bounds_recording(context: RefCounted) -> void:
 	wide.input_width = 65536
 	wide.neutral_input.resize(65536)
 	context.equal(wide.validate(), Types.Code.INVALID_CONFIGURATION, "rejects recordings larger than the byte limit")
+
+
+## Peer lockstep advances on received input while the mesh confirmation limit trails by a round trip.
+## Recording must not wait for that limit: the queues discard each frame once it is simulated.
+func _lockstep_confirmation_limit(context: RefCounted) -> void:
+	var config: Config = _config(false, FRAMES)
+	config.max_prediction_frames = 0
+	config.history_slots = 1
+	config.capture_confirmed_snapshots = true
+	config.storage_budget_bytes = config.required_storage_bytes()
+	var session: Session = Session.new()
+	context.equal(session.configure(config), Types.Code.OK, "lockstep configures")
+	context.equal(session.set_confirmation_limit(-1).code, Types.Code.OK, "enables the mesh limit")
+	var driver: Driver = Driver.new(session, Game.new())
+	for frame: int in range(30):
+		session.receive_input(1, frame, PackedByteArray([_remote(frame)]))
+		context.equal(driver.step(frame, [Driver.LocalInput.new(0, frame, PackedByteArray([_local(frame)]))]).code, Types.Code.OK, "lockstep advances")
+		if frame % 10 == 9:
+			context.equal(session.set_confirmation_limit(frame - 5).code, Types.Code.OK, "limit trails receipts")
+	var replay: Replay = session.replay()
+	context.equal(replay.frame_count(), 30, "records every simulated frame")
+	context.equal(replay.skipped_frames(), 0, "skips nothing while the limit trails")
+	var game: Game = Game.new()
+	var player: Player = Player.new()
+	context.equal(player.configure(replay, game, Game.SNAPSHOT_BYTES), Types.Code.OK, "player configures")
+	var code: int = Types.Code.OK
+	while code == Types.Code.OK:
+		code = player.step()
+	context.equal(code, Types.Code.FRAME_EXHAUSTED, "plays the whole lockstep match")
+	context.bytes_equal(game.canonical_bytes(), _reference(30, 0)[30], 30, "reaches the lockstep final state")
