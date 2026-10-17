@@ -150,6 +150,25 @@ class EngineControls(unittest.TestCase):
                     self.assertEqual(report["runs"][0]["result"], report["runs"][1]["result"])
                     self.assertEqual(report["runs"][0]["result"]["count"], 1)
 
+    # Value: sharded runs must record exactly what one process records, so parallelism cannot
+    # reorder, drop or duplicate cases. A filter must still fail when no suite matches.
+    def test_sharded_runs_match_one_process(self) -> None:
+        suites = ["--suite", "res://tests/unit/test_snapshot_history.gd", "--suite", "res://tests/runner/self_suite.gd"]
+        cases = [("all", [], True), ("filtered", ["--filter", "fixture_reset"], True), ("unmatched", ["--filter", "no-such-case"], False)]
+        with tempfile.TemporaryDirectory() as directory:
+            for label, arguments, passed in cases:
+                with self.subTest(case=label):
+                    results = []
+                    for jobs in ("1", "4"):
+                        output = Path(directory) / f"{label}-{jobs}.json"
+                        process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(GODOT),
+                            *suites, *arguments, "--jobs", jobs, "--results", str(output)], cwd=ROOT, capture_output=True, text=True)
+                        self.assertEqual(process.returncode, 0 if passed else 1, process.stdout + process.stderr)
+                        results.append(json.loads(output.read_text())["runs"][0].get("result"))
+                    self.assertEqual(results[0], results[1])
+                    if passed:
+                        self.assertEqual(len({record["suite"] for record in results[0]["records"]}), 1 if arguments else 2)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(add_help=False)

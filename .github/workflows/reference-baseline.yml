@@ -111,13 +111,15 @@ jobs:
           if-no-files-found: error
 
   godot:
-    name: Godot ${{ matrix.version }} and Chromium
+    name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
+        # Suites and oracle launchers share no state, so they run as parallel jobs.
+        part: [suites, oracles]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -127,6 +129,7 @@ jobs:
         with:
           node-version: "22.23.3"
       - name: Install Java for scoped handshake model checking
+        if: matrix.part == 'oracles'
         run: sudo apt-get update && sudo apt-get install -y openjdk-17-jre-headless
       - name: Restore verified reference downloads and crates
         uses: actions/cache@v5
@@ -145,43 +148,50 @@ jobs:
       - name: Execute native and exported web probes
         run: python3 scripts/reference/godot_smoke.py --web
       - name: Verify runner failure controls and fresh-process suites
+        if: matrix.part == 'suites'
         run: |
-          for version in "${{ matrix.version }}"; do
-            editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-            python3 scripts/reference/package_audit.py --godot "$editor" --output ".cache/reference/results/package-$version"
-            python3 scripts/reference/test_package_audit.py --godot "$editor" -v
-            python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
-            python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
-            python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
-            for case in default_single default_batched readiness_boundary aborted_wait; do
-              case_timeout=120
-              if [[ "$case" == default_single ]]; then case_timeout=180; fi
-              python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
-                --results ".cache/tests/integration-$version-$case.json"
-            done
-            python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
-            python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
-            python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
-            python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
-            python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
+          version="${{ matrix.version }}"
+          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
+          python3 scripts/reference/package_audit.py --godot "$editor" --output ".cache/reference/results/package-$version"
+          python3 scripts/reference/test_package_audit.py --godot "$editor" -v
+          python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
+          python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
+          python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
+          for case in default_single default_batched readiness_boundary aborted_wait; do
+            case_timeout=120
+            if [[ "$case" == default_single ]]; then case_timeout=180; fi
+            python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
+              --results ".cache/tests/integration-$version-$case.json"
           done
+          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
+      - name: Compare actual upstream and Godot traces
+        if: matrix.part == 'oracles'
+        run: |
+          version="${{ matrix.version }}"
+          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
+          python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
+          python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
+          python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
+          python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: godot-browser-reference-results-${{ matrix.version }}
+          name: godot-browser-reference-results-${{ matrix.version }}-${{ matrix.part }}
           path: |
             .cache/reference/results/
             .cache/tests/
           if-no-files-found: error
 
   signalfish:
-    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }}
+    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
+        # Each part starts its own server and browsers, so they run as parallel jobs.
+        part: [webrtc, online]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -219,6 +229,7 @@ jobs:
             --source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
             --output .cache/reference/results/signalfish-server-build
       - name: Verify real browser WebRTC on the pinned engine
+        if: matrix.part == 'webrtc'
         run: |
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" \
@@ -227,6 +238,7 @@ jobs:
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/signalfish-webrtc
       - name: Play the shipped online example in two independent browsers
+        if: matrix.part == 'online'
         run: |
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --online-example --version "${{ matrix.version }}" \
@@ -235,6 +247,7 @@ jobs:
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/online-example
       - name: Verify native relay and late-event controls
+        if: matrix.part == 'online'
         run: |
           for version in "${{ matrix.version }}"; do
             editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
@@ -248,6 +261,6 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: signalfish-live-reference-results-${{ matrix.version }}
+          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}
           path: .cache/reference/results/
           if-no-files-found: error
