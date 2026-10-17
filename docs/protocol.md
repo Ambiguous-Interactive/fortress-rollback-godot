@@ -175,7 +175,7 @@ The semantic reference is Fortress
 | --- | --- |
 | Header sentinel/version/flags/conn_id | Explicit Godot header, plus session and sender; connection identity widened to opaque 8 bytes |
 | SyncRequest/SyncReply | Preserve challenge/echo, minimum compatibility, features, configuration and wide digest; injected challenge widened to 16 bytes |
-| SessionConfigBlock | Preserve player count/input width/fps/prediction/desync interval; add delay, game formats, neutral bytes and ordered roster |
+| SessionConfigBlock | Preserve player count/input width/fps/prediction/desync interval; add delay, game formats, queue capacity, neutral bytes and ordered roster |
 | Input/InputAck/ConnectionStatus | Preserve input start, cumulative ACK and every roster status including epoch; complete uncompressed samples replace Rust compressed bytes |
 | QualityReport/QualityReply | Preserve signed i16 advantage and full 128-bit ping/pong token |
 | ChecksumReport | Preserve full frame domain and u128 checksum bytes |

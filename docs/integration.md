@@ -243,7 +243,8 @@ an `incompatible` failure for `queue_capacity`, instead of ending the match late
 ### Suggested input delay
 
 Peer sessions publish an `input_delay_recommendation` event when the measured connection needs more delay.
-The suggestion covers one-way latency: half the largest peer RTT, in frames, rounded up.
+The suggestion is the delay that covers one-way latency, which removes most rollbacks: half the largest peer RTT, in frames,
+rounded up. Large RTTs give large suggestions, so your game may cap what it applies.
 The library never applies it. Your game decides, for example after asking the player:
 
 ```gdscript
@@ -261,6 +262,8 @@ for event: Dictionary in peer.drain_events():
 
 A raise must hold for 60 consecutive steps; the event suggests the smallest delay seen in that window.
 Each suggestion is larger than the last one, so an ignored suggestion is not repeated and suggestions never flap.
+Keep the value if `set_input_delay` does not return `OK`, for example `NETWORK_BACKPRESSURE`, and try again later.
+A suggestion can go out of date when latency recovers. The online example offers each one for 10 seconds.
 Sessions with several local players, or with lifecycle controls disabled, publish none.
 RTT comes from the clock your game passes to the session, so peers can receive different suggestions.
 That is safe: the suggestion never reaches the simulation, and `set_input_delay` keeps peers in agreement.

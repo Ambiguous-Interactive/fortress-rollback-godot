@@ -72,6 +72,10 @@ var adapter: Adapter = Adapter.new()
 code = adapter.attach(client, mesh, membership)
 ```
 
+The profile and the session config must agree on player count, input width, neutral bytes, delay,
+prediction window and `queue_capacity`. Otherwise `configure_peer` refuses the peer. Set both when you
+change a default.
+
 Retain the adapter and membership alongside the peer. Keep SDK Nodes alive and
 call `adapter.detach()` before freeing them. The adapter uses weak SDK references
 and does not own the Nodes. Keep one consumer of mesh packet reads.

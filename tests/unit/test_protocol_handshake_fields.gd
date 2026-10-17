@@ -77,6 +77,10 @@ func _bounds(context: RefCounted) -> void:
 		var packet: PackedByteArray = _golden()
 		packet.encode_u32(66, width)
 		context.equal(Codec.decode(packet, Types.Limits.new()).code, Types.Code.INVALID_PACKET, "reject invalid remote width")
+	for capacity: int in [0, 1, 65537, 4294967295]:
+		var packet: PackedByteArray = _golden()
+		packet.encode_u32(94, capacity)
+		context.equal(Codec.decode(packet, Types.Limits.new()).code, Types.Code.INVALID_PACKET, "reject invalid remote queue capacity")
 	for field: String in ["min_compat_version", "features"]:
 		for value: int in [-1, 256 if field == "min_compat_version" else 4294967296]:
 			var message: RefCounted = Types.Message.new()

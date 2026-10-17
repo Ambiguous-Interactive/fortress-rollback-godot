@@ -65,8 +65,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		var code: int = controller.game_match.raise_input_delay()
 		controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
+		var had_suggestion: bool = controller.game_match.suggested_delay >= 0
 		var code: int = controller.game_match.apply_suggested_delay()
-		controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+		if not had_suggestion:
+			controller.message = "No suggested delay to apply."
+		else:
+			controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
 
 
 func _exit_tree() -> void:

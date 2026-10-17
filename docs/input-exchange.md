@@ -95,7 +95,7 @@ by default.
 ## Bounds and evidence
 
 Input options bound pending and received history (1–4096 frames each), packet
-batches (1–128 frames) and each publication queue (1–4096 entries). Configuration
+batches (1–128 frames sent; received batches may always hold up to 128) and each publication queue (1–4096 entries). Configuration
 checks cardinalities before allocating lookup state and rejects history geometry
 above the configured retained-byte budget, capped at 16 MiB. Geometry includes
 one extra locally packed frame for the last acknowledged input:

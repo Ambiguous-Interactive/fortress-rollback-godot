@@ -65,7 +65,7 @@ satisfy attribution; these checks do not provide cryptographic authentication.
 Mismatch precedence is minimum compatibility version, player count, input width,
 FPS, prediction window, checksum interval and feature mask. These seven checks
 match pinned upstream `HandshakeConfig::first_mismatch`. Godot then checks input
-delay, input format, snapshot format, checksum algorithm, neutral input and roster
+delay, input format, snapshot format, checksum algorithm, queue capacity, neutral input and roster
 before checking the opaque configuration digest. The extra fields belong to the
 Godot session agreement. A mismatch event retains the field and locally oriented
 `ours`/`theirs` values; bytes and rosters use canonical hexadecimal strings.
