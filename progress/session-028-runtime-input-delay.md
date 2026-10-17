@@ -87,3 +87,9 @@ requests.
 
 Limit: the bound is derived from the worst case. A mutation to a one-sided bound of 110 still passes
 the suite, because realistic spans stay smaller. The public API cannot construct the worst case.
+
+## Retrospective
+
+The [retrospective](../.llm/retrospectives/2026-10-17-runtime-input-delay.md) adds the remote-span
+and endpoint-resume rules to the networking skill.
+Retro: findings-acted.
