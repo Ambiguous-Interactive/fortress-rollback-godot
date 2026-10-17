@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add `set_input_delay` so a player can raise input delay mid-match. Peers stay in agreement and replays record the change. Press = in the online example to try it.
+- Add `set_input_delay` so a player can raise input delay mid-match. Peers with equal `queue_capacity` stay in agreement, and replays record the change. Press = in the online example to try it.
 
 - Add match recording and playback. Set `replay_max_frames` to record confirmed inputs, save the bytes, then play them with `FortressReplayPlayer`. Playback checks recorded state checksums and stops at the first frame that differs.
 
@@ -52,7 +52,7 @@
 
 ### Fixed
 
-- Fix peer sessions ending with `PROTOCOL_FAILED` when a large `input_delay` overflowed the other peer's input queue. `configure` now refuses a starting delay above `FortressPeerSession.max_input_delay(config)`.
+- Fix peer sessions ending with `PROTOCOL_FAILED` when a large `input_delay` overflowed the other peer's input queue. **Behavior change:** `configure` now returns `INVALID_ARGUMENT` for a starting delay above `FortressPeerSession.max_input_delay(config)`.
 
 - Fix SignalFish plan callbacks reviving ended adapters or recursively detaching meshes. Replacement attachment waits until teardown returns.
 

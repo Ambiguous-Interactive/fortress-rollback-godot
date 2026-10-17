@@ -232,9 +232,12 @@ as ordinary input and stay in agreement. Replays record them like any other inpu
 | `INVALID_CONFIGURATION` | `delay + max(max_prediction_frames, check_distance) + 2` exceeds `queue_capacity`. Peer sessions allow at most `FortressPeerSession.max_input_delay(config)`, which leaves room for every peer's delay. |
 | `NETWORK_BACKPRESSURE` | A peer still holds too many unacknowledged frames to send the added ones. Try again later. |
 | `INVALID_PLAYER` | The slot is not a local player. |
+| `NOT_SYNCHRONIZED` / `BUSY` / `TERMINATED` | The peer session is not running, a step or callback is in progress, or the match has ended. |
+| `PROTOCOL_FAILED` | Sending the added frames failed. The match ends rather than let peers disagree. |
 
 Before the first sample, a plain `FortressSession` accepts any delay that fits, including a lower one.
-Give every peer the same `queue_capacity` and `max_prediction_frames` so they share one limit.
+Give every peer the same `queue_capacity`. The handshake does not compare capacities yet: a peer with a
+larger one can raise past the other peer's limit, and that match ends with `PROTOCOL_FAILED`.
 
 ## Coming from Rust
 

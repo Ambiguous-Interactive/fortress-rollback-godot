@@ -93,3 +93,8 @@ the suite, because realistic spans stay smaller. The public API cannot construct
 The [retrospective](../.llm/retrospectives/2026-10-17-runtime-input-delay.md) adds the remote-span
 and endpoint-resume rules to the networking skill.
 Retro: findings-acted.
+
+A second fresh review confirmed both repairs and the bound's derivation. Its medium finding, unequal
+`queue_capacity` across peers, fails closed. It is documented and tracked in #108, since agreeing
+capacity changes the handshake. Its low findings are fixed: the stricter `configure` check is marked
+as a behavior change, and the result table lists every code. #109 tracks a measured delay suggestion.

@@ -23,4 +23,4 @@ new section and the Rust mapping row. No other guidance became stale.
 ## Outcome
 
 - State: `findings-acted`.
-- Follow-ups: tracked in the issues linked from the session PR.
+- Follow-ups: #108 (agree queue capacity in the handshake), #109 (measured delay suggestion); #46 stays open.
