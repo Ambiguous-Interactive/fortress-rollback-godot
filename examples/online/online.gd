@@ -64,6 +64,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_EQUAL, KEY_KP_ADD]:
 		var code: int = controller.game_match.raise_input_delay()
 		controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
+		var code: int = controller.game_match.apply_suggested_delay()
+		controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
 
 
 func _exit_tree() -> void:
@@ -152,6 +155,8 @@ func _update_status() -> void:
 			"\nYou: player %d | frame %d | confirmed %d | delay %d (= raises) | stalls %d | event %s"
 			% [game.local_slot + 1, state.current_frame, state.confirmed_frame, game.peer.input_delay(game.local_slot), game.stalls, game.latest_event]
 		)
+		if game.suggested_delay >= 0:
+			_status.text += "\nSuggested delay for this connection: %d (R applies)" % game.suggested_delay
 		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
 		_status.text += (
 			"\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d"
