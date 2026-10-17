@@ -54,6 +54,8 @@ var delivered: int = 0
 var failure: int = I.Code.OK
 var event_counts: Array[Dictionary] = [{}, {}]
 var latest_events: Array[Dictionary] = [{}, {}]
+## Each peer's input_delay_recommendation events, oldest first; the caller clears them.
+var recommendations: Array[Array] = [[], []]
 var _tokens: int = 0
 var _packets: Array[Dictionary] = []
 var _held: PackedInt32Array = PackedInt32Array([-1, -1])
@@ -76,6 +78,7 @@ func reset() -> int:
 	failure = I.Code.OK
 	event_counts = [{}, {}]
 	latest_events = [{}, {}]
+	recommendations = [[], []]
 	is_partitioned = false
 	for player: int in range(2):
 		var config: Config = Config.new()
@@ -155,6 +158,8 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 			event_counts[player][kind] = event_counts[player].get(kind, 0) + 1
 			if kind != "inputs_received":
 				latest_events[player] = event.duplicate(true)
+			if kind == "input_delay_recommendation":
+				recommendations[player].append(event.duplicate(true))
 		session.drain_transitions()
 	_collect()
 
