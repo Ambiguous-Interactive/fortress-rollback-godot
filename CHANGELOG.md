@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add an `input_delay_recommendation` peer event that suggests a higher input delay from measured round-trip time. Your game chooses whether to apply it. Press R in the online example to apply a suggestion.
+
 - Add `set_input_delay` so a player can raise input delay mid-match. Replays record the change. Press = in the online example to try it.
 
 - Add match recording and playback. Set `replay_max_frames` to record confirmed inputs, save the bytes, then play them with `FortressReplayPlayer`. Playback checks recorded state checksums and stops at the first frame that differs.
