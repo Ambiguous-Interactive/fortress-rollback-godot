@@ -75,6 +75,9 @@ Identical retries during a stall are idempotent; a conflicting retry returns
 the actual delayed scheduled frame in `Result.value`. Before successful advance,
 `scheduled_local_input(player)` returns an owned `InputResult` with that frame,
 bytes and confirmed status; absent samples return `MISSING_LOCAL_INPUT`.
+`set_input_delay(player, delay)` raises a local delay by appending copies of the
+latest actual input. Raised during a stall, the retained sample's retries and
+`scheduled_local_input` then report the last appended frame, which holds the same bytes.
 
 In external mode, `receive_input(player, scheduled_frame, bytes)` accepts already
 scheduled remote inputs. The first record may start at zero or at the negotiated
