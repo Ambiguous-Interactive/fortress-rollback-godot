@@ -104,6 +104,10 @@ Evidence:
   Ignoring the operation stops at `unobserved packet`. Dropping refusal codes fails at
   `operation 21: delay change outcome`.
 - `make test-oracle`: 58 OK.
+- Native: `test_input_delay.gd` `raise_sends_one_packet` checks raises of one and three frames send one
+  packet ending at the raised frame with unchanged time-sync fields, and that a bad mid-batch frame
+  changes nothing. Restoring the per-frame loop fails five assertions (three packets; changed
+  advantage sums).
 
 Documented, not compared: changes before the first step (upstream accepts, Godot returns
 `UNSUPPORTED`), delays in the band where the limits differ (upstream `127 - max_prediction`, Godot
@@ -123,6 +127,18 @@ Fresh adversarial reviews ran on #103 and #45.
   in the addon starts at `OK`, replays have never shipped, and the guide compares against `OK`.
 - #45, nits: two hostile rows are also caught by a second check; playback does not tell a game that
   a frame was skipped (recording calls that path defensive). Recorded, not changed.
+
+- #46, should-fix: only the oracle caught a revert to one packet per frame. Fixed with the native case
+  above.
+- #46, nits: the same-peer clock rule and the delay-bound band are now documented as intended
+  differences in `docs/oracle-p2p.md`.
+
+## Verification
+
+- `make test-godot` (260 cases, 31s), determinism category, `make test-reference` (95 OK, 4 skipped),
+  `make test-oracle` (58 OK), `make lint-source`, `make lint-llm`, `make test-llm` on Godot 4.7.2.
+- `p2p_launch.py`, `launch.py` and `handshake_launch.py` receipts passed locally; the P2P gate also
+  passed on the pinned 4.3 editor.
 
 ## Retrospective
 
