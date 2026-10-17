@@ -261,6 +261,10 @@ func _lockstep_confirmation_limit(context: RefCounted) -> void:
 	var replay: Replay = session.replay()
 	context.equal(replay.frame_count(), 30, "records every simulated frame")
 	context.equal(replay.skipped_frames(), 0, "skips nothing while the limit trails")
+	var checksums: int = 0
+	for frame: int in range(replay.frame_count()):
+		checksums += int(not replay.checksum(frame).is_empty())
+	context.equal(checksums, 30, "records every lockstep checksum")
 	var game: Game = Game.new()
 	var player: Player = Player.new()
 	context.equal(player.configure(replay, game, Game.SNAPSHOT_BYTES), Types.Code.OK, "player configures")

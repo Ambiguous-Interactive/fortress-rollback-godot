@@ -55,6 +55,10 @@ recorded only through the mesh confirmation limit, which trails receipts while l
 each simulated frame. Recording now follows receipts, and `lockstep_confirmation_limit` fails
 before the repair and passes after it. The review also led to slice-based decoding, type-checked
 callback results with one exit path in the player, and documentation for `skipped_frames()`.
+A second fresh review confirmed these repairs, including that recorded checksums never precede a
+correction and that no unrecorded frame reaches the discard floor. Its two low findings are fixed:
+the lockstep case now requires all thirty checksums, and the demo shows a refused replay start.
+Full unit and determinism categories pass on both native pins for the reviewed code.
 
 ## Playable demo
 

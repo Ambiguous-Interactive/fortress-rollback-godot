@@ -66,10 +66,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_P:
 			if _demo.replay_player != null:
 				_demo.stop_replay()
+				_replay_code = Types.Code.OK
 			else:
 				_replay_code = _demo.start_replay()
 		KEY_R:
 			_code = _demo.reset()
+			_replay_code = Types.Code.OK
 			_last_effect = 0
 			_pulses.clear()
 	_update_label()
@@ -80,6 +82,8 @@ func _update_label() -> void:
 	var state: String = "WAITING FOR INPUT" if _code == Types.Code.PREDICTION_STALL else "RUNNING"
 	if _code != Types.Code.OK and _code != Types.Code.PREDICTION_STALL:
 		state = "STOPPED: code %d, failure frame %d" % [_code, status.failure_frame]
+	if _demo.replay_player == null and _replay_code != Types.Code.OK:
+		state += " | REPLAY UNAVAILABLE: code %d" % _replay_code
 	if _demo.replay_player != null:
 		state = "REPLAY frame %d of %d" % [_demo.replay_player.current_frame(), _demo.replay_frames]
 		if _replay_code == Types.Code.FRAME_EXHAUSTED:
