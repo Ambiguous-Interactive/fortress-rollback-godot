@@ -142,7 +142,10 @@ A `delay` operation, `{"kind": "delay", "peer": p, "delay": d}`, calls upstream
 for the peer's local slot. It has no `now_us`: Godot's API takes no clock, and
 the source reuses the shared injected clock. The schema therefore requires the
 operation to follow a step, poll or delay addressed to the same peer, so both
-clocks agree. It must also follow that peer's first step: upstream accepts any
+clocks agree. Godot stamps the raise's send with that peer's last step or poll
+time and upstream with its live clock, so only send timestamps could differ:
+retries and keepalives may fire one tick earlier in Godot. This is an accepted
+timing difference, not a semantic one. It must also follow that peer's first step: upstream accepts any
 fitting delay before the first input, while Godot's agreed config owns the
 starting delay and returns `UNSUPPORTED`. Before-first-input changes are a
 documented divergence, not compared.
@@ -153,7 +156,10 @@ unchanged frame. Refusals compare by outcome. Upstream
 `FrameDelayTooLarge` or `ConfigValueOutOfRange` map to `INVALID_CONFIGURATION`.
 Validation recomputes every expected outcome independently. The bounds differ:
 upstream accepts up to `127 - max_prediction`, while Godot's peer bound is
-`(126 - 2 * max_prediction) / 2` for these 128-slot queues. Delays in that band
+`(126 - 2 * max_prediction) / 2` for these 128-slot queues. The tighter Godot
+bound is intended: every peer's queue must hold both delays, which upstream does
+not enforce. With `max_prediction` 8 the band is 56–119 frames, about one to two
+seconds at 60 Hz. Delays in that band
 are rejected by all three schema validators. Values up to Godot's bound, and
 from upstream's bound plus one through 1000, are compared. The confirmed-input
 model adds each raise's gap frames, which repeat the latest scheduled sample.
