@@ -43,6 +43,10 @@ var latency_ticks: int = 3
 var drop_every: int = 7
 var reorder: bool = true
 var is_partitioned: bool = false
+## Confirmed frames each peer records; 0 disables recording.
+var replay_frames: int = 0
+## Unacknowledged local frames each peer retains before steps report NETWORK_BACKPRESSURE.
+var max_pending_frames: int = 128
 var now_us: int = 0
 var sent: int = 0
 var dropped: int = 0
@@ -79,6 +83,7 @@ func reset() -> int:
 		config.check_distance = 0
 		config.local_players = PackedInt32Array([player])
 		config.input_delay = 2
+		config.replay_max_frames = replay_frames
 		config.max_snapshot_bytes = Simulation.SNAPSHOT_BYTES
 		config.storage_budget_bytes = config.required_storage_bytes()
 		var profile: T.Message = T.Message.new()
@@ -93,7 +98,9 @@ func reset() -> int:
 		handshake.roundtrips = 2
 		var game: Game = Game.new()
 		var session: Peer = Peer.new()
-		failure = session.configure(config, profile, game, handshake, I.Options.new())
+		var inputs: I.Options = I.Options.new()
+		inputs.max_pending_frames = max_pending_frames
+		failure = session.configure(config, profile, game, handshake, inputs)
 		if failure != I.Code.OK:
 			return failure
 		sessions.append(session)
@@ -154,6 +161,13 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 
 func queued_packets() -> int:
 	return _packets.size()
+
+
+## Delay one more frame of this player's input; peers receive the added frames as ordinary input.
+func raise_input_delay(player: int) -> int:
+	if player < 0 or player >= sessions.size():
+		return Types.Code.INVALID_PLAYER
+	return sessions[player].set_input_delay(player, sessions[player].input_delay(player) + 1)
 
 
 ## Deliberately use different game rules on peer one to demonstrate checksum failure.

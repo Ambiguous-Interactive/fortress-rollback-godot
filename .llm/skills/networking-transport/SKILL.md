@@ -217,6 +217,11 @@ the reserve with a recoverable overflow first, then inject terminal events from
 every remote link. Each actual fatal cause must survive with owned peer metadata;
 halting simulation alone does not prove diagnostic preservation.
 
+Size per-peer limits against the remote's resources too. A queue for a remote slot spans that
+remote's delay, the local delay and two prediction windows; a local-only check let two peers at
+the limit overflow each other. Any API that emits frames outside `step` must resume each endpoint
+from its own `last_submitted_frame`: a backpressured step leaves the core one sample ahead.
+
 - Wire formats, channels, replay layout, checksum exchange: this skill.
 - When to roll back and why: rollback-fundamentals.
 - Bit-exactness of what you serialize: determinism.

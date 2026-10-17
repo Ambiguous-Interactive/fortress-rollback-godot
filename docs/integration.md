@@ -212,6 +212,33 @@ With a positive snapshot size it first calls `save_state` and compares the recor
 Pass `0` to play inputs without checking. The file stores inputs, not game rules or seeds:
 keep your own game version and setup alongside it.
 
+## Change input delay during a match
+
+Input delay trades responsiveness for fewer rollbacks. Set the starting value with `config.input_delay`.
+A player on a worse connection can raise it mid-match:
+
+```gdscript
+var code: int = session.set_input_delay(player, session.input_delay(player) + 1)  # or peer.set_input_delay
+```
+
+Call it between steps or while stalled, never from a game callback. Each added frame repeats the
+player's latest input, so a held button stays held for those frames. Peers receive the added frames
+as ordinary input and stay in agreement. Replays record them like any other input.
+
+| Result | Meaning |
+| --- | --- |
+| `OK` | The new delay applies to the next sample. Asking for the current delay is also `OK`. |
+| `UNSUPPORTED` | A decrease after the first sample. Peer sessions also refuse changes before the first step and with several local players. |
+| `INVALID_CONFIGURATION` | `delay + max(max_prediction_frames, check_distance) + 2` exceeds `queue_capacity`. Peer sessions allow at most `FortressPeerSession.max_input_delay(config)`, which leaves room for every peer's delay. |
+| `NETWORK_BACKPRESSURE` | A peer still holds too many unacknowledged frames to send the added ones. Try again later. |
+| `INVALID_PLAYER` | The slot is not a local player. |
+| `NOT_SYNCHRONIZED` / `BUSY` / `TERMINATED` | The peer session is not running, a step or callback is in progress, or the match has ended. |
+| `PROTOCOL_FAILED` | Sending the added frames failed. The match ends rather than let peers disagree. |
+
+Before the first sample, a plain `FortressSession` accepts any delay that fits, including a lower one.
+Give every peer the same `queue_capacity`. The handshake does not compare capacities yet: a peer with a
+larger one can raise past the other peer's limit, and that match ends with `PROTOCOL_FAILED`.
+
 ## Coming from Rust
 
 The concepts match [fortress-rollback](https://github.com/wallstop/fortress-rollback).
@@ -225,8 +252,9 @@ Differences in this port:
 | Game state cells holding Rust values | Your own byte format through bounded readers and writers |
 | `PredictionThreshold` error | `PREDICTION_STALL` result |
 | `with_recording` + `into_replay` | `config.replay_max_frames`, then `session.replay()` |
+| `set_input_delay` / `input_delay` | Same names on sessions and peer sessions; result codes replace `FortressError` |
 | `ReplaySession` with validation | `FortressReplayPlayer`; a checksum mismatch stops playback with `DESYNC` instead of queuing an event |
 
 The manual request API remains available: see the [session guide](session.md#expert-request-consumption).
-Rust and Godot peers cannot join the same session, and replay files are not interchangeable. Spectators, runtime input-delay changes,
+Rust and Godot peers cannot join the same session, and replay files are not interchangeable. Spectators,
 dropping peers mid-game and joining mid-game are not available yet; the [plan](../PLAN.md) tracks them.

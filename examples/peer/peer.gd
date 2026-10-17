@@ -6,6 +6,7 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE, Color.GOLD, Color.MEDIUM_SEA_GREEN]
 var _match: Match = Match.new()
 var _label: Label
+var _delay_result: String = ""
 
 
 func _ready() -> void:
@@ -35,6 +36,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	match event.keycode:
 		KEY_R:
 			_match.reset()
+			_delay_result = ""
 		KEY_L:
 			_match.drop_every = 0 if _match.drop_every > 0 else 7
 		KEY_T:
@@ -45,6 +47,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_match.is_partitioned = not _match.is_partitioned
 		KEY_X:
 			_match.inject_desync()
+		KEY_1, KEY_2:
+			var player: int = 0 if event.keycode == KEY_1 else 1
+			var code: int = _match.raise_input_delay(player)
+			_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged (code %d)" % [player + 1, code]
 	_update_label()
 
 
@@ -56,16 +62,16 @@ func _buttons(left: Key, right: Key, up: Key, down: Key) -> int:
 func _update_label() -> void:
 	_label.text = ("Two peer sessions | actual encoded bytes in this process | failure: %d\n"
 		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets | X: wrong game rules\n"
-		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s\n"
+		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s | 1/2: raise peer input delay%s\n"
 		+ "Sent %d | Dropped %d | Delivered %d | Queued %d / 256") % [
-		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
+		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned), _delay_result,
 		_match.sent, _match.dropped, _match.delivered, _match.queued_packets()]
 	for player: int in range(_match.sessions.size()):
 		var session: Peer = _match.sessions[player]
 		var network: Dictionary = session.network_status()
 		var peer: Dictionary = network.peers.values()[0]
-		_label.text += "\nPeer %d: %s | frame %d | confirmed %d | ACK %d | pending %d | restores %d | stalls %d" % [
-			player + 1, network.state, session.status().current_frame, session.status().confirmed_frame,
+		_label.text += "\nPeer %d: %s | frame %d | confirmed %d | delay %d | ACK %d | pending %d | restores %d | stalls %d" % [
+			player + 1, network.state, session.status().current_frame, session.status().confirmed_frame, session.input_delay(player),
 			peer.last_acked_frame, peer.pending_frames, _match.games[player].restores, _match.stalls[player]]
 		_label.text += "\n  RTT %d ms | ahead %d | interrupted %s | event %s | terminal reason %d" % [
 			peer.get("round_trip_time_ms", 0), network.get("frames_ahead", 0), str(peer.get("interrupted", false)),

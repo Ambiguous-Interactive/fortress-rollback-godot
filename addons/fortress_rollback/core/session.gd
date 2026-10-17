@@ -166,6 +166,45 @@ func scheduled_local_input(player: int) -> Types.InputResult:
 	return result
 
 
+## Local delay now in effect, or -1 for an unconfigured session or a slot that is not local.
+func input_delay(player: int) -> int:
+	if _config == null or player < 0 or player >= _queues.size() or player not in _config.local_players:
+		return -1
+	return _queues[player].frame_delay()
+
+
+## Before the player's first sample any delay that fits the queue applies. After it, only increases:
+## the new frames repeat the latest actual input, so no scheduled frame changes meaning.
+## Allowed between steps and while stalled. The value is the player's last scheduled frame.
+func set_input_delay(player: int, delay: int) -> Types.Result:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return Types.Result.new(code)
+	if player < 0 or player >= _queues.size() or player not in _config.local_players:
+		return Types.Result.new(Code.INVALID_PLAYER)
+	if delay < 0 or delay + maxi(_config.max_prediction_frames, _config.check_distance) + 2 > _config.queue_capacity:
+		return Types.Result.new(Code.INVALID_CONFIGURATION)
+	var queue: Queue = _queues[player]
+	var added: int = delay - queue.frame_delay()
+	if _received[player] != -1 and added < 0:
+		return Types.Result.new(Code.UNSUPPORTED)
+	if queue.set_frame_delay_with_reclaim_floor(delay, _floor()) != Queue.Code.OK:
+		return Types.Result.new(Code.INPUT_FAILED)
+	if _received[player] != -1:
+		_received[player] += added
+	var changed: Types.Result = Types.Result.new(Code.OK)
+	changed.value = _received[player]
+	return changed
+
+
+## Owned actual bytes a local player scheduled for a retained frame, or empty when unavailable.
+func retained_local_input(player: int, frame: int) -> PackedByteArray:
+	if _config == null or player < 0 or player >= _queues.size() or player not in _config.local_players:
+		return PackedByteArray()
+	var retained: Queue.Result = _queues[player].retained_confirmed_input(frame)
+	return retained.bytes.duplicate() if retained.code == Queue.Code.OK else PackedByteArray()
+
+
 ## Per-slot actual scheduled receipt bounds for transport gossip; never prediction frames.
 func received_frames() -> PackedInt64Array:
 	return _received.duplicate()

@@ -20,6 +20,7 @@ The shipped addon and this scene require no Rust or development oracle.
 | O | Toggle packet reordering |
 | Space | Block outgoing packets; press again before timeout to recover |
 | X | Change one peer's game rules to demonstrate a desync |
+| 1 / 2 | Raise peer 1's or peer 2's input delay by one frame |
 | R | Reset sessions, snapshots, packets and counters |
 
 ![Two byte sessions with active packet faults](peer-example.png)
@@ -41,7 +42,8 @@ latency and reordering use that clock. Simulation advances in whole frames
 and never reads clocks, keyboard state or transport settings. A sample already
 submitted for a stalled frame remains fixed until that frame advances; new
 keyboard state applies to the next sample. The two-frame input delay provides
-neutral startup frames.
+neutral startup frames. Press 1 or 2 to raise one peer's delay mid-match; the delay line shows it,
+and both arenas keep agreeing because the added frames reach the other peer as ordinary input.
 
 The example reuses the offline integer simulation, complete snapshots and
 presentation ledger. It draws reversible pulses from corrected state after

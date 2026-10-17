@@ -144,6 +144,13 @@ func tick(now_us: int, buttons: int) -> void:
 	_collect_events()
 
 
+## Delay this player's input by one more frame; the other player receives the added frames as ordinary input.
+func raise_input_delay() -> int:
+	if not has_started or local_slot < 0:
+		return Types.Code.NOT_SYNCHRONIZED
+	return peer.set_input_delay(local_slot, peer.input_delay(local_slot) + 1)
+
+
 func _poll_protocol(now_us: int) -> bool:
 	for _attempt: int in 2:
 		var code: int = peer.poll(now_us, [next_token()])
