@@ -74,3 +74,20 @@ seek support remain open under #45 and later tasks.
 The [retrospective](../.llm/retrospectives/2026-10-17-match-replays.md) adds the headless
 `class_name` and constant-expression rules to the GDScript style skill.
 Retro: findings-acted.
+
+## Online diagnostic validator
+
+Two later PR runs failed `Play the shipped online example` with `diagnostic integer outside domain`
+(4.3 job 117318405145; 4.7.2 in run 39005643266), after the first head passed. Replaying the
+validator over the downloaded 4.3 evidence shows the first trace row at frame 61 where 60 was
+expected. That download was taken at a prediction stall: current 180, confirmed 172. The stalled
+step had saved the state at frame 180 before simulating it, so the trace correctly ends with a
+state-only row at `current_frame`. The validator assumed the window always ends at
+`current_frame - 1`, so it failed whenever capture landed on a stall. Recording is disabled in the
+online example, so this branch does not change that path.
+
+The validator now accepts exactly two shapes: a window ending at `current_frame - 1`, or one ending
+at the saved boundary whose only inputless row is last. Payload accounting counts that row without
+inputs. A stall-boundary regression fails before the change and passes after it, with five rejected
+variants. The actual failing CI evidence now validates, and all 90 reference tests pass with three
+environment skips.
