@@ -13,7 +13,7 @@ Advance PLAN.md through a green, reviewed, squash-merged session PR
 - Aggregate all of one session's work into one PR, do not stack PRs.
 - After all current-head CI is green, scan every PR feedback surface with complete pagination, including resolved/outdated thread state and check annotations.
 - Address all actionable feedback, repeat gates after fixes, and recheck feedback immediately before merge. Follow [.llm/skills/ship-session/SKILL.md](.llm/skills/ship-session/SKILL.md).
-- Squash merge the session PR to `main` once green and feedback-complete; this is standing authorization. Verify the merge, fetch, and update local `main` to match `origin/main`.
+- Squash merge the session PR to `main` once green and feedback-complete. The repository owner authorizes the agent to run this merge itself (`gh pr merge <n> --squash --match-head-commit <sha>`); no human review, approval or further confirmation is needed. Adversarial sub-agent reviews, bot reviews and the feedback scan are the review. Verify the merge, fetch, and update local `main` to match `origin/main`.
 - Verify merge-triggered main CI before completion.
 - Apply [.llm/skills/user-copy/SKILL.md](.llm/skills/user-copy/SKILL.md) to comments, PR titles/descriptions, commit messages and CHANGELOG entries.
 - Set editor and formatter maximum source line lengths to 180, and verify all source files with `make lint-source`.
