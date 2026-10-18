@@ -30,7 +30,8 @@ Run the full CI entry point with its declared per-process watchdog. Size the
 full-suite budget from completed runs without relaxing focused hang controls.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
-aligned when extending a shared suite. Verify preload dependencies are copied;
+aligned when extending a shared suite. Platform-specific I/O must assert equivalent
+contracts with equal assertion counts when full native/Web records are compared. Verify preload dependencies are copied;
 exercise the affected probe, since the root unit runner cannot prove its staging.
 Freeze source/helper hashes before staging; verify copied and relocated authored bytes before adapting them.
 Verify tools before use and recheck sources/tools before publication; end-only hashes cannot identify executed bytes.

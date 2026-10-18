@@ -166,16 +166,21 @@ func _scene_controls(context: RefCounted) -> void:
 		if child is Label and child.text.contains("Validated states: 8 | applied advances: 8") and child.text.contains("captured seed: 9223372036854775808"):
 			visible = true
 	context.equal(visible, true, "visible status includes seed and verification counts")
+	var path: String = "user://diagnostic-viewer-test.json"
 	if not OS.has_feature("web"):
-		var path: String = "user://diagnostic-viewer-test.json"
 		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
 		file.store_buffer(bytes)
 		file.close()
 		node._native_file(path)
-		context.equal(node.viewer.status().rows_consumed, 0, "native file import starts paused")
+	else:
+		node._web_file([Marshalls.raw_to_base64(bytes), ""])
+	context.equal(node.viewer.status().rows_consumed, 0, "file import starts paused")
+	if not OS.has_feature("web"):
 		DirAccess.remove_absolute(path)
 		node._native_file(path)
-		context.equal(node.viewer.message, "Could not open the diagnostic file.", "native missing file is visible")
+	else:
+		node._web_file(["", "Could not open the diagnostic file."])
+	context.equal(node.viewer.message, "Could not open the diagnostic file.", "file read failure is visible")
 	node._exit_tree()
 	node.free()
 
