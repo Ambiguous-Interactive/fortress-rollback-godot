@@ -6,7 +6,8 @@ Checks (in order):
    not embed generated content.
 3. Skill frontmatter: every `.llm/skills/*/SKILL.md` is a valid Agent Skill.
 4. Encoding contract: UTF-8 without BOM, LF-only, for every scoped file.
-5. Link integrity: every relative markdown link inside `.llm/**` resolves.
+5. Link integrity: every relative markdown link inside `.llm/**` resolves,
+   except links into machine-local, never-committed directories.
 
 Usage: python3 scripts/llm/lint_llm_instructions.py [root]
 """
@@ -142,6 +143,20 @@ def check_encoding(scope_files: list[Path], root: Path) -> list[Finding]:
     return findings
 
 
+def _is_local_only(resolved: Path, root: Path) -> bool:
+    """True when a link target lives in a machine-local, never-committed dir.
+
+    `progress/` session logs stay on the authoring machine and are git-ignored,
+    so a fresh checkout has none of them. Pointers into that directory are a
+    deliberate local convenience, not a broken link.
+    """
+    try:
+        relative = resolved.relative_to(root.resolve())
+    except ValueError:  # escapes the repo entirely
+        return False
+    return bool(relative.parts) and relative.parts[0] in llm_paths.LOCAL_ONLY_DIRS
+
+
 def check_links(root: Path) -> list[Finding]:
     findings: list[Finding] = []
     llm_dir = root / ".llm"
@@ -154,15 +169,16 @@ def check_links(root: Path) -> list[Finding]:
             if target.startswith(_SKIP_PREFIXES):
                 continue
             resolved = (path.parent / target.split("#", 1)[0]).resolve()
-            if not resolved.exists():
-                findings.append(
-                    Finding(
-                        "error",
-                        path,
-                        f"{path.relative_to(root)}: broken relative link "
-                        f"-> {target}",
-                    )
+            if _is_local_only(resolved, root) or resolved.exists():
+                continue
+            findings.append(
+                Finding(
+                    "error",
+                    path,
+                    f"{path.relative_to(root)}: broken relative link "
+                    f"-> {target}",
                 )
+            )
     return findings
 
 

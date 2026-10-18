@@ -369,6 +369,8 @@ known-allocation positive control; flat memory alone is insufficient.
 
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
+Validated replay playback checks callback success and bounded snapshot status before
+advancing; a matching checksum cannot override a failed snapshot write.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.

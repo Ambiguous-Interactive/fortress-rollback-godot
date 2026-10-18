@@ -97,9 +97,12 @@ for secret in GITHUB_TOKEN OPENROUTER_API_KEY ZAI_API_KEY OPENAI_API_KEY ANTHROP
 done
 
 section "Wiring"
-hooks="$(git -C "$ROOT" config core.hooksPath || true)"
-if [ "$hooks" = ".githooks" ]; then
-  ok "git hooks installed (core.hooksPath=.githooks)"
+hooks="$(git -C "$ROOT" config --path core.hooksPath || true)"
+if [ -n "$hooks" ] &&
+    hooks_path="$(cd "$ROOT" && cd -P -- "$hooks" 2>/dev/null && pwd -P)" &&
+    expected_hooks_path="$(cd "$ROOT/.githooks" 2>/dev/null && pwd -P)" &&
+    [ "$hooks_path" = "$expected_hooks_path" ]; then
+  ok "git hooks installed (core.hooksPath=$hooks)"
 else
   bad "git hooks not installed (core.hooksPath='${hooks:-<unset>}') — run: make hooks"
 fi

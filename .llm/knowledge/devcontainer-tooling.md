@@ -2,7 +2,7 @@
 
 Operational facts learned while building this repo's devcontainer
 (`.devcontainer/`); feeding retrospective
-[2026-10-09-devcontainer-bootstrap](../retrospectives/2026-10-09-devcontainer-bootstrap.md).
+[foundations archive](../retrospectives/2026-10-18-foundations-archive.md).
 
 | Fact (one assertable sentence) | Evidence (command + output, file:line, or measurement) | Verified |
 | --- | --- | --- |

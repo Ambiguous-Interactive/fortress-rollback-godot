@@ -16,6 +16,51 @@ ROOT = HELPERS.parent.parent
 
 
 class ToolProbeTests(unittest.TestCase):
+    def test_hooks_paths_resolve_to_repository_hooks(self):
+        # Value: protects=equivalent hook paths and missing hooks; fails_when=raw strings decide; why_new=no hook validation coverage; seam=actual wiring block.
+        script = (ROOT / ".devcontainer/verify.sh").read_text(encoding="utf-8")
+        wiring = script.split('section "Wiring"\n', 1)[1].split('\nfor cfg in ', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository with spaces"
+            repository.mkdir()
+            subprocess.run(["git", "init", "-q", str(repository)], check=True)
+            hooks = repository / ".githooks"
+            hooks.mkdir()
+            (repository / "other-hooks").mkdir()
+            (repository / "hooks-link").symlink_to(hooks, target_is_directory=True)
+            external = Path(directory) / "external"
+            (external / "nested").mkdir(parents=True)
+            (external / ".githooks").mkdir()
+            (repository / "external-link").symlink_to(external / "nested", target_is_directory=True)
+            (repository / "other-hooks/nested").mkdir()
+            (repository / "internal-link").symlink_to(repository / "other-hooks/nested", target_is_directory=True)
+            cases = [
+                (".githooks", True),
+                (".githooks/", True),
+                (str(hooks), True),
+                ("./other-hooks/../.githooks", True),
+                ("hooks-link", True),
+                ("external-link/../.githooks", False),
+                ("internal-link/../../.githooks", True),
+                (None, False),
+                ("", False),
+                ("other-hooks", False),
+                ("missing-hooks", False),
+            ]
+            for configured, valid in cases:
+                with self.subTest(configured=configured):
+                    subprocess.run(["git", "-C", str(repository), "config", "--local", "--unset-all", "core.hooksPath"], check=False)
+                    if configured is not None:
+                        subprocess.run(["git", "-C", str(repository), "config", "--local", "core.hooksPath", configured], check=True)
+                    env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_COUNT="0")
+                    result = subprocess.run(
+                        ["bash", "-c", 'set -euo pipefail; ROOT="$1"; source "$2"; '
+                         'ok() { echo PASS; }; bad() { echo FAIL; }; ' + wiring,
+                         "probe", str(repository), str(HELPERS)],
+                        cwd=directory, env=env, capture_output=True, text=True, check=True,
+                    )
+                    self.assertEqual(result.stdout.strip(), "PASS" if valid else "FAIL")
+
     def probe(self, body, call):
         with tempfile.TemporaryDirectory() as directory:
             executable = Path(directory) / "probe-tool"

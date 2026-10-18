@@ -34,3 +34,6 @@ Thumbs.db
 
 # Agent measurement and issue-read artifacts
 /.cache/session-*/
+
+# Machine-local session logs (never committed)
+/progress/

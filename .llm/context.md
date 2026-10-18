@@ -38,7 +38,7 @@ until a skill is activated, so keep bodies focused and link to
 | `.llm/code-samples/` | Reviewed GDScript snippets referenced by skills. |
 | `.llm/research/` | Data-backed research notes that justify harness/port decisions. |
 | `.llm/knowledge/` | Distilled operational facts (gotchas/trivia) with evidence + verify dates — contract in [README](./knowledge/README.md). |
-| `.llm/retrospectives/` | Post-work retrospective artifacts (the episodic record) — browse [artifacts](./retrospectives/). |
+| `.llm/retrospectives/` | Post-work retrospective artifacts and historical summaries — browse [artifacts](./retrospectives/). |
 | `.llm/templates/` | Authoring templates (e.g. new skill skeleton). |
 | `.claude/skills/` | GENERATED discovery stubs for Claude Code. |
 | `.agents/skills/` | GENERATED discovery stubs (vendor-neutral). |

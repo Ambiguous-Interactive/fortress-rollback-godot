@@ -86,6 +86,13 @@ A changed code path is covered only when the applicable buckets have tests:
 
 ## Regression Triple Proof
 
+Before trusting a probe's red result, run the same probe against a control where
+the target contract is satisfied and confirm green. Change one relevant variable
+between control and failing experiment. Verify the intended diagnostic: an
+unrelated failure does not establish the regression. An npm uninstall probe that
+rejects an allowed empty scope directory, or a permissions probe that cannot read
+its own tarball, is a broken instrument. Repair the probe before interpreting red.
+
 Every bug fix ships its regression test, proven in three steps:
 
 1. **Fails at HEAD** — the test fails on the buggy code (bug is real, fixture
@@ -111,179 +118,26 @@ never *whether*. See [debugging](../debugging/SKILL.md).
    with the triple proof above (fails at HEAD, passes at base, passes after
    fix).
 
-## Infrastructure evidence
+## Evidence references
 
-Tool probes must check process exit status before accepting version text or a
-completion marker. Test both empty failures and plausible output followed by
-nonzero exit. A completed result stream must account for every selected test,
-including expected-panic cases; reject partial output even if listed tests pass.
+Read the applicable reference before changing a runner or witness. These are part
+of this skill's contract; load only the domains involved in the task.
 
-Decode structured UTF-8 child-process output with explicit `encoding="utf-8"`
-and strict errors. A successful JSON parse after locale decoding can still
-contain corrupted feedback. Exercise real emitted bytes under a forced non-UTF-8
-parent decoder, including malformed stdout and stderr; mocks returning decoded
-strings cannot expose this boundary. Decoding failures must report sanitized
-errors without revealing captured CLI output or credentials.
+| Changed boundary | Required reference |
+| --- | --- |
+| Child processes, receipts, source/tool identity, staging, caches, local iteration | [Infrastructure evidence](references/infrastructure.md) |
+| SDK signals, browser observers, live network clocks, rendering, watchdogs | [Browser and network integration](references/browser-integration.md) |
+| Differential traces, schemas, projections, mutations, canonical history | [Oracle validation](references/oracle-validation.md) |
 
-Invalidate a prior success report before starting a new attempt, clear only the
-runner-owned logs, and preserve partial stdout/stderr on timeout. Capture
-bounded in-loop state snapshots before the outer watchdog when
-the inner timeout can occur later: include pending work and receipt/status
-gossip needed to distinguish throughput from confirmation stalls. Local passes
-do not supersede CI failures for the same source candidate. A failed rerun
-must never leave a stale success receipt beside logs from its replacement.
-Finalize fixtures before declaring a verification snapshot frozen. An intervening
-edit restarts affected fresh-process and source-inventory checks.
-Validate fresh service startup as well as warm state: asynchronous catalogs may
-need bounded readiness polling rather than one successful configuration read.
-Integration witnesses must capture every applicable SDK failure signal and
-recheck latched errors after the final event drain and before publishing success.
-Inject each actual failure signal at that last boundary and require nonzero exit
-with no success marker. Correct game state can outlive a late connection failure.
-
-Engine doubles expose only public methods; verify the real method list and exported interface.
-Inspect browser constructor options and resulting properties; ignored options can violate channel policy.
-Group dependent browser observers in one init script; separate registration calls do not define execution order.
-Retain RefCounted targets when replaying captured old callbacks; select only bindings from the original owner.
-Challenge foreign packet rejection at a later clock through the shared session; same-time samples can hide clock mutation.
-
-Validate embedded scenarios/results independently before comparing their identity
-to submitted artifacts. Python equality treats booleans, integral floats and
-integers as equal; it is not schema validation. Standalone executables also need
-their own complete schema and nonempty-work boundary.
-Run the full CI entry point with its declared per-process watchdog. Size the
-full-suite budget from completed runs without relaxing focused hang controls.
-Preserve decoded wire fields instead of substituting scenario expectations.
-Mutate actual encoded bytes before observation to test the observer itself.
-Validate nullable fields before normalization; false and empty strings cannot
-silently become the same observation. Test omitted and explicit-null optional
-objects separately through every standalone executable. Require field presence
-when explicit null is part of the observed contract; parser defaults can alias
-them before shared validation runs. Constrain omitted setup records to their
-exact allowed position. Formal projection must account for the observed initial
-state and every supported post-state, not just action names and final success.
-
-Compare intermediate canonical prefixes against original submitted histories.
-A final checksum or accumulator sum can match after reordered inputs; replaying
-an oracle's own requests can preserve the same mistake. Keep a temporal mutation
-that retains the final state while violating an intermediate frame.
-For network scenarios, compare corrected confirmed prefixes while faults remain
-active and assert a nonzero comparison count for every peer. Confirmation can
-advance on delivery before predicted game state is repaired; capture actual
-callback boundaries rather than assuming the current state is already canonical.
-Compare stalled save/load/advance requests too; unchanged frame numbers do not
-mean a session performed no work. Do not gate every new input on global
-confirmation when receipt gossip requires later submissions. Pace the witness
-by endpoint receipts while retaining independent final confirmation and
-corrected-prefix checks; otherwise the test driver can create a cyclic wait.
-When every peer must exercise rollback, coordinate an explicit predicted step
-before delivering its original inputs. A fast clean run can otherwise receive
-all inputs before advancing and never restore a snapshot.
-Batch bounded transport polls before yielding an exported host render turn.
-Delayed-delivery fixtures must check readiness before flushing staged packets;
-a successful wait has no render yield. Measure incoming FIFO peaks after every
-active delivery boundary, including post-step and final confirmation drains.
-Skip final drains when the actual host returns immediately after failed gameplay.
-Separate a heavy workload from boundary controls when their combined runtime
-exceeds the process cap; preserve every case and repeat layer with distinct receipts.
-Limit overlap inventories to the decoded packet/frame domain needed by the proof,
-while counting all traffic separately. Late delivery of an early packet stays eligible.
-Repeated timer yields per input can make integration duration depend on
-software rendering, despite unchanged protocol work; verify under CPU limits.
-Real socket witnesses must measure transport deadlines with elapsed monotonic
-host time from the owned handshake epoch. A requested timer delay is not the
-elapsed duration of its render turn. Keep game simulation on original frames
-and inputs. Exercise handshake retries as well as input loss: an immediate
-handshake can hide a missing caller-owned retry token.
-Measure rendering or scheduling costs with paired engine/process/CPU controls
-before prescribing a viewport or pacing change. A slow turn alone does not
-identify its cause. Reject an optimization when its execution contradicts
-the prediction; preserve failed receipts and remove unsupported guidance.
-Budget real-browser watchdogs for their actual phase and room count. Track
-each unfinished peer independently; only monotone game or protocol evidence
-may reset inactivity. Keep separate gameplay and confirmation caps and an
-absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
-prove progress. Fresh execution must still satisfy every acceptance gate.
-Capture bounded physical channel counters before destroying a failed room; keep
-the original rejection and bound each diagnostic independently of gameplay.
-Serialize probes that reinstall a shared browser or editor cache. Unique output
-paths do not isolate executable extraction; overlapping launches can hit ETXTBSY.
-Apply each page observation at its completion time before waiting for sibling
-pages. Check that peer's existing deadline first, then rearm the earliest live
-deadline. Exercise asymmetric timely completions and exact expired boundaries;
-an all-pages barrier can otherwise discard valid progress against stale clocks.
-Observe each page independently with one evaluation in flight per page; slower
-siblings must not block its next sample. Keep a persistent earliest-deadline timer
-active during inter-sample pauses, and test a fast advancing page behind a valid
-slow response that finishes just before its own deadline.
-Recheck the monotonic clock after every awaited duration or deadline timer callback;
-rearm early callbacks because scheduler delays can truncate. Test just-before and
-exact thresholds with an advancing fake clock; a callback does not prove elapsed time.
-Deactivate an observation synchronously on every failure path. Resolve a sibling
-in the same turn as timeout/evaluation/validation rejection and prove it cannot
-sample or rearm after failure; an awaiting `finally` can run too late.
-Exercise the lowest accepted checksum capacity through repeated eviction, with
-both lockstep and predictive advancement. Require healthy progress and nonzero
-actual comparisons for each peer, then inject a real game mismatch at that same
-capacity. Retained/send counts alone can pass while every comparison is skipped.
-
-Validate original numeric tokens when parsing erases integer versus float syntax.
-Keep a copied probe's exact case inventory, native selection and Web host selection
-aligned when extending a shared suite. Verify preload dependencies are copied;
-exercise the affected probe, since the root unit runner cannot prove its staging.
-Freeze source/helper hashes before staging; verify copied and relocated authored bytes before adapting them.
-Verify tools before use and recheck sources/tools before publication; end-only hashes cannot identify executed bytes.
-When engine import creates metadata, first verify authored sources are unchanged.
-Allow only metadata paired with existing inputs, then freeze the complete
-post-import inventory through export and execution.
-Verify supplied pinned executables against bytes extracted from the verified
-archive; a version string and unchanged execution hash do not prove provenance.
-Observe resource construction separately from child creation, so teardown checks
-also include abandoned connections that never created channels.
-
-Godot JSON parsers expose numeric fields as floats. After validating integrality
-and bounds, reconstruct scenario records with explicit integers before emitting
-a strict cross-language trace. Godot 4.3 and 4.7.2 stringify integral floats
-differently; never weaken the Python integer schema to compensate. The production
-session oracle's canonical scenario conversion protects this boundary.
-
-Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
-Declare expected diagnostics independently; learning them from the validator makes rejection circular.
-For idempotent input delivery, state equality can hide duplicate work. Also assert
-exact queue occupancy, due-frame timing and once-per-frame sampling with a resampling mutant.
-Select mutated records by semantic kind. Require scenario-specific nonzero
-observations and an expected control inventory before publishing success. A
-shortened corpus that never reaches its named event must fail those gates.
-For snapshot-omission controls, derive localization from the first serialized
-consumer of the missing field. A mutant that omits a field from every snapshot
-can hide its immediate difference until a later scheduled event exposes it.
-
-Before projecting intentional source/product differences, validate the excluded
-inventory's exact peer membership, payload, count, order and allowed position.
-Keep controls for invented local-peer events and duplicate notification suffixes.
-Terminal freeze witnesses read the actual retained simulation frame after teardown,
-require the completed frontier, and reject zero display defaults or later advancement.
-Their mutants preserve earlier frame/state checks to reach the terminal boundary.
-For deliberate gameplay divergence, retain valid serialized-state bounds. Drive
-the game to domain edges and force rollback after divergence; require a genuine
-checksum mismatch rather than accepting an unrelated callback failure.
-A corruption control may desync before capture; require its typed cause and independently verified altered bytes.
+Cross-domain work reads every applicable reference. A browser trace validator,
+for example, needs both browser integration and oracle validation.
 
 ## Faster local iteration
 
-`make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;
-suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
-selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
-The oracle launcher defaults to four independent scenario workers; `--jobs 1`
-selects serial diagnosis. Preserve deterministic receipt order and unique logs.
-Clear owned success receipts on parse and execution-option rejection, including
-malformed worker values; real subprocess controls verify mode isolation and help.
-
-Keep verified source timestamps when bytes, modes, entry inventories and symlinks
-match freshly extracted pinned archives. A timestamp-only cache or a hash of an
-old receipt is insufficient. Cache downloaded Cargo crates and registry indexes,
-then unpack afresh: Cargo does not revalidate already-unpacked `registry/src`
-against crate checksums. Never restore that source tree as trusted CI evidence.
+Use `make test-focus SUITE=res://tests/unit/x.gd` for one suite and
+`make test-changed` for suites reaching files changed since `origin/main`.
+Deliver the full suite. Process isolation, worker order and cache verification
+are described in [infrastructure evidence](references/infrastructure.md#faster-local-iteration).
 
 ## CI
 

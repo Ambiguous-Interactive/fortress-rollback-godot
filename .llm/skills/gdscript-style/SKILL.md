@@ -56,6 +56,8 @@ Boring, typed, reviewable GDScript. The reference formatter is `gdformat`
 Owned `RefCounted` callback graphs must not keep strong back-references. Use a
 `WeakRef` when a game or test fixture refers back to its owning driver/session.
 Engine resource-leak errors fail verification even if structured assertions pass.
+Validate bounded view status separately from callback success and capture it before
+expiration. A matching checksum cannot make a failed snapshot write successful.
 
 ## File Hygiene
 
