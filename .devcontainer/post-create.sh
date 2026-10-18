@@ -7,6 +7,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 GDTOOLKIT_VERSION="${GDTOOLKIT_VERSION:-4.5.0}"
 
+# Devcontainer features are appended as layers AFTER the Dockerfile, and the
+# claude-code feature installs a global npm package as root. Those packages are
+# created after the Dockerfile's own repair ran, so they come out root-owned
+# and un-updatable again -- every rebuild would reintroduce EACCES for them.
+# Re-apply the repair here, where features have already run. postCreateCommand
+# runs as the remote user, so this needs sudo, which is passwordless here.
+echo "[post-create] restoring npm global write access (features install after the Dockerfile)"
+sudo "$SCRIPT_DIR/npm-global-perms.sh"
+
 echo "[post-create] installing git hooks"
 make -C "$ROOT" hooks
 

@@ -111,3 +111,20 @@ RUN npm install -g "@coding-solo/godot-mcp@0.1.1" \
 
 # uv: official static binaries from the pinned release image (see uv-bin stage).
 COPY --from=uv-bin /uv /uvx /usr/local/bin/
+
+# npm global write access for the remote user. Every npm global install above
+# ran as root, so /usr/local/lib/node_modules and /usr/local/bin are root-owned
+# 0755. The container runs as `vscode`, and on Unix replacing or removing a file
+# needs write permission on its *parent* directory, so `npm install -g`,
+# `npm update -g` and `npm uninstall -g` all fail with EACCES while read-only
+# npm commands keep working and hide the breakage. Group write plus setgid keeps
+# the single global root intact, so `npm root -g`, PATH and every existing
+# binary are unaffected. The script verifies as the target user, so a no-op
+# build cannot pass here.
+#
+# This covers only what the Dockerfile installs. Devcontainer features are
+# appended as layers AFTER this file, and the claude-code feature installs a
+# global npm package as root, which would land root-owned again.
+# post-create.sh re-applies the repair after features have run; keep both.
+COPY npm-global-perms.sh /usr/local/lib/npm-global-perms.sh
+RUN chmod 0755 /usr/local/lib/npm-global-perms.sh && /usr/local/lib/npm-global-perms.sh

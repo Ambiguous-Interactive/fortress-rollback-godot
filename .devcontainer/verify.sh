@@ -77,6 +77,9 @@ check_cmd gh --version
 check_cmd node --version
 check_cmd uv --version
 
+section "npm global packages (user-updatable)"
+check_npm_global_writable
+
 section "Modern CLI tools"
 check_cmd rg --version
 check_cmd fd --version
