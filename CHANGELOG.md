@@ -6,7 +6,7 @@
 
 - Add a replay viewer for online recordings. Open a downloaded file without a server, then play, pause, step or restart. Playback validates recorded checksums and stops at the first mismatch.
 
-- Add offline canonical diagnostic playback and an online trace reproduction command. Restore a captured window, compare complete state bytes and inputs, and report the first failing frame.
+- Add offline canonical diagnostic playback and an online trace reproduction command. Restore a captured window, apply its recorded inputs, and locate the first differing saved state.
 
 - Add optional replay recording to the online example. Select Record replay before Ready, then Download replay to save the first ten minutes of confirmed inputs. Diagnostic capture remains a separate choice.
 
