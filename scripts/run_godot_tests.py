@@ -14,10 +14,16 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
+CASES_PREFIX = "FORTRESS_TEST_CASES "
+# A suite this slow in the last run is split into one process per case.
+SPLIT_SECONDS = 4.0
 DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
+# Seconds per suite from earlier runs. It only orders shards, so a stale or missing file is harmless.
+DURATIONS = ROOT / ".cache/tests/durations.json"
 ENGINE_ERROR = re.compile(r"(?m)^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)")
 
 
@@ -103,6 +109,32 @@ def invoke(command: list[str], timeout: float) -> dict:
     except (ValueError, TypeError) as exc:
         report["failure"] = str(exc)
     return report
+
+
+def timed(command: list[str], timeout: float) -> tuple[dict, float]:
+    started = time.monotonic()
+    return invoke(command, timeout), time.monotonic() - started
+
+
+def load_durations(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {key: seconds for key, seconds in value.items() if isinstance(seconds, (int, float))} if isinstance(value, dict) else {}
+
+
+def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
+    """List case names for slow suites. Any listing problem leaves them whole; the run itself reports it."""
+    try:
+        process = subprocess.run(command + [part for suite in suites for part in ("--suite", suite)] + ["--list-cases"],
+                                 cwd=ROOT, capture_output=True, text=True, timeout=timeout)
+        lines = [line[len(CASES_PREFIX):] for line in process.stdout.splitlines() if line.startswith(CASES_PREFIX)]
+        inventory = json.loads(lines[0]) if process.returncode == 0 and len(lines) == 1 else {}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {}
+    return {suite: names for suite, names in inventory.items() if suite in suites and isinstance(names, list) and len(names) > 1
+            and all(isinstance(name, str) and name for name in names) and len(set(names)) == len(names)}
 
 
 def discover(category: str) -> list[str]:
@@ -203,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1701)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
+    parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
     args = parser.parse_args(argv)
@@ -225,8 +258,16 @@ def main(argv: list[str] | None = None) -> int:
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
     suites = sorted(args.suite) or discover(args.category)
-    shards = [command + ["--suite", suite] for suite in suites] if args.jobs > 1 else [
-        command + [part for suite in args.suite for part in ("--suite", suite)]]
+    durations = load_durations(args.durations)
+    if args.jobs > 1:
+        slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
+        cases = split_cases(command, slow, args.timeout) if slow else {}
+        # Shards stay in suite order, then inventory order, so merged records match one process.
+        keys = [(suite, case) for suite in suites for case in cases.get(suite, [None])]
+        shards = [command + ["--suite", suite] + (["--case", case] if case else []) for suite, case in keys]
+    else:
+        keys = [("|".join(args.suite), None)]
+        shards = [command + [part for suite in args.suite for part in ("--suite", suite)]]
     version_probe = None
     try:
         version_process = subprocess.run([str(executable), "--version"], capture_output=True,
@@ -239,9 +280,32 @@ def main(argv: list[str] | None = None) -> int:
         if version_process.returncode != 0:
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
+        # Start the slowest shards first, and both repetitions of each together, so no long shard starts last.
+        # Shards with no recorded time count as slowest. Results are still merged in suite order.
+        def estimate(key: tuple) -> float:
+            suite, case = key
+            return durations.get(suite + "::" + case, durations.get(suite, math.inf)) if case else durations.get(suite, math.inf)
+        order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
+        pending = [[None] * len(shards), [None] * len(shards)]
         with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            pending = [[pool.submit(invoke, shard, args.timeout) for shard in shards] for _ in range(2)]
-            runs = [merge([future.result() for future in repetition], bool(args.filter)) for repetition in pending]
+            for index in order:
+                for repetition in pending:
+                    repetition[index] = pool.submit(timed, shards[index], args.timeout)
+            completed = [[future.result() for future in repetition] for repetition in pending]
+        runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
+        if not args.filter and args.jobs > 1:
+            measured = {}
+            for index, (suite, case) in enumerate(keys):
+                seconds = round(max(completed[0][index][1], completed[1][index][1]), 2)
+                if case:
+                    durations[suite + "::" + case] = seconds
+                measured[suite] = measured.get(suite, 0) + seconds
+            durations.update(measured)
+            try:
+                args.durations.parent.mkdir(parents=True, exist_ok=True)
+                args.durations.write_text(json.dumps(durations, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+            except OSError:
+                pass
         failed = any("failure" in run for run in runs)
         if not failed and runs[0]["result"] != runs[1]["result"]:
             failed = True

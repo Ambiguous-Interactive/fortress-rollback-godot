@@ -5,7 +5,8 @@ const Context = preload("res://tests/runner/test_context.gd")
 
 # No SceneTree, nodes, timers or filesystem discovery: browser hosts can call
 # execute with the same scripts, category selection and scenario seed.
-func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int) -> Dictionary:
+# A nonempty case_names runs only those exact case names, in inventory order.
+func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int, case_names: PackedStringArray = []) -> Dictionary:
 	var records: Array[Dictionary] = []
 	var errors: Array[Dictionary] = []
 	for script: Script in scripts:
@@ -28,6 +29,8 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 				continue
 			seen[name] = true
 			if not filter_text.is_empty() and not name.contains(filter_text):
+				continue
+			if not case_names.is_empty() and name not in case_names:
 				continue
 			var runs: Array[Dictionary] = []
 			for repetition: int in range(2):

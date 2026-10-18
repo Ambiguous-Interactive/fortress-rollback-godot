@@ -23,12 +23,19 @@ receives the same explicit seed (default `1701`, signed 64-bit).
 
 Options: `--category unit|determinism|integration`, `--filter <case-substring>`,
 `--suite res://path.gd` (repeatable), `--seed <integer>`, `--timeout <seconds>`
-(per process, default 30), `--jobs <count>` (default: CPU count) and `--results <path>`.
+(per process, default 30), `--jobs <count>` (default: CPU count), `--durations <path>` and `--results <path>`.
 
 Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. The launcher joins
 the shard results in sorted suite order, so the record is the same as one process running every
 suite; `--jobs 1` keeps that single process. With `--filter`, suites with no matching case are
-dropped, and the whole selection must still match at least one case. Each report run lists its
+dropped, and the whole selection must still match at least one case.
+
+Each run without `--filter` saves per-suite times to ignored `.cache/tests/durations.json`. The next
+run starts the slowest suites first, with both repetitions of a suite started together. A suite
+that took at least four seconds is listed with `--list-cases` and runs one fresh-process pair per
+case (`--case <name>`), still merged in inventory order. The times only change scheduling; a
+missing or stale file gives the same records. Pure engine run time makes a new suite shard freely,
+so split a slow case into smaller cases rather than lengthen it. Each report run lists its
 shard processes under `shards`. Default results live in ignored
 `.cache/tests/latest.json`. They contain engine version/digest, repository commit
 and dirty flag, pin digest, platform, commands, working directory, seeds, complete

@@ -11,15 +11,20 @@ const Relay = preload("res://addons/fortress_rollback/transport/signalfish_relay
 const Fallback = preload("res://addons/fortress_rollback/transport/signalfish_fallback.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 
+# Each receive budget is its own case so the launcher can run them in parallel.
 func cases() -> PackedStringArray:
-	return PackedStringArray(["slow_mesh"])
+	return PackedStringArray(["slow_mesh_eight_receives", "slow_mesh_thirty_two_receives"])
 
-func run_case(_name: String, context: RefCounted) -> void:
-	var constrained: Dictionary = _run(context, 8)
+func run_case(name: String, context: RefCounted) -> void:
+	if name == "slow_mesh_eight_receives":
+		var constrained: Dictionary = _run(context, 8)
+		print("BACKLOG_CONTROL ", JSON.stringify({"eight": constrained}))
+		context.equal(constrained.frames < 12, true, "eight receives misses fixed twenty-second frame deadline")
+		context.equal(constrained.backlog > 128, true, "physical FIFO accumulates despite reliable delivery")
+		context.finish()
+		return
 	var sufficient: Dictionary = _run(context, 32)
-	print("BACKLOG_CONTROL ", JSON.stringify({"eight": constrained, "thirty_two": sufficient}))
-	context.equal(constrained.frames < 12, true, "eight receives misses fixed twenty-second frame deadline")
-	context.equal(constrained.backlog > 128, true, "physical FIFO accumulates despite reliable delivery")
+	print("BACKLOG_CONTROL ", JSON.stringify({"thirty_two": sufficient}))
 	context.equal(sufficient.frames, 12, "bounded larger receive work finishes same input log")
 	context.equal(sufficient.backlog < 128, true, "receive work keeps the physical FIFO bounded")
 	for received: int in sufficient.received:
