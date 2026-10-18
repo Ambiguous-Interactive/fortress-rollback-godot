@@ -127,6 +127,48 @@ async function collectDiagnostics(pages, command) {
   return diagnostics;
 }
 
+
+async function watchReplay(page, command, recording, diagnostic) {
+  await command(page, 'watch_replay');
+  const control = button => command(page, 'viewer_control', { button });
+  const choose = async buffer => {
+    const pending = page.waitForEvent('filechooser', { timeout: 10000 });
+    await control('Open replay');
+    const chooser = await pending;
+    await chooser.setFiles({ name: 'fortress-online.frrp', mimeType: 'application/octet-stream', buffer });
+  };
+  const bytes = Buffer.from(recording.hex, 'hex');
+  await choose(bytes);
+  await page.waitForFunction(() => window.fortressOnline.viewer.frames > 0, null, { timeout: 10000 });
+  const initial = await page.evaluate(() => window.fortressOnline.viewer);
+  if (initial.frame !== 0 || initial.playing) throw new Error('viewer did not open paused');
+  await control('Step');
+  const stepped = await page.evaluate(() => window.fortressOnline.viewer);
+  if (stepped.frame !== 1 || stepped.playing) throw new Error('viewer single step failed');
+  await control('Play');
+  await page.waitForFunction(() => window.fortressOnline.viewer.frame >= 4, null, { timeout: 10000 });
+  await control('Pause');
+  const paused = await page.evaluate(() => window.fortressOnline.viewer);
+  await page.waitForTimeout(100);
+  if (paused.playing || await page.evaluate(() => window.fortressOnline.viewer.frame) !== paused.frame)
+    throw new Error('viewer advanced while paused');
+  await control('Restart');
+  const restarted = await page.evaluate(() => window.fortressOnline.viewer);
+  if (restarted.frame !== 0 || restarted.state !== initial.state || restarted.playing) throw new Error('viewer restart failed');
+  await choose(Buffer.from('malformed replay'));
+  await page.waitForFunction(() => window.fortressOnline.viewer.message.includes('Could not open'), null, { timeout: 10000 });
+  const rejected = await page.evaluate(() => window.fortressOnline.viewer);
+  if (rejected.frames !== initial.frames || rejected.frame !== 0 || rejected.state !== initial.state)
+    throw new Error('failed import replaced the recording');
+  await control('Play');
+  await page.waitForFunction(() => window.fortressOnline.viewer.message.startsWith('Replay complete.'), null, { timeout: 30000 });
+  const completed = await page.evaluate(() => window.fortressOnline.viewer);
+  if (completed.playing || completed.frame !== initial.frames || completed.state !== recording.playback.canonical)
+    throw new Error('viewer differs from independently validated replay');
+  await page.screenshot({ path: diagnostic.replace('-events.log', '-viewer.png') });
+  return { initial, stepped, paused, restarted, rejected, completed };
+}
+
 async function collectReplay(pages, command, diagnostic) {
   const page = pages[1];
   const before = await page.evaluate(() => ({ state: window.fortressOnline.state, frame: window.fortressOnline.frame,
@@ -367,7 +409,9 @@ async function main() {
       rounds[round].diagnostics = await collectDiagnostics(pages, command);
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
-    console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, errors, teardown: true }));
+    const viewer = corrupt ? null : await watchReplay(pages[1], command, rounds[0].replay_download, diagnostic);
+    if (errors.length) throw new Error(JSON.stringify(errors));
+    console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, errors, teardown: true }));
   } catch (error) {
     const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
     const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));

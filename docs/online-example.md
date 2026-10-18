@@ -148,8 +148,22 @@ previous export, and display the full saved path or an error. Export remains ava
 after a failed match and after **Leave / new room**. Save it before creating or joining
 the next room, which replaces the old match. At the recording limit,
 gameplay continues while the recorded prefix stops growing; later exports contain that
-same prefix. The example has no playback controls. Load the file through
-`FortressReplay.decode()` and `FortressReplayPlayer`; see [replays](integration.md#record-and-replay-a-match).
+same prefix.
+
+After leaving the room, press **Watch replay**, then **Open replay** and choose your
+`fortress-online.frrp` file. Native builds use a file dialog; browsers use a local
+file chooser without uploading the file or using browser storage. Playback needs
+no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
+The display shows the current frame and stops at the first failed recorded checksum.
+**Back to online** returns to room setup.
+
+The viewer accepts complete recordings of this online integer game with seed 1701,
+two players and one-byte inputs, up to 36,000 frames and 1 MiB. Other games, unknown
+game/addon/upstream versions, missing-input rows and invalid button bytes are rejected.
+A failed import keeps the previous recording. Engine versions may differ; available
+recorded checksums still must match. Checksums are not an authenticity guarantee.
+For other games, use `FortressReplay.decode()` and `FortressReplayPlayer` with your
+own initial state; see [replays](integration.md#record-and-replay-a-match).
 
 ## Leave and restart
 

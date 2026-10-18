@@ -132,5 +132,6 @@ def trace_evidence(states, histories, current=110, boundary=False):
                [{'player': player, 'bytes': bytes([histories[player][frame]]).hex(), 'status': 1} for player in range(2)]}
               for frame, state in states.items() if end - 120 < frame <= end]
     return {'schema': 'fortress-canonical-trace-v1', 'seed': '1701', 'application_version': 'fortress-online-integer-v1',
-            'replay_command': '', 'max_frames': 120, 'max_payload_bytes': 18480, 'max_export_bytes': 198752,
+            'replay_command': 'godot --headless --path . --script scripts/diagnose_trace.gd -- fortress-diagnostics.json',
+            'max_frames': 120, 'max_payload_bytes': 18480, 'max_export_bytes': 198752,
             'retained_payload_bytes': len(frames) * 154 - (2 if boundary else 0), 'first_divergence': {}, 'frames': frames}

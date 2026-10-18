@@ -85,6 +85,7 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 	config.replay_max_frames = REPLAY_FRAMES if record_replay else 0
 	if capture_trace:
 		config.diagnostic_trace_frames = 120
+		config.diagnostic_replay_command = "godot --headless --path . --script scripts/diagnose_trace.gd -- fortress-diagnostics.json"
 	config.storage_budget_bytes = config.required_storage_bytes()
 	var handshake: Handshake.Options = Handshake.Options.new()
 	handshake.timeout_us = 30000000

@@ -7,6 +7,9 @@ recheck latched errors after the final event drain and before publishing success
 Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
+Exercise actual UI controls during playback, after failure and at completion.
+Controller-only tests cannot prove that visible status and enabled buttons agree.
+
 Engine doubles expose only public methods; verify the real method list and exported interface.
 Inspect browser constructor options and resulting properties; ignored options can violate channel policy.
 Group dependent browser observers in one init script; separate registration calls do not define execution order.

@@ -11,7 +11,8 @@ from unittest.mock import patch
 import unittest
 
 from browser import webrtc_runner
-from online_example_probe import expected_states, run_online, validate_result as observe_result, validate_replay_download as observe_replay
+from online_example_probe import (expected_states, run_online, validate_result as observe_result,
+                                  validate_replay_download as observe_replay, validate_viewer, validate_diagnostic_playback)
 from online_diagnostics import game_checksum
 from test_online_diagnostics import diagnostic_download, trace_evidence
 from online_install import ROOT, create_project, install_sdk, server_config
@@ -86,6 +87,13 @@ def evidence():
             record['failure_resources'] = copy.deepcopy(record['teardown'])
             record['frozen_frames'] = [{'before': 110, 'after': 110, 'state': 'failed'} for _ in range(2)]
     rounds[0]['replay_download'] = replay_download(histories)
+    initial = {'frame': 0, 'frames': 110, 'playing': False, 'message': 'Ready.', 'state': states[0]}
+    viewer = {key: dict(initial) for key in ('initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed')}
+    viewer['stepped'].update(frame=1, state=states[1])
+    viewer['paused'].update(frame=4, state=states[4])
+    viewer['rejected']['message'] = 'Could not open replay (file code 1).'
+    viewer['completed'].update(frame=110, state=rounds[0]['replay_download']['playback']['canonical'], message='Replay complete.')
+
     rounds[0]['terminal'] = {'state': 'failed', 'message': 'Leave and create a fresh room.', 'frame_before': 110, 'frame_after': 110}
     rounds[2]['socket_loss'] = {'kind': 'signaling-websocket-socket-loss', 'method': 'tls-proxy-destroy-both-pairs',
         'proxy_pairs_before': 2, 'destroyed_pairs': 2, 'proxy_pairs_after': 0, 'open_websockets_before': [1, 1],
@@ -121,10 +129,42 @@ def evidence():
                     'room_id': peer['room_id'], 'frame': 45, 'message': 'fresh game', 'info_id': '1234', 'canonical': states[45]}
         peer['stale_callbacks'] = {'calls': 4, 'kinds': ['protocol_info', 'room_joined', 'lobby_state_changed', 'protocol_error'],
                                    'before': boundary, 'after': copy.deepcopy(boundary)}
-    return {'passed': True, 'corrupt': False, 'browser_instances': 2, 'errors': [], 'teardown': True, 'rounds': rounds}
+    return {'passed': True, 'corrupt': False, 'browser_instances': 2, 'errors': [], 'teardown': True, 'rounds': rounds, 'viewer': viewer}
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
+    def test_diagnostic_playback_requires_all_captured_boundaries(self):
+        trace = evidence()['rounds'][0]['diagnostics'][0]['report']['trace']
+        report = {'code': 16, 'complete': True, 'failure': {},
+                  'validated_states': sum(row['state_available'] for row in trace['frames']),
+                  'advanced_frames': sum(bool(row['inputs']) for row in trace['frames'])}
+        prefix = 'FORTRESS_DIAGNOSTIC_RESULT '
+        line = prefix + json.dumps(report)
+        self.assertEqual(validate_diagnostic_playback(line, trace), report)
+        for field, invalid in [('code', 18), ('complete', False), ('failure', {'frame': 1}),
+                               ('validated_states', 1), ('advanced_frames', 0), ('complete', 1), ('code', 16.0)]:
+            changed = dict(report, **{field: invalid})
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_diagnostic_playback(prefix + json.dumps(changed), trace)
+        for output in ('', line + '\n' + line):
+            with self.assertRaises(ValueError):
+                validate_diagnostic_playback(output, trace)
+
+
+    def test_viewer_receipt_requires_controls_and_original_gameplay(self):
+        original = evidence()
+        replay = original['rounds'][0]['replay_download']
+        validate_viewer(original['viewer'], replay)
+        for label, field, invalid in [('completed', 'state', '00' * 136), ('stepped', 'frame', 0),
+                                      ('paused', 'playing', True), ('restarted', 'frame', 1), ('rejected', 'message', 'Ready.')]:
+            changed = copy.deepcopy(original['viewer'])
+            changed[label][field] = invalid
+            with self.subTest(label=label, field=field), self.assertRaises(ValueError):
+                validate_viewer(changed, replay)
+        with self.assertRaises(ValueError):
+            validate_viewer(None, replay)
+
+
     def test_replay_must_belong_to_the_witnessed_round_and_engine(self):
         for label in ('unrelated recording', 'wrong engine'):
             changed = evidence()

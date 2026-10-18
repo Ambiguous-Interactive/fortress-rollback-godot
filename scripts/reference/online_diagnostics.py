@@ -108,7 +108,8 @@ def validate_trace(trace, current_frame):
               'max_export_bytes', 'retained_payload_bytes', 'first_divergence', 'frames'}
     if (not isinstance(trace, dict) or trace.keys() != fields or trace['schema'] != 'fortress-canonical-trace-v1'
             or trace['seed'] != '1701' or trace['application_version'] != 'fortress-online-integer-v1'
-            or trace['replay_command'] != '' or trace['first_divergence'] != {}):
+            or trace['replay_command'] != 'godot --headless --path . --script scripts/diagnose_trace.gd -- fortress-diagnostics.json'
+            or trace['first_divergence'] != {}):
         raise ValueError('online trace schema or metadata differs')
     for field, expected in [('max_frames', 120), ('max_payload_bytes', 18480), ('max_export_bytes', 198752)]:
         integer(trace[field], expected, expected)

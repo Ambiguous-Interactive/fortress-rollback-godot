@@ -216,6 +216,8 @@ A failed snapshot write stops with `SNAPSHOT_FAILED`, even if the callback retur
 Pass `0` to play inputs without checking. The file stores inputs, not game rules.
 Check `game_version()` and `game_seed()` before playing, and set up the game to match.
 
+For downloaded online example recordings, use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.
+
 ### Replay file format
 
 Version 2 is little-endian with fixed-width fields. `decode` checks every count and length against

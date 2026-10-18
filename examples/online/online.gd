@@ -17,6 +17,7 @@ var leave_button: Button
 var diagnostics_button: Button
 var trace_checkbox: CheckBox
 var replay_checkbox: CheckBox
+var watch_button: Button
 var replay_button: Button
 var _replay_notice: String = ""
 var _status: Label
@@ -50,6 +51,7 @@ func _ready() -> void:
 	replay_checkbox.text = "Record replay: first 10 minutes (choose before Ready)"
 	replay_row.add_child(replay_checkbox)
 	replay_button = _button(replay_row, "Download replay", _export_replay)
+	watch_button = _button(replay_row, "Watch replay", _watch_replay)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -114,6 +116,10 @@ func _button(parent: Node, caption: String, callback: Callable) -> Button:
 	return button
 
 
+func _watch_replay() -> void:
+	get_tree().change_scene_to_file("res://examples/online/replay.tscn")
+
+
 func _create() -> void:
 	controller.connect_room(endpoint.text.strip_edges(), player_name.text, "", Time.get_ticks_usec())
 	_update_status()
@@ -151,6 +157,7 @@ func _leave() -> void:
 
 func _update_status() -> void:
 	var connected: bool = controller.client != null
+	watch_button.disabled = connected
 	create_button.disabled = connected
 	join_button.disabled = connected
 	leave_button.disabled = not connected
