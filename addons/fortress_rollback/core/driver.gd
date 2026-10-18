@@ -47,6 +47,8 @@ class StepResult:
 var _session: Session
 var _game: RefCounted
 var _is_stepping: bool = false
+# Config validates at most eight player slots; indices borrow only this step's input list.
+var _sample_indices: PackedInt64Array = PackedInt64Array([-1, -1, -1, -1, -1, -1, -1, -1])
 
 
 func _init(session: Session = null, game: RefCounted = null) -> void:
@@ -79,9 +81,20 @@ func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
 	var code: int = _session.poll(now_us).code
 	if code != Types.Code.OK:
 		return _finish(code, before)
-	for sample: LocalInput in local_inputs:
+	# Reject malformed lists before any valid prefix becomes a retained stalled sample.
+	_sample_indices.fill(-1)
+	for index: int in range(local_inputs.size()):
+		var sample: LocalInput = local_inputs[index]
 		if sample == null:
 			return _finish(Types.Code.INVALID_CONFIGURATION, before)
+		code = _session.validate_local_input(sample.player, sample.sample_frame, sample.bytes)
+		if code != Types.Code.OK:
+			return _finish(code, before)
+		var prior_index: int = _sample_indices[sample.player]
+		if prior_index != -1 and local_inputs[prior_index].bytes != sample.bytes:
+			return _finish(Types.Code.INPUT_ALREADY_SUBMITTED, before)
+		_sample_indices[sample.player] = index
+	for sample: LocalInput in local_inputs:
 		code = _session.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code
 		if code != Types.Code.OK:
 			return _finish(code, before)

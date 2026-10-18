@@ -1,9 +1,10 @@
 class_name FortressSpectatorDemo
 extends RefCounted
 
-## Local host and delayed viewer. Transport is injected in this process, without a spectator network protocol.
+## Local host and delayed viewer exchange bounded spectator bytes in the same process.
 const Host = preload("res://examples/integration/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
+const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
 const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
@@ -11,6 +12,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const SEND_BUDGET: int = 16
 
 var host: Host
+var stream: Stream
 var viewer: Spectator
 var game: Game
 var driver: Driver
@@ -33,10 +35,14 @@ func start() -> int:
 	config.history_slots = 1
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
 	config.storage_budget_bytes = config.required_storage_bytes()
-	viewer = Spectator.new()
-	code = viewer.configure(config)
+	stream = Stream.new()
+	# A local fixture identity; network integrations supply a fresh agreed lifetime.
+	var identity: PackedByteArray = PackedByteArray()
+	identity.resize(32)
+	code = stream.configure(config, identity, 0, 10000000, 256)
 	if code != Types.Code.OK:
 		return code
+	viewer = stream.playback_session()
 	code = viewer.set_playback(12, 4, 4)
 	if code != Types.Code.OK:
 		return code
@@ -59,6 +65,9 @@ func tick(buttons: int) -> int:
 		return code
 	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 		return code
+	viewer_code = stream.poll(host.tick_count * Host.TICK_US)
+	if viewer_code != Types.Code.OK:
+		return code
 	var status: Types.Status = host.loop.session.status()
 	var last: int = mini(status.confirmed_frame, status.current_frame - 1)
 	for _work: int in range(SEND_BUDGET):
@@ -70,7 +79,7 @@ func tick(buttons: int) -> int:
 			viewer.terminate(viewer_code)
 			return code
 		var row: Array[PackedByteArray] = [inputs.read(0).bytes, inputs.read(1).bytes]
-		viewer_code = viewer.receive_host_frame(next_host_frame, row).code
+		viewer_code = stream.receive_packet(stream.encode_row(next_host_frame, row), host.tick_count * Host.TICK_US)
 		if viewer_code != Types.Code.OK:
 			break
 		next_host_frame += 1

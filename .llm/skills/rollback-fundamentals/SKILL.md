@@ -94,7 +94,11 @@ The [audited queue contract](../../../docs/input-queue.md) separates raw queue
 observations from session guarantees. `confirmed_input` checks a physical frame
 tag even after logical discard; session recovery must check retained history.
 Raw duplicate submission is rejected; stalled-sample idempotence belongs to the
-session. Prediction uses a frozen per-player episode, not global confirmation.
+session. Validate every local sample's metadata and list conflicts before retaining
+any valid prefix; rejection must leave corrected same-frame retries usable. Use
+bounded player-slot lookup for duplicate checks, rather than pairwise list scans.
+Queue-capacity failure remains a separate atomicity boundary.
+Prediction uses a frozen per-player episode, not global confirmation.
 Applied input statuses describe execution time: a matching late actual input can
 confirm history without replaying it, so retained trace rows may still say predicted.
 Validate their bytes against original inputs below the corrected confirmation boundary.

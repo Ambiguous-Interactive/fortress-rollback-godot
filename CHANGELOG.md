@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add bounded replay checkpoints for faster repeated navigation. The replay viewer restores previously validated boundaries and checks the remaining inputs.
+
+- Add versioned spectator byte delivery with lifetime checks, bounded reordered rows, clean endings and injected-clock host expiry. Games supply authenticated transport.
+
 - Add confirmed-input spectator playback and a playable delayed-view example. Pause and catch up the viewer while the host continues. Live spectator networking remains planned.
 
 - Compare sequential replay playback with actual pinned upstream sessions and independent canonical state histories on both engine pins.
@@ -65,6 +69,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix corrected driver retries after malformed multi-player input lists. Invalid sample metadata is rejected before any earlier sample is retained.
 
 - Stop matches explicitly when game callbacks return invalid values. Drivers release request views and notify peer closure instead of leaving the match stalled.
 

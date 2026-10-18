@@ -83,7 +83,7 @@ class Game:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure", "notifications"])
+	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure", "notifications", "input_validation"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -102,6 +102,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_terminate_reconfigure(context)
 		"notifications":
 			_notifications(context)
+		"input_validation":
+			_input_validation(context)
 	context.finish()
 
 
@@ -329,3 +331,55 @@ func _notifications(context: RefCounted) -> void:
 	context.equal(busy_driver.step(0, _samples(0)).code, Types.Code.BUSY, "external batch rejects driver")
 	context.equal(busy_notices.size(), 0, "no completion for someone else's batch")
 	busy_session.terminate()
+
+
+# Value: protects=rejected driver sample lists permit corrected retries; fails_when=valid prefix commits before invalid tail; why_new=validation covers one sample only; seam=none
+func _input_validation(context: RefCounted) -> void:
+	var malformed: Array[Driver.LocalInput] = [
+		null,
+		Driver.LocalInput.new(2, 0, PackedByteArray([1])),
+		Driver.LocalInput.new(1, 1, PackedByteArray([1])),
+		Driver.LocalInput.new(1, 0, PackedByteArray([1, 2])),
+		Driver.LocalInput.new(0, 0, PackedByteArray([2])),
+	]
+	var codes: PackedInt32Array = PackedInt32Array([
+		Types.Code.INVALID_CONFIGURATION, Types.Code.INVALID_PLAYER, Types.Code.INVALID_FRAME,
+		Types.Code.INPUT_WIDTH, Types.Code.INPUT_ALREADY_SUBMITTED,
+	])
+	for index: int in range(malformed.size()):
+		var session: RefCounted = _session()
+		var game: Game = Game.new()
+		var driver: RefCounted = Driver.new(session, game)
+		var rejected: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, 0, PackedByteArray([1])), malformed[index]]
+		context.equal(driver.step(0, rejected).code, codes[index], "invalid tail rejected")
+		context.equal(session.scheduled_local_input(0).code, Types.Code.MISSING_LOCAL_INPUT, "rejected prefix was not retained")
+		context.equal(session.received_frames(), PackedInt64Array([-1, -1]), "rejected list leaves receipt bank unchanged")
+		context.equal(game.trace.size(), 0, "invalid list never invokes game")
+		var repaired: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, 0, PackedByteArray([3])), Driver.LocalInput.new(1, 0, PackedByteArray([4]))]
+		context.equal(driver.step(0, repaired).code, Types.Code.OK, "corrected retry accepts fresh sample")
+		context.equal(game.value, 13, "simulation uses corrected samples")
+	var session: RefCounted = _session()
+	var game: Game = Game.new()
+	var driver: RefCounted = Driver.new(session, game)
+	context.equal(session.submit_local_input(0, 0, PackedByteArray([2])).code, Types.Code.OK, "expert retained sample")
+	context.equal(session.submit_local_input(0, 0, PackedByteArray([3])).value, -1, "conflicting expert retry keeps rejected scheduled-frame sentinel")
+	var conflicting: Array[Driver.LocalInput] = [Driver.LocalInput.new(1, 0, PackedByteArray([1])), Driver.LocalInput.new(0, 0, PackedByteArray([3]))]
+	context.equal(driver.step(0, conflicting).code, Types.Code.INPUT_ALREADY_SUBMITTED, "conflict with retained expert sample")
+	context.equal(session.scheduled_local_input(1).code, Types.Code.MISSING_LOCAL_INPUT, "conflict rejects valid prefix")
+	context.bytes_equal(session.scheduled_local_input(0).bytes, PackedByteArray([2]), 0, "expert sample preserved")
+	var repeated: Array[Driver.LocalInput] = [
+		Driver.LocalInput.new(0, 0, PackedByteArray([2])), Driver.LocalInput.new(0, 0, PackedByteArray([2])),
+		Driver.LocalInput.new(1, 0, PackedByteArray([4])),
+	]
+	context.equal(driver.step(0, repeated).code, Types.Code.OK, "identical duplicates and expert sample remain idempotent")
+	context.equal(game.value, 10, "accepted list uses retained sample")
+
+	# Duplicate list length must not change acceptance or prevent servicing a complete input frame.
+	var many: Array[Driver.LocalInput] = []
+	var duplicate: Driver.LocalInput = Driver.LocalInput.new(0, 1, PackedByteArray([2]))
+	for index: int in range(10000):
+		many.append(duplicate)
+	many.append(Driver.LocalInput.new(1, 1, PackedByteArray([4])))
+	context.equal(driver.step(1, many).code, Types.Code.OK, "large identical duplicate list accepted")
+	context.equal(session.status().current_frame, 2, "large list advances only one frame")
+	context.equal(game.value, 104, "large list applies each player's input once")

@@ -8,9 +8,20 @@ extends RefCounted
 
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 
+class Checkpoint:
+	extends RefCounted
+	var frame: int
+	var bytes: PackedByteArray
+	var checksum: PackedByteArray
+
+
+var _checkpoint_interval: int = 0
+var _checkpoint_capacity: int = 0
+var _checkpoints: Array[Checkpoint] = []
 var _replay: Replay
 var _game: RefCounted
 var _max_snapshot_bytes: int = 0
@@ -22,7 +33,10 @@ var _is_stepping: bool = false
 
 ## A positive max_snapshot_bytes saves each recorded-checksum frame and stops at the first mismatch.
 ## Zero plays inputs only. The game needs simulate_frame, plus save_state when validating.
-func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0) -> int:
+## Optional checkpoints also require load_state; interval and capacity must both be positive.
+## Capacity includes the initial state, ranges from 2 to 1024, and retains at most 16 MiB.
+## Cached boundaries save state even without a recorded checksum; configure clears the cache.
+func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, checkpoint_interval: int = 0, checkpoint_capacity: int = 0) -> int:
 	if _is_stepping:
 		return Types.Code.BUSY
 	if replay == null or game == null or not game.has_method("simulate_frame") or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
@@ -31,6 +45,17 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0) ->
 		return Types.Code.INVALID_CONFIGURATION
 	if max_snapshot_bytes > 0 and not game.has_method("save_state"):
 		return Types.Code.INVALID_CONFIGURATION
+	if checkpoint_interval < 0 or checkpoint_capacity < 0 or checkpoint_capacity > 1024:
+		return Types.Code.INVALID_CONFIGURATION
+	if (checkpoint_interval == 0) != (checkpoint_capacity == 0):
+		return Types.Code.INVALID_CONFIGURATION
+	if checkpoint_capacity > 0 and (max_snapshot_bytes == 0 or checkpoint_capacity < 2 or not game.has_method("load_state")):
+		return Types.Code.INVALID_CONFIGURATION
+	if checkpoint_capacity * max_snapshot_bytes > 16777216:
+		return Types.Code.INVALID_CONFIGURATION
+	_checkpoint_interval = checkpoint_interval
+	_checkpoint_capacity = checkpoint_capacity
+	_checkpoints.clear()
 	_replay = replay.owned_copy()
 	_game = game
 	_max_snapshot_bytes = max_snapshot_bytes
@@ -64,21 +89,91 @@ func step() -> int:
 
 func _play_frame() -> int:
 	var expected: PackedByteArray = _replay.checksum(_frame)
-	if _max_snapshot_bytes > 0 and not expected.is_empty():
-		var writer: Writer = Writer.new(_max_snapshot_bytes)
-		var saved: Variant = _game.save_state(_frame, writer)
-		var snapshot_code: int = writer.status()
-		writer._expire()
-		if not (saved is Driver.SaveResult) or not saved.ok:
-			return Types.Code.CALLBACK_FAILED
-		if snapshot_code != Writer.Code.OK:
-			return Types.Code.SNAPSHOT_FAILED
-		if saved.checksum != expected:
+	var cache: bool = _checkpoint_interval > 0 and _frame % _checkpoint_interval == 0
+	if _max_snapshot_bytes > 0 and (not expected.is_empty() or cache):
+		var checkpoint: Checkpoint = Checkpoint.new()
+		var code: int = _save_checkpoint(checkpoint)
+		if code != Types.Code.OK:
+			return code
+		if not expected.is_empty() and checkpoint.checksum != expected:
 			return Types.Code.DESYNC
+		if cache:
+			_retain_checkpoint(checkpoint)
 	var inputs: Types.FrameInputs = _replay.inputs(_frame)
 	var ok: Variant = _game.simulate_frame(_frame, inputs)
 	inputs._expire()
 	return Types.Code.OK if (ok is bool) and ok else Types.Code.CALLBACK_FAILED
+
+
+func _save_checkpoint(checkpoint: Checkpoint) -> int:
+	var writer: Writer = Writer.new(_max_snapshot_bytes)
+	var saved: Variant = _game.save_state(_frame, writer)
+	var snapshot_code: int = writer.status()
+	checkpoint.bytes = writer._written_copy()
+	writer._expire()
+	if not (saved is Driver.SaveResult) or not saved.ok:
+		return Types.Code.CALLBACK_FAILED
+	if snapshot_code != Writer.Code.OK:
+		return Types.Code.SNAPSHOT_FAILED
+	if saved.checksum.size() != Replay.CHECKSUM_BYTES:
+		return Types.Code.DESYNC
+	checkpoint.frame = _frame
+	checkpoint.checksum = saved.checksum.duplicate()
+	return Types.Code.OK
+
+
+func _retain_checkpoint(checkpoint: Checkpoint) -> void:
+	for retained: Checkpoint in _checkpoints:
+		if retained.frame == checkpoint.frame:
+			return
+	# Preserve the initial state while evicting the oldest noninitial checkpoint.
+	if _checkpoints.size() >= _checkpoint_capacity:
+		_checkpoints.remove_at(1)
+	_checkpoints.append(checkpoint)
+	_checkpoints.sort_custom(func(first: Checkpoint, second: Checkpoint) -> bool: return first.frame < second.frame)
+
+
+## Restore the nearest cached boundary at or before target, then call step to reach it.
+## Only checkpoints validated by this player are eligible. Cache bytes are bounded by configure.
+## A target ahead of the current state never moves backward. Failures stop playback.
+func restore_before(target: int) -> int:
+	if _is_stepping:
+		return Types.Code.BUSY
+	if _replay == null:
+		return Types.Code.NOT_CONFIGURED
+	if target < 0 or target > _replay.frame_count():
+		return Types.Code.INVALID_FRAME
+	if _reason != Types.Code.OK:
+		return _reason
+	var selected: Checkpoint
+	for checkpoint: Checkpoint in _checkpoints:
+		if checkpoint.frame <= target:
+			selected = checkpoint
+	if selected == null:
+		return Types.Code.HISTORY_UNAVAILABLE
+	if target >= _frame and selected.frame <= _frame:
+		return Types.Code.OK
+	_is_stepping = true
+	var reader: Reader = Reader.new(selected.bytes, true)
+	var loaded: Variant = _game.load_state(selected.frame, reader)
+	var complete: bool = reader.is_complete()
+	reader._expire()
+	var code: int = Types.Code.OK
+	if not (loaded is bool) or not loaded:
+		code = Types.Code.CALLBACK_FAILED
+	elif not complete:
+		code = Types.Code.SNAPSHOT_FAILED
+	else:
+		_frame = selected.frame
+		var restored: Checkpoint = Checkpoint.new()
+		code = _save_checkpoint(restored)
+		if code == Types.Code.OK and (restored.bytes != selected.bytes or restored.checksum != selected.checksum):
+			code = Types.Code.DESYNC
+	_is_stepping = false
+	if code != Types.Code.OK:
+		_reason = code
+		_failure_frame = selected.frame
+	return code
 
 
 ## The next frame to simulate.
