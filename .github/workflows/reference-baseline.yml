@@ -146,7 +146,7 @@ jobs:
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
-        run: python3 scripts/reference/godot_smoke.py --web
+        run: python3 scripts/reference/godot_smoke.py --web --version "${{ matrix.version }}"
       - name: Verify runner failure controls and fresh-process suites
         if: matrix.part == 'suites'
         run: |
@@ -265,5 +265,9 @@ jobs:
         if: always()
         with:
           name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}
-          path: .cache/reference/results/
+          # The build receipt keeps the server binary's digest and build log; the cargo output is not evidence.
+          path: |
+            .cache/reference/results/
+            !.cache/reference/results/signalfish-server-build/target/
+            !.cache/reference/results/signalfish-server-build/cargo-cache/
           if-no-files-found: error
