@@ -52,8 +52,17 @@ build time by design. Downloads come from official endpoints over TLS;
 checksums are not pinned for the latest-tracking tools.
 
 "Latest at build" means *newest when that image layer was built* — Docker
-caches the layer, so a plain rebuild will not fetch a newer CLI. To pull the
-current release of Codex / OpenCode, rebuild without the build cache:
+caches the layer, so a plain rebuild will not fetch a newer CLI.
+
+Because the global npm root is writable by the container user, updating in
+place is the fast path and needs no rebuild:
+
+```sh
+npm install -g @openai/codex@latest        # also @opencode/cli, @anthropic-ai/claude-code
+npm ls -g --depth=0                        # confirm what is installed
+```
+
+A cache-free rebuild still exists, and is what CI exercises:
 
 ```sh
 npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-container --build-no-cache
@@ -62,7 +71,62 @@ npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-containe
 This does **not** refresh Claude Code: it arrives via a devcontainer feature
 locked to a digest in `devcontainer-lock.json` (and CI builds with
 `--frozen-lockfile`). To move it, delete its entry from the lock file (or run
-`up` without `--frozen-lockfile`), then rebuild.
+`up` without `--frozen-lockfile`), then rebuild. `npm install -g
+@anthropic-ai/claude-code@latest` does update it in place, overriding the
+feature's digest until the next rebuild.
+
+### npm global permissions
+
+The Dockerfile installs every CLI from npm's global prefix (`/usr/local`) as
+root, which leaves `/usr/local/lib/node_modules` and `/usr/local/bin` owned by
+`root`. The container then runs as `vscode`, and on Unix replacing or removing a
+file requires write permission on its **parent** directory — so
+`npm install -g`, `npm update -g` and `npm uninstall -g` all failed with
+`EACCES` (`mkdir` for a new package, `rename` for an update or a removal) while
+read-only npm commands kept working and hid the breakage. `npm doctor` does not
+catch this: it reports group/world-writable directories, never "not writable by
+me".
+
+`npm-global-perms.sh` keeps the single global root (so `npm root -g`, `PATH`
+and every existing binary are unchanged) and adds group write plus setgid for
+`vscode`'s own primary group. This grants no new privilege — `vscode` already
+has passwordless sudo. It is idempotent, fails closed, and verifies as `vscode`
+rather than as root. It does not change the ownership of existing entries, so
+they stay `root`; a package the user installs afterwards is owned by `vscode`.
+It applies group write recursively under `lib/node_modules`, where npm extracts
+and empties package trees, but only to the `bin` **directory**, because npm
+only creates and unlinks symlinks there — so unrelated binaries such as the
+pinned Godot engine keep their original permissions.
+
+It runs twice, and both steps are required. The Dockerfile step covers the
+CLIs the image installs. Devcontainer features are appended as layers *after*
+the Dockerfile, and the claude-code feature installs a global npm package as
+root, which would land root-owned again — so `post-create.sh` re-applies the
+repair once features have run. Without that second step every rebuild
+reintroduces `EACCES` for `@anthropic-ai/claude-code` while leaving the
+Dockerfile-installed CLIs working, which is a confusing half-broken state.
+
+`verify.sh` checks the contract two ways: it requires every directory under the
+global root to be writable by the current user, and it installs, **replaces**
+and removes a synthetic package offline. The replace step matters — a probe
+that only creates a new package passes even when the packages the features
+installed are still locked. The check also refuses to run as root, because root
+can always write and would report a false pass.
+
+If the state is ever lost, re-apply it with:
+
+```sh
+sudo .devcontainer/npm-global-perms.sh
+```
+
+Do **not** install global packages with `sudo npm install -g`. Root creates
+directories with its own umask, so they come out group-readable but not
+group-writable (`2755`), even inside a setgid parent. The package can then no
+longer be updated or removed without sudo: `npm uninstall -g` either fails with
+`ENOTEMPTY` (packages with dependencies) or appears to succeed while leaving an
+undeletable `.pkg-XXXX` tree behind. Plain `npm install -g` is the supported
+path; if sudo was used anyway, run the repair command above. `verify.sh`
+detects the regression, names the offending directory and states the repair.
 
 Codex and OpenCode are installed from **npm global** packages. `verify.sh`
 checks the Codex package layout and the OpenCode major version. OpenCode v2
@@ -236,9 +300,10 @@ are neutralized inside the script. It is **off by default**. To enable:
 | Bump uv | `UV_VERSION` arg in `Dockerfile` |
 | Bump gdtoolkit | `GDTOOLKIT_VERSION` in `post-create.sh` (env-overridable) |
 | Bump godot-mcp | pinned npm install in `Dockerfile` |
-| Refresh Codex / OpenCode | nothing to edit — they track latest; rebuild with `--build-no-cache` (see Version policy) |
+| Refresh Codex / OpenCode | nothing to edit — they track latest; `npm install -g <pkg>@latest` in place, or rebuild with `--build-no-cache` (see Version policy) |
 | Refresh Claude Code | it is digest-pinned in `devcontainer-lock.json`; drop that entry and rebuild — `--build-no-cache` does not affect it |
 | Change CLI publication budget | `--timeout`, `--attempts`, and `--interval` on the installer calls in `Dockerfile` |
+| Change who may run `npm i -g` | `npm-global-perms.sh` (target user argument); it must stay the last image step that touches the global npm root |
 | Add a VS Code extension | `customizations.vscode.extensions` |
 | Add an MCP server | both `.mcp.json` and `opencode.json` |
 
