@@ -8,7 +8,7 @@ import struct
 import sys
 import zipfile
 
-from online_diagnostics import validate_download, validate_trace_history
+from online_diagnostics import validate_download, validate_trace_history, game_checksum
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
@@ -43,6 +43,67 @@ def expected_states(histories, count):
                 pending_color[player], pending[player] = (rng >> 16) % 4, frame + 3
         frame += 1
     return states
+
+
+def validate_replay_download(value, expected_engine, round_record):
+    if (not isinstance(value, dict) or value.get('filename') != 'fortress-online.frrp' or value.get('disabled_peer') is not True
+            or not isinstance(value.get('hex'), str) or not re.fullmatch(r'(?:[0-9a-f]{2}){23,8192}', value['hex'])):
+        raise ValueError('online replay download missing or unbounded')
+    before, after = value.get('before'), value.get('after')
+    if (not isinstance(before, dict) or not isinstance(after, dict) or before != after or before.get('state') != 'failed'
+            or any(type(boundary.get(key)) is not int for boundary in (before, after) for key in ('frame', 'restores'))
+            or not 100 <= before['frame'] <= 256 or before['restores'] < 1):
+        raise ValueError('online replay download advanced a stopped match')
+    raw = bytes.fromhex(value['hex'])
+    version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
+    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (2, 2, 1, 0, 2, 8, 0)
+            or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
+        raise ValueError('online replay configuration differs from the played match')
+    cursor, texts = 24, []
+    for _ in range(5):
+        size = raw[cursor] if cursor < len(raw) else 129
+        field = raw[cursor + 1:cursor + 1 + size]
+        if size > 128 or len(field) != size or any(byte < 0x20 or byte > 0x7e for byte in field):
+            raise ValueError('online replay metadata malformed')
+        texts.append(field.decode('ascii'))
+        cursor += 1 + size
+    if (not isinstance(expected_engine, str) or not expected_engine or texts[0] != expected_engine or texts[1:] != ['0.1.0',
+            'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8', '1701', 'fortress-online-integer-v1']):
+        raise ValueError('online replay lost its engine or game metadata')
+    peers = value.get('peers')
+    if (not isinstance(peers, list) or len(peers) != 2 or any(not isinstance(peer, dict) or type(peer.get('slot')) is not int for peer in peers)
+            or sorted(peer['slot'] for peer in peers) != [0, 1]):
+        raise ValueError('online replay original input identities missing')
+    histories = [peer.get('inputs') for peer in sorted(peers, key=lambda peer: peer['slot'])]
+    if any(not isinstance(history, list) or not frames <= len(history) <= 256
+           or any(type(button) is not int or not 0 <= button <= 15 for button in history) for history in histories):
+        raise ValueError('online replay original input histories incomplete')
+    original = [peer['inputs'] for peer in sorted(round_record['peers'], key=lambda peer: peer['slot'])]
+    stopped = round_record['terminal']['frame_after']
+    retained = round_record['diagnostics'][1]['before']
+    if histories != original or before['frame'] != stopped or before['frame'] != retained['frame'] or before['restores'] != retained['restores']:
+        raise ValueError('online replay does not belong to the witnessed round')
+    states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
+    checksums = 0
+    for frame in range(frames):
+        if cursor + 3 > len(raw) or raw[cursor:cursor + 2] != bytes(history[frame] for history in histories):
+            raise ValueError('online replay differs from original submitted input')
+        flag = raw[cursor + 2]
+        cursor += 3
+        if flag not in (0, 1):
+            raise ValueError('online replay contains skipped or malformed frames')
+        if flag == 1:
+            if raw[cursor:cursor + 16].hex() != game_checksum(states[frame]):
+                raise ValueError('online replay checksum differs from canonical history')
+            checksums += 1
+            cursor += 16
+    if cursor != len(raw) or checksums == 0:
+        raise ValueError('online replay missing checksum evidence or has trailing bytes')
+    playback = value.get('playback')
+    if (not isinstance(playback, dict) or any(type(playback.get(key)) is not int for key in ('decode_code', 'code', 'frames', 'failure_frame'))
+            or playback != {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}):
+        raise ValueError('downloaded replay did not play back to its independent canonical state')
+    return frames
 
 
 def validate_suspension(record, expired):
@@ -215,7 +276,7 @@ def validate_stale_callbacks(peer):
 
 
 
-def validate_result(value, corrupt=False):
+def validate_result(value, corrupt=False, expected_engine=None):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
         raise ValueError('online example browser flow failed')
@@ -346,6 +407,7 @@ def validate_result(value, corrupt=False):
         if expected != state:
             raise ValueError(f'online example canonical prefix mismatch at frame {frame}')
     if not corrupt:
+        validate_replay_download(rounds[0].get('replay_download'), expected_engine, rounds[0])
         histories = [peer['inputs'] for peer in rounds[0]['peers']]
         expected = expected_states(histories, min(map(len, histories)))
         validate_trace_history(rounds[0]['diagnostics'][0]['report'], expected, histories)
@@ -422,7 +484,10 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     browser = [str(sources['node']), str(sources['online_browser']), str(export), f'ws://127.0.0.1:{port}/v3/ws']
     clean_command = browser + ['clean', str(output / f'{version}-online-events.log')]
     offset = len(server.events)
-    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=5)))
+    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=5)),
+                             expected_engine=no_sdk['engine_identity'])
+    if (output / f'{version}-online-replay.frrp').read_bytes().hex() != result['rounds'][0]['replay_download']['hex']:
+        raise ValueError('saved replay artifact differs from the downloaded bytes')
     restart = result['rounds'][3]['server_restart']
     if server.events[offset:] != [restart['stopped'], restart['started']]:
         raise ValueError('browser process evidence disagrees with owned handles')
@@ -430,7 +495,7 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     control_command = browser + ['corrupt', str(output / f'{version}-online-corrupt-events.log')]
     control = json.loads(run_browser(control_command, environment, output / f'{version}-online-corrupt.log', rooms=1))
     try:
-        validate_result(control, corrupt=True)
+        validate_result(control, corrupt=True, expected_engine=no_sdk['engine_identity'])
     except ValueError as error:
         if not str(error).startswith('online example canonical prefix mismatch at frame '):
             raise

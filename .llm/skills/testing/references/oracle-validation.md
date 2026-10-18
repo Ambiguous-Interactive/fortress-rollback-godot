@@ -1,0 +1,54 @@
+# Oracle and Mutation Evidence
+
+Use for differential traces, schemas, projections and negative controls.
+Validate the instrument with a single-variable green control before trusting its red;
+see the [regression triple proof](../SKILL.md#regression-triple-proof).
+
+Validate embedded scenarios/results independently before comparing their identity
+to submitted artifacts. Python equality treats booleans, integral floats and
+integers as equal; it is not schema validation. Standalone executables also need
+their own complete schema and nonempty-work boundary.
+Preserve decoded wire fields instead of substituting scenario expectations.
+Mutate actual encoded bytes before observation to test the observer itself.
+Validate nullable fields before normalization; false and empty strings cannot
+silently become the same observation. Test omitted and explicit-null optional
+objects separately through every standalone executable. Require field presence
+when explicit null is part of the observed contract; parser defaults can alias
+them before shared validation runs. Constrain omitted setup records to their
+exact allowed position. Formal projection must account for the observed initial
+state and every supported post-state, not just action names and final success.
+
+Compare intermediate canonical prefixes against original submitted histories.
+A final checksum or accumulator sum can match after reordered inputs; replaying
+an oracle's own requests can preserve the same mistake. Keep a temporal mutation
+that retains the final state while violating an intermediate frame.
+
+Validate original numeric tokens when parsing erases integer versus float syntax.
+
+Godot JSON parsers expose numeric fields as floats. After validating integrality
+and bounds, reconstruct scenario records with explicit integers before emitting
+a strict cross-language trace. Godot 4.3 and 4.7.2 stringify integral floats
+differently; never weaken the Python integer schema to compensate. The production
+session oracle's canonical scenario conversion protects this boundary.
+
+Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
+Declare expected diagnostics independently; learning them from the validator makes rejection circular.
+For idempotent input delivery, state equality can hide duplicate work. Also assert
+exact queue occupancy, due-frame timing and once-per-frame sampling with a resampling mutant.
+Select mutated records by semantic kind. Require scenario-specific nonzero
+observations and an expected control inventory before publishing success. A
+shortened corpus that never reaches its named event must fail those gates.
+For snapshot-omission controls, derive localization from the first serialized
+consumer of the missing field. A mutant that omits a field from every snapshot
+can hide its immediate difference until a later scheduled event exposes it.
+
+Before projecting intentional source/product differences, validate the excluded
+inventory's exact peer membership, payload, count, order and allowed position.
+Keep controls for invented local-peer events and duplicate notification suffixes.
+Terminal freeze witnesses read the actual retained simulation frame after teardown,
+require the completed frontier, and reject zero display defaults or later advancement.
+Their mutants preserve earlier frame/state checks to reach the terminal boundary.
+For deliberate gameplay divergence, retain valid serialized-state bounds. Drive
+the game to domain edges and force rollback after divergence; require a genuine
+checksum mismatch rather than accepting an unrelated callback failure.
+A corruption control may desync before capture; require its typed cause and independently verified altered bytes.

@@ -12,15 +12,16 @@ class Client:
 	signal room_joined(info: RefCounted)
 	signal lobby_state_changed(value: int, players: PackedStringArray, ready: bool)
 	signal protocol_error(reason: String)
-	signal connection_failed()
+	signal connection_failed
 	signal authentication_error(reason: String)
 	signal room_join_failed(code: int, reason: String)
 	signal server_error(code: int, reason: String, extra: String)
-	signal reconnection_failed()
+	signal reconnection_failed
 	signal disconnected(code: int, reason: String)
-	signal going_away()
-	signal room_left()
-	signal reconnected()
+	signal going_away
+	signal room_left
+	signal reconnected
+
 	func close(_code: int, _reason: String) -> Error:
 		return OK
 
@@ -31,10 +32,14 @@ class Scene:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["stale_callbacks", "current_failure_payloads", "released_owner", "captured_target"])
+	return PackedStringArray(["stale_callbacks", "current_failure_payloads", "released_owner", "captured_target", "terminal_input_capture"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "terminal_input_capture":
+		_terminal_input_capture(context)
+		context.finish()
+		return
 
 	if name == "captured_target":
 		var bridge: Bridge = Bridge.new()
@@ -117,3 +122,31 @@ func run_case(name: String, context: RefCounted) -> void:
 			context.equal(lobby.state, "failed", "current SDK failure preserves arity %d" % count)
 			lobby.disconnect_room()
 	context.finish()
+
+
+# Value: protects=last sender input survives shutdown before render capture; fails_when=observer requires a live transport; seam=actual observer boundary.
+func _terminal_input_capture(context: RefCounted) -> void:
+	var config: Bridge.Session.Config = Bridge.Session.Config.new()
+	config.max_snapshot_bytes = Bridge.Simulation.SNAPSHOT_BYTES
+	config.storage_budget_bytes = config.required_storage_bytes()
+	var core: Bridge.Session = Bridge.Session.new()
+	context.equal(core.configure(config), Bridge.Session.Code.OK, "source session configures")
+	var bridge: Bridge = Bridge.new()
+	bridge.observed = Bridge.ObservedGame.new()
+	var lobby: Bridge.ObservedLobby = Bridge.ObservedLobby.new()
+	lobby.game_match.peer._core = core
+	lobby.game_match.local_slot = 0
+	lobby.game_match.has_started = true
+	var driver: Bridge.Driver = Bridge.Driver.new(core, bridge.observed)
+	for frame: int in 2:
+		var samples: Array[Bridge.Driver.LocalInput] = [
+			Bridge.Driver.LocalInput.new(0, frame, PackedByteArray([frame + 1])), Bridge.Driver.LocalInput.new(1, frame, PackedByteArray([4]))
+		]
+		context.equal(driver.step(frame, samples).code, Bridge.Session.Code.OK, "source submits actual input")
+		if frame == 0:
+			bridge._capture_inputs(lobby)
+	context.equal(bridge.inputs, [1], "first render captures first input only")
+	lobby.game_match.detach()
+	bridge._capture_inputs(lobby)
+	context.equal(bridge.inputs, [1, 2], "shutdown before next render retains the final actual input")
+	bridge.free()

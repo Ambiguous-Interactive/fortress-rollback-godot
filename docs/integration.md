@@ -211,6 +211,8 @@ player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES)
 `step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
 With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
 `DESYNC` means this game build simulates differently from the recording one; playback stops at `failure_frame()`.
+A failed snapshot write stops with `SNAPSHOT_FAILED`, even if the callback returns a matching checksum.
+`CALLBACK_FAILED` means a callback returned failure or an invalid result. These failures also set `failure_frame()`.
 Pass `0` to play inputs without checking. The file stores inputs, not game rules.
 Check `game_version()` and `game_seed()` before playing, and set up the game to match.
 

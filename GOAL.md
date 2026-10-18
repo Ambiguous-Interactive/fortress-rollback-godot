@@ -52,6 +52,7 @@ Target: consensus among all reviewers that the result needs zero revisions.
 ## Progress Tracking
 
 - Log work in `progress/session-NNN-brief-description.md` (literal `progress/` at repo root).
+  This directory is machine-local and git-ignored: never commit it, not even with `git add -f`.
 - Unified formatting; descriptive names for easy discovery.
 - Keep `PLAN.md` current: remove completed or obsolete items after each session.
 

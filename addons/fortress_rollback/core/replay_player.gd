@@ -27,6 +27,8 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0) ->
 		return Types.Code.BUSY
 	if replay == null or game == null or not game.has_method("simulate_frame") or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
+	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count()):
+		return Types.Code.INVALID_CONFIGURATION
 	if max_snapshot_bytes > 0 and not game.has_method("save_state"):
 		return Types.Code.INVALID_CONFIGURATION
 	_replay = replay.owned_copy()
@@ -39,7 +41,7 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0) ->
 
 
 ## OK advanced one frame. FRAME_EXHAUSTED means every frame played. DESYNC and CALLBACK_FAILED stop
-## playback at failure_frame(); configure again to restart.
+## playback at failure_frame(); SNAPSHOT_FAILED stops on invalid snapshot writes. Configure again to restart.
 func step() -> int:
 	if _is_stepping:
 		return Types.Code.BUSY
@@ -65,9 +67,12 @@ func _play_frame() -> int:
 	if _max_snapshot_bytes > 0 and not expected.is_empty():
 		var writer: Writer = Writer.new(_max_snapshot_bytes)
 		var saved: Variant = _game.save_state(_frame, writer)
+		var snapshot_code: int = writer.status()
 		writer._expire()
 		if not (saved is Driver.SaveResult) or not saved.ok:
 			return Types.Code.CALLBACK_FAILED
+		if snapshot_code != Writer.Code.OK:
+			return Types.Code.SNAPSHOT_FAILED
 		if saved.checksum != expected:
 			return Types.Code.DESYNC
 	var inputs: Types.FrameInputs = _replay.inputs(_frame)

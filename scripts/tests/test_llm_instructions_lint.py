@@ -1,5 +1,6 @@
 """Self-tests for the meta-linter: pointers, context, encodings, link integrity."""
 
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -103,6 +104,32 @@ class MetaLintTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertTrue(any("missing.md" in f.message for f in self.errors()))
+
+    def test_machine_local_link_boundary(self):
+        # Value: protects=clean checkout link integrity; fails_when=local logs
+        # are required or sibling/escaping paths bypass validation; seam=none
+        skill = self.root / ".llm" / "skills" / "demo-skill" / "SKILL.md"
+        cases = {
+            "../../../progress/session-001-x.md": False,
+            "../../../progress/nested/session.md#result": False,
+            "../../../progress/../progress/session.md": False,
+            "../../../progress-notes/missing.md": True,
+            "../../../progress/../missing.md": True,
+            "../../progress/session.md": True,
+            "../../../../progress/session.md": True,
+        }
+        for target, broken in cases.items():
+            with self.subTest(target=target):
+                skill.write_text(
+                    "---\nname: demo-skill\ndescription: d\nmetadata:\n"
+                    f"  category: core\n---\n\n[session]({target})\n",
+                    encoding="utf-8",
+                )
+                roots = (self.root, Path(os.path.relpath(self.root)))
+                for root in roots:
+                    with self.subTest(root=root):
+                        findings = lint.check_links(root)
+                        self.assertEqual(bool(findings), broken, findings)
 
     def test_skill_with_invalid_frontmatter_is_error(self):
         skill = self.root / ".llm" / "skills" / "demo-skill" / "SKILL.md"

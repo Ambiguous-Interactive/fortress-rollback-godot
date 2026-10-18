@@ -26,7 +26,8 @@ to the [Agent Skills](https://agentskills.io) `SKILL.md` standard.
    trigger keywords; `metadata.category` in {core, performance, feature}.
 4. **Encoding**: UTF-8, no BOM, LF-only, single trailing newline.
 5. **Link integrity**: every relative markdown link inside `.llm/**` must
-   resolve to a real file.
+   resolve to a real file. Links into root `progress/` are explicitly local-only;
+   they may be absent in a clean checkout. Keep shared evidence in tracked artifacts.
 6. **Pointer delegation**: each pointer file must contain its exact
    delegation link (see `POINTER_FILES` in `scripts/llm/llm_paths.py`).
 

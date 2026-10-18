@@ -131,10 +131,25 @@ mismatch freezes that window; download it before leaving the failed match.
 Review the game bytes before sharing. The checkbox affects only local diagnostics,
 so the other player can keep capture disabled. New rooms use the checkbox's current
 choice when you press Ready. See the [trace contract](peer-lifecycle.md#opt-in-canonical-divergence-evidence)
-for payload bounds and missing-history limits. This example has no standalone replay command.
+for payload bounds and missing-history limits.
 A checksum mismatch includes both checksum hex strings and the first mismatching frame.
-The local canonical window is diagnostic evidence; full gameplay recording and replay
-remain [separate work](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45).
+
+## Record and download a replay
+
+Select **Record replay** before pressing **Ready** to retain the first 36,000 confirmed
+gameplay frames: ten minutes at 60 Hz. Recording defaults off and freezes at Ready.
+It works independently of diagnostic payload capture and includes both players' confirmed
+inputs, available checksums, the fixed game seed and game version. It excludes names,
+room identifiers, SDK configuration and tokens. Review game inputs before sharing.
+
+Press **Download replay** once confirmed gameplay is available. Browsers download
+`fortress-online.frrp`; native runs save `user://fortress-online.frrp`, replacing the
+previous export, and display the full saved path or an error. Export remains available
+after a failed match and after **Leave / new room**. Save it before creating or joining
+the next room, which replaces the old match. At the recording limit,
+gameplay continues while the recorded prefix stops growing; later exports contain that
+same prefix. The example has no playback controls. Load the file through
+`FortressReplay.decode()` and `FortressReplayPlayer`; see [replays](integration.md#record-and-replay-a-match).
 
 ## Leave and restart
 

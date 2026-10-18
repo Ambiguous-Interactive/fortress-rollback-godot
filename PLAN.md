@@ -30,6 +30,7 @@ Local development contracts and evidence entry points:
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback](docs/integration.md#record-and-replay-a-match).
+- [Optional online match recording and replay downloads](docs/online-example.md#record-and-download-a-replay).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).
 - [Playable input-driven shots, confirmation and prediction stalls](docs/integration.md#try-the-effects-example).
@@ -369,6 +370,8 @@ known-allocation positive control; flat memory alone is insufficient.
 
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
+Validated replay playback checks callback success and bounded snapshot status before
+advancing; a matching checksum cannot override a failed snapshot write.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.

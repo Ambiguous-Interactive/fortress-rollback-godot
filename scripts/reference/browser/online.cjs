@@ -127,6 +127,26 @@ async function collectDiagnostics(pages, command) {
   return diagnostics;
 }
 
+async function collectReplay(pages, command, diagnostic) {
+  const page = pages[1];
+  const before = await page.evaluate(() => ({ state: window.fortressOnline.state, frame: window.fortressOnline.frame,
+    restores: window.fortressOnline.restores }));
+  if (before.state !== 'failed') throw new Error('replay download requires a stopped failed match');
+  const disabledPeer = await pages[0].evaluate(() => !window.fortressOnline.replay_enabled);
+  const peers = await Promise.all(pages.map(peer => peer.evaluate(() => ({ slot: window.fortressOnline.slot, inputs: window.fortressOnline.inputs }))));
+  const pending = page.waitForEvent('download', { timeout: 10000 });
+  await command(page, 'replay');
+  const download = await pending;
+  const bytes = fs.readFileSync(await download.path());
+  if (bytes.length > 8192) throw new Error('online witness replay exceeds its short-match byte bound');
+  await download.saveAs(diagnostic.replace('-events.log', '-replay.frrp'));
+  await command(page, 'validate_replay', { hex: bytes.toString('hex') });
+  const after = await page.evaluate(() => ({ state: window.fortressOnline.state, frame: window.fortressOnline.frame,
+    restores: window.fortressOnline.restores }));
+  return { filename: download.suggestedFilename(), hex: bytes.toString('hex'), before, after, disabled_peer: disabledPeer, peers,
+    playback: await page.evaluate(() => window.fortressOnline.replay_playback) };
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -192,7 +212,8 @@ async function main() {
       const room = await pages[0].evaluate(() => window.fortressOnline.room);
       await command(pages[1], 'join', { endpoint: socketEndpoint, name: 'Joiner', room });
       await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.ready_enabled)));
-      await Promise.all(pages.map((page, index) => command(page, 'ready', { capture_trace: !corrupt && round === 0 && index === 0 })));
+      await Promise.all(pages.map((page, index) => command(page, 'ready', {
+        capture_trace: !corrupt && round === 0 && index === 0, record_replay: !corrupt && round === 0 && index === 1 })));
       await wait(pages[0], () => window.fortressOnline.start_enabled);
       await pages[0].keyboard.down('KeyD');
       await pages[1].keyboard.down('KeyW');
@@ -236,6 +257,9 @@ async function main() {
         await pages[1].waitForTimeout(250);
         const after = await pages[1].evaluate(() => ({ state: window.fortressOnline.state, frame_after: window.fortressOnline.frame }));
         rounds[round].terminal = { ...before, ...after };
+        rounds[round].replay_download = await collectReplay(pages, command, diagnostic);
+        for (const original of rounds[round].replay_download.peers)
+          rounds[round].peers.find(peer => peer.slot === original.slot).inputs = original.inputs;
         await command(pages[1], 'leave');
       } else {
         if (!corrupt && round === 1) {

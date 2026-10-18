@@ -9,6 +9,8 @@ const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Lobby = preload("res://examples/online/lobby.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const ReplayPlayer = preload("res://addons/fortress_rollback/core/replay_player.gd")
 
 
 class ObservedLobby:
@@ -27,9 +29,18 @@ class ObservedLobby:
 		var was_playing: bool = state == "playing"
 		super.tick(now_us, buttons)
 		if was_playing and not label.is_empty() and now_us - clock_before > int(resume.get("gap_us", 0)):
-			resume = {"label": label, "host_before_us": clock_before, "host_after_us": now_us, "gap_us": now_us - clock_before,
-				"protocol_before_us": protocol_before, "protocol_after_us": game_match.peer.network_status().last_now_us,
-				"frame_before": before, "frame_after": game_match.peer.status().current_frame, "state": state, "message": message}
+			resume = {
+				"label": label,
+				"host_before_us": clock_before,
+				"host_after_us": now_us,
+				"gap_us": now_us - clock_before,
+				"protocol_before_us": protocol_before,
+				"protocol_after_us": game_match.peer.network_status().last_now_us,
+				"frame_before": before,
+				"frame_after": game_match.peer.status().current_frame,
+				"state": state,
+				"message": message
+			}
 
 
 class ObservedGame:
@@ -60,6 +71,7 @@ var snapshots: Dictionary = {}
 var command_id: int = 0
 var old_callbacks: Array[Dictionary] = []
 var stale_callbacks: Dictionary = {}
+var replay_playback: Dictionary = {}
 
 
 func _ready() -> void:
@@ -72,7 +84,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	# Commands cross the browser bridge as bounded JSON, never as executable snippets.
 	var text: String = JavaScriptBridge.eval("JSON.stringify(window.fortressOnlineCommand || {})")
-	if text.length() <= 4096:
+	if text.length() <= 16384:
 		var value: Variant = JSON.parse_string(text)
 		if value is Dictionary and int(value.get("id", 0)) > command_id:
 			command_id = int(value.id)
@@ -94,24 +106,51 @@ func _process(_delta: float) -> void:
 		current = lobby.game_match.peer.status().current_frame
 		confirmed = lobby.game_match.peer.status().confirmed_frame
 		var core: RefCounted = lobby.game_match.peer._core
-		var receipt: int = core.received_frames()[slot]
-		while inputs.size() <= mini(receipt, 255):
-			var actual: Queue.Result = core._queues[slot].retained_confirmed_input(inputs.size())
-			if actual.code != Queue.Code.OK:
-				break
-			inputs.append(actual.bytes[0])
 		snapshots.merge(confirmed_snapshots(core, observed.saves), true)
-	var result: Dictionary = {"state": lobby.state, "message": lobby.message, "room": lobby.room_code(), "slot": slot, "session_id": session_id,
+	_capture_inputs(lobby)
+	var result: Dictionary = {
+		"state": lobby.state,
+		"message": lobby.message,
+		"room": lobby.room_code(),
+		"slot": slot,
+		"session_id": session_id,
 		"uuid": lobby.game_match.membership.local_uuid() if lobby.has_readied else "",
 		"room_id": lobby.client.call("get_room_id") if lobby.client != null else "",
 		"direct_rejected": lobby.game_match.direct.status().rejected,
-		"pending": lobby.game_match.fallback.status().pending_packets, "relay_pending": lobby.game_match.relay.status().pending_packets,
-		"frame": current, "confirmed": confirmed, "failure": lobby.game_match.failure, "inputs": inputs, "snapshots": snapshots,
+		"pending": lobby.game_match.fallback.status().pending_packets,
+		"relay_pending": lobby.game_match.relay.status().pending_packets,
+		"frame": current,
+		"confirmed": confirmed,
+		"failure": lobby.game_match.failure,
+		"inputs": inputs,
+		"snapshots": snapshots,
 		"terminal_reason": lobby.game_match.peer.status().reason,
-		"restores": observed.restores if observed != null else 0, "all_ready": lobby.all_ready,
-		"ready_enabled": not scene.ready_button.disabled, "start_enabled": not scene.start_button.disabled, "command_id": command_id,
-		"stale_callbacks": stale_callbacks, "resume": lobby.resume, "host_now_us": lobby._last_now, "epoch_us": lobby._epoch}
+		"restores": observed.restores if observed != null else 0,
+		"all_ready": lobby.all_ready,
+		"ready_enabled": not scene.ready_button.disabled,
+		"start_enabled": not scene.start_button.disabled,
+		"command_id": command_id,
+		"replay_enabled": not scene.replay_button.disabled,
+		"replay_playback": replay_playback,
+		"stale_callbacks": stale_callbacks,
+		"resume": lobby.resume,
+		"host_now_us": lobby._last_now,
+		"epoch_us": lobby._epoch
+	}
 	JavaScriptBridge.eval("window.fortressOnline = " + JSON.stringify(result))
+
+
+func _capture_inputs(lobby: ObservedLobby) -> void:
+	var slot: int = lobby.game_match.local_slot
+	var core: Session = lobby.game_match.peer._core
+	if observed == null or core == null or slot < 0:
+		return
+	var receipt: int = core.received_frames()[slot]
+	while inputs.size() <= mini(receipt, 255):
+		var actual: Queue.Result = core._queues[slot].retained_confirmed_input(inputs.size())
+		if actual.code != Queue.Code.OK:
+			break
+		inputs.append(actual.bytes[0])
 
 
 static func confirmed_snapshots(core: Session, saves: Dictionary) -> Dictionary:
@@ -138,12 +177,18 @@ func _command(value: Dictionary) -> void:
 			var button: Button = scene.create_button if value.kind == "create" else scene.join_button
 			if not button.disabled:
 				button.pressed.emit()
+		"replay":
+			if not scene.replay_button.disabled:
+				scene.replay_button.pressed.emit()
+		"validate_replay":
+			replay_playback = _play_replay(str(value.get("hex", "")))
 		"diagnostics":
 			if not scene.diagnostics_button.disabled:
 				scene.diagnostics_button.pressed.emit()
 		"ready":
 			if not scene.ready_button.disabled:
 				scene.trace_checkbox.button_pressed = value.get("capture_trace", false) == true
+				scene.replay_checkbox.button_pressed = value.get("record_replay", false) == true
 				scene.ready_button.pressed.emit()
 		"start":
 			if not scene.start_button.disabled:
@@ -181,8 +226,28 @@ func _command(value: Dictionary) -> void:
 
 
 func callback_boundary(lobby: Lobby) -> Dictionary:
-	return {"state": lobby.state, "message": lobby.message, "all_ready": lobby.all_ready, "has_readied": lobby.has_readied,
+	return {
+		"state": lobby.state,
+		"message": lobby.message,
+		"all_ready": lobby.all_ready,
+		"has_readied": lobby.has_readied,
 		"session_id": lobby.game_match.membership.handshake_message().session_id.hex_encode(),
-		"room_id": lobby.client.call("get_room_id"), "frame": lobby.game_match.peer.status().current_frame,
-		"canonical": lobby.game_match.game.canonical_bytes().hex_encode(), "failure": lobby.game_match.failure,
-		"info_id": str(lobby._info.get_instance_id()) if lobby._info != null else ""}
+		"room_id": lobby.client.call("get_room_id"),
+		"frame": lobby.game_match.peer.status().current_frame,
+		"canonical": lobby.game_match.game.canonical_bytes().hex_encode(),
+		"failure": lobby.game_match.failure,
+		"info_id": str(lobby._info.get_instance_id()) if lobby._info != null else ""
+	}
+
+
+func _play_replay(hex: String) -> Dictionary:
+	var recording: Replay = Replay.new()
+	var decoded: int = recording.decode(hex.hex_decode(), 8192)
+	if decoded != Replay.DecodeCode.OK or recording.frame_count() > 256:
+		return {"decode_code": decoded}
+	var game: Simulation = Simulation.new()
+	var player: ReplayPlayer = ReplayPlayer.new()
+	var code: int = player.configure(recording, game, Simulation.SNAPSHOT_BYTES)
+	while code == Session.Code.OK:
+		code = player.step()
+	return {"decode_code": decoded, "code": code, "frames": player.current_frame(), "failure_frame": player.failure_frame(), "canonical": game.canonical_bytes().hex_encode()}

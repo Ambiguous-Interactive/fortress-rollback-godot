@@ -42,6 +42,11 @@ POINTER_FILES = {
 # Generated agent-skill discovery stub roots (Agent Skills standard).
 STUB_ROOTS = (".claude/skills", ".agents/skills")
 
+# Machine-local, never-committed directories (see .gitignore). Links into them
+# resolve on the authoring machine but are absent from any fresh checkout, so
+# they must not be reported as broken by the link check.
+LOCAL_ONLY_DIRS = ("progress",)
+
 
 def resolve_root(root: Path | None = None) -> Path:
     return Path(root) if root is not None else REPO_ROOT

@@ -15,6 +15,12 @@ const Relay = preload("res://addons/fortress_rollback/transport/signalfish_relay
 const Fallback = preload("res://addons/fortress_rollback/transport/signalfish_fallback.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 
+## Largest packet the transports carry. Input batches are sized to fit it.
+const PACKET_BYTES: int = 1024
+## Frames a suggestion stays on offer. Latency can recover, and a raise cannot be undone.
+const SUGGESTION_FRAMES: int = 600
+const REPLAY_FRAMES: int = 36000
+
 var game: Simulation = Simulation.new()
 var peer: Peer = Peer.new()
 var membership: Membership = Membership.new()
@@ -26,10 +32,6 @@ var local_slot: int = -1
 var failure: String = ""
 var latest_event: String = "none"
 var stalls: int = 0
-## Largest packet the transports carry. Input batches are sized to fit it.
-const PACKET_BYTES: int = 1024
-## Frames a suggestion stays on offer. Latency can recover, and a raise cannot be undone.
-const SUGGESTION_FRAMES: int = 600
 
 ## Latest measured delay suggestion for this player, or -1 when there is none to apply.
 var suggested_delay: int = -1
@@ -38,6 +40,9 @@ var suggested_frame: int = 0
 var has_started: bool = false
 ## Choose before freeze. Captures local canonical state and inputs for diagnostic export.
 var capture_trace: bool = false
+## Choose before freeze. Retains the first ten minutes of confirmed gameplay at 60 Hz.
+var record_replay: bool = false
+var has_recorded_replay: bool = false
 var _held: int = -1
 var _tokens: int = 0
 var _pending: Array[Peer.Packet] = []
@@ -75,10 +80,11 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 	config.check_distance = 0
 	config.input_delay = 2
 	config.max_snapshot_bytes = Simulation.SNAPSHOT_BYTES
+	config.diagnostic_seed = str(game.rng_state)
+	config.diagnostic_version = "fortress-online-integer-v1"
+	config.replay_max_frames = REPLAY_FRAMES if record_replay else 0
 	if capture_trace:
 		config.diagnostic_trace_frames = 120
-		config.diagnostic_seed = str(game.rng_state)
-		config.diagnostic_version = "fortress-online-integer-v1"
 	config.storage_budget_bytes = config.required_storage_bytes()
 	var handshake: Handshake.Options = Handshake.Options.new()
 	handshake.timeout_us = 30000000
@@ -145,6 +151,7 @@ func tick(now_us: int, buttons: int) -> void:
 		var result: Driver.StepResult = peer.step(now_us, samples)
 		if result.code == Types.Code.OK:
 			_held = -1
+			has_recorded_replay = has_recorded_replay or (record_replay and peer.status().current_frame > 0 and peer.status().confirmed_frame >= 0)
 		elif result.code in [Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 			stalls += 1
 		else:
