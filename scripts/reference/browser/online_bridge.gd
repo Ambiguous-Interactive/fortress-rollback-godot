@@ -190,7 +190,7 @@ func _command(value: Dictionary) -> void:
 			scene.set_physics_process(false)
 			add_child(viewer_scene)
 		"viewer_control":
-			for button: Node in viewer_scene.get_child(0).get_child(1).get_children():
+			for button: Node in viewer_scene.find_children("*", "Button", true, false):
 				if button is Button and button.text == value.get("button", "") and not button.disabled:
 					button.pressed.emit()
 		"validate_replay":
