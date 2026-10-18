@@ -201,7 +201,8 @@ jobs:
       matrix:
         version: ["4.3", "4.7.2"]
         # Each part starts its own server and browsers, so they run as parallel jobs.
-        # The transport witness splits into direct-only and mixed-path labels.
+        # The transport witness splits into direct-path labels and mixed-path labels. The short
+        # disabled-fallback control runs with the direct labels so both jobs take about as long.
         part: [direct, mixed, online, relay]
     steps:
       - uses: actions/checkout@v5
@@ -226,12 +227,6 @@ jobs:
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
-      # The builder still cleans and rebuilds the server crate; only pinned dependency builds are reused.
-      - name: Restore SignalFish dependency builds
-        uses: actions/cache@v5
-        with:
-          path: .cache/reference/results/signalfish-server-build/target
-          key: signalfish-server-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/reference/signalfish_build_server.py') }}
       - name: Build the pinned local SignalFish server
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
@@ -249,7 +244,7 @@ jobs:
       - name: Verify real browser WebRTC on the pinned engine
         if: matrix.part == 'direct' || matrix.part == 'mixed'
         run: |
-          if [[ "${{ matrix.part }}" == direct ]]; then labels=(clean faults corrupt default); else labels=(mixed mixed-default mixed-disabled mixed-close); fi
+          if [[ "${{ matrix.part }}" == direct ]]; then labels=(clean faults corrupt default mixed-disabled); else labels=(mixed mixed-default mixed-close); fi
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
