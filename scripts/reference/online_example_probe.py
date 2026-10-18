@@ -412,11 +412,12 @@ def validate_result(value, corrupt=False, expected_engine=None):
         histories = [peer['inputs'] for peer in rounds[0]['peers']]
         expected = expected_states(histories, min(map(len, histories)))
         validate_trace_history(rounds[0]['diagnostics'][0]['report'], expected, histories)
+        validate_diagnostic_viewer(value.get('diagnostic_viewer'), rounds[0]['diagnostics'][0]['report']['trace'], histories)
     return value
 
 
 def validate_viewer(value, download):
-    if not isinstance(value, dict) or set(value) != {'initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed'}:
+    if not isinstance(value, dict) or set(value) != {'initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed', 'forward', 'backward'}:
         raise ValueError('online replay viewer controls missing')
     frames = download['playback']['frames']
     for label, row in value.items():
@@ -425,13 +426,64 @@ def validate_viewer(value, download):
                 or row['playing'] is not False or not isinstance(row['message'], str)
                 or not isinstance(row['state'], str) or not re.fullmatch(r'[0-9a-f]{272}', row['state'])):
             raise ValueError('online replay viewer control evidence malformed: ' + label)
+    histories = [peer['inputs'] for peer in sorted(download['peers'], key=lambda peer: peer['slot'])]
+    expected = expected_states(histories, 13)
     initial = value['initial']
-    if (initial['frame'] != 0 or value['stepped']['frame'] != 1 or not 4 <= value['paused']['frame'] < frames
+    if (value['forward']['frame'] != 12 or value['forward']['state'] != expected[12]
+            or value['backward']['frame'] != 6 or value['backward']['state'] != expected[6]
+            or initial['frame'] != 0 or value['stepped']['frame'] != 1 or not 4 <= value['paused']['frame'] < frames
             or any(value[label]['frame'] != 0 or value[label]['state'] != initial['state'] for label in ('restarted', 'rejected'))
             or not value['rejected']['message'].startswith('Could not open replay')
             or value['completed']['frame'] != frames or value['completed']['state'] != download['playback']['canonical']
             or not value['completed']['message'].startswith('Replay complete.')):
         raise ValueError('online replay viewer did not reproduce downloaded gameplay and controls')
+
+
+def validate_diagnostic_viewer(value, trace, histories):
+    labels = {'initial', 'stepped', 'restarted', 'rejected', 'completed', 'diverged'}
+    if not isinstance(value, dict) or value.keys() != labels:
+        raise ValueError('diagnostic viewer control inventory missing')
+    rows = trace['frames']
+    final_frame = rows[-1]['frame'] + bool(rows[-1]['inputs'])
+    if final_frame > min(map(len, histories)):
+        raise ValueError('diagnostic viewer final boundary exceeds original inputs')
+    states = expected_states([history + [0] for history in histories], final_frame + 1)
+    for label, row in value.items():
+        if (not isinstance(row, dict) or row.keys() != {'status', 'state', 'message'} or not isinstance(row['status'], dict)
+                or not isinstance(row['message'], str) or not isinstance(row['state'], str) or not re.fullmatch(r'[0-9a-f]{272}', row['state'])):
+            raise ValueError('diagnostic viewer observation malformed')
+        status = row['status']
+        integers = ('code', 'first_boundary', 'last_boundary', 'next_boundary', 'rows_consumed', 'row_count',
+                    'game_frame', 'validated_states', 'advanced_frames')
+        if (any(type(status.get(field)) is not int for field in integers) or status.get('loaded') is not True
+                or status.get('playing') is not False or type(status.get('complete')) is not bool
+                or status.get('application_version') != trace['application_version'] or status.get('seed') != trace['seed']
+                or status.get('capture_failure') != trace['first_divergence'] or status['row_count'] != len(rows)
+                or status['first_boundary'] != rows[0]['frame'] or status['last_boundary'] != rows[-1]['frame']):
+            raise ValueError('diagnostic viewer lost captured metadata or boundaries')
+    initial = {'loaded': True, 'playing': False, 'code': 0, 'first_boundary': rows[0]['frame'], 'last_boundary': rows[-1]['frame'],
+               'next_boundary': rows[0]['frame'], 'rows_consumed': 0, 'row_count': len(rows), 'game_frame': 0,
+               'seed': trace['seed'], 'application_version': trace['application_version'], 'capture_failure': trace['first_divergence'],
+               'complete': False, 'validated_states': 0, 'advanced_frames': 0, 'failure': {}}
+    stepped = dict(initial, rows_consumed=1, validated_states=1, advanced_frames=1,
+                   next_boundary=rows[1]['frame'], game_frame=rows[0]['frame'] + 1)
+    complete = dict(initial, complete=True, rows_consumed=len(rows), next_boundary=-1, game_frame=final_frame,
+                    validated_states=sum(row['state_available'] for row in rows), advanced_frames=sum(bool(row['inputs']) for row in rows))
+    changed_index = next(index for index, row in enumerate(rows) if index > 0 and row['state_available'])
+    changed = rows[changed_index]
+    failed = dict(initial, code=DESYNC_REASON, rows_consumed=changed_index, next_boundary=changed['frame'], game_frame=changed['frame'],
+                  validated_states=sum(row['state_available'] for row in rows[:changed_index]),
+                  advanced_frames=sum(bool(row['inputs']) for row in rows[:changed_index]),
+                  failure={'frame': changed['frame'], 'kind': 'state', 'byte': 24, 'expected_bytes': 136, 'actual_bytes': 136})
+    failure = value['diverged']['status'].get('failure')
+    if not isinstance(failure, dict) or any(type(failure.get(field)) is not int for field in ('frame', 'byte', 'expected_bytes', 'actual_bytes')):
+        raise ValueError('diagnostic viewer failure positions must be integers')
+    expected_status = {'initial': initial, 'restarted': initial, 'rejected': initial, 'stepped': stepped, 'completed': complete, 'diverged': failed}
+    expected_frame = {'initial': 0, 'restarted': 0, 'rejected': 0, 'stepped': rows[0]['frame'] + 1,
+                      'completed': final_frame, 'diverged': changed['frame']}
+    if (any(row['status'] != expected_status[label] or row['state'] != states[expected_frame[label]] for label, row in value.items())
+            or not value['rejected']['message'].startswith('This viewer needs')):
+        raise ValueError('diagnostic viewer controls differ from downloaded canonical history')
 
 
 def validate_diagnostic_playback(output, trace):

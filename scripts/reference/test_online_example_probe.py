@@ -12,7 +12,7 @@ import unittest
 
 from browser import webrtc_runner
 from online_example_probe import (expected_states, run_online, validate_result as observe_result,
-                                  validate_replay_download as observe_replay, validate_viewer, validate_diagnostic_playback)
+                                  validate_replay_download as observe_replay, validate_viewer, validate_diagnostic_playback, validate_diagnostic_viewer)
 from online_diagnostics import game_checksum
 from test_online_diagnostics import diagnostic_download, trace_evidence
 from online_install import ROOT, create_project, install_sdk, server_config
@@ -43,6 +43,33 @@ def replay_download(histories):
             'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
             'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],
             'playback': {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}}
+
+
+def diagnostic_viewer_evidence(trace, histories):
+    rows = trace['frames']
+    states = expected_states(histories, rows[-1]['frame'] + 2)
+    status = {'loaded': True, 'playing': False, 'code': 0, 'first_boundary': rows[0]['frame'], 'last_boundary': rows[-1]['frame'],
+              'next_boundary': rows[0]['frame'], 'rows_consumed': 0, 'row_count': len(rows), 'game_frame': 0,
+              'seed': trace['seed'], 'application_version': trace['application_version'], 'capture_failure': {},
+              'complete': False, 'validated_states': 0, 'advanced_frames': 0, 'failure': {}}
+    initial = {'status': status, 'state': states[0], 'message': 'Ready.'}
+    value = {label: copy.deepcopy(initial) for label in ('initial', 'stepped', 'restarted', 'rejected', 'completed', 'diverged')}
+    value['rejected']['message'] = 'This viewer needs a fortress-online-integer-v1 canonical capture.'
+    value['stepped']['status'].update(rows_consumed=1, validated_states=1, advanced_frames=1,
+                                       next_boundary=rows[1]['frame'], game_frame=rows[0]['frame'] + 1)
+    value['stepped']['state'] = states[rows[0]['frame'] + 1]
+    final_frame = rows[-1]['frame'] + bool(rows[-1]['inputs'])
+    value['completed']['status'].update(complete=True, rows_consumed=len(rows), next_boundary=-1, game_frame=final_frame,
+        validated_states=sum(row['state_available'] for row in rows), advanced_frames=sum(bool(row['inputs']) for row in rows))
+    value['completed']['state'] = states[final_frame]
+    changed = next(row for row in rows[1:] if row['state_available'])
+    changed_index = rows.index(changed)
+    value['diverged']['status'].update(code=18, rows_consumed=changed_index, next_boundary=changed['frame'], game_frame=changed['frame'],
+        validated_states=sum(row['state_available'] for row in rows[:changed_index]),
+        advanced_frames=sum(bool(row['inputs']) for row in rows[:changed_index]), failure={'frame': changed['frame'], 'kind': 'state', 'byte': 24,
+                                                       'expected_bytes': 136, 'actual_bytes': 136})
+    value['diverged']['state'] = states[changed['frame']]
+    return value
 
 
 def evidence():
@@ -88,7 +115,9 @@ def evidence():
             record['frozen_frames'] = [{'before': 110, 'after': 110, 'state': 'failed'} for _ in range(2)]
     rounds[0]['replay_download'] = replay_download(histories)
     initial = {'frame': 0, 'frames': 110, 'playing': False, 'message': 'Ready.', 'state': states[0]}
-    viewer = {key: dict(initial) for key in ('initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed')}
+    viewer = {key: dict(initial) for key in ('initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed', 'forward', 'backward')}
+    viewer['forward'].update(frame=12, state=states[12])
+    viewer['backward'].update(frame=6, state=states[6])
     viewer['stepped'].update(frame=1, state=states[1])
     viewer['paused'].update(frame=4, state=states[4])
     viewer['rejected']['message'] = 'Could not open replay (file code 1).'
@@ -129,7 +158,8 @@ def evidence():
                     'room_id': peer['room_id'], 'frame': 45, 'message': 'fresh game', 'info_id': '1234', 'canonical': states[45]}
         peer['stale_callbacks'] = {'calls': 4, 'kinds': ['protocol_info', 'room_joined', 'lobby_state_changed', 'protocol_error'],
                                    'before': boundary, 'after': copy.deepcopy(boundary)}
-    return {'passed': True, 'corrupt': False, 'browser_instances': 2, 'errors': [], 'teardown': True, 'rounds': rounds, 'viewer': viewer}
+    return {'passed': True, 'corrupt': False, 'browser_instances': 2, 'errors': [], 'teardown': True, 'rounds': rounds, 'viewer': viewer,
+            'diagnostic_viewer': diagnostic_viewer_evidence(rounds[0]['diagnostics'][0]['report']['trace'], histories)}
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
@@ -151,12 +181,49 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                 validate_diagnostic_playback(output, trace)
 
 
+    def test_diagnostic_viewer_requires_actual_window_controls_and_rejects_corruption(self):
+        source = evidence()
+        trace = source['rounds'][0]['diagnostics'][0]['report']['trace']
+        histories = [peer['inputs'] for peer in source['rounds'][0]['peers']]
+        original = source['diagnostic_viewer']
+        validate_diagnostic_viewer(original, trace, histories)
+        final_frame = trace['frames'][-1]['frame'] + bool(trace['frames'][-1]['inputs'])
+        validate_diagnostic_viewer(original, trace, [history[:final_frame] for history in histories])
+        mutations = [('initial', 'rows_consumed', 1), ('stepped', 'validated_states', 0), ('restarted', 'game_frame', 1),
+                     ('rejected', 'row_count', 0), ('completed', 'complete', False), ('completed', 'advanced_frames', True),
+                     ('completed', 'seed', 'other'), ('diverged', 'failure', {}), ('diverged', 'playing', True),
+                     ('stepped', 'game_frame', 999999), ('stepped', 'next_boundary', -1), ('stepped', 'complete', True),
+                     ('stepped', 'failure', {'frame': 0}), ('diverged', 'rows_consumed', 0), ('diverged', 'validated_states', -1),
+                     ('diverged', 'advanced_frames', -1), ('diverged', 'next_boundary', -1)]
+        for label, field, invalid in mutations:
+            changed = copy.deepcopy(original)
+            changed[label]['status'][field] = invalid
+            with self.subTest(label=label, field=field), self.assertRaises(ValueError):
+                validate_diagnostic_viewer(changed, trace, histories)
+        for field in ('frame', 'byte', 'expected_bytes', 'actual_bytes'):
+            changed = copy.deepcopy(original)
+            changed['diverged']['status']['failure'][field] = float(changed['diverged']['status']['failure'][field])
+            with self.subTest(failure_field=field), self.assertRaises(ValueError):
+                validate_diagnostic_viewer(changed, trace, histories)
+        changed = copy.deepcopy(original)
+        changed['diverged']['status']['failure']['frame'] = True
+        with self.assertRaises(ValueError):
+            validate_diagnostic_viewer(changed, trace, histories)
+        for label in original:
+            changed = copy.deepcopy(original)
+            changed[label]['state'] = '00' * 136
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                validate_diagnostic_viewer(changed, trace, histories)
+        with self.assertRaises(ValueError):
+            validate_diagnostic_viewer(None, trace, histories)
+
     def test_viewer_receipt_requires_controls_and_original_gameplay(self):
         original = evidence()
         replay = original['rounds'][0]['replay_download']
         validate_viewer(original['viewer'], replay)
         for label, field, invalid in [('completed', 'state', '00' * 136), ('stepped', 'frame', 0),
-                                      ('paused', 'playing', True), ('restarted', 'frame', 1), ('rejected', 'message', 'Ready.')]:
+                                      ('paused', 'playing', True), ('restarted', 'frame', 1), ('rejected', 'message', 'Ready.'),
+                                      ('forward', 'frame', 11), ('backward', 'state', '00' * 136)]:
             changed = copy.deepcopy(original['viewer'])
             changed[label][field] = invalid
             with self.subTest(label=label, field=field), self.assertRaises(ValueError):

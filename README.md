@@ -50,6 +50,8 @@ godot --path . res://examples/peer/peer.tscn
 Move players with WASD and the arrow keys. Toggle packet loss, reordering or a
 partition to observe prediction stalls and recovery. Delivery runs in process.
 
+For an addon-only install, [build and verify a candidate archive](./docs/package.md).
+
 To add rollback to your own game, follow the [integration guide](./docs/integration.md).
 It covers inputs, snapshots, the frame loop, stalls, errors and sounds that must not replay after rollback.
 

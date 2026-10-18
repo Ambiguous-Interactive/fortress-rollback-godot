@@ -1,6 +1,7 @@
 extends RefCounted
 
 # Value: protects=online room identity, retained input and teardown; fails_when=room restarts alias or stalled input is resampled; seam=SDK public transport doubles
+const Scene = preload("res://examples/online/online.tscn")
 const Match = preload("res://examples/online/match.gd")
 const Fallback = preload("res://addons/fortress_rollback/transport/signalfish_fallback.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
@@ -18,6 +19,14 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const U: String = MembershipFixture.U
 const V: String = MembershipFixture.V
 const ROOM: String = "10000000-0000-0000-0000-000000000001"
+
+
+class SceneClient:
+	extends Node
+	func get_room_code() -> String:
+		return "ROOM01"
+	func get_players() -> Array:
+		return []
 
 
 class ObservedGame:
@@ -61,11 +70,13 @@ class Client:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "terminal_callbacks", "handshake_timeout", "observer_history"])
+	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "terminal_callbacks", "handshake_timeout", "observer_history", "viewer_lifetime"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"viewer_lifetime":
+			_viewer_lifetime(context)
 		"observer_history":
 			_observer_history(context)
 		"identity":
@@ -76,8 +87,7 @@ func run_case(name: String, context: RefCounted) -> void:
 			for roster: PackedStringArray in [PackedStringArray([U]), PackedStringArray([U, U]), PackedStringArray([U, "bad"])]:
 				context.equal(Match.session_identity(ROOM, roster).is_empty(), true, "invalid room membership refused")
 		"optional_scene":
-			var scene: PackedScene = load("res://examples/online/online.tscn")
-			var node: Node = scene.instantiate()
+			var node: Node = Scene.instantiate()
 			node.call("_ready")
 			var lobby: Lobby = node.get("controller")
 			context.equal(lobby.ready(), ERR_UNAVAILABLE, "ready before joining is refused")
@@ -300,3 +310,27 @@ func _observer_history(context: RefCounted) -> void:
 		context.equal(driver.step(frame, samples).code, Types.Code.OK, "actual callbacks without public checksum evidence")
 	context.equal(game.saves.size(), 4, "actual callback bytes exist with checksums disabled")
 	context.equal(Bridge.confirmed_snapshots(core, game.saves).is_empty(), true, "disabled checksum domain cannot publish evidence")
+
+
+func _viewer_lifetime(context: RefCounted) -> void:
+	var node: Node = Scene.instantiate()
+	node.call("_ready")
+	var inspector: Button
+	for button: Node in node.find_children("*", "Button", true, false):
+		if button is Button and button.text == "Inspect diagnostic file":
+			inspector = button
+	context.equal(inspector.disabled, false, "inspection available offline")
+	var client: SceneClient = SceneClient.new()
+	var lobby: Lobby = node.get("controller")
+	lobby.client = client
+	for state: String in ["lobby", "playing", "failed"]:
+		lobby.state = state
+		node.call("_update_status")
+		context.equal(node.get("watch_button").disabled, true, "existing replay control preserves connected room")
+		context.equal(inspector.disabled, true, "diagnostic control preserves connected room")
+	lobby.client = null
+	lobby.state = "offline"
+	node.call("_update_status")
+	context.equal(inspector.disabled, false, "inspection available after leaving")
+	client.free()
+	node.free()

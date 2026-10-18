@@ -165,8 +165,55 @@ async function watchReplay(page, command, recording, diagnostic) {
   const completed = await page.evaluate(() => window.fortressOnline.viewer);
   if (completed.playing || completed.frame !== initial.frames || completed.state !== recording.playback.canonical)
     throw new Error('viewer differs from independently validated replay');
+  await command(page, 'viewer_target', { frame: 6 });
+  await control('Go');
+  await page.waitForFunction(() => window.fortressOnline.viewer.frame === 6, null, { timeout: 10000 });
+  const backward = await page.evaluate(() => window.fortressOnline.viewer);
+  await command(page, 'viewer_target', { frame: 12 });
+  await control('Go');
+  await page.waitForFunction(() => window.fortressOnline.viewer.frame === 12, null, { timeout: 10000 });
+  const forward = await page.evaluate(() => window.fortressOnline.viewer);
+  if (forward.playing || backward.playing) throw new Error('navigation did not finish paused');
   await page.screenshot({ path: diagnostic.replace('-events.log', '-viewer.png') });
-  return { initial, stepped, paused, restarted, rejected, completed };
+  return { initial, stepped, paused, restarted, rejected, completed, forward, backward };
+}
+
+async function inspectDiagnostic(page, command, report, diagnostic) {
+  await command(page, 'inspect_diagnostic');
+  const control = button => command(page, 'diagnostic_control', { button });
+  const choose = async data => {
+    const pending = page.waitForEvent('filechooser', { timeout: 10000 });
+    await control('Open diagnostic');
+    const chooser = await pending;
+    await chooser.setFiles({ name: 'fortress-diagnostics.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
+  };
+  const observe = () => page.evaluate(() => window.fortressOnline.diagnostic_viewer);
+  await choose(report);
+  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.loaded, null, { timeout: 10000 });
+  const initial = await observe();
+  await control('Step');
+  const stepped = await observe();
+  await control('Restart');
+  const restarted = await observe();
+  await choose({ invalid: true });
+  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.message.includes('This viewer needs'), null, { timeout: 10000 });
+  const rejected = await observe();
+  await control('Play');
+  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.complete, null, { timeout: 15000 });
+  const completed = await observe();
+  await page.screenshot({ path: diagnostic.replace('-events.log', '-diagnostic-viewer.png') });
+  const corrupt = JSON.parse(JSON.stringify(report));
+  const changed = corrupt.trace.frames.find((row, index) => index > 0 && row.state_available);
+  if (!changed) throw new Error('diagnostic window needs a later canonical boundary');
+  const bytes = Buffer.from(changed.state, 'hex'); bytes[24] ^= 1; changed.state = bytes.toString('hex');
+  await choose(corrupt);
+  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.rows_consumed === 0, null, { timeout: 10000 });
+  await control('Play');
+  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.failure.kind === 'state', null, { timeout: 15000 });
+  const diverged = await observe();
+  if (diverged.status.failure.frame !== changed.frame || diverged.status.failure.byte !== 24)
+    throw new Error('diagnostic viewer did not localize deliberately corrupted canonical bytes');
+  return { initial, stepped, restarted, rejected, completed, diverged };
 }
 
 async function collectReplay(pages, command, diagnostic) {
@@ -410,8 +457,9 @@ async function main() {
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     const viewer = corrupt ? null : await watchReplay(pages[1], command, rounds[0].replay_download, diagnostic);
+    const diagnostic_viewer = corrupt ? null : await inspectDiagnostic(pages[0], command, rounds[0].diagnostics[0].report, diagnostic);
     if (errors.length) throw new Error(JSON.stringify(errors));
-    console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, errors, teardown: true }));
+    console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, diagnostic_viewer, errors, teardown: true }));
   } catch (error) {
     const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
     const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));

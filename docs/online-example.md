@@ -134,6 +134,17 @@ choice when you press Ready. See the [trace contract](peer-lifecycle.md#opt-in-c
 for payload bounds and missing-history limits.
 A checksum mismatch includes both checksum hex strings and the first mismatching frame.
 
+## Inspect a diagnostic file
+
+After leaving the room, press **Inspect diagnostic file** and open a downloaded
+`fortress-diagnostics.json`. The viewer restores the captured local state, applies
+the retained inputs, and compares each available saved boundary. Play, pause, step
+or restart without a server. It shows the capture's reported failure separately
+from any playback difference. See [diagnostic viewer](diagnostic-viewer.md) for
+window limits and interpretation.
+
+![Diagnostic file viewer](images/diagnostic-viewer.png)
+
 ## Record and download a replay
 
 Select **Record replay** before pressing **Ready** to retain the first 36,000 confirmed
@@ -154,6 +165,10 @@ After leaving the room, press **Watch replay**, then **Open replay** and choose 
 `fortress-online.frrp` file. Native builds use a file dialog; browsers use a local
 file chooser without uploading the file or using browser storage. Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
+Enter a frame number and press **Go** to navigate forward or backward. Navigation
+replays every input and validates every available checksum; backward navigation restarts
+from the initial state. Each UI tick processes at most 120 frames, and **Cancel seek**
+pauses at the last validated boundary. Navigation finishes paused at the requested frame.
 The display shows the current frame and stops at the first failed recorded checksum.
 **Back to online** returns to room setup.
 

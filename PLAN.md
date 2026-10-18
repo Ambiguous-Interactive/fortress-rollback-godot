@@ -31,6 +31,8 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback](docs/integration.md#record-and-replay-a-match).
 - [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
+- [Addon candidate packaging and clean installation](docs/package.md).
+- [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).

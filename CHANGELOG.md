@@ -4,7 +4,9 @@
 
 ### Added
 
-- Add a replay viewer for online recordings. Open a downloaded file without a server, then play, pause, step or restart. Playback validates recorded checksums and stops at the first mismatch.
+- Add a diagnostic file viewer for online captures. Open JSON locally, inspect retained boundaries and metadata, then play or step through canonical comparisons. Playback identifies the first differing saved state.
+
+- Add a replay viewer for online recordings. Open a downloaded file without a server, then play, pause, step, restart or go to a chosen frame. Playback validates recorded checksums and stops at the first mismatch.
 
 - Add offline canonical diagnostic playback and an online trace reproduction command. Restore a captured window, apply its recorded inputs, and locate the first differing saved state.
 

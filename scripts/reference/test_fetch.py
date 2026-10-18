@@ -197,7 +197,7 @@ class ReferenceContracts(unittest.TestCase):
         repository = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
-            for pattern in ('scripts/reference/*.py', 'scripts/reference/browser/*.py', 'scripts/oracle/*.py', 'addons/fortress_rollback/protocol/*.gd',
+            for pattern in ('scripts/package_addon.py', 'scripts/reference/*.py', 'scripts/reference/browser/*.py', 'scripts/oracle/*.py', 'addons/fortress_rollback/protocol/*.gd',
                             'docs/reference/pins.json'):
                 for source in repository.glob(pattern):
                     (root / source.relative_to(repository)).parent.mkdir(parents=True, exist_ok=True)

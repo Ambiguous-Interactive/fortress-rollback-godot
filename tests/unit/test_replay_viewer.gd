@@ -11,11 +11,15 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls"])
+	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation", "navigation_boundaries"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"navigation_boundaries":
+			_navigation_boundaries(context)
+		"navigation":
+			_navigation(context)
 		"scene_controls":
 			_scene_controls(context)
 		"controls":
@@ -180,3 +184,101 @@ func _scene_controls(context: RefCounted) -> void:
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()
+
+
+func _navigation(context: RefCounted) -> void:
+	var viewer: Viewer = Viewer.new()
+	context.equal(viewer.has_method("seek"), true, "frame navigation is available")
+	if not viewer.has_method("seek"):
+		return
+	var replay: Replay = recording(300)
+	context.equal(viewer.open_bytes(replay.to_bytes()), true, "open long recording")
+	context.equal(viewer.call("seek", 299), true, "request distant frame")
+	context.equal(viewer.current_frame(), 0, "seek starts without blocking")
+	viewer.tick()
+	context.equal(viewer.current_frame(), 120, "one tick has a bounded replay budget")
+	context.equal(viewer.call("is_seeking"), true, "long seek continues later")
+	viewer.call("cancel_seek")
+	viewer.tick()
+	context.equal(viewer.current_frame(), 120, "cancel pauses at a validated boundary")
+	context.equal(viewer.call("seek", 30), true, "backward seek restarts sequential validation")
+	viewer.tick()
+	var expected: Simulation = Simulation.new()
+	for frame: int in 30:
+		expected.simulate_frame(frame, replay.inputs(frame))
+	context.bytes_equal(viewer.game.canonical_bytes(), expected.canonical_bytes(), 30, "backward navigation canonical equality")
+	context.equal(viewer.call("is_seeking"), false, "seek reaches exact target")
+	context.equal(viewer.is_playing, false, "navigation finishes paused")
+	for invalid: int in [-1, 301, 9223372036854775807]:
+		context.equal(viewer.call("seek", invalid), false, "reject invalid target")
+		context.equal(viewer.current_frame(), 30, "invalid target preserves frame")
+	context.equal(viewer.call("seek", 300), true, "can navigate to final boundary")
+	while viewer.call("is_seeking"):
+		viewer.tick()
+	context.equal(viewer.current_frame(), 300, "seek completes recording")
+	context.equal(viewer.call("seek", 0), true, "return to initial boundary")
+	context.equal(viewer.current_frame(), 0, "zero target resets immediately")
+	replay._inputs[14] = 1
+	context.equal(viewer.open_bytes(replay.to_bytes()), true, "load shape-correct corruption")
+	viewer.call("seek", 300)
+	viewer.tick()
+	context.equal(viewer.current_frame(), 8, "seek cannot skip checksum failure")
+	context.equal(viewer.call("is_seeking"), false, "failure cancels seek")
+	context.equal(viewer.can_step(), false, "failure remains terminal")
+	context.equal(viewer.message.contains("stopped at frame 8"), true, "failure visible during navigation")
+	context.state(8, viewer.game.canonical_bytes())
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	node.viewer.open_bytes(recording(300).to_bytes())
+	node._refresh()
+	var target: SpinBox = node.find_children("*", "SpinBox", true, false)[0]
+	target.get_line_edit().text = "299"
+	_button(node, "Go").pressed.emit()
+	context.equal(node.viewer.is_seeking(), true, "Go applies typed target")
+	context.equal(_button(node, "Cancel seek").disabled, false, "seek exposes cancel")
+	context.equal(_button(node, "Play").disabled, true, "seek disables playback controls")
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 120, "scene seek budget enforced")
+	_button(node, "Cancel seek").pressed.emit()
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 120, "real cancel pauses")
+	context.equal(_button(node, "Play").disabled, false, "cancel permits playback")
+	context.equal(node.viewer.message, "Paused.", "cancel updates visible message")
+	node._exit_tree()
+	node.free()
+
+
+func _navigation_boundaries(context: RefCounted) -> void:
+	for boundary: int in [0, 8, 120]:
+		var replay: Replay = recording(300)
+		if boundary == 0:
+			replay._checksums[0] ^= 1
+		else:
+			replay._inputs[2 * (boundary - 1)] = 1
+		var viewer: Viewer = Viewer.new()
+		context.equal(viewer.open_bytes(replay.to_bytes()), true, "shape-correct corruption loads")
+		viewer.seek(299 if boundary == 120 else boundary)
+		viewer.tick()
+		if boundary == 120:
+			viewer.cancel_seek()
+		context.equal(viewer.current_frame(), boundary, "navigation stops at selected boundary")
+		context.equal(viewer.can_step(), false, "selected saved boundary checksum must match")
+		context.equal(viewer.message.contains("stopped at frame %d" % boundary), true, "boundary mismatch visible")
+		context.equal([viewer.is_playing, viewer.is_seeking()], [false, false], "boundary failure stops all work")
+		var message: String = viewer.message
+		viewer.cancel_seek()
+		context.equal(viewer.message, message, "cancel cannot erase failure")
+		context.equal(viewer.seek(-1), false, "invalid seek rejected after failure")
+		context.equal(viewer.open_bytes(PackedByteArray([0])), false, "invalid import rejected after failure")
+		context.equal(viewer.can_step(), false, "invalid operations preserve failure latch")
+		viewer.restart()
+		context.equal(viewer.can_step(), true, "restart clears navigation failure latch")
+		if boundary > 0:
+			viewer.seek(0)
+			context.equal(viewer.can_step(), true, "earlier healthy boundary remains inspectable")
+	var viewer: Viewer = Viewer.new()
+	viewer.open_bytes(recording(1).to_bytes())
+	viewer.seek(1)
+	viewer.tick()
+	viewer.seek(1)
+	context.equal(viewer.message.begins_with("Replay complete."), true, "same final target preserves completion")

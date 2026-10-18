@@ -30,7 +30,8 @@ Run the full CI entry point with its declared per-process watchdog. Size the
 full-suite budget from completed runs without relaxing focused hang controls.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
-aligned when extending a shared suite. Verify preload dependencies are copied;
+aligned when extending a shared suite. Platform-specific I/O must assert equivalent
+contracts with equal assertion counts when full native/Web records are compared. Verify preload dependencies are copied;
 exercise the affected probe, since the root unit runner cannot prove its staging.
 Freeze source/helper hashes before staging; verify copied and relocated authored bytes before adapting them.
 Verify tools before use and recheck sources/tools before publication; end-only hashes cannot identify executed bytes.
@@ -39,6 +40,11 @@ Allow only metadata paired with existing inputs, then freeze the complete
 post-import inventory through export and execution.
 Verify supplied pinned executables against bytes extracted from the verified
 archive; a version string and unchanged execution hash do not prove provenance.
+
+For distributable archives, compare against an explicit required runtime inventory.
+A clean import can succeed after an entire optional subsystem was omitted. Delete
+a required subsystem and add an unknown development script as negative controls;
+both must fail before constructing a successful candidate.
 
 ## Faster local iteration
 

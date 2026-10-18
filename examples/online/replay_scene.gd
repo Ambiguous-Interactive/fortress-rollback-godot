@@ -38,6 +38,9 @@ var _status: Label
 var _play: Button
 var _step_button: Button
 var _restart_button: Button
+var _target: SpinBox
+var _seek_button: Button
+var _cancel_button: Button
 var _dialog: FileDialog
 var _web_import: JavaScriptObject
 var _web_callback: JavaScriptObject
@@ -58,6 +61,17 @@ func _ready() -> void:
 	_step_button = _button(buttons, "Step", _step)
 	_restart_button = _button(buttons, "Restart", _restart)
 	_button(buttons, "Back to online", _back)
+	var navigation: HBoxContainer = HBoxContainer.new()
+	panel.add_child(navigation)
+	var caption: Label = Label.new()
+	caption.text = "Go to frame:"
+	navigation.add_child(caption)
+	_target = SpinBox.new()
+	_target.step = 1
+	_target.custom_minimum_size.x = 130
+	navigation.add_child(_target)
+	_seek_button = _button(navigation, "Go", _seek)
+	_cancel_button = _button(navigation, "Cancel seek", _cancel_seek)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -121,6 +135,17 @@ func _step() -> void:
 	_refresh()
 
 
+func _seek() -> void:
+	_target.apply()
+	viewer.seek(int(_target.value))
+	_refresh()
+
+
+func _cancel_seek() -> void:
+	viewer.cancel_seek()
+	_refresh()
+
+
 func _restart() -> void:
 	viewer.restart()
 	_refresh()
@@ -143,14 +168,18 @@ func _physics_process(_delta: float) -> void:
 func _refresh() -> void:
 	_status.text = "%s\nFrame %d / %d" % [viewer.message, viewer.current_frame(), viewer.frame_count()]
 	_play.text = "Pause" if viewer.is_playing else "Play"
-	_play.disabled = not viewer.can_step()
+	_play.disabled = viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
 	_restart_button.disabled = viewer.frame_count() == 0
+	_target.max_value = viewer.frame_count()
+	_target.editable = viewer.frame_count() > 0
+	_seek_button.disabled = viewer.frame_count() == 0
+	_cancel_button.disabled = not viewer.is_seeking()
 	queue_redraw()
 
 
 func _draw() -> void:
-	var origin: Vector2 = Vector2(24, 150)
+	var origin: Vector2 = Vector2(24, 190)
 	var available: Vector2 = get_viewport_rect().size - origin - Vector2(16, 16)
 	var fit: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
 	draw_set_transform(origin, 0.0, Vector2.ONE * fit)
