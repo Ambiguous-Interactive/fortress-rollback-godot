@@ -27,9 +27,11 @@ def previous_class_names(base: str, changed: list[str], root: Path = ROOT) -> se
     merge_base = subprocess.run(["git", "merge-base", "HEAD", base], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
     names: set[str] = set()
     for path in changed:
-        old = subprocess.run(["git", "show", f"{merge_base}:{path}"], cwd=root, capture_output=True, text=True)
+        if not path.endswith(".gd"):
+            continue
+        old = subprocess.run(["git", "show", f"{merge_base}:{path}"], cwd=root, capture_output=True)
         if old.returncode == 0:
-            names.update(CLASS_NAME.findall(old.stdout))
+            names.update(CLASS_NAME.findall(old.stdout.decode("utf-8", errors="replace")))
     return names
 
 
