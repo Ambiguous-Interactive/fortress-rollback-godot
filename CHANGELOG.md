@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add confirmed-input spectator playback and a playable delayed-view example. Pause and catch up the viewer while the host continues. Live spectator networking remains planned.
+
+- Compare sequential replay playback with actual pinned upstream sessions and independent canonical state histories on both engine pins.
+
 - Add a diagnostic file viewer for online captures. Open JSON locally, inspect retained boundaries and metadata, then play or step through canonical comparisons. Playback identifies the first differing saved state.
 
 - Add a replay viewer for online recordings. Open a downloaded file without a server, then play, pause, step, restart or go to a chosen frame. Playback validates recorded checksums and stops at the first mismatch.
@@ -61,6 +65,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Stop matches explicitly when game callbacks return invalid values. Drivers release request views and notify peer closure instead of leaving the match stalled.
 
 - Fix stale WebRTC callbacks after connection closure. Create a fresh connection wrapper before initializing a replacement.
 

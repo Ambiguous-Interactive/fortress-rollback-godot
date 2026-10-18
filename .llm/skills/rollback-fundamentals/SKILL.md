@@ -129,6 +129,16 @@ Protocol and P2P evidence require their own boundary tests and observations.
 Browser support remains separately gated; local request parity and deterministic
 delivery tests cannot establish it.
 
+Session wrappers must preserve shared-engine terminal checks before returning
+recoverable input or delay stalls. Exercise exhausted frame and request counters
+through each wrapper while its input is unavailable.
+When callers service only a recommended number of steps, include pending lifecycle
+completion after payload drains. Test clean end through that public service loop
+with empty input, a delayed tail and a gap; direct advancement can conceal starvation.
+Include wrapper-owned staging payloads and frame tags in configuration storage
+reservations before allocation. Verify exact-budget acceptance and rejection one
+byte below it; a bounded extra ring still consumes the declared budget.
+
 ## Code Samples
 
 - [fixed_step_loop.gd](../../code-samples/fixed_step_loop.gd) — driving ticks

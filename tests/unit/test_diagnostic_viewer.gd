@@ -166,17 +166,33 @@ func _scene_controls(context: RefCounted) -> void:
 		if child is Label and child.text.contains("Validated states: 8 | applied advances: 8") and child.text.contains("captured seed: 9223372036854775808"):
 			visible = true
 	context.equal(visible, true, "visible status includes seed and verification counts")
-	var path: String = "user://diagnostic-viewer-test.json"
+	# Fresh-process repetitions run concurrently and share the Godot user directory.
+	var path: String = ""
+	var fixture_code: int = OK
 	if not OS.has_feature("web"):
+		path = "user://diagnostic-viewer-test-%d.json" % OS.get_process_id()
 		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
-		file.store_buffer(bytes)
-		file.close()
+		if file == null:
+			fixture_code = FileAccess.get_open_error()
+		else:
+			file.store_buffer(bytes)
+			file.flush()
+			fixture_code = file.get_error()
+			file.close()
+	context.equal(fixture_code, OK, "file import fixture is prepared")
+	if not OS.has_feature("web"):
 		node._native_file(path)
 	else:
 		node._web_file([Marshalls.raw_to_base64(bytes), ""])
 	context.equal(node.viewer.status().rows_consumed, 0, "file import starts paused")
+	var removal_code: int = OK
+	var fixture_absent: bool = true
 	if not OS.has_feature("web"):
-		DirAccess.remove_absolute(path)
+		removal_code = DirAccess.remove_absolute(path)
+		fixture_absent = not FileAccess.file_exists(path)
+	context.equal(removal_code, OK, "file fixture removal succeeds")
+	context.equal(fixture_absent, true, "missing-file fixture is absent before import")
+	if not OS.has_feature("web"):
 		node._native_file(path)
 	else:
 		node._web_file(["", "Could not open the diagnostic file."])

@@ -21,3 +21,7 @@ required-features = ["handshake-oracle"]
 [[bin]]
 name = "p2p"
 path = "src/bin/p2p.rs"
+
+[[bin]]
+name = "replay"
+path = "src/bin/replay.rs"

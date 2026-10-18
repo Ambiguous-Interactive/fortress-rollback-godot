@@ -105,14 +105,17 @@ func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
 			return _finish(code, before)
 		match request.kind:
 			Types.Kind.SAVE:
-				var saved: SaveResult = _game.save_state(request.frame, request.writer)
-				if saved != null:
+				# Callback results cross the dynamic application boundary before validation.
+				var saved: Variant = _game.save_state(request.frame, request.writer)
+				if saved is SaveResult:
 					ok = saved.ok
 					checksum = saved.checksum
 			Types.Kind.LOAD:
-				ok = _game.load_state(request.frame, request.reader)
+				var loaded: Variant = _game.load_state(request.frame, request.reader)
+				ok = loaded is bool and loaded
 			Types.Kind.ADVANCE:
-				ok = _game.simulate_frame(request.frame, request.inputs)
+				var simulated: Variant = _game.simulate_frame(request.frame, request.inputs)
+				ok = simulated is bool and simulated
 		_session._end_driver_callback()
 		code = _session.complete_request(batch_id, request_id, ok, checksum).code
 		if code != Types.Code.OK:

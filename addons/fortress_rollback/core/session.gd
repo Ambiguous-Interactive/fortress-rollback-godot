@@ -210,6 +210,25 @@ func received_frames() -> PackedInt64Array:
 	return _received.duplicate()
 
 
+## Owned finalized input row for a simulated frame, or null when unavailable or under correction.
+## Read before physical queue tags wrap. This export does not extend rollback retention.
+func confirmed_inputs(frame: int) -> Types.FrameInputs:
+	if _config == null or _batch != null or _is_driver_callback or frame < 0 or frame >= _current or frame > _confirmed():
+		return null
+	var pending: int = status().pending_rollback_frame
+	if pending >= 0 and frame >= pending:
+		return null
+	var bytes: Array[PackedByteArray] = []
+	var statuses: PackedInt32Array = PackedInt32Array()
+	for queue: Queue in _queues:
+		var actual: Queue.Result = queue.confirmed_input(frame)
+		if actual.code != Queue.Code.OK:
+			return null
+		bytes.append(actual.bytes)
+		statuses.append(Queue.Status.CONFIRMED)
+	return Types.FrameInputs.new(bytes, statuses)
+
+
 ## Completed saved boundaries only. Hide snapshots affected by pending repairs and active callbacks.
 ## Sending may include the confirmed boundary; comparison requires strictly earlier frames.
 func confirmed_checksums(include_boundary: bool = false) -> Array[Dictionary]:

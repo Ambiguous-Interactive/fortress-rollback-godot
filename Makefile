@@ -1,4 +1,4 @@
-.PHONY: p2p-probes handshake-probes queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
+.PHONY: replay-probes p2p-probes handshake-probes queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
 .PHONY: llm-index llm-index-prune pre-commit godot-check test-godot test-focus test-changed
 
 PY ?= python3
@@ -47,7 +47,11 @@ p2p-probes:
 handshake-probes:
 	$(PY) scripts/oracle/handshake_launch.py --godot $(GODOT)
 
-## Actual upstream runtime traces and independent GDScript game replay
+## Actual pinned upstream replay and production Godot playback
+replay-probes:
+	$(PY) scripts/oracle/replay_launch.py --godot $(GODOT)
+
+## Actual upstream sync-test traces and independent canonical history
 oracle-probes:
 	$(PY) scripts/oracle/launch.py --godot $(GODOT)
 
