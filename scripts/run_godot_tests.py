@@ -235,6 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=1701)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
+    parser.add_argument("--changed", metavar="BASE", help="run only suites that load files changed since BASE (e.g. origin/main)")
     parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
@@ -245,6 +246,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("seed must fit a signed 64-bit integer")
     if args.jobs < 1:
         parser.error("jobs must be positive")
+    if args.changed and args.suite:
+        parser.error("--changed selects suites itself")
     # Supersede prior success before any external executable gets control.
     args.results.parent.mkdir(parents=True, exist_ok=True)
     args.results.write_text(json.dumps({"format": 1, "passed": False,
@@ -257,6 +260,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.filter:
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
+    if args.changed:
+        from changed_suites import changed_files, previous_class_names, select
+        changed = changed_files(args.changed)
+        args.suite = select(discover(args.category), changed, old_names=previous_class_names(args.changed, changed))
+        print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
+        if not args.suite:
+            args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
+            print(json.dumps({"passed": None, "results": str(args.results), "note": "no suite loads a changed file"}))
+            return 0
     suites = sorted(args.suite) or discover(args.category)
     durations = load_durations(args.durations)
     if args.jobs > 1:

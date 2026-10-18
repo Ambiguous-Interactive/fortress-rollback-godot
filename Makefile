@@ -1,5 +1,5 @@
 .PHONY: p2p-probes handshake-probes queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
-.PHONY: llm-index llm-index-prune pre-commit godot-check test-godot test-focus
+.PHONY: llm-index llm-index-prune pre-commit godot-check test-godot test-focus test-changed
 
 PY ?= python3
 GODOT ?= godot
@@ -54,6 +54,11 @@ oracle-probes:
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:
 	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --timeout 120
+
+## Fastest local loop: only suites that load files changed since BASE (default origin/main); any untraced change runs all
+BASE ?= origin/main
+test-changed:
+	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --category $(CATEGORY) --timeout 120 --changed $(BASE)
 
 ## Focused local iteration, preserving both fresh-process and in-process repetitions
 test-focus:

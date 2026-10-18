@@ -273,7 +273,7 @@ A corruption control may desync before capture; require its typed cause and inde
 
 `make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;
 suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
-selects one suite with both repeat layers. Split a slow case into smaller cases rather than lengthen it. Deliver all suites.
+selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
 Clear owned success receipts on parse and execution-option rejection, including

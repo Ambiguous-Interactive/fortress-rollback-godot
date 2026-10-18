@@ -69,6 +69,24 @@ simulation. Formatted per-tick assertion labels cost only about 10% of it, so it
 with a durations file that marks `test_snapshot_history.gd` slow must give identical results. With
 the case order reversed inside split suites, the control fails.
 
+### Changed-suite runs
+
+After the merge of #115 the local gain was still moderate, so a follow-up PR adds `make test-changed`
+(`scripts/changed_suites.py`, launcher `--changed BASE`). It follows `res://` paths and `class_name`
+mentions from changed files to the suites that reach them, and falls back to every suite for any
+change outside the Godot sources or to the runner. `scripts/tests/test_changed_suites.py` covers
+direct, transitive, fixture, class-name and fallback rows; with class-name tracing disabled, it
+fails.
+
+| Edit since `HEAD` | Suites | Time |
+| --- | --- | --- |
+| One test file (`test_replay.gd`) | 1 | 1.6s |
+| Online example script | 6 | 16.5s |
+| Core `replay.gd` | 48 (everything reaches it) | full run |
+
+The same PR trims CI: each Godot job smoke-tests only its own engine, and SignalFish artifacts drop
+the cargo build output (330MB and about 28s of upload per job).
+
 ## Global rollback floor (#61)
 
 `tests/unit/test_rollback.gd` adds `global_floor`. Three players, prediction window 4, queue

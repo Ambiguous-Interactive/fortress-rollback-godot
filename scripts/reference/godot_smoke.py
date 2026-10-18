@@ -25,6 +25,7 @@ def main():
     parser = ReceiptParser(description=__doc__, receipt='godot-baseline.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--web', action='store_true', help='require templates and installed pinned Playwright Chromium')
+    parser.add_argument('--version', action='append', help='pinned engine version; defaults to minimum and current')
     args = parser.parse_args()
     results = CACHE / 'results'
     begin_results(results, 'godot-baseline.json', [p.name for p in results.glob('godot-*.log')])
@@ -33,7 +34,10 @@ def main():
     if arch is None or platform.system() != 'Linux':
         raise ValueError('editor bootstrap supports Linux arm64/x86_64 only')
     records = []
-    for version in [data['godot']['minimum'], data['godot']['current_stable']]:
+    pinned = [data['godot']['minimum'], data['godot']['current_stable']]
+    if any(version not in pinned for version in args.version or []):
+        parser.error('only pinned engine versions are accepted')
+    for version in [version for version in pinned if version in (args.version or pinned)]:
         name = f'Godot_v{version}-stable_linux.{arch}.zip'
         archive = fetch(data['artifacts'][name], name, args.offline)
         directory = CACHE / 'editors' / version
