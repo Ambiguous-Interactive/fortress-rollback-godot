@@ -111,7 +111,7 @@ jobs:
           if-no-files-found: error
 
   godot:
-    name: Godot ${{ matrix.version }} ${{ matrix.part }}
+    name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -119,7 +119,7 @@ jobs:
       matrix:
         version: ["4.3", "4.7.2"]
         # Suites and oracle launchers share no state, so they run as parallel jobs.
-        part: [suites, integration, oracles]
+        part: [suites, oracles]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -140,18 +140,13 @@ jobs:
             .cache/reference/cargo/registry/index
           key: reference-godot-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
       - name: Install pinned browser runner and operating system dependencies
-        if: matrix.part != 'integration'
         run: |
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
-        if: matrix.part != 'integration'
         run: python3 scripts/reference/godot_smoke.py --web
-      - name: Execute native probes
-        if: matrix.part == 'integration'
-        run: python3 scripts/reference/godot_smoke.py
       - name: Verify runner failure controls and fresh-process suites
         if: matrix.part == 'suites'
         run: |
@@ -162,18 +157,13 @@ jobs:
           python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
           python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
           python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
-          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
-      - name: Run integration suites one case at a time
-        if: matrix.part == 'integration'
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
           for case in default_single default_batched readiness_boundary aborted_wait; do
             case_timeout=120
             if [[ "$case" == default_single ]]; then case_timeout=180; fi
             python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
               --results ".cache/tests/integration-$version-$case.json"
           done
+          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
       - name: Compare actual upstream and Godot traces
         if: matrix.part == 'oracles'
         run: |
@@ -200,10 +190,10 @@ jobs:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        # Each part starts its own server and browsers, so they run as parallel jobs.
-        # The transport witness splits into direct-path labels and mixed-path labels. The short
-        # disabled-fallback control runs with the direct labels so both jobs take about as long.
-        part: [direct, mixed, online, relay]
+        # Each part starts its own server and browsers, so they run as parallel jobs. The transport
+        # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
+        # runs with the direct labels so both jobs take about as long.
+        part: [direct, mixed, online]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -221,7 +211,6 @@ jobs:
             .cache/reference/cargo/registry/index
           key: reference-signalfish-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/reference/browser/package-lock.json') }}
       - name: Install pinned browser runner and operating system dependencies
-        if: matrix.part != 'relay'
         run: |
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
@@ -261,24 +250,17 @@ jobs:
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/online-example
       - name: Verify native relay and late-event controls
-        if: matrix.part == 'relay'
+        if: matrix.part == 'online'
         run: |
-          version="${{ matrix.version }}"
-          PYTHONPATH=scripts/reference python3 - "$version" <<'PY'
-          import sys, zipfile
-          from fetch import CACHE, fetch, load_manifest
-          name = f'Godot_v{sys.argv[1]}-stable_linux.x86_64.zip'
-          with zipfile.ZipFile(fetch(load_manifest()['artifacts'][name], name, False)) as package:
-              package.extractall(CACHE / 'webrtc-editors' / sys.argv[1])
-          PY
-          editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
-          chmod +x "$editor"
-          python3 scripts/reference/signalfish_live_probe.py \
-            --godot "$editor" \
-            --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-            --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
-            --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-            --output ".cache/reference/results/signalfish-live-$version"
+          for version in "${{ matrix.version }}"; do
+            editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
+            python3 scripts/reference/signalfish_live_probe.py \
+              --godot "$editor" \
+              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+              --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+              --output ".cache/reference/results/signalfish-live-$version"
+          done
       - uses: actions/upload-artifact@v6
         if: always()
         with:
