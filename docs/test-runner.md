@@ -35,7 +35,13 @@ run starts the slowest suites first, with both repetitions of a suite started to
 that took at least four seconds is listed with `--list-cases` and runs one fresh-process pair per
 case (`--case <name>`), still merged in inventory order. The times only change scheduling; a
 missing or stale file gives the same records. Pure engine run time makes a new suite shard freely,
-so split a slow case into smaller cases rather than lengthen it. Each report run lists its
+so split a slow case into smaller cases rather than lengthen it.
+
+`make test-changed` (`--changed origin/main`; `BASE=` overrides) runs only the suites that can
+observe a change. It follows every `res://` path and `class_name` mention in `addons/`, `tests/` and
+`examples/` from the files changed since the merge base, including uncommitted and untracked source
+files. A change anywhere else, or to `tests/runner/`, runs every suite; Markdown runs none. It is the
+inner loop only: run `make test-godot` before pushing. Each report run lists its
 shard processes under `shards`. Default results live in ignored
 `.cache/tests/latest.json`. They contain engine version/digest, repository commit
 and dirty flag, pin digest, platform, commands, working directory, seeds, complete

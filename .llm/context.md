@@ -106,6 +106,7 @@ across repository source files. File line-count caps remain separate.
 | Install git hooks | `make hooks` |
 | Check file lengths only | `python3 scripts/llm/check_llm_file_lengths.py` |
 | Validate skills + pointers + links | `python3 scripts/llm/lint_llm_instructions.py` |
+| Run only suites affected by your changes (fastest loop) | `make test-changed` |
 | Run the game/tests headless | `godot --headless --path .` |
 
 ## The .llm Harness (Architecture)
