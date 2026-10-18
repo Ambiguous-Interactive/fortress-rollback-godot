@@ -22,6 +22,8 @@ var storage_budget_bytes: int = 0
 var checksums_enabled: bool = true
 var capture_confirmed_snapshots: bool = false
 var sync_test: bool = true
+## Confirmed-only, all-remote playback for FortressSpectatorSession; no local samples or prediction.
+var spectator: bool = false
 ## Canonical game payloads are private unless explicitly opted in with a positive bound.
 var diagnostic_trace_frames: int = 0
 var diagnostic_seed: String = ""
@@ -61,7 +63,9 @@ func validate() -> int:
 		return Types.Code.INVALID_CONFIGURATION
 	if (queue_capacity + 1) * input_width > 16777216 or required_storage_bytes() > storage_budget_bytes:
 		return Types.Code.INVALID_CONFIGURATION
-	if local_players.is_empty() or local_players.size() > player_count or (sync_test and local_players.size() != player_count):
+	if spectator and (sync_test or not local_players.is_empty() or max_prediction_frames != 0 or input_delay != 0):
+		return Types.Code.INVALID_CONFIGURATION
+	if (local_players.is_empty() and not spectator) or local_players.size() > player_count or (sync_test and local_players.size() != player_count):
 		return Types.Code.INVALID_CONFIGURATION
 	var seen: PackedByteArray = PackedByteArray()
 	seen.resize(player_count)
@@ -72,11 +76,12 @@ func validate() -> int:
 	return Types.Code.OK
 
 
-## Payload reservation includes snapshot staging/views and first-save comparison history.
+## Payload reservation includes snapshot staging/views, first-save comparison history and spectator host rows/tags.
 ## Runtime object metadata adds bounded overhead; this is not a heap-size guarantee.
 func required_storage_bytes() -> int:
 	return (
 		diagnostic_trace_storage_bytes()
+		+ (queue_capacity * (player_count * input_width + 8) if spectator else 0)
 		+ (history_slots + 2) * max_snapshot_bytes
 		+ history_slots * 40
 		+ history_slots * (max_snapshot_bytes + 16)
@@ -111,6 +116,7 @@ func owned_copy() -> RefCounted:
 	copy.checksums_enabled = checksums_enabled
 	copy.capture_confirmed_snapshots = capture_confirmed_snapshots
 	copy.sync_test = sync_test
+	copy.spectator = spectator
 	copy.diagnostic_trace_frames = diagnostic_trace_frames
 	copy.diagnostic_seed = diagnostic_seed
 	copy.diagnostic_version = diagnostic_version

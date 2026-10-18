@@ -19,6 +19,7 @@ MARKER = 'FORTRESS_ADDON_PACKAGE_OK'
 SMOKE = '''extends SceneTree
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd")
@@ -72,7 +73,7 @@ func _initialize() -> void:
     if result.code != Types.Code.OK or result.frame_after != 1 or game.ticks != 1:
         quit(1)
         return
-    if not _handshake() or not _peer_session():
+    if not _handshake() or not _peer_session() or not _spectator_session():
         quit(1)
         return
     print("FORTRESS_ADDON_PACKAGE_OK")
@@ -180,6 +181,33 @@ func _peer_session() -> bool:
             return false
     return true
 
+
+func _spectator_session() -> bool:
+    var config: Config = Config.new()
+    config.spectator = true
+    config.sync_test = false
+    config.local_players = PackedInt32Array()
+    config.max_prediction_frames = 0
+    config.check_distance = 0
+    config.max_snapshot_bytes = 1
+    config.storage_budget_bytes = 100000
+    var session: Spectator = Spectator.new()
+    if session.configure(config) != Types.Code.OK:
+        return false
+    var game: Game = Game.new()
+    var driver: Driver = Driver.new(session, game)
+    var empty: Array[Driver.LocalInput] = []
+    if driver.step(0, empty).code != Types.Code.PREDICTION_STALL or game.ticks != 0:
+        return false
+    if session.submit_local_input(0, 0, PackedByteArray([1])).code != Types.Code.UNSUPPORTED:
+        return false
+    var row: Array[PackedByteArray] = [PackedByteArray([1]), PackedByteArray([2])]
+    if session.receive_host_frame(0, row).code != Types.Code.OK:
+        return false
+    var result: Driver.StepResult = driver.step(1, empty)
+    return result.code == Types.Code.OK and result.frame_after == 1 and game.ticks == 1
+
+
 func _deliver(peers: Array[Peer], roster: Array[PackedByteArray], now_us: int) -> bool:
     for slot: int in range(2):
         for packet: Peer.Packet in peers[slot].drain_outbox():
@@ -228,7 +256,7 @@ def main():
               'command': command, 'engine_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
               'limits': 'Addon-only candidate: every runtime script loads without SignalFish; one driver tick, 70 two-peer gameplay steps, '
-                        'full checksum/quality bytes and terminal timeout; '
+                        'full checksum/quality bytes, terminal timeout and confirmed-only spectator tick; '
                         'not a supported release or browser networking gate.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'files': len(entries), 'results': str(receipt)}))

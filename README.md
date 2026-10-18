@@ -50,6 +50,10 @@ godot --path . res://examples/peer/peer.tscn
 Move players with WASD and the arrow keys. Toggle packet loss, reordering or a
 partition to observe prediction stalls and recovery. Delivery runs in process.
 
+Try the [delayed spectator example](./docs/spectators.md) to watch a corrected host
+stream while the host keeps playing. Press P to pause and catch up the viewer.
+Delivery runs in process; live spectator networking remains planned.
+
 For an addon-only install, [build and verify a candidate archive](./docs/package.md).
 
 To add rollback to your own game, follow the [integration guide](./docs/integration.md).

@@ -49,9 +49,12 @@ report every configured attempt, including not-ready/error outcomes. Unconfigure
 and recursive BUSY attempts emit nothing. Mutating peer calls remain BUSY inside
 handlers, and publication drains return empty until the outer call returns.
 
-A failed callback terminates the session. GDScript exceptions or malformed
-callback return types are application programming errors; use the typed result
-contracts and return explicit failure for runtime errors.
+A failed callback terminates the session with `CALLBACK_FAILED`. A null or wrong-typed
+`save_state` result, or a non-boolean load/simulate result, follows the same path.
+The failing request kind and frame remain available in `status()`. Callback guards
+and views expire before the completion signal. Explicit callback termination keeps
+its original reason. GDScript runtime errors inside callbacks remain application
+programming errors; return explicit failure for runtime conditions.
 
 The game owns snapshot format/version, stable checksums, PRNG state and pending
 simulation events. Enabled checksums are exactly 16 bytes in little-endian

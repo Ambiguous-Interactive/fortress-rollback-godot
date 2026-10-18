@@ -43,6 +43,11 @@ EXPECTED.update({
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit'},
 })
+EXPECTED.update({
+    'res://tests/unit/test_spectator_session.gd': {'configuration', 'confirmed_playback', 'buffering', 'delay_and_loss',
+        'expert_parity', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes'},
+    'res://tests/unit/test_driver_callback_results.gd': {'valid', 'malformed', 'termination', 'peer_failure'},
+})
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -69,6 +74,7 @@ FILES += ['tests/unit/test_diagnostic_player.gd', 'tests/unit/test_replay_viewer
           'examples/online/replay_viewer.gd', 'examples/online/replay_scene.gd', 'examples/online/replay.tscn', 'examples/offline/simulation.gd']
 FILES += ['tests/unit/test_diagnostic_viewer.gd', 'examples/online/diagnostic_viewer.gd',
           'examples/online/diagnostic_scene.gd', 'examples/online/diagnostic.tscn']
+FILES += ['tests/unit/test_spectator_session.gd', 'tests/unit/test_driver_callback_results.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -90,9 +96,11 @@ const ReplayCallbacks = preload("res://tests/unit/test_replay_callbacks.gd")
 const DiagnosticPlayer = preload("res://tests/unit/test_diagnostic_player.gd")
 const DiagnosticViewer = preload("res://tests/unit/test_diagnostic_viewer.gd")
 const ReplayViewer = preload("res://tests/unit/test_replay_viewer.gd")
+const Spectator = preload("res://tests/unit/test_spectator_session.gd")
+const CallbackResults = preload("res://tests/unit/test_driver_callback_results.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
-\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer]
+\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)

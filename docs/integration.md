@@ -217,6 +217,7 @@ Pass `0` to play inputs without checking. The file stores inputs, not game rules
 Check `game_version()` and `game_seed()` before playing, and set up the game to match.
 
 For downloaded online example recordings, use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.
+The [replay applicability probe](oracle-replay.md) checks sequential playback against the actual pinned upstream session and documents interface differences.
 
 ### Replay file format
 

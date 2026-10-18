@@ -71,7 +71,7 @@ func _id(value: int, width: int = 8) -> PackedByteArray:
 
 
 func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = false, pending: int = 128, start: bool = true,
-	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60, trace_frames: int = 0) -> Dictionary:
+	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60, trace_frames: int = 0, game_override: RefCounted = null) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
 		lifecycle_options = L.Options.new()
@@ -121,6 +121,8 @@ func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = fa
 		var input: I.Options = I.Options.new()
 		input.max_pending_frames = pending
 		var game: RefCounted = ReentryGame.new(count) if reentry else Game.new(count)
+		if player == 0 and game_override != null:
+			game = game_override
 		var peer: Peer = Peer.new()
 		context.equal(peer.configure(config, local, game, handshake, input, lifecycle_options), I.Code.OK, "configure mesh")
 		if reentry:

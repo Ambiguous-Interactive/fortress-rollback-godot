@@ -175,6 +175,7 @@ jobs:
           editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
           python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
           python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
+          python3 scripts/oracle/replay_launch.py --godot "$editor" --output ".cache/reference/results/replay-$version"
           python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
           python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
       - uses: actions/upload-artifact@v6

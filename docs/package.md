@@ -57,7 +57,8 @@ then extracts them into a temporary Godot project. That project contains only
 the installed addon, minimal project settings and the audit script. It loads
 every runtime script without the SDK, advances one local driver tick, runs
 70 frames between two byte peers, exchanges checksum and quality messages,
-and checks terminal timeout behavior.
+checks terminal timeout behavior, and plays one confirmed spectator frame.
+The spectator smoke also refuses local input and waits when host data is missing.
 
 `package-audit.json` records success, archive and engine hashes, and archive
 paths. `clean-addon.log` records engine output. A failure clears the prior

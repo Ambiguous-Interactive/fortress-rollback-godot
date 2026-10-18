@@ -30,6 +30,7 @@ Local development contracts and evidence entry points:
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback](docs/integration.md#record-and-replay-a-match).
+- [Confirmed-input spectator playback and local delayed-view example](docs/spectators.md).
 - [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
@@ -378,6 +379,11 @@ advancing; a matching checksum cannot override a failed snapshot write.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.
+The bounded confirmed-input spectator API shares the player request engine and
+supports delayed playback, caller-bounded catch-up and explicit host endings.
+Its local example streams corrected original inputs while the host continues.
+Live SignalFish spectator routing, handshake/events and upstream spectator
+differential/model acceptance remain open in #47.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 Hot join uses reserved/dropped slots with fixed player cardinality,
