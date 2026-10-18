@@ -41,7 +41,7 @@ class Game:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["sync_wrap", "snapshot_omissions", "external_corrections", "lockstep", "configuration", "snapshot_failure"])
+	return PackedStringArray(["sync_wrap", "snapshot_omissions", "external_corrections", "global_floor", "lockstep", "configuration", "snapshot_failure"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -55,6 +55,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_sync(context, 3, 2, false, true)
 		"external_corrections":
 			_external(context)
+		"global_floor":
+			_global_floor(context)
 		"lockstep":
 			_lockstep(context)
 		"configuration":
@@ -144,6 +146,59 @@ func _external(context: RefCounted) -> void:
 	_consume(context, session, batch, game, false, false, expected, 39)
 	context.equal(session.receive_input(1, 0, PackedByteArray([1])).code, Session.Code.INVALID_FRAME, "stale history rejected")
 	context.state(game.frame, game.bytes())
+
+
+# Value: protects=global rollback floor keeps every queue's floor input; fails_when=a fast queue's receipt or high-water sets the floor;
+# why_new=external_corrections never fills a ring or raises delay; seam=private queue read for the stale side-slot tag
+func _global_floor(context: RefCounted) -> void:
+	var config: RefCounted = _settings(3, 0)
+	config.sync_test = false
+	config.local_players = PackedInt32Array([0])
+	config.max_prediction_frames = 4
+	config.history_slots = 5
+	config.queue_capacity = 9
+	var session: RefCounted = Session.new()
+	context.equal(session.configure(config), Session.Code.OK, "floor config")
+	var game: Game = Game.new()
+	var baseline: Game = Game.new()
+	var expected: Array[PackedByteArray] = [baseline.bytes()]
+	for frame: int in range(40):
+		baseline.simulate(PackedByteArray([_delayed_local(frame), _value(1, frame), _value(2, frame)]))
+		expected.append(baseline.bytes())
+	var delivered: PackedInt32Array = PackedInt32Array([-1, -1, -1])
+	for frame: int in range(41):
+		# Player 2 always lags by three. Player 1 stalls, then fills its ring ahead of the session in one batch.
+		var targets: PackedInt32Array = PackedInt32Array([-1, frame - 1 if frame < 10 else (8 if frame < 12 else frame + 5), frame - 3 if frame < 40 else 39])
+		for player: int in [1, 2]:
+			while delivered[player] < targets[player]:
+				delivered[player] += 1
+				context.equal(session.receive_input(player, delivered[player], PackedByteArray([_value(player, delivered[player])])).code, Session.Code.OK, "delayed arrival")
+		var floor: int = maxi(0, frame - 4)
+		if frame >= 12:
+			var refused: int = delivered[1] + 1
+			context.equal(session.receive_input(1, refused, PackedByteArray([_value(1, refused)])).code, Session.Code.INPUT_FAILED, "no reclaim above floor")
+			context.bytes_equal(session.retained_local_input(0, floor), PackedByteArray([_delayed_local(floor)]), floor, "local floor readable")
+			for player: int in [1, 2]:
+				context.equal(session.receive_input(player, floor, PackedByteArray([_value(player, floor)])).code, Session.Code.OK, "remote floor readable")
+		if frame >= 13 and frame < 40:
+			context.equal(session.status().pending_rollback_frame, frame - 3, "lagging correction behind fast queue")
+			context.equal(session.received_frames()[1], frame + 5, "fast queue ahead")
+		if frame == 20:
+			context.equal(session.set_input_delay(0, 2).value, 21, "delay raised while predicting")
+		context.equal(session.submit_local_input(0, frame, PackedByteArray([_value(0, frame)])).code, Session.Code.OK, "local sample")
+		var result: RefCounted = session.begin_advance()
+		context.equal(result.code, Session.Code.READY, "bounded floor recovery")
+		_consume(context, session, result.batch, game, false, false, expected, session.status().confirmed_frame)
+		if frame >= 12:
+			context.equal(session._queues[1].confirmed_input(floor).code, Queue.Code.NO_CONFIRMED_INPUT, "stale side slot dropped")
+			context.equal(session.receive_input(1, floor, PackedByteArray([_value(1, floor)])).code, Session.Code.INVALID_FRAME, "stale floor rejected")
+	context.equal(session.status().confirmed_frame, 39, "final confirmation")
+	context.equal(session.statistics().max_rollback_depth, 3, "earlier correction rolled back")
+	context.state(game.frame, game.bytes())
+
+
+func _delayed_local(frame: int) -> int:
+	return _value(0, frame) if frame < 20 else _value(0, maxi(19, frame - 2))
 
 
 func _lockstep(context: RefCounted) -> void:
