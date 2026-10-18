@@ -13,11 +13,13 @@ SCANNED = (".gd", ".tscn", ".tres", ".json", ".cfg")
 
 
 def changed_files(base: str, root: Path = ROOT) -> list[str]:
-    """Committed changes since the merge base, plus staged, unstaged and untracked files."""
+    """Committed changes since the merge base, plus staged, unstaged and untracked source files.
+
+    Untracked files outside the Godot source directories (editor or agent settings) cannot reach a suite."""
     def git(*arguments: str) -> list[str]:
         return subprocess.run(["git", *arguments], cwd=root, capture_output=True, text=True, check=True).stdout.splitlines()
     merge_base = git("merge-base", "HEAD", base)[0]
-    return sorted(set(git("diff", "--name-only", merge_base)) | set(git("ls-files", "--others", "--exclude-standard")))
+    return sorted(set(git("diff", "--name-only", merge_base)) | set(git("ls-files", "--others", "--exclude-standard", "--", *SOURCES)))
 
 
 def select(suites: list[str], changed: list[str], root: Path = ROOT) -> list[str]:
