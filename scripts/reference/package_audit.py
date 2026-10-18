@@ -5,13 +5,16 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 
 from receipt_arguments import ReceiptParser
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.package_addon import ADDON, build_archive
+
 ROOT = Path(__file__).resolve().parents[2]
-ADDON = Path('addons/fortress_rollback')
 MARKER = 'FORTRESS_ADDON_PACKAGE_OK'
 SMOKE = '''extends SceneTree
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
@@ -201,35 +204,17 @@ def main():
     receipt = args.output / 'package-audit.json'
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
     executable = Path(shutil.which(str(args.godot)) or args.godot).resolve()
-    if (ROOT / ADDON).is_symlink() or not (ROOT / ADDON).is_dir():
-        raise ValueError('addon root is missing or symlinked')
-    paths = sorted((ROOT / ADDON).rglob('*'))
-    if any(path.is_symlink() for path in paths):
-        raise ValueError('addon contains a symlink')
-    if any(not path.is_dir() and not path.is_file() for path in paths):
-        raise ValueError('addon contains a nonregular entry')
-    files = [path for path in paths if path.is_file()]
-    required = {'LICENSE', 'NOTICE.md', 'licenses/fortress-LICENSE-MIT'}
-    if not required <= {str(path.relative_to(ROOT / ADDON)) for path in files}:
-        raise ValueError('missing runtime attribution')
-    if any(not (ROOT / ADDON / name).read_bytes().strip() for name in required):
-        raise ValueError('empty runtime attribution')
-    for name, source in [('LICENSE', ROOT / 'LICENSE'),
-                         ('licenses/fortress-LICENSE-MIT', ROOT / 'docs/reference/licenses/fortress-LICENSE-MIT')]:
-        if (ROOT / ADDON / name).read_bytes() != source.read_bytes():
-            raise ValueError('runtime license differs from canonical notice')
-    if any(path.suffix not in ('.gd', '.uid', '.md') and str(path.relative_to(ROOT / ADDON)) not in required for path in files):
-        raise ValueError('unsupported addon file or symlink')
     archive = args.output / 'fortress-addon-candidate.tar'
-    with tarfile.open(archive, 'w') as package:
-        for path in files:
-            package.add(path, arcname=str(path.relative_to(ROOT)), recursive=False)
+    files = build_archive(ROOT, archive)
     with tempfile.TemporaryDirectory(prefix='fortress-clean-addon-') as temporary:
         project = Path(temporary)
         with tarfile.open(archive) as package:
             entries = package.getnames()
-            if entries != [str(path.relative_to(ROOT)) for path in files]:
+            if entries != list(files):
                 raise ValueError('archive differs from addon allowlist')
+            for member in package.getmembers():
+                if not member.isfile() or package.extractfile(member).read() != files[member.name]:
+                    raise ValueError('archive bytes differ from frozen addon inputs')
             package.extractall(project, filter='data')
         (project / 'project.godot').write_text('config_version=5\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
         (project / 'smoke.gd').write_text(SMOKE)

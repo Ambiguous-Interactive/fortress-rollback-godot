@@ -72,6 +72,7 @@ var command_id: int = 0
 var old_callbacks: Array[Dictionary] = []
 var stale_callbacks: Dictionary = {}
 var replay_playback: Dictionary = {}
+var diagnostic_scene: Node2D
 var viewer_scene: Node2D
 
 
@@ -136,6 +137,7 @@ func _process(_delta: float) -> void:
 		"replay_enabled": not scene.replay_button.disabled,
 		"replay_playback": replay_playback,
 		"viewer": viewer_report(),
+		"diagnostic_viewer": diagnostic_viewer_report(),
 		"stale_callbacks": stale_callbacks,
 		"resume": lobby.resume,
 		"host_now_us": lobby._last_now,
@@ -189,6 +191,19 @@ func _command(value: Dictionary) -> void:
 			scene.hide()
 			scene.set_physics_process(false)
 			add_child(viewer_scene)
+		"inspect_diagnostic":
+			diagnostic_scene = load("res://examples/online/diagnostic.tscn").instantiate()
+			scene.hide()
+			scene.set_physics_process(false)
+			add_child(diagnostic_scene)
+		"diagnostic_control":
+			for button: Node in diagnostic_scene.find_children("*", "Button", true, false):
+				if button is Button and button.text == value.get("button", "") and not button.disabled:
+					button.pressed.emit()
+		"viewer_target":
+			for field: Node in viewer_scene.find_children("*", "SpinBox", true, false):
+				if field is SpinBox:
+					field.value = int(value.get("frame", 0))
 		"viewer_control":
 			for button: Node in viewer_scene.find_children("*", "Button", true, false):
 				if button is Button and button.text == value.get("button", "") and not button.disabled:
@@ -284,3 +299,10 @@ func failure_clocks(lobby: Lobby) -> Array[Dictionary]:
 	for endpoint: Dictionary in lobby.game_match.peer.network_status().peers.values():
 		clocks.append({"now_us": endpoint.get("now_us", -1), "last_recv_us": endpoint.get("last_recv_us", -1), "last_send_us": endpoint.get("last_send_us", -1)})
 	return clocks
+
+
+func diagnostic_viewer_report() -> Dictionary:
+	if diagnostic_scene == null:
+		return {}
+	return {"status": diagnostic_scene.viewer.status(), "state": diagnostic_scene.viewer.game.canonical_bytes().hex_encode(),
+		"message": diagnostic_scene.viewer.message}

@@ -407,6 +407,7 @@ def main():
                        python=Path(sys.executable).resolve(),
                        online_install_check=ROOT / 'scripts/reference/browser/online_install_check.gd',
                        online_host=ROOT / 'scripts/reference/browser/online_host.cjs', license=ROOT / 'LICENSE',
+                       diagnostic_guide=ROOT / 'docs/diagnostic-viewer.md',
                        online_guide=ROOT / 'docs/online-example.md', integration_guide=ROOT / 'docs/integration.md',
                        online_browser=ROOT / 'scripts/reference/browser/online.cjs',
                        online_bridge=ROOT / 'scripts/reference/browser/online_bridge.gd')

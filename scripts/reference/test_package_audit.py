@@ -9,25 +9,26 @@ import unittest
 from unittest.mock import patch
 
 import package_audit
+from test_package_builder import fixture
 
 GODOT: Path | None = None
 
 
 class PackageAuditControls(unittest.TestCase):
     def test_invalid_candidate_supersedes_success_before_running_engine(self):
-        for defect in ('rust', 'extensionless_tool', 'missing_notice', 'symlink', 'root_symlink', 'fifo', 'empty_notice', 'wrong_license'):
+        for defect in ('rust', 'extensionless_tool', 'missing_notice', 'symlink', 'root_symlink', 'fifo', 'empty_notice', 'wrong_license', 'orphan_uid', 'development_directory',
+                       'missing_transport', 'notices_only', 'unknown_script'):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                addon = root / package_audit.ADDON
-                (addon / 'licenses').mkdir(parents=True)
-                for name in ('LICENSE', 'NOTICE.md', 'licenses/fortress-LICENSE-MIT'):
-                    (addon / name).write_text('required notice\n')
-                (root / 'LICENSE').write_text('required notice\n')
-                canonical = root / 'docs/reference/licenses/fortress-LICENSE-MIT'
-                canonical.parent.mkdir(parents=True)
-                canonical.write_text('required notice\n')
-                (addon / 'core.gd').write_text('extends RefCounted\n')
-                if defect == 'missing_notice':
+                addon = fixture(root)
+                if defect == 'missing_transport':
+                    shutil.rmtree(addon / 'transport')
+                elif defect == 'notices_only':
+                    for family in ('core', 'protocol', 'transport'):
+                        shutil.rmtree(addon / family)
+                elif defect == 'unknown_script':
+                    (addon / 'core/test_dev.gd').write_text('extends RefCounted\n')
+                elif defect == 'missing_notice':
                     (addon / 'NOTICE.md').unlink()
                 elif defect == 'symlink':
                     (addon / 'linked-directory').symlink_to(root, target_is_directory=True)
@@ -39,6 +40,10 @@ class PackageAuditControls(unittest.TestCase):
                     os.mkfifo(addon / 'ignored-pipe')
                 elif defect == 'empty_notice':
                     (addon / 'NOTICE.md').write_text(' \n')
+                elif defect == 'orphan_uid':
+                    (addon / 'core/missing.gd.uid').write_text('uid://orphan\n')
+                elif defect == 'development_directory':
+                    (addon / 'tools').mkdir()
                 elif defect == 'wrong_license':
                     (addon / 'LICENSE').write_text('invented notice\n')
                 else:
@@ -51,7 +56,8 @@ class PackageAuditControls(unittest.TestCase):
                         ['package_audit.py', '--godot', '/nonexistent-engine', '--output', str(output)]), \
                         patch.object(package_audit.subprocess, 'run') as run:
                     with self.assertRaisesRegex(ValueError,
-                            'missing runtime attribution|unsupported addon file|symlink|nonregular entry|empty runtime attribution|differs from canonical'):
+                            'missing runtime attribution|unsupported addon file|symlink|nonregular entry|empty runtime attribution'
+                            '|differs from canonical|unsupported addon directory|missing required runtime scripts'):
                         package_audit.main()
                     run.assert_not_called()
                 self.assertIs(json.loads(receipt.read_text())['passed'], False)
@@ -69,9 +75,10 @@ class RuntimeScriptControls(unittest.TestCase):
             canonical = root / 'docs/reference/licenses/fortress-LICENSE-MIT'
             canonical.parent.mkdir(parents=True)
             shutil.copyfile(package_audit.ROOT / 'docs/reference/licenses/fortress-LICENSE-MIT', canonical)
-            optional = root / package_audit.ADDON / 'transport/optional_dependency.gd'
+            optional = root / package_audit.ADDON / 'transport/signalfish_adapter.gd'
             optional.parent.mkdir(exist_ok=True)
-            optional.write_text('extends RefCounted\nconst SDK = preload("res://addons/signal_fish/missing.gd")\n')
+            original = optional.read_bytes()
+            optional.write_bytes(original + b'\nconst MissingSDK = preload("res://addons/signal_fish/missing.gd")\n')
             output = root / 'results'
             arguments = ['package_audit.py', '--godot', str(GODOT), '--output', str(output)]
             with patch.object(package_audit, 'ROOT', root), patch('sys.argv', arguments):
@@ -79,7 +86,7 @@ class RuntimeScriptControls(unittest.TestCase):
                     package_audit.main()
                 self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], False)
                 self.assertIn('missing.gd', (output / 'clean-addon.log').read_text())
-                optional.write_text('extends RefCounted\n')
+                optional.write_bytes(original)
                 package_audit.main()
                 self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], True)
 

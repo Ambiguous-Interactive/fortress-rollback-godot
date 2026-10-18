@@ -11,11 +11,13 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls"])
+	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"navigation":
+			_navigation(context)
 		"scene_controls":
 			_scene_controls(context)
 		"controls":
@@ -178,5 +180,67 @@ func _scene_controls(context: RefCounted) -> void:
 	context.equal(_button(node, "Play").disabled, true, "completed playback disables Play")
 	context.equal(_button(node, "Step").disabled, true, "completed playback disables Step")
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+func _navigation(context: RefCounted) -> void:
+	var viewer: Viewer = Viewer.new()
+	context.equal(viewer.has_method("seek"), true, "frame navigation is available")
+	if not viewer.has_method("seek"):
+		return
+	var replay: Replay = recording(300)
+	context.equal(viewer.open_bytes(replay.to_bytes()), true, "open long recording")
+	context.equal(viewer.call("seek", 299), true, "request distant frame")
+	context.equal(viewer.current_frame(), 0, "seek starts without blocking")
+	viewer.tick()
+	context.equal(viewer.current_frame(), 120, "one tick has a bounded replay budget")
+	context.equal(viewer.call("is_seeking"), true, "long seek continues later")
+	viewer.call("cancel_seek")
+	viewer.tick()
+	context.equal(viewer.current_frame(), 120, "cancel pauses at a validated boundary")
+	context.equal(viewer.call("seek", 30), true, "backward seek restarts sequential validation")
+	viewer.tick()
+	var expected: Simulation = Simulation.new()
+	for frame: int in 30:
+		expected.simulate_frame(frame, replay.inputs(frame))
+	context.bytes_equal(viewer.game.canonical_bytes(), expected.canonical_bytes(), 30, "backward navigation canonical equality")
+	context.equal(viewer.call("is_seeking"), false, "seek reaches exact target")
+	context.equal(viewer.is_playing, false, "navigation finishes paused")
+	for invalid: int in [-1, 301, 9223372036854775807]:
+		context.equal(viewer.call("seek", invalid), false, "reject invalid target")
+		context.equal(viewer.current_frame(), 30, "invalid target preserves frame")
+	context.equal(viewer.call("seek", 300), true, "can navigate to final boundary")
+	while viewer.call("is_seeking"):
+		viewer.tick()
+	context.equal(viewer.current_frame(), 300, "seek completes recording")
+	context.equal(viewer.call("seek", 0), true, "return to initial boundary")
+	context.equal(viewer.current_frame(), 0, "zero target resets immediately")
+	replay._inputs[14] = 1
+	context.equal(viewer.open_bytes(replay.to_bytes()), true, "load shape-correct corruption")
+	viewer.call("seek", 300)
+	viewer.tick()
+	context.equal(viewer.current_frame(), 8, "seek cannot skip checksum failure")
+	context.equal(viewer.call("is_seeking"), false, "failure cancels seek")
+	context.equal(viewer.can_step(), false, "failure remains terminal")
+	context.equal(viewer.message.contains("stopped at frame 8"), true, "failure visible during navigation")
+	context.state(8, viewer.game.canonical_bytes())
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	node.viewer.open_bytes(recording(300).to_bytes())
+	node._refresh()
+	var target: SpinBox = node.find_children("*", "SpinBox", true, false)[0]
+	target.get_line_edit().text = "299"
+	_button(node, "Go").pressed.emit()
+	context.equal(node.viewer.is_seeking(), true, "Go applies typed target")
+	context.equal(_button(node, "Cancel seek").disabled, false, "seek exposes cancel")
+	context.equal(_button(node, "Play").disabled, true, "seek disables playback controls")
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 120, "scene seek budget enforced")
+	_button(node, "Cancel seek").pressed.emit()
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 120, "real cancel pauses")
+	context.equal(_button(node, "Play").disabled, false, "cancel permits playback")
+	context.equal(node.viewer.message, "Paused.", "cancel updates visible message")
 	node._exit_tree()
 	node.free()

@@ -40,6 +40,11 @@ post-import inventory through export and execution.
 Verify supplied pinned executables against bytes extracted from the verified
 archive; a version string and unchanged execution hash do not prove provenance.
 
+For distributable archives, compare against an explicit required runtime inventory.
+A clean import can succeed after an entire optional subsystem was omitted. Delete
+a required subsystem and add an unknown development script as negative controls;
+both must fail before constructing a successful candidate.
+
 ## Faster local iteration
 
 `make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;

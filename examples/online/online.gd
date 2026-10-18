@@ -45,6 +45,7 @@ func _ready() -> void:
 	trace_checkbox = CheckBox.new()
 	trace_checkbox.text = "Include game state and inputs in diagnostics (choose before Ready)"
 	panel.add_child(trace_checkbox)
+	_button(panel, "Inspect diagnostic file", _inspect_diagnostic)
 	var replay_row: HBoxContainer = HBoxContainer.new()
 	panel.add_child(replay_row)
 	replay_checkbox = CheckBox.new()
@@ -114,6 +115,10 @@ func _button(parent: Node, caption: String, callback: Callable) -> Button:
 	button.pressed.connect(callback)
 	parent.add_child(button)
 	return button
+
+
+func _inspect_diagnostic() -> void:
+	get_tree().change_scene_to_file("res://examples/online/diagnostic.tscn")
 
 
 func _watch_replay() -> void:

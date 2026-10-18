@@ -7,11 +7,13 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const MAX_BYTES: int = 1048576
 const MAX_FRAMES: int = 36000
+const SEEK_FRAMES_PER_TICK: int = 120
 const GAME_VERSION: String = "fortress-online-integer-v1"
 
 var game: Simulation = Simulation.new()
 var message: String = "Open a fortress-online.frrp recording."
 var is_playing: bool = false
+var _seek_target: int = -1
 var _recording: Replay
 var _player: Player = Player.new()
 
@@ -49,6 +51,7 @@ func _compatible(recording: Replay) -> bool:
 func restart() -> void:
 	if _recording == null:
 		return
+	_seek_target = -1
 	game = Simulation.new()
 	_player = Player.new()
 	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES)
@@ -57,19 +60,36 @@ func restart() -> void:
 
 
 func toggle_play() -> void:
-	if not can_step():
+	if is_seeking() or not can_step():
 		return
 	is_playing = not is_playing
 	message = "Playing; recorded checksums are validated." if is_playing else "Paused."
 
 
-## One presentation tick advances at most one recorded frame; elapsed time never invents input.
+## Playback advances one recorded frame per tick; seeking uses a bounded batch of recorded frames.
 func tick() -> void:
-	if is_playing:
+	if is_seeking():
+		for _frame: int in SEEK_FRAMES_PER_TICK:
+			if not is_seeking():
+				break
+			_advance()
+			if _player.failure_frame() >= 0:
+				_seek_target = -1
+			elif current_frame() == _seek_target:
+				_seek_target = -1
+				if not _player.is_complete():
+					message = "Paused."
+	elif is_playing:
 		step()
 
 
 func step() -> void:
+	if is_seeking():
+		return
+	_advance()
+
+
+func _advance() -> void:
 	if not can_step():
 		return
 	var code: int = _player.step()
@@ -92,3 +112,26 @@ func current_frame() -> int:
 ## Whether another recorded frame can advance, including while paused.
 func can_step() -> bool:
 	return _recording != null and not _player.is_complete() and _player.failure_frame() < 0
+
+
+## Navigate by replaying every intervening input and checksum, at a bounded rate per tick.
+## Backward targets rebuild from the initial game state. Navigation always finishes paused.
+func seek(frame: int) -> bool:
+	if _recording == null or frame < 0 or frame > frame_count():
+		return false
+	if frame < current_frame() or _player.failure_frame() >= 0:
+		restart()
+	is_playing = false
+	_seek_target = frame if frame != current_frame() else -1
+	message = "Seeking to frame %d; checksums are validated." % frame if is_seeking() else "Paused."
+	return true
+
+
+func is_seeking() -> bool:
+	return _seek_target >= 0
+
+
+func cancel_seek() -> void:
+	if is_seeking():
+		_seek_target = -1
+		message = "Paused."
