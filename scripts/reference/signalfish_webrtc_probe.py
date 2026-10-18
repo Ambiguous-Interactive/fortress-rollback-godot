@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 
 from browser.webrtc_import import freeze_after_import
@@ -25,6 +26,9 @@ from signalfish_live_probe import (build_cargo, extract, native_inventory, sourc
 from signalfish_probe import inventory
 from run import capture
 from wire import INPUT_HEADER
+LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close')
+
+
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
@@ -343,10 +347,14 @@ def main():
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--browser-pair', choices=PAIRS, default='chromium', help='two independent browser processes; default chromium')
     parser.add_argument('--online-example', action='store_true', help='export and drive the shipped two-player online example')
+    parser.add_argument('--label', action='append', choices=LABELS, help='transport witness label to run; defaults to all, in order')
     args = parser.parse_args()
     pair = PAIRS[args.browser_pair]
     if args.online_example and args.browser_pair != 'chromium':
         parser.error('--browser-pair applies to the transport witness; online example currently requires Chromium')
+    if args.online_example and args.label:
+        parser.error('--label applies to the transport witness')
+    labels = [label for label in LABELS if label in (args.label or LABELS)]
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / ('online-example.json' if args.online_example else 'signalfish-webrtc.json')
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
@@ -542,7 +550,8 @@ def main():
                             environment, args.output / f'{version}-clock-test.log'): raise ValueError('transport clock regression incomplete')
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
-                    for label in ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close'):
+                    for label in labels:
+                        started = time.monotonic()
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
                                            f'ws://127.0.0.1:{port}/v3/ws', label, str(args.output / f'{version}-{label}-events.log')]
@@ -558,6 +567,7 @@ def main():
                                                             default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close'))
                         records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled') else None,
                                         'command': browser_command, 'result': result})
+                        print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
                     if inventory(executed) != frozen or inventory({'export': export}) != export_before:
                         raise ValueError('executed Web sources changed')
                     executed_records.append({'engine': actual, 'source_inventory': frozen, 'export_inventory': export_before})
@@ -566,7 +576,8 @@ def main():
     if native_inventory(sources) != before or source_inventory(args.server_source) != server_before:
         raise ValueError('source or tool inventory changed during execution')
     report = {'passed': True, 'sdk_revision': sdk_pin['revision'], 'server_revision': server_pin['revision'],
-              'browser_pair': list(pair), 'input_inventory': before, 'server_source_inventory': server_before, 'executed': executed_records,
+              'browser_pair': list(pair), 'labels': [] if args.online_example else labels, 'input_inventory': before,
+              'server_source_inventory': server_before, 'executed': executed_records,
               'server_config': config, 'server_events': server_events, 'records': records,
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
               'limits': 'Real release Web exports in two independent selected pinned browser processes; local host ICE, 2/4/8 peers, '
