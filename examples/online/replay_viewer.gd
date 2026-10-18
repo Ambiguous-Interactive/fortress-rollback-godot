@@ -57,7 +57,7 @@ func restart() -> void:
 	_seek_failed = false
 	game = Simulation.new()
 	_player = Player.new()
-	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES)
+	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES, 300, 121)
 	is_playing = false
 	message = "Ready. Press Play; recorded checksums are validated." if code == Types.Code.OK else "Could not start playback (%d)." % code
 
@@ -115,13 +115,21 @@ func can_step() -> bool:
 	return _recording != null and not _seek_failed and not _player.is_complete() and _player.failure_frame() < 0
 
 
-## Navigate by replaying every intervening input and checksum, at a bounded rate per tick.
-## Backward targets rebuild from the initial game state. Navigation always finishes paused.
+## Navigate from a previously validated checkpoint, replaying the remaining inputs and checksums.
+## Checkpoints cover five-second boundaries within this recording. Navigation always finishes paused.
 func seek(frame: int) -> bool:
 	if _recording == null or frame < 0 or frame > frame_count():
 		return false
-	if frame < current_frame() or _seek_failed or _player.failure_frame() >= 0:
+	if _seek_failed or _player.failure_frame() >= 0:
 		restart()
+	var code: int = _player.restore_before(frame)
+	if code == Types.Code.HISTORY_UNAVAILABLE and frame < current_frame():
+		restart()
+	elif code not in [Types.Code.OK, Types.Code.HISTORY_UNAVAILABLE]:
+		is_playing = false
+		_seek_target = -1
+		message = "Replay stopped at frame %d (code %d)." % [_player.failure_frame(), code]
+		return false
 	is_playing = false
 	_seek_target = frame if frame != current_frame() else -1
 	if is_seeking():

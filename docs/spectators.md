@@ -3,8 +3,8 @@
 `FortressSpectatorSession` plays one trusted host's complete confirmed input rows.
 It uses the same ordered expert requests and `FortressDriver` game callbacks as
 player sessions. Spectators contribute no input, prediction or confirmation to
-the host. This is a transport-independent playback API; live SignalFish spectator
-routing, network handshake and host timeout handling remain under [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47).
+the host. The playback API and optional byte envelope are transport-independent; live SignalFish
+spectator routing and network handshake remain under [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47).
 
 ## Try the local example
 
@@ -18,8 +18,9 @@ Move with A/D or arrows and fire with Space. Press P to pause only the viewer;
 resume to catch up at most four frames per physics tick. R starts a fresh game.
 
 A long viewer pause can exhaust retained host history. The viewer then stops
-with `HISTORY_UNAVAILABLE`; the host keeps playing. The example runs delivery
-in the same process and requires no server, SDK or native extension.
+with `HISTORY_UNAVAILABLE`; the host keeps playing. The example encodes and receives spectator byte packets
+in the same process, with an injected ten-second host deadline. It requires no server,
+SDK or native extension.
 
 ![Local host and delayed spectator](images/spectator-example.png)
 
@@ -102,6 +103,53 @@ row before delivering them. Export does not extend rollback history or wait for
 spectators; callers must keep their own bounded send cursor and handle missing
 history explicitly. The playable example shows this loop.
 
+## Deliver bytes over a caller-owned transport
+
+`FortressSpectatorStream` wraps a spectator session with versioned fixed-width packets.
+Configure it with the spectator `config`, an owned 32-byte identity, initial monotonic
+microseconds, a positive timeout, and a packet limit large enough for one complete row.
+Use `playback_session()` with the ordinary driver and fresh initial game state.
+
+```gdscript
+const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
+var stream: Stream = Stream.new()
+var code: int = stream.configure(config, agreed_identity, 0, 2000000, 65536)
+# Continue only on OK. Authenticate host delivery before accepting packets.
+var viewer: Spectator = stream.playback_session()
+code = stream.receive_packet(received_bytes, now_us)
+code = stream.poll(now_us)
+```
+
+The identity contains a 16-byte session ID, eight-byte host ID and eight-byte
+connection lifetime. Identifiers fence delivery; they do not authenticate a sender.
+The caller must authenticate the host and agree neutral input, seed, initial state
+and game rules separately. Use fresh identities for a new network lifetime.
+
+The 48-byte little-endian header contains `FRGS`, version 1, kind, player count,
+reserved zero byte, u32 input width, the identity, and a u32 frame. `encode_row`
+appends exactly one complete row in stable player order. Obtain that row from the
+host's corrected `confirmed_inputs`; the encoder cannot prove it was confirmed.
+`encode_end(final_frame)` carries the exclusive final frame without a body.
+
+`receive_packet` validates lengths, version, dimensions and identity before touching
+playback. Foreign or malformed packets return `PROTOCOL_FAILED` without changing
+the session. Conflicting accepted history terminates the viewer. Reordering and
+identical retained duplicates use the same bounded row ring as direct delivery.
+No extra receive queue is retained. On `BUSY` or `NETWORK_BACKPRESSURE`, keep the
+exact packet and retry after the active batch or playback frees capacity.
+
+Call `poll` independently of playback and packet acceptance. The deadline uses
+elapsed time since the last accepted host packet; expiry wins over a packet at
+that exact deadline and terminates with `PROTOCOL_FAILED`. Calls during an active
+batch return `BUSY` without changing clocks. Rejected packets do not refresh host
+liveness. A clean END may overtake rows: remaining rows below its exclusive bound
+are accepted until the contiguous prefix is complete, then playback drains cleanly.
+A missing tail expires under the same deadline. The caller owns transport closure.
+
+This envelope is separate from the player wire protocol. It supplies neither
+handshake negotiation, retransmission nor SignalFish spectator admission. Player
+rosters and player confirmation remain unchanged.
+
 ## End the stream
 
 For a known clean end, call `finish_host()`. It refuses further rows, releases
@@ -127,6 +175,6 @@ viewer state with independent original-input game history while the host rolls
 back. Pausing and history loss leave host progress unaffected.
 
 This foundation does not close #47. Actual upstream spectator differential/model
-checks, host protocol events, SignalFish spectator identity/routing, real relay
+checks, host protocol events and handshake, SignalFish spectator identity/routing, real relay
 delivery, and network lifecycle validation remain required. The existing player
 mesh roster must not be extended to admit spectators without those contracts.

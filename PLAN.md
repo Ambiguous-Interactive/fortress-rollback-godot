@@ -30,7 +30,7 @@ Local development contracts and evidence entry points:
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback](docs/integration.md#record-and-replay-a-match).
-- [Confirmed-input spectator playback and local delayed-view example](docs/spectators.md).
+- [Confirmed-input spectator playback, bounded byte envelopes and local delayed-view example](docs/spectators.md).
 - [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
@@ -372,6 +372,8 @@ known-allocation positive control; flat memory alone is insufficient.
 
 ## Advanced parity boundaries
 
+Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
+in-memory snapshots without changing the portable file format.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Validated replay playback checks callback success and bounded snapshot status before
@@ -382,6 +384,7 @@ Single-host spectators precede redundant-host failover.
 The bounded confirmed-input spectator API shares the player request engine and
 supports delayed playback, caller-bounded catch-up and explicit host endings.
 Its local example streams corrected original inputs while the host continues.
+Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
 Live SignalFish spectator routing, handshake/events and upstream spectator
 differential/model acceptance remain open in #47.
 Coordinated peer drop must preserve exposed confirmed history and irreversible

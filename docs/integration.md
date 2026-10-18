@@ -178,6 +178,15 @@ A snapshot that leaves out state stops the session with `DESYNC` and a `failure_
 The test drops the shot cooldown from the snapshot and confirms sync-test catches it.
 The [offline example](offline-example.md) is a complete sync-test scene.
 
+### Local input validation and retries
+
+The driver checks every local sample's player, frame, width and retained-input conflict
+before submitting any sample in a step. Null samples and conflicting duplicate slots
+also reject the list. Correct the list and retry at the same frame. Identical duplicate
+samples remain idempotent. Queue capacity is checked during submission; it is separate
+from this metadata preflight. Expert callers can use `session.validate_local_input`
+for the same non-mutating checks before calling `submit_local_input`.
+
 ## Record and replay a match
 
 Set `config.replay_max_frames` before `configure` to record confirmed inputs as the match runs.
@@ -215,6 +224,20 @@ A failed snapshot write stops with `SNAPSHOT_FAILED`, even if the callback retur
 `CALLBACK_FAILED` means a callback returned failure or an invalid result. These failures also set `failure_frame()`.
 Pass `0` to play inputs without checking. The file stores inputs, not game rules.
 Check `game_version()` and `game_seed()` before playing, and set up the game to match.
+
+For repeated navigation, pass optional `checkpoint_interval` and `checkpoint_capacity` to
+`configure`. Both default to zero. Enable both together with a positive snapshot size,
+a capacity of 2–1024, and a game implementing `load_state`. Reserved snapshot bytes
+(`capacity * max_snapshot_bytes`) must not exceed 16 MiB. The initial checkpoint is
+retained; the oldest later checkpoint is evicted when the cache fills.
+
+`restore_before(target)` restores the nearest retained boundary at or before the target.
+Continue calling `step()` in a caller-bounded loop to reach the exact target. Forward
+navigation keeps the current state when it is closer than any retained checkpoint.
+A cache miss returns `HISTORY_UNAVAILABLE`; a failed player cannot skip its failure
+using checkpoints. Restore validates full snapshot consumption, canonical bytes and
+checksum. Reconfiguration clears the cache. Checkpoints stay in memory and do not
+change the portable replay file format.
 
 For downloaded online example recordings, use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.
 The [replay applicability probe](oracle-replay.md) checks sequential playback against the actual pinned upstream session and documents interface differences.

@@ -100,20 +100,33 @@ func poll(now_us: int) -> Types.Result:
 	return Types.Result.new(Code.OK)
 
 
-## Identical current samples are idempotent while stalled; conflicts preserve input.
-func submit_local_input(player: int, sample_frame: int, bytes: PackedByteArray) -> Types.Result:
+## Checks local sample metadata and retained retries without changing input or receipt state.
+## Queue capacity is checked only by submission.
+func validate_local_input(player: int, sample_frame: int, bytes: PackedByteArray) -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
-		return Types.Result.new(code)
+		return code
 	if player < 0 or player >= _queues.size() or player not in _config.local_players:
-		return Types.Result.new(Code.INVALID_PLAYER)
+		return Code.INVALID_PLAYER
 	if sample_frame != _current:
-		return Types.Result.new(Code.INVALID_FRAME)
+		return Code.INVALID_FRAME
 	if bytes.size() != _config.input_width:
-		return Types.Result.new(Code.INPUT_WIDTH)
+		return Code.INPUT_WIDTH
+	if not _samples[player].is_empty() and _samples[player] != bytes:
+		return Code.INPUT_ALREADY_SUBMITTED
+	return Code.OK
+
+
+## Identical current samples are idempotent while stalled; conflicts preserve input.
+func submit_local_input(player: int, sample_frame: int, bytes: PackedByteArray) -> Types.Result:
+	var code: int = validate_local_input(player, sample_frame, bytes)
+	if code != Code.OK:
+		var rejected: Types.Result = Types.Result.new(code)
+		rejected.value = -1 if code == Code.INPUT_ALREADY_SUBMITTED else 0
+		return rejected
 	if not _samples[player].is_empty():
-		var repeated: Types.Result = Types.Result.new(Code.OK if _samples[player] == bytes else Code.INPUT_ALREADY_SUBMITTED)
-		repeated.value = _received[player] if repeated.code == Code.OK else -1
+		var repeated: Types.Result = Types.Result.new(Code.OK)
+		repeated.value = _received[player]
 		return repeated
 	var result: Queue.Result = _queues[player].add_input_with_reclaim_floor(sample_frame, bytes, _floor())
 	if result.code != Queue.Code.OK:

@@ -82,6 +82,11 @@ func receive_host_frame(frame: int, inputs: Array[PackedByteArray]) -> Types.Res
 	return Types.Result.new(Code.OK)
 
 
+## Highest complete contiguous host input, independent of playback delay.
+func host_frontier() -> int:
+	return _host_frontier
+
+
 ## Number of driver/expert calls to attempt now; zero waits for complete host history.
 ## After a clean tail, one final call publishes termination without simulating a frame.
 ## Recompute after each service cycle. The driver still enforces delay if callers exceed this advice.
@@ -122,6 +127,10 @@ func begin_advance() -> Types.Result:
 		if received.code != Code.OK:
 			return received
 	return super.begin_advance()
+
+
+func validate_local_input(_player: int, _sample_frame: int, _bytes: PackedByteArray) -> int:
+	return Code.UNSUPPORTED
 
 
 func submit_local_input(_player: int, _sample_frame: int, _bytes: PackedByteArray) -> Types.Result:

@@ -48,6 +48,13 @@ EXPECTED.update({
         'expert_parity', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes'},
     'res://tests/unit/test_driver_callback_results.gd': {'valid', 'malformed', 'termination', 'peer_failure'},
 })
+EXPECTED.update({
+    'res://tests/unit/test_driver.gd': {'parity', 'reentry', 'failure', 'validation', 'stall',
+        'terminate_reconfigure', 'notifications', 'input_validation'},
+    'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
+    'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed',
+        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy'},
+})
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -75,6 +82,7 @@ FILES += ['tests/unit/test_diagnostic_player.gd', 'tests/unit/test_replay_viewer
 FILES += ['tests/unit/test_diagnostic_viewer.gd', 'examples/online/diagnostic_viewer.gd',
           'examples/online/diagnostic_scene.gd', 'examples/online/diagnostic.tscn']
 FILES += ['tests/unit/test_spectator_session.gd', 'tests/unit/test_driver_callback_results.gd']
+FILES += ['tests/unit/test_replay_checkpoints.gd', 'tests/unit/test_spectator_stream.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -97,10 +105,13 @@ const DiagnosticPlayer = preload("res://tests/unit/test_diagnostic_player.gd")
 const DiagnosticViewer = preload("res://tests/unit/test_diagnostic_viewer.gd")
 const ReplayViewer = preload("res://tests/unit/test_replay_viewer.gd")
 const Spectator = preload("res://tests/unit/test_spectator_session.gd")
+const DriverInputs = preload("res://tests/unit/test_driver.gd")
+const ReplayCheckpoints = preload("res://tests/unit/test_replay_checkpoints.gd")
+const SpectatorStream = preload("res://tests/unit/test_spectator_stream.gd")
 const CallbackResults = preload("res://tests/unit/test_driver_callback_results.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
-\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults]
+\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs, ReplayCheckpoints, SpectatorStream]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
