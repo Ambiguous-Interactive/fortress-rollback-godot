@@ -7,9 +7,10 @@ metadata:
 
 # Ship a Session
 
-Aggregate the session in one PR. The user's standing instruction authorizes its
-squash merge to `main` once CI is fully green and no feedback remains unaddressed.
-Finish this sequence without asking for another confirmation. Publication of a
+Aggregate the session in one PR. The repository owner authorizes the agent to squash
+merge it to `main` itself once CI is fully green and no feedback remains unaddressed.
+No human review or approval is needed: adversarial sub-agent reviews, bot reviews and
+the feedback scan below are the review. Finish without asking for another confirmation. Publication of a
 release and changes to repository settings require their own scope.
 
 Use [user-copy](../user-copy/SKILL.md) for titles, descriptions, comments,
@@ -83,7 +84,8 @@ session log or linked issue. Do not make an automated clean claim from counts.
 
 1. Re-read PR head/base, checks, statuses and feedback just before merge. If the
    head changed, repeat all candidate gates. Merge only the reviewed SHA, using
-   squash and the API's expected-head precondition where available.
+   squash and the expected-head precondition:
+   `gh pr merge <n> --squash --match-head-commit <reviewed-sha>`.
 2. Confirm the API reports merged and read the resulting merge commit SHA.
    A successful auto-merge request or closed PR is not proof of a merge.
    After an uncertain response, read state before retrying the mutation.

@@ -145,3 +145,15 @@ Fresh adversarial reviews ran on #103 and #45.
 The [retrospective](../.llm/retrospectives/2026-10-17-parallel-suites.md) updates the testing skill's
 local-iteration guidance for sharded runs.
 Retro: findings-acted.
+
+## Delivery
+
+#114 merged as `eeac6855d0ae92cd1d9ea572485939207167b7b6` from reviewed head
+`e1d1bf4fc4b41e1dcb03ce869630f2471029712c`. All 14 PR checks passed on that head (Reference Baseline
+11m26s). Cursor Bugbot ran when the PR left draft and found no issues. Feedback scans after green CI
+and immediately before merge found no inline comments, reviews, conversation comments, threads or
+annotations. #103 and #46 closed on merge; #45 has a progress comment.
+
+The first merge attempt was refused by the agent permission check as an unreviewed merge. The owner
+approved the merge explicitly, and GOAL.md, PLAN.md, `.llm/context.md` and the ship-session skill now
+state that the agent runs the squash merge itself, with the exact command.

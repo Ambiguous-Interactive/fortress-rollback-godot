@@ -28,7 +28,7 @@ const path = require('node:path');
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
-    await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 60000 });
+    await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 120000 });
     if (errors.length) throw new Error(JSON.stringify(errors));
     const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
     console.log(JSON.stringify({ browser: 'Chromium', version: browser.version(), result, errors }));

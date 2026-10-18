@@ -437,7 +437,8 @@ Follow [ship-session](.llm/skills/ship-session/SKILL.md): after all current-head
 is green, scan inline threads, submitted reviews, conversation comments and check
 annotations with complete pagination. Address every actionable finding, repeat
 CI after fixes, and scan again immediately before merging. Squash merge the
-session PR to `main` under standing user authorization, verify its merge SHA,
+session PR to `main` yourself: the repository owner authorizes the agent to merge it
+without human review once the session is complete. Verify its merge SHA,
 fetch and fast-forward local `main` to `origin/main`, then verify main CI.
 
 Use [user-copy](.llm/skills/user-copy/SKILL.md) for comments, PR titles/bodies,

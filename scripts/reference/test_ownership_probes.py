@@ -38,7 +38,7 @@ class OwnershipReceiptTests(unittest.TestCase):
 
     def test_web_host_and_copy_inventory_cover_selected_suites(self):
         constants = dict(re.findall(r'const (\w+) = preload\("(res://[^"\n]+)"\)', probes.HOST))
-        scripts = re.search(r'var scripts: Array\[Script\] = \[(.*?)\]', probes.HOST).group(1)
+        scripts = re.search(r'var scripts: Array\[Script\] = \[(.*?)\]', probes.HOST, re.S).group(1)
         selected = [constants[name.strip()] for name in scripts.split(',')]
         self.assertEqual(len(selected), len(set(selected)))
         self.assertEqual(set(selected), set(probes.EXPECTED))
@@ -59,7 +59,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 cache = Path(directory) / 'cache'
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
-                                       'scripts/reference/receipt_arguments.py', 'docs/reference/pins.json']
+                                       'scripts/reference/receipt_arguments.py', 'docs/reference/pins.json', 'project.godot']
                 for filename in files:
                     target = root / filename
                     target.parent.mkdir(parents=True, exist_ok=True)

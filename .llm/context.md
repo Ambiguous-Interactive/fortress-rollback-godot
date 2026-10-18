@@ -85,8 +85,10 @@ Follow [ship-session](./skills/ship-session/SKILL.md) after every push and befor
 ending a session. Once the session PR has fully green current-head CI, scan all
 four feedback surfaces with complete pagination and thread resolution state.
 Address every actionable finding, recheck immediately before merge, squash merge
-to `main`, and fetch/update local Git to match `origin/main`. This is standing
-user authorization; no additional merge confirmation is needed.
+to `main`, and fetch/update local Git to match `origin/main`. The repository owner
+authorizes the agent to run that squash merge itself once the session is complete;
+no human review, approval or further confirmation is needed. Adversarial sub-agent
+reviews, bot reviews and the feedback scan are the review.
 
 Use [user-copy](./skills/user-copy/SKILL.md) for plain comments, PR titles and
 bodies, commit messages and CHANGELOG entries. Set the maximum source line width

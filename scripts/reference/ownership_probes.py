@@ -36,6 +36,8 @@ EXPECTED.update({
 EXPECTED.update({
     'res://tests/unit/test_diagnostic_trace.gd': {'owned_window', 'disabled_equality', 'bounds', 'failed_callback', 'local_divergence'},
     'res://tests/unit/test_peer_diagnostic_trace.gd': {'real_divergence', 'healthy_equality'},
+    'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
+        'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit'},
 })
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
@@ -58,6 +60,7 @@ FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
           'tests/unit/test_input_endpoint.gd', 'tests/unit/test_session_network_seams.gd',
           'tests/unit/test_peer_session.gd', 'tests/unit/test_stalled_gossip.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
 FILES += ['tests/unit/test_diagnostic_trace.gd', 'tests/unit/test_peer_diagnostic_trace.gd', 'tests/unit/test_driver.gd']
+FILES += ['tests/unit/test_replay.gd', 'tests/fixtures/replay/golden.json', 'examples/integration/game.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -74,8 +77,10 @@ const PeerLifecycle = preload("res://tests/unit/test_peer_lifecycle.gd")
 const DiagnosticTrace = preload("res://tests/unit/test_diagnostic_trace.gd")
 const PeerTrace = preload("res://tests/unit/test_peer_diagnostic_trace.gd")
 const StalledGossip = preload("res://tests/unit/test_stalled_gossip.gd")
+const Replay = preload("res://tests/unit/test_replay.gd")
 func _ready() -> void:
-\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace, PeerTrace]
+\tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
+\t\tPeerTrace, Replay]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)
@@ -145,7 +150,7 @@ def validate(result, negative):
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
-               'docs/reference/pins.json']
+               'docs/reference/pins.json', 'project.godot']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
 
 
@@ -221,8 +226,12 @@ def main():
                 if text.count(before) != 1:
                     raise ValueError('negative control mutation no longer applicable')
                 suite.write_text(text.replace(before, 'var history: PackedByteArray = caller'))
+            # Replays record the addon version, which tests compare with the project setting.
+            versions = [line for line in (ROOT / 'project.godot').read_text().splitlines() if line.startswith('config/version=')]
+            if len(versions) != 1:
+                raise ValueError('project version line missing or duplicated')
             (project / 'project.godot').write_text(
-                'config_version=5\n[application]\nconfig/name="Ownership probes"\nrun/main_scene="res://main.tscn"\n'
+                f'config_version=5\n[application]\nconfig/name="Ownership probes"\n{versions[0]}\nrun/main_scene="res://main.tscn"\n'
                 '[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
             (project / 'host.gd').write_text(HOST)
             (project / 'main.tscn').write_text(
@@ -283,7 +292,7 @@ def main():
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
-              'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery and 2–8-player gameplay; '
+              'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '
               'no real transport, performance or other-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')
 

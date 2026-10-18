@@ -190,8 +190,10 @@ jobs:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        # Each part starts its own server and browsers, so they run as parallel jobs.
-        part: [webrtc, online]
+        # Each part starts its own server and browsers, so they run as parallel jobs. The transport
+        # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
+        # runs with the direct labels so both jobs take about as long.
+        part: [direct, mixed, online]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -229,10 +231,11 @@ jobs:
             --source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
             --output .cache/reference/results/signalfish-server-build
       - name: Verify real browser WebRTC on the pinned engine
-        if: matrix.part == 'webrtc'
+        if: matrix.part == 'direct' || matrix.part == 'mixed'
         run: |
+          if [[ "${{ matrix.part }}" == direct ]]; then labels=(clean faults corrupt default mixed-disabled); else labels=(mixed mixed-default mixed-close); fi
           python3 scripts/reference/signalfish_webrtc_probe.py \
-            --version "${{ matrix.version }}" \
+            --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
             --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \

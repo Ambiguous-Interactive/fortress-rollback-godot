@@ -155,7 +155,7 @@ class EngineControls(unittest.TestCase):
                     process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"),
                         "--godot", str(GODOT), "--category", category, "--suite",
                         "res://tests/runner/self_suite.gd", "--seed", "9223372036854775807",
-                        "--results", str(output)], cwd=ROOT, capture_output=True, text=True)
+                        "--results", str(output), "--durations", str(Path(directory) / "durations.json")], cwd=ROOT, capture_output=True, text=True)
                     self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
                     report = json.loads(output.read_text())
                     self.assertTrue(report["passed"])
@@ -168,16 +168,26 @@ class EngineControls(unittest.TestCase):
         suites = ["--suite", "res://tests/unit/test_snapshot_history.gd", "--suite", "res://tests/runner/self_suite.gd"]
         cases = [("all", [], True), ("filtered", ["--filter", "fixture_reset"], True), ("unmatched", ["--filter", "no-such-case"], False)]
         with tempfile.TemporaryDirectory() as directory:
+            # A recorded slow suite runs one process per case; its merged records must still match one process.
+            slow = Path(directory) / "slow.json"
+            slow.write_text(json.dumps({"res://tests/unit/test_snapshot_history.gd": 60}))
             for label, arguments, passed in cases:
                 with self.subTest(case=label):
                     results = []
-                    for jobs in ("1", "4"):
-                        output = Path(directory) / f"{label}-{jobs}.json"
+                    for jobs, durations in (("1", None), ("4", None), ("4", slow)):
+                        output = Path(directory) / f"{label}-{jobs}-{durations is None}.json"
+                        timing = Path(directory) / f"{label}-{jobs}-timing.json"
+                        timing.write_bytes(slow.read_bytes() if durations else b"{}")
                         process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(GODOT),
-                            *suites, *arguments, "--jobs", jobs, "--results", str(output)], cwd=ROOT, capture_output=True, text=True)
+                            *suites, *arguments, "--jobs", jobs, "--results", str(output), "--durations", str(timing)],
+                            cwd=ROOT, capture_output=True, text=True)
                         self.assertEqual(process.returncode, 0 if passed else 1, process.stdout + process.stderr)
-                        results.append(json.loads(output.read_text())["runs"][0].get("result"))
+                        report = json.loads(output.read_text())
+                        results.append(report["runs"][0].get("result"))
+                        if durations and not arguments:
+                            self.assertGreater(len(report["runs"][0]["shards"]), 2, "slow suite was not split by case")
                     self.assertEqual(results[0], results[1])
+                    self.assertEqual(results[0], results[2])
                     if passed:
                         self.assertEqual(len({record["suite"] for record in results[0]["records"]}), 1 if arguments else 2)
 

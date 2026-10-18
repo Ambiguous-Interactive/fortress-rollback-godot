@@ -5,7 +5,8 @@ const Context = preload("res://tests/runner/test_context.gd")
 
 # No SceneTree, nodes, timers or filesystem discovery: browser hosts can call
 # execute with the same scripts, category selection and scenario seed.
-func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int) -> Dictionary:
+# A nonempty case_names runs only those exact case names, in inventory order.
+func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int, case_names: PackedStringArray = []) -> Dictionary:
 	var records: Array[Dictionary] = []
 	var errors: Array[Dictionary] = []
 	for script: Script in scripts:
@@ -29,6 +30,8 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 			seen[name] = true
 			if not filter_text.is_empty() and not name.contains(filter_text):
 				continue
+			if not case_names.is_empty() and name not in case_names:
+				continue
 			var runs: Array[Dictionary] = []
 			for repetition: int in range(2):
 				var instance: Variant = script.new()
@@ -45,6 +48,9 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 			if runs[0] != runs[1]:
 				errors.append(_first_difference(script.resource_path, name, runs))
 			records.append({"suite": script.resource_path, "case": name, "category": category, "seed": str(fixed_seed), "runs": runs})
+	for name: String in case_names:
+		if not records.any(func(record: Dictionary) -> bool: return record["case"] == name):
+			errors.append({"kind": "unknown_case", "case": name})
 	if records.is_empty():
 		errors.append({"kind": "zero_matching_cases"})
 	var is_pass: bool = errors.is_empty()
