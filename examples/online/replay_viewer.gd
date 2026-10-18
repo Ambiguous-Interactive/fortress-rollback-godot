@@ -57,7 +57,7 @@ func restart() -> void:
 
 
 func toggle_play() -> void:
-	if _recording == null or _player.is_complete() or _player.failure_frame() >= 0:
+	if not can_step():
 		return
 	is_playing = not is_playing
 	message = "Playing; recorded checksums are validated." if is_playing else "Paused."
@@ -70,7 +70,7 @@ func tick() -> void:
 
 
 func step() -> void:
-	if _recording == null or _player.failure_frame() >= 0:
+	if not can_step():
 		return
 	var code: int = _player.step()
 	if code not in [Types.Code.OK, Types.Code.FRAME_EXHAUSTED]:
@@ -87,3 +87,8 @@ func frame_count() -> int:
 
 func current_frame() -> int:
 	return _player.current_frame()
+
+
+## Whether another recorded frame can advance, including while paused.
+func can_step() -> bool:
+	return _recording != null and not _player.is_complete() and _player.failure_frame() < 0

@@ -115,7 +115,8 @@ func _toggle() -> void:
 
 
 func _step() -> void:
-	viewer.is_playing = false
+	if viewer.is_playing:
+		viewer.toggle_play()
 	viewer.step()
 	_refresh()
 
@@ -142,7 +143,7 @@ func _physics_process(_delta: float) -> void:
 func _refresh() -> void:
 	_status.text = "%s\nFrame %d / %d" % [viewer.message, viewer.current_frame(), viewer.frame_count()]
 	_play.text = "Pause" if viewer.is_playing else "Play"
-	_play.disabled = viewer.frame_count() == 0 or viewer.current_frame() >= viewer.frame_count()
+	_play.disabled = not viewer.can_step()
 	_step_button.disabled = _play.disabled
 	_restart_button.disabled = viewer.frame_count() == 0
 	queue_redraw()

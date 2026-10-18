@@ -2,6 +2,7 @@ extends RefCounted
 
 # Value: protects=users can watch downloaded online recordings safely; fails_when=controls drift, imports accept incompatible games or checksum failures continue;
 # why_new=core replay tests have no example loading or playback controls; seam=none
+const Scene = preload("res://examples/online/replay.tscn")
 const Viewer = preload("res://examples/online/replay_viewer.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
@@ -10,11 +11,13 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence"])
+	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"scene_controls":
+			_scene_controls(context)
 		"controls":
 			_controls(context)
 		"rejects_incompatible":
@@ -128,3 +131,52 @@ func _stops_at_divergence(context: RefCounted) -> void:
 	viewer.restart()
 	context.equal(viewer.current_frame(), 0, "can restart after failure")
 	context.state(8, bytes)
+
+
+static func _button(node: Node, caption: String) -> Button:
+	for child: Node in node.find_children("*", "Button", true, false):
+		if child is Button and child.text == caption:
+			return child
+	return null
+
+
+func _scene_controls(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.viewer.open_bytes(recording().to_bytes()), true, "open recording for real controls")
+	node._refresh()
+	_button(node, "Play").pressed.emit()
+	context.equal(node.viewer.is_playing, true, "Play starts playback")
+	_button(node, "Step").pressed.emit()
+	context.equal(node.viewer.current_frame(), 1, "Step advances exactly one frame while playing")
+	context.equal(node.viewer.is_playing, false, "Step pauses playback")
+	context.equal(node.viewer.message, "Paused.", "Step updates paused status")
+	var has_paused_label: bool = false
+	for label: Node in node.find_children("*", "Label", true, false):
+		if label is Label and label.text.begins_with("Paused.\nFrame 1 /"):
+			has_paused_label = true
+	context.equal(has_paused_label, true, "visible status agrees with paused playback")
+	var recording_with_mismatch: Replay = recording()
+	recording_with_mismatch._inputs[2 * 7] = 1
+	context.equal(node.viewer.open_bytes(recording_with_mismatch.to_bytes()), true, "open recording with checksum disagreement")
+	node._refresh()
+	_button(node, "Play").pressed.emit()
+	for tick: int in range(30):
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 8, "real scene stops at first mismatch")
+	context.equal(_button(node, "Play").disabled, true, "failed playback disables Play")
+	context.equal(_button(node, "Step").disabled, true, "failed playback disables Step")
+	context.equal(_button(node, "Restart").disabled, false, "failed playback permits restart")
+	_button(node, "Restart").pressed.emit()
+	context.equal(_button(node, "Play").disabled, false, "restart enables playback")
+	context.equal(_button(node, "Step").disabled, false, "restart enables single stepping")
+	context.equal(node.viewer.open_bytes(recording(1).to_bytes()), true, "single-frame boundary")
+	node._refresh()
+	_button(node, "Play").pressed.emit()
+	_button(node, "Step").pressed.emit()
+	context.equal(node.viewer.message.begins_with("Replay complete."), true, "completion overrides paused notice")
+	context.equal(_button(node, "Play").disabled, true, "completed playback disables Play")
+	context.equal(_button(node, "Step").disabled, true, "completed playback disables Step")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()

@@ -38,7 +38,7 @@ EXPECTED.update({
     'res://tests/unit/test_peer_diagnostic_trace.gd': {'real_divergence', 'healthy_equality'},
     'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay'},
     'res://tests/unit/test_diagnostic_player.gd': {'captured_window', 'canonical_mismatch', 'malformed', 'callbacks', 'bounds'},
-    'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence'},
+    'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit'},
 })
@@ -65,7 +65,7 @@ FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
 FILES += ['tests/unit/test_diagnostic_trace.gd', 'tests/unit/test_peer_diagnostic_trace.gd', 'tests/unit/test_driver.gd']
 FILES += ['tests/unit/test_replay_callbacks.gd', 'tests/unit/test_replay.gd', 'tests/fixtures/replay/golden.json', 'examples/integration/game.gd']
 FILES += ['tests/unit/test_diagnostic_player.gd', 'tests/unit/test_replay_viewer.gd',
-          'examples/online/replay_viewer.gd', 'examples/offline/simulation.gd']
+          'examples/online/replay_viewer.gd', 'examples/online/replay_scene.gd', 'examples/online/replay.tscn', 'examples/offline/simulation.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
