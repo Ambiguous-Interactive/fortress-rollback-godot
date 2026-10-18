@@ -180,6 +180,7 @@ func _records_corrected_match(context: RefCounted) -> void:
 		context.equal(code, Types.Code.FRAME_EXHAUSTED, label + " validates every checksum and finishes")
 		context.equal(player.is_complete(), true, label + " is complete")
 		context.bytes_equal(game.canonical_bytes(), expected[frames], frames, label + " replays the corrected final state")
+		context.state(frames, game.canonical_bytes())
 
 
 func _detects_changed_rules(context: RefCounted) -> void:
@@ -199,6 +200,7 @@ func _detects_changed_rules(context: RefCounted) -> void:
 		context.equal(code, row.code, row.label + " result")
 		context.equal(player.failure_frame(), row.frame, row.label + " failure frame")
 		context.equal(player.step(), row.code, row.label + " stays stopped")
+		context.state(row.game.frame, row.game.canonical_bytes())
 	context.equal(Player.new().configure(replay, RefCounted.new()), Types.Code.INVALID_CONFIGURATION, "rejects a game without callbacks")
 	context.equal(Player.new().step(), Types.Code.NOT_CONFIGURED, "unconfigured player refuses to step")
 
@@ -232,6 +234,7 @@ func _golden(context: RefCounted) -> void:
 	context.equal(replay.inputs(1).read(1).bytes, PackedByteArray([0x7f, 0x80]), "second player's input")
 	context.bytes_equal(replay.to_bytes(), fixture.v2, 0, "re-encodes the golden")
 	context.bytes_equal(replay.owned_copy().to_bytes(), fixture.v2, 0, "copies keep every field")
+	context.state(replay.frame_count(), replay.to_bytes())
 	context.equal(Replay.new().decode(fixture.v1), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the unreleased v1 layout explicitly")
 
 
@@ -345,3 +348,4 @@ func _lockstep_confirmation_limit(context: RefCounted) -> void:
 		code = player.step()
 	context.equal(code, Types.Code.FRAME_EXHAUSTED, "plays the whole lockstep match")
 	context.bytes_equal(game.canonical_bytes(), _reference(30, 0)[30], 30, "reaches the lockstep final state")
+	context.state(30, game.canonical_bytes())
