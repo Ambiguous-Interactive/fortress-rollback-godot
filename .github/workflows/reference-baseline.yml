@@ -226,6 +226,12 @@ jobs:
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
+      # The builder still cleans and rebuilds the server crate; only pinned dependency builds are reused.
+      - name: Restore SignalFish dependency builds
+        uses: actions/cache@v5
+        with:
+          path: .cache/reference/results/signalfish-server-build/target
+          key: signalfish-server-target-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/reference/signalfish_build_server.py') }}
       - name: Build the pinned local SignalFish server
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
