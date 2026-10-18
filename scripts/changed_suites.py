@@ -22,7 +22,18 @@ def changed_files(base: str, root: Path = ROOT) -> list[str]:
     return sorted(set(git("diff", "--name-only", "--no-renames", merge_base)) | set(git("ls-files", "--others", "--exclude-standard", "--", *SOURCES)))
 
 
-def select(suites: list[str], changed: list[str], root: Path = ROOT) -> list[str]:
+def previous_class_names(base: str, changed: list[str], root: Path = ROOT) -> set[str]:
+    """Class names the changed files declared at the merge base, so renamed or removed names still reach their users."""
+    merge_base = subprocess.run(["git", "merge-base", "HEAD", base], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    names: set[str] = set()
+    for path in changed:
+        old = subprocess.run(["git", "show", f"{merge_base}:{path}"], cwd=root, capture_output=True, text=True)
+        if old.returncode == 0:
+            names.update(CLASS_NAME.findall(old.stdout))
+    return names
+
+
+def select(suites: list[str], changed: list[str], root: Path = ROOT, old_names: set[str] = frozenset()) -> list[str]:
     """Return the suites (res:// paths) to run; every suite when a change cannot be traced."""
     # A rename reports both paths (--no-renames); a .uid sidecar stands for its resource.
     relevant = [path.removesuffix(".uid") for path in changed if not path.endswith(".md")]
@@ -40,7 +51,8 @@ def select(suites: list[str], changed: list[str], root: Path = ROOT) -> list[str
             dependents.setdefault(target, set()).add(path)
     # A directory reference (a res:// string ending in /) depends on every file under it, including new ones.
     directories = [target for target in dependents if target.endswith("/")]
-    reached, pending = set(relevant), list(relevant)
+    reached = set(relevant) | {path for path, text in texts.items() if any(re.search(r"\b" + name + r"\b", text) for name in old_names)}
+    pending = list(reached)
     while pending:
         path = pending.pop()
         for dependent in dependents.get(path, set()).union(*(dependents[d] for d in directories if path.startswith(d))):

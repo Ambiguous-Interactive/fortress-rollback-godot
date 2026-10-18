@@ -261,8 +261,9 @@ def main(argv: list[str] | None = None) -> int:
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
     if args.changed:
-        from changed_suites import changed_files, select
-        args.suite = select(discover(args.category), changed_files(args.changed))
+        from changed_suites import changed_files, previous_class_names, select
+        changed = changed_files(args.changed)
+        args.suite = select(discover(args.category), changed, old_names=previous_class_names(args.changed, changed))
         print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
         if not args.suite:
             args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
