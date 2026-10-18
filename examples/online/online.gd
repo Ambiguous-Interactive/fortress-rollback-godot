@@ -17,6 +17,7 @@ var leave_button: Button
 var diagnostics_button: Button
 var trace_checkbox: CheckBox
 var replay_checkbox: CheckBox
+var inspect_button: Button
 var watch_button: Button
 var replay_button: Button
 var _replay_notice: String = ""
@@ -45,7 +46,7 @@ func _ready() -> void:
 	trace_checkbox = CheckBox.new()
 	trace_checkbox.text = "Include game state and inputs in diagnostics (choose before Ready)"
 	panel.add_child(trace_checkbox)
-	_button(panel, "Inspect diagnostic file", _inspect_diagnostic)
+	inspect_button = _button(panel, "Inspect diagnostic file", _inspect_diagnostic)
 	var replay_row: HBoxContainer = HBoxContainer.new()
 	panel.add_child(replay_row)
 	replay_checkbox = CheckBox.new()
@@ -163,6 +164,7 @@ func _leave() -> void:
 func _update_status() -> void:
 	var connected: bool = controller.client != null
 	watch_button.disabled = connected
+	inspect_button.disabled = connected
 	create_button.disabled = connected
 	join_button.disabled = connected
 	leave_button.disabled = not connected
