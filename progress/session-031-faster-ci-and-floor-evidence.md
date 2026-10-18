@@ -19,25 +19,29 @@ online example 2m04s, then native relay 4m05s), then the suites jobs (unit 2m29s
 
 - `signalfish_webrtc_probe.py --label` (repeatable) selects witness labels and records them in the
   receipt; each label logs its time. CI's SignalFish matrix is now `direct` (clean, faults, corrupt,
-  default), `mixed` (the four mixed labels), `online` and `relay`. Relay extracts its pinned editor
-  through `fetch` and skips the browser install.
-- The Godot matrix adds `integration`, which runs the four cases as before without the browser
-  install or web smoke. The suites part keeps the package audit, SDK probe, runner controls, unit
-  and determinism runs.
-- The SignalFish jobs cache the server's dependency builds. The builder still cleans and rebuilds the
-  server crate, and its receipt is unchanged.
+  default and the short disabled-fallback control), `mixed` (mixed, mixed-default, mixed-close) and
+  `online`. Every previous step still runs on both pinned engines.
 
-Every previous step still runs on both pinned engines; the adversarial review checked this line by
-line.
+Tried and reverted, by measurement:
 
-| Measurement | main `eeac685` | PR, first run (`9a0fba2`..`d52534d`) |
-| --- | --- | --- |
-| Reference Baseline wall time | 12m20s | 6m38s |
-| Slowest job | 12m18s (4.7.2 webrtc) | 6m37s (4.3 mixed) |
-| Jobs / summed job time | 11 / 65m57s | 17 / 75m37s |
+- Separate `relay` and `integration` jobs. Each cut its own job's time, but the jobs they left still
+  finished inside the mixed job, so they added about two setup minutes each and no wall time.
+- Caching the SignalFish server's dependency builds. The cache restored, but the build still took
+  67s: the builder uses a fresh cargo home per run, so cargo rebuilt every dependency. Changing that
+  would alter the build receipt's environment, so the cache was deleted.
 
-The summed job time rose with six extra job setups. The dependency cache, measured below, targets
-about a minute of that per SignalFish job.
+Label times on the cached run (4.7.2): clean 98s, faults 99s, corrupt 6s, default 5s, mixed 114s,
+mixed-default 115s, mixed-disabled 26s, mixed-close 118s. Runner variance between runs is large: the
+same mixed job took 322s and 526s on two runs.
+
+| Measurement | main `eeac685` | PR, all parts split | PR final (`3ed3a72`) |
+| --- | --- | --- | --- |
+| Reference Baseline wall time | 12m20s | 6m38s / 8m46s | 7m49s |
+| Slowest job | 12m18s (4.7.2 webrtc) | 6m37s / 8m46s | 7m49s (4.7.2 mixed) |
+| Jobs / summed job time | 11 / 65m57s | 17 / 75m37s and 80m34s | 13 / 72m13s |
+
+Summed job time on the last four main runs ranged from 61m to 75m, so the final 72m13s sits inside
+that spread, 6m above the most recent main run. The two added jobs cost about 2.5 setup minutes each.
 
 ## Faster local runs
 
@@ -93,7 +97,7 @@ old 60s limit. Remaining on #45: optional seek and snapshot acceleration.
 A fresh-context adversarial review of the CI, runner and floor changes found no critical defects.
 Acted on: split suites stayed split forever (major), unknown `--case` names were ignored, runner
 controls wrote the real durations file, an unknown mesh case ran the second branch, and the
-integration job's name mentioned Chromium. Not acted on: CI never caches durations, so CI keeps
+integration job's name mentioned Chromium (that job was later folded back). Not acted on: CI never caches durations, so CI keeps
 whole-suite shards; its unit run is CPU-bound on four runner CPUs anyway.
 
 `make test-reference` caught that the replay probe change broke two receipt controls (the fixture
