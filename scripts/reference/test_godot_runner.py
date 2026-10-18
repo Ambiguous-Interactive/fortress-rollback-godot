@@ -155,7 +155,7 @@ class EngineControls(unittest.TestCase):
                     process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"),
                         "--godot", str(GODOT), "--category", category, "--suite",
                         "res://tests/runner/self_suite.gd", "--seed", "9223372036854775807",
-                        "--results", str(output)], cwd=ROOT, capture_output=True, text=True)
+                        "--results", str(output), "--durations", str(Path(directory) / "durations.json")], cwd=ROOT, capture_output=True, text=True)
                     self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
                     report = json.loads(output.read_text())
                     self.assertTrue(report["passed"])
@@ -174,15 +174,17 @@ class EngineControls(unittest.TestCase):
             for label, arguments, passed in cases:
                 with self.subTest(case=label):
                     results = []
-                    for jobs, durations in (("1", "none.json"), ("4", "none.json"), ("4", slow.name)):
-                        output = Path(directory) / f"{label}-{jobs}-{durations}"
+                    for jobs, durations in (("1", None), ("4", None), ("4", slow)):
+                        output = Path(directory) / f"{label}-{jobs}-{durations is None}.json"
+                        timing = Path(directory) / f"{label}-{jobs}-timing.json"
+                        timing.write_bytes(slow.read_bytes() if durations else b"{}")
                         process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(GODOT),
-                            *suites, *arguments, "--jobs", jobs, "--results", str(output), "--durations", str(Path(directory) / durations)],
+                            *suites, *arguments, "--jobs", jobs, "--results", str(output), "--durations", str(timing)],
                             cwd=ROOT, capture_output=True, text=True)
                         self.assertEqual(process.returncode, 0 if passed else 1, process.stdout + process.stderr)
                         report = json.loads(output.read_text())
                         results.append(report["runs"][0].get("result"))
-                        if durations == slow.name and not arguments:
+                        if durations and not arguments:
                             self.assertGreater(len(report["runs"][0]["shards"]), 2, "slow suite was not split by case")
                     self.assertEqual(results[0], results[1])
                     self.assertEqual(results[0], results[2])

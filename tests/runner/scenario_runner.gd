@@ -48,6 +48,9 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 			if runs[0] != runs[1]:
 				errors.append(_first_difference(script.resource_path, name, runs))
 			records.append({"suite": script.resource_path, "case": name, "category": category, "seed": str(fixed_seed), "runs": runs})
+	for name: String in case_names:
+		if not records.any(func(record: Dictionary) -> bool: return record["case"] == name):
+			errors.append({"kind": "unknown_case", "case": name})
 	if records.is_empty():
 		errors.append({"kind": "zero_matching_cases"})
 	var is_pass: bool = errors.is_empty()

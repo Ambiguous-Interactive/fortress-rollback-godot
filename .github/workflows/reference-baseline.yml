@@ -111,7 +111,7 @@ jobs:
           if-no-files-found: error
 
   godot:
-    name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
+    name: Godot ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:

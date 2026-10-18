@@ -294,13 +294,17 @@ def main(argv: list[str] | None = None) -> int:
             completed = [[future.result() for future in repetition] for repetition in pending]
         runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
         if not args.filter and args.jobs > 1:
-            measured = {}
-            for index, (suite, case) in enumerate(keys):
-                seconds = round(max(completed[0][index][1], completed[1][index][1]), 2)
+            times = [max(completed[0][index][1], completed[1][index][1]) for index in range(len(keys))]
+            measured, fastest = {}, {}
+            for (suite, case), seconds in zip(keys, times):
                 if case:
-                    durations[suite + "::" + case] = seconds
+                    durations[suite + "::" + case] = round(seconds, 2)
+                    fastest[suite] = min(fastest.get(suite, seconds), seconds)
                 measured[suite] = measured.get(suite, 0) + seconds
-            durations.update(measured)
+            # A split suite pays engine startup once per case. Estimate its one-process time by removing the
+            # extra startups, bounded by its fastest case, so a suite that is no longer slow becomes whole again.
+            for suite, seconds in measured.items():
+                durations[suite] = round(seconds - (len(cases[suite]) - 1) * fastest[suite] if suite in fastest else seconds, 2)
             try:
                 args.durations.parent.mkdir(parents=True, exist_ok=True)
                 args.durations.write_text(json.dumps(durations, indent=1, sort_keys=True) + "\n", encoding="utf-8")

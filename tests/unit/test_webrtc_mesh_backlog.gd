@@ -23,6 +23,9 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.equal(constrained.backlog > 128, true, "physical FIFO accumulates despite reliable delivery")
 		context.finish()
 		return
+	if name != "slow_mesh_thirty_two_receives":
+		context.equal(name, "slow_mesh_thirty_two_receives", "known case")
+		return
 	var sufficient: Dictionary = _run(context, 32)
 	print("BACKLOG_CONTROL ", JSON.stringify({"thirty_two": sufficient}))
 	context.equal(sufficient.frames, 12, "bounded larger receive work finishes same input log")
