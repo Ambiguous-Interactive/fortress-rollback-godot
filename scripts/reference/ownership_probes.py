@@ -37,6 +37,8 @@ EXPECTED.update({
     'res://tests/unit/test_diagnostic_trace.gd': {'owned_window', 'disabled_equality', 'bounds', 'failed_callback', 'local_divergence'},
     'res://tests/unit/test_peer_diagnostic_trace.gd': {'real_divergence', 'healthy_equality'},
     'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay'},
+    'res://tests/unit/test_diagnostic_player.gd': {'captured_window', 'canonical_mismatch', 'malformed', 'callbacks', 'bounds'},
+    'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit'},
 })
@@ -62,6 +64,8 @@ FILES += ['addons/fortress_rollback/protocol/input_endpoint.gd',
           'tests/unit/test_peer_session.gd', 'tests/unit/test_stalled_gossip.gd', 'tests/oracle/p2p_game.gd', 'tests/oracle/reference_game.gd']
 FILES += ['tests/unit/test_diagnostic_trace.gd', 'tests/unit/test_peer_diagnostic_trace.gd', 'tests/unit/test_driver.gd']
 FILES += ['tests/unit/test_replay_callbacks.gd', 'tests/unit/test_replay.gd', 'tests/fixtures/replay/golden.json', 'examples/integration/game.gd']
+FILES += ['tests/unit/test_diagnostic_player.gd', 'tests/unit/test_replay_viewer.gd',
+          'examples/online/replay_viewer.gd', 'examples/offline/simulation.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -80,9 +84,11 @@ const PeerTrace = preload("res://tests/unit/test_peer_diagnostic_trace.gd")
 const StalledGossip = preload("res://tests/unit/test_stalled_gossip.gd")
 const Replay = preload("res://tests/unit/test_replay.gd")
 const ReplayCallbacks = preload("res://tests/unit/test_replay_callbacks.gd")
+const DiagnosticPlayer = preload("res://tests/unit/test_diagnostic_player.gd")
+const ReplayViewer = preload("res://tests/unit/test_replay_viewer.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
-\t\tPeerTrace, Replay, ReplayCallbacks]
+\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, ReplayViewer]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)

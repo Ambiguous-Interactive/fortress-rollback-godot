@@ -47,6 +47,8 @@ suites over four seconds run one pair per case. Its record matches `--jobs 1`. `
 selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
+Concurrent native launchers must use distinct `--results` paths: a focused review
+can overwrite the default `latest.json` receipt from a full-suite run.
 Clear owned success receipts on parse and execution-option rejection, including
 malformed worker values; real subprocess controls verify mode isolation and help.
 

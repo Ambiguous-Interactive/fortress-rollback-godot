@@ -7,7 +7,9 @@ const Connection = preload("res://addons/fortress_rollback/transport/signalfish_
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["public_peer", "channel_options", "forwarding", "initialize_lifetime", "candidate_media_ids", "description_reentry"])
+	return PackedStringArray(
+		["public_peer", "channel_options", "forwarding", "initialize_lifetime", "candidate_media_ids", "description_reentry", "delayed_callbacks", "initialize_reentry"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -15,6 +17,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		_public_peer(context)
 	elif name == "candidate_media_ids":
 		_candidate_media_ids(context)
+	elif name == "initialize_reentry":
+		_initialize_reentry(context)
+	elif name == "delayed_callbacks":
+		_delayed_callbacks(context)
 	elif name == "description_reentry":
 		_description_reentry(context)
 	elif name == "initialize_lifetime":
@@ -66,15 +72,19 @@ func _wrapper(context: RefCounted, name: String) -> void:
 
 
 func _initialize_lifetime(context: RefCounted) -> void:
-	var inner: Inner = Inner.new()
-	var wrapper: WebRTCPeerConnectionExtension = Connection.new(inner)
-	for attempt: int in 2:
-		context.equal(wrapper.initialize({"iceServers": []}), OK, "SDK reinitialize succeeds")
-		context.equal(inner.live_connections, 1, "each initialize replaces default connection without orphan " + str(attempt))
-	context.equal(inner.operations, ["close", "initialize", "close", "initialize"], "close precedes every initialize")
-	inner.initialize_code = ERR_INVALID_PARAMETER
-	context.equal(wrapper.initialize({}), ERR_INVALID_PARAMETER, "initialize failure preserved")
-	context.equal(inner.live_connections, 0, "failed initialization closes previous connection too")
+	for first_code: Error in [OK, ERR_INVALID_PARAMETER]:
+		var inner: Inner = Inner.new()
+		inner.initialize_code = first_code
+		var wrapper: WebRTCPeerConnectionExtension = Connection.new(inner)
+		context.equal(wrapper.initialize({}), first_code, "initial native result preserved")
+		context.equal(inner.live_connections, 1 if first_code == OK else 0, "initial setup closes implicit browser handle")
+		context.equal(wrapper.initialize({}), ERR_ALREADY_IN_USE, "reinitialization requires a fresh wrapper")
+		context.equal(inner.live_connections, 0, "refused reinitialization closes old native lifetime")
+		context.equal(
+			inner.operations,
+			["close", "initialize", "close"] if first_code == OK else ["close", "initialize", "close", "close"],
+			"failed setup and refused reuse close their native resources"
+		)
 
 
 # Value: resolves SignalFish string-only ICE candidates; Firefox rejects empty mids even when Chromium accepts them.
@@ -124,7 +134,7 @@ func _candidate_media_ids(context: RefCounted) -> void:
 	context.equal(wrapper.add_ice_candidate("", 0, "stale"), ERR_INVALID_PARAMETER, "initialize fences old media IDs")
 	wrapper.set_remote_description("offer", sdp)
 	wrapper.close()
-	context.equal(wrapper.add_ice_candidate("", 0, "stale"), ERR_INVALID_PARAMETER, "close fences old media IDs")
+	context.equal(wrapper.add_ice_candidate("", 0, "stale"), ERR_UNCONFIGURED, "close fences old media IDs")
 
 
 # Value: public forwarded SDP signals can reenter lifecycle calls before native description setup returns.
@@ -153,7 +163,79 @@ func _description_reentry(context: RefCounted) -> void:
 				context.equal(wrapper.add_ice_candidate("", 0, "current"), ERR_INVALID_DATA, "newest successful SDP remains usable")
 				context.equal(inner.candidate_values, ["replacement", 0, "current"], "obsolete outer SDP never replaces nested mapping")
 			else:
-				context.equal(wrapper.add_ice_candidate("", 0, "stale"), ERR_INVALID_PARAMETER, "lifecycle and rejected nested SDP keep mapping cleared")
+				context.equal(
+					wrapper.add_ice_candidate("", 0, "stale"),
+					ERR_UNCONFIGURED if action == "close" else ERR_INVALID_PARAMETER,
+					"lifecycle and rejected nested SDP keep mapping cleared"
+				)
+
+
+# Value: protects=closed native callback ownership; fails_when=old ICE, SDP or channels reach the replacement mesh; seam=public native signals
+func _delayed_callbacks(context: RefCounted) -> void:
+	for transition: String in ["close", "initialize"]:
+		var inner: Inner = Inner.new()
+		var wrapper: WebRTCPeerConnectionExtension = Connection.new(inner)
+		var sink: Sink = Sink.new()
+		wrapper.session_description_created.connect(sink.description)
+		wrapper.ice_candidate_created.connect(sink.candidate)
+		wrapper.data_channel_received.connect(sink.channel)
+		context.equal(wrapper.initialize({}), OK, "initial connection lifetime starts")
+		var channel: WebRTCDataChannelExtension = WebRTCDataChannelExtension.new()
+		inner.session_description_created.emit("offer", "current")
+		context.equal(sink.values, ["offer", "current"], "active connection forwards current SDP")
+		sink.values.clear()
+		if transition == "close":
+			wrapper.close()
+		else:
+			context.equal(wrapper.initialize({}), ERR_ALREADY_IN_USE, "replacement requires a fresh native wrapper")
+		inner.session_description_created.emit("answer", "obsolete")
+		inner.ice_candidate_created.emit("old-mid", 0, "obsolete")
+		inner.data_channel_received.emit(channel)
+		context.equal(sink.values.is_empty(), true, "delayed old SDP and ICE stay fenced after " + transition)
+		context.equal(sink.received_channel == null, true, "delayed old channels stay fenced after " + transition)
+		context.equal(wrapper.add_ice_candidate("explicit", 0, "obsolete"), ERR_UNCONFIGURED, "ended lifetime refuses explicit ICE too")
+		context.equal(wrapper.set_remote_description("answer", "obsolete"), ERR_UNCONFIGURED, "ended lifetime refuses delayed signaling")
+		var fresh_inner: Inner = Inner.new()
+		var fresh: WebRTCPeerConnectionExtension = Connection.new(fresh_inner)
+		context.equal(fresh.initialize({}), OK, "fresh wrapper starts replacement lifetime")
+		fresh.session_description_created.connect(sink.description)
+		fresh.ice_candidate_created.connect(sink.candidate)
+		fresh.data_channel_received.connect(sink.channel)
+		fresh_inner.session_description_created.emit("answer", "replacement")
+		fresh_inner.ice_candidate_created.emit("new-mid", 0, "replacement")
+		fresh_inner.data_channel_received.emit(channel)
+		context.equal(sink.values, ["answer", "replacement", "new-mid", 0, "replacement"], "replacement SDP and ICE still reach SDK")
+		context.equal(sink.received_channel == channel, true, "replacement channel still reaches SDK")
+		fresh.close()
+		wrapper.close()
+
+
+# Value: protects=initialization cannot revive a lifetime closed by a synchronous native callback.
+func _initialize_reentry(context: RefCounted) -> void:
+	for stage: String in ["close", "initialize"]:
+		for action: String in ["close", "initialize"]:
+			var inner: Inner = Inner.new()
+			var wrapper: WebRTCPeerConnectionExtension = Connection.new(inner)
+			var owner: WeakRef = weakref(wrapper)
+			var nested: Array[int] = []
+			var callback: Callable = func() -> void:
+				var active: WebRTCPeerConnection = owner.get_ref()
+				if action == "close":
+					active.close()
+				else:
+					nested.append(active.initialize({}))
+			if stage == "close":
+				inner.on_close = callback
+			else:
+				inner.on_initialize = callback
+			context.equal(wrapper.initialize({}), ERR_UNAVAILABLE, "callback prevents obsolete outer initialization: " + stage)
+			context.equal(inner.live_connections, 0, "callback closes native lifetime: " + stage)
+			if stage == "close":
+				context.equal(inner.operations, ["close", "close"], "obsolete initialization never reaches native setup")
+			if action == "initialize":
+				context.equal(nested, [ERR_ALREADY_IN_USE], "recursive reuse cannot open a native lifetime")
+			context.equal(wrapper.create_offer(), ERR_UNCONFIGURED, "closed setup cannot publish an offer")
+			context.equal(wrapper.get_connection_state(), WebRTCPeerConnection.STATE_CLOSED, "closed setup reports its actual terminal state")
 
 
 class PublicMesh:
@@ -189,6 +271,8 @@ class Inner:
 	var initialize_code: Error = OK
 	var description_code: Error = OK
 	var emit_description: bool = false
+	var on_close: Callable
+	var on_initialize: Callable
 	# Variant records the public candidate tuple string, index, string.
 	var candidate_values: Array[Variant] = []
 
@@ -196,6 +280,10 @@ class Inner:
 		operations.append("initialize")
 		if initialize_code == OK:
 			live_connections += 1
+		var callback: Callable = on_initialize
+		on_initialize = Callable()
+		if callback.is_valid():
+			callback.call()
 		return initialize_code
 
 	func _create_data_channel(_label: String, options: Dictionary) -> WebRTCDataChannel:
@@ -217,6 +305,10 @@ class Inner:
 		return ERR_INVALID_DATA
 
 	func _close() -> void:
+		var callback: Callable = on_close
+		on_close = Callable()
 		operations.append("close")
+		if callback.is_valid():
+			callback.call()
 		live_connections = 0
 		closed = true

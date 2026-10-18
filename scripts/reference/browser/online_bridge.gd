@@ -72,6 +72,7 @@ var command_id: int = 0
 var old_callbacks: Array[Dictionary] = []
 var stale_callbacks: Dictionary = {}
 var replay_playback: Dictionary = {}
+var viewer_scene: Node2D
 
 
 func _ready() -> void:
@@ -125,6 +126,8 @@ func _process(_delta: float) -> void:
 		"inputs": inputs,
 		"snapshots": snapshots,
 		"terminal_reason": lobby.game_match.peer.status().reason,
+		"failure_diagnostic": lobby.game_match.peer.diagnostics() if lobby.state == "failed" else {},
+		"failure_clocks": failure_clocks(lobby) if lobby.state == "failed" else [],
 		"restores": observed.restores if observed != null else 0,
 		"all_ready": lobby.all_ready,
 		"ready_enabled": not scene.ready_button.disabled,
@@ -132,6 +135,7 @@ func _process(_delta: float) -> void:
 		"command_id": command_id,
 		"replay_enabled": not scene.replay_button.disabled,
 		"replay_playback": replay_playback,
+		"viewer": viewer_report(),
 		"stale_callbacks": stale_callbacks,
 		"resume": lobby.resume,
 		"host_now_us": lobby._last_now,
@@ -180,6 +184,15 @@ func _command(value: Dictionary) -> void:
 		"replay":
 			if not scene.replay_button.disabled:
 				scene.replay_button.pressed.emit()
+		"watch_replay":
+			viewer_scene = load("res://examples/online/replay.tscn").instantiate()
+			scene.hide()
+			scene.set_physics_process(false)
+			add_child(viewer_scene)
+		"viewer_control":
+			for button: Node in viewer_scene.get_child(0).get_child(1).get_children():
+				if button is Button and button.text == value.get("button", "") and not button.disabled:
+					button.pressed.emit()
 		"validate_replay":
 			replay_playback = _play_replay(str(value.get("hex", "")))
 		"diagnostics":
@@ -251,3 +264,23 @@ func _play_replay(hex: String) -> Dictionary:
 	while code == Session.Code.OK:
 		code = player.step()
 	return {"decode_code": decoded, "code": code, "frames": player.current_frame(), "failure_frame": player.failure_frame(), "canonical": game.canonical_bytes().hex_encode()}
+
+
+func viewer_report() -> Dictionary:
+	if viewer_scene == null:
+		return {}
+	var viewer: RefCounted = viewer_scene.viewer
+	return {
+		"frame": viewer.current_frame(),
+		"frames": viewer.frame_count(),
+		"playing": viewer.is_playing,
+		"message": viewer.message,
+		"state": viewer.game.canonical_bytes().hex_encode()
+	}
+
+
+func failure_clocks(lobby: Lobby) -> Array[Dictionary]:
+	var clocks: Array[Dictionary] = []
+	for endpoint: Dictionary in lobby.game_match.peer.network_status().peers.values():
+		clocks.append({"now_us": endpoint.get("now_us", -1), "last_recv_us": endpoint.get("last_recv_us", -1), "last_send_us": endpoint.get("last_send_us", -1)})
+	return clocks

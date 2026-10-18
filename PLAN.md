@@ -30,7 +30,8 @@ Local development contracts and evidence entry points:
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback](docs/integration.md#record-and-replay-a-match).
-- [Optional online match recording and replay downloads](docs/online-example.md#record-and-download-a-replay).
+- [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
+- [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).
 - [Playable input-driven shots, confirmation and prediction stalls](docs/integration.md#try-the-effects-example).

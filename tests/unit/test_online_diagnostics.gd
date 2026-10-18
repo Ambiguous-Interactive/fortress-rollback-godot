@@ -64,7 +64,11 @@ func run_case(name: String, context: RefCounted) -> void:
 				context.equal(report.trace.max_frames, 120, "bounded two-second canonical window")
 				context.equal(report.trace.seed, "1701", "actual application seed")
 				context.equal(report.trace.application_version, "fortress-online-integer-v1", "game version matches session domain")
-				context.equal(report.trace.replay_command, "", "no invented replay command")
+				context.equal(
+					report.trace.replay_command,
+					"godot --headless --path . --script scripts/diagnose_trace.gd -- fortress-diagnostics.json",
+					"capture supplies the actual offline reproduction command"
+				)
 				report.trace.seed = "caller edit"
 				context.equal(game.peer.diagnostics().trace.seed, "1701", "export owns metadata")
 			game.detach()

@@ -408,10 +408,45 @@ def validate_result(value, corrupt=False, expected_engine=None):
             raise ValueError(f'online example canonical prefix mismatch at frame {frame}')
     if not corrupt:
         validate_replay_download(rounds[0].get('replay_download'), expected_engine, rounds[0])
+        validate_viewer(value.get('viewer'), rounds[0]['replay_download'])
         histories = [peer['inputs'] for peer in rounds[0]['peers']]
         expected = expected_states(histories, min(map(len, histories)))
         validate_trace_history(rounds[0]['diagnostics'][0]['report'], expected, histories)
     return value
+
+
+def validate_viewer(value, download):
+    if not isinstance(value, dict) or set(value) != {'initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed'}:
+        raise ValueError('online replay viewer controls missing')
+    frames = download['playback']['frames']
+    for label, row in value.items():
+        if (not isinstance(row, dict) or set(row) != {'frame', 'frames', 'playing', 'message', 'state'}
+                or type(row['frame']) is not int or type(row['frames']) is not int or row['frames'] != frames
+                or row['playing'] is not False or not isinstance(row['message'], str)
+                or not isinstance(row['state'], str) or not re.fullmatch(r'[0-9a-f]{272}', row['state'])):
+            raise ValueError('online replay viewer control evidence malformed: ' + label)
+    initial = value['initial']
+    if (initial['frame'] != 0 or value['stepped']['frame'] != 1 or not 4 <= value['paused']['frame'] < frames
+            or any(value[label]['frame'] != 0 or value[label]['state'] != initial['state'] for label in ('restarted', 'rejected'))
+            or not value['rejected']['message'].startswith('Could not open replay')
+            or value['completed']['frame'] != frames or value['completed']['state'] != download['playback']['canonical']
+            or not value['completed']['message'].startswith('Replay complete.')):
+        raise ValueError('online replay viewer did not reproduce downloaded gameplay and controls')
+
+
+def validate_diagnostic_playback(output, trace):
+    prefix = 'FORTRESS_DIAGNOSTIC_RESULT '
+    records = [line[len(prefix):] for line in output.splitlines() if line.startswith(prefix)]
+    if len(records) != 1:
+        raise ValueError('online diagnostic reproduction result missing or duplicated')
+    report = json.loads(records[0])
+    expected = {'code': 16, 'complete': True, 'failure': {},
+                'validated_states': sum(row['state_available'] for row in trace['frames']),
+                'advanced_frames': sum(bool(row['inputs']) for row in trace['frames'])}
+    if (not isinstance(report, dict) or any(type(report.get(key)) is not int for key in ('code', 'validated_states', 'advanced_frames'))
+            or report.get('complete') is not True or report != expected or expected['validated_states'] < 2 or expected['advanced_frames'] < 1):
+        raise ValueError('downloaded diagnostic did not reproduce all captured canonical boundaries')
+    return report
 
 
 def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
@@ -469,12 +504,13 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
         raise ValueError('documented export changed installed runtime sources')
     documented_inventory = inventory({'export': documented_export})
     shutil.copyfile(sources['online_bridge'], project / 'bridge.gd')
+    shutil.copyfile(sources['diagnostic_cli'], project / 'diagnose_trace.gd')
     project_text = (project / 'project.godot').read_text()
     (project / 'project.godot').write_text(project_text.replace('res://examples/online/online.tscn', 'res://main.tscn'))
     (project / 'main.tscn').write_text('[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://bridge.gd" id="1"]\n'
         '[node name="ExampleWitness" type="Node"]\nscript = ExtResource("1")\n')
     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish', 'examples': project / 'examples',
-                'bridge': project / 'bridge.gd', 'project': project / 'project.godot', 'scene': project / 'main.tscn',
+                'bridge': project / 'bridge.gd', 'diagnostic_cli': project / 'diagnose_trace.gd', 'project': project / 'project.godot', 'scene': project / 'main.tscn',
                 'preset': project / 'export_presets.cfg', 'license': project / 'LICENSE', 'certificate': certificate, 'private_key': private_key}
     frozen = inventory(executed)
     run(command + ['--editor', '--quit'], environment, output / f'{version}-import.log')
@@ -488,6 +524,11 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
                              expected_engine=no_sdk['engine_identity'])
     if (output / f'{version}-online-replay.frrp').read_bytes().hex() != result['rounds'][0]['replay_download']['hex']:
         raise ValueError('saved replay artifact differs from the downloaded bytes')
+    diagnostic_path = (output / f'{version}-diagnostic.json').resolve()
+    diagnostic_path.write_text(json.dumps(result['rounds'][0]['diagnostics'][0]['report']), encoding='utf-8')
+    diagnostic_command = command + ['--script', 'res://diagnose_trace.gd', '--', str(diagnostic_path)]
+    diagnostic_output = run(diagnostic_command, environment, output / f'{version}-diagnostic-reproduction.log')
+    diagnostic_result = validate_diagnostic_playback(diagnostic_output, result['rounds'][0]['diagnostics'][0]['report']['trace'])
     restart = result['rounds'][3]['server_restart']
     if server.events[offset:] != [restart['stopped'], restart['started']]:
         raise ValueError('browser process evidence disagrees with owned handles')
@@ -506,6 +547,7 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
             or inventory({'export': documented_export}) != documented_inventory):
         raise ValueError('online example executed sources changed')
     return ({'engine': actual, 'command': clean_command, 'result': result,
+             'diagnostic_reproduction': {'command': diagnostic_command, 'result': diagnostic_result},
              'clean_install': {'install_command': install_command, 'sdk_command': sdk_command, 'no_sdk_command': no_sdk_command,
                                'import_commands': [command + ['--editor', '--quit']],
                                'engine_user_directories': {key: environment[key] for key in ('XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME')},

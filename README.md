@@ -70,6 +70,12 @@ the host starts the game. WASD or arrow keys move your player. The scene uses
 WebRTC with relay fallback and shows confirmation, stalls and terminal failures.
 Leave and create a fresh room to restart.
 
+Select **Record replay** before Ready to save the match. After leaving, choose
+**Watch replay** to open the downloaded file and play, pause, step or restart
+without a server. [Preview the viewer](./docs/images/replay-viewer.png).
+Captured diagnostic downloads can also be
+[reproduced offline](./docs/diagnostic-reproduction.md) to locate a differing state byte.
+
 Contributor tooling:
 
 ```sh

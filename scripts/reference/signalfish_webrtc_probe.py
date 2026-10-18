@@ -402,6 +402,7 @@ def main():
         sources.update(online_example=ROOT / 'examples/online', offline_example=ROOT / 'examples/offline',
                        online_launcher=ROOT / 'scripts/reference/online_example_probe.py',
                        online_diagnostics=ROOT / 'scripts/reference/online_diagnostics.py',
+                       diagnostic_cli=ROOT / 'scripts/diagnose_trace.gd',
                        online_installer=ROOT / 'scripts/reference/online_install.py',
                        python=Path(sys.executable).resolve(),
                        online_install_check=ROOT / 'scripts/reference/browser/online_install_check.gd',
@@ -414,9 +415,13 @@ def main():
         owned_logs.extend(f'{version}-{label}.log' for version in versions for label in online_labels)
         owned_logs.extend(f'{version}-online.png' for version in versions)
         owned_logs.extend(f'{version}-online-replay.frrp' for version in versions)
+        owned_logs.extend(f'{version}-{name}' for version in versions
+                          for name in ('online-viewer.png', 'diagnostic.json', 'diagnostic-reproduction.log'))
         for version in versions:
             (args.output / f'{version}-online.png').unlink(missing_ok=True)
             (args.output / f'{version}-online-replay.frrp').unlink(missing_ok=True)
+            for name in ('online-viewer.png', 'diagnostic.json', 'diagnostic-reproduction.log'):
+                (args.output / f'{version}-{name}').unlink(missing_ok=True)
             for label in online_labels:
                 (args.output / f'{version}-{label}.log').unlink(missing_ok=True)
     for module in sorted((CACHE / 'browser/node_modules').rglob('*')):

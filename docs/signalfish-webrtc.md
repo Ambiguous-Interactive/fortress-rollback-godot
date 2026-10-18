@@ -90,6 +90,13 @@ mesh.peer_connection_factory = Connection.create
 mesh.multiplayer_peer_factory = Multiplayer.create
 ```
 
+Each connection wrapper owns one native lifetime. The SDK creates a fresh wrapper
+through this factory when rebuilding a peer. Calling `initialize()` again on a used
+wrapper closes the old connection and returns `ERR_ALREADY_IN_USE`, including after
+failed initialization. Use `Connection.create()` for the replacement. Closed wrappers
+refuse signaling and suppress late SDP, ICE and data-channel callbacks. This prevents
+old callbacks from entering a replacement connection's signaling lifetime.
+
 The GDScript wrapper delegates to the actual browser peer connection and
 corrects the channel option at creation. The direct adapter verifies channel
 properties before sending. The multiplayer peer factory also makes SDK removal

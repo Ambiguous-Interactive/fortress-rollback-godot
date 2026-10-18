@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add a replay viewer for online recordings. Open a downloaded file without a server, then play, pause, step or restart. Playback validates recorded checksums and stops at the first mismatch.
+
+- Add offline canonical diagnostic playback and an online trace reproduction command. Restore a captured window, compare complete state bytes and inputs, and report the first failing frame.
+
 - Add optional replay recording to the online example. Select Record replay before Ready, then Download replay to save the first ten minutes of confirmed inputs. Diagnostic capture remains a separate choice.
 
 - Add an `input_delay_recommendation` peer event that suggests a higher input delay from measured round-trip time. Your game chooses whether to apply it. Press R in the online example to apply a suggestion.
@@ -55,6 +59,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix stale WebRTC callbacks after connection closure. Create a fresh connection wrapper before initializing a replacement.
 
 - Fix replay validation accepting failed snapshot writes when the callback returned a matching checksum. Playback now stops with `SNAPSHOT_FAILED` at the affected frame.
 
