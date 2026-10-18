@@ -34,7 +34,9 @@ func _check() -> void:
 			return
 	var canonical: String = offline._simulation.canonical_bytes().hex_encode()
 	offline.free()
-	print("FORTRESS_CLEAN_INSTALL:" + JSON.stringify({"missing_sdk_message": message, "offline_frame": 24, "offline_state": canonical}))
+	var info: Dictionary = Engine.get_version_info()
+	var identity: String = "%d.%d.%d.%s %s" % [info.major, info.minor, info.patch, info.status, info.hash]
+	print("FORTRESS_CLEAN_INSTALL:" + JSON.stringify({"missing_sdk_message": message, "offline_frame": 24, "offline_state": canonical, "engine_identity": identity}))
 	quit()
 
 

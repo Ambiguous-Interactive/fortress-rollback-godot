@@ -11,11 +11,37 @@ from unittest.mock import patch
 import unittest
 
 from browser import webrtc_runner
-from online_example_probe import expected_states, run_online, validate_result
+from online_example_probe import expected_states, run_online, validate_result as observe_result, validate_replay_download as observe_replay
+from online_diagnostics import game_checksum
 from test_online_diagnostics import diagnostic_download, trace_evidence
 from online_install import ROOT, create_project, install_sdk, server_config
 from signalfish_probe import inventory
 from wire import INPUT_HEADER
+
+
+ENGINE_IDENTITY = '4.3.0.stable 77dcf97d8'
+
+
+def validate_result(value, corrupt=False):
+    return observe_result(value, corrupt, expected_engine=ENGINE_IDENTITY)
+
+
+def validate_replay_download(value):
+    return observe_replay(value, ENGINE_IDENTITY, evidence()['rounds'][0])
+
+
+def replay_download(histories):
+    frames = 110
+    states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
+    texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8',
+             '1701', 'fortress-online-integer-v1']
+    raw = b'FRRP' + struct.pack('<HBIIIHBB', 2, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
+    raw += b''.join(bytes([len(text)]) + text.encode('ascii') for text in texts)
+    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1]) + bytes.fromhex(game_checksum(states[frame])) for frame in range(frames))
+    return {'filename': 'fortress-online.frrp', 'hex': raw.hex(), 'disabled_peer': True,
+            'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
+            'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],
+            'playback': {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}}
 
 
 def evidence():
@@ -59,6 +85,7 @@ def evidence():
         if expired:
             record['failure_resources'] = copy.deepcopy(record['teardown'])
             record['frozen_frames'] = [{'before': 110, 'after': 110, 'state': 'failed'} for _ in range(2)]
+    rounds[0]['replay_download'] = replay_download(histories)
     rounds[0]['terminal'] = {'state': 'failed', 'message': 'Leave and create a fresh room.', 'frame_before': 110, 'frame_after': 110}
     rounds[2]['socket_loss'] = {'kind': 'signaling-websocket-socket-loss', 'method': 'tls-proxy-destroy-both-pairs',
         'proxy_pairs_before': 2, 'destroyed_pairs': 2, 'proxy_pairs_after': 0, 'open_websockets_before': [1, 1],
@@ -98,6 +125,35 @@ def evidence():
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
+    def test_replay_must_belong_to_the_witnessed_round_and_engine(self):
+        for label in ('unrelated recording', 'wrong engine'):
+            changed = evidence()
+            if label == 'unrelated recording':
+                changed['rounds'][0]['replay_download'] = replay_download([[0] * 117, [0] * 117])
+            else:
+                download = changed['rounds'][0]['replay_download']
+                download['hex'] = bytes.fromhex(download['hex']).replace(b'4.3.0.stable 77dcf97d8', b'4.7.9.stable 000000000').hex()
+            with self.subTest(label=label), self.assertRaises(ValueError):
+                validate_result(changed)
+
+    # Value: protects=downloaded replay equals original history; fails_when=export or player silently corrupts bytes; seam=none
+    def test_replay_download_rejects_corruption_and_fake_playback(self):
+        original = evidence()['rounds'][0]['replay_download']
+        self.assertEqual(validate_replay_download(original), 110)
+        for mutate in (lambda v: v.update(hex=v['hex'][:-2]),
+                       lambda v: v.update(hex=v['hex'] + '00'),
+                       lambda v: v.update(hex=v['hex'][:-2] + 'ff'),
+                       lambda v: v.update(disabled_peer=False),
+                       lambda v: v['peers'][0]['inputs'].__setitem__(4, 15),
+                       lambda v: v['playback'].update(canonical='00' * 136),
+                       lambda v: v['playback'].update(decode_code=False),
+                       lambda v: v['after'].update(frame=110.0),
+                       lambda v: v['after'].update(state='playing')):
+            changed = copy.deepcopy(original)
+            mutate(changed)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                validate_replay_download(changed)
+
     # Value: protects=bounded fault timing during slow downloads; fails_when=exports run live or advance stopped matches; why_new=CI reached289; seam=none
     def test_downloads_observe_only_a_frozen_offline_match(self):
         original = evidence()

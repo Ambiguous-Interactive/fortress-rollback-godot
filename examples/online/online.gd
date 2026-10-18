@@ -2,6 +2,8 @@ extends Node2D
 
 const Lobby = preload("res://examples/online/lobby.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
+const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const REPLAY_FILENAME: String = "fortress-online.frrp"
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE, Color.GOLD, Color.MEDIUM_SEA_GREEN]
 var controller: Lobby = Lobby.new()
 var endpoint: LineEdit
@@ -14,6 +16,9 @@ var start_button: Button
 var leave_button: Button
 var diagnostics_button: Button
 var trace_checkbox: CheckBox
+var replay_checkbox: CheckBox
+var replay_button: Button
+var _replay_notice: String = ""
 var _status: Label
 
 
@@ -39,6 +44,12 @@ func _ready() -> void:
 	trace_checkbox = CheckBox.new()
 	trace_checkbox.text = "Include game state and inputs in diagnostics (choose before Ready)"
 	panel.add_child(trace_checkbox)
+	var replay_row: HBoxContainer = HBoxContainer.new()
+	panel.add_child(replay_row)
+	replay_checkbox = CheckBox.new()
+	replay_checkbox.text = "Record replay: first 10 minutes (choose before Ready)"
+	replay_row.add_child(replay_checkbox)
+	replay_button = _button(replay_row, "Download replay", _export_replay)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -119,6 +130,7 @@ func _join() -> void:
 func _ready_player() -> void:
 	if not controller.has_readied:
 		controller.game_match.capture_trace = trace_checkbox.button_pressed
+		controller.game_match.record_replay = replay_checkbox.button_pressed
 	if controller.ready() == OK:
 		get_viewport().gui_release_focus()
 	_update_status()
@@ -131,6 +143,7 @@ func _start_game() -> void:
 
 
 func _leave() -> void:
+	_replay_notice = ""
 	controller.disconnect_room()
 	room_code.text = ""
 	_update_status()
@@ -143,6 +156,8 @@ func _update_status() -> void:
 	leave_button.disabled = not connected
 	diagnostics_button.disabled = controller.game_match.local_slot < 0
 	trace_checkbox.disabled = controller.has_readied
+	replay_checkbox.disabled = controller.has_readied
+	replay_button.disabled = not controller.game_match.has_recorded_replay
 	endpoint.editable = not connected
 	player_name.editable = not connected
 	room_code.editable = not connected
@@ -152,6 +167,8 @@ func _update_status() -> void:
 	ready_button.disabled = controller.state != "lobby" or controller.has_readied or players != 2
 	start_button.disabled = controller.state != "lobby" or not controller.is_creator or not controller.has_readied or not controller.all_ready
 	_status.text = "%s\n%s\nRoom: %s | players: %d / 2" % [controller.state.capitalize(), controller.message, controller.room_code(), players]
+	if not _replay_notice.is_empty():
+		_status.text += "\n" + _replay_notice
 	var game: Lobby.Match = controller.game_match
 	if game.local_slot >= 0:
 		var state: Lobby.Match.Types.Status = game.peer.status()
@@ -186,12 +203,40 @@ func _export_diagnostics() -> void:
 		DisplayServer.clipboard_set(text)
 
 
+## Owned confirmed-input recording; disabled or empty recordings produce no file.
+func replay_bytes() -> PackedByteArray:
+	var recording: Replay = controller.game_match.peer.replay()
+	return recording.to_bytes() if recording != null and recording.frame_count() > 0 else PackedByteArray()
+
+
+func _export_replay() -> void:
+	var bytes: PackedByteArray = replay_bytes()
+	if bytes.is_empty():
+		_replay_notice = "No confirmed replay frames are available yet."
+	elif OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(bytes, REPLAY_FILENAME, "application/octet-stream")
+		_replay_notice = "Replay download requested: " + REPLAY_FILENAME
+	else:
+		var path: String = "user://" + REPLAY_FILENAME
+		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+		if file == null:
+			_replay_notice = "Could not save replay (%d): %s" % [FileAccess.get_open_error(), path]
+		else:
+			file.store_buffer(bytes)
+			file.flush()
+			_replay_notice = "Replay saved: " + ProjectSettings.globalize_path(path) if file.get_error() == OK else "Could not write replay: " + path
+	_update_status()
+
+
 func _draw() -> void:
 	var origin: Vector2 = Vector2(24, maxf(310, to_local(_status.get_global_rect().end).y + 16))
-	draw_rect(Rect2(origin, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
+	var available: Vector2 = get_viewport_rect().size - origin - Vector2(16, 16)
+	var scale_factor: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
+	draw_set_transform(origin, 0.0, Vector2.ONE * scale_factor)
+	draw_rect(Rect2(Vector2.ZERO, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
 	var game: Simulation = controller.game_match.game
 	for player: int in 2:
-		var position: Vector2 = origin + Vector2(game.x[player], game.y[player])
+		var position: Vector2 = Vector2(game.x[player], game.y[player])
 		var tint: Color = COLORS[game.color[player]]
 		draw_circle(position, 12, tint)
 		draw_string(ThemeDB.fallback_font, position + Vector2(-4, 5), str(player + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.BLACK)

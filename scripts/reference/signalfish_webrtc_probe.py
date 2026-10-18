@@ -413,8 +413,10 @@ def main():
                          'no-sdk', 'install-sdk', 'sdk-import', 'documented-export')
         owned_logs.extend(f'{version}-{label}.log' for version in versions for label in online_labels)
         owned_logs.extend(f'{version}-online.png' for version in versions)
+        owned_logs.extend(f'{version}-online-replay.frrp' for version in versions)
         for version in versions:
             (args.output / f'{version}-online.png').unlink(missing_ok=True)
+            (args.output / f'{version}-online-replay.frrp').unlink(missing_ok=True)
             for label in online_labels:
                 (args.output / f'{version}-{label}.log').unlink(missing_ok=True)
     for module in sorted((CACHE / 'browser/node_modules').rglob('*')):
