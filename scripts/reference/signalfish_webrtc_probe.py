@@ -15,12 +15,12 @@ import tempfile
 import zipfile
 
 from browser.webrtc_import import freeze_after_import
-from browser.webrtc_arguments import ReceiptParser
 from browser.webrtc_runner import run_browser
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from godot_smoke import run
+from receipt_arguments import ReceiptParser
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
 from run import capture
@@ -333,7 +333,7 @@ def validate_restore_control(result, kind="corrupt"):
             raise ValueError('snapshot corruption rejected outside canonical gameplay prefix comparison')
     return result
 def main():
-    parser = ReceiptParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='signalfish-webrtc.json', variants={'--online-example': 'online-example.json'})
     parser.add_argument('--server', type=Path, required=True)
     parser.add_argument('--server-source', type=Path, required=True)
     parser.add_argument('--build-receipt', type=Path, required=True)
@@ -382,7 +382,7 @@ def main():
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
                'browser_matrix': ROOT / 'scripts/reference/browser/webrtc_matrix.py',
-               'browser_arguments': ROOT / 'scripts/reference/browser/webrtc_arguments.py',
+               'receipt_arguments': ROOT / 'scripts/reference/receipt_arguments.py',
                'browser_display': ROOT / 'scripts/reference/browser/webrtc_display.cjs',
                'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
                'server_owner': ROOT / 'scripts/reference/browser/owned_server.py',
@@ -463,7 +463,7 @@ def main():
         sources.update({f'engine_{version}': engine, f'engine_archive_{version}': archive, f'templates_{version}': templates})
     before = native_inventory(sources)
     server_before = source_inventory(args.server_source)
-    expected = {name: before[name] for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'cargo', 'rustc')}
+    expected = {name: before[name] for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'cargo', 'rustc')}
     expected['archive'] = before['server_archive']
     validate_build_receipt(build, server_pin['revision'], server_before, before['server'], expected, before['build_log'])
     run([str(sources['node']), '--test', str(sources['instrument_test']), str(sources['watchdog_test']), str(sources['display_test'])],

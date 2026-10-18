@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run the optional adapter against the verified SDK in an isolated project."""
-import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +9,7 @@ import tempfile
 import tarfile
 
 from fetch import fetch, load_manifest
+from receipt_arguments import ReceiptParser
 
 ROOT = Path(__file__).resolve().parents[2]
 MARKER = 'FORTRESS_SIGNALFISH_SDK_OK'
@@ -34,7 +34,7 @@ def inventory(paths):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='signalfish-sdk.json')
     parser.add_argument('--godot', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--offline', action='store_true')
@@ -52,7 +52,8 @@ def main():
               'relay_controls': ROOT / 'scripts/reference/signalfish_probe_relay_controls.gd',
               'lifetime_probe': ROOT / 'scripts/reference/signalfish_probe_lifetime.gd',
               'sdk_archive': archive, 'engine': executable, 'launcher': Path(__file__).resolve(),
-              'fetch_helper': ROOT / 'scripts/reference/fetch.py', 'pin_manifest': ROOT / 'docs/reference/pins.json'}
+              'fetch_helper': ROOT / 'scripts/reference/fetch.py', 'pin_manifest': ROOT / 'docs/reference/pins.json',
+              'receipt_arguments': ROOT / 'scripts/reference/receipt_arguments.py'}
     before = inventory(inputs)
     with tempfile.TemporaryDirectory(prefix='fortress-signalfish-sdk-') as temporary:
         project = Path(temporary)

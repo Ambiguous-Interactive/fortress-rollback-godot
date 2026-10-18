@@ -239,6 +239,41 @@ func submit(frame: Variant, data: Variant, statuses: Variant, now_us: Variant) -
 	return _commit(plan)
 
 
+## Schedules consecutive new frames and sends them in one input packet, as upstream flushes a delay gap-fill once.
+## Frames after sampled_through repeat earlier input, so like upstream they add no time-sync sample.
+func submit_frames(start_frame: Variant, inputs: Variant, statuses: Variant, now_us: Variant, sampled_through: Variant) -> int:
+	var code: int = _gate(now_us)
+	if code != I.Code.OK:
+		return code
+	if _handshake.status().state != "running":
+		return I.Code.WRONG_STATE
+	if typeof(start_frame) != TYPE_INT or typeof(sampled_through) != TYPE_INT or not inputs is Array or inputs.is_empty():
+		return I.Code.INVALID_ARGUMENT
+	if start_frame != _state.last_submitted_frame + 1 and not (_state.last_submitted_frame == -1 and start_frame == _local.config.input_delay):
+		return I.Code.INVALID_FRAME
+	code = _status_code(statuses)
+	if code != I.Code.OK:
+		return code
+	if _state.pending.size() + inputs.size() > _options.max_pending_frames:
+		return I.Code.BACKPRESSURE
+	var plan: Dictionary = _plan(now_us)
+	for offset: int in range(inputs.size()):
+		var frame: int = start_frame + offset
+		var data: Variant = inputs[offset]
+		if not V.frame(frame, false):
+			return I.Code.INVALID_FRAME
+		if not data is PackedByteArray or data.size() != _local_players.size() * _limits.input_width:
+			return I.Code.INVALID_ARGUMENT
+		plan.state.pending[frame] = data.duplicate()
+		plan.state.last_submitted_frame = frame
+		if _lifecycle != null and frame <= sampled_through:
+			Lifecycle.sample(plan.state, frame, _lifecycle)
+	_merge_statuses(plan, statuses, "connect_statuses")
+	_send_pending(plan)
+	_trace(plan, "submit", "sent")
+	return _commit(plan)
+
+
 func status() -> Dictionary:
 	if _handshake == null:
 		return {}

@@ -179,6 +179,15 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
     for field in ('peer', 'now_us'):
         for alias_name, alias in [('float', float(scenario['operations'][0][field])), ('null', None)]:
             value = deepcopy(scenario); value['operations'][0][field] = alias; mutants[alias_name + '_' + field] = value
+    # Delay changes: before the first step, after another peer's operation, in the bound band, and aliased.
+    if scenario['operations'][0]['kind'] == 'step':
+        peer = scenario['operations'][0]['peer']
+        for name, op, index in [('delay_before_step', {'kind': 'delay', 'peer': peer, 'delay': 1}, 0),
+                                ('delay_bound_band', {'kind': 'delay', 'peer': peer, 'delay': 100}, 1),
+                                ('delay_float', {'kind': 'delay', 'peer': peer, 'delay': 1.0}, 1),
+                                ('delay_clock_field', {'kind': 'delay', 'peer': peer, 'delay': 1, 'now_us': 0}, 1),
+                                ('delay_after_other_peer', {'kind': 'delay', 'peer': peer, 'delay': 1}, 2)]:
+            value = deepcopy(scenario); value['operations'].insert(index, op); mutants[name] = value
     mutants['exponent_format'] = json.dumps(scenario).replace('"format": 1,', '"format": 1e0,', 1)
     for window in (0, 1):
         mutants['low_prediction_' + str(window)] = dict(scenario, max_prediction=window)

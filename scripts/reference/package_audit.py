@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Audit an addon-only candidate in a clean project without development tooling."""
-import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -8,6 +7,8 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+
+from receipt_arguments import ReceiptParser
 
 ROOT = Path(__file__).resolve().parents[2]
 ADDON = Path('addons/fortress_rollback')
@@ -192,7 +193,7 @@ func _deliver(peers: Array[Peer], roster: Array[PackedByteArray], now_us: int) -
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ReceiptParser(description=__doc__, receipt='package-audit.json')
     parser.add_argument('--godot', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()

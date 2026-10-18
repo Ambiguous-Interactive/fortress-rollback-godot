@@ -271,9 +271,9 @@ A corruption control may desync before capture; require its typed cause and inde
 
 ## Faster local iteration
 
-Use `make test-focus GODOT=/path/to/godot SUITE=res://tests/unit/test_input_queue.gd`
-for one suite while changing it. This retains both in-process and fresh-process
-repeat layers. Final delivery still runs all applicable suites and controls.
+`make test-godot` runs each suite in its own fresh-process pair across CPUs (`--jobs`); its record matches `--jobs 1`.
+`make test-focus GODOT=/path/to/godot SUITE=res://tests/unit/test_input_queue.gd` selects one suite with both
+repeat layers. A new suite parallelizes for free; split a slow suite rather than lengthen it. Deliver all suites.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
 Clear owned success receipts on parse and execution-option rejection, including
