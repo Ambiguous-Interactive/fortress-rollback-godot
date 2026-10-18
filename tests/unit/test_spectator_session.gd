@@ -124,6 +124,7 @@ func _buffering(context: RefCounted) -> void:
 
 
 func _delay_and_loss(context: RefCounted) -> void:
+	_clean_end_advice(context)
 	var session: RefCounted = _spectator(context)
 	context.equal(session.set_playback(2, 1, 3), Types.Code.OK, "bounded delayed catchup")
 	var driver: RefCounted = Driver.new(session, Fixture.Game.new())
@@ -310,3 +311,27 @@ func _shapes(context: RefCounted) -> void:
 				context.equal(session.receive_host_frame(frame, row).code, Types.Code.OK, "bounded shape row")
 				context.equal(driver.step(frame, _empty()).code, Types.Code.OK, "shape advance")
 				context.equal(game.value, expected, "stable per-player stride")
+
+
+# Value: protects=advice-driven clean end; fails_when=final empty advice hides lifecycle completion; why_new=direct step end bypasses advice; seam=none
+func _clean_end_advice(context: RefCounted) -> void:
+	for scenario: Dictionary in [
+		{"rows": [], "delay": 0, "frames": 0}, {"rows": [0], "delay": 0, "frames": 1}, {"rows": [0, 1, 2], "delay": 2, "frames": 3}, {"rows": [0, 2], "delay": 1, "frames": 1}
+	]:
+		var session: RefCounted = _spectator(context)
+		var game: RefCounted = Fixture.Game.new()
+		var driver: RefCounted = Driver.new(session, game)
+		context.equal(session.set_playback(scenario.delay, 1, 3), Types.Code.OK, "configure clean end playback")
+		for frame: int in scenario.rows:
+			context.equal(session.receive_host_frame(frame, _row(frame)).code, Types.Code.OK, "stage ending host rows")
+		context.equal(session.finish_host(), Types.Code.OK, "finish host before advice loop")
+		var attempts: int = 0
+		var last_code: int = Types.Code.OK
+		while session.recommended_steps() > 0 and attempts < 8:
+			last_code = driver.step(attempts, _empty()).code
+			attempts += 1
+		context.equal(last_code, Types.Code.TERMINATED, "advice loop observes terminal completion")
+		context.equal(session.status().lifecycle, Types.Lifecycle.TERMINATED, "advice loop finishes lifecycle")
+		context.equal(session.status().current_frame, scenario.frames, "only contiguous prefix is played")
+		context.equal(game.trace.size(), scenario.frames, "terminal control step simulates no input")
+		context.equal(session.recommended_steps(), 0, "terminated viewer needs no further service")

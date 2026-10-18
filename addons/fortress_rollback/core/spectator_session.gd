@@ -82,14 +82,15 @@ func receive_host_frame(frame: int, inputs: Array[PackedByteArray]) -> Types.Res
 	return Types.Result.new(Code.OK)
 
 
-## Number of single-frame driver/expert steps to attempt now; zero waits for complete host history.
+## Number of driver/expert calls to attempt now; zero waits for complete host history.
+## After a clean tail, one final call publishes termination without simulating a frame.
 ## Recompute after each service cycle. The driver still enforces delay if callers exceed this advice.
 func recommended_steps() -> int:
 	if _config == null or _reason != Code.OK:
 		return 0
 	var available: int = _host_frontier - (0 if _host_finished else _stream_delay) - _current + 1
 	if available <= 0:
-		return 0
+		return 1 if _host_finished else 0
 	return mini(available, _catchup_speed if available > _max_frames_behind else 1)
 
 
@@ -109,10 +110,10 @@ func begin_advance() -> Types.Result:
 		return Types.Result.new(code)
 	if _current == Queue.FRAME_MAX or _batch_id == 9223372036854775807:
 		return super.begin_advance()
+	if _host_finished and _host_frontier < _current:
+		terminate(Code.TERMINATED)
+		return Types.Result.new(Code.TERMINATED)
 	if recommended_steps() == 0:
-		if _host_finished:
-			terminate(Code.TERMINATED)
-			return Types.Result.new(Code.TERMINATED)
 		return Types.Result.new(Code.PREDICTION_STALL)
 	var row: PackedByteArray = _host_rows[_current % _host_tags.size()]
 	for player: int in range(_config.player_count):

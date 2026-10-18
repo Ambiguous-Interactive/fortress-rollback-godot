@@ -46,6 +46,11 @@ A clean import can succeed after an entire optional subsystem was omitted. Delet
 a required subsystem and add an unknown development script as negative controls;
 both must fail before constructing a successful candidate.
 
+Concurrent processes for one Godot project share `user://`. Give writable test
+fixtures process-owned paths and check open, write and removal results before
+asserting application behavior. Reproduce interference with a second process;
+a missing-file test can observe a peer's recreated or truncated file instead.
+
 ## Faster local iteration
 
 `make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;

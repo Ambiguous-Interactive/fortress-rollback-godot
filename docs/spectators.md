@@ -60,12 +60,14 @@ behind the highest contiguous host frame. The delay must be smaller than the
 queue capacity; catch-up speed must be positive and at most that capacity.
 When more than `max_frames_behind` playable frames await, `recommended_steps()`
 suggests up to `catchup_speed` single-frame steps. Otherwise it suggests one.
-No available frame returns zero. Gaps never move the contiguous frontier.
+No available frame returns zero while the host stream remains open. Gaps never
+move the contiguous frontier. After a clean end, one final recommended call
+publishes termination without advancing the game.
 
 Call `driver.step(now_us, empty_local_inputs)` that many times using an explicitly
 typed `Array[Driver.LocalInput]`. Alternatively, consume `begin_advance()` and
 `complete_request()` manually. Each batch uses the shared session engine and
-advances one frame. `begin_advance()` enforces stream delay even if the caller
+advances one frame, except the final termination call. `begin_advance()` enforces stream delay even if the caller
 ignores the recommendation. Protocol time must remain monotonic.
 
 ## Deliver confirmed rows
@@ -105,7 +107,9 @@ history explicitly. The playable example shows this loop.
 For a known clean end, call `finish_host()`. It refuses further rows, releases
 the configured viewing delay, plays the remaining contiguous prefix and then
 terminates. Buffered rows beyond a gap cannot be played. Do not call it while
-expecting retransmissions to fill a gap.
+expecting retransmissions to fill a gap. Continue servicing `recommended_steps()`
+after finishing the host, including its final terminal call. This reports
+`TERMINATED`, runs no game callback, and then recommends zero further work.
 
 On host loss, malformed authenticated transport or an unrecoverable history gap,
 call `terminate(reason)`. This stops immediately, including buffered playback.

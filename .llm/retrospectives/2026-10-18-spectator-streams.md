@@ -37,6 +37,49 @@ receipts pass with exit zero and `FORTRESS_ADDON_PACKAGE_OK`. Their smoke covers
 addon-only loading, player traffic and one confirmed spectator tick. Full live
 spectator routing, late admission and browser networking remain separately gated.
 
+## Clean-end follow-up
+
+A later independent public-API review reproduced a finished stream remaining
+RUNNING when callers executed only `recommended_steps()`. Direct advancement
+had covered termination while bypassing the documented scheduling contract.
+
+`.cache/tests/session036-clean-end-red.json` confirms four failures: empty stream,
+one frame, delayed tail and gapped input. Each advice-driven loop ended with
+code OK and lifecycle RUNNING instead of TERMINATED. The regression at
+`tests/unit/test_spectator_session.gd:317` also requires the exact contiguous
+frame count and no simulation callback for the terminal service call.
+
+`recommended_steps()` now recommends one final service call after clean drain;
+`begin_advance()` commits termination from raw stream availability. Both
+`.cache/tests/session036-clean-end-green43.json` and
+`.cache/tests/session036-clean-end-green472.json` pass all ten spectator cases
+and three demo cases. These follow-up receipts supersede the earlier focused
+spectator receipts for this lifecycle repair.
+
+Extended the existing wrapper terminal paragraph with the distinct scheduling
+lesson: completion work must remain reachable through the caller's public service
+loop. No separate lifecycle skill or duplicate general terminal rule was added.
+
+## Shared filesystem fixture incident
+
+CI exposed a diagnostic viewer test race: fresh Godot processes shared the
+constant `user://diagnostic-viewer-test.json`. A concurrent process could recreate
+or truncate that file between removal and the missing-file assertion.
+
+`.cache/tests/session036-diagnostic-race/results.json` contains controlled
+before/after observations on both engine pins. The isolated control passes;
+a second writer makes the old test report “Could not open diagnostic JSON.”
+instead of the expected missing-file error. Both old race runs exit 1.
+With process-owned fixture paths, both race runs exit 0 with twelve assertions.
+`tests/unit/test_diagnostic_viewer.gd:170` now checks setup and removal I/O and
+preserves equal native/Web assertion counts. Production code is unchanged.
+
+Added the fixture ownership and checked-I/O lesson to the existing
+[testing infrastructure reference](../skills/testing/references/infrastructure.md).
+Prune check: existing unique result-path guidance covers receipts, while this
+incident concerns shared application filesystem fixtures. Both remain necessary;
+no additional skill or operational fact duplicates the procedure.
+
 ## Curation and verification
 
 Updated existing [GDScript style](../skills/gdscript-style/SKILL.md) and
