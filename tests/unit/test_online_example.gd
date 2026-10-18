@@ -1,6 +1,7 @@
 extends RefCounted
 
 # Value: protects=online room identity, retained input and teardown; fails_when=room restarts alias or stalled input is resampled; seam=SDK public transport doubles
+const Scene = preload("res://examples/online/online.tscn")
 const Match = preload("res://examples/online/match.gd")
 const Fallback = preload("res://addons/fortress_rollback/transport/signalfish_fallback.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
@@ -86,8 +87,7 @@ func run_case(name: String, context: RefCounted) -> void:
 			for roster: PackedStringArray in [PackedStringArray([U]), PackedStringArray([U, U]), PackedStringArray([U, "bad"])]:
 				context.equal(Match.session_identity(ROOM, roster).is_empty(), true, "invalid room membership refused")
 		"optional_scene":
-			var scene: PackedScene = load("res://examples/online/online.tscn")
-			var node: Node = scene.instantiate()
+			var node: Node = Scene.instantiate()
 			node.call("_ready")
 			var lobby: Lobby = node.get("controller")
 			context.equal(lobby.ready(), ERR_UNAVAILABLE, "ready before joining is refused")
@@ -313,8 +313,7 @@ func _observer_history(context: RefCounted) -> void:
 
 
 func _viewer_lifetime(context: RefCounted) -> void:
-	var scene: PackedScene = load("res://examples/online/online.tscn")
-	var node: Node = scene.instantiate()
+	var node: Node = Scene.instantiate()
 	node.call("_ready")
 	var inspector: Button
 	for button: Node in node.find_children("*", "Button", true, false):
