@@ -167,9 +167,10 @@ func _scene_controls(context: RefCounted) -> void:
 			visible = true
 	context.equal(visible, true, "visible status includes seed and verification counts")
 	# Fresh-process repetitions run concurrently and share the Godot user directory.
-	var path: String = "user://diagnostic-viewer-test-%d.json" % OS.get_process_id()
+	var path: String = ""
 	var fixture_code: int = OK
 	if not OS.has_feature("web"):
+		path = "user://diagnostic-viewer-test-%d.json" % OS.get_process_id()
 		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
 		if file == null:
 			fixture_code = FileAccess.get_open_error()

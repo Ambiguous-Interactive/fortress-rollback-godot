@@ -80,6 +80,26 @@ Prune check: existing unique result-path guidance covers receipts, while this
 incident concerns shared application filesystem fixtures. Both remain necessary;
 no additional skill or operational fact duplicates the procedure.
 
+## Exported Web fixture follow-up
+
+The fixture repair initially built its process-owned path before the native/Web
+branch. The preserved log
+`.cache/tests/session036-ci-webfailure/ownership-4.3-negative-browser.log`
+records `OS::get_process_id() is not available on the Web platform` twice.
+CI run `39161213108`, ownership job `117774750503`, exposed this platform error.
+Native success did not establish that shared setup was safe in the exported probe.
+
+The follow-up moves the PID call inside the existing native branch;
+`tests/unit/test_diagnostic_viewer.gd:174` now computes the path only there.
+Both `.cache/tests/session036-native-fixture43.json` and
+`.cache/tests/session036-native-fixture472.json` pass. The final native unit
+receipts `session036-final-unit43.json` and `session036-final-unit472.json`
+also pass. Exported verification remains a separate delivery gate.
+
+Prune check: the existing testing infrastructure instruction already requires
+exercising affected staged probes and preserving platform-specific contracts.
+This was a missed application of that guidance, so no new skill rule was added.
+
 ## Curation and verification
 
 Updated existing [GDScript style](../skills/gdscript-style/SKILL.md) and
