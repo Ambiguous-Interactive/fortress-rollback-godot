@@ -8,12 +8,14 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const MAX_BYTES: int = 1048576
 const MAX_FRAMES: int = 36000
 const SEEK_FRAMES_PER_TICK: int = 120
+const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checksums matched."
 const GAME_VERSION: String = "fortress-online-integer-v1"
 
 var game: Simulation = Simulation.new()
 var message: String = "Open a fortress-online.frrp recording."
 var is_playing: bool = false
 var _seek_target: int = -1
+var _seek_failed: bool = false
 var _recording: Replay
 var _player: Player = Player.new()
 
@@ -52,6 +54,7 @@ func restart() -> void:
 	if _recording == null:
 		return
 	_seek_target = -1
+	_seek_failed = false
 	game = Simulation.new()
 	_player = Player.new()
 	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES)
@@ -76,9 +79,7 @@ func tick() -> void:
 			if _player.failure_frame() >= 0:
 				_seek_target = -1
 			elif current_frame() == _seek_target:
-				_seek_target = -1
-				if not _player.is_complete():
-					message = "Paused."
+				_finish_seek()
 	elif is_playing:
 		step()
 
@@ -98,7 +99,7 @@ func _advance() -> void:
 		message = "Replay stopped at frame %d (code %d)." % [_player.failure_frame(), code]
 	elif _player.is_complete():
 		is_playing = false
-		message = "Replay complete. All available recorded checksums matched."
+		message = COMPLETE_MESSAGE
 
 
 func frame_count() -> int:
@@ -111,7 +112,7 @@ func current_frame() -> int:
 
 ## Whether another recorded frame can advance, including while paused.
 func can_step() -> bool:
-	return _recording != null and not _player.is_complete() and _player.failure_frame() < 0
+	return _recording != null and not _seek_failed and not _player.is_complete() and _player.failure_frame() < 0
 
 
 ## Navigate by replaying every intervening input and checksum, at a bounded rate per tick.
@@ -119,11 +120,14 @@ func can_step() -> bool:
 func seek(frame: int) -> bool:
 	if _recording == null or frame < 0 or frame > frame_count():
 		return false
-	if frame < current_frame() or _player.failure_frame() >= 0:
+	if frame < current_frame() or _seek_failed or _player.failure_frame() >= 0:
 		restart()
 	is_playing = false
 	_seek_target = frame if frame != current_frame() else -1
-	message = "Seeking to frame %d; checksums are validated." % frame if is_seeking() else "Paused."
+	if is_seeking():
+		message = "Seeking to frame %d; checksums are validated." % frame
+	else:
+		_finish_seek()
 	return true
 
 
@@ -133,5 +137,15 @@ func is_seeking() -> bool:
 
 func cancel_seek() -> void:
 	if is_seeking():
-		_seek_target = -1
-		message = "Paused."
+		_finish_seek()
+
+
+func _finish_seek() -> void:
+	_seek_target = -1
+	is_playing = false
+	var expected: PackedByteArray = _recording.checksum(current_frame())
+	if not expected.is_empty() and Simulation.checksum(game.canonical_bytes()) != expected:
+		_seek_failed = true
+		message = "Replay stopped at frame %d (code %d)." % [current_frame(), Types.Code.DESYNC]
+	else:
+		message = COMPLETE_MESSAGE if _player.is_complete() else "Paused."
