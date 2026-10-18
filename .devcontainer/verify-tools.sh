@@ -111,7 +111,11 @@ check_npm_global_writable() {
     return
   fi
 
-  unreadable="$(find "$root" "$bindir" -type d ! -writable 2>/dev/null | head -4)"
+  # `|| true` because this is the failure path: under pipefail, head closing the
+  # pipe early makes find exit 141 once its output exceeds the pipe buffer, which
+  # would abort the harness before bad() could name the repair. Reproduced with
+  # 3001 directories (~210 KB of paths).
+  unreadable="$(find "$root" "$bindir" -type d ! -writable 2>/dev/null | head -4 || true)"
   if [ -n "$unreadable" ]; then
     bad "npm global directories are not writable by $(id -un); repair: sudo .devcontainer/npm-global-perms.sh"
     printf '%s\n' "$unreadable" | sed 's/^/         /'
@@ -174,8 +178,8 @@ check_npm_global_writable() {
       detail="$(printf '%s\n' "$verdict" | grep -oE 'EACCES: permission denied, [a-z]+' | head -1 || true)"
       bad "npm global ${verdict%-failed} is not permitted for $(id -un) [${detail:-see npm output}]; repair: sudo .devcontainer/npm-global-perms.sh"
       ;;
-    layout) bad "npm global install succeeded but the package is missing from ${root}" ;;
-    link) bad "npm global install succeeded but no bin symlink appeared in ${bindir}" ;;
+    layout-failed) bad "npm global install succeeded but the package is missing from ${root}" ;;
+    link-failed) bad "npm global install succeeded but no bin symlink appeared in ${bindir}" ;;
     run-failed) bad "the npm global probe package installed but its binary would not run" ;;
     replace-not-applied) bad "npm global replace reported success but the old version is still installed" ;;
     residue) bad "npm global uninstall left the probe package or its symlink behind" ;;
