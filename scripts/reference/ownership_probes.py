@@ -62,6 +62,9 @@ EXPECTED.update({
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
     'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step'},
 })
+EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum'}
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
+EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -94,6 +97,7 @@ FILES += ['tests/unit/test_driver_callback_signatures.gd', 'tests/unit/test_driv
 FILES += ['tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
           'examples/integration/demo.gd', 'examples/integration/loop.gd', 'examples/integration/effects.gd']
 FILES += ['tests/unit/test_spectator_policy.gd', 'tests/unit/test_replay_speed.gd', 'tests/unit/test_spectator_publisher.gd']
+FILES += ['tests/unit/test_driver_recovery.gd', 'tests/unit/test_peer_recovery.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -126,11 +130,14 @@ const ReplayDiagnostics = preload("res://tests/unit/test_replay_diagnostics.gd")
 const SpectatorDemo = preload("res://tests/unit/test_spectator_demo.gd")
 const SpectatorPolicy = preload("res://tests/unit/test_spectator_policy.gd")
 const SpectatorPublisher = preload("res://tests/unit/test_spectator_publisher.gd")
+const PeerRecovery = preload("res://tests/unit/test_peer_recovery.gd")
+const DriverRecovery = preload("res://tests/unit/test_driver_recovery.gd")
 const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
-\t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed]
+\t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
+		DriverRecovery, PeerRecovery]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)

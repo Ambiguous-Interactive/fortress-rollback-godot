@@ -107,7 +107,8 @@ foreign-packet inertness unchanged, and agree support for optional packet kinds.
 A confirmed-row publisher owns each refused packet until exact transport acceptance;
 re-reading the host ring on retry can lose already prepared history. Fence the
 host configuration lifetime before returning retained bytes, keep liveness independent
-of row pressure, and report an overwritten next row explicitly.
+of row pressure, and report an overwritten next row explicitly. A stopped producer still
+owes liveness while final rows or END are refused; stop heartbeats only after END acceptance.
 When a stream exposes its playback session, fence both packet delivery and elapsed
 expiry against successful session replacement. Equal configuration values do not
 preserve a connection lifetime; rejected configuration must preserve the valid stream.
@@ -188,6 +189,9 @@ When ACKs drain the last input carrier, recover only with bounded fresh remote
 status evidence; never substitute local receipt for remote confirmation. Retain
 an owned acknowledged sample within configured memory and separate input/nudge
 cadence from ACK/control traffic so ordinary heartbeats cannot starve recovery.
+Explicit final-history recovery also needs gossip below prediction-window exhaustion.
+A sender's local confirmation does not prove every recipient learned its receipt bank;
+keep bounded historical carriers eligible while the caller services explicit recovery.
 
 Preserve the inbound FIFO head and its generated handshake token when a peer
 returns recoverable queue pressure before committing packet state. The same

@@ -137,8 +137,18 @@ Zero prediction waits for actual current inputs from every slot. Global
 confirmation is the minimum actual scheduled input frame across all players,
 capped by the explicit mesh limit when enabled;
 it can include the current unsimulated frame. Speculative agreement never confirms.
-A recovery-only batch can finish with `PREDICTION_STALL`; it corrects the game,
-preserves the current sample and leaves the exposed frame unchanged.
+A stalled advance can still correct earlier frames before returning `PREDICTION_STALL`.
+It preserves the current sample and leaves the exposed frame unchanged.
+
+For remote-input sessions, `driver.recover(now_us)` applies pending corrections without
+requiring a new local sample or advancing another frame. The expert equivalent is
+`session.begin_recovery()`, whose READY batch uses the ordinary ordered request API.
+An idle call returns OK without callbacks and finalizes matching late replay inputs.
+Recovery preserves staged samples, callback guards and terminal limits. It emits
+`step_completed` after callbacks; successful recovery does not count as a prediction stall. Corrected recovery also saves
+the current boundary, replacing any checksum retained from a previous mesh stall.
+Sync-test and spectator sessions return UNSUPPORTED. This explicit recovery operation
+is a Godot extension, separate from pinned upstream advance-frame observations.
 
 ## Sync-test behavior and verification
 
@@ -173,7 +183,7 @@ manual request API and `FortressDriver` update this single engine inventory:
 | `rollback_count` | Successfully completed LOAD callbacks, including sync-test rewinds. |
 | `resimulated_frames` | Successfully completed ADVANCE callbacks below the current frontier. |
 | `advanced_frames` | Successfully completed ADVANCE callbacks at the current frontier. |
-| `prediction_stalls` | Attempts that finish with PREDICTION_STALL, including repair-only batches. |
+| `prediction_stalls` | Advances that finish with PREDICTION_STALL, including stalled correction. Explicit recovery does not count. |
 | `last_rollback_depth` | Frontier minus restored frame for the last successful LOAD. |
 | `max_rollback_depth` | Largest successful LOAD depth in this configured session. |
 

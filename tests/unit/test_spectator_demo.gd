@@ -8,7 +8,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["corrected_viewing", "pause_and_catchup", "lost_history", "idle_host_liveness"])
+	return PackedStringArray(["corrected_viewing", "pause_and_catchup", "lost_history", "idle_host_liveness", "clean_host_end", "paused_final_tail"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -18,6 +18,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		_pause_and_catchup(context)
 	elif name == "lost_history":
 		_lost_history(context)
+	elif name == "paused_final_tail":
+		_paused_final_tail(context)
+	elif name == "clean_host_end":
+		_clean_host_end(context)
 	else:
 		_idle_host_liveness(context)
 	context.finish()
@@ -87,3 +91,61 @@ func _idle_host_liveness(context: RefCounted) -> void:
 	context.equal(demo.next_host_frame, 0, "no confirmed row was delivered")
 	context.equal(demo.stream.poll(10000000), Types.Code.OK, "host's rowless tick refreshed viewer liveness")
 	context.equal(demo.viewer.status().reason, Types.Code.OK, "live idle host preserves viewer")
+
+
+# Value: protects=playable final tail without a phantom host tick; fails_when=ending skips correction or paused tail; why_new=demo only runs indefinitely; seam=none
+func _clean_host_end(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.has_method("finish_host"), true, "example exposes clean ending")
+	if not demo.has_method("finish_host"):
+		return
+	for pause: bool in [false, true]:
+		context.equal(demo.start(), Types.Code.OK, "fresh ending example")
+		var reference: Game = Game.new()
+		for tick: int in range(40):
+			var frame: int = demo.host.loop.game.frame
+			var buttons: int = Game.RIGHT | (Game.FIRE if frame % 5 < 3 else 0)
+			context.equal(demo.tick(buttons), Types.Code.OK, "original host input")
+			var rows: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(reference.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent final history")
+		var final_frame: int = demo.host.loop.game.frame
+		context.equal(demo.host.loop.session.status().confirmed_frame < final_frame - 1, true, "ending begins with outstanding actual input")
+		demo.is_paused = pause
+		context.equal(demo.finish_host(), Types.Code.OK, "request final host boundary")
+		context.equal(demo.finish_host(), Types.Code.OK, "repeated end request is idempotent")
+		for tick: int in range(20):
+			context.equal(demo.tick(Game.LEFT) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "drain without new host samples")
+		context.equal(demo.host.loop.game.frame, final_frame, "host never adds a phantom final frame")
+		context.bytes_equal(demo.host.loop.game.canonical_bytes(), reference.canonical_bytes(), final_frame, "final host corrected to original inputs")
+		if pause:
+			context.equal(demo.game.frame < final_frame, true, "pause holds clean tail")
+			demo.is_paused = false
+		for tick: int in range(20):
+			context.equal(demo.tick(Game.LEFT), Types.Code.OK, "viewer catches up after host stops")
+		context.equal(demo.viewer.status().lifecycle, Types.Lifecycle.TERMINATED, "clean tail visibly completes")
+		context.equal(demo.viewer_code, Types.Code.TERMINATED, "clean end reason")
+		context.bytes_equal(demo.game.canonical_bytes(), reference.canonical_bytes(), final_frame, "viewer displays exact final canonical host state")
+		context.equal(demo.start(), Types.Code.OK, "restart creates a fresh host and viewer")
+		context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "fresh host accepts input after ending")
+		context.equal(demo.host.loop.game.frame, 1, "new host advances normally")
+
+
+# Value: protects=stopped host liveness while final rows wait; fails_when=freeze suppresses heartbeat before END acceptance; why_new=short pauses never fill ring; seam=none
+func _paused_final_tail(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.start(), Types.Code.OK, "fresh paused viewer")
+	demo.is_paused = true
+	for tick: int in range(130):
+		context.equal(demo.tick(0), Types.Code.OK, "host advances with full paused viewer ring")
+	context.equal(demo.finish_host(), Types.Code.OK, "stop host before retained history is lost")
+	for tick: int in range(620):
+		context.equal(demo.tick(0) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "final packets wait with live host")
+	context.equal(demo.is_host_finished, true, "host boundary settled")
+	context.equal(demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "backpressured final tail survives original ten-second deadline")
+	context.equal(demo.game.frame, 0, "long pause simulates no viewer input")
+	demo.is_paused = false
+	for tick: int in range(150):
+		demo.tick(0)
+	context.equal(demo.viewer_code, Types.Code.TERMINATED, "resumed final tail ends cleanly")
+	context.bytes_equal(demo.game.canonical_bytes(), demo.host.loop.game.canonical_bytes(), 130, "full stopped-host history survives pause")

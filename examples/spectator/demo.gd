@@ -21,6 +21,9 @@ var driver: Driver
 var is_paused: bool = false
 var viewer_code: int = Types.Code.OK
 var next_host_frame: int = 0
+var is_finishing: bool = false
+var is_host_finished: bool = false
+var _tick_count: int = 0
 
 
 func start() -> int:
@@ -57,6 +60,20 @@ func start() -> int:
 	is_paused = false
 	viewer_code = Types.Code.OK
 	next_host_frame = 0
+	is_finishing = false
+	is_host_finished = false
+	_tick_count = 0
+	return Types.Code.OK
+
+
+## Stop at the current host frame, correct outstanding predictions and send the complete clean tail.
+## A paused viewer can resume and drain that tail before its normal terminal notification.
+func finish_host() -> int:
+	if host == null:
+		return Types.Code.NOT_CONFIGURED
+	if host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return Types.Code.TERMINATED
+	is_finishing = true
 	return Types.Code.OK
 
 
@@ -64,26 +81,32 @@ func start() -> int:
 func tick(buttons: int) -> int:
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
-	var code: int = host.tick(buttons)
+	_tick_count += 1
+	var code: int = Types.Code.OK
+	if not is_host_finished:
+		code = host.finish_tick() if is_finishing else host.tick(buttons)
+		if is_finishing and code == Types.Code.OK:
+			code = publisher.finish_host()
+			is_host_finished = code == Types.Code.OK
 	if code != Types.Code.OK and code != Types.Code.PREDICTION_STALL:
 		viewer.terminate(code)
 		viewer_code = code
 		return code
 	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 		return code
-	viewer_code = stream.poll(host.tick_count * Host.TICK_US)
+	viewer_code = stream.poll(_tick_count * Host.TICK_US)
 	if viewer_code != Types.Code.OK:
 		return code
 	var first_host_frame: int = next_host_frame
 	for _work: int in range(SEND_BUDGET):
 		var packet: Types.InputResult = publisher.prepare_packet()
-		if packet.code == Types.Code.PREDICTION_STALL:
+		if packet.code == Types.Code.PREDICTION_STALL or (is_host_finished and packet.code == Types.Code.TERMINATED):
 			break
 		if packet.code != Types.Code.OK:
 			viewer_code = packet.code
 			viewer.terminate(viewer_code)
 			return code
-		viewer_code = stream.receive_packet(packet.bytes, host.tick_count * Host.TICK_US)
+		viewer_code = stream.receive_packet(packet.bytes, _tick_count * Host.TICK_US)
 		if viewer_code != Types.Code.OK:
 			break
 		viewer_code = publisher.acknowledge_packet(packet.bytes)
@@ -92,14 +115,16 @@ func tick(buttons: int) -> int:
 			return code
 		next_host_frame = publisher.next_frame()
 	if next_host_frame == first_host_frame:
-		var keepalive_code: int = stream.receive_packet(publisher.encode_keepalive(), host.tick_count * Host.TICK_US)
-		if keepalive_code != Types.Code.OK:
-			viewer_code = keepalive_code
-			return code
+		var keepalive: PackedByteArray = publisher.encode_keepalive()
+		if not keepalive.is_empty():
+			var keepalive_code: int = stream.receive_packet(keepalive, _tick_count * Host.TICK_US)
+			if keepalive_code != Types.Code.OK:
+				viewer_code = keepalive_code
+				return code
 	if not is_paused:
 		var samples: Array[Driver.LocalInput] = []
 		for _step: int in range(viewer.recommended_steps()):
-			viewer_code = driver.step(host.tick_count * Host.TICK_US, samples).code
+			viewer_code = driver.step(_tick_count * Host.TICK_US, samples).code
 			if viewer_code != Types.Code.OK:
 				break
 	return code

@@ -145,6 +145,10 @@ Include wrapper-owned staging payloads and frame tags in configuration storage
 reservations before allocation. Verify exact-budget acceptance and rejection one
 byte below it; a bounded extra ring still consumes the declared budget.
 
+Recovery can succeed without a forward frame. Consume staged local samples only when the
+exposed frame advances, and refresh any retained current boundary after correction before
+publishing its checksum. Finalize late matching inputs without fabricating another sample.
+
 Specialized session modes must audit inherited public mutators. A confirmed-only spectator
 cannot accept player-mesh confirmation limits: playback may succeed while exports lose
 their confirmed rows. Test public confirmation and row export alongside game state.

@@ -274,8 +274,9 @@ Reuse the existing SDK through an optional adapter.
 The core addon must parse and run without SignalFish installed.
 An exhausted prediction window must retain a bounded receipt-gossip carrier
 after ordinary input ACKs drain. Recovery preserves the same samples and
-conservative remote confirmation evidence; voluntary input-idle tail convergence
-is a separate compatibility decision.
+conservative remote confirmation evidence; ordinary input-idle polling retains its existing compatibility behavior.
+Explicit peer recovery keeps bounded receipt gossip alive even below prediction-window
+exhaustion, so a final prefix can confirm without another sample when delivery continues.
 The [membership seam](docs/signalfish-membership.md) derives frozen UUID slots
 and binds the full roster/configuration into the existing peer handshake.
 Its plan route describes validated setup; byte delivery remains a separate adapter contract.
@@ -387,6 +388,9 @@ supports delayed playback, caller-bounded catch-up and explicit host endings. Sp
 confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
 Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
+Remote-input sessions can recover and finalize confirmed replay history without another local sample
+or forward frame. The spectator example uses that shared operation to settle its exact final host
+boundary before sending END; paused viewers can resume through the full clean tail.
 The host publisher retains one exact refused packet, advances only on transport acceptance,
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
