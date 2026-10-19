@@ -66,6 +66,19 @@ func start() -> int:
 	return Types.Code.OK
 
 
+## Pause continuous viewing and attempt exactly one ordinary confirmed playback step.
+## Delay and missing input still stall; this never advances or samples the host.
+func step_viewer() -> int:
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	is_paused = true
+	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
+		return viewer_code
+	var samples: Array[Driver.LocalInput] = []
+	viewer_code = driver.step(_tick_count * Host.TICK_US, samples).code
+	return viewer_code
+
+
 ## Stop at the current host frame, correct outstanding predictions and send the complete clean tail.
 ## A paused viewer can resume and drain that tail before its normal terminal notification.
 func finish_host() -> int:

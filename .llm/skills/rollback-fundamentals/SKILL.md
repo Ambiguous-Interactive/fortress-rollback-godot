@@ -123,6 +123,10 @@ may clear the active batch, but must not reopen configuration, input submission,
 polling, advancement or request completion inside that callback. Status and
 termination remain available; the driver acknowledges only after releasing the
 guard. Test valid request identities as well as terminate-then-reconfigure.
+Apply callback termination checks to paused validation and checkpoint restoration too.
+Track their active bounded readers/writers so termination expires them. Recheck the
+latched terminal reason before accepting callback returns, invoking another callback,
+committing a restored frame or publishing validation coverage.
 
 Audit low prediction windows through actual upstream callbacks before claiming
 checksum parity. No SAVE callbacks means no callback-supplied checksum evidence;

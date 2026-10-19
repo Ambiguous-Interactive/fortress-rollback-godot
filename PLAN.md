@@ -91,6 +91,8 @@ Issue creation does not establish implementation, test success or feature parity
 The game owns deterministic simulation and complete serialization.
 The library supplies orchestration, validation and sync-test tooling.
 Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
+Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
+The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
 Godot physics and arbitrary scene state are not made deterministic by rollback.
 
 ## Reference revisions and provenance
@@ -379,6 +381,8 @@ Pausing or stepping a replay validates the displayed boundary before allowing fu
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
 in-memory snapshots without changing the portable file format. Viewer speed controls change
 only the bounded number of recorded frames serviced; each simulation step stays fixed.
+Callback and expert replay playback share ordered save/advance requests in the same player.
+Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Validated replay playback and paused navigation check callback success and bounded snapshot status before

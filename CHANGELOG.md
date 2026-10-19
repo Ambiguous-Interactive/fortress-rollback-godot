@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add expert replay requests through `FortressReplayPlayer.configure_expert()`. Dispatch the same ordered saves and advances used by callback playback.
+
+- Add N-key single-frame inspection to the spectator example. It preserves viewing delay and pause, and can drain a clean final tail.
+
 - Add `FrameInputs.player_count()` and `read_into()` for reusable fixed-width input buffers. Use `read()` when you need input status or prefer bulk copies for wide samples.
 
 - Add typed spectator playback events for waiting, contiguous host input, clean host closure and terminal completion or failure. Driver results carry events after callbacks finish.
@@ -147,6 +151,8 @@
 - Fix invalid transport token callbacks retaining oversized data. Relay and WebRTC adapters validate null or exactly 16 bytes before copying.
 
 ### Improved
+
+- Improve wide-input queue insertion with native byte copying while preserving input, prediction and rollback-floor ownership.
 
 - Improve driver handling of repeated identical local samples. Each player submits once after the complete list passes validation.
 
