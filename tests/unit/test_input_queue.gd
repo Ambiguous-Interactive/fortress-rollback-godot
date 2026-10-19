@@ -142,6 +142,29 @@ func _ownership(context: RefCounted) -> void:
 	prediction.bytes[0] = 99
 	context.bytes_equal(queue.input(2).bytes, PackedByteArray([2, 3]), 2, "prediction ownership")
 
+	# Native slot replacement must preserve ownership across wide samples, wrap and the rollback floor.
+	for width: int in [1, 8, 32, 256]:
+		var source: PackedByteArray = PackedByteArray()
+		source.resize(width)
+		source.fill(7)
+		var expected: PackedByteArray = source.duplicate()
+		queue.configure(3, source)
+		for frame: int in range(3):
+			context.equal(queue.add_input(frame, source).code, Queue.Code.OK, "wide owned append")
+		var retained: RefCounted = queue.confirmed_input(0)
+		source.fill(99)
+		context.bytes_equal(queue.input(3).bytes, expected, 3, "latest actual owns submitted bytes")
+		context.equal(queue.add_input_with_reclaim_floor(3, expected, 0).code, Queue.Code.OK, "wide ring wraps")
+		retained.bytes.fill(88)
+		expected.fill(77)
+		var seven: PackedByteArray = PackedByteArray()
+		seven.resize(width)
+		seven.fill(7)
+		context.bytes_equal(queue.retained_confirmed_input(0).bytes, seven, 0, "reclaimed floor owns old slot")
+		context.bytes_equal(queue.confirmed_input(3).bytes, seven, 3, "wrapped slot owns new submission")
+		queue.reset_prediction()
+		context.bytes_equal(queue.input(4).bytes, seven, 4, "wrapped latest prediction owns bytes")
+
 
 # Value: protects=global floor history and frozen episode; fails_when=local progress evicts floor; why_new=ordinary full ring rejects; seam=none
 func _reclaim(context: RefCounted) -> void:
