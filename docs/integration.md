@@ -204,7 +204,7 @@ before submitting any sample in a step. Null samples and conflicting duplicate s
 also reject the list. A missing local player's sample returns `MISSING_LOCAL_INPUT`
 without retaining any samples from that list. Correct the list and retry at the same frame.
 Samples already submitted through the expert API count toward a complete frame and stay retained.
-Identical duplicate samples remain idempotent. Queue capacity is checked during submission; it is separate
+Identical duplicate samples remain idempotent and submit once per player after validation. Queue capacity is checked during submission; it is separate
 from this metadata preflight. Expert callers can use `session.validate_local_input`
 for the same non-mutating checks before calling `submit_local_input`.
 
@@ -248,6 +248,9 @@ Successful reconfiguration clears the evidence; rejected configuration preserves
 A failed snapshot write stops with `SNAPSHOT_FAILED`, even if the callback returns a matching checksum.
 `CALLBACK_FAILED` means a callback returned failure or an invalid result. These failures also set `failure_frame()`.
 Pass `0` to play inputs without checking. The file stores inputs, not game rules.
+`checked_checksum_count()` reports distinct recorded state boundaries whose checksums actually matched.
+Input-only playback reports zero; repeated validation and checkpoint navigation never count a boundary twice.
+Successful configuration starts a fresh count; rejected configuration preserves it.
 Check `game_version()` and `game_seed()` before playing, and set up the game to match.
 
 For repeated navigation, pass optional `checkpoint_interval` and `checkpoint_capacity` to

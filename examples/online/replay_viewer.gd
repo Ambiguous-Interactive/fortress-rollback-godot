@@ -17,6 +17,7 @@ var is_playing: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
+var _recorded_checksum_count: int = 0
 var _recording: Replay
 var _player: Player = Player.new()
 
@@ -32,6 +33,10 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 		message = "This viewer needs a complete online integer game recording (up to ten minutes)."
 		return false
 	_recording = recording
+	_recorded_checksum_count = 0
+	for frame: int in recording.frame_count():
+		if not recording.checksum(frame).is_empty():
+			_recorded_checksum_count += 1
 	restart()
 	return true
 
@@ -61,6 +66,8 @@ func restart() -> void:
 	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES, 300, 121)
 	is_playing = false
 	message = "Ready. Press Play; recorded checksums are validated." if code == Types.Code.OK else "Could not start playback (%d)." % code
+	if code == Types.Code.OK and _recorded_checksum_count == 0:
+		message = "Ready. Press Play; this recording has no checksums."
 
 
 func toggle_play() -> void:
@@ -69,6 +76,8 @@ func toggle_play() -> void:
 	_playback_quarters = 0
 	is_playing = not is_playing
 	message = "Playing; recorded checksums are validated." if is_playing else "Paused."
+	if is_playing and _recorded_checksum_count == 0:
+		message = "Playing inputs; this recording has no checksums."
 
 
 ## Quarter-speed units: 1, 2, 4, 8, 16 select ¼×, ½×, 1×, 2×, 4×.
@@ -128,11 +137,19 @@ func _advance() -> void:
 		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	elif _player.is_complete():
 		is_playing = false
-		message = COMPLETE_MESSAGE
+		message = _complete_message()
 
 
 func frame_count() -> int:
 	return _recording.frame_count() if _recording != null else 0
+
+
+func recorded_checksum_count() -> int:
+	return _recorded_checksum_count
+
+
+func checked_checksum_count() -> int:
+	return _player.checked_checksum_count()
 
 
 func current_frame() -> int:
@@ -164,6 +181,8 @@ func seek(frame: int) -> bool:
 	_seek_target = frame if frame != current_frame() else -1
 	if is_seeking():
 		message = "Seeking to frame %d; checksums are validated." % frame
+		if _recorded_checksum_count == 0:
+			message = "Seeking to frame %d; this recording has no checksums." % frame
 	else:
 		_finish_seek()
 	return true
@@ -185,7 +204,13 @@ func _finish_seek() -> void:
 	if code != Types.Code.OK:
 		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	else:
-		message = COMPLETE_MESSAGE if _player.is_complete() else "Paused."
+		message = _complete_message() if _player.is_complete() else "Paused."
+
+
+func _complete_message() -> String:
+	if _recorded_checksum_count == 0:
+		return "Replay complete. This recording has no checksums; playback could not be verified."
+	return COMPLETE_MESSAGE
 
 
 func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: PackedByteArray) -> String:

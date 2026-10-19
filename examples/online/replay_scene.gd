@@ -189,7 +189,10 @@ func _physics_process(_delta: float) -> void:
 
 
 func _refresh() -> void:
-	_status.text = "%s\nFrame %d / %d" % [viewer.message, viewer.current_frame(), viewer.frame_count()]
+	_status.text = (
+		"%s\nFrame %d / %d | Checksums checked: %d / %d recorded"
+		% [viewer.message, viewer.current_frame(), viewer.frame_count(), viewer.checked_checksum_count(), viewer.recorded_checksum_count()]
+	)
 	_play.text = "Pause" if viewer.is_playing else "Play"
 	_play.disabled = viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled

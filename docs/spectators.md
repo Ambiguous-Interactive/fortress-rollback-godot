@@ -218,6 +218,40 @@ This envelope is separate from the player wire protocol. It supplies neither
 handshake negotiation, retransmission nor SignalFish spectator admission. Player
 rosters and player confirmation remain unchanged.
 
+## Observe playback lifecycle
+
+`viewer.drain_events()` returns owned `Spectator.Event` objects. Each event has
+`kind`, `frame` and `reason`; `frame` is the playback boundary at the transition,
+or the failing request frame. `reason` is `OK` except for terminal events.
+
+| `Spectator.EventKind` | Meaning |
+| --- | --- |
+| `WAITING_FOR_HOST` | Successful configuration starts a fresh viewer at frame zero. |
+| `SYNCHRONIZED` | The first complete contiguous host input prefix is available. |
+| `HOST_FINISHED` | Clean input closure releases the delayed tail for playback. |
+| `TERMINATED` | Playback reached its clean final boundary, or failed with the recorded reason. |
+
+These events describe local playback. `SYNCHRONIZED` does not establish a network
+handshake, host authentication or game-state transfer. Reordered future rows do
+not synchronize a viewer until the gap at frame zero is filled. An empty clean
+stream publishes input closure and termination without inventing an input prefix.
+
+Each kind occurs at most once per configured lifetime, so the queue retains at
+most four events even when the caller never drains it. A successful configuration
+starts a fresh queue; a rejected configuration preserves pending events.
+Returned events belong to the caller and cannot change viewer state.
+
+Ordinary driver calls drain these events into `Driver.StepResult.events`. Consume
+that result when using the driver; expert callers drain the viewer after completing
+the request batch. Draining during an active batch or game callback returns an
+empty array and preserves pending events, including termination during a callback.
+Expiry, conflicting history and callback failures publish their exact committed
+terminal cause. Repeated termination cannot replace it or publish another event.
+
+`HOST_FINISHED` does not mean playback has completed. A paused viewer still owns
+its delayed tail; only the terminal event after final playback reports completion.
+Continue servicing the viewer through that final call, including an empty stream.
+
 ## End the stream
 
 For a known clean end, call `finish_host()`. It refuses further rows, releases
