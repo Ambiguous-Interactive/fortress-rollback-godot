@@ -85,6 +85,31 @@ Pack buttons into bits: the example uses one byte with left=1, right=2 and fire=
 Configure `input_width` and a `neutral_input` of that width; neutral input fills frames before the first real input.
 Never send floats, strings or engine objects as input. Quantize analog sticks to small integers first.
 
+For small samples, reuse an input buffer instead of creating an owned read result for every player:
+
+```gdscript
+var input_sample: PackedByteArray = PackedByteArray([0])  # one-byte configured input width
+
+func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+	var count: int = inputs.player_count()
+	if count < 0:
+		return false
+	for player: int in count:
+		if inputs.read_into(player, input_sample) != Types.Code.OK:
+			return false
+		# Apply input_sample before copying the next player's sample.
+	return true
+```
+
+`player_count()` returns the live slot count, or `-1` after the request expires.
+`read_into(player, destination)` requires the exact configured width. It returns
+`OK`, `EXPIRED_VIEW`, `INVALID_PLAYER` or `INPUT_WIDTH`; rejection preserves the destination.
+The destination belongs to your game, and changing it cannot modify recorded inputs.
+Reuse only scratch storage that is overwritten before use; authoritative state still belongs in snapshots.
+Use `read(player)` when you need its `status` or an owned result. Both APIs preserve request lifetimes.
+The reusable path avoids result wrappers and copies bytes in GDScript. It helps small inputs;
+wide samples can be faster with `read()`. This is not a whole-frame allocation guarantee.
+
 ### Snapshots
 
 A snapshot must contain **everything** the next frame reads: positions, timers, cooldowns,

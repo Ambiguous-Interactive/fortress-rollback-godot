@@ -83,7 +83,10 @@ class Game:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure", "notifications", "input_validation", "missing_samples"])
+	return PackedStringArray([
+		"parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure",
+		"notifications", "input_validation", "missing_samples", "input_exhaustion",
+	])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -106,6 +109,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_input_validation(context)
 		"missing_samples":
 			_missing_samples(context)
+		"input_exhaustion":
+			_input_exhaustion(context)
 	context.finish()
 
 
@@ -440,3 +445,22 @@ func _missing_samples(context: RefCounted) -> void:
 		var exhausted_driver: RefCounted = Driver.new(exhausted_session, Game.new())
 		context.equal(exhausted_driver.step(0, omitted).code, Types.Code.FRAME_EXHAUSTED, "exhaustion precedes missing local input")
 		context.equal(exhausted_session.status().lifecycle, Types.Lifecycle.TERMINATED, "missing input does not mask terminal exhaustion")
+
+
+# Value: protects=terminal limits before staging; fails_when=input errors mask exhaustion; why_new=empty-list tests skip submission; seam=existing counter fixture
+func _input_exhaustion(context: RefCounted) -> void:
+	for exhausted: String in ["_current", "_batch_id"]:
+		var session: RefCounted = _session()
+		var game: Game = Game.new()
+		var driver: Driver = Driver.new(session, game)
+		if exhausted == "_current":
+			session._current = 2147483647
+		else:
+			session._batch_id = 9223372036854775807
+		var frame: int = session.status().current_frame
+		var received: PackedInt64Array = session.received_frames()
+		context.equal(driver.step(0, _samples(frame)).code, Types.Code.FRAME_EXHAUSTED, "terminal limit precedes input submission")
+		context.equal(session.status().lifecycle, Types.Lifecycle.TERMINATED, "exhaustion cannot leave an input retry loop")
+		context.equal(session.received_frames(), received, "exhausted step stages no new inputs")
+		context.equal(game.trace.is_empty(), true, "exhausted step invokes no game callback")
+		context.equal(driver.step(1, _samples(frame)).code, Types.Code.TERMINATED, "exhaustion remains terminal")

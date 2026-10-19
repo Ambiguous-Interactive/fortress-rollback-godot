@@ -35,6 +35,9 @@ Mutations must fail at the intended diagnostic and consumed-record position; unr
 Declare expected diagnostics independently; learning them from the validator makes rejection circular.
 For idempotent input delivery, state equality can hide duplicate work. Also assert
 exact queue occupancy, due-frame timing and once-per-frame sampling with a resampling mutant.
+Activate each modeled bound: a catch-up speed equal to queue capacity never tests
+clamping. Buffer more ready work than the selected speed and remove the production
+clamp in an isolated control to prove the model rejects it.
 Select mutated records by semantic kind. Require scenario-specific nonzero
 observations and an expected control inventory before publishing success. A
 shortened corpus that never reaches its named event must fail those gates.

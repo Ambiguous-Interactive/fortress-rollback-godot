@@ -94,6 +94,24 @@ class FrameInputs:
 			result.status = _statuses[player]
 		return result
 
+	## Live slot count; -1 means the callback view has expired.
+	func player_count() -> int:
+		return _bytes.size() if _live else -1
+
+	## Copy one fixed-width sample into caller-owned storage, without allocating a result wrapper.
+	## Rejection preserves destination. Use read() when the applied input status is needed.
+	func read_into(player: int, destination: PackedByteArray) -> int:
+		if not _live:
+			return Code.EXPIRED_VIEW
+		if player < 0 or player >= _bytes.size():
+			return Code.INVALID_PLAYER
+		var sample: PackedByteArray = _bytes[player]
+		if destination.size() != sample.size():
+			return Code.INPUT_WIDTH
+		for index: int in destination.size():
+			destination[index] = sample[index]
+		return Code.OK
+
 	func size() -> Result:
 		var result: Result = Result.new(Code.OK if _live else Code.EXPIRED_VIEW)
 		result.value = _bytes.size() if _live else 0

@@ -191,7 +191,9 @@ events and any state that influences future input interpretation.
 
 Readers/writers and input views are valid only during their request callback
 (or the current expert request before acknowledgement). Retained view objects
-must check generation/liveness and return `EXPIRED_VIEW` on every operation.
+must check generation/liveness and return `EXPIRED_VIEW` from checked operations.
+The scalar input `player_count()` accessor returns `-1` when expired. `read_into`
+copies into exact-width caller-owned storage and preserves it on every rejection.
 Any byte array returned to user code is an owned copy; raw slot backing arrays
 are never exposed. Mutating a returned copy cannot affect history. Reused slots
 must check both frame and generation; modulo index alone is insufficient.

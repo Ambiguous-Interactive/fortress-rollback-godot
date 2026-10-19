@@ -276,6 +276,14 @@ views, and manual/driver request equality. The local game example compares every
 viewer state with independent original-input game history while the host rolls
 back. Pausing and history loss leave host progress unaffected.
 
+An independent finite playback model checks 72 seeded byte-delivery schedules:
+queue capacities 2, 3 and 5, zero and maximum delay, duplicate and reordered rows,
+caller-owned retries, and END arriving before or after its tail. It compares every
+played prefix with the original host transcript and checks unchanged host confirmation.
+Separate controls reject loss, foreign liveness and conflicting history. Bypassing the
+production delay gate fails the model's first service-advice comparison.
+These bounded schedules establish neither upstream model equivalence nor live transport support.
+
 This foundation does not close #47. Actual upstream spectator differential/model
 checks, host protocol events and handshake, SignalFish spectator identity/routing, real relay
 delivery, and network lifecycle validation remain required. The existing player

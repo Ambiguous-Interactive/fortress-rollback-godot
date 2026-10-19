@@ -293,12 +293,20 @@ func begin_recovery() -> Types.Result:
 	return _begin_advance(false)
 
 
-func _begin_advance(allow_advance: bool) -> Types.Result:
+## Driver preflight shares terminal limits before it retains the current input samples.
+func _check_advance_limits() -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
-		return Types.Result.new(code)
+		return code
 	if _current == Queue.FRAME_MAX or _batch_id == 9223372036854775807:
-		return _fatal(Code.FRAME_EXHAUSTED)
+		return _fatal(Code.FRAME_EXHAUSTED).code
+	return Code.OK
+
+
+func _begin_advance(allow_advance: bool) -> Types.Result:
+	var code: int = _check_advance_limits()
+	if code != Code.OK:
+		return Types.Result.new(code)
 	if allow_advance:
 		for player: int in _config.local_players:
 			if _samples[player].is_empty():

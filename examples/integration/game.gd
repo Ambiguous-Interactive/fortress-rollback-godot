@@ -27,6 +27,9 @@ var frame: int = 0
 var x: PackedInt64Array = PackedInt64Array([100, 300])
 var cooldown: PackedInt64Array = PackedInt64Array([0, 0])
 var shot_total: int = 0
+# Scratch input copies are overwritten before use and never affect saved state.
+var _input_sample: PackedByteArray = PackedByteArray([0])
+var _buttons: PackedByteArray = PackedByteArray([0, 0])
 ## Ring of shot IDs. ID = frame * 2 + player + 1, so IDs increase with frame.
 var shot_ids: PackedInt64Array = _empty_shots()
 
@@ -103,14 +106,14 @@ func load_state(saved_frame: int, reader: Reader) -> bool:
 func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
 	if input_frame != frame or frame >= MAX_FRAME:
 		return false
-	var buttons: PackedByteArray = PackedByteArray()
+	if inputs.player_count() != 2:
+		return false
 	for player: int in range(2):
-		var input: Types.InputResult = inputs.read(player)
-		if input.code != Types.Code.OK or input.bytes.size() != 1 or input.bytes[0] > 7:
+		if inputs.read_into(player, _input_sample) != Types.Code.OK or _input_sample[0] > 7:
 			return false
-		buttons.append(input.bytes[0])
+		_buttons[player] = _input_sample[0]
 	for player: int in range(2):
-		var pressed: int = buttons[player]
+		var pressed: int = _buttons[player]
 		x[player] = clampi(x[player] + 4 * (int(bool(pressed & RIGHT)) - int(bool(pressed & LEFT))), MIN_X, MAX_X)
 		if cooldown[player] > 0:
 			cooldown[player] -= 1

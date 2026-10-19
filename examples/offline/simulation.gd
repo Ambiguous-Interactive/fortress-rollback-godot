@@ -24,6 +24,9 @@ var pending_color: PackedInt32Array = PackedInt32Array([0, 0])
 var event_id: PackedInt64Array = PackedInt64Array([0, 0])
 var event_frame: PackedInt64Array = PackedInt64Array([-1, -1])
 var color: PackedInt32Array = PackedInt32Array([0, 1])
+# Scratch input copies are overwritten before use and never affect saved state.
+var _input_sample: PackedByteArray = PackedByteArray([0])
+var _samples: PackedByteArray = PackedByteArray([0, 0])
 
 
 ## Full fixed-width little-endian state, including delayed effects and random state.
@@ -103,14 +106,14 @@ func _is_valid_snapshot(bytes: PackedByteArray, saved_frame: int) -> bool:
 func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
 	if input_frame != frame or frame < 0 or frame >= MAX_FRAME:
 		return false
-	var samples: PackedByteArray = PackedByteArray()
+	if inputs.player_count() != 2:
+		return false
 	for player: int in range(2):
-		var input: Types.InputResult = inputs.read(player)
-		if input.code != Types.Code.OK or input.bytes.size() != 1 or input.bytes[0] > 15:
+		if inputs.read_into(player, _input_sample) != Types.Code.OK or _input_sample[0] > 15:
 			return false
-		samples.append(input.bytes[0])
+		_samples[player] = _input_sample[0]
 	for player: int in range(2):
-		var buttons: int = samples[player]
+		var buttons: int = _samples[player]
 		x[player] = clampi(x[player] + 2 * (int(bool(buttons & RIGHT)) - int(bool(buttons & LEFT))), 20, 460)
 		y[player] = clampi(y[player] + 2 * (int(bool(buttons & DOWN)) - int(bool(buttons & UP))), 20, 280)
 		if pending_frame[player] == frame:
