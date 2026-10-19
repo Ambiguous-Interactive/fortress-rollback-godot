@@ -136,6 +136,8 @@ check confirmation as well as the return code before declaring the game finished
 For byte-network games, `peer.recover(now_us)` provides the same operation while polling
 protocol deadlines, retries, confirmation and checksum controls. Keep servicing transport
 packets; recovery does not submit new local inputs or perform an end handshake.
+It repeats an acknowledged historical input at the existing bounded gossip cadence,
+including after local confirmation, so a lagging recipient can learn the final receipt bank.
 
 Sample local input once per frame. While stalled, keep submitting that same sample:
 a different sample for the same frame is rejected with `INPUT_ALREADY_SUBMITTED`.

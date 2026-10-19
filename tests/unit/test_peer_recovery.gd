@@ -26,7 +26,7 @@ class RecoveryGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["final_mesh", "guards", "callbacks", "timeout"])
+	return PackedStringArray(["final_mesh", "guards", "callbacks", "timeout", "idle_confirmation"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -114,3 +114,53 @@ func _timeout(context: RefCounted) -> void:
 	context.equal(peer.recover(2000001).code, Types.Code.PROTOCOL_FAILED, "recovery independently services host deadlines")
 	context.equal(peer.status().lifecycle, Types.Lifecycle.TERMINATED, "timeout halts recovery without new input")
 	context.equal(mesh.games[0].requests.is_empty(), true, "expired peer runs no game callbacks")
+
+
+# Value: protects=final receipt convergence below prediction limit; fails_when=confirmed peers stop gossiping to a lagging peer; why_new=mesh tests keep sampling; seam=none
+func _idle_confirmation(context: RefCounted) -> void:
+	for count: int in [3, 8]:
+		for lose_packet: bool in [false, true]:
+			var fixture: RefCounted = Fixture.new()
+			var mesh: Dictionary = fixture._build(context, count)
+			for frame: int in range(3):
+				mesh.now += 1000
+				fixture._tick(context, mesh)
+			fixture._deliver(context, mesh, fixture._drain(mesh))
+			fixture._deliver(context, mesh, fixture._drain(mesh))
+			for peer: RefCounted in mesh.peers:
+				context.equal(peer.status().confirmed_frame, -1, "input-idle tail remains below prediction exhaustion")
+				for state: Dictionary in peer.network_status().peers.values():
+					context.equal(state.pending_frames, 0, "all ordinary input ACKs drained")
+				context.equal(peer.recover(203000).code, Types.Code.OK, "recover at strict input resend equality")
+			context.equal(fixture._drain(mesh).is_empty(), true, "equality sends no gossip carrier")
+			for peer: RefCounted in mesh.peers:
+				context.equal(peer.recover(203001).code, Types.Code.OK, "recover services final receipt gossip")
+			var packets: Array[Dictionary] = fixture._drain(mesh)
+			context.equal(packets.size(), count * (count - 1), "one bounded historical carrier per link")
+			if packets.is_empty():
+				continue
+			if lose_packet:
+				packets.remove_at(0)
+			mesh.now = 203001
+			fixture._deliver(context, mesh, packets)
+			fixture._deliver(context, mesh, fixture._drain(mesh))
+			if lose_packet:
+				var waiting: bool = false
+				var completed: bool = false
+				for peer: RefCounted in mesh.peers:
+					waiting = waiting or peer.status().confirmed_frame < 2
+					completed = completed or peer.status().confirmed_frame == 2
+				context.equal(waiting and completed, true, "one missing packet leaves asymmetric confirmation")
+				for peer: RefCounted in mesh.peers:
+					context.equal(peer.recover(403001).code, Types.Code.OK, "retry equality remains idle")
+				context.equal(fixture._drain(mesh).is_empty(), true, "gossip interval equality is strict")
+				for peer: RefCounted in mesh.peers:
+					context.equal(peer.recover(403002).code, Types.Code.OK, "confirmed senders still help the waiting recipient")
+				mesh.now = 403002
+				fixture._deliver(context, mesh, fixture._drain(mesh))
+				fixture._deliver(context, mesh, fixture._drain(mesh))
+			for peer: RefCounted in mesh.peers:
+				context.equal(peer.status().confirmed_frame, 2, "entire final simulated prefix confirms without another sample")
+				context.equal(peer.status().current_frame, 3, "receipt recovery adds no simulation frame")
+				for state: Dictionary in peer.network_status().peers.values():
+					context.equal(state.last_submitted_frame, 2, "gossip repeats historical input without a new sample")

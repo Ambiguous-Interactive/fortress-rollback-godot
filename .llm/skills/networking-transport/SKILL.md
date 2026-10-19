@@ -189,6 +189,9 @@ When ACKs drain the last input carrier, recover only with bounded fresh remote
 status evidence; never substitute local receipt for remote confirmation. Retain
 an owned acknowledged sample within configured memory and separate input/nudge
 cadence from ACK/control traffic so ordinary heartbeats cannot starve recovery.
+Explicit final-history recovery also needs gossip below prediction-window exhaustion.
+A sender's local confirmation does not prove every recipient learned its receipt bank;
+keep bounded historical carriers eligible while the caller services explicit recovery.
 
 Preserve the inbound FIFO head and its generated handshake token when a peer
 returns recoverable queue pressure before committing packet state. The same

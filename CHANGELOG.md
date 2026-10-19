@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add bounded final receipt gossip to explicit peer recovery. A mesh can confirm its last simulated inputs after sampling stops, including when a final gossip packet is lost.
+
 - Add recovery without a new simulation frame through `FortressDriver.recover()` and `FortressSession.begin_recovery()`. Finalize corrected replay and spectator tails while preserving staged input.
 
 - Add E to end the local spectator example's host. Outstanding inputs settle before the viewer drains its complete final history, including after pause and resume.

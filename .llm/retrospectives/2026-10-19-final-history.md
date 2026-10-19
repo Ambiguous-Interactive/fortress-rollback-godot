@@ -13,6 +13,7 @@
 | Successful recovery must preserve staged local input even when its result is OK. | `test_driver_recovery.gd:staged_sample` and `Session.complete_request` | Clear samples only after actual forward advancement; update rollback guidance. |
 | A previously saved current boundary becomes stale when preceding inputs are corrected. | The boundary-checksum regression published 17628 while corrected state was 24188 before repair. | Save the corrected current boundary; add the regression and owning guidance. |
 | A stopped host still owes liveness until its final rows and END are accepted. | Pausing 620 ticks after stopping a 130-frame host expired the viewer at the original ten-second deadline. | Keep independent heartbeats until publisher completion; cover resume through the exact final state. |
+| Final receipt convergence can stall below prediction-window exhaustion, and a locally confirmed sender can still owe gossip to a lagging recipient. | `test_peer_recovery.gd:idle_confirmation` failed with zero carriers before the explicit-recovery change. | Keep bounded historical status carriers eligible during explicit recovery, including after asymmetric packet loss. |
 
 ## Prune Ledger
 
@@ -24,4 +25,4 @@
 ## Outcome
 
 - State: `findings-acted`.
-- Follow-ups: full driver/replay/spectator task acceptance remains in issues #40, #45 and #47; authenticated spectator relay startup remains in #131.
+- Follow-ups: full driver/replay/spectator task acceptance remains in issues #40, #45 and #47; broader upstream P2P acceptance remains in #59; authenticated spectator relay startup remains in #131.

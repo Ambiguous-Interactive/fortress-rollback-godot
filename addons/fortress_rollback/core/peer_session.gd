@@ -190,7 +190,8 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 
 
 ## Poll transport controls and correct simulated history without submitting another local input.
-## Receipt and confirmation can still lag; check status before declaring a clean final boundary.
+## Bounded historical carriers refresh receipt gossip, including for already-confirmed senders.
+## Delivery and confirmation can still lag; check status before declaring a clean final boundary.
 func recover(now_us: Variant) -> Driver.StepResult:
 	if _busy or _core == null:
 		return _recover(now_us)
@@ -208,7 +209,7 @@ func _recover(now_us: Variant) -> Driver.StepResult:
 		return Driver.StepResult.new(_step_code(gate), before, before)
 	if not _running():
 		return Driver.StepResult.new(Types.Code.NOT_SYNCHRONIZED, before, before)
-	var polled: int = _poll(now_us, [])
+	var polled: int = _poll(now_us, [], [], true)
 	if polled != I.Code.OK:
 		return Driver.StepResult.new(_step_failure(polled), before, before)
 	var control_code: int = _service_controls(now_us, true)
@@ -543,11 +544,11 @@ func _receive(packet: Variant, attributed_sender: PackedByteArray, now_us: int, 
 	return code
 
 
-func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = []) -> int:
+func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = [], force_status_gossip: bool = false) -> int:
 	_now = now_us
 	if statuses.is_empty():
 		statuses = _statuses()
-	var status_nudge: bool = _gossip_nudge_needed()
+	var status_nudge: bool = force_status_gossip or _gossip_nudge_needed()
 	var result: int = I.Code.OK
 	for index: int in range(_ids.size()):
 		if _lifecycle.enabled:
