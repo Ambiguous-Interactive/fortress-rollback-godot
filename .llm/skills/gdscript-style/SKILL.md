@@ -60,6 +60,9 @@ Validate bounded view status separately from callback success and capture it bef
 expiration. A matching checksum cannot make a failed snapshot write successful.
 Validate callback checksum width before encoding diagnostics; a typed `SaveResult`
 does not constrain its contained byte array.
+Check callback argument counts at configuration before replacing an active game.
+Method existence alone does not prove a two-argument invocation is valid; accept
+additional optional parameters. Metadata cannot prove callback parameter types.
 Capture dynamic application callback returns as `Variant`, then validate the exact
 contract before typed assignment or boolean use. An engine type error can bypass
 guard release; coercion can accept malformed success values. Route rejected

@@ -28,6 +28,8 @@ var _max_snapshot_bytes: int = 0
 var _frame: int = 0
 var _reason: int = Types.Code.OK
 var _failure_frame: int = -1
+var _failure_expected_checksum: PackedByteArray = PackedByteArray()
+var _failure_actual_checksum: PackedByteArray = PackedByteArray()
 var _is_stepping: bool = false
 
 
@@ -39,17 +41,17 @@ var _is_stepping: bool = false
 func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, checkpoint_interval: int = 0, checkpoint_capacity: int = 0) -> int:
 	if _is_stepping:
 		return Types.Code.BUSY
-	if replay == null or game == null or not game.has_method("simulate_frame") or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
+	if replay == null or game == null or not Driver.accepts_callback_arguments(game, "simulate_frame") or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
 	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count()):
 		return Types.Code.INVALID_CONFIGURATION
-	if max_snapshot_bytes > 0 and not game.has_method("save_state"):
+	if max_snapshot_bytes > 0 and not Driver.accepts_callback_arguments(game, "save_state"):
 		return Types.Code.INVALID_CONFIGURATION
 	if checkpoint_interval < 0 or checkpoint_capacity < 0 or checkpoint_capacity > 1024:
 		return Types.Code.INVALID_CONFIGURATION
 	if (checkpoint_interval == 0) != (checkpoint_capacity == 0):
 		return Types.Code.INVALID_CONFIGURATION
-	if checkpoint_capacity > 0 and (max_snapshot_bytes == 0 or checkpoint_capacity < 2 or not game.has_method("load_state")):
+	if checkpoint_capacity > 0 and (max_snapshot_bytes == 0 or checkpoint_capacity < 2 or not Driver.accepts_callback_arguments(game, "load_state")):
 		return Types.Code.INVALID_CONFIGURATION
 	if checkpoint_capacity * max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
@@ -62,6 +64,8 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, ch
 	_frame = 0
 	_reason = Types.Code.OK
 	_failure_frame = -1
+	_failure_expected_checksum.clear()
+	_failure_actual_checksum.clear()
 	return Types.Code.OK
 
 
@@ -96,7 +100,7 @@ func _play_frame() -> int:
 		if code != Types.Code.OK:
 			return code
 		if not expected.is_empty() and checkpoint.checksum != expected:
-			return Types.Code.DESYNC
+			return _checksum_mismatch(expected, checkpoint.checksum)
 		if cache:
 			_retain_checkpoint(checkpoint)
 	var inputs: Types.FrameInputs = _replay.inputs(_frame)
@@ -167,8 +171,11 @@ func restore_before(target: int) -> int:
 		_frame = selected.frame
 		var restored: Checkpoint = Checkpoint.new()
 		code = _save_checkpoint(restored)
-		if code == Types.Code.OK and (restored.bytes != selected.bytes or restored.checksum != selected.checksum):
-			code = Types.Code.DESYNC
+		if code == Types.Code.OK:
+			if restored.checksum != selected.checksum:
+				code = _checksum_mismatch(selected.checksum, restored.checksum)
+			elif restored.bytes != selected.bytes:
+				code = Types.Code.DESYNC
 	_is_stepping = false
 	if code != Types.Code.OK:
 		_reason = code
@@ -187,3 +194,21 @@ func is_complete() -> bool:
 
 func failure_frame() -> int:
 	return _failure_frame
+
+
+## Owned 16-byte evidence for the first checksum comparison failure; empty for other failures.
+## Expected is the recording's checksum during playback or the cached checksum during restore.
+## Successful configure clears both values; failed configure preserves them.
+func failure_expected_checksum() -> PackedByteArray:
+	return _failure_expected_checksum.duplicate()
+
+
+## Owned computed checksum paired with failure_expected_checksum(); empty for other failures.
+func failure_actual_checksum() -> PackedByteArray:
+	return _failure_actual_checksum.duplicate()
+
+
+func _checksum_mismatch(expected: PackedByteArray, actual: PackedByteArray) -> int:
+	_failure_expected_checksum = expected.duplicate()
+	_failure_actual_checksum = actual.duplicate()
+	return Types.Code.DESYNC

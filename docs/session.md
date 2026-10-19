@@ -32,6 +32,10 @@ A game supplies these synchronous methods:
 | `load_state(frame, reader)` | `bool`; consume the complete published snapshot through `read_bytes` |
 | `simulate_frame(frame, inputs)` | `bool`; read each ascending slot through `inputs.read(player)` and advance exactly once |
 
+`Driver.configure` rejects missing callbacks or methods that cannot accept two arguments
+with `INVALID_CONFIGURATION`. Additional optional arguments are supported.
+A rejected configuration leaves the previous session and game installed.
+
 `Driver.LocalInput(player, sample_frame, bytes)` copies one local sample.
 Construct `Driver.new(session, game)` and call `step(now_us, samples)` per tick.
 `StepResult` reports code, before/after frame and drained events. The driver

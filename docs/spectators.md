@@ -20,7 +20,8 @@ resume to catch up at most four frames per physics tick. R starts a fresh game.
 A long viewer pause can exhaust retained host history. The viewer then stops
 with `HISTORY_UNAVAILABLE`; the host keeps playing. The example encodes and receives spectator byte packets
 in the same process, with an injected ten-second host deadline. It requires no server,
-SDK or native extension.
+SDK or native extension. The example sends keepalives on ticks without accepted rows,
+including initial prediction and viewer backpressure.
 
 ![Local host and delayed spectator](images/spectator-example.png)
 
@@ -130,6 +131,15 @@ reserved zero byte, u32 input width, the identity, and a u32 frame. `encode_row`
 appends exactly one complete row in stable player order. Obtain that row from the
 host's corrected `confirmed_inputs`; the encoder cannot prove it was confirmed.
 `encode_end(final_frame)` carries the exclusive final frame without a body.
+`encode_keepalive()` uses kind 3, a reserved zero frame, and no body. It refreshes
+host liveness without adding inputs, advancing playback, or completing an END gap.
+Send it before the deadline when no row can be delivered, including confirmation
+stalls, game pauses, or viewer backpressure. Poll the viewer independently.
+
+ROW (kind 1) and END (kind 2) retain their existing version 1 bytes. Keepalive is
+an optional extension to this experimental envelope. Older receivers reject kind 3;
+callers must agree support before sending it. There is no capability negotiation.
+Keepalive delivery requires the same authenticated host and lifetime as input rows.
 
 `receive_packet` validates lengths, version, dimensions and identity before touching
 playback. Foreign or malformed packets return `PROTOCOL_FAILED` without changing
@@ -142,9 +152,11 @@ Call `poll` independently of playback and packet acceptance. The deadline uses
 elapsed time since the last accepted host packet; expiry wins over a packet at
 that exact deadline and terminates with `PROTOCOL_FAILED`. Calls during an active
 batch return `BUSY` without changing clocks. Rejected packets do not refresh host
-liveness. A clean END may overtake rows: remaining rows below its exclusive bound
+liveness. A valid keepalive obeys the same strict deadline, monotonic clock, and BUSY rules. A clean END may overtake rows: remaining rows below its exclusive bound
 are accepted until the contiguous prefix is complete, then playback drains cleanly.
-A missing tail expires under the same deadline. The caller owns transport closure.
+A missing tail expires when the host stops delivering accepted packets. Keepalives
+prove host liveness; they do not repair missing history. The caller must terminate
+a known unrecoverable gap. The caller owns transport closure.
 
 This envelope is separate from the player wire protocol. It supplies neither
 handshake negotiation, retransmission nor SignalFish spectator admission. Player
@@ -169,7 +181,7 @@ cross-session packet acceptance is implied.
 
 Native tests on both engine pins cover 2–8-player configuration, atomic malformed
 rows, reordering, conflicting and identical duplicates, ring wrap, storage bounds,
-stream delay, catch-up, clean and failed host endings, frame exhaustion, expired
+stream delay, catch-up, input-idle keepalives, clean and failed host endings, frame exhaustion, expired
 views, and manual/driver request equality. The local game example compares every
 viewer state with independent original-input game history while the host rolls
 back. Pausing and history loss leave host progress unaffected.

@@ -19,11 +19,12 @@ class ReentrantGame:
 		var stream: RefCounted = stream_ref.get_ref()
 		stream_codes.append(stream.poll(1000))
 		stream_codes.append(stream.receive_packet(stream.encode_end(1), 1000))
+		stream_codes.append(stream.receive_packet(stream.encode_keepalive(), 1000))
 		stream_codes.append(stream.configure(Fixture.new()._config(), stream._identity, 1000, 100, 50))
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy"])
+	return PackedStringArray(["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -191,6 +192,7 @@ func _busy(context: RefCounted) -> void:
 	var advance: Types.Result = viewer.begin_advance()
 	context.equal(advance.code, CODE.READY, "open expert batch")
 	context.equal(stream.poll(1000), CODE.BUSY, "active batch cannot expire host")
+	context.equal(stream.receive_packet(stream.encode_keepalive(), 1000), CODE.BUSY, "keepalive cannot consume clock during batch")
 	context.equal(stream.receive_packet(stream.encode_end(1), 1000), CODE.BUSY, "receive cannot consume clock during batch")
 	context.equal(viewer.status().reason, CODE.OK, "busy stream preserves lifecycle")
 	var request: Types.Request = advance.batch.next_request()
@@ -202,5 +204,45 @@ func _busy(context: RefCounted) -> void:
 	var game: ReentrantGame = ReentrantGame.new()
 	game.stream_ref = weakref(callbacks)
 	context.equal(Driver.new(callbacks.playback_session(), game).step(1, _empty()).code, CODE.OK, "guarded callback completes")
-	context.equal(game.stream_codes, PackedInt32Array([CODE.BUSY, CODE.BUSY, CODE.BUSY]), "every stream mutation refuses callback reentry")
+	context.equal(game.stream_codes, PackedInt32Array([CODE.BUSY, CODE.BUSY, CODE.BUSY, CODE.BUSY]), "every stream mutation refuses callback reentry")
 	context.equal(callbacks.poll(2), CODE.OK, "callback reentry consumes no clock")
+
+
+# Value: protects=live input-idle host; fails_when=valid keepalive expires or advances viewer; why_new=row delivery conflates liveness and input; seam=none
+func _keepalive(context: RefCounted) -> void:
+	var stream: RefCounted = _stream(context)
+	var keepalive: PackedByteArray = stream.encode_keepalive()
+	context.equal(
+		keepalive.hex_encode(),
+		"465247530103020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000",
+		"keepalive kind and reserved frame independent golden"
+	)
+	context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 1), CODE.OK, "ordinary host packet control")
+	for now_us: int in [100, 199, 298, 397]:
+		context.equal(stream.receive_packet(keepalive, now_us), CODE.OK, "idle host refreshes liveness before deadline")
+		context.equal(stream.playback_session().host_frontier(), 0, "keepalive contributes no confirmed input")
+		context.equal(stream.playback_session().status().current_frame, 0, "keepalive simulates no frame")
+	context.equal(stream.poll(496), CODE.OK, "host remains live over several timeout periods")
+	context.equal(stream.receive_packet(keepalive, 497), CODE.PROTOCOL_FAILED, "deadline equality still expires")
+	context.equal(stream.playback_session().status().reason, CODE.PROTOCOL_FAILED, "idle host loss is terminal")
+
+	for invalid_field: String in ["foreign_identity", "reserved_frame", "extra_body"]:
+		var viewer: RefCounted = _stream(context)
+		var invalid: PackedByteArray = viewer.encode_keepalive()
+		if invalid_field == "foreign_identity":
+			invalid[12] ^= 1
+		elif invalid_field == "reserved_frame":
+			invalid.encode_u32(44, 1)
+		else:
+			invalid.append(0)
+		context.equal(viewer.receive_packet(invalid, 90), CODE.INVALID_FRAME if invalid_field == "reserved_frame" else CODE.PROTOCOL_FAILED, "invalid keepalive refused")
+		context.equal(viewer.receive_packet(viewer.encode_keepalive(), 1), CODE.OK, "invalid keepalive consumes no clock")
+		context.equal(viewer.poll(101), CODE.PROTOCOL_FAILED, "invalid keepalive does not refresh liveness")
+	var ending: RefCounted = _stream(context)
+	context.equal(ending.receive_packet(ending.encode_end(1), 0), CODE.OK, "end with missing row")
+	context.equal(ending.receive_packet(ending.encode_keepalive(), 99), CODE.OK, "idle host may still fill clean-end gap")
+	context.equal(ending.playback_session().recommended_steps(), 0, "keepalive cannot complete clean-end gap")
+	context.equal(ending.receive_packet(ending.encode_row(0, _row(0)), 100), CODE.OK, "missing tail still accepted")
+	context.equal(ending.receive_packet(ending.encode_keepalive(), 101), CODE.TERMINATED, "completed end cannot reopen stream")
+	context.equal(ending.poll(1000), CODE.OK, "completed clean stream needs no liveness")
+	context.equal(Stream.new().encode_keepalive().is_empty(), true, "unconfigured keepalive cannot encode")

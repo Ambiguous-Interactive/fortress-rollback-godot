@@ -96,7 +96,7 @@ func _advance() -> void:
 	var code: int = _player.step()
 	if code not in [Types.Code.OK, Types.Code.FRAME_EXHAUSTED]:
 		is_playing = false
-		message = "Replay stopped at frame %d (code %d)." % [_player.failure_frame(), code]
+		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	elif _player.is_complete():
 		is_playing = false
 		message = COMPLETE_MESSAGE
@@ -128,7 +128,7 @@ func seek(frame: int) -> bool:
 	elif code not in [Types.Code.OK, Types.Code.HISTORY_UNAVAILABLE]:
 		is_playing = false
 		_seek_target = -1
-		message = "Replay stopped at frame %d (code %d)." % [_player.failure_frame(), code]
+		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 		return false
 	is_playing = false
 	_seek_target = frame if frame != current_frame() else -1
@@ -152,8 +152,16 @@ func _finish_seek() -> void:
 	_seek_target = -1
 	is_playing = false
 	var expected: PackedByteArray = _recording.checksum(current_frame())
-	if not expected.is_empty() and Simulation.checksum(game.canonical_bytes()) != expected:
+	var actual: PackedByteArray = Simulation.checksum(game.canonical_bytes()) if not expected.is_empty() else PackedByteArray()
+	if not expected.is_empty() and actual != expected:
 		_seek_failed = true
-		message = "Replay stopped at frame %d (code %d)." % [current_frame(), Types.Code.DESYNC]
+		message = _failure_message(current_frame(), Types.Code.DESYNC, expected, actual)
 	else:
 		message = COMPLETE_MESSAGE if _player.is_complete() else "Paused."
+
+
+func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: PackedByteArray) -> String:
+	var text: String = "Replay stopped at frame %d (code %d)." % [frame, code]
+	if not expected.is_empty():
+		text += "\nExpected: %s\nActual: %s" % [expected.hex_encode(), actual.hex_encode()]
+	return text

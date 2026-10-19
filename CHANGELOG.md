@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add expected and actual checksum values to replay failures, including navigation errors. The replay viewer shows both values at the failed frame.
+
+- Add spectator host keepalives for input stalls and paused viewers. Hosts must agree receiver support before sending the new packet kind.
+
 - Add bounded replay checkpoints for faster repeated navigation. The replay viewer restores previously validated boundaries and checks the remaining inputs.
 
 - Add versioned spectator byte delivery with lifetime checks, bounded reordered rows, clean endings and injected-clock host expiry. Games supply authenticated transport.
@@ -69,6 +73,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix invalid game callback argument counts being accepted during driver, replay and diagnostic setup. Configuration now fails early and preserves any previous playback.
 
 - Fix corrected driver retries after malformed multi-player input lists. Invalid sample metadata is rejected before any earlier sample is retained.
 

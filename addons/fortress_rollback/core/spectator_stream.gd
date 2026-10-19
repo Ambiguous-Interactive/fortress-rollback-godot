@@ -10,6 +10,7 @@ const HEADER_BYTES: int = 48
 const FRAME_MAX: int = 2147483647
 const ROW: int = 1
 const END: int = 2
+const KEEPALIVE: int = 3
 
 ## Experimental confirmed-row byte envelope, separate from the player protocol.
 ## Delivery must authenticate the host; identifiers fence lifetimes but provide no authentication.
@@ -76,6 +77,12 @@ func encode_end(final_frame: int) -> PackedByteArray:
 	return _header(END, final_frame)
 
 
+## Authenticated host liveness without input progress; requires a receiver supporting kind 3.
+## Send before the timeout while confirmation stalls or row delivery is backpressured.
+func encode_keepalive() -> PackedByteArray:
+	return _header(KEEPALIVE, 0) if _config != null else PackedByteArray()
+
+
 ## No receive queue is retained. Backpressure/BUSY leave this packet caller-owned for retry.
 ## Foreign identity and malformed bytes are inert. Conflicting accepted history is terminal.
 func receive_packet(packet: PackedByteArray, now_us: int) -> int:
@@ -89,14 +96,14 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		packet.size() != expected_size
 		or packet.slice(0, 4) != "FRGS".to_ascii_buffer()
 		or packet[4] != 1
-		or kind not in [ROW, END]
+		or kind not in [ROW, END, KEEPALIVE]
 		or packet[6] != _config.player_count
 		or packet[7] != 0
 		or packet.decode_u32(8) != _config.input_width
 	):
 		return Code.PROTOCOL_FAILED
 	var frame: int = packet.decode_u32(44)
-	if frame > FRAME_MAX or (kind == ROW and frame == FRAME_MAX):
+	if frame > FRAME_MAX or (kind == ROW and frame == FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
 		return Code.INVALID_FRAME
 	var code: int = poll(now_us)
 	if code != Code.OK:
@@ -110,7 +117,7 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		if (_end_frame >= 0 and _end_frame != frame) or frame <= _highest_frame:
 			return _fail()
 		_end_frame = frame
-	else:
+	elif kind == ROW:
 		if _end_frame >= 0 and frame >= _end_frame:
 			return _fail()
 		var row: Array[PackedByteArray] = []
