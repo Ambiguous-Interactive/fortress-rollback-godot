@@ -106,9 +106,11 @@ Do not read the clock, `delta`, engine physics, node positions or the global ran
 Avoid float math in simulation: results can differ between platforms.
 `simulate_frame` must not play audio, spawn nodes or send messages.
 
-Configuration rejects callback argument counts and built-in types that cannot receive the frame and view.
-Use `int` for the frame and the documented view type, `RefCounted` or an untyped argument for the view.
-Godot's method metadata can erase script-specific types, so those annotations remain the game's responsibility.
+Configuration rejects callback argument counts and reflected types that cannot receive the frame and view.
+Use `int` for the frame and the documented view type, `RefCounted`, `Object` or an untyped argument for the view.
+Named script annotations must match the supplied view or its ancestors. For example, a snapshot reader
+cannot receive the writer passed to `save_state`. Godot can erase script-specific types to `RefCounted`;
+these erased annotations remain the game's responsibility. Replay and diagnostic setup use the same checks.
 A rejected configuration leaves the previously configured game installed.
 
 ## The frame loop

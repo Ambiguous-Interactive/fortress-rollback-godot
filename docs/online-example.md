@@ -169,6 +169,8 @@ Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and 
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame. Pause, stepping, seeking and speed changes clear any partial
 slow-motion frame; restart and new imports keep your selected speed.
+Press **Back one frame** to inspect the preceding state, including after completion or a checksum failure.
+It pauses playback and uses the same bounded navigation as **Go**; **Cancel seek** can interrupt a long restore.
 Enter a frame number and press **Go** to navigate forward or backward. Navigation
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**

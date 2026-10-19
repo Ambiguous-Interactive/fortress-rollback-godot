@@ -41,7 +41,7 @@ func configure(config: Config, identity: PackedByteArray, now_us: int, timeout_u
 	if code != Code.OK:
 		return code
 	_session = session
-	_config = config.owned_copy()
+	_config = session._config
 	_identity = identity.duplicate()
 	_timeout_us = timeout_us
 	_last_time = now_us
@@ -59,7 +59,7 @@ func playback_session() -> Spectator:
 ## Encode only host-confirmed complete rows. Empty bytes mean invalid dimensions or frame.
 ## The host must obtain its rows through confirmed_inputs(), after correction completes.
 func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
-	if _config == null or frame < 0 or frame >= FRAME_MAX or inputs.size() != _config.player_count:
+	if _config == null or _session._config != _config or frame < 0 or frame >= FRAME_MAX or inputs.size() != _config.player_count:
 		return PackedByteArray()
 	for bytes: PackedByteArray in inputs:
 		if bytes.size() != _config.input_width:
@@ -72,7 +72,7 @@ func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
 
 ## Exclusive final frame; END may arrive before its rows, which remain receivable until complete.
 func encode_end(final_frame: int) -> PackedByteArray:
-	if _config == null or final_frame < 0 or final_frame > FRAME_MAX:
+	if _config == null or _session._config != _config or final_frame < 0 or final_frame > FRAME_MAX:
 		return PackedByteArray()
 	return _header(END, final_frame)
 
@@ -80,7 +80,7 @@ func encode_end(final_frame: int) -> PackedByteArray:
 ## Authenticated host liveness without input progress; requires a receiver supporting kind 3.
 ## Send before the timeout while confirmation stalls or row delivery is backpressured.
 func encode_keepalive() -> PackedByteArray:
-	return _header(KEEPALIVE, 0) if _config != null else PackedByteArray()
+	return _header(KEEPALIVE, 0) if _config != null and _session._config == _config else PackedByteArray()
 
 
 ## No receive queue is retained. Backpressure/BUSY leave this packet caller-owned for retry.
@@ -88,6 +88,8 @@ func encode_keepalive() -> PackedByteArray:
 func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	if _session == null:
 		return Code.NOT_CONFIGURED
+	if _session._config != _config:
+		return Code.INVALID_CONFIGURATION
 	if packet.size() < HEADER_BYTES or packet.slice(12, 44) != _identity:
 		return Code.PROTOCOL_FAILED
 	var kind: int = packet[5]
@@ -143,6 +145,8 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 func poll(now_us: int) -> int:
 	if _session == null:
 		return Code.NOT_CONFIGURED
+	if _session._config != _config:
+		return Code.INVALID_CONFIGURATION
 	if now_us < 0 or now_us < _last_time:
 		return Code.INVALID_TIME
 	var code: int = _session._mutation_code()

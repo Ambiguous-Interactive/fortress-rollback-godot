@@ -172,6 +172,14 @@ connection lifetime. Identifiers fence delivery; they do not authenticate a send
 The caller must authenticate the host and agree neutral input, seed, initial state
 and game rules separately. Use fresh identities for a new network lifetime.
 
+Reconfigure through `stream.configure` when starting another viewer lifetime.
+If you configure the returned playback session directly, the existing stream loses
+authority over it. Packet delivery and polling then return `INVALID_CONFIGURATION`;
+row, END and keepalive encoders return empty bytes. Old packets and deadlines
+cannot change the replacement viewer. A failed viewer configuration preserves
+the existing stream. Explicit stream configuration installs a fresh viewer;
+use a fresh initial game, driver and agreed connection identity with it.
+
 The 48-byte little-endian header contains `FRGS`, version 1, kind, player count,
 reserved zero byte, u32 input width, the identity, and a u32 frame. `encode_row`
 appends exactly one complete row in stable player order. Obtain that row from the

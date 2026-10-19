@@ -31,7 +31,7 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback with failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded byte envelopes, retained host publication and local delayed-view example](docs/spectators.md).
-- [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
+- [Online match recording, downloads and offline replay viewer with one-frame backward inspection](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
@@ -389,6 +389,7 @@ Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
 The host publisher retains one exact refused packet, advances only on transport acceptance,
 and fences host replacement while keeping liveness separate from row pressure.
+Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Live SignalFish spectator routing, handshake/events and upstream spectator
 differential/model acceptance remain open in #47.
 Coordinated peer drop must preserve exposed confirmed history and irreversible

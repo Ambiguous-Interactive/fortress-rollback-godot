@@ -34,6 +34,11 @@ A game supplies these synchronous methods:
 
 `Driver.configure` rejects missing callbacks or methods that cannot accept two arguments
 with `INVALID_CONFIGURATION`. Additional optional arguments are supported.
+It also rejects reflected parameter types incompatible with each supplied view,
+including a snapshot reader declared where a writer is supplied. Godot may erase
+script annotations to `RefCounted`; these erased types cannot be checked before dispatch.
+Use the actual reader, writer and frame-input types, or compatible `RefCounted`,
+`Object` or untyped parameters. Replay and diagnostic setup use the same checks.
 A rejected configuration leaves the previous session and game installed.
 
 `Driver.LocalInput(player, sample_frame, bytes)` copies one local sample.
