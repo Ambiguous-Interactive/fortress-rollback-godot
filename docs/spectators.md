@@ -15,7 +15,9 @@ godot --path . res://examples/spectator/spectator.tscn
 The upper board is a playable host with delayed remote input and actual rollback.
 The lower board follows its corrected input history, twelve confirmed frames behind.
 Move with A/D or arrows and fire with Space. Press P to pause only the viewer;
-resume to catch up at most four frames per physics tick. R starts a fresh game.
+resume to catch up at most four frames per physics tick. E stops the host at its current
+frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
+A paused viewer can resume to display that exact final state. R starts a fresh game.
 
 A long viewer pause can exhaust retained host history. The viewer then stops
 with `HISTORY_UNAVAILABLE`; the host keeps playing. The example encodes and receives spectator byte packets

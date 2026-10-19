@@ -107,7 +107,8 @@ foreign-packet inertness unchanged, and agree support for optional packet kinds.
 A confirmed-row publisher owns each refused packet until exact transport acceptance;
 re-reading the host ring on retry can lose already prepared history. Fence the
 host configuration lifetime before returning retained bytes, keep liveness independent
-of row pressure, and report an overwritten next row explicitly.
+of row pressure, and report an overwritten next row explicitly. A stopped producer still
+owes liveness while final rows or END are refused; stop heartbeats only after END acceptance.
 When a stream exposes its playback session, fence both packet delivery and elapsed
 expiry against successful session replacement. Equal configuration values do not
 preserve a connection lifetime; rejected configuration must preserve the valid stream.

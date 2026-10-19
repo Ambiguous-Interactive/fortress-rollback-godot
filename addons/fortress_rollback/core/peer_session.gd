@@ -1,7 +1,7 @@
 class_name FortressPeerSession
 extends RefCounted
 
-## Final outer-step outcome after game callbacks and peer controls. Mutating reentry remains BUSY.
+## Final step or recovery outcome after game callbacks and peer controls. Mutating reentry remains BUSY.
 signal step_completed(code: int, frame_before: int, frame_after: int)
 
 # gdlint: disable=max-returns
@@ -120,7 +120,9 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	_checksums = Checksums.new()
 	# A peer can confirm up to max_prediction + its delay frames ahead, and delays never exceed max_input_delay.
 	_checksums.configure(
-		_ids, profile.desync_interval if _lifecycle.enabled and config.checksums_enabled else 0, _lifecycle.max_checksum_frames,
+		_ids,
+		profile.desync_interval if _lifecycle.enabled and config.checksums_enabled else 0,
+		_lifecycle.max_checksum_frames,
 		config.max_prediction_frames + max_input_delay(config)
 	)
 	return I.Code.OK
@@ -185,6 +187,42 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	step_completed.emit(result.code, result.frame_before, result.frame_after)
 	_busy = false
 	return result
+
+
+## Poll transport controls and correct simulated history without submitting another local input.
+## Receipt and confirmation can still lag; check status before declaring a clean final boundary.
+func recover(now_us: Variant) -> Driver.StepResult:
+	if _busy or _core == null:
+		return _recover(now_us)
+	var result: Driver.StepResult = _recover(now_us)
+	_busy = true
+	step_completed.emit(result.code, result.frame_before, result.frame_after)
+	_busy = false
+	return result
+
+
+func _recover(now_us: Variant) -> Driver.StepResult:
+	var before: int = status().current_frame
+	var gate: int = _gate(now_us)
+	if gate != I.Code.OK:
+		return Driver.StepResult.new(_step_code(gate), before, before)
+	if not _running():
+		return Driver.StepResult.new(Types.Code.NOT_SYNCHRONIZED, before, before)
+	var polled: int = _poll(now_us, [])
+	if polled != I.Code.OK:
+		return Driver.StepResult.new(_step_failure(polled), before, before)
+	var control_code: int = _service_controls(now_us, true)
+	if control_code != I.Code.OK:
+		return Driver.StepResult.new(_step_failure(control_code), before, before)
+	_busy = true
+	var recovered: Driver.StepResult = _driver.recover(now_us)
+	if recovered.code == Types.Code.OK:
+		_checksum_confirmation = _core.status().confirmed_frame
+	_busy = false
+	_service_controls(now_us, false)
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return Driver.StepResult.new(_core.status().reason, before, _core.status().current_frame)
+	return recovered
 
 
 ## Every endpoint retains the scheduled sample before the game can advance.

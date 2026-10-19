@@ -1,7 +1,7 @@
 class_name FortressDriver
 extends RefCounted
 
-## Completed outer step, after ordered callbacks and event collection. Reentrant driver calls remain BUSY.
+## Completed step or recovery, after ordered callbacks and event collection. Reentrant driver calls remain BUSY.
 signal step_completed(code: int, frame_before: int, frame_after: int)
 
 # gdlint: disable=max-returns
@@ -112,6 +112,17 @@ static func _accepts_view_class(view_class: StringName, method: String) -> bool:
 
 ## Consume the session's ordered requests; simulation and recovery policy stay in session.
 func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
+	return _step(now_us, local_inputs, true)
+
+
+## Apply pending corrections and finalize confirmed recording history without advancing a new frame.
+## Preserves staged samples and emits step_completed after ordered recovery callbacks.
+func recover(now_us: int) -> StepResult:
+	var empty: Array[LocalInput] = []
+	return _step(now_us, empty, false)
+
+
+func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) -> StepResult:
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
 		return StepResult.new(Types.Code.BUSY, before, before)
@@ -121,30 +132,31 @@ func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
 	var code: int = _session.poll(now_us).code
 	if code != Types.Code.OK:
 		return _finish(code, before)
-	# Reject malformed lists before any valid prefix becomes a retained stalled sample.
-	_sample_indices.fill(-1)
-	for index: int in range(local_inputs.size()):
-		var sample: LocalInput = local_inputs[index]
-		if sample == null:
-			return _finish(Types.Code.INVALID_CONFIGURATION, before)
-		code = _session.validate_local_input(sample.player, sample.sample_frame, sample.bytes)
-		if code != Types.Code.OK:
-			return _finish(code, before)
-		var prior_index: int = _sample_indices[sample.player]
-		if prior_index != -1 and local_inputs[prior_index].bytes != sample.bytes:
-			return _finish(Types.Code.INPUT_ALREADY_SUBMITTED, before)
-		_sample_indices[sample.player] = index
-	for player: int in range(_sample_indices.size()):
-		if _sample_indices[player] != -1 or _session.input_delay(player) < 0:
-			continue
-		if _session.scheduled_local_input(player).code == Types.Code.MISSING_LOCAL_INPUT:
-			# No batch can open without this sample. Let the engine prioritize terminal exhaustion.
-			return _finish(_session.begin_advance().code, before)
-	for sample: LocalInput in local_inputs:
-		code = _session.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code
-		if code != Types.Code.OK:
-			return _finish(code, before)
-	var advance: Types.Result = _session.begin_advance()
+	if allow_advance:
+		# Reject malformed lists before any valid prefix becomes a retained stalled sample.
+		_sample_indices.fill(-1)
+		for index: int in range(local_inputs.size()):
+			var sample: LocalInput = local_inputs[index]
+			if sample == null:
+				return _finish(Types.Code.INVALID_CONFIGURATION, before)
+			code = _session.validate_local_input(sample.player, sample.sample_frame, sample.bytes)
+			if code != Types.Code.OK:
+				return _finish(code, before)
+			var prior_index: int = _sample_indices[sample.player]
+			if prior_index != -1 and local_inputs[prior_index].bytes != sample.bytes:
+				return _finish(Types.Code.INPUT_ALREADY_SUBMITTED, before)
+			_sample_indices[sample.player] = index
+		for player: int in range(_sample_indices.size()):
+			if _sample_indices[player] != -1 or _session.input_delay(player) < 0:
+				continue
+			if _session.scheduled_local_input(player).code == Types.Code.MISSING_LOCAL_INPUT:
+				# No batch can open without this sample. Let the engine prioritize terminal exhaustion.
+				return _finish(_session.begin_advance().code, before)
+		for sample: LocalInput in local_inputs:
+			code = _session.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code
+			if code != Types.Code.OK:
+				return _finish(code, before)
+	var advance: Types.Result = _session.begin_advance() if allow_advance else _session.begin_recovery()
 	if advance.code != Types.Code.READY:
 		return _finish(advance.code, before)
 	while true:

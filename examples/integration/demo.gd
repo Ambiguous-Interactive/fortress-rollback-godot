@@ -146,6 +146,23 @@ func tick(buttons: int) -> int:
 	return code
 
 
+## Stop sampling, receive outstanding actual inputs and repair the final simulated state.
+## PREDICTION_STALL waits for the existing deliveries; OK means the exact final tail is confirmed.
+func finish_tick() -> int:
+	if loop == null:
+		return Types.Code.NOT_CONFIGURED
+	var code: int = _deliver_ready()
+	if code != Types.Code.OK:
+		return code
+	code = loop.driver.recover(tick_count * TICK_US).code
+	tick_count += 1
+	if code != Types.Code.OK:
+		return code
+	var status: Types.Status = loop.session.status()
+	effects.reconcile(loop.game, status)
+	return Types.Code.OK if status.confirmed_frame >= status.current_frame - 1 else Types.Code.PREDICTION_STALL
+
+
 func load_count() -> int:
 	return (loop.game as DemoGame).loads if loop != null else 0
 

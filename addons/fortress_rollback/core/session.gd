@@ -278,14 +278,31 @@ func set_confirmation_limit(frame: int) -> Types.Result:
 
 
 func begin_advance() -> Types.Result:
+	return _begin_advance(true)
+
+
+## Correct already simulated remote-input history without consuming or requiring a local sample.
+## Leaves current_frame and staged local inputs unchanged. Idle recovery succeeds without callbacks.
+## Sync-test and spectator sessions do not accept this operation.
+func begin_recovery() -> Types.Result:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return Types.Result.new(code)
+	if _config.sync_test or _config.spectator:
+		return Types.Result.new(Code.UNSUPPORTED)
+	return _begin_advance(false)
+
+
+func _begin_advance(allow_advance: bool) -> Types.Result:
 	var code: int = _mutation_code()
 	if code != Code.OK:
 		return Types.Result.new(code)
 	if _current == Queue.FRAME_MAX or _batch_id == 9223372036854775807:
 		return _fatal(Code.FRAME_EXHAUSTED)
-	for player: int in _config.local_players:
-		if _samples[player].is_empty():
-			return Types.Result.new(Code.MISSING_LOCAL_INPUT)
+	if allow_advance:
+		for player: int in _config.local_players:
+			if _samples[player].is_empty():
+				return Types.Result.new(Code.MISSING_LOCAL_INPUT)
 	if _config.sync_test and not _consistent():
 		return _fatal(Code.DESYNC)
 	var rollback: int = -1
@@ -313,18 +330,21 @@ func begin_advance() -> Types.Result:
 			if frame > rollback:
 				_plan.append(Vector2i(Kind.SAVE, frame))
 			_plan.append(Vector2i(Kind.ADVANCE, frame))
-	var can_advance: bool = _config.sync_test or _can_advance()
-	var save_mesh_boundary: bool = _has_confirmation_limit and _config.max_prediction_frames > 0
+	var can_advance: bool = allow_advance and (_config.sync_test or _can_advance())
+	var save_mesh_boundary: bool = allow_advance and _has_confirmation_limit and _config.max_prediction_frames > 0
+	if not allow_advance and _plan.is_empty():
+		_record_replay()
+		return Types.Result.new(Code.OK)
 	if not can_advance and _plan.is_empty() and not save_mesh_boundary:
 		_count_stall()
 		return Types.Result.new(Code.PREDICTION_STALL)
-	if can_advance or save_mesh_boundary:
+	if can_advance or save_mesh_boundary or not allow_advance:
 		if (_config.sync_test and _config.check_distance > 0) or (not _config.sync_test and (_config.max_prediction_frames > 0 or _config.capture_confirmed_snapshots)):
 			_plan.append(Vector2i(Kind.SAVE, _current))
 	if can_advance:
 		_plan.append(Vector2i(Kind.ADVANCE, _current))
 	_target = _current + 1 if can_advance else _current
-	_outcome = Code.OK if can_advance else Code.PREDICTION_STALL
+	_outcome = Code.OK if can_advance or not allow_advance else Code.PREDICTION_STALL
 	_batch_id += 1
 	_index = 0
 	_batch = Types.Batch.new(self, _batch_id)
@@ -373,9 +393,10 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 	if _index == _plan.size():
 		if _outcome == Code.PREDICTION_STALL:
 			_count_stall()
+		var advanced: bool = _target > _current
 		_current = _target
 		_batch = null
-		if _outcome == Code.OK:
+		if advanced:
 			for player: int in _config.local_players:
 				_samples[player] = PackedByteArray()
 		_record_replay()
@@ -401,7 +422,7 @@ func status() -> Types.Status:
 
 
 ## Owned completed-callback counters, outside game snapshots. Counts saturate at signed-64 maximum.
-## A repair-only batch counts one stall when completed; rejected and aborted calls do not.
+## A stalled advance counts one stall when completed; explicit recovery, rejected and aborted calls do not.
 func statistics() -> Types.Statistics:
 	var result: Types.Statistics = Types.Statistics.new()
 	result.rollback_count = _statistics.rollback_count
@@ -418,7 +439,7 @@ func diagnostic_trace() -> Dictionary:
 	return _trace.report()
 
 
-## Caller-owned copy of the confirmed frames recorded by completed steps; null unless replay_max_frames > 0.
+## Caller-owned copy of confirmed frames finalized by completed advances or recovery; null unless replay_max_frames > 0.
 func replay() -> Replay:
 	return _replay.owned_copy() if _replay != null else null
 

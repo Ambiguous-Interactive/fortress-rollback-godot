@@ -127,6 +127,16 @@ Peer sessions call `FortressPeerSession.step` with the same arguments and add tw
 | `NOT_SYNCHRONIZED` | Peer sessions only: the connection handshake has not finished. Keep polling. |
 | Anything else | If `session.status().lifecycle` is `TERMINATED`, the session stopped: show `reason` and `failure_frame` and offer a restart. Otherwise the call was rejected, for example `INPUT_ALREADY_SUBMITTED`; fix the call. |
 
+To stop recording at the current simulated frame, stop submitting new samples,
+continue delivering outstanding remote inputs, and call `driver.recover(now_us)`.
+Once all simulated inputs are confirmed and `pending_rollback_frame == -1`,
+`session.replay()` includes the corrected final tail without a fabricated final tick.
+A successful recovery can still leave unconfirmed predictions when remote input is missing;
+check confirmation as well as the return code before declaring the game finished.
+For byte-network games, `peer.recover(now_us)` provides the same operation while polling
+protocol deadlines, retries, confirmation and checksum controls. Keep servicing transport
+packets; recovery does not submit new local inputs or perform an end handshake.
+
 Sample local input once per frame. While stalled, keep submitting that same sample:
 a different sample for the same frame is rejected with `INPUT_ALREADY_SUBMITTED`.
 `loop.gd` keeps the sample until the frame advances.

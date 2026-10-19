@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add recovery without a new simulation frame through `FortressDriver.recover()` and `FortressSession.begin_recovery()`. Finalize corrected replay and spectator tails while preserving staged input.
+
+- Add E to end the local spectator example's host. Outstanding inputs settle before the viewer drains its complete final history, including after pause and resume.
+
 - Add one-frame backward navigation to the replay viewer, including inspection before a checksum failure. Longer restores remain bounded and can be canceled.
 
 - Add a bounded spectator host publisher that retains refused rows and sends keepalives while delivery waits.

@@ -387,6 +387,9 @@ supports delayed playback, caller-bounded catch-up and explicit host endings. Sp
 confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
 Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
+Remote-input sessions can recover and finalize confirmed replay history without another local sample
+or forward frame. The spectator example uses that shared operation to settle its exact final host
+boundary before sending END; paused viewers can resume through the full clean tail.
 The host publisher retains one exact refused packet, advances only on transport acceptance,
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.

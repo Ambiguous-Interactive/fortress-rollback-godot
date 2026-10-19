@@ -37,6 +37,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if event.keycode == KEY_P:
 		demo.is_paused = not demo.is_paused
+	elif event.keycode == KEY_E:
+		demo.finish_host()
 	elif event.keycode == KEY_R:
 		_code = demo.start()
 	_update_label()
@@ -54,11 +56,13 @@ func _update_label() -> void:
 		_label.text = "Could not start: code %d" % _code
 		return
 	var state: String = "PAUSED" if demo.is_paused else "WATCHING"
+	if demo.is_finishing:
+		state = "DRAINING FINAL TAIL" if demo.is_host_finished else "CONFIRMING FINAL INPUTS"
 	if demo.viewer.status().lifecycle == Types.Lifecycle.TERMINATED:
-		state = "STOPPED: code %d | R: start again" % demo.viewer_code
+		state = "COMPLETE | R: start again" if demo.viewer_code == Types.Code.TERMINATED else "STOPPED: code %d | R: start again" % demo.viewer_code
 	_label.text = (
 		"Delayed spectator | %s\n" % state
-		+ "A/D or arrows: move host | Space: fire | P: pause viewer | R: restart\n"
+		+ "A/D or arrows: move host | Space: fire | P: pause viewer | E: end host | R: restart\n"
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
 		+ "Viewer holds 12 confirmed frames and catches up at most 4 per tick.\n"
 		+ "A long pause can exceed retained history; the host keeps playing.\n"
