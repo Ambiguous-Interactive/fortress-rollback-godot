@@ -27,6 +27,8 @@ var _replay: Replay
 var _game: RefCounted
 var _max_snapshot_bytes: int = 0
 var _frame: int = 0
+var _checked_checksum_count: int = 0
+var _validated_through_frame: int = -1
 var _reason: int = Types.Code.OK
 var _failure_frame: int = -1
 var _failure_expected_checksum: PackedByteArray = PackedByteArray()
@@ -63,6 +65,8 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, ch
 	_game = game
 	_max_snapshot_bytes = max_snapshot_bytes
 	_frame = 0
+	_checked_checksum_count = 0
+	_validated_through_frame = -1
 	_reason = Types.Code.OK
 	_failure_frame = -1
 	_failure_expected_checksum.clear()
@@ -205,9 +209,18 @@ func _validate_frame() -> int:
 			return code
 		if not expected.is_empty() and checkpoint.checksum != expected:
 			return _checksum_mismatch(expected, checkpoint.checksum)
+		if not expected.is_empty() and _frame > _validated_through_frame:
+			_checked_checksum_count += 1
 		if cache:
 			_retain_checkpoint(checkpoint)
+	_validated_through_frame = maxi(_validated_through_frame, _frame)
 	return Types.Code.OK
+
+
+## Distinct recorded state boundaries whose checksums matched during this playback lifetime.
+## Restoring or rechecking a boundary never counts it twice; input-only playback counts none.
+func checked_checksum_count() -> int:
+	return _checked_checksum_count
 
 
 ## The next frame to simulate.

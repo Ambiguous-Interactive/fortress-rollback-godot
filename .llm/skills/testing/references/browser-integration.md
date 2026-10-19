@@ -16,6 +16,10 @@ core's bounded snapshot callback so callback/write failures and checksum evidenc
 follow the same terminal contract as ordinary stepping. Validate every observed control
 frontier and nested failure integer, rejecting Python bool/float equality lookalikes.
 
+Replay coverage reports distinguish recorded checksums from comparisons that actually passed.
+Exercise absent, sparse and complete checksums, repeated navigation, failed comparisons and restart;
+checksum-free playback must never imply verification. Separate host input closure from completed spectator playback.
+
 Engine doubles expose only public methods; verify the real method list and exported interface.
 Inspect browser constructor options and resulting properties; ignored options can violate channel policy.
 Group dependent browser observers in one init script; separate registration calls do not define execution order.

@@ -177,6 +177,9 @@ remaining inputs and checksums. A first visit still validates the full preceding
 pauses at the last validated boundary. Navigation finishes paused at the requested frame.
 Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
 The display shows the current frame and stops at the first failed recorded checksum.
+**Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
+Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
+A recording with no checksums plays its inputs but explicitly reports that playback could not be verified.
 Checksum failures show both the expected and actual values as hexadecimal strings, including failures at a seek target.
 **Back to online** returns to room setup.
 

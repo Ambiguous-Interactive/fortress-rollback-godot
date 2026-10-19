@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add typed spectator playback events for waiting, contiguous host input, clean host closure and terminal completion or failure. Driver results carry events after callbacks finish.
+
+- Add replay checksum coverage to the viewer. Recordings without checksums clearly report that playback could not be verified.
+
 - Add bounded final receipt gossip to explicit peer recovery. A mesh can confirm its last simulated inputs after sampling stops, including when a final gossip packet is lost.
 
 - Add recovery without a new simulation frame through `FortressDriver.recover()` and `FortressSession.begin_recovery()`. Finalize corrected replay and spectator tails while preserving staged input.
@@ -135,6 +139,10 @@
 - Fix stalled meshes after pending inputs drain by repeating bounded receipt gossip. Keep stalled samples unchanged and confirmation bound to actual inputs.
 
 - Fix invalid transport token callbacks retaining oversized data. Relay and WebRTC adapters validate null or exactly 16 bytes before copying.
+
+### Improved
+
+- Improve driver handling of repeated identical local samples. Each player submits once after the complete list passes validation.
 
 ### Changed
 

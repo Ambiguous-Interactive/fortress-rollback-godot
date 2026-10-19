@@ -7,6 +7,23 @@ extends "res://addons/fortress_rollback/core/session.gd"
 ## The caller authenticates host/session identity before delivering atomic rows. No network protocol is implied.
 ## Start from the host's initial game state; admission at a later frame requires separate state transfer.
 
+enum EventKind { WAITING_FOR_HOST, SYNCHRONIZED, HOST_FINISHED, TERMINATED }
+
+
+class Event:
+	extends RefCounted
+	var kind: int
+	var frame: int
+	var reason: int
+
+	func _init(event_kind: int, event_frame: int, event_reason: int = Code.OK) -> void:
+		kind = event_kind
+		frame = event_frame
+		reason = event_reason
+
+
+var _events: Array[RefCounted] = []
+var _has_host_prefix: bool = false
 var _host_rows: Array[PackedByteArray] = []
 var _host_tags: PackedInt64Array = PackedInt64Array()
 var _host_frontier: int = -1
@@ -31,6 +48,8 @@ func configure(config: Config) -> int:
 	_stream_delay = 0
 	_max_frames_behind = 1
 	_catchup_speed = 1
+	_has_host_prefix = false
+	_events = [Event.new(EventKind.WAITING_FOR_HOST, 0)]
 	return Code.OK
 
 
@@ -79,6 +98,9 @@ func receive_host_frame(frame: int, inputs: Array[PackedByteArray]) -> Types.Res
 	_host_rows[index] = row
 	while _host_frontier + 1 < Queue.FRAME_MAX and _host_tags[(_host_frontier + 1) % _host_tags.size()] == _host_frontier + 1:
 		_host_frontier += 1
+	if not _has_host_prefix and _host_frontier >= 0:
+		_has_host_prefix = true
+		_events.append(Event.new(EventKind.SYNCHRONIZED, _current))
 	return Types.Result.new(Code.OK)
 
 
@@ -105,7 +127,9 @@ func finish_host() -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
 		return code
-	_host_finished = true
+	if not _host_finished:
+		_host_finished = true
+		_events.append(Event.new(EventKind.HOST_FINISHED, _current))
 	return Code.OK
 
 
@@ -148,3 +172,22 @@ func set_input_delay(_player: int, _delay: int) -> Types.Result:
 ## Viewer confirmation follows complete host rows; player-mesh confirmation gates do not apply.
 func set_confirmation_limit(_frame: int) -> Types.Result:
 	return Types.Result.new(Code.UNSUPPORTED)
+
+
+## At most four owned events per configured lifetime. Driver results drain these after completed calls.
+## SYNCHRONIZED means a contiguous input prefix, not a transport handshake; HOST_FINISHED releases the tail.
+## TERMINATED reports actual playback completion or failure. Active batches and callbacks preserve the queue.
+func drain_events() -> Array[RefCounted]:
+	if _batch != null or _is_driver_callback:
+		return []
+	var events: Array[RefCounted] = _events
+	_events = []
+	return events
+
+
+func _fatal(code: int, frame: int = -1, kind: int = -1) -> Types.Result:
+	var first_failure: bool = _reason == Code.OK and _config != null
+	var result: Types.Result = super._fatal(code, frame, kind)
+	if first_failure:
+		_events.append(Event.new(EventKind.TERMINATED, frame if frame >= 0 else _current, _reason))
+	return result
