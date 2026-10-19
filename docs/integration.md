@@ -106,6 +106,11 @@ Do not read the clock, `delta`, engine physics, node positions or the global ran
 Avoid float math in simulation: results can differ between platforms.
 `simulate_frame` must not play audio, spawn nodes or send messages.
 
+Configuration rejects callback argument counts and built-in types that cannot receive the frame and view.
+Use `int` for the frame and the documented view type, `RefCounted` or an untyped argument for the view.
+Godot's method metadata can erase script-specific types, so those annotations remain the game's responsibility.
+A rejected configuration leaves the previously configured game installed.
+
 ## The frame loop
 
 Call `driver.step(now_us, samples)` once per physics frame with one `Driver.LocalInput` per local player.
@@ -244,6 +249,11 @@ A cache miss returns `HISTORY_UNAVAILABLE`; a failed player cannot skip its fail
 using checkpoints. Restore validates full snapshot consumption, canonical bytes and
 checksum. Reconfiguration clears the cache. Checkpoints stay in memory and do not
 change the portable replay file format.
+
+Call `validate_current_frame()` after reaching a paused navigation target or canceling a seek.
+It checks that boundary through the same bounded save callback as `step()`, without consuming input.
+Callback, snapshot and checksum failures stop playback and retain `failure_frame()` and checksum evidence.
+Input-only playback and boundaries without recorded checksums need no save unless checkpoint caching requires one.
 
 For downloaded online example recordings, use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.
 The [replay applicability probe](oracle-replay.md) checks sequential playback against the actual pinned upstream session and documents interface differences.

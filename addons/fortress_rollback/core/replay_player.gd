@@ -12,6 +12,7 @@ const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 
+
 class Checkpoint:
 	extends RefCounted
 	var frame: int
@@ -92,17 +93,9 @@ func step() -> int:
 
 
 func _play_frame() -> int:
-	var expected: PackedByteArray = _replay.checksum(_frame)
-	var cache: bool = _checkpoint_interval > 0 and _frame % _checkpoint_interval == 0
-	if _max_snapshot_bytes > 0 and (not expected.is_empty() or cache):
-		var checkpoint: Checkpoint = Checkpoint.new()
-		var code: int = _save_checkpoint(checkpoint)
-		if code != Types.Code.OK:
-			return code
-		if not expected.is_empty() and checkpoint.checksum != expected:
-			return _checksum_mismatch(expected, checkpoint.checksum)
-		if cache:
-			_retain_checkpoint(checkpoint)
+	var code: int = _validate_frame()
+	if code != Types.Code.OK:
+		return code
 	var inputs: Types.FrameInputs = _replay.inputs(_frame)
 	var ok: Variant = _game.simulate_frame(_frame, inputs)
 	inputs._expire()
@@ -181,6 +174,40 @@ func restore_before(target: int) -> int:
 		_reason = code
 		_failure_frame = selected.frame
 	return code
+
+
+## Validate a paused state boundary without consuming its input. Uses the same bounded save callback
+## as step; failures latch the frame and checksum evidence. Input-only playback and checksum-absent
+## boundaries succeed without invoking save_state, except when checkpoint caching requires a save.
+func validate_current_frame() -> int:
+	if _is_stepping:
+		return Types.Code.BUSY
+	if _replay == null:
+		return Types.Code.NOT_CONFIGURED
+	if _reason != Types.Code.OK:
+		return _reason
+	_is_stepping = true
+	var code: int = _validate_frame()
+	_is_stepping = false
+	if code != Types.Code.OK:
+		_reason = code
+		_failure_frame = _frame
+	return code
+
+
+func _validate_frame() -> int:
+	var expected: PackedByteArray = _replay.checksum(_frame)
+	var cache: bool = _checkpoint_interval > 0 and _frame < _replay.frame_count() and _frame % _checkpoint_interval == 0
+	if _max_snapshot_bytes > 0 and (not expected.is_empty() or cache):
+		var checkpoint: Checkpoint = Checkpoint.new()
+		var code: int = _save_checkpoint(checkpoint)
+		if code != Types.Code.OK:
+			return code
+		if not expected.is_empty() and checkpoint.checksum != expected:
+			return _checksum_mismatch(expected, checkpoint.checksum)
+		if cache:
+			_retain_checkpoint(checkpoint)
+	return Types.Code.OK
 
 
 ## The next frame to simulate.

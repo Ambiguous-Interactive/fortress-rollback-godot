@@ -17,7 +17,6 @@ var is_playing: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
-var _seek_failed: bool = false
 var _recording: Replay
 var _player: Player = Player.new()
 
@@ -57,7 +56,6 @@ func restart() -> void:
 		return
 	_seek_target = -1
 	_playback_quarters = 0
-	_seek_failed = false
 	game = Simulation.new()
 	_player = Player.new()
 	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES, 300, 121)
@@ -135,7 +133,7 @@ func current_frame() -> int:
 
 ## Whether another recorded frame can advance, including while paused.
 func can_step() -> bool:
-	return _recording != null and not _seek_failed and not _player.is_complete() and _player.failure_frame() < 0
+	return _recording != null and not _player.is_complete() and _player.failure_frame() < 0
 
 
 ## Navigate from a previously validated checkpoint, replaying the remaining inputs and checksums.
@@ -144,7 +142,7 @@ func seek(frame: int) -> bool:
 	if _recording == null or frame < 0 or frame > frame_count():
 		return false
 	_playback_quarters = 0
-	if _seek_failed or _player.failure_frame() >= 0:
+	if _player.failure_frame() >= 0:
 		restart()
 	var code: int = _player.restore_before(frame)
 	if code == Types.Code.HISTORY_UNAVAILABLE and frame < current_frame():
@@ -175,11 +173,9 @@ func cancel_seek() -> void:
 func _finish_seek() -> void:
 	_seek_target = -1
 	is_playing = false
-	var expected: PackedByteArray = _recording.checksum(current_frame())
-	var actual: PackedByteArray = Simulation.checksum(game.canonical_bytes()) if not expected.is_empty() else PackedByteArray()
-	if not expected.is_empty() and actual != expected:
-		_seek_failed = true
-		message = _failure_message(current_frame(), Types.Code.DESYNC, expected, actual)
+	var code: int = _player.validate_current_frame()
+	if code != Types.Code.OK:
+		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	else:
 		message = COMPLETE_MESSAGE if _player.is_complete() else "Paused."
 

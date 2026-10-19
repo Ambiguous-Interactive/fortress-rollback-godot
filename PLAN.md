@@ -30,7 +30,7 @@ Local development contracts and evidence entry points:
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback with failure evidence](docs/integration.md#record-and-replay-a-match).
-- [Confirmed-input spectator playback, bounded byte envelopes, host keepalives and local delayed-view example](docs/spectators.md).
+- [Confirmed-input spectator playback, bounded byte envelopes, retained host publication and local delayed-view example](docs/spectators.md).
 - [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
@@ -377,8 +377,8 @@ in-memory snapshots without changing the portable file format. Viewer speed cont
 only the bounded number of recorded frames serviced; each simulation step stays fixed.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
-Validated replay playback checks callback success and bounded snapshot status before
-advancing; a matching checksum cannot override a failed snapshot write.
+Validated replay playback and paused navigation check callback success and bounded snapshot status before
+accepting a boundary; a matching checksum cannot override a failed snapshot write.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.
@@ -387,6 +387,8 @@ supports delayed playback, caller-bounded catch-up and explicit host endings. Sp
 confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
 Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
+The host publisher retains one exact refused packet, advances only on transport acceptance,
+and fences host replacement while keeping liveness separate from row pressure.
 Live SignalFish spectator routing, handshake/events and upstream spectator
 differential/model acceptance remain open in #47.
 Coordinated peer drop must preserve exposed confirmed history and irreversible

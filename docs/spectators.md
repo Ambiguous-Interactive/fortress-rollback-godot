@@ -106,6 +106,50 @@ row before delivering them. Export does not extend rollback history or wait for
 spectators; callers must keep their own bounded send cursor and handle missing
 history explicitly. The playable example shows this loop.
 
+## Publish from a host
+
+`FortressSpectatorPublisher` owns a bounded host send cursor and one prepared packet.
+Configure it with the host session, agreed 32-byte identity and maximum packet size.
+It starts at frame zero and exports only corrected, simulated, confirmed inputs.
+The local example uses this publisher for its byte delivery.
+
+```gdscript
+const Publisher = preload("res://addons/fortress_rollback/core/spectator_publisher.gd")
+var publisher: Publisher = Publisher.new()
+var code: int = publisher.configure(host_session, agreed_identity, 65536)
+var packet: Types.InputResult = publisher.prepare_packet()
+# On OK, pass packet.bytes to the authenticated transport.
+# Only after transport acceptance:
+code = publisher.acknowledge_packet(packet.bytes)
+```
+
+`prepare_packet()` returns `PREDICTION_STALL` when no corrected confirmed row is
+available. On `OK`, the caller owns the returned bytes. Refusal needs no acknowledgement;
+the next preparation returns the identical retained packet while continuation remains possible. A mutated or stale
+acknowledgement returns `STALE_REQUEST`, preserving the cursor. Acceptance moves
+`next_frame()` once. Transport acceptance does not prove delivery; reliable delivery
+or retransmission remains the caller's responsibility.
+
+One retained row survives eviction from host history. If later required history
+is overwritten, preparation reports `HISTORY_UNAVAILABLE` even before retrying a retained head; it never skips a missing
+row. Source reconfiguration fences prepared packets even when dimensions match.
+Active host requests and callbacks return `BUSY` before publisher mutation.
+Host termination stops publication; finish clean publication before terminating the host.
+
+`encode_keepalive()` remains independently available while a row is refused.
+Send these authenticated liveness packets before the receiver deadline during pauses
+or transport pressure. They do not acknowledge, replace or advance a pending row.
+
+Stop the host, finish any correction and confirm its entire simulated tail before
+calling publisher `finish_host()`. It freezes the exclusive end and returns
+`PREDICTION_STALL` if correction or confirmation remains incomplete. Continue preparing
+and acknowledging rows; END follows the final row. Once END is accepted, preparation
+returns `TERMINATED`. Keep the host stopped and configured until publication finishes. If it advances
+past the frozen end, preparation and acknowledgement return `INVALID_FRAME`;
+keepalive encoding returns empty bytes.
+Each preparation and acknowledgement does bounded work for at most one packet.
+There is no recipient membership, authentication, transport queue or automatic reconnect.
+
 ## Deliver bytes over a caller-owned transport
 
 `FortressSpectatorStream` wraps a spectator session with versioned fixed-width packets.

@@ -173,6 +173,7 @@ Enter a frame number and press **Go** to navigate forward or backward. Navigatio
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**
 pauses at the last validated boundary. Navigation finishes paused at the requested frame.
+Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
 The display shows the current frame and stops at the first failed recorded checksum.
 Checksum failures show both the expected and actual values as hexadecimal strings, including failures at a seek target.
 **Back to online** returns to room setup.

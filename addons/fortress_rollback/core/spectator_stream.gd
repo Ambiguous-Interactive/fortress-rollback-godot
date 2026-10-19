@@ -160,14 +160,23 @@ func _fail() -> int:
 
 
 func _header(kind: int, frame: int) -> PackedByteArray:
+	return encode_header(kind, frame, _config.player_count, _config.input_width, _identity)
+
+
+## Shared fixed-width writer for configured stream and host publisher implementations.
+static func encode_header(kind: int, frame: int, players: int, width: int, identity: PackedByteArray) -> PackedByteArray:
+	if identity.size() != 32 or players < 2 or players > 8 or width < 1 or width > 65536 or kind not in [ROW, END, KEEPALIVE]:
+		return PackedByteArray()
+	if frame < 0 or frame > FRAME_MAX or (kind == ROW and frame == FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
+		return PackedByteArray()
 	var buffer: StreamPeerBuffer = StreamPeerBuffer.new()
 	buffer.big_endian = false
 	buffer.put_data("FRGS".to_ascii_buffer())
 	buffer.put_u8(1)
 	buffer.put_u8(kind)
-	buffer.put_u8(_config.player_count)
+	buffer.put_u8(players)
 	buffer.put_u8(0)
-	buffer.put_u32(_config.input_width)
-	buffer.put_data(_identity)
+	buffer.put_u32(width)
+	buffer.put_data(identity)
 	buffer.put_u32(frame)
 	return buffer.data_array

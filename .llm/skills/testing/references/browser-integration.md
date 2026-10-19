@@ -11,7 +11,9 @@ Exercise actual UI controls during playback, after failure and at completion.
 Controller-only tests cannot prove that visible status and enabled buttons agree.
 Exercise navigation from measured starting frames in both directions; a receipt
 named forward can still describe a backward seek. Validate a selected saved boundary
-before pausing or canceling; its input may never be advanced. Validate every observed control
+before pausing or canceling; its input may never be advanced. Use the playback
+core's bounded snapshot callback so callback/write failures and checksum evidence
+follow the same terminal contract as ordinary stepping. Validate every observed control
 frontier and nested failure integer, rejecting Python bool/float equality lookalikes.
 
 Engine doubles expose only public methods; verify the real method list and exported interface.
