@@ -108,6 +108,9 @@ A confirmed-row publisher owns each refused packet until exact transport accepta
 re-reading the host ring on retry can lose already prepared history. Fence the
 host configuration lifetime before returning retained bytes, keep liveness independent
 of row pressure, and report an overwritten next row explicitly.
+When a stream exposes its playback session, fence both packet delivery and elapsed
+expiry against successful session replacement. Equal configuration values do not
+preserve a connection lifetime; rejected configuration must preserve the valid stream.
 
 ## Serialization Rules
 

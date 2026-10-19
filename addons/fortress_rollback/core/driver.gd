@@ -7,6 +7,8 @@ signal step_completed(code: int, frame_before: int, frame_after: int)
 # gdlint: disable=max-returns
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
+const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 
 
 class LocalInput:
@@ -71,7 +73,7 @@ func configure(session: Session, game: RefCounted) -> int:
 
 
 ## Whether a game method accepts the frame and view arguments supplied by the driver.
-## Rejects incompatible built-in types; script-specific types and implementation remain the game's responsibility.
+## Rejects incompatible reflected types. Erased script annotations and implementation remain the game's responsibility.
 static func accepts_callback_arguments(game: RefCounted, name: String) -> bool:
 	if game == null:
 		return false
@@ -89,9 +91,22 @@ static func accepts_callback_arguments(game: RefCounted, name: String) -> bool:
 			var view_argument: Dictionary = method.args[1]
 			if view_argument.type not in [TYPE_NIL, TYPE_OBJECT]:
 				return false
-			if view_argument.type == TYPE_OBJECT and ClassDB.class_exists(view_argument.class_name) and not ClassDB.is_parent_class("RefCounted", view_argument.class_name):
+			if view_argument.type == TYPE_OBJECT and not _accepts_view_class(view_argument.class_name, name):
 				return false
 		return true
+	return false
+
+
+static func _accepts_view_class(view_class: StringName, method: String) -> bool:
+	if view_class == &"":
+		return true
+	if ClassDB.class_exists(view_class):
+		return ClassDB.is_parent_class("RefCounted", view_class)
+	var script: Script = Writer if method == "save_state" else (Reader if method == "load_state" else Types.FrameInputs)
+	while script != null:
+		if script.get_global_name() == view_class:
+			return true
+		script = script.get_base_script()
 	return false
 
 

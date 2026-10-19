@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add one-frame backward navigation to the replay viewer, including inspection before a checksum failure. Longer restores remain bounded and can be canceled.
+
 - Add a bounded spectator host publisher that retains refused rows and sends keepalives while delivery waits.
 
 - Add replay playback speeds from ¼× to 4×. Frame stepping and navigation still use exact recorded frames.
@@ -77,6 +79,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator stream packets and timeouts affecting a viewer after direct session reconfiguration. Reconfigure the stream with a fresh connection identity to resume delivery.
+
+- Fix incompatible reflected snapshot and input callback types being accepted during setup. Rejected replacements preserve the active game; erased engine metadata cannot identify every mismatch.
 
 - Fix incompatible built-in game callback parameter types being accepted during setup. Invalid replacements leave the active game intact.
 

@@ -24,7 +24,9 @@ class ReentrantGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive"])
+	return PackedStringArray(
+		["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive", "viewer_lifetime", "viewer_lifetime_control"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -141,6 +143,51 @@ func _lifetime_and_timeout(context: RefCounted) -> void:
 	var game: RefCounted = GameFixture.Game.new()
 	context.equal(Driver.new(buffered.playback_session(), game).step(100, _empty()).code, CODE.TERMINATED, "host loss stops buffered playback")
 	context.equal(game.trace.size(), 0, "host loss runs no callbacks")
+
+
+# Value: protects=fresh viewer lifetime from old stream packets/timeouts; fails_when=viewer reconfigure keeps stream authority; why_new=identity tests replace stream; seam=none
+func _viewer_lifetime(context: RefCounted) -> void:
+	_check_viewer_lifetime(context, true)
+
+
+func _viewer_lifetime_control(context: RefCounted) -> void:
+	_check_viewer_lifetime(context, false)
+
+
+func _check_viewer_lifetime(context: RefCounted, replace_viewer: bool) -> void:
+	for complete_end: bool in [false, true]:
+		var stream: RefCounted = _stream(context)
+		var viewer: RefCounted = stream.playback_session()
+		var packets: Array[PackedByteArray] = [stream.encode_row(0, _row(0)), stream.encode_end(1), stream.encode_keepalive()]
+		if complete_end:
+			context.equal(stream.receive_packet(stream.encode_end(0), 0), CODE.OK, "old lifetime may already have cleanly ended")
+		var config: RefCounted = Fixture.new()._config()
+		if replace_viewer:
+			context.equal(viewer.configure(config), CODE.OK, "public viewer configuration creates a new lifetime")
+		else:
+			config.queue_capacity = 0
+			context.equal(viewer.configure(config), CODE.INVALID_CONFIGURATION, "failed viewer configuration preserves lifetime control")
+		if replace_viewer:
+			var deadline: RefCounted = _stream(context)
+			context.equal(deadline.playback_session().configure(Fixture.new()._config()), CODE.OK, "replace viewer before old deadline")
+			context.equal(deadline.poll(1000), CODE.INVALID_CONFIGURATION, "old deadline cannot terminate replacement viewer")
+			context.equal(deadline.playback_session().status().reason, CODE.OK, "old timeout preserves replacement viewer lifecycle")
+			for packet: PackedByteArray in packets:
+				context.equal(stream.receive_packet(packet, 90), CODE.INVALID_CONFIGURATION, "old stream cannot deliver into replacement viewer")
+			context.equal(stream.poll(1000), CODE.INVALID_CONFIGURATION, "old deadline cannot terminate replacement viewer")
+			context.equal(stream.encode_row(0, _row(0)).is_empty(), true, "stale stream cannot encode rows")
+			context.equal(stream.encode_end(0).is_empty(), true, "stale stream cannot encode end")
+			context.equal(stream.encode_keepalive().is_empty(), true, "stale stream cannot encode liveness")
+			context.equal(viewer.host_frontier(), -1, "replacement viewer retains no old input")
+			context.equal(viewer.status().reason, CODE.OK, "replacement viewer remains live")
+		else:
+			context.equal(stream.receive_packet(packets[2], 1), CODE.TERMINATED if complete_end else CODE.OK, "rejected configuration preserves stream state")
+			context.equal(stream.poll(99), CODE.OK, "rejected configuration preserves stream clock")
+		var fresh: PackedByteArray = _identity()
+		fresh[31] += 1
+		context.equal(stream.configure(Fixture.new()._config(), fresh, 10, 100, 50), CODE.OK, "explicit stream configuration restores fresh ownership")
+		context.equal(stream.receive_packet(packets[0], 109), CODE.PROTOCOL_FAILED, "old identity remains fenced after stream recovery")
+		context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 11), CODE.OK, "fresh lifetime accepts its own row and clock")
 
 
 func _clean_tail(context: RefCounted) -> void:

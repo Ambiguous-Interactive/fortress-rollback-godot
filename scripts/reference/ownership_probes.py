@@ -53,13 +53,14 @@ EXPECTED.update({
         'terminate_reconfigure', 'notifications', 'input_validation', 'missing_samples'},
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed',
-        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive'},
+        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
+    'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
     'res://tests/unit/test_spectator_demo.gd': {'corrected_viewing', 'pause_and_catchup', 'lost_history', 'idle_host_liveness'},
     'res://tests/unit/test_spectator_policy.gd': {'confirmation_policy'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
-    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed'},
+    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step'},
 })
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
@@ -89,7 +90,7 @@ FILES += ['tests/unit/test_diagnostic_viewer.gd', 'examples/online/diagnostic_vi
           'examples/online/diagnostic_scene.gd', 'examples/online/diagnostic.tscn']
 FILES += ['tests/unit/test_spectator_session.gd', 'tests/unit/test_driver_callback_results.gd']
 FILES += ['tests/unit/test_replay_checkpoints.gd', 'tests/unit/test_spectator_stream.gd']
-FILES += ['tests/unit/test_driver_callback_signatures.gd', 'tests/unit/test_replay_diagnostics.gd']
+FILES += ['tests/unit/test_driver_callback_signatures.gd', 'tests/unit/test_driver_script_view_types.gd', 'tests/unit/test_replay_diagnostics.gd']
 FILES += ['tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
           'examples/integration/demo.gd', 'examples/integration/loop.gd', 'examples/integration/effects.gd']
 FILES += ['tests/unit/test_spectator_policy.gd', 'tests/unit/test_replay_speed.gd', 'tests/unit/test_spectator_publisher.gd']
@@ -120,6 +121,7 @@ const ReplayCheckpoints = preload("res://tests/unit/test_replay_checkpoints.gd")
 const SpectatorStream = preload("res://tests/unit/test_spectator_stream.gd")
 const CallbackResults = preload("res://tests/unit/test_driver_callback_results.gd")
 const CallbackSignatures = preload("res://tests/unit/test_driver_callback_signatures.gd")
+const ScriptViewTypes = preload("res://tests/unit/test_driver_script_view_types.gd")
 const ReplayDiagnostics = preload("res://tests/unit/test_replay_diagnostics.gd")
 const SpectatorDemo = preload("res://tests/unit/test_spectator_demo.gd")
 const SpectatorPolicy = preload("res://tests/unit/test_spectator_policy.gd")
@@ -128,7 +130,7 @@ const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
-\t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed]
+\t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)

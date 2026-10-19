@@ -63,8 +63,10 @@ does not constrain its contained byte array.
 Check callback argument counts at configuration before replacing an active game.
 Method existence alone does not prove a two-argument invocation is valid; accept
 additional optional parameters. Reject incompatible reflected built-in parameter types,
-but preserve valid Object/RefCounted/Variant views. Godot can erase script-specific
-annotations; metadata cannot prove those types. Test actual dispatch as well as rejection.
+but preserve valid Object/RefCounted/Variant views. Compare named script annotations with
+the actual supplied view script and its ancestors. Godot may erase script annotations
+to RefCounted; those erased types cannot be validated from metadata. Test actual
+dispatch as well as rejection, including swapped reader/writer/input views on each pin.
 Capture dynamic application callback returns as `Variant`, then validate the exact
 contract before typed assignment or boolean use. An engine type error can bypass
 guard release; coercion can accept malformed success values. Route rejected

@@ -37,6 +37,7 @@ var viewer: Viewer = Viewer.new()
 var _status: Label
 var _play: Button
 var _step_button: Button
+var _back_button: Button
 var _restart_button: Button
 var _speed: OptionButton
 var _target: SpinBox
@@ -74,6 +75,7 @@ func _ready() -> void:
 	buttons.add_child(_speed)
 	var navigation: HBoxContainer = HBoxContainer.new()
 	panel.add_child(navigation)
+	_back_button = _button(navigation, "Back one frame", _back_one_frame)
 	var caption: Label = Label.new()
 	caption.text = "Go to frame:"
 	navigation.add_child(caption)
@@ -151,6 +153,11 @@ func _speed_selected(index: int) -> void:
 	_refresh()
 
 
+func _back_one_frame() -> void:
+	viewer.step_back()
+	_refresh()
+
+
 func _seek() -> void:
 	_target.apply()
 	viewer.seek(int(_target.value))
@@ -186,6 +193,7 @@ func _refresh() -> void:
 	_play.text = "Pause" if viewer.is_playing else "Play"
 	_play.disabled = viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
+	_back_button.disabled = viewer.is_seeking() or viewer.current_frame() == 0
 	_restart_button.disabled = viewer.frame_count() == 0
 	_target.max_value = viewer.frame_count()
 	_target.editable = viewer.frame_count() > 0

@@ -111,6 +111,14 @@ func step() -> void:
 	_advance()
 
 
+## Inspect the preceding state through validated checkpoint navigation, finishing paused.
+## Long restores use tick's seek budget and can be canceled. A failed prefix is replayed again.
+func step_back() -> bool:
+	if is_seeking() or current_frame() == 0:
+		return false
+	return seek(current_frame() - 1)
+
+
 func _advance() -> void:
 	if not can_step():
 		return
