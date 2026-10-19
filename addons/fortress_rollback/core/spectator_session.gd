@@ -143,3 +143,8 @@ func receive_input(_player: int, _frame: int, _bytes: PackedByteArray) -> Types.
 
 func set_input_delay(_player: int, _delay: int) -> Types.Result:
 	return Types.Result.new(Code.UNSUPPORTED)
+
+
+## Viewer confirmation follows complete host rows; player-mesh confirmation gates do not apply.
+func set_confirmation_limit(_frame: int) -> Types.Result:
+	return Types.Result.new(Code.UNSUPPORTED)

@@ -165,6 +165,10 @@ After leaving the room, press **Watch replay**, then **Open replay** and choose 
 `fortress-online.frrp` file. Native builds use a file dialog; browsers use a local
 file chooser without uploading the file or using browser storage. Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
+Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and available checksum
+is still processed; fast playback advances at most four frames per tick. **Step** always
+advances exactly one frame. Pause, stepping, seeking and speed changes clear any partial
+slow-motion frame; restart and new imports keep your selected speed.
 Enter a frame number and press **Go** to navigate forward or backward. Navigation
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**

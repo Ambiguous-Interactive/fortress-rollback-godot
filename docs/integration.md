@@ -182,8 +182,10 @@ The [offline example](offline-example.md) is a complete sync-test scene.
 
 The driver checks every local sample's player, frame, width and retained-input conflict
 before submitting any sample in a step. Null samples and conflicting duplicate slots
-also reject the list. Correct the list and retry at the same frame. Identical duplicate
-samples remain idempotent. Queue capacity is checked during submission; it is separate
+also reject the list. A missing local player's sample returns `MISSING_LOCAL_INPUT`
+without retaining any samples from that list. Correct the list and retry at the same frame.
+Samples already submitted through the expert API count toward a complete frame and stay retained.
+Identical duplicate samples remain idempotent. Queue capacity is checked during submission; it is separate
 from this metadata preflight. Expert callers can use `session.validate_local_input`
 for the same non-mutating checks before calling `submit_local_input`.
 

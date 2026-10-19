@@ -14,6 +14,8 @@ const GAME_VERSION: String = "fortress-online-integer-v1"
 var game: Simulation = Simulation.new()
 var message: String = "Open a fortress-online.frrp recording."
 var is_playing: bool = false
+var _speed_quarters: int = 4
+var _playback_quarters: int = 0
 var _seek_target: int = -1
 var _seek_failed: bool = false
 var _recording: Replay
@@ -54,6 +56,7 @@ func restart() -> void:
 	if _recording == null:
 		return
 	_seek_target = -1
+	_playback_quarters = 0
 	_seek_failed = false
 	game = Simulation.new()
 	_player = Player.new()
@@ -65,11 +68,27 @@ func restart() -> void:
 func toggle_play() -> void:
 	if is_seeking() or not can_step():
 		return
+	_playback_quarters = 0
 	is_playing = not is_playing
 	message = "Playing; recorded checksums are validated." if is_playing else "Paused."
 
 
-## Playback advances one recorded frame per tick; seeking uses a bounded batch of recorded frames.
+## Quarter-speed units: 1, 2, 4, 8, 16 select ¼×, ½×, 1×, 2×, 4×.
+## Changing speed starts a fresh cadence; invalid values preserve the current cadence.
+func set_playback_speed(quarters: int) -> bool:
+	if quarters not in [1, 2, 4, 8, 16]:
+		return false
+	if quarters != _speed_quarters:
+		_speed_quarters = quarters
+		_playback_quarters = 0
+	return true
+
+
+func playback_speed_quarters() -> int:
+	return _speed_quarters
+
+
+## Playback advances at most four recorded frames per tick; seeking uses its own bounded batch.
 func tick() -> void:
 	if is_seeking():
 		for _frame: int in SEEK_FRAMES_PER_TICK:
@@ -81,12 +100,16 @@ func tick() -> void:
 			elif current_frame() == _seek_target:
 				_finish_seek()
 	elif is_playing:
-		step()
+		_playback_quarters += _speed_quarters
+		while _playback_quarters >= 4 and is_playing:
+			_playback_quarters -= 4
+			_advance()
 
 
 func step() -> void:
 	if is_seeking():
 		return
+	_playback_quarters = 0
 	_advance()
 
 
@@ -120,6 +143,7 @@ func can_step() -> bool:
 func seek(frame: int) -> bool:
 	if _recording == null or frame < 0 or frame > frame_count():
 		return false
+	_playback_quarters = 0
 	if _seek_failed or _player.failure_frame() >= 0:
 		restart()
 	var code: int = _player.restore_before(frame)
