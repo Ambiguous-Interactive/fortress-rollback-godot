@@ -16,6 +16,14 @@ repeated input-read measurements and fresh adversarial reviews.
 | Wrapper avoidance and copy speed have different workload limits | Seven-sample input-read measurements improve one-byte samples but slow 256-byte samples | Preserve both APIs, adopt reusable scratch only for one-byte games, document width tradeoff and limit allocation claims |
 | Terminal preflight must precede sample staging | `test_driver.gd` input_exhaustion fails on original frame/batch limits | Share the session limit check before submission, preserving unsupported recovery priority |
 
+Measurement: Linux ARM64, 16 Apple CPU cores, 1,000-read warmup, seven samples of
+50,000 alternating reads, 2/8 players and widths 1/8/32/256. For two players,
+one-byte median times were 35,457 -> 9,561 microseconds on Godot 4.7.2 and
+42,404 -> 11,008 on 4.3. At 256 bytes they were 35,439 -> 168,852 and
+40,707 -> 187,890 respectively. Each pair compares owned `read` with `read_into`.
+These local input-read timings exclude game simulation and transport; they establish
+neither whole-frame speed nor total allocation counts. Issue #43 holds the reproducible workload.
+
 ## Prune ledger
 
 Updated existing browser/oracle references instead of creating overlapping skills or knowledge entries.
