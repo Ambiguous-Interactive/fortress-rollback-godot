@@ -5,6 +5,7 @@ extends RefCounted
 const Host = preload("res://examples/integration/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
+const Publisher = preload("res://addons/fortress_rollback/core/spectator_publisher.gd")
 const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
@@ -12,6 +13,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const SEND_BUDGET: int = 16
 
 var host: Host
+var publisher: Publisher
 var stream: Stream
 var viewer: Spectator
 var game: Game
@@ -42,6 +44,10 @@ func start() -> int:
 	code = stream.configure(config, identity, 0, 10000000, 256)
 	if code != Types.Code.OK:
 		return code
+	publisher = Publisher.new()
+	code = publisher.configure(host.loop.session, identity, 256)
+	if code != Types.Code.OK:
+		return code
 	viewer = stream.playback_session()
 	code = viewer.set_playback(12, 4, 4)
 	if code != Types.Code.OK:
@@ -68,24 +74,25 @@ func tick(buttons: int) -> int:
 	viewer_code = stream.poll(host.tick_count * Host.TICK_US)
 	if viewer_code != Types.Code.OK:
 		return code
-	var status: Types.Status = host.loop.session.status()
-	var last: int = mini(status.confirmed_frame, status.current_frame - 1)
 	var first_host_frame: int = next_host_frame
 	for _work: int in range(SEND_BUDGET):
-		if next_host_frame > last:
+		var packet: Types.InputResult = publisher.prepare_packet()
+		if packet.code == Types.Code.PREDICTION_STALL:
 			break
-		var inputs: Types.FrameInputs = host.loop.session.confirmed_inputs(next_host_frame)
-		if inputs == null:
-			viewer_code = Types.Code.HISTORY_UNAVAILABLE
+		if packet.code != Types.Code.OK:
+			viewer_code = packet.code
 			viewer.terminate(viewer_code)
 			return code
-		var row: Array[PackedByteArray] = [inputs.read(0).bytes, inputs.read(1).bytes]
-		viewer_code = stream.receive_packet(stream.encode_row(next_host_frame, row), host.tick_count * Host.TICK_US)
+		viewer_code = stream.receive_packet(packet.bytes, host.tick_count * Host.TICK_US)
 		if viewer_code != Types.Code.OK:
 			break
-		next_host_frame += 1
+		viewer_code = publisher.acknowledge_packet(packet.bytes)
+		if viewer_code != Types.Code.OK:
+			viewer.terminate(viewer_code)
+			return code
+		next_host_frame = publisher.next_frame()
 	if next_host_frame == first_host_frame:
-		var keepalive_code: int = stream.receive_packet(stream.encode_keepalive(), host.tick_count * Host.TICK_US)
+		var keepalive_code: int = stream.receive_packet(publisher.encode_keepalive(), host.tick_count * Host.TICK_US)
 		if keepalive_code != Types.Code.OK:
 			viewer_code = keepalive_code
 			return code

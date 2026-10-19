@@ -71,7 +71,7 @@ func configure(session: Session, game: RefCounted) -> int:
 
 
 ## Whether a game method accepts the frame and view arguments supplied by the driver.
-## This checks argument count; callback parameter types and implementation remain the game's responsibility.
+## Rejects incompatible built-in types; script-specific types and implementation remain the game's responsibility.
 static func accepts_callback_arguments(game: RefCounted, name: String) -> bool:
 	if game == null:
 		return false
@@ -81,7 +81,17 @@ static func accepts_callback_arguments(game: RefCounted, name: String) -> bool:
 		var argument_count: int = method.args.size()
 		var required_count: int = argument_count - method.default_args.size()
 		var is_vararg: bool = (method.flags & METHOD_FLAG_VARARG) != 0
-		return required_count <= 2 and (argument_count >= 2 or is_vararg)
+		if required_count > 2 or (argument_count < 2 and not is_vararg):
+			return false
+		if argument_count > 0 and method.args[0].type not in [TYPE_NIL, TYPE_INT, TYPE_FLOAT]:
+			return false
+		if argument_count > 1:
+			var view_argument: Dictionary = method.args[1]
+			if view_argument.type not in [TYPE_NIL, TYPE_OBJECT]:
+				return false
+			if view_argument.type == TYPE_OBJECT and ClassDB.class_exists(view_argument.class_name) and not ClassDB.is_parent_class("RefCounted", view_argument.class_name):
+				return false
+		return true
 	return false
 
 

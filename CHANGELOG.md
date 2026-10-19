@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add a bounded spectator host publisher that retains refused rows and sends keepalives while delivery waits.
+
 - Add replay playback speeds from ¼× to 4×. Frame stepping and navigation still use exact recorded frames.
 
 - Add expected and actual checksum values to replay failures, including navigation errors. The replay viewer shows both values at the failed frame.
@@ -75,6 +77,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix incompatible built-in game callback parameter types being accepted during setup. Invalid replacements leave the active game intact.
+
+- Fix replay navigation bypassing bounded snapshot validation at paused frames. Callback and snapshot failures now stop playback with the selected frame.
 
 - Fix corrected driver retries after incomplete multiplayer input lists. Missing local samples are rejected before retaining other players’ buttons.
 

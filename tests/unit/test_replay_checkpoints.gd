@@ -27,8 +27,13 @@ class FaultGame:
 		if fault == "save reentry":
 			reentry_codes.append(owner.get_ref().restore_before(0))
 			reentry_codes.append(owner.get_ref().step())
+			reentry_codes.append(owner.get_ref().validate_current_frame())
 			reentry_codes.append(owner.get_ref().configure(Fixture.recording(), self))
 		var result: Driver.SaveResult = game.save_state(frame, writer)
+		if fault == "overflow":
+			writer.write_bytes(PackedByteArray([0]))
+		if fault == "false":
+			result.ok = false
 		if fault == "checksum collision":
 			result.checksum = cached_checksum.duplicate()
 		if fault == "large checksum":
@@ -60,6 +65,7 @@ class FaultGame:
 		if fault == "reentry":
 			reentry_codes.append(owner.get_ref().restore_before(0))
 			reentry_codes.append(owner.get_ref().step())
+			reentry_codes.append(owner.get_ref().validate_current_frame())
 			reentry_codes.append(owner.get_ref().configure(Fixture.recording(), self))
 		return loaded
 
@@ -169,7 +175,7 @@ func _restore_failures(context: RefCounted) -> void:
 			context.equal(player.current_frame(), 6, fault + " restored nearest checkpoint")
 			context.equal(player.step(), Types.Code.OK, fault + " restored frame continues normally")
 		if fault == "reentry":
-			context.equal(game.reentry_codes, [Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY], "restore guard covers callbacks")
+			context.equal(game.reentry_codes, [Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY], "restore guard covers callbacks")
 		context.state(game.game.frame, game.game.canonical_bytes())
 
 
@@ -186,7 +192,7 @@ func _checkpoint_callbacks(context: RefCounted) -> void:
 			context.equal(player.step(), Types.Code.DESYNC if cache and fault == "large checksum" else Types.Code.OK, "checkpoint callback result validated")
 			context.equal(game.save_calls, 1 if cache else 0, "ordinary playback does not add snapshot callbacks")
 			if cache and fault == "save reentry":
-				context.equal(game.reentry_codes, [Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY], "checkpoint save guards all player mutations")
+				context.equal(game.reentry_codes, [Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY], "checkpoint save guards all player mutations")
 			if cache and fault == "large checksum":
 				context.equal(player.failure_frame(), 0, "unbounded callback checksum stops before simulation")
 				context.equal(player.current_frame(), 0, "invalid checksum does not advance")
