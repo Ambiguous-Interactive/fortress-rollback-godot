@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `FrameInputs.player_count()` and `read_into()` for reusable fixed-width input buffers. Use `read()` when you need input status or prefer bulk copies for wide samples.
+
 - Add typed spectator playback events for waiting, contiguous host input, clean host closure and terminal completion or failure. Driver results carry events after callbacks finish.
 
 - Add replay checksum coverage to the viewer. Recordings without checksums clearly report that playback could not be verified.
@@ -89,6 +91,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix driver input submission hiding terminal frame or batch exhaustion. Exhausted calls terminate before retaining new samples.
+
+- Fix replay Step and Pause accepting an unchecked displayed boundary. Both actions now report checksum failures immediately and preserve the failed input for inspection.
 
 - Fix spectator stream packets and timeouts affecting a viewer after direct session reconfiguration. Reconfigure the stream with a fresh connection identity to resume delivery.
 

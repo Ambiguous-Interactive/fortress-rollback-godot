@@ -133,6 +133,9 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 	if code != Types.Code.OK:
 		return _finish(code, before)
 	if allow_advance:
+		code = _session._check_advance_limits()
+		if code != Types.Code.OK:
+			return _finish(code, before)
 		# Reject malformed lists before any valid prefix becomes a retained stalled sample.
 		_sample_indices.fill(-1)
 		for index: int in range(local_inputs.size()):

@@ -159,6 +159,9 @@ func _guards(context: RefCounted) -> void:
 		config.storage_budget_bytes = config.required_storage_bytes()
 		context.equal(unsupported.configure(config), Types.Code.OK, "unsupported mode control configured")
 		context.equal(Driver.new(unsupported, Fixture.Game.new()).recover(0).code, Types.Code.UNSUPPORTED, "recovery cannot bypass specialized session semantics")
+		unsupported._current = 2147483647
+		context.equal(Driver.new(unsupported, Fixture.Game.new()).recover(0).code, unsupported.begin_recovery().code, "rejected recovery keeps expert eligibility priority")
+		context.equal(unsupported.status().lifecycle, Types.Lifecycle.RUNNING, "unsupported recovery does not terminate the specialized session")
 	for frame_limit: bool in [true, false]:
 		var exhausted: RefCounted = _session(context)
 		if frame_limit:

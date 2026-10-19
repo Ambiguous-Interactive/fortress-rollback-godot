@@ -8,6 +8,9 @@ Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
 Exercise actual UI controls during playback, after failure and at completion.
+Validate displayed state boundaries through every action that pauses playback,
+including Step and Pause, not only seeking and cancellation. A departing-boundary
+check can leave a corrupt destination displayed until playback resumes.
 Controller-only tests cannot prove that visible status and enabled buttons agree.
 Exercise navigation from measured starting frames in both directions; a receipt
 named forward can still describe a backward seek. Validate a selected saved boundary

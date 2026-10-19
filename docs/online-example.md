@@ -167,7 +167,9 @@ file chooser without uploading the file or using browser storage. Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
 Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and available checksum
 is still processed; fast playback advances at most four frames per tick. **Step** always
-advances exactly one frame. Pause, stepping, seeking and speed changes clear any partial
+advances exactly one frame and finishes paused. Step and Pause validate the displayed
+state boundary immediately, including sparse recorded checksums, without consuming its input.
+Pause, stepping, seeking and speed changes clear any partial
 slow-motion frame; restart and new imports keep your selected speed.
 Press **Back one frame** to inspect the preceding state, including after completion or a checksum failure.
 It pauses playback and uses the same bounded navigation as **Go**; **Cancel seek** can interrupt a long restore.

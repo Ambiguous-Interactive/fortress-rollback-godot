@@ -90,6 +90,7 @@ Issue creation does not establish implementation, test success or feature parity
 
 The game owns deterministic simulation and complete serialization.
 The library supplies orchestration, validation and sync-test tooling.
+Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
 Godot physics and arbitrary scene state are not made deterministic by rollback.
 
 ## Reference revisions and provenance
@@ -374,6 +375,7 @@ known-allocation positive control; flat memory alone is insufficient.
 ## Advanced parity boundaries
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
+Pausing or stepping a replay validates the displayed boundary before allowing further playback.
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
 in-memory snapshots without changing the portable file format. Viewer speed controls change
 only the bounded number of recorded frames serviced; each simulation step stays fixed.

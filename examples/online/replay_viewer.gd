@@ -75,8 +75,11 @@ func toggle_play() -> void:
 		return
 	_playback_quarters = 0
 	is_playing = not is_playing
-	message = "Playing; recorded checksums are validated." if is_playing else "Paused."
-	if is_playing and _recorded_checksum_count == 0:
+	if not is_playing:
+		_finish_seek()
+		return
+	message = "Playing; recorded checksums are validated."
+	if _recorded_checksum_count == 0:
 		message = "Playing inputs; this recording has no checksums."
 
 
@@ -113,11 +116,13 @@ func tick() -> void:
 			_advance()
 
 
+## Pause after one input and validate the selected state boundary without consuming its input.
 func step() -> void:
-	if is_seeking():
+	if is_seeking() or not can_step():
 		return
 	_playback_quarters = 0
 	_advance()
+	_finish_seek()
 
 
 ## Inspect the preceding state through validated checkpoint navigation, finishing paused.
