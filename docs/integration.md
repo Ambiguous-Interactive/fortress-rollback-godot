@@ -278,6 +278,39 @@ Input-only playback reports zero; repeated validation and checkpoint navigation 
 Successful configuration starts a fresh count; rejected configuration preserves it.
 Check `game_version()` and `game_seed()` before playing, and set up the game to match.
 
+To dispatch replay through your own request loop, call `configure_expert(replay, max_snapshot_bytes)`
+instead of `configure`. The same player then exposes `begin_advance()` and `complete_request()`
+with the live session's `FortressSessionTypes.Batch` and `Request` types:
+
+```gdscript
+var result := player.begin_advance()
+if result.code == FortressSessionTypes.Code.READY:
+	while true:
+		var request := result.batch.next_request()
+		if request == null:
+			break
+		# Dispatch SAVE to your serializer or ADVANCE to your simulation.
+		# Capture identities before application code can edit request metadata.
+		var batch_id := request.batch_id
+		var request_id := request.request_id
+		var completed := dispatch_replay_request(request)
+		var code := player.complete_request(batch_id, request_id, completed.ok, completed.checksum).code
+		if code != FortressSessionTypes.Code.OK:
+			break
+```
+
+Each batch emits `SAVE(F)` when validation needs a recorded checksum, then `ADVANCE(F)`.
+A zero snapshot bound emits only advances. Inputs are slot-ordered and confirmed.
+Callback `step()` dispatches these same requests internally, including checkpoint saves when enabled.
+Acknowledgement expires the bounded writer or input view. Wrong identities return `STALE_REQUEST`
+and preserve the active view; repeated `next_request()` returns the unacknowledged request.
+Only a successful advance commits the exposed frame. A failed callback, snapshot or checksum stops playback before committing that input.
+An incomplete batch returns `BUSY` from advancement, configuration and callback navigation.
+Call `terminate()` to abandon it and expire its views, then configure a new playback lifetime.
+Batch identities remain monotonic across configuration, so a retained old batch cannot consume a new request.
+Expert configuration does not own a game; `step()`, `restore_before()` and `validate_current_frame()` return `UNSUPPORTED`.
+Applications using expert playback own callback dispatch and any navigation or checkpoint restoration.
+
 For repeated navigation, pass optional `checkpoint_interval` and `checkpoint_capacity` to
 `configure`. Both default to zero. Enable both together with a positive snapshot size,
 a capacity of 2–1024, and a game implementing `load_state`. Reserved snapshot bytes
