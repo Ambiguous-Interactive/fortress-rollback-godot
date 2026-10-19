@@ -264,11 +264,11 @@ func _append(frame: int, bytes: PackedByteArray, reclaim_floor: int) -> void:
 		_length -= 1
 	var index: int = frame % _capacity
 	_frames[index] = frame
-	for offset: int in range(bytes.size()):
-		_slots[index][offset] = bytes[offset]
+	# Private slots are replaced, never mutated: one native copy also owns the latest actual.
+	_last_actual = bytes.duplicate()
+	_slots[index] = _last_actual
 	_length += 1
 	_last_added = frame
-	_last_actual = bytes.duplicate()
 	if _prediction_frame != -1:
 		if _first_incorrect == -1 and _prediction_bytes != bytes:
 			_first_incorrect = frame

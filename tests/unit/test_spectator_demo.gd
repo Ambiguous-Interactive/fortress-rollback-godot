@@ -1,6 +1,7 @@
 extends RefCounted
 
 # Value: protects=delayed viewer follows corrected original game; fails_when=predictions stream or spectator stalls host; why_new=playable host/export composition; seam=none
+const Scene = preload("res://examples/spectator/spectator.gd")
 const Demo = preload("res://examples/spectator/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -8,7 +9,19 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["corrected_viewing", "pause_and_catchup", "lost_history", "idle_host_liveness", "clean_host_end", "paused_final_tail"])
+	return PackedStringArray(
+		[
+			"corrected_viewing",
+			"pause_and_catchup",
+			"lost_history",
+			"idle_host_liveness",
+			"clean_host_end",
+			"paused_final_tail",
+			"single_frame",
+			"single_frame_end",
+			"single_frame_control"
+		]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -20,6 +33,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		_lost_history(context)
 	elif name == "paused_final_tail":
 		_paused_final_tail(context)
+	elif name in ["single_frame", "single_frame_end", "single_frame_control"]:
+		call("_" + name, context)
 	elif name == "clean_host_end":
 		_clean_host_end(context)
 	else:
@@ -149,3 +164,106 @@ func _paused_final_tail(context: RefCounted) -> void:
 		demo.tick(0)
 	context.equal(demo.viewer_code, Types.Code.TERMINATED, "resumed final tail ends cleanly")
 	context.bytes_equal(demo.game.canonical_bytes(), demo.host.loop.game.canonical_bytes(), 130, "full stopped-host history survives pause")
+
+
+# Value: protects=paused single-frame inspection; fails_when=step runs catchup or advances host; why_new=pause tests only resume continuous playback; seam=none
+func _single_frame(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.has_method("step_viewer"), true, "viewer exposes single-frame playback")
+	if not demo.has_method("step_viewer"):
+		return
+	context.equal(demo.call("step_viewer"), Types.Code.NOT_CONFIGURED, "cannot step before startup")
+	context.equal(demo.start(), Types.Code.OK, "start frame inspection")
+	context.equal(demo.call("step_viewer"), Types.Code.PREDICTION_STALL, "empty viewer cannot invent inputs")
+	context.equal(demo.is_paused, true, "single step pauses continuous playback")
+	var reference: Game = Game.new()
+	var history: Array[PackedByteArray] = [reference.canonical_bytes()]
+	for tick: int in range(60):
+		var frame: int = demo.host.loop.game.frame
+		var buttons: int = Game.RIGHT | (Game.FIRE if frame % 5 < 3 else 0)
+		context.equal(demo.tick(buttons), Types.Code.OK, "host advances while viewer remains paused")
+		var rows: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
+		var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+		context.equal(reference.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent original-input history")
+		history.append(reference.canonical_bytes())
+	context.equal(demo.game.frame, 0, "host ticking does not resume paused viewer")
+	var host_frame: int = demo.host.loop.game.frame
+	var confirmed: int = demo.host.loop.session.status().confirmed_frame
+	var playable: int = demo.viewer.host_frontier() - 11
+	for frame: int in range(playable):
+		context.equal(demo.call("step_viewer"), Types.Code.OK, "inspect exactly one confirmed frame")
+		context.equal(demo.game.frame, frame + 1, "single step ignores multi-frame catchup advice")
+		context.equal(demo.is_paused, true, "inspection preserves pause")
+		context.bytes_equal(demo.game.canonical_bytes(), history[frame + 1], frame + 1, "inspected state matches original input prefix")
+	context.equal(demo.call("step_viewer"), Types.Code.PREDICTION_STALL, "single step cannot bypass stream delay")
+	context.equal(demo.game.frame, playable, "delay stall leaves game unchanged")
+	context.equal(demo.host.loop.game.frame, host_frame, "inspection never advances host")
+	context.equal(demo.host.loop.session.status().confirmed_frame, confirmed, "inspection never changes player confirmation")
+	demo.is_paused = false
+	context.equal(demo.tick(Game.LEFT), Types.Code.OK, "resume host and viewer")
+	context.equal(demo.is_paused, false, "regular playback resumes explicitly")
+	context.equal(demo.game.frame > playable, true, "resumed viewer follows new confirmed history")
+
+
+# Value: protects=single-step final tail and failure diagnostics; fails_when=terminal action invents frame or erases failure; why_new=tail tests use continuous playback; seam=none
+func _single_frame_end(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.has_method("step_viewer"), true, "viewer exposes single-frame playback")
+	if not demo.has_method("step_viewer"):
+		return
+	for count: int in [0, 40]:
+		context.equal(demo.start(), Types.Code.OK, "fresh ending inspection")
+		demo.is_paused = true
+		for tick: int in range(count):
+			context.equal(demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "host input before ending")
+		context.equal(demo.finish_host(), Types.Code.OK, "freeze host")
+		for tick: int in range(20):
+			context.equal(demo.tick(0) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "confirm and publish final rows")
+		for frame: int in range(count):
+			context.equal(demo.call("step_viewer"), Types.Code.OK, "step through final tail")
+			context.equal(demo.game.frame, frame + 1, "exact final-tail step")
+		context.bytes_equal(demo.game.canonical_bytes(), demo.host.loop.game.canonical_bytes(), count, "inspected tail reaches exact final host state")
+		context.equal(demo.call("step_viewer"), Types.Code.TERMINATED, "final control call reports clean completion")
+		context.equal(demo.call("step_viewer"), Types.Code.TERMINATED, "repeated completion is stable")
+		context.equal(demo.game.frame, count, "terminal step creates no phantom frame")
+	context.equal(demo.start(), Types.Code.OK, "restart after single-step completion")
+	demo.is_paused = true
+	for tick: int in range(300):
+		demo.tick(0)
+	context.equal(demo.call("step_viewer"), Types.Code.HISTORY_UNAVAILABLE, "step preserves lost-history cause")
+	context.equal(demo.viewer_code, Types.Code.HISTORY_UNAVAILABLE, "failure remains visible")
+	context.equal(demo.start(), Types.Code.OK, "restart after failed inspection")
+	context.equal(demo.is_paused, false, "restart restores continuous playback")
+
+
+# Value: protects=scene keyboard frame-step control; fails_when=N is unbound or repeats on held key; why_new=demo API tests bypass scene input; seam=none
+func _single_frame_control(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	for tick: int in range(50):
+		scene.demo.tick(Game.RIGHT)
+	var key: InputEventKey = InputEventKey.new()
+	key.keycode = KEY_P
+	key.pressed = true
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, true, "existing pause control prepares inspection")
+	for tick: int in range(10):
+		scene.demo.tick(Game.RIGHT)
+	var frame: int = scene.demo.game.frame
+	key.keycode = KEY_N
+	key.pressed = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.game.frame, frame, "key release never advances viewer")
+	key.pressed = true
+	key.echo = true
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.game.frame, frame, "held key never repeats viewer advance")
+	key.echo = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, true, "N key enters paused inspection")
+	context.equal(scene.demo.game.frame, frame + 1, "N key advances one eligible frame")
+	context.equal(scene._label.text.contains("N: step viewer"), true, "help exposes frame-step key")
+	key.keycode = KEY_P
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, false, "P resumes playback after inspection")
+	scene.free()

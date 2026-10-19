@@ -24,10 +24,10 @@ This is gameplay replay applicability, separate from network fault-trace replay.
 | Completion | True after the final advance; another advance errors | True after the final callback; another step returns `FRAME_EXHAUSTED` |
 | Empty replay | Complete immediately; advance errors | Complete immediately; step returns `FRAME_EXHAUSTED` |
 
-Godot deliberately uses callback playback and does not expose an expert replay
-request interface. The [driver/expert interface](session.md) applies to live
-sessions. An expert replay interface remains open under
-[X1](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45).
+Godot callback playback dispatches the same ordered requests exposed by
+`FortressReplayPlayer.configure_expert`, `begin_advance` and `complete_request`.
+The expert interface uses the live session
+[batch and request types](session.md); validation keeps the Godot policy above.
 These differences are explicit expectations; the comparator excludes no
 requests, events or frame observations.
 
@@ -59,7 +59,7 @@ must remain unchanged throughout execution. A failed attempt removes its prior
 success receipt and retains raw logs.
 
 This does not establish upstream recording parity, file interchangeability,
-expert replay requests, snapshot seek acceleration or network-fault replay.
+independent expert-request differential coverage, snapshot seek acceleration or network-fault replay.
 Native/browser gameplay replay evidence remains in the
 [ownership experiment](experiments/buffer-ownership.md) and
 [online example](online-example.md#record-and-download-a-replay).
