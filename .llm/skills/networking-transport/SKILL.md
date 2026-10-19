@@ -100,6 +100,11 @@ The pinned engine's legacy maxPacketLifetime spelling is ignored by browsers
 that expect maxPacketLifeTime. Use the production connection factory correction
 and verify the resulting lifetime; do not claim a zero-retransmit policy.
 
+Authenticated host liveness and confirmed-input progress are separate observations.
+A spectator keepalive may refresh elapsed host expiry without advancing a row,
+repairing a gap or affecting player confirmation. Keep deadline equality and
+foreign-packet inertness unchanged, and agree support for optional packet kinds.
+
 ## Serialization Rules
 
 1. All packets are built with `StreamPeerBuffer` in **explicit little-endian,

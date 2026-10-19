@@ -20,6 +20,7 @@ class FaultGame:
 	var reentry_codes: Array[int] = []
 	var retained_reader: Reader
 	var save_calls: int = 0
+	var cached_checksum: PackedByteArray = PackedByteArray()
 
 	func save_state(frame: int, writer: Writer) -> Driver.SaveResult:
 		save_calls += 1
@@ -28,6 +29,8 @@ class FaultGame:
 			reentry_codes.append(owner.get_ref().step())
 			reentry_codes.append(owner.get_ref().configure(Fixture.recording(), self))
 		var result: Driver.SaveResult = game.save_state(frame, writer)
+		if fault == "checksum collision":
+			result.checksum = cached_checksum.duplicate()
 		if fault == "large checksum":
 			result.checksum.resize(1048576)
 		return result
@@ -50,7 +53,7 @@ class FaultGame:
 		var loaded: bool = game.load_state(frame, reader)
 		if fault == "expired":
 			reader._expire()
-		if fault == "wrong state":
+		if fault in ["wrong state", "checksum collision"]:
 			game.rng_state ^= 1
 		if fault == "false":
 			return false

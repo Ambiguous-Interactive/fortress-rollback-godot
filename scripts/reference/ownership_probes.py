@@ -36,7 +36,7 @@ EXPECTED.update({
 EXPECTED.update({
     'res://tests/unit/test_diagnostic_trace.gd': {'owned_window', 'disabled_equality', 'bounds', 'failed_callback', 'local_divergence'},
     'res://tests/unit/test_peer_diagnostic_trace.gd': {'real_divergence', 'healthy_equality'},
-    'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay'},
+    'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay', 'callback_arguments'},
     'res://tests/unit/test_diagnostic_player.gd': {'captured_window', 'canonical_mismatch', 'malformed', 'callbacks', 'bounds'},
     'res://tests/unit/test_diagnostic_viewer.gd': {'imports', 'controls', 'divergence', 'scene_controls'},
     'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls', 'navigation', 'navigation_boundaries'},
@@ -53,7 +53,10 @@ EXPECTED.update({
         'terminate_reconfigure', 'notifications', 'input_validation'},
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed',
-        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy'},
+        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive'},
+    'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic'},
+    'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence'},
+    'res://tests/unit/test_spectator_demo.gd': {'corrected_viewing', 'pause_and_catchup', 'lost_history', 'idle_host_liveness'},
 })
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
@@ -83,6 +86,9 @@ FILES += ['tests/unit/test_diagnostic_viewer.gd', 'examples/online/diagnostic_vi
           'examples/online/diagnostic_scene.gd', 'examples/online/diagnostic.tscn']
 FILES += ['tests/unit/test_spectator_session.gd', 'tests/unit/test_driver_callback_results.gd']
 FILES += ['tests/unit/test_replay_checkpoints.gd', 'tests/unit/test_spectator_stream.gd']
+FILES += ['tests/unit/test_driver_callback_signatures.gd', 'tests/unit/test_replay_diagnostics.gd']
+FILES += ['tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
+          'examples/integration/demo.gd', 'examples/integration/loop.gd', 'examples/integration/effects.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -109,9 +115,13 @@ const DriverInputs = preload("res://tests/unit/test_driver.gd")
 const ReplayCheckpoints = preload("res://tests/unit/test_replay_checkpoints.gd")
 const SpectatorStream = preload("res://tests/unit/test_spectator_stream.gd")
 const CallbackResults = preload("res://tests/unit/test_driver_callback_results.gd")
+const CallbackSignatures = preload("res://tests/unit/test_driver_callback_signatures.gd")
+const ReplayDiagnostics = preload("res://tests/unit/test_replay_diagnostics.gd")
+const SpectatorDemo = preload("res://tests/unit/test_spectator_demo.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
-\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs, ReplayCheckpoints, SpectatorStream]
+\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
+\t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ReplayDiagnostics, SpectatorDemo]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
 \tvar text: String = JSON.stringify(result)

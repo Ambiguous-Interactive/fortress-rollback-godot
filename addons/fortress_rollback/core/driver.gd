@@ -63,11 +63,26 @@ func configure(session: Session, game: RefCounted) -> int:
 	if session == null or game == null:
 		return Types.Code.INVALID_CONFIGURATION
 	for method: String in ["save_state", "load_state", "simulate_frame"]:
-		if not game.has_method(method):
+		if not accepts_callback_arguments(game, method):
 			return Types.Code.INVALID_CONFIGURATION
 	_session = session
 	_game = game
 	return Types.Code.OK
+
+
+## Whether a game method accepts the frame and view arguments supplied by the driver.
+## This checks argument count; callback parameter types and implementation remain the game's responsibility.
+static func accepts_callback_arguments(game: RefCounted, name: String) -> bool:
+	if game == null:
+		return false
+	for method: Dictionary in game.get_method_list():
+		if method.name != name:
+			continue
+		var argument_count: int = method.args.size()
+		var required_count: int = argument_count - method.default_args.size()
+		var is_vararg: bool = (method.flags & METHOD_FLAG_VARARG) != 0
+		return required_count <= 2 and (argument_count >= 2 or is_vararg)
+	return false
 
 
 ## Consume the session's ordered requests; simulation and recovery policy stay in session.

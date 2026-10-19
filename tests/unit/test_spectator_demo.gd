@@ -8,7 +8,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["corrected_viewing", "pause_and_catchup", "lost_history"])
+	return PackedStringArray(["corrected_viewing", "pause_and_catchup", "lost_history", "idle_host_liveness"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -16,8 +16,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		_corrected_viewing(context)
 	elif name == "pause_and_catchup":
 		_pause_and_catchup(context)
-	else:
+	elif name == "lost_history":
 		_lost_history(context)
+	else:
+		_idle_host_liveness(context)
 	context.finish()
 
 
@@ -75,3 +77,13 @@ func _lost_history(context: RefCounted) -> void:
 	context.equal(demo.host.loop.game.frame, frame + 1, "no spectator effect on host")
 	context.equal(demo.start(), Types.Code.OK, "explicit fresh game restart")
 	context.equal(demo.game.frame, 0, "fresh viewer state")
+
+
+# Value: protects=example forwards liveness without confirmed inputs; fails_when=startup idle sends no keepalive; why_new=normal ticks stay below timeout; seam=none
+func _idle_host_liveness(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.start(), Types.Code.OK, "start host and viewer")
+	context.equal(demo.tick(0), Types.Code.OK, "host begins predicting before remote input")
+	context.equal(demo.next_host_frame, 0, "no confirmed row was delivered")
+	context.equal(demo.stream.poll(10000000), Types.Code.OK, "host's rowless tick refreshed viewer liveness")
+	context.equal(demo.viewer.status().reason, Types.Code.OK, "live idle host preserves viewer")

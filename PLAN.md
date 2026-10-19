@@ -29,8 +29,8 @@ Local development contracts and evidence entry points:
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
-- [Match recording, replay files and checksum-validated playback](docs/integration.md#record-and-replay-a-match).
-- [Confirmed-input spectator playback, bounded byte envelopes and local delayed-view example](docs/spectators.md).
+- [Match recording, replay files and checksum-validated playback with failure evidence](docs/integration.md#record-and-replay-a-match).
+- [Confirmed-input spectator playback, bounded byte envelopes, host keepalives and local delayed-view example](docs/spectators.md).
 - [Online match recording, downloads and offline replay viewer](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).

@@ -70,6 +70,7 @@ func tick(buttons: int) -> int:
 		return code
 	var status: Types.Status = host.loop.session.status()
 	var last: int = mini(status.confirmed_frame, status.current_frame - 1)
+	var first_host_frame: int = next_host_frame
 	for _work: int in range(SEND_BUDGET):
 		if next_host_frame > last:
 			break
@@ -83,6 +84,11 @@ func tick(buttons: int) -> int:
 		if viewer_code != Types.Code.OK:
 			break
 		next_host_frame += 1
+	if next_host_frame == first_host_frame:
+		var keepalive_code: int = stream.receive_packet(stream.encode_keepalive(), host.tick_count * Host.TICK_US)
+		if keepalive_code != Types.Code.OK:
+			viewer_code = keepalive_code
+			return code
 	if not is_paused:
 		var samples: Array[Driver.LocalInput] = []
 		for _step: int in range(viewer.recommended_steps()):

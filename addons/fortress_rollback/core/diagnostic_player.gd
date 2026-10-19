@@ -32,7 +32,7 @@ func configure(trace: Dictionary, game: RefCounted, max_snapshot_bytes: int, pla
 	if game == null:
 		return Types.Code.INVALID_CONFIGURATION
 	for method: String in ["save_state", "load_state", "simulate_frame"]:
-		if not game.has_method(method):
+		if not Driver.accepts_callback_arguments(game, method):
 			return Types.Code.INVALID_CONFIGURATION
 	var rows: Array[Dictionary] = Schema.decode(trace, player_count, input_width, max_snapshot_bytes)
 	if rows.is_empty():
