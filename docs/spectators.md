@@ -92,8 +92,10 @@ and validates every player's width before changing the buffer.
 
 Rows may arrive out of order within the current bounded window. No partial row
 or prediction is simulated. Rejected rows leave the accepted history unchanged.
-Local input submission, per-player `receive_input` and input-delay changes return
-`UNSUPPORTED`; use complete host rows.
+Local input submission, per-player `receive_input`, input-delay changes and
+player-mesh `set_confirmation_limit` calls return `UNSUPPORTED`; use complete host rows.
+Viewer confirmation follows the host rows consumed by playback. Player confirmation
+gates cannot withhold those rows from `confirmed_inputs` or change viewer confirmation.
 
 A local `FortressSession` host can export a caller-owned row with
 `confirmed_inputs(frame)`. It returns null unless the frame was simulated, is

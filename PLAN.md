@@ -373,7 +373,8 @@ known-allocation positive control; flat memory alone is insufficient.
 ## Advanced parity boundaries
 
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
-in-memory snapshots without changing the portable file format.
+in-memory snapshots without changing the portable file format. Viewer speed controls change
+only the bounded number of recorded frames serviced; each simulation step stays fixed.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Validated replay playback checks callback success and bounded snapshot status before
@@ -382,7 +383,8 @@ Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.
 The bounded confirmed-input spectator API shares the player request engine and
-supports delayed playback, caller-bounded catch-up and explicit host endings.
+supports delayed playback, caller-bounded catch-up and explicit host endings. Spectator
+confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
 Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
 Live SignalFish spectator routing, handshake/events and upstream spectator

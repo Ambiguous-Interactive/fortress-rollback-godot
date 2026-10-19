@@ -97,7 +97,9 @@ Raw duplicate submission is rejected; stalled-sample idempotence belongs to the
 session. Validate every local sample's metadata and list conflicts before retaining
 any valid prefix; rejection must leave corrected same-frame retries usable. Use
 bounded player-slot lookup for duplicate checks, rather than pairwise list scans.
-Queue-capacity failure remains a separate atomicity boundary.
+For driver lists, validate completeness before retaining a prefix too; an omitted local
+slot may already have an expert-staged sample. Rejected incomplete lists must allow changed
+buttons on retry. Queue-capacity failure remains a separate atomicity boundary.
 Prediction uses a frozen per-player episode, not global confirmation.
 Applied input statuses describe execution time: a matching late actual input can
 confirm history without replaying it, so retained trace rows may still say predicted.
@@ -142,6 +144,10 @@ with empty input, a delayed tail and a gap; direct advancement can conceal starv
 Include wrapper-owned staging payloads and frame tags in configuration storage
 reservations before allocation. Verify exact-budget acceptance and rejection one
 byte below it; a bounded extra ring still consumes the declared budget.
+
+Specialized session modes must audit inherited public mutators. A confirmed-only spectator
+cannot accept player-mesh confirmation limits: playback may succeed while exports lose
+their confirmed rows. Test public confirmation and row export alongside game state.
 
 ## Code Samples
 

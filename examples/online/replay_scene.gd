@@ -38,6 +38,7 @@ var _status: Label
 var _play: Button
 var _step_button: Button
 var _restart_button: Button
+var _speed: OptionButton
 var _target: SpinBox
 var _seek_button: Button
 var _cancel_button: Button
@@ -61,6 +62,16 @@ func _ready() -> void:
 	_step_button = _button(buttons, "Step", _step)
 	_restart_button = _button(buttons, "Restart", _restart)
 	_button(buttons, "Back to online", _back)
+	var speed_caption: Label = Label.new()
+	speed_caption.text = "Speed:"
+	buttons.add_child(speed_caption)
+	_speed = OptionButton.new()
+	_speed.name = "PlaybackSpeed"
+	for caption: String in ["¼×", "½×", "1×", "2×", "4×"]:
+		_speed.add_item(caption)
+	_speed.select(2)
+	_speed.item_selected.connect(_speed_selected)
+	buttons.add_child(_speed)
 	var navigation: HBoxContainer = HBoxContainer.new()
 	panel.add_child(navigation)
 	var caption: Label = Label.new()
@@ -132,6 +143,11 @@ func _step() -> void:
 	if viewer.is_playing:
 		viewer.toggle_play()
 	viewer.step()
+	_refresh()
+
+
+func _speed_selected(index: int) -> void:
+	viewer.set_playback_speed([1, 2, 4, 8, 16][index])
 	_refresh()
 
 

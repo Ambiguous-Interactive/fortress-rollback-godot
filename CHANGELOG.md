@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add replay playback speeds from ¼× to 4×. Frame stepping and navigation still use exact recorded frames.
+
 - Add expected and actual checksum values to replay failures, including navigation errors. The replay viewer shows both values at the failed frame.
 
 - Add spectator host keepalives for input stalls and paused viewers. Hosts must agree receiver support before sending the new packet kind.
@@ -73,6 +75,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix corrected driver retries after incomplete multiplayer input lists. Missing local samples are rejected before retaining other players’ buttons.
+
+- Fix spectator confirmation being restricted by player-only mesh controls. Played host-confirmed rows remain available for export.
 
 - Fix invalid game callback argument counts being accepted during driver, replay and diagnostic setup. Configuration now fails early and preserves any previous playback.
 

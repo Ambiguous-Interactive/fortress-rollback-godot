@@ -83,7 +83,7 @@ class Game:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure", "notifications", "input_validation"])
+	return PackedStringArray(["parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure", "notifications", "input_validation", "missing_samples"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -104,6 +104,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_notifications(context)
 		"input_validation":
 			_input_validation(context)
+		"missing_samples":
+			_missing_samples(context)
 	context.finish()
 
 
@@ -383,3 +385,58 @@ func _input_validation(context: RefCounted) -> void:
 	context.equal(driver.step(1, many).code, Types.Code.OK, "large identical duplicate list accepted")
 	context.equal(session.status().current_frame, 2, "large list advances only one frame")
 	context.equal(game.value, 104, "large list applies each player's input once")
+
+
+# Value: protects=incomplete-list retries; fails_when=missing slot retains prefix; why_new=metadata tests omit missing slots; seam=existing counter fixture
+func _missing_samples(context: RefCounted) -> void:
+	for count: int in [2, 4, 8]:
+		for missing: int in [0, count - 1]:
+			var config: RefCounted = Config.new()
+			config.player_count = count
+			config.local_players = PackedInt32Array()
+			for player: int in range(count):
+				config.local_players.append(player)
+			config.max_snapshot_bytes = 8
+			config.storage_budget_bytes = config.required_storage_bytes()
+			var session: RefCounted = Session.new()
+			context.equal(session.configure(config), Types.Code.OK, "multi-local configuration")
+			var game: Game = Game.new()
+			var driver: RefCounted = Driver.new(session, game)
+			var incomplete: Array[Driver.LocalInput] = []
+			for player: int in range(count):
+				if player != missing:
+					incomplete.append(Driver.LocalInput.new(player, 0, PackedByteArray([1])))
+			context.equal(driver.step(0, incomplete).code, Types.Code.MISSING_LOCAL_INPUT, "incomplete list rejected")
+			context.equal(game.trace.size(), 0, "incomplete list never invokes game")
+			for player: int in range(count):
+				context.equal(session.scheduled_local_input(player).code, Types.Code.MISSING_LOCAL_INPUT, "incomplete list retains no samples")
+			var complete: Array[Driver.LocalInput] = []
+			var expected: int = 0
+			for player: int in range(count):
+				complete.append(Driver.LocalInput.new(player, 0, PackedByteArray([player + 2])))
+				expected = expected * 3 + player + 2
+			context.equal(driver.step(1, complete).code, Types.Code.OK, "corrected list accepts newly sampled input")
+			context.equal(game.value, expected, "all corrected inputs simulated")
+	# Expert callers can stage a sample separately and omit it from the driver's list.
+	var session: RefCounted = _session()
+	var game: Game = Game.new()
+	var driver: RefCounted = Driver.new(session, game)
+	context.equal(session.submit_local_input(0, 0, PackedByteArray([3])).code, Types.Code.OK, "expert staged sample")
+	var rest: Array[Driver.LocalInput] = [Driver.LocalInput.new(1, 0, PackedByteArray([4]))]
+	context.equal(driver.step(0, rest).code, Types.Code.OK, "expert sample completes driver list")
+	context.equal(game.value, 13, "expert and driver samples combined")
+	# A rejected empty list must preserve samples already retained through the expert API.
+	var mixed_session: RefCounted = _session()
+	var mixed_driver: RefCounted = Driver.new(mixed_session, Game.new())
+	context.equal(mixed_session.submit_local_input(0, 0, PackedByteArray([3])).code, Types.Code.OK, "partial expert staging")
+	var omitted: Array[Driver.LocalInput] = []
+	context.equal(mixed_driver.step(0, omitted).code, Types.Code.MISSING_LOCAL_INPUT, "missing sample preserves expert staging")
+	context.bytes_equal(mixed_session.scheduled_local_input(0).bytes, PackedByteArray([3]), 0, "expert staged sample unchanged on missing input")
+	context.equal(mixed_driver.step(1, rest).code, Types.Code.OK, "expert staged sample remains retryable")
+	# Existing counter-boundary fixtures force exhaustion without simulating signed-64 frames.
+	for exhausted: String in ["_current", "_batch_id"]:
+		var exhausted_session: RefCounted = _session()
+		exhausted_session.set(exhausted, 2147483647 if exhausted == "_current" else 9223372036854775807)
+		var exhausted_driver: RefCounted = Driver.new(exhausted_session, Game.new())
+		context.equal(exhausted_driver.step(0, omitted).code, Types.Code.FRAME_EXHAUSTED, "exhaustion precedes missing local input")
+		context.equal(exhausted_session.status().lifecycle, Types.Lifecycle.TERMINATED, "missing input does not mask terminal exhaustion")
