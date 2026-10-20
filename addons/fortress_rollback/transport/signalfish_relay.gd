@@ -31,6 +31,11 @@ var _failure: int = Code.OK
 var _last_receive: int = Code.OK
 var _rejected: int = 0
 var _ignored: int = 0
+# Binary frames handed over by the SDK, refused ones included. A refused frame is still traffic.
+var _delivered: int = 0
+# Last poll's traffic and sends, so a caller can tell an idle transport from a busy one.
+var _activity: int = 0
+var _sent: int = 0
 var _busy: bool = false
 
 
@@ -117,6 +122,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 		return Types.Result.new(Code.INVALID_ARGUMENT)
 	_busy = true
 	var result: Types.Result = Types.Result.new()
+	var delivered: int = _delivered
 	for _index: int in mini(_options.max_receives_per_poll, _received.size()):
 		var incoming: Envelope.Decoded = _received[0]
 		if not _receive_token_ready:
@@ -182,8 +188,17 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 			result.sent += 1
 	if receive_pressure and result.code == Code.OK:
 		result.code = Code.BACKPRESSURE
+	result.activity = _delivered - delivered
+	_activity = result.activity
+	_sent = result.sent
 	_busy = false
 	return result
+
+
+## True when the last poll took nothing off the wire, sent nothing and holds no queued work.
+## A refused frame still counts as traffic, so valid work queued behind it is never left queued.
+func idle() -> bool:
+	return _activity == 0 and _sent == 0 and _pending.is_empty() and _received.is_empty()
 
 
 func status() -> Dictionary:
@@ -209,10 +224,14 @@ func detach() -> void:
 	_received_bytes = 0
 	_receive_token = null
 	_receive_token_ready = false
+	_delivered = 0
+	_activity = 0
+	_sent = 0
 	_failure = Code.OK
 
 
 func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> void:
+	_delivered += 1
 	var gate: int = _gate()
 	if gate != Code.OK:
 		_last_receive = gate

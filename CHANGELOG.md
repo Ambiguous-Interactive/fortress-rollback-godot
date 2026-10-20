@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add transport traffic reporting. `poll()` results now carry `activity`, the number of transport items taken off the wire, refused ones included, and the direct, relay and composed adapters expose `idle()`.
+
+- Stop the online example's service batch once the transport is idle. A busy or refused route keeps the whole bounded batch, so a slow link still drains while an idle page stops spending its frame budget on repeated polls.
+
 - Add explicit local ownership of the shared reference cache. A second local probe reports who owns the cache instead of deleting the first run's logs.
 
 - Add `make prune`, `make prune-apply`, `make disk` and `make scratch` to keep the machine-local caches and scratch bounded. The pruner never removes a path a tracked file names, never removes a tree a running session still holds, and a dry run is the default.

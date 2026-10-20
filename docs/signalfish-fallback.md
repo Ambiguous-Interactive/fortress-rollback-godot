@@ -59,6 +59,31 @@ limit is the smaller of the direct and relay limits. Refusal leaves all caller
 bytes owned by the caller. Unsent direct packets return to coordinator ownership
 with their original frozen destination and exact payload bytes.
 
+## Idle routes and bounded service batches
+
+`poll()` returns the traffic it moved. `activity` counts the transport items it
+took off the wire, refused ones included: a packet the transport consumed and
+then refused is still traffic, and valid work can sit behind it. `sent` counts
+published packets. `idle()` is true when the composed routes took nothing off
+the wire, sent nothing and hold no queued work.
+
+A caller can therefore service in a bounded batch and stop as soon as the route
+is idle, instead of spending a whole frame budget on repeated polls:
+
+```gdscript
+for _round: int in 8:
+    if not _poll_protocol(now_us):
+        break
+    if not _service_transport(now_us):
+        break
+    if retained.is_empty() and fallback.idle():
+        break
+```
+
+A busy route keeps the whole batch, so a slow or refused route still drains its
+queue. The caller's own retained batch counts as queued work: a refused batch
+keeps the batch alive until the transport accepts it.
+
 ## Routing and limits
 
 Routing runs on outgoing work with nonnegative, monotonic injected microseconds.

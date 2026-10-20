@@ -310,6 +310,9 @@ records its loss regression and delivery gate.
 The bounded fallback coordinator routes individual unready links through relay
 and restores ready direct channels in the same rollback session. Injected
 three-peer tests cover overlapping delivery and corrected canonical game history.
+Transport polls report the traffic they moved, refused packets included, so a
+bounded service batch can stop on an idle route without leaving valid bytes
+queued behind refused traffic.
 Exported Chromium also exercises actual mixed-path packets under injected
 single-link send pressure, using default and selected work budgets on both pins.
 It correlates one input packet across direct and relay receipt, requires restored

@@ -229,6 +229,10 @@ Godot also bounds physics catch-up to eight ticks per rendered frame by default.
 Each of the eight service rounds permits one additional protocol poll after
 draining diagnostic pressure, before receiving buffered bytes. Freeing a full
 event or trace bank must not allow a completion reply to overtake expiry.
+The service batch stops early once the transport is idle: a route that neither
+moved bytes nor holds queued work has nothing left to do this frame, so the
+remaining budget belongs to the game and the browser. A refused packet still
+counts as traffic, so valid bytes queued behind it are never left unread.
 
 The running protocol expires after more than two seconds without an accepted
 remote packet. Initial rollback synchronization has a 30-second application
