@@ -4,6 +4,10 @@
 
 ### Added
 
+- Report the elapsed time of every test case. The scenario runner measures each case with an injected clock, the native runner injects a deterministic tick clock, and the exported browser host injects the real host clock. A rejected browser run now names the last completed case, how long it took and the case that was in flight. The canonical results are unchanged.
+
+- Copy snapshot bytes with one native append instead of one interpreted step per byte. A game that saves 4 KiB of state per frame now spends about 3 microseconds on the write instead of about 60, and the writer no longer reserves its full capacity up front. The saved bytes, the overflow behavior and the caller-owned copy are unchanged.
+
 - Add `driver.status()` and `driver.statistics()`. A client that only holds the driver now reads the current frame, the confirmed frame, the lifecycle and the counters.
 
 - Add the session's terminal `reason` and `failure_frame` to every driver and peer step result. A desync or a callback failure is no longer reported as a plain stop.

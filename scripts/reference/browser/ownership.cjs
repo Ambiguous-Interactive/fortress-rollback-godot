@@ -4,6 +4,18 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
+// Name the last completed case, its elapsed time and the case in flight.
+function summarize(progress) {
+  if (!progress) return null;
+  const unit = progress.unit || 'unit';
+  const parts = [`completed ${progress.completed}`];
+  const last = progress.last_completed;
+  if (last) parts.push(`last completed ${last.case} in ${last.elapsed}${unit}`);
+  const executing = progress.executing;
+  if (executing) parts.push(`executing ${executing.case}`);
+  return parts.join('; ');
+}
+
 (async () => {
   const root = path.resolve(process.argv[2]);
   const errors = [];
@@ -44,11 +56,13 @@ const path = require('node:path');
         detail.reported = null;
         detail.page_error = String(page_error).slice(0, 200);
       }
-      // The page publishes the case that was executing and the number of
-      // completed cases, so a rejected run names where it stopped.
+      // The page publishes the case that was executing, the number of
+      // completed cases and the time the last completed case took, so a
+      // rejected run names where it stopped and how long it took.
       try {
         const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
         detail.progress = progress === undefined ? null : JSON.parse(progress);
+        detail.summary = summarize(detail.progress);
       } catch (progress_error) {
         detail.progress = null;
         detail.progress_error = String(progress_error).slice(0, 200);

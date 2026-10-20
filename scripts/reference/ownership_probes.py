@@ -165,14 +165,22 @@ func _ready() -> void:
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
-\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress)
+\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
-\n\n## A rejected run must name the case that was executing, so a slow run can be told
-## apart from an engine or script failure.
+\n\n## A rejected run must name the case that was executing and the time the last
+## completed case took, so a slow run can be told apart from an engine or
+## script failure.
 func _publish_progress(value: Dictionary) -> void:
-\tvar progress: String = JSON.stringify(value)
-\tJavaScriptBridge.eval("document.body.dataset.fortressOwnershipProgress = " + JSON.stringify(progress))
+\tvar progress: Dictionary = value.duplicate()
+\tprogress["unit"] = "us"
+\tvar text: String = JSON.stringify(progress)
+\tJavaScriptBridge.eval("document.body.dataset.fortressOwnershipProgress = " + JSON.stringify(text))
+
+\n\n## The browser host injects the real host clock, so the reported elapsed times
+## are the time each case actually took.
+func _clock() -> int:
+\treturn Time.get_ticks_usec()
 '''
 
 
