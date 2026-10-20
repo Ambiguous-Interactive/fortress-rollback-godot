@@ -246,7 +246,7 @@ for the same non-mutating checks before calling `submit_local_input`.
 
 Set `config.replay_max_frames` before `configure` to record confirmed inputs as the match runs.
 Recording keeps the first frames and stops when full. At 60 frames per second, 216000 frames
-cover an hour; memory is about `replay_max_frames * (player_count * input_width + 17)` bytes,
+cover an hour; memory is about `replay_max_frames * (player_count * input_width + 33)` bytes,
 outside `storage_budget_bytes`.
 
 ```gdscript

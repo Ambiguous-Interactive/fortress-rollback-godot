@@ -358,6 +358,16 @@ func _protects_input_rows(context: RefCounted) -> void:
 		code = sparse_player.step()
 	context.equal(code, Types.Code.DESYNC, "a corrupted row without a later state checksum stops playback")
 	context.equal(sparse_player.failure_frame(), 1, "the owning frame reports the failure")
+	# A recording without its recorded digests cannot be verified and is refused.
+	var stripped: Replay = _decode(bytes)
+	stripped._digests = PackedByteArray()
+	var stripped_player: Player = Player.new()
+	context.equal(stripped_player.configure(stripped, Game.new(), Game.SNAPSHOT_BYTES), Types.Code.OK, "stripped player configures")
+	code = Types.Code.OK
+	while code == Types.Code.OK:
+		code = stripped_player.step()
+	context.equal(code, Types.Code.DESYNC, "a recording without its input digests is refused")
+	context.equal(stripped_player.failure_frame(), 0, "the refusal names the first unverified frame")
 
 
 func _bounds_recording(context: RefCounted) -> void:

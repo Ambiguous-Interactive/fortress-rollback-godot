@@ -328,12 +328,24 @@ func _scheduling_gaps(context: RefCounted) -> void:
 	context.equal(backwards.summary()["turns"], 1, "a backwards clock is ignored")
 	# A turn before the match runs stamps no frame, so setup time is not a confirmation wait.
 	var setup: Bridge.Scheduling = Bridge.Scheduling.new()
-	setup.record_turn(0, 0, -1, -1)
-	setup.record_turn(5000000, 5000000, -1, -1)
-	setup.record_turn(5100000, 5100000, 1, 0)
-	setup.record_turn(5200000, 5200000, 1, 1)
+	setup.record_turn(0, 0, 1, 0, false)
+	setup.record_turn(5000000, 5000000, 1, 0, false)
+	setup.record_turn(5100000, 5100000, 1, 0, true)
+	setup.record_turn(5200000, 5200000, 1, 1, true)
 	context.equal(setup.summary()["confirmed_frames"], 2, "only running frames are counted")
 	context.equal(setup.summary()["confirmation_max_gap_us"], 100000, "setup time is not a confirmation wait")
+	# A single turn has no gap, and the summary still names one nominal turn.
+	var single: Bridge.Scheduling = Bridge.Scheduling.new()
+	single.record_turn(1000, 1000, 1, 0)
+	context.equal(single.summary()["turns"], 1, "a single turn is counted")
+	context.equal(single.summary()["max_gap_us"], 0, "a single turn has no gap")
+	context.equal(single.summary()["max_gap_turns"], 1, "a single turn names one nominal turn")
+	context.equal(single.summary()["confirmation_max_gap_turns"], 1, "an unconfirmed frame names one nominal turn")
+	# A new room restarts the transport clock, so the covered time never goes backwards.
+	var restarted_clock: Bridge.Scheduling = Bridge.Scheduling.new()
+	restarted_clock.record_turn(0, 500000, 1, 0)
+	restarted_clock.record_turn(16667, -1, 1, 1)
+	context.equal(restarted_clock.summary()["max_gap_transport_us"] >= 0, true, "a restarted transport clock never reports negative time")
 	# A new room restarts the summary.
 	var restarted: Bridge.Scheduling = Bridge.Scheduling.new()
 	restarted.record_turn(0, 0, 1, 0)

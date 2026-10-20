@@ -238,8 +238,9 @@ The browser witness publishes the host's service cadence with the room state: th
 largest wall-clock gap between consecutive service turns, the nominal fixed-tick
 turns that pause covered, the transport time it spans and the longest wait from a
 submitted local frame to its confirmed receipt. A starved host and a transport
-that lost bytes therefore look different in the same room. The summary stays out
-of the canonical game state, the retained diagnostics and any recording.
+that lost bytes therefore look different in the same room. The counters describe
+one room and restart with the next one. The summary stays out of the canonical
+game state, the retained diagnostics and any recording.
 
 The running protocol expires after more than two seconds without an accepted
 remote packet. Initial rollback synchronization has a 30-second application

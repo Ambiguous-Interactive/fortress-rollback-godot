@@ -47,8 +47,8 @@ class Scheduling:
 		_submitted.clear()
 
 	## One service turn: the host clock, the elapsed transport clock and the local/confirmed frames.
-	## A frame count below zero means the match is not running, so no frame is stamped as submitted.
-	func record_turn(now_us: int, transport_us: int, current: int, confirmed: int) -> void:
+	## A turn outside a running match stamps no frame, so room setup is not a confirmation wait.
+	func record_turn(now_us: int, transport_us: int, current: int, confirmed: int, running: bool = true) -> void:
 		if now_us < _last_turn_us:
 			return
 		if _last_turn_us >= 0:
@@ -61,7 +61,7 @@ class Scheduling:
 		turns += 1
 		_last_turn_us = now_us
 		_last_transport_us = transport_us
-		if current < 0 or confirmed < 0:
+		if not running or current < 0 or confirmed < 0:
 			return
 		if current > _last_current:
 			for frame: int in range(_last_current + 1, current + 1):
@@ -106,6 +106,13 @@ class ObservedLobby:
 
 	var _observed_match: Variant = null
 
+	## A new room starts a new summary, so the counters describe one room.
+	func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
+		var code: Error = super.connect_room(endpoint, player_name, room, now_us)
+		_observed_match = game_match
+		scheduling.reset()
+		return code
+
 	func tick(now_us: int, buttons: int) -> void:
 		# A new room starts a new summary, so the counters describe one room.
 		if game_match != _observed_match:
@@ -136,7 +143,7 @@ class ObservedLobby:
 		var playing: bool = state == "playing"
 		var status: Variant = game_match.peer.status()
 		scheduling.record_turn(now_us, game_match.peer.network_status().last_now_us,
-			status.current_frame if playing else -1, status.confirmed_frame if playing else -1)
+			status.current_frame, status.confirmed_frame, playing)
 
 
 class ObservedGame:

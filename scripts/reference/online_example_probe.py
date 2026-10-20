@@ -115,7 +115,12 @@ SCHEDULING_FIELDS = ('turns', 'ticks_per_second', 'max_gap_us', 'max_gap_turns',
 
 
 def validate_scheduling(summary, confirmed=None):
-    """The host's service cadence and confirmation waits must be published for every room."""
+    """The host's service cadence and confirmation waits must be published for every room.
+
+    The counters describe one room: the page restarts them with the next room.
+    ``confirmed_frames`` counts the frames the page saw confirmed, so it cannot
+    exceed the room's own confirmed frontier by more than the frontier's first frame.
+    """
     if (not isinstance(summary, dict) or set(summary) != set(SCHEDULING_FIELDS)
             or any(type(summary.get(field)) is not int or summary[field] < 0 for field in SCHEDULING_FIELDS)
             or summary['turns'] < 1 or summary['ticks_per_second'] < 1):
