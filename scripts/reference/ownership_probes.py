@@ -229,7 +229,7 @@ def validate(result, negative):
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
-               'docs/reference/pins.json', 'project.godot']
+               'scripts/reference/local_ownership.py', 'docs/reference/pins.json', 'project.godot']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
 
 
@@ -254,7 +254,7 @@ def main():
 
 
 def run_probes(args, results):
-    begin_results(results, 'ownership.json', [p.name for p in results.glob('ownership-*.log')])
+    begin_results(results, 'ownership.json', [p.name for p in results.glob('ownership-*.log')] + ['ownership-rounds.json'])
     # Bounded per-round observations. A watchdog rejects the run before it
     # can print its own inventory, so the round that was executing is
     # written down as it starts and stays on disk when the run fails.
@@ -392,7 +392,8 @@ def run_probes(args, results):
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
     verify_sources(frozen_sources)
-    report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701', 'rounds': rounds,
+    report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
+              'rounds': [{'label': entry['label'], 'outcome': entry['outcome']} for entry in rounds],
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
               'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '

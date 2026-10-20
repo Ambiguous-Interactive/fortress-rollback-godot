@@ -9,8 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
-from engine import resolve_engine
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
+from engine_path import resolve_engine
 from fetch import retain_verified_tree
 from receipt_arguments import ReceiptParser
 from queue_contract import compare, validate_bundle
@@ -112,7 +112,7 @@ def startup_divergence(binary, game_command, output):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/queue')
     args = parser.parse_args()
@@ -187,7 +187,7 @@ def main():
               'bundle_sha256': digest(fixture), 'rust_trace_sha256': digest(args.output / 'rust-trace.json'),
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),
               'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
-                  list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py')) + [ROOT / 'scripts/oracle/engine.py']
+                  list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py')) + [ROOT / 'scripts/reference/engine_path.py']
                   + [ROOT / 'scripts/oracle/rust/src/bin/queue.rs', ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py'])},
               'limitations': ['Raw queue only; no session confirmation, prediction window, transport or rollback history.',
                               'Zero neutral input in differential corpus; custom neutral verified independently.',

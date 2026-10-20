@@ -10,8 +10,8 @@ import struct
 import subprocess
 import zipfile
 
-from engine import resolve_engine
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
+from engine_path import resolve_engine
 from fetch import fetch
 from receipt_arguments import ReceiptParser
 
@@ -204,7 +204,7 @@ def verified_engine(engine, manifest, offline):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='replay.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/replay')
     parser.add_argument('--offline', action='store_true')
     args = parser.parse_args()

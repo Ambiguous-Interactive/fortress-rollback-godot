@@ -11,8 +11,9 @@ These tests cover the resolver and every launcher entry point:
 * a bare name on `PATH`, a relative path and an absolute path resolve to
   the same executable bytes;
 * a name that names nothing fails with a readable message;
-* every launcher accepts a name from `PATH` and rejects a name that
-  names nothing, before it starts the expensive work.
+* every launcher resolves the engine once, before it starts the
+  expensive work, and uses that resolved path for the version probe, the
+  execution, the digest and the receipt.
 """
 
 import hashlib
@@ -27,25 +28,31 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 
-from engine import resolve_engine
+from engine_path import resolve_engine
 
 ORACLE = Path(__file__).resolve().parent
 
-# Every launcher that takes `--godot`, with the receipt it writes and the
-# calls that stand in for the expensive work.
+# Every launcher that takes `--godot`, with the receipt it writes, the
+# calls that stand in for the expensive work, and the exact expressions
+# that must use the resolved path.
 LAUNCHERS = {
-    'launch.py': ('receipt.json', ('sources',)),
-    'queue_launch.py': ('receipt.json', ('sources', 'observation_source')),
-    'replay_launch.py': ('replay.json', ('sources', 'verified_engine')),
-    'handshake_launch.py': ('receipt.json', ('sources', 'ensure_jar')),
-    'p2p_launch.py': ('receipt.json', ('sources',)),
+    'launch.py': ('receipt.json', ('sources',), ("'engine_path': str(engine)", "execute([str(engine), '--version']", 'digest(engine)')),
+    'queue_launch.py': ('receipt.json', ('sources', 'observation_source'),
+                        ("'engine_path': str(engine)", "execute([str(engine), '--version']", 'digest(engine)')),
+    'replay_launch.py': ('replay.json', ('sources', 'verified_engine'),
+                         ('engine_path=str(engine)', 'digest(engine) != engine_hash')),
+    'handshake_launch.py': ('receipt.json', ('sources', 'ensure_jar'),
+                            ("'engine_path': str(engine)", "execute([str(engine), '--version']", 'digest(engine)')),
+    'p2p_launch.py': ('receipt.json', ('sources',),
+                      ("'engine_path': str(engine)", "execute([str(engine), '--version']", 'executable_identity(engine)')),
 }
 
 RESOLVER = (
     'import sys;'
-    'sys.path.insert(0, {oracle!r});'
-    'from engine import resolve_engine;'
+    'sys.path.insert(0, {reference!r});'
+    'from engine_path import resolve_engine;'
     'print(resolve_engine(sys.argv[1]))'
 )
 
@@ -63,8 +70,8 @@ def executable(path: Path) -> Path:
 
 def resolve_in_subprocess(candidate: str, environment=None, cwd=None) -> str:
     """Resolve a candidate in a fresh process and return its standard output."""
-    result = subprocess.run([sys.executable, '-c', RESOLVER.format(oracle=str(ORACLE)), candidate],
-                            capture_output=True, text=True, env=environment, cwd=cwd)
+    result = subprocess.run([sys.executable, '-c', RESOLVER.format(reference=str(ORACLE.parent / 'reference')),
+                             candidate], capture_output=True, text=True, env=environment, cwd=cwd)
     if result.returncode:
         raise AssertionError(result.stderr.strip() or 'resolver failed')
     return result.stdout.strip()
@@ -84,6 +91,16 @@ class ResolutionTest(unittest.TestCase):
             self.assertEqual(by_name, str(engine))
             self.assertEqual(by_relative, str(engine))
             self.assertEqual(by_absolute, str(engine))
+
+    def test_a_relative_path_is_not_redirected_to_the_path(self):
+        """`./godot` names the file in the working directory, not a name on PATH."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            local = executable(root / 'godot')
+            other = Path(tempfile.mkdtemp())
+            executable(other / 'godot')
+            environment = dict(os.environ, PATH=str(other) + os.pathsep + os.environ.get('PATH', ''))
+            self.assertEqual(resolve_in_subprocess('./godot', environment=environment, cwd=root), str(local))
 
     def test_the_resolved_executable_identifies_the_same_bytes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -131,7 +148,7 @@ class LauncherEntryPointTest(unittest.TestCase):
         error it raised, if any.
         """
         module = importlib.import_module(name[:-3])
-        _, stand_ins = LAUNCHERS[name]
+        _, stand_ins, _ = LAUNCHERS[name]
         directory = Path(tempfile.mkdtemp())
         try:
             output = directory / 'out'
@@ -156,19 +173,29 @@ class LauncherEntryPointTest(unittest.TestCase):
         finally:
             shutil.rmtree(directory, ignore_errors=True)
 
-    def test_every_launcher_accepts_an_engine_named_on_the_path(self):
+    def test_every_launcher_resolves_the_candidate_once_and_uses_that_path(self):
+        """The launcher must resolve the raw name, not a path built from it."""
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            executable(root / 'godot')
+            engine = executable(root / 'godot')
             environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ.get('PATH', ''))
             for name in LAUNCHERS:
                 with self.subTest(launcher=name), patch.dict(os.environ, environment, clear=True):
-                    outcome = self.launch(name, 'godot')
+                    module = importlib.import_module(name[:-3])
+                    seen = []
+
+                    def spy(candidate, _seen=seen):
+                        _seen.append(candidate)
+                        return resolve_engine(candidate)
+
+                    with patch.object(module, 'resolve_engine', side_effect=spy):
+                        outcome = self.launch(name, 'godot')
+                    self.assertEqual(seen, ['godot'], f'{name} did not resolve the candidate it was given')
                     self.assertIsNone(outcome['error'], f'{name} rejected a name from PATH: {outcome["error"]}')
                     self.assertTrue(outcome['reached_work'], f'{name} did not reach the work it starts')
 
     def test_every_launcher_rejects_a_name_that_names_nothing(self):
-        for name, (receipt_name, _) in LAUNCHERS.items():
+        for name, (receipt_name, _, _) in LAUNCHERS.items():
             with self.subTest(launcher=name):
                 outcome = self.launch(name, 'godot-that-is-not-installed')
                 self.assertIsNotNone(outcome['error'], f'{name} accepted an engine that does not exist')
@@ -177,7 +204,7 @@ class LauncherEntryPointTest(unittest.TestCase):
                 self.assertEqual(outcome['files'], [], 'the engine must be resolved before the build')
 
     def test_a_missing_engine_fails_in_a_fresh_process_without_building_anything(self):
-        for name, (receipt_name, _) in LAUNCHERS.items():
+        for name, (receipt_name, _, _) in LAUNCHERS.items():
             with self.subTest(launcher=name), tempfile.TemporaryDirectory() as temporary:
                 output = Path(temporary) / 'out'
                 receipt = output / receipt_name
@@ -192,14 +219,15 @@ class LauncherEntryPointTest(unittest.TestCase):
                                  'the engine must be resolved before the toolchain and the build')
 
 
-class ReceiptIdentityTest(unittest.TestCase):
-    """A receipt names the executable that ran, so two spellings agree."""
+class ResolvedPathUseTest(unittest.TestCase):
+    """The resolved path, not the raw name, reaches the probe and the receipt."""
 
-    def test_the_receipt_records_the_resolved_path(self):
-        for name in LAUNCHERS:
+    def test_every_launcher_uses_the_resolved_path(self):
+        for name, (_, _, expressions) in LAUNCHERS.items():
             with self.subTest(launcher=name):
                 source = (ORACLE / name).read_text(encoding='utf-8')
-                self.assertTrue('engine_path' in source or 'engine_identity' in source)
+                for expression in expressions:
+                    self.assertIn(expression, source)
 
 
 if __name__ == '__main__':

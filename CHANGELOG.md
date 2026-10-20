@@ -106,6 +106,8 @@
 
 - Fix the oracle launchers so the documented `make` commands find a Godot engine installed on `PATH`. The engine is resolved before the Rust toolchain is installed, and the receipt names the executable that ran.
 
+- Apply one engine-resolution rule to every probe and launcher. A name on `PATH`, a relative path and an absolute path now resolve the same way, and a name that names nothing fails with a readable message.
+
 - Keep the browser error inventory when the ownership watchdog rejects a run, and record each ownership round as it starts, so a timeout names the round that was running.
 
 

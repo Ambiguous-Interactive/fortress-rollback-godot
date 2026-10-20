@@ -40,16 +40,22 @@ class ClaimTest(unittest.TestCase):
             pass
 
     def test_a_claim_waits_for_the_holder(self):
-        def holder():
-            time.sleep(0.6)
-            with self.claim():
-                pass
+        outcomes = []
 
-        thread = threading.Thread(target=holder)
-        thread.start()
-        with self.claim(timeout=5.0):
-            pass
+        def second():
+            try:
+                self.claim(timeout=10.0)
+                outcomes.append('acquired')
+            except ValueError as error:
+                outcomes.append(str(error))
+
+        with self.claim():
+            thread = threading.Thread(target=second)
+            thread.start()
+            time.sleep(0.5)
+            self.assertEqual(outcomes, [], 'the second claim must wait, not fail')
         thread.join()
+        self.assertEqual(outcomes, ['acquired'])
 
     def test_different_resources_do_not_block_each_other(self):
         with self.claim('ownership'):

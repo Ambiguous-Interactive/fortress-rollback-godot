@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import ROOT, CACHE, digest, load_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import setup_rust, rust_environment
-from engine import resolve_engine
 from launch import execute
+from engine_path import resolve_engine
 from p2p_contract import validate, validate_scenario, compare, REVISION
 from p2p_controls import process_controls
 import p2p_lifecycle_corpus
@@ -190,7 +190,7 @@ def require_unchanged(label, original, current):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--case')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/p2p-oracle')
@@ -268,7 +268,8 @@ def main():
         'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, encoding='utf-8').strip(),
         'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, encoding='utf-8')),
         'engine': engine_version.strip(), 'engine_sha256': engine_identity['sha256'], 'binary_sha256': binary_identity['sha256'],
-        'engine_identity': engine_identity, 'binary_identity': binary_identity, 'execution_identities_unchanged': True,
+        'engine_identity': engine_identity, 'engine_path': str(engine),
+        'binary_identity': binary_identity, 'execution_identities_unchanged': True,
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'default_features': False, 'features': [],
         'process_controls': process_evidence, 'cases': evidence}, indent=2) + '\n')
 
