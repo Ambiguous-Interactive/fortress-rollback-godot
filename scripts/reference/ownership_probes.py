@@ -165,7 +165,12 @@ func _ready() -> void:
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
-\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
+\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress)
+\n\n## A rejected run must name the case that was executing, so a slow run can be told
+## apart from an engine or script failure.
+func _publish_progress(value: Dictionary) -> void:
+\tvar text: String = JSON.stringify(value)
+\tJavaScriptBridge.eval("document.body.dataset.fortressOwnershipProgress = " + JSON.stringify(text))
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
 '''

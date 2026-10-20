@@ -110,6 +110,22 @@ def validate_replay_download(value, expected_engine, round_record):
     return frames
 
 
+SCHEDULING_FIELDS = ('turns', 'ticks_per_second', 'max_gap_us', 'max_gap_turns', 'max_gap_transport_us',
+                     'confirmation_max_gap_us', 'confirmation_max_gap_turns', 'confirmed_frames')
+
+
+def validate_scheduling(summary):
+    """The host's service cadence and confirmation waits must be published for every room."""
+    if (not isinstance(summary, dict) or set(summary) != set(SCHEDULING_FIELDS)
+            or any(type(summary.get(field)) is not int or summary[field] < 0 for field in SCHEDULING_FIELDS)
+            or summary['turns'] < 1 or summary['ticks_per_second'] < 1):
+        raise ValueError('online example scheduling summary missing or malformed')
+    ticks = summary['ticks_per_second']
+    for gap, turns in (('max_gap_us', 'max_gap_turns'), ('confirmation_max_gap_us', 'confirmation_max_gap_turns')):
+        if summary[turns] != max(1, summary[gap] * ticks // 1000000):
+            raise ValueError('online example scheduling gap disagrees with its nominal turn count')
+
+
 def validate_suspension(record, expired):
     evidence = record.get('suspension', {})
     label, duration = ('expired', 2500) if expired else ('short', 750)
@@ -349,6 +365,7 @@ def validate_result(value, corrupt=False, expected_engine=None):
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
                     or (peer.get('state') != 'playing' and not intended_desync) or peer.get('room') != record['room']):
                 raise ValueError('online example rollback or confirmation missing')
+            validate_scheduling(peer.get('scheduling'))
             page_index = peer['page_index']
             first, second = (2, 8) if page_index == 0 else (4, 1)
             if first not in peer['inputs'] or second not in peer['inputs']:

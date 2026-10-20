@@ -85,7 +85,11 @@ def evidence():
                       'uuid': f'00000000-0000-0000-0000-{slot + 1:012}', 'direct_rejected': 0,
                       'room_id': '00000000-0000-0000-0000-000000000001', 'failure': '',
                       'snapshots': {str(frame): state for frame, state in states.items()},
-                      'rtc': {'channels': channels}, 'delayed': 25})
+                      'rtc': {'channels': channels}, 'delayed': 25,
+                      'scheduling': {'turns': 240, 'ticks_per_second': 60, 'max_gap_us': 50000,
+                                     'max_gap_turns': 3, 'max_gap_transport_us': 50000,
+                                     'confirmation_max_gap_us': 33334, 'confirmation_max_gap_turns': 2,
+                                     'confirmed_frames': 110}})
     rounds = [{'room': room, 'peers': copy.deepcopy(peers), 'teardown': [
         {'channels': 3 * (index + 1), 'channels_closed': 3 * (index + 1), 'connections': index + 1,
          'connections_closed': index + 1, 'ice_closed': index + 1, 'websockets': index + 1,
@@ -285,6 +289,28 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             changed = evidence()
             changed['rounds'][0]['diagnostics'] = downloads
             with self.subTest(count=len(downloads)), self.assertRaisesRegex(ValueError, 'missing real diagnostic downloads'):
+                validate_result(changed)
+
+    # Value: protects=published host scheduling gaps; fails_when=a room omits or fakes the cadence; why_new=#147 needs the stall evidence
+    def test_scheduling_summary_is_required_and_consistent(self):
+        original = evidence()
+        self.assertIs(validate_result(original), original)
+        for label, mutate in (
+                ('missing', lambda summary: summary.pop('max_gap_us')),
+                ('empty', lambda summary: summary.clear()),
+                ('not a dict', lambda summary: None),
+                ('negative gap', lambda summary: summary.update(max_gap_us=-1)),
+                ('no turns', lambda summary: summary.update(turns=0)),
+                ('fractional turn', lambda summary: summary.update(turns=1.5)),
+                ('inconsistent turns', lambda summary: summary.update(max_gap_turns=99)),
+                ('inconsistent confirmation turns', lambda summary: summary.update(confirmation_max_gap_turns=99))):
+            changed = evidence()
+            summary = changed['rounds'][0]['peers'][0]['scheduling']
+            if label == 'not a dict':
+                changed['rounds'][0]['peers'][0]['scheduling'] = None
+            else:
+                mutate(summary)
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'scheduling summary missing or malformed|disagrees with its nominal turn count'):
                 validate_result(changed)
 
     # Value: protects=standalone runtime-only install; fails_when=missing licenses/files or overwrites; why_new=browser staging was handwritten; seam=none

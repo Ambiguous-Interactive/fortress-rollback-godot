@@ -94,7 +94,7 @@ class Client:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "idle_batch", "terminal_callbacks", "handshake_timeout",
-		"observer_history", "viewer_lifetime"])
+		"observer_history", "viewer_lifetime", "scheduling_gaps"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -154,6 +154,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_idle_batch(context)
 		"live_driver":
 			_live_driver(context)
+		"scheduling_gaps":
+			_scheduling_gaps(context)
 	context.finish()
 
 
@@ -281,6 +283,49 @@ func _retained_batch(context: RefCounted) -> void:
 	fixture.client.free()
 
 
+# Value: protects=published host scheduling gaps; fails_when=a stalled turn is invisible or an idle schedule reports one;
+# why_new=#125 and #132 cannot separate a starved host from lost transport; seam=actual observer clock
+func _scheduling_gaps(context: RefCounted) -> void:
+	# A known schedule: ten service turns on an injected clock, one frame in flight.
+	var steady: Bridge.Scheduling = Bridge.Scheduling.new()
+	var now: int = 1000
+	for turn: int in 10:
+		steady.record_turn(now, now - 500, turn + 1, turn)
+		now += 16667
+	var summary: Dictionary = steady.summary()
+	context.equal(summary["turns"], 10, "every service turn is counted")
+	context.equal(summary["max_gap_us"], 16667, "the largest pause is the longest turn gap")
+	context.equal(summary["max_gap_turns"], 1, "one nominal tick covers the pause")
+	context.equal(summary["max_gap_transport_us"], 16667, "the pause covers the same transport time")
+	context.equal(summary["confirmed_frames"], 10, "every confirmed frame is counted")
+	context.equal(summary["confirmation_max_gap_us"], 16667, "a confirmed frame reports one turn of waiting")
+	# The same schedule on a different injected clock reports a different summary.
+	var slower: Bridge.Scheduling = Bridge.Scheduling.new()
+	now = 1000
+	for turn: int in 10:
+		slower.record_turn(now, now - 500, turn + 1, turn)
+		now += 33334
+	context.equal(slower.summary()["max_gap_us"], 33334, "a slower clock reports a longer pause")
+	context.equal(slower.summary()["max_gap_turns"], 2, "the slower pause covers two nominal ticks")
+	context.equal(slower.summary()["confirmation_max_gap_us"], 33334, "the slower clock waits longer for confirmation")
+	# A stalled turn is visible in the summary.
+	var stalled: Bridge.Scheduling = Bridge.Scheduling.new()
+	stalled.record_turn(0, 0, 1, 0)
+	stalled.record_turn(500000, 500000, 1, 1)
+	context.equal(stalled.summary()["max_gap_us"], 500000, "a stalled turn is visible")
+	context.equal(stalled.summary()["max_gap_turns"], 30, "the stall covers thirty nominal ticks")
+	context.equal(stalled.summary()["confirmation_max_gap_us"], 500000, "the stalled turn also delays confirmation")
+	# A control that omits the stall reports no stall.
+	var uninterrupted: Bridge.Scheduling = Bridge.Scheduling.new()
+	uninterrupted.record_turn(0, 0, 1, 0)
+	uninterrupted.record_turn(16667, 16667, 1, 1)
+	context.equal(uninterrupted.summary()["max_gap_us"], 16667, "an uninterrupted schedule reports only its own pause")
+	context.equal(uninterrupted.summary()["max_gap_turns"], 1, "an uninterrupted schedule claims no stall")
+	# A backwards clock is the lobby's failure, not a gap.
+	var backwards: Bridge.Scheduling = Bridge.Scheduling.new()
+	backwards.record_turn(1000, 1000, 1, 0)
+	backwards.record_turn(500, 500, 1, 0)
+	context.equal(backwards.summary()["turns"], 1, "a backwards clock is ignored")
 # Value: protects=idle service batches; fails_when=an idle route repeats the whole bounded batch; why_new=the retained case only covers refusal; seam=actual example tick
 func _idle_batch(context: RefCounted) -> void:
 	var fixture: Dictionary = _fixture(context, U)

@@ -121,6 +121,16 @@ class OwnershipReceiptTests(unittest.TestCase):
                 if mutation not in ('staged_copy', 'relocated_copy'):
                     self.assertTrue(list(output.glob('ownership-*-native.log')), 'execution logs survive rejection')
 
+    def test_interrupted_run_publishes_and_retains_case_progress(self):
+        # A rejected run must name the case that was executing, so a slow run
+        # can be told apart from an engine or script failure.
+        self.assertIn('_publish_progress', probes.HOST)
+        self.assertIn('fortressOwnershipProgress', probes.HOST)
+        self.assertIn('PackedStringArray(), _publish_progress)', probes.HOST)
+        runner = (probes.ROOT / 'scripts/reference/browser/ownership.cjs').read_text(encoding='utf-8')
+        self.assertIn('fortressOwnershipProgress', runner)
+        self.assertIn('detail.progress', runner)
+
     def test_complete_inventory(self):
         self.assertEqual(probes.validate(result(), False)['count'], probes.EXPECTED_COUNT)
 

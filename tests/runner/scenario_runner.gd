@@ -6,9 +6,12 @@ const Context = preload("res://tests/runner/test_context.gd")
 # No SceneTree, nodes, timers or filesystem discovery: browser hosts can call
 # execute with the same scripts, category selection and scenario seed.
 # A nonempty case_names runs only those exact case names, in inventory order.
-func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int, case_names: PackedStringArray = []) -> Dictionary:
+# An optional progress callable receives {"suite", "case", "completed"} before each case runs,
+# so a host that is interrupted can name the case that was executing.
+func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int, case_names: PackedStringArray = [], progress: Callable = Callable()) -> Dictionary:
 	var records: Array[Dictionary] = []
 	var errors: Array[Dictionary] = []
+	var completed: int = 0
 	for script: Script in scripts:
 		if not script.can_instantiate():
 			errors.append({"kind": "uninstantiable_suite", "suite": script.resource_path})
@@ -32,6 +35,8 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 				continue
 			if not case_names.is_empty() and name not in case_names:
 				continue
+			if progress.is_valid():
+				progress.call({"suite": script.resource_path, "case": name, "completed": completed})
 			var runs: Array[Dictionary] = []
 			for repetition: int in range(2):
 				var instance: Variant = script.new()
@@ -48,6 +53,7 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 			if runs[0] != runs[1]:
 				errors.append(_first_difference(script.resource_path, name, runs))
 			records.append({"suite": script.resource_path, "case": name, "category": category, "seed": str(fixed_seed), "runs": runs})
+			completed += 1
 	for name: String in case_names:
 		if not records.any(func(record: Dictionary) -> bool: return record["case"] == name):
 			errors.append({"kind": "unknown_case", "case": name})
