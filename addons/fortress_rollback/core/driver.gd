@@ -38,6 +38,10 @@ class StepResult:
 	var code: int
 	var frame_before: int
 	var frame_after: int
+	## Terminal cause of the session; OK while the session runs.
+	var reason: int = Types.Code.OK
+	## Frame the session failed at; -1 while the session runs.
+	var failure_frame: int = -1
 	var events: Array[RefCounted] = []
 
 	func _init(result_code: int, before: int, after: int) -> void:
@@ -122,6 +126,17 @@ func recover(now_us: int) -> StepResult:
 	return _step(now_us, empty, false)
 
 
+## Owned session status: current and confirmed frames, lifecycle, terminal reason and failure frame.
+## A client that only holds the driver still learns why a session stopped.
+func status() -> Types.Status:
+	return _session.status() if _session != null else Types.Status.new()
+
+
+## Owned session counters: rollbacks, resimulated and advanced frames, and prediction stalls.
+func statistics() -> Types.Statistics:
+	return _session.statistics() if _session != null else Types.Statistics.new()
+
+
 func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) -> StepResult:
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
@@ -201,7 +216,11 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 
 
 func _finish(code: int, before: int) -> StepResult:
-	var result: StepResult = StepResult.new(code, before, _session.status().current_frame)
+	var status: Types.Status = _session.status() if _session != null else Types.Status.new()
+	var result: StepResult = StepResult.new(code, before, status.current_frame)
+	# A stopped session keeps its own cause, so a client can tell a desync from a plain stop.
+	result.reason = status.reason
+	result.failure_frame = status.failure_frame
 	# An externally opened expert batch owns its events until completion.
 	if code != Types.Code.BUSY:
 		result.events = _session.drain_events()

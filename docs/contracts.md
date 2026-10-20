@@ -57,7 +57,7 @@ No public return value relies on an unexplained `Variant`.
 | `FortressConfig` | Mutable setup fields; `validate() -> FortressConfigResult` creates an immutable owned validated copy or typed field errors |
 | `FortressSession` | `poll(now_us: int) -> FortressResult`; `submit_local_input(player: int, sample_frame: int, bytes: PackedByteArray) -> FortressResult`; `begin_advance() -> FortressAdvanceResult`; `complete_request(batch_id: int, request_id: int, completion: FortressCompletion) -> FortressResult`; `drain_events() -> Array[FortressEvent]`; `status() -> FortressSessionStatus`; `terminate(reason: FortressError) -> void` |
 | `FortressGame` | `save_state(frame: int, writer: FortressSnapshotWriter) -> FortressSaveResult`; `load_state(frame: int, reader: FortressSnapshotReader) -> FortressCallbackResult`; `simulate_frame(frame: int, inputs: FortressFrameInputs) -> FortressCallbackResult` |
-| `FortressDriver` | Owns a session and game; `step(now_us: int, local_inputs: Array[FortressLocalInput]) -> FortressStepResult`; drains events after processing; no separate prediction/rollback algorithm |
+| `FortressDriver` | Owns a session and game; `step(now_us: int, local_inputs: Array[FortressLocalInput]) -> FortressStepResult`; `status()` and `statistics()` report the session state and counters; drains events after processing; no separate prediction/rollback algorithm |
 | `FortressTransport` | `send(destination: FortressPeerId, bytes: PackedByteArray) -> FortressSendResult`; `receive(max_packets: int, max_bytes: int) -> FortressReceiveResult`; `close() -> void` |
 
 A `FortressResult` has a typed code and structured diagnostic fields, including

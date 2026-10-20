@@ -43,8 +43,11 @@ A rejected configuration leaves the previous session and game installed.
 
 `Driver.LocalInput(player, sample_frame, bytes)` copies one local sample.
 Construct `Driver.new(session, game)` and call `step(now_us, samples)` per tick.
-`StepResult` reports code, before/after frame and drained events. The driver
-consumes the expert engine's requests in order; it has no rollback algorithm.
+`StepResult` reports code, before/after frame, drained events, the session's terminal
+`reason` and its `failure_frame`. The driver consumes the expert engine's requests in
+order; it has no rollback algorithm. `driver.status()` and `driver.statistics()` report
+the session state and counters, so a client that only holds the driver still learns the
+current frame, the confirmed frame, the lifecycle and the exact cause of a stop.
 Connect `driver.step_completed(code, frame_before, frame_after)` to update
 presentation after an outer step finishes. The signal runs synchronously after
 all game callbacks and event collection, including repair-only stalls and
