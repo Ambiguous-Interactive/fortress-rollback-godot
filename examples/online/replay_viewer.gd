@@ -45,11 +45,11 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 func _open_failure_message(code: int) -> String:
 	match code:
 		Replay.DecodeCode.UNSUPPORTED_VERSION:
-			return "This replay uses another format version. Recordings from an older release cannot be replayed; record the match again."
+			return "Could not open replay: this file uses another format version. A recording from an older release cannot be replayed; record the match again."
 		Replay.DecodeCode.TOO_LARGE:
-			return "This replay file is larger than the viewer accepts."
+			return "Could not open replay: this file is larger than the viewer accepts."
 		_:
-			return "This replay file is malformed or incomplete."
+			return "Could not open replay: this file is malformed or incomplete."
 
 
 func _compatible(recording: Replay) -> bool:

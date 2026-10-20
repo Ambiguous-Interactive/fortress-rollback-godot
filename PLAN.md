@@ -388,6 +388,10 @@ Callback and expert replay playback share ordered save/advance requests in the s
 Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
+The recorded final frame carries a digest of its input row, because the state
+checksum of the following frame covers every other row and does not exist for
+the last one. That anchor is a Godot-side integrity extension; the pinned
+upstream session owns the input history.
 A recording carries the roster, sample width, neutral input, seed and game version
 of the session that produced it, and a player refuses a recording that does not
 match the running game. A recording with substituted inputs is reported as such
