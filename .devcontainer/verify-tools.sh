@@ -240,10 +240,15 @@ check_opencode_runtime() {
 check_disk_budget() {
   local root="$1"
   local cache_bytes scratch_bytes
-  cache_bytes="$(du -sb "$root/.cache" 2>/dev/null | cut -f1 || echo 0)"
-  scratch_bytes="$(du -sb /tmp 2>/dev/null | cut -f1 || echo 0)"
+  # `du` exits non-zero when it cannot read part of the tree, but it has
+  # already printed a total by then. Keep that total: a zero reading would
+  # silently pass a budget that is actually exceeded.
+  cache_bytes="$(du -sb "$root/.cache" 2>/dev/null | cut -f1 || true)"
+  scratch_bytes="$(du -sb /tmp 2>/dev/null | cut -f1 || true)"
   : "${cache_bytes:=0}"
   : "${scratch_bytes:=0}"
+  case "$cache_bytes" in *[!0-9]*) cache_bytes=0 ;; esac
+  case "$scratch_bytes" in *[!0-9]*) scratch_bytes=0 ;; esac
   local cache_gb=$((cache_bytes / 1073741824))
   local scratch_gb=$((scratch_bytes / 1073741824))
   if [ "$cache_bytes" -gt 32212254720 ]; then

@@ -235,12 +235,35 @@ def plan_workspace(root: Path, ttl_days: float, protected: set[Path]) -> list[Pl
             plans.extend(plan_session(path, ttl_days, protected))
         elif name == 'tests':
             plans.extend(plan_entries(path, ttl_days, protected, 'workspace', 'test output'))
+        elif name == 'scratch':
+            plans.extend(plan_scratch_copies(path, ttl_days, protected))
         elif name == 'reference':
             for sub in sorted(os.listdir(path)):
                 if sub in PRUNABLE_REFERENCE:
                     plans.extend(plan_entries(path / sub, ttl_days, protected, 'workspace', 'run output'))
 
     plans.extend(redundant_archives(cache, protected))
+    return plans
+
+
+def plan_scratch_copies(directory: Path, ttl_days: float, protected: set[Path]) -> list[Plan]:
+    """Scratch copies of the working tree.
+
+    A scratch copy that a running session still holds is never removed,
+    even when it is older than the retention age.
+    """
+    plans: list[Plan] = []
+    if not directory.is_dir():
+        return plans
+    for name in sorted(os.listdir(directory)):
+        path = directory / name
+        if is_protected(path, protected):
+            continue
+        if age_days(path) < ttl_days:
+            continue
+        if in_use(path):
+            continue
+        plans.append(Plan(path, 'workspace', f'uncited scratch copy older than {ttl_days:g} days'))
     return plans
 
 
@@ -313,6 +336,7 @@ def in_use(path: Path) -> bool:
     every read is best-effort: an unreadable handle is never proof of use.
     """
     target = str(path)
+    inside = target + '/'
     try:
         entries = list(Path('/proc').iterdir())
     except OSError:
@@ -322,20 +346,25 @@ def in_use(path: Path) -> bool:
             continue
         for link in (entry / 'cwd', entry / 'exe', entry / 'root'):
             try:
-                if os.readlink(link) == target:
-                    return True
+                link_target = os.readlink(link)
             except OSError:
                 continue
+            # The process works inside the candidate, or the candidate is
+            # the process itself.
+            if link_target == target or link_target.startswith(inside):
+                return True
         try:
             handles = list((entry / 'fd').iterdir())
         except OSError:
             continue
         for handle in handles:
             try:
-                if os.readlink(handle).startswith(target + '/'):
-                    return True
+                handle_target = os.readlink(handle)
             except OSError:
                 continue
+            # The handle is the candidate itself, or something inside it.
+            if handle_target == target or handle_target.startswith(inside):
+                return True
     return False
 
 

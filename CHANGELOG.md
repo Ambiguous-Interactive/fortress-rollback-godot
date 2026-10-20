@@ -6,11 +6,11 @@
 
 - Add explicit local ownership of the shared reference cache. A second local probe reports who owns the cache instead of deleting the first run's logs.
 
-- Add `make prune`, `make prune-apply`, `make disk` and `make scratch` to keep the machine-local caches and scratch bounded. The pruner never removes a path a tracked file names, and a dry run is the default.
+- Add `make prune`, `make prune-apply`, `make disk` and `make scratch` to keep the machine-local caches and scratch bounded. The pruner never removes a path a tracked file names, never removes a tree a running session still holds, and a dry run is the default.
 
 - Add a scratch-copy helper at `scripts/scratch_workspace.py`. It skips `.cache/`, `.git`, `.godot` and `progress/`, so an isolated run no longer copies the whole cache with the tree.
 
-- Add a disk budget to the devcontainer acceptance harness. `verify.sh` reports the repository cache and container scratch sizes and fails above 25 GB and 20 GB.
+- Add a disk budget to the devcontainer acceptance harness. `verify.sh` reports the repository cache and container scratch sizes and fails above 25 GB and 20 GB. The reading keeps the size `du` reported when part of the tree could not be read.
 
 - Add expert replay requests through `FortressReplayPlayer.configure_expert()`. Dispatch the same ordered saves and advances used by callback playback.
 

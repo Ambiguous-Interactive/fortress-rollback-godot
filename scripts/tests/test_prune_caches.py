@@ -22,6 +22,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -156,6 +157,76 @@ class WorkspacePlanTest(unittest.TestCase):
         self.assertIn(archive, [plan.path for plan in planned])
         cited = prune_caches.redundant_archives(self.cache, prune_caches.protection_set({archive}))
         self.assertEqual(cited, [])
+
+
+class ScratchCopyPlanTest(unittest.TestCase):
+    """The approved scratch location must be prunable, but not while it is in use."""
+
+    def setUp(self):
+        self.root = Path(os.environ.get('TMPDIR', '/tmp')) / 'frg-prune-copies'
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.cache = self.root / '.cache'
+        self.scratch = self.cache / 'scratch'
+        self.scratch.mkdir(parents=True, exist_ok=True)
+
+    def test_an_old_uncited_scratch_copy_is_planned(self):
+        stale = self.scratch / 'probe-01'
+        stale.mkdir(parents=True, exist_ok=True)
+        age(stale, 30)
+        plans = prune_caches.plan_workspace(self.root, 7.0, set())
+        self.assertIn(stale, [plan.path for plan in plans])
+
+    def test_a_recent_scratch_copy_is_kept(self):
+        fresh = self.scratch / 'probe-02'
+        fresh.mkdir(parents=True, exist_ok=True)
+        plans = prune_caches.plan_workspace(self.root, 7.0, set())
+        self.assertNotIn(fresh, [plan.path for plan in plans])
+
+    def test_a_scratch_copy_in_use_is_kept(self):
+        busy = self.scratch / 'probe-03'
+        busy.mkdir(parents=True, exist_ok=True)
+        age(busy, 30)
+        with unittest.mock.patch.object(prune_caches, 'in_use', return_value=True):
+            plans = prune_caches.plan_workspace(self.root, 7.0, set())
+        self.assertNotIn(busy, [plan.path for plan in plans])
+
+
+class InUseTest(unittest.TestCase):
+    """A live session must never be deleted from under itself."""
+
+    def setUp(self):
+        self.root = Path(os.environ.get('TMPDIR', '/tmp')) / 'frg-prune-inuse'
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.target = self.root / 'copy'
+        self.target.mkdir(parents=True, exist_ok=True)
+
+    def test_the_current_directory_inside_the_candidate_counts_as_in_use(self):
+        inside = self.target / 'inner'
+        inside.mkdir(parents=True, exist_ok=True)
+        script = ('import os, sys\n'
+                  'os.chdir(sys.argv[1])\n'
+                  'print(os.getcwd(), flush=True)\n'
+                  'sys.stdin.read()\n')
+        process = subprocess.Popen([sys.executable, '-c', script, str(inside)], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, text=True)
+        try:
+            process.stdout.readline()
+            self.assertTrue(prune_caches.in_use(self.target))
+        finally:
+            process.stdin.close()
+            process.wait(timeout=10)
+
+    def test_an_open_handle_on_the_candidate_counts_as_in_use(self):
+        handle = (self.target / 'held.txt').open('w')
+        try:
+            self.assertTrue(prune_caches.in_use(self.target))
+        finally:
+            handle.close()
+
+    def test_an_unrelated_path_is_not_in_use(self):
+        self.assertFalse(prune_caches.in_use(self.root / 'absent'))
 
 
 class ScratchPlanTest(unittest.TestCase):
