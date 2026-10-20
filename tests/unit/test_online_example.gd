@@ -73,6 +73,19 @@ class IdleCoordinator:
 		return Result.new(Code.OK)
 
 
+class BusyCoordinator:
+	extends Fallback
+	var polls: int = 0
+	func enqueue_batch(_packets: Array[Peer.Packet]) -> int:
+		return Code.OK
+	func poll(_now_us: int, _factory: Callable = Callable()) -> Result:
+		polls += 1
+		return Result.new(Code.OK)
+	# A route with queued work never reports itself idle.
+	func idle() -> bool:
+		return false
+
+
 class Client:
 	extends MeshFixture.Client
 	func get_room_id() -> String:
@@ -280,6 +293,10 @@ func _idle_batch(context: RefCounted) -> void:
 	context.equal(game_match.failure, "", "an idle route does not terminate the match")
 	game_match.tick(1, Simulation.LEFT)
 	context.equal(coordinator.polls, 2, "every tick still services the transport once")
+	var busy: BusyCoordinator = BusyCoordinator.new()
+	game_match.fallback = busy
+	game_match.tick(2, Simulation.RIGHT)
+	context.equal(busy.polls, 8, "a route with queued work keeps the whole bounded batch")
 	game_match.detach()
 	fixture.mesh.free()
 	fixture.client.free()
