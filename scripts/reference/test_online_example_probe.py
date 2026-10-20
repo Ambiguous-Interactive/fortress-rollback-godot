@@ -303,14 +303,17 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                 ('no turns', lambda summary: summary.update(turns=0)),
                 ('fractional turn', lambda summary: summary.update(turns=1.5)),
                 ('inconsistent turns', lambda summary: summary.update(max_gap_turns=99)),
-                ('inconsistent confirmation turns', lambda summary: summary.update(confirmation_max_gap_turns=99))):
+                ('inconsistent confirmation turns', lambda summary: summary.update(confirmation_max_gap_turns=99)),
+                ('more confirmations than the room observed', lambda summary: summary.update(confirmed_frames=1000))):
             changed = evidence()
             summary = changed['rounds'][0]['peers'][0]['scheduling']
             if label == 'not a dict':
                 changed['rounds'][0]['peers'][0]['scheduling'] = None
             else:
                 mutate(summary)
-            with self.subTest(label=label), self.assertRaisesRegex(ValueError, 'scheduling summary missing or malformed|disagrees with its nominal turn count'):
+            reasons = ('scheduling summary missing or malformed|disagrees with its nominal turn count'
+                       '|claims more confirmations than the room observed')
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, reasons):
                 validate_result(changed)
 
     # Value: protects=standalone runtime-only install; fails_when=missing licenses/files or overwrites; why_new=browser staging was handwritten; seam=none
@@ -375,8 +378,10 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             early = copy.deepcopy(changed)
             failed = early['rounds'][0]['peers'][1]
             failed.update(inputs=failed['inputs'][:108], frame=107, confirmed=107)
+            failed['scheduling'] = dict(failed['scheduling'], confirmed_frames=108)
             peer = early['rounds'][0]['peers'][slot]
             peer.update(inputs=peer['inputs'][:108], frame=107, confirmed=confirmed)
+            peer['scheduling'] = dict(peer['scheduling'], confirmed_frames=confirmed + 1)
             for peer in early['rounds'][0]['peers']:
                 peer['snapshots'] = {frame: state for frame, state in peer['snapshots'].items() if int(frame) < 107}
             with self.subTest(slot=slot, confirmed=confirmed), self.assertRaisesRegex(ValueError, message):

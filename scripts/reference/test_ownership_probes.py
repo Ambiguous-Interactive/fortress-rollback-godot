@@ -131,6 +131,20 @@ class OwnershipReceiptTests(unittest.TestCase):
         self.assertIn('fortressOwnershipProgress', runner)
         self.assertIn('detail.progress', runner)
 
+    def test_exported_host_publishes_the_inventory_outside_the_progress_callable(self):
+        # The inventory publication must stay in the entry point: the progress
+        # callable runs before every case and cannot reach the run's result.
+        host = probes.HOST
+        ready = host.split('func _ready() -> void:', 1)[1].split('\nfunc ', 1)[0]
+        progress = host.split('func _publish_progress(', 1)[1].split('\nfunc ', 1)[0]
+        self.assertIn('fortressOwnership =', ready)
+        self.assertNotIn('fortressOwnershipProgress', ready)
+        self.assertIn('fortressOwnershipProgress', progress)
+        self.assertNotIn('fortressOwnership =', progress)
+        for body in (ready, progress):
+            names = re.findall(r'var (\w+)', body)
+            self.assertEqual(len(names), len(set(names)), 'a function declares each local once')
+
     def test_complete_inventory(self):
         self.assertEqual(probes.validate(result(), False)['count'], probes.EXPECTED_COUNT)
 

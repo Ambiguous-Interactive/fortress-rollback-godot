@@ -44,8 +44,8 @@ const path = require('node:path');
         detail.reported = null;
         detail.page_error = String(page_error).slice(0, 200);
       }
-      // The page publishes the case that was executing, so a rejected run
-      // names the last completed case and the one in flight.
+      // The page publishes the case that was executing and the number of
+      // completed cases, so a rejected run names where it stopped.
       try {
         const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
         detail.progress = progress === undefined ? null : JSON.parse(progress);

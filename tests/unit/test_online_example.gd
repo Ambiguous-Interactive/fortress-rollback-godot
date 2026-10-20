@@ -326,6 +326,23 @@ func _scheduling_gaps(context: RefCounted) -> void:
 	backwards.record_turn(1000, 1000, 1, 0)
 	backwards.record_turn(500, 500, 1, 0)
 	context.equal(backwards.summary()["turns"], 1, "a backwards clock is ignored")
+	# A turn before the match runs stamps no frame, so setup time is not a confirmation wait.
+	var setup: Bridge.Scheduling = Bridge.Scheduling.new()
+	setup.record_turn(0, 0, -1, -1)
+	setup.record_turn(5000000, 5000000, -1, -1)
+	setup.record_turn(5100000, 5100000, 1, 0)
+	setup.record_turn(5200000, 5200000, 1, 1)
+	context.equal(setup.summary()["confirmed_frames"], 2, "only running frames are counted")
+	context.equal(setup.summary()["confirmation_max_gap_us"], 100000, "setup time is not a confirmation wait")
+	# A new room restarts the summary.
+	var restarted: Bridge.Scheduling = Bridge.Scheduling.new()
+	restarted.record_turn(0, 0, 1, 0)
+	restarted.record_turn(16667, 16667, 1, 1)
+	restarted.reset()
+	context.equal(restarted.summary()["turns"], 0, "a new room restarts the turn count")
+	context.equal(restarted.summary()["confirmed_frames"], 0, "a new room restarts the confirmed frames")
+	restarted.record_turn(0, 0, 1, 0)
+	context.equal(restarted.summary()["turns"], 1, "the restarted summary counts the new room")
 # Value: protects=idle service batches; fails_when=an idle route repeats the whole bounded batch; why_new=the retained case only covers refusal; seam=actual example tick
 func _idle_batch(context: RefCounted) -> void:
 	var fixture: Dictionary = _fixture(context, U)

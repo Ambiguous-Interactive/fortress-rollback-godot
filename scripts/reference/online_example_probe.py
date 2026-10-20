@@ -114,7 +114,7 @@ SCHEDULING_FIELDS = ('turns', 'ticks_per_second', 'max_gap_us', 'max_gap_turns',
                      'confirmation_max_gap_us', 'confirmation_max_gap_turns', 'confirmed_frames')
 
 
-def validate_scheduling(summary):
+def validate_scheduling(summary, confirmed=None):
     """The host's service cadence and confirmation waits must be published for every room."""
     if (not isinstance(summary, dict) or set(summary) != set(SCHEDULING_FIELDS)
             or any(type(summary.get(field)) is not int or summary[field] < 0 for field in SCHEDULING_FIELDS)
@@ -124,6 +124,9 @@ def validate_scheduling(summary):
     for gap, turns in (('max_gap_us', 'max_gap_turns'), ('confirmation_max_gap_us', 'confirmation_max_gap_turns')):
         if summary[turns] != max(1, summary[gap] * ticks // 1000000):
             raise ValueError('online example scheduling gap disagrees with its nominal turn count')
+    # The page cannot confirm more frames than the room itself observed.
+    if confirmed is not None and summary['confirmed_frames'] > confirmed + 1:
+        raise ValueError('online example scheduling summary claims more confirmations than the room observed')
 
 
 def validate_suspension(record, expired):
@@ -365,7 +368,7 @@ def validate_result(value, corrupt=False, expected_engine=None):
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
                     or (peer.get('state') != 'playing' and not intended_desync) or peer.get('room') != record['room']):
                 raise ValueError('online example rollback or confirmation missing')
-            validate_scheduling(peer.get('scheduling'))
+            validate_scheduling(peer.get('scheduling'), peer.get('confirmed'))
             page_index = peer['page_index']
             first, second = (2, 8) if page_index == 0 else (4, 1)
             if first not in peer['inputs'] or second not in peer['inputs']:

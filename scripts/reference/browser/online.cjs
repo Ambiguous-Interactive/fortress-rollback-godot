@@ -227,7 +227,7 @@ async function collectReplay(pages, command, diagnostic) {
   await command(page, 'replay');
   const download = await pending;
   const bytes = fs.readFileSync(await download.path());
-  if (bytes.length > 8192) throw new Error('online witness replay exceeds its short-match byte bound');
+  if (bytes.length > 16384) throw new Error('online witness replay exceeds its short-match byte bound');
   await download.saveAs(diagnostic.replace('-events.log', '-replay.frrp'));
   await command(page, 'validate_replay', { hex: bytes.toString('hex') });
   const after = await page.evaluate(() => ({ state: window.fortressOnline.state, frame: window.fortressOnline.frame,

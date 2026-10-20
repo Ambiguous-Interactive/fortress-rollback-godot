@@ -384,6 +384,8 @@ whose last frames carry no checksum therefore leaves the rows in front of them u
 frame carries the digest of its own input row: the player compares the recorded digest with the
 row it applies and stops with `DESYNC` at the frame that owns the row when they disagree. The
 digests are a Godot-side integrity extension; the pinned upstream session owns the input history itself.
+The digest costs 16 bytes per frame, so the byte budget of a recording includes them and the
+largest recording a configuration can hold is smaller than before.
 
 Released format versions never change. A new version either reads older files with explicit
 defaults or rejects them with `UNSUPPORTED_VERSION`; this guide states which. Version 1 never

@@ -365,11 +365,11 @@ func _is_cache_boundary() -> bool:
 
 
 ## Every frame carries the digest of its own input row, so a corrupted row is refused at the
-## frame that owns it. A mismatch stops playback at that frame.
+## frame that owns it. A recording without that digest cannot be verified and is refused.
 func _verify_input_digest() -> int:
 	var expected: PackedByteArray = _replay.input_digest(_frame)
 	if expected.size() != Replay.DIGEST_BYTES:
-		return Types.Code.OK
+		return _fail(Types.Code.DESYNC)
 	var actual: PackedByteArray = _replay.computed_input_digest(_frame)
 	if actual == expected:
 		return Types.Code.OK

@@ -19,10 +19,10 @@ const ReplayPlayer = preload("res://addons/fortress_rollback/core/replay_player.
 class Scheduling:
 	var turns: int = 0
 	var max_gap_us: int = 0
-	var max_gap_turns: int = 0
+	var max_gap_turns: int = 1
 	var max_gap_transport_us: int = 0
 	var confirmation_max_gap_us: int = 0
-	var confirmation_max_gap_turns: int = 0
+	var confirmation_max_gap_turns: int = 1
 	var confirmed_frames: int = 0
 
 	var _last_turn_us: int = -1
@@ -31,7 +31,23 @@ class Scheduling:
 	var _last_confirmed: int = -1
 	var _submitted: Dictionary = {}
 
+	## A new room starts a new summary: the counters describe one room, not the page.
+	func reset() -> void:
+		turns = 0
+		max_gap_us = 0
+		max_gap_turns = 1
+		max_gap_transport_us = 0
+		confirmation_max_gap_us = 0
+		confirmation_max_gap_turns = 1
+		confirmed_frames = 0
+		_last_turn_us = -1
+		_last_transport_us = 0
+		_last_current = -1
+		_last_confirmed = -1
+		_submitted.clear()
+
 	## One service turn: the host clock, the elapsed transport clock and the local/confirmed frames.
+	## A frame count below zero means the match is not running, so no frame is stamped as submitted.
 	func record_turn(now_us: int, transport_us: int, current: int, confirmed: int) -> void:
 		if now_us < _last_turn_us:
 			return
@@ -40,10 +56,13 @@ class Scheduling:
 			if gap > max_gap_us:
 				max_gap_us = gap
 				max_gap_turns = _nominal_turns(gap)
-				max_gap_transport_us = transport_us - _last_transport_us
+				# A new room restarts the transport clock, so the covered time never goes backwards.
+				max_gap_transport_us = maxi(0, transport_us - _last_transport_us)
 		turns += 1
 		_last_turn_us = now_us
 		_last_transport_us = transport_us
+		if current < 0 or confirmed < 0:
+			return
 		if current > _last_current:
 			for frame: int in range(_last_current + 1, current + 1):
 				_submitted[frame] = now_us
@@ -85,7 +104,13 @@ class ObservedLobby:
 	var label: String = ""
 	var scheduling: Scheduling = Scheduling.new()
 
+	var _observed_match: Variant = null
+
 	func tick(now_us: int, buttons: int) -> void:
+		# A new room starts a new summary, so the counters describe one room.
+		if game_match != _observed_match:
+			_observed_match = game_match
+			scheduling.reset()
 		var armed: String = str(JavaScriptBridge.eval("window.fortressOnlineResumeLabel || ''"))
 		if armed != label:
 			label = armed
@@ -108,8 +133,10 @@ class ObservedLobby:
 				"state": state,
 				"message": message
 			}
+		var playing: bool = state == "playing"
+		var status: Variant = game_match.peer.status()
 		scheduling.record_turn(now_us, game_match.peer.network_status().last_now_us,
-			game_match.peer.status().current_frame, game_match.peer.status().confirmed_frame)
+			status.current_frame if playing else -1, status.confirmed_frame if playing else -1)
 
 
 class ObservedGame:
@@ -340,7 +367,7 @@ func callback_boundary(lobby: Lobby) -> Dictionary:
 
 func _play_replay(hex: String) -> Dictionary:
 	var recording: Replay = Replay.new()
-	var decoded: int = recording.decode(hex.hex_decode(), 8192)
+	var decoded: int = recording.decode(hex.hex_decode(), 16384)
 	if decoded != Replay.DecodeCode.OK or recording.frame_count() > 256:
 		return {"decode_code": decoded}
 	var game: Simulation = Simulation.new()
