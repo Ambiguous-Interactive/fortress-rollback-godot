@@ -56,7 +56,7 @@ def validate_replay_download(value, expected_engine, round_record):
         raise ValueError('online replay download advanced a stopped match')
     raw = bytes.fromhex(value['hex'])
     version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
-    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (2, 2, 1, 0, 2, 8, 0)
+    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (3, 2, 1, 0, 2, 8, 0)
             or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
         raise ValueError('online replay configuration differs from the played match')
     cursor, texts = 24, []
@@ -97,8 +97,11 @@ def validate_replay_download(value, expected_engine, round_record):
                 raise ValueError('online replay checksum differs from canonical history')
             checksums += 1
             cursor += 16
-    if cursor != len(raw) or checksums == 0:
+    if cursor + 16 != len(raw) or checksums == 0:
         raise ValueError('online replay missing checksum evidence or has trailing bytes')
+    final_row = bytes(history[frames - 1] for history in histories)
+    if raw[cursor:cursor + 16] != hashlib.sha256(final_row).digest()[:16]:
+        raise ValueError('online replay final input digest differs from the original row')
     playback = value.get('playback')
     if (not isinstance(playback, dict) or any(type(playback.get(key)) is not int for key in ('decode_code', 'code', 'frames', 'failure_frame'))
             or playback != {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}):

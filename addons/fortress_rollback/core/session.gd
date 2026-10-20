@@ -382,7 +382,8 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			var saved_trace: History.Inspection = _history.inspect(frame)
 			_trace.save(frame, saved_trace.bytes, saved_trace.checksum)
 		elif kind == Kind.LOAD:
-			_trace.load_frame(frame)
+			var restored_trace: History.Inspection = _history.inspect(frame)
+			_trace.load_frame(frame, restored_trace.bytes, restored_trace.checksum)
 		elif kind == Kind.ADVANCE:
 			_trace.advance(frame, _inputs)
 	if kind == Kind.LOAD:

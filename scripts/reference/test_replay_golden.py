@@ -13,11 +13,12 @@ class ReplayGoldenTests(unittest.TestCase):
         self.assertEqual(replay_golden.DESTINATION.read_bytes(), replay_golden.rendered())
 
     def test_layout_sizes(self):
-        data = replay_golden.v2()
         text = sum(1 + len(replay_golden.FIELDS[name]) for name in
                    ['engine_version', 'addon_version', 'upstream_revision', 'game_seed', 'game_version'])
-        self.assertEqual(len(data), 23 + 2 + text + 4 * 5 + 2 * 16)
-        self.assertEqual(data[23 + 2 + text + 4], 1)
+        self.assertEqual(len(replay_golden.v3()), 23 + 2 + text + 4 * 5 + 2 * 16 + 16)
+        self.assertEqual(replay_golden.v3()[23 + 2 + text + 4], 1)
+        self.assertEqual(replay_golden.v3()[-16:], replay_golden.digest(replay_golden.FRAMES[-1][0]))
+        self.assertEqual(len(replay_golden.v2()), 23 + 2 + text + 4 * 5 + 2 * 16)
 
 
 if __name__ == '__main__':

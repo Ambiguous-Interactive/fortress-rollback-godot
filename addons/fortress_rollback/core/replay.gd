@@ -5,6 +5,8 @@ extends RefCounted
 
 ## Confirmed inputs for frames 0..frame_count() - 1, with optional 16-byte state checksums.
 ## Frame F's checksum covers the state before input F. Sessions record; FortressReplayPlayer plays back.
+## The trailing input digest covers the final frame's input row, which no following frame's
+## state checksum can reach.
 ## Load a file with FortressReplay.new().decode(bytes). The layout is in docs/integration.md.
 
 enum DecodeCode { OK, MALFORMED, UNSUPPORTED_VERSION, TOO_LARGE }
@@ -12,13 +14,14 @@ enum DecodeCode { OK, MALFORMED, UNSUPPORTED_VERSION, TOO_LARGE }
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const MAGIC: String = "FRRP"
-const FORMAT_VERSION: int = 2
+const FORMAT_VERSION: int = 3
 const ADDON_VERSION: String = "0.1.0"
 const UPSTREAM_REVISION: String = "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"
 const FIXED_BYTES: int = 23
 const TEXT_FIELDS: int = 5
 const MAX_TEXT_BYTES: int = 128
 const CHECKSUM_BYTES: int = 16
+const DIGEST_BYTES: int = 16
 const MAX_FRAMES: int = 4194304
 const MAX_BYTES: int = 268435456
 const FLAG_CHECKSUM: int = 1
@@ -37,12 +40,21 @@ var _text: PackedStringArray = PackedStringArray(["", "", "", "", ""])
 var _inputs: PackedByteArray = PackedByteArray()
 var _checksums: PackedByteArray = PackedByteArray()
 var _flags: PackedByteArray = PackedByteArray()
+var _final_digest: PackedByteArray = PackedByteArray()
 
 
 static func valid_shape(players: int, width: int, frames: int) -> bool:
 	if players < 2 or players > 8 or width < 1 or width > 65536 or frames < 0 or frames > MAX_FRAMES:
 		return false
-	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (players * width + 1 + CHECKSUM_BYTES) <= MAX_BYTES
+	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (players * width + 1 + CHECKSUM_BYTES) + DIGEST_BYTES <= MAX_BYTES
+
+
+## The digest of one recorded input row: the first 16 bytes of its SHA-256.
+static func digest_row(row: PackedByteArray) -> PackedByteArray:
+	var context: HashingContext = HashingContext.new()
+	context.start(HashingContext.HASH_SHA256)
+	context.update(row)
+	return context.finish().slice(0, DIGEST_BYTES)
 
 
 ## Metadata text is printable ASCII of at most MAX_TEXT_BYTES, so every stored string round-trips exactly.
@@ -61,7 +73,8 @@ static func _printable(bytes: PackedByteArray) -> bool:
 
 ## Replaces this replay only when the result is OK; any other DecodeCode leaves it unchanged.
 ## Nothing is allocated before the declared frame count is checked against the bytes actually present.
-## Version 1 files are UNSUPPORTED_VERSION: they lack the metadata that version 2 requires.
+## Version 1 and version 2 files are UNSUPPORTED_VERSION: version 1 lacks the metadata that
+## version 2 requires, and version 2 lacks the final input digest that version 3 records.
 func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	if bytes.size() > mini(max_bytes, MAX_BYTES):
 		return DecodeCode.TOO_LARGE
@@ -94,7 +107,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 		text.append(value.get_string_from_ascii())
 		cursor += 1 + size
 	var row: int = players * width
-	if frames * (row + 1) > bytes.size() - cursor:
+	if frames * (row + 1) + DIGEST_BYTES > bytes.size() - cursor:
 		return DecodeCode.MALFORMED
 	var neutral_row: PackedByteArray = PackedByteArray()
 	for player: int in range(players):
@@ -119,7 +132,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 		else:
 			checksums.resize(checksums.size() + CHECKSUM_BYTES)
 		cursor = end
-	if cursor != bytes.size() or skipped_seen != skipped:
+	if cursor + DIGEST_BYTES != bytes.size() or skipped_seen != skipped:
 		return DecodeCode.MALFORMED
 	_players = players
 	_width = width
@@ -133,6 +146,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	_inputs = inputs
 	_checksums = checksums
 	_flags = flags
+	_final_digest = bytes.slice(cursor, cursor + DIGEST_BYTES)
 	return DecodeCode.OK
 
 
@@ -234,6 +248,29 @@ func checksum(frame: int) -> PackedByteArray:
 	return _checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES)
 
 
+## The digest of one frame's recorded input row.
+func input_digest(frame: int) -> PackedByteArray:
+	if frame < 0 or frame >= _frames:
+		return PackedByteArray()
+	var row: int = _players * _width
+	return digest_row(_inputs.slice(frame * row, (frame + 1) * row))
+
+
+## The digest that anchors the final frame's input row. A decoded file keeps the digest it
+## carried, so a corrupted row cannot silently agree with it.
+func final_digest() -> PackedByteArray:
+	return _recorded_digest()
+
+
+## The digest written to the file: the recorded anchor, or zeros without frames.
+func _recorded_digest() -> PackedByteArray:
+	if _final_digest.size() == DIGEST_BYTES:
+		return _final_digest.duplicate()
+	var empty: PackedByteArray = PackedByteArray()
+	empty.resize(DIGEST_BYTES)
+	return empty
+
+
 func to_bytes() -> PackedByteArray:
 	var bytes: PackedByteArray = MAGIC.to_ascii_buffer()
 	bytes.resize(FIXED_BYTES)
@@ -255,6 +292,7 @@ func to_bytes() -> PackedByteArray:
 		bytes.append(_flags[frame])
 		if _flags[frame] == FLAG_CHECKSUM:
 			bytes.append_array(_checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES))
+	bytes.append_array(_recorded_digest())
 	return bytes
 
 
@@ -272,6 +310,7 @@ func owned_copy() -> RefCounted:
 	copy._inputs = _inputs.duplicate()
 	copy._checksums = _checksums.duplicate()
 	copy._flags = _flags.duplicate()
+	copy._final_digest = _final_digest.duplicate()
 	return copy
 
 
@@ -299,3 +338,5 @@ func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: boo
 		_checksums.resize(_checksums.size() + CHECKSUM_BYTES)
 	_frames += 1
 	_skipped += int(skipped)
+	# The anchor covers the stored bytes, not the caller's array.
+	_final_digest = digest_row(_inputs.slice(_inputs.size() - row.size(), _inputs.size()))

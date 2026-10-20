@@ -21,6 +21,8 @@ class Game:
 	var terminating_config: RefCounted
 	var terminating_kind: int = Types.Kind.SAVE
 	var termination_codes: PackedInt32Array = PackedInt32Array()
+	var trace_session: RefCounted
+	var trace_reports: Array[Dictionary] = []
 
 	func _reenter() -> void:
 		if terminating_session != null and trace[trace.size() - 1].begins_with(["save", "load", "advance"][terminating_kind]):
@@ -45,6 +47,8 @@ class Game:
 
 	func save_state(frame: int, writer: RefCounted) -> Driver.SaveResult:
 		trace.append("save:%d" % frame)
+		if trace_session != null:
+			trace_reports.append(trace_session.call("diagnostic_trace"))
 		_reenter()
 		if terminating_session != null and terminating_session.status().lifecycle == Types.Lifecycle.TERMINATED:
 			return Driver.SaveResult.new(false)

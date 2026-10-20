@@ -39,14 +39,23 @@ func advance(frame: int, inputs: RefCounted) -> void:
 
 
 ## A restored boundary invalidates all later evidence, including speculative input statuses.
-func load_frame(frame: int) -> void:
+## The frontier follows the simulation back, so the window keeps recording the frames that
+## follow a rollback instead of rejecting the whole divergence region.
+## The restored bytes keep the boundary restorable, so the re-opened window stays usable.
+func load_frame(frame: int, bytes: PackedByteArray = PackedByteArray(), checksum: PackedByteArray = PackedByteArray()) -> void:
 	if _limit == 0 or not _failure.is_empty():
 		return
 	for retained: int in _rows.keys():
 		if retained > frame:
 			_rows.erase(retained)
-	if _rows.has(frame):
-		_rows[frame].inputs = []
+	_frontier = mini(_frontier, frame)
+	if not _rows.has(frame):
+		_rows[frame] = {"state": PackedByteArray(), "state_available": false, "checksum": PackedByteArray(), "inputs": []}
+	_rows[frame].inputs = []
+	if not bytes.is_empty():
+		_rows[frame].state = bytes.duplicate()
+		_rows[frame].checksum = checksum.duplicate()
+		_rows[frame].state_available = true
 
 
 func freeze(frame: int, peer_index: int, local: PackedByteArray, remote: PackedByteArray, source: String = "peer_checksum") -> void:

@@ -127,7 +127,10 @@ player. State at frame F precedes input F. `state_available` distinguishes an
 empty saved state from a frame without a SAVE callback. Tracing adds no game
 callbacks; profiles without SAVE callbacks can therefore contain only inputs.
 Rollback removes invalidated later states and replaces replayed inputs with their
-corrected values. Failed callbacks never claim completed input application.
+corrected values. The window follows the simulation back to the restored frame, so
+a rollback that rewinds past the window still records the frames that follow it
+instead of losing the divergence region. Failed callbacks never claim completed
+input application.
 
 The first detected peer mismatch freezes the window with its frame, peer index,
 both checksum domains and `source = "peer_checksum"`. A local sync-test canonical
