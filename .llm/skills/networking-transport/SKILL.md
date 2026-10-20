@@ -93,6 +93,11 @@ Clear a pre-fallback unavailability timer on demonstrated direct recovery, and
 observe restoration readiness even during polls without outgoing packets.
 Arm refusal timers from the actual refused destination, not an aggregate poll
 error: inbound pressure and another peer's refusal do not implicate healthy tails.
+A transport that is polled after the SDK hands frames over must drain its
+traffic counter in the poll, not difference it at poll entry, or a frame that
+arrived earlier is never reported. Count a refused item as traffic: valid work
+can sit behind it, and an idle rule that ignores refusals can end a service
+batch too early.
 Exercise minimum routing work with a blocked peer ahead of a healthy peer;
 bounded work alone does not prove fair service. Preserve each peer's FIFO while
 rotating service across the frozen roster.
