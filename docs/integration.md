@@ -5,7 +5,7 @@ The code lives in [`examples/integration/`](../examples/integration/):
 
 - [`game.gd`](../examples/integration/game.gd): two players move left/right and fire shots.
 - [`loop.gd`](../examples/integration/loop.gd): one local player against one remote player.
-- [`effects.gd`](../examples/integration/effects.gd): plays each shot's sound exactly once.
+- [`effects.gd`](../examples/integration/effects.gd): calls your `play()` hook once per confirmed shot.
 - [`integration.tscn`](../examples/integration/integration.tscn): playable shots with delayed remote input.
 
 [`test_integration_example.gd`](../tests/unit/test_integration_example.gd) runs this code with late remote input,
@@ -150,7 +150,13 @@ Peer sessions call `FortressPeerSession.step` with the same arguments and add tw
 | `PREDICTION_STALL` | Remote input is too far behind. The frame did not advance, but earlier frames may have been corrected. Update presentation and retry next frame **with the same input bytes**. |
 | `NETWORK_BACKPRESSURE` | Peer sessions only: drain outgoing packets, then retry with the same input bytes. |
 | `NOT_SYNCHRONIZED` | Peer sessions only: the connection handshake has not finished. Keep polling. |
-| Anything else | If `session.status().lifecycle` is `TERMINATED`, the session stopped: show `reason` and `failure_frame` and offer a restart. Otherwise the call was rejected, for example `INPUT_ALREADY_SUBMITTED`; fix the call. |
+| Anything else | If `driver.status().lifecycle` is `TERMINATED`, the session stopped: show `reason` and `failure_frame` and offer a restart. Otherwise the call was rejected, for example `INPUT_ALREADY_SUBMITTED`; fix the call. |
+
+The driver also reports the session without a session reference. `driver.status()` returns the
+current and confirmed frame, the lifecycle, the terminal `reason` and the `failure_frame`.
+`driver.statistics()` returns the rollback, resimulation, advance and stall counters.
+Every step result carries the same terminal `reason` and `failure_frame`, so a client that
+only holds the driver still learns why a session stopped.
 
 To stop recording at the current simulated frame, stop submitting new samples,
 continue delivering outstanding remote inputs, and call `driver.recover(now_us)`.
@@ -176,7 +182,10 @@ Peer callers can use `peer.step_completed` with the same scalar arguments.
 It runs after peer control processing too. Mutating peer calls return `BUSY`
 until handlers return; drain peer packets, events and transitions after `peer.step` returns.
 
-A failed callback stops the session for good. Do not keep stepping a stopped session. Configure it again or create a new one.
+A failed callback stops the session for good. Do not keep stepping a stopped session.
+Start a new session and a new game object: a reconfigured session starts at frame zero
+while the old game object still holds the last simulated frame, so the first callback fails.
+The example creates a fresh game and a fresh driver when it restarts.
 
 ## Presentation and effects
 
@@ -263,6 +272,12 @@ var player := FortressReplayPlayer.new()
 player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES)
 ```
 
+Pass your session configuration as the last argument to refuse a recording that belongs to
+another game. `player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES, 0, 0, config)`
+returns `INCOMPATIBLE_RECORDING` when the roster, sample width, neutral input, game seed or
+game version differ from the recording. `configure_expert` takes the same configuration.
+`replay.matches_config(config)` answers the same question without a player.
+
 `step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
 With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
 `DESYNC` means this game build simulates differently from the recording one; playback stops at `failure_frame()`.
@@ -276,7 +291,8 @@ Pass `0` to play inputs without checking. The file stores inputs, not game rules
 `checked_checksum_count()` reports distinct recorded state boundaries whose checksums actually matched.
 Input-only playback reports zero; repeated validation and checkpoint navigation never count a boundary twice.
 Successful configuration starts a fresh count; rejected configuration preserves it.
-Check `game_version()` and `game_seed()` before playing, and set up the game to match.
+`player.skipped_frames()` reports the recorded frames whose input was substituted, so a
+recording with holes never looks like a faithful copy.
 
 To dispatch replay through your own request loop, call `configure_expert(replay, max_snapshot_bytes)`
 instead of `configure`. The same player then exposes `begin_advance()` and `complete_request()`

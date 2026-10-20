@@ -32,7 +32,8 @@ class FailingGame:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["records_corrected_match", "records_metadata", "detects_changed_rules", "golden", "rejects_malformed_files", "bounds_recording", "lockstep_confirmation_limit"]
+		["records_corrected_match", "records_metadata", "detects_changed_rules", "golden", "rejects_malformed_files",
+			"bounds_recording", "lockstep_confirmation_limit", "refuses_foreign_recording"]
 	)
 
 
@@ -52,6 +53,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_bounds_recording(context)
 		"lockstep_confirmation_limit":
 			_lockstep_confirmation_limit(context)
+		"refuses_foreign_recording":
+			_refuses_foreign_recording(context)
 	context.finish()
 
 
@@ -349,3 +352,42 @@ func _lockstep_confirmation_limit(context: RefCounted) -> void:
 	context.equal(code, Types.Code.FRAME_EXHAUSTED, "plays the whole lockstep match")
 	context.bytes_equal(game.canonical_bytes(), _reference(30, 0)[30], 30, "reaches the lockstep final state")
 	context.state(30, game.canonical_bytes())
+
+
+## A configuration that differs from the recording in exactly one compared field.
+static func _foreign_config(field: String) -> Config:
+	var config: Config = _config(false, 12)
+	match field:
+		"player_count":
+			config.player_count = 4
+			config.local_players = PackedInt32Array([0])
+		"input_width":
+			config.input_width = 2
+			config.neutral_input = PackedByteArray([0, 0])
+		"neutral_input":
+			config.neutral_input = PackedByteArray([9])
+		"diagnostic_seed":
+			config.diagnostic_seed = "other"
+		"diagnostic_version":
+			config.diagnostic_version = "other v2"
+	config.storage_budget_bytes = config.required_storage_bytes()
+	return config
+
+
+# Value: protects=recorded inputs only drive the game that produced them; fails_when=a foreign roster, width, neutral
+# input, seed or version is played; why_new=other cases decode a recording without a running configuration; seam=none
+func _refuses_foreign_recording(context: RefCounted) -> void:
+	var config: Config = _config(false, 12)
+	var session: Session = _match(context, {"lag": 2, "burst": 1}, 12)
+	var recording: Replay = session.replay()
+	context.equal(recording.matches_config(config), true, "a recording matches its own configuration")
+	context.equal(recording.matches_config(null), false, "no configuration matches nothing")
+	var player: Player = Player.new()
+	context.equal(player.configure(recording, Game.new(), 0, 0, 0, config), Types.Code.OK, "the matching configuration plays the recording")
+	context.equal(player.skipped_frames(), 0, "a complete recording skips nothing")
+	for field: String in ["player_count", "input_width", "neutral_input", "diagnostic_seed", "diagnostic_version"]:
+		var foreign: Config = _foreign_config(field)
+		context.equal(recording.matches_config(foreign), false, "a foreign " + field + " does not match")
+		context.equal(Player.new().configure(recording, Game.new(), 0, 0, 0, foreign), Types.Code.INCOMPATIBLE_RECORDING, "the player refuses a foreign " + field)
+		context.equal(Player.new().configure_expert(recording, 0, foreign), Types.Code.INCOMPATIBLE_RECORDING, "expert playback refuses a foreign " + field)
+	context.equal(Player.new().configure_expert(recording, 0, config), Types.Code.OK, "expert playback accepts the matching configuration")

@@ -49,13 +49,16 @@ var _inputs: Types.FrameInputs
 ## Optional checkpoints also require load_state; interval and capacity must both be positive.
 ## Capacity includes the initial state, ranges from 2 to 1024, and retains at most 16 MiB.
 ## Cached boundaries save state even without a recorded checksum; configure clears the cache.
-func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, checkpoint_interval: int = 0, checkpoint_capacity: int = 0) -> int:
+## A supplied config refuses a recording that does not match the running game.
+func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, checkpoint_interval: int = 0, checkpoint_capacity: int = 0, config: RefCounted = null) -> int:
 	if _is_stepping or _batch != null:
 		return Types.Code.BUSY
 	if replay == null or game == null or not Driver.accepts_callback_arguments(game, "simulate_frame") or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
 	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count()):
 		return Types.Code.INVALID_CONFIGURATION
+	if config != null and not replay.matches_config(config):
+		return Types.Code.INCOMPATIBLE_RECORDING
 	if max_snapshot_bytes > 0 and not Driver.accepts_callback_arguments(game, "save_state"):
 		return Types.Code.INVALID_CONFIGURATION
 	if checkpoint_interval < 0 or checkpoint_capacity < 0 or checkpoint_capacity > 1024:
@@ -89,13 +92,16 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 ## Expert playback uses the same ordered requests as callback step(), without owning a game.
 ## A positive snapshot bound validates recorded checksums; zero plays inputs only.
 ## Navigation and callback step are unsupported in this mode. Reconfiguration cannot abandon a batch.
-func configure_expert(replay: Replay, max_snapshot_bytes: int = 0) -> int:
+## A supplied config refuses a recording that does not match the running game.
+func configure_expert(replay: Replay, max_snapshot_bytes: int = 0, config: RefCounted = null) -> int:
 	if _is_stepping or _batch != null:
 		return Types.Code.BUSY
 	if replay == null or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
 	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count()):
 		return Types.Code.INVALID_CONFIGURATION
+	if config != null and not replay.matches_config(config):
+		return Types.Code.INCOMPATIBLE_RECORDING
 	_reset(replay, null, max_snapshot_bytes, 0, 0)
 	return Types.Code.OK
 
@@ -382,6 +388,12 @@ func _accept_checkpoint(checkpoint: Checkpoint) -> int:
 ## Restoring or rechecking a boundary never counts it twice; input-only playback counts none.
 func checked_checksum_count() -> int:
 	return _checked_checksum_count
+
+
+## Recorded frames whose confirmed input was no longer retained when the file was written.
+## Their input was replaced with the neutral sample, so the recording is not a faithful copy.
+func skipped_frames() -> int:
+	return _replay.skipped_frames() if _replay != null else 0
 
 
 ## The next frame to simulate.

@@ -167,6 +167,21 @@ func input_delay() -> int:
 	return _input_delay
 
 
+## Whether this recording can drive a session configured with config: the same roster, sample
+## width, neutral input, game seed and game version. A mismatch means the recorded inputs cannot
+## reproduce that game's states, so a player must refuse the recording.
+func matches_config(config: RefCounted) -> bool:
+	if config == null:
+		return false
+	return (
+		_players == config.player_count
+		and _width == config.input_width
+		and _neutral == config.neutral_input
+		and _text[3] == config.diagnostic_seed
+		and _text[4] == config.diagnostic_version
+	)
+
+
 func max_prediction_frames() -> int:
 	return _max_prediction_frames
 
