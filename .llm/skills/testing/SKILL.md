@@ -104,6 +104,25 @@ Every bug fix ships its regression test, proven in three steps:
 This is mandatory and needs no permission; ask *how* to cover a regression,
 never *whether*. See [debugging](../debugging/SKILL.md).
 
+## Measurement
+
+A benchmark is a test of a measurement, and it fails like a test.
+
+1. **Verify outside the measured region.** A checksum over the bytes a
+   benchmark measures costs as much as the work it checks. Collect the
+   evidence while the clock runs and hash it afterwards.
+2. **Fail when the workload did not run.** A workload that stalls instead of
+   exercising the path still reports a number. Assert the state the workload
+   must reach, such as the last frame or the correction count, and exit
+   non-zero when it does not get there.
+3. **Compare the result with a published baseline.** The canonical checksum
+   is the equivalence proof: it must be identical before and after the
+   change, on every pinned engine.
+4. **No machine-dependent threshold in a unit test.** A lower bound on a
+   measured duration fails on a faster machine. Inject a scripted clock and
+   assert the exact elapsed time, and use a real clock only to order two
+   cases against each other.
+
 ## Rules
 
 1. **Never call `randomize()`** in test code; derive every random sequence

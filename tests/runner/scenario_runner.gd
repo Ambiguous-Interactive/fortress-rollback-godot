@@ -6,12 +6,27 @@ const Context = preload("res://tests/runner/test_context.gd")
 # No SceneTree, nodes, timers or filesystem discovery: browser hosts can call
 # execute with the same scripts, category selection and scenario seed.
 # A nonempty case_names runs only those exact case names, in inventory order.
-# An optional progress callable receives {"suite", "case", "completed"} before each case runs,
-# so a host that is interrupted can name the case that was executing.
-func execute(scripts: Array[Script], category: String, filter_text: String, fixed_seed: int, case_names: PackedStringArray = [], progress: Callable = Callable()) -> Dictionary:
+# An optional progress callable receives the run's progress before and after each
+# case runs, so a host that is interrupted can name the case that was executing
+# and the case that completed before it, with the time that case took.
+# An optional clock callable returns a monotonic integer count of its own unit.
+# The host injects the clock, so the runner never reads a wall clock itself: a
+# native suite keeps its deterministic clock and a browser host injects the real
+# host clock. The observation never enters the canonical result: the case
+# records and their assertion counts stay exactly as they are.
+func execute(
+	scripts: Array[Script],
+	category: String,
+	filter_text: String,
+	fixed_seed: int,
+	case_names: PackedStringArray = [],
+	progress: Callable = Callable(),
+	clock: Callable = Callable()
+) -> Dictionary:
 	var records: Array[Dictionary] = []
 	var errors: Array[Dictionary] = []
 	var completed: int = 0
+	var last_completed: Variant = null
 	for script: Script in scripts:
 		if not script.can_instantiate():
 			errors.append({"kind": "uninstantiable_suite", "suite": script.resource_path})
@@ -35,8 +50,8 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 				continue
 			if not case_names.is_empty() and name not in case_names:
 				continue
-			if progress.is_valid():
-				progress.call({"suite": script.resource_path, "case": name, "completed": completed})
+			var started: int = _read_clock(clock)
+			_publish(progress, {"completed": completed, "executing": {"suite": script.resource_path, "case": name, "started": started}, "last_completed": last_completed})
 			var runs: Array[Dictionary] = []
 			for repetition: int in range(2):
 				var instance: Variant = script.new()
@@ -54,6 +69,9 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 				errors.append(_first_difference(script.resource_path, name, runs))
 			records.append({"suite": script.resource_path, "case": name, "category": category, "seed": str(fixed_seed), "runs": runs})
 			completed += 1
+			var finished: int = _read_clock(clock)
+			last_completed = {"suite": script.resource_path, "case": name, "started": started, "finished": finished, "elapsed": finished - started}
+			_publish(progress, {"completed": completed, "executing": null, "last_completed": last_completed})
 	for name: String in case_names:
 		if not records.any(func(record: Dictionary) -> bool: return record["case"] == name):
 			errors.append({"kind": "unknown_case", "case": name})
@@ -64,6 +82,17 @@ func execute(scripts: Array[Script], category: String, filter_text: String, fixe
 		for run: Dictionary in record["runs"]:
 			is_pass = is_pass and run["failures"].is_empty()
 	return {"format": 1, "complete": true, "passed": is_pass, "count": records.size(), "errors": errors, "records": records}
+
+
+func _read_clock(clock: Callable) -> int:
+	if not clock.is_valid():
+		return 0
+	return int(clock.call())
+
+
+func _publish(progress: Callable, value: Dictionary) -> void:
+	if progress.is_valid():
+		progress.call(value)
 
 
 func _first_difference(suite: String, case_name: String, runs: Array[Dictionary]) -> Dictionary:

@@ -122,14 +122,31 @@ class OwnershipReceiptTests(unittest.TestCase):
                     self.assertTrue(list(output.glob('ownership-*-native.log')), 'execution logs survive rejection')
 
     def test_interrupted_run_publishes_and_retains_case_progress(self):
-        # A rejected run must name the case that was executing, so a slow run
-        # can be told apart from an engine or script failure.
+        # A rejected run must name the case that was executing and the time the
+        # last completed case took, so a slow run can be told apart from an
+        # engine or script failure.
         self.assertIn('_publish_progress', probes.HOST)
         self.assertIn('fortressOwnershipProgress', probes.HOST)
-        self.assertIn('PackedStringArray(), _publish_progress)', probes.HOST)
+        self.assertIn('PackedStringArray(), _publish_progress, _clock)', probes.HOST)
+        self.assertIn('func _clock() -> int:', probes.HOST)
+        self.assertIn('Time.get_ticks_usec()', probes.HOST)
+        self.assertIn('progress["unit"] = "us"', probes.HOST)
         runner = (probes.ROOT / 'scripts/reference/browser/ownership.cjs').read_text(encoding='utf-8')
         self.assertIn('fortressOwnershipProgress', runner)
         self.assertIn('detail.progress', runner)
+
+    def test_the_runner_measures_elapsed_time_with_an_injected_clock(self):
+        # The runner must not read a wall clock itself: the host injects the
+        # clock, so the native suites keep their deterministic clock and the
+        # browser run uses the real host clock.
+        runner = (probes.ROOT / 'tests/runner/scenario_runner.gd').read_text(encoding='utf-8')
+        self.assertIn('clock: Callable = Callable()', runner)
+        self.assertIn('"elapsed"', runner)
+        self.assertNotIn('Time.get_ticks_usec()', runner)
+        native = (probes.ROOT / 'tests/runner/run_tests.gd').read_text(encoding='utf-8')
+        self.assertIn('_publish_progress, _clock', native)
+        self.assertIn('record["unit"] = "tick"', native)
+        self.assertNotIn('Time.get_ticks_usec()', native)
 
     def test_exported_host_publishes_the_inventory_outside_the_progress_callable(self):
         # The inventory publication must stay in the entry point: the progress

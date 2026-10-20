@@ -45,6 +45,7 @@ Local development contracts and evidence entry points:
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
+- [Measured session hot path, snapshot copy and codec cost](docs/experiments/session-hot-path-performance.md).
 - [Audited raw input queue and prediction contracts](docs/input-queue.md).
 - [Actual upstream and production Godot sync-test differential traces](docs/oracle.md).
 - [Shared session engine, bounded snapshots and game driver](docs/session.md).

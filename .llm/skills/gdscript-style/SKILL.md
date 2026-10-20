@@ -23,6 +23,8 @@ Boring, typed, reviewable GDScript. The reference formatter is `gdformat`
   instances with `get_script().new()` and returns `RefCounted`, not its own name.
   On Godot 4.3, `PackedByteArray([...])` is not a constant expression; use a
   `String` constant and convert it at runtime.
+- A lambda captures a local variable by value, so a counter that the lambda
+  must advance needs a member variable or an array, not a captured local.
 - Use `@onready` (not `_ready` assignments) for node refs; prefer `%` unique
   names over long `get_node("A/B/C")` chains.
 

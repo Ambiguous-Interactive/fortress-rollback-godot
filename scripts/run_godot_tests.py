@@ -21,6 +21,7 @@ from engine_path import resolve_engine  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
 CASES_PREFIX = "FORTRESS_TEST_CASES "
+PROGRESS_PREFIX = "FORTRESS_TEST_PROGRESS "
 # A suite this slow in the last run is split into one process per case.
 SPLIT_SECONDS = 4.0
 DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
@@ -85,15 +86,37 @@ def validate_result(value: object) -> dict:
     return value
 
 
+def last_progress(stdout: str) -> dict | None:
+    """Return the last case the runner reported, so an interrupted run names it."""
+    record: dict | None = None
+    for line in stdout.splitlines():
+        if not line.startswith(PROGRESS_PREFIX):
+            continue
+        try:
+            value = json.loads(line[len(PROGRESS_PREFIX):])
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            record = value
+    return record
+
+
 def invoke(command: list[str], timeout: float) -> dict:
     try:
         process = subprocess.run(command, cwd=ROOT, capture_output=True,
                                  timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        return {"command": command, "exit": None, "failure": "watchdog",
-                "stdout": _decode(exc.stdout), "stderr": _decode(exc.stderr)}
+        report = {"command": command, "exit": None, "failure": "watchdog",
+                  "stdout": _decode(exc.stdout), "stderr": _decode(exc.stderr)}
+        progress = last_progress(report["stdout"])
+        if progress is not None:
+            report["progress"] = progress
+        return report
     report = {"command": command, "exit": process.returncode,
               "stdout": _decode(process.stdout), "stderr": _decode(process.stderr)}
+    progress = last_progress(report["stdout"])
+    if progress is not None:
+        report["progress"] = progress
     if _invalid_utf8(process.stdout, process.stderr):
         report["failure"] = "invalid_utf8_output"
         return report

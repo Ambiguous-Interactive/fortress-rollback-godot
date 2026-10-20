@@ -1,6 +1,7 @@
-.PHONY: replay-probes p2p-probes handshake-probes queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
-.PHONY: llm-index llm-index-prune pre-commit godot-check test-godot test-focus test-changed
-.PHONY: prune prune-apply disk scratch
+.PHONY: replay-probes p2p-probes handshake-probes queue-probes oracle-probes test-oracle
+.PHONY: hot-path-probes representation-probes lint-source hooks lint-llm test-llm
+.PHONY: test-reference reference-baseline llm-index llm-index-prune pre-commit
+.PHONY: godot-check test-godot test-focus test-changed prune prune-apply disk scratch
 
 PY ?= python3
 GODOT ?= godot
@@ -73,6 +74,10 @@ replay-probes:
 ## Actual upstream sync-test traces and independent canonical history
 oracle-probes:
 	$(PY) scripts/oracle/launch.py --godot $(GODOT)
+
+## Measured session hot path, snapshot copy and codec cost
+hot-path-probes:
+	$(GODOT) --headless --path . --script scripts/benchmark_session_hot_path.gd
 
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:

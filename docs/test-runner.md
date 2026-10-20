@@ -132,11 +132,27 @@ after all work; asynchronous/yielding cases are unsupported and fail incomplete.
 
 `scenario_runner.gd` has no SceneTree, Node, filesystem, timer or OS dependency.
 A future browser host can preload the same suite scripts and call
-`execute(scripts: Array[Script], category, filter_text, seed, case_names, progress) -> Dictionary`.
+`execute(scripts: Array[Script], category, filter_text, seed, case_names, progress, clock) -> Dictionary`.
 The optional `case_names` runs only those cases; the optional `progress` callable
-receives one dictionary with the suite, the case and the number of completed
-cases before each case runs, so an interrupted host can name the case that was
-executing.
+receives the run's progress before and after each case, so an interrupted host
+can name the case that was executing and the case that completed before it. The
+optional `clock` callable returns a monotonic integer count of its own unit; the
+host injects it, so the runner never reads a wall clock itself. The native
+runner injects a deterministic tick clock and the exported browser host injects
+the real host clock in microseconds. The observation never enters the canonical
+result: the case records, their assertion counts and the repeat comparison stay
+exactly as they are.
+
+The progress record has `completed` (the number of finished cases), `executing`
+(the suite, case and start reading of the case in flight, or null between
+cases) and `last_completed` (the suite, case, start reading, finish reading and
+elapsed time of the last finished case, or null before the first case). The
+native runner prints each record as `FORTRESS_TEST_PROGRESS <json>`; the
+launcher keeps the last record of a shard in its report, so an interrupted
+process names the case it was running. The exported ownership host publishes
+the same record to the page, and the browser runner reports it with the browser
+error inventory when its watchdog rejects the run.
+
 The result contains format, completion, pass flag, count, errors and ordered
 case records with both runs. Browser export/execution is **not implemented or
 verified by this runner**. It still needs its own host watchdog/error handling.

@@ -3,6 +3,26 @@ extends SceneTree
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
 const PREFIX: String = "FORTRESS_TEST_RESULT "
 const CASES_PREFIX: String = "FORTRESS_TEST_CASES "
+const PROGRESS_PREFIX: String = "FORTRESS_TEST_PROGRESS "
+
+# The native runner injects a deterministic tick clock, so its progress output
+# is byte-stable and the canonical result stays untouched. A browser host
+# injects the real host clock instead.
+var _ticks: int = 0
+
+
+func _clock() -> int:
+	_ticks += 1
+	return _ticks
+
+
+# The progress record names the case that was executing and the case that
+# completed before it. A host that is interrupted can tell a slow run from a
+# failed one.
+func _publish_progress(value: Dictionary) -> void:
+	var record: Dictionary = value.duplicate()
+	record["unit"] = "tick"
+	print(PROGRESS_PREFIX + JSON.stringify(record))
 
 
 func _initialize() -> void:
@@ -65,7 +85,7 @@ func _initialize() -> void:
 	if list_cases:
 		_list(scripts)
 		return
-	var result: Dictionary = Scenarios.new().execute(scripts, category, filter_text, fixed_seed, case_names)
+	var result: Dictionary = Scenarios.new().execute(scripts, category, filter_text, fixed_seed, case_names, _publish_progress, _clock)
 	print(PREFIX + JSON.stringify(result))
 	quit(0 if result["passed"] else 1)
 

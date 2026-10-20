@@ -7,6 +7,7 @@ const Status = preload("res://addons/fortress_rollback/core/snapshot_status.gd")
 const Code = Status.Code
 # gdlint: enable=constant-name
 var _bytes: PackedByteArray = PackedByteArray()
+var _capacity: int = 0
 var _cursor: int = 0
 var _error: int = Code.OK
 var _is_live: bool = false
@@ -14,19 +15,21 @@ var _is_live: bool = false
 
 func _init(capacity: int = 0) -> void:
 	if capacity > 0 and capacity <= 16777216:
-		_bytes.resize(capacity)
+		_capacity = capacity
 		_is_live = true
 
 
+## Appends a copy of the caller's bytes. The copy is a native buffer append, so
+## a wide snapshot does not cost one interpreted step per byte. The writer's own
+## storage stays bounded by its capacity and never aliases the caller's buffer.
 func write_bytes(bytes: PackedByteArray) -> int:
 	var code: int = status()
 	if code != Code.OK:
 		return code
-	if bytes.size() > _bytes.size() - _cursor:
+	if bytes.size() > _capacity - _cursor:
 		_error = Code.OVERFLOW
 		return _error
-	for index: int in range(bytes.size()):
-		_bytes[_cursor + index] = bytes[index]
+	_bytes.append_array(bytes)
 	_cursor += bytes.size()
 	return Code.OK
 
@@ -45,4 +48,4 @@ func _expire() -> void:
 
 
 func _written_copy() -> PackedByteArray:
-	return _bytes.slice(0, _cursor)
+	return _bytes.duplicate()
