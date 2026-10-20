@@ -119,7 +119,7 @@
 
 ### Fixed
 
-- Fix the canonical diagnostic trace losing the divergence region after a rollback. The window follows the simulation back to the restored frame, so the frames that follow a rollback are recorded instead of rejected.
+- Fix the canonical diagnostic trace losing the divergence region after a rollback. The window follows the simulation back to the restored frame, so the frames that follow a rollback are recorded instead of rejected, and the restored boundary keeps its canonical state so the re-opened window stays restorable.
 
 - Fix spectator playback simulating a stale host row. A missing retained row now ends the advance with `HISTORY_UNAVAILABLE` and no game callback.
 
@@ -198,7 +198,7 @@
 
 ### Changed
 
-- **Breaking**: Change the replay file format to version 3. The file ends with a digest of the final frame's input row, so a corrupted last input stops playback with `DESYNC` at that frame instead of ending in a wrong final state. Version 2 files are refused with `UNSUPPORTED_VERSION`.
+- **Breaking**: Change the replay file format to version 3. The file ends with a digest of the final frame's input row, so a corrupted last input stops playback with `DESYNC` at that frame instead of ending in a wrong final state. Version 1 and version 2 files are refused with `UNSUPPORTED_VERSION`.
 
 - Name the reason the replay viewer refuses a file. An older format version, a malformed file and an oversized file each get their own message.
 

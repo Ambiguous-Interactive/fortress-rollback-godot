@@ -316,7 +316,7 @@ func _protects_final_input(context: RefCounted) -> void:
 	corrupted[bytes.size() - tail - row_size] ^= 0xff
 	var decoded: Replay = _decode(corrupted)
 	context.equal(decoded != null, true, "a corrupted final row still decodes")
-	context.equal(decoded.to_bytes(), corrupted, "a decoded recording keeps its recorded anchor")
+	context.bytes_equal(decoded.to_bytes(), corrupted, last, "a decoded recording keeps its recorded anchor")
 	var player: Player = Player.new()
 	context.equal(player.configure(decoded, Game.new(), Game.SNAPSHOT_BYTES), Types.Code.OK, "player configures")
 	var code: int = Types.Code.OK

@@ -372,17 +372,17 @@ It returns `UNSUPPORTED_VERSION` for any other version, and `TOO_LARGE` above th
 | Neutral input | width | `neutral_input()` |
 | Five texts: u8 length (0–128), then printable ASCII | varies | `engine_version()`, `addon_version()`, `upstream_revision()`, `game_seed()`, `game_version()` |
 | Per frame: every player's input, a flag, then a 16-byte checksum when the flag is 1 | varies | `inputs()`, `checksum()`, `is_skipped_frame()` |
-| Final input digest: the first 16 bytes of the last frame's input row SHA-256 | 16 | `final_digest()` |
+| Final input digest: the first 16 bytes of the last frame's input row SHA-256 | 16 | `final_digest()`, `input_digest()` |
 
 The flag is 0 for no checksum, 1 for a checksum and 2 for a skipped frame, which must hold neutral input.
 The skipped count must equal the number of flag-2 frames. Every recorded input is confirmed.
 Metadata describes the recording; `decode` does not compare it with the running build.
 
 Each frame's checksum covers the state before that frame's input, so the state checksum of the
-following frame covers every input row but the last one. The trailing digest anchors the final
-input row: the player compares it with the row it applies and stops with `DESYNC` at that frame
-when they disagree. The digest is a Godot-side integrity extension; the pinned upstream session
-owns the input history itself.
+following frame covers an input row whenever that following frame carries a checksum. The trailing
+digest anchors the final input row, which no following frame can cover: the player compares it
+with the row it applies and stops with `DESYNC` at that frame when they disagree. The digest is
+a Godot-side integrity extension; the pinned upstream session owns the input history itself.
 
 Released format versions never change. A new version either reads older files with explicit
 defaults or rejects them with `UNSUPPORTED_VERSION`; this guide states which. Version 1 never

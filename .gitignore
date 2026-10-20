@@ -28,15 +28,8 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Verified development caches
-/.cache/reference/
-/.cache/tests/
-
-# Agent measurement and issue-read artifacts
-/.cache/session-*/
-
-# Scratch copies of the working tree (machine-local, regenerable)
-/.cache/scratch/
+# Machine-local caches, measurement artifacts and scratch copies (never committed)
+/.cache/
 
 # Machine-local session logs (never committed)
 /progress/

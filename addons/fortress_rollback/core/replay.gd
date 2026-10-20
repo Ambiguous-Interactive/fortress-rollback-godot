@@ -73,7 +73,8 @@ static func _printable(bytes: PackedByteArray) -> bool:
 
 ## Replaces this replay only when the result is OK; any other DecodeCode leaves it unchanged.
 ## Nothing is allocated before the declared frame count is checked against the bytes actually present.
-## Version 1 files are UNSUPPORTED_VERSION: they lack the metadata that version 2 requires.
+## Version 1 and version 2 files are UNSUPPORTED_VERSION: version 1 lacks the metadata that
+## version 2 requires, and version 2 lacks the final input digest that version 3 records.
 func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	if bytes.size() > mini(max_bytes, MAX_BYTES):
 		return DecodeCode.TOO_LARGE

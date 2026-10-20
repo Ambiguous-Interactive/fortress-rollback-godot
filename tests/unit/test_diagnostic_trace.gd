@@ -6,6 +6,7 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Reader = preload("res://addons/fortress_rollback/core/diagnostic_trace_reader.gd")
 const Fixture = preload("res://tests/unit/test_driver.gd")
 
 
@@ -127,12 +128,15 @@ func _rollback_window(context: RefCounted) -> void:
 			if after_rollback:
 				after_rollback = false
 				context.equal(captured.frames.size() > 0, true, "trace records the frames that follow a rollback")
+				context.equal(captured.frames[0].state_available, true, "the restored boundary keeps its canonical state")
 	context.equal(captures, game.trace_reports.size(), "every save captured the trace")
 	var report: Dictionary = session.call("diagnostic_trace")
 	context.equal(report.frames.size() <= 2, true, "trace keeps the retained frame bound")
 	for offset: int in range(report.frames.size() - 1):
 		context.equal(report.frames[offset + 1].frame, report.frames[offset].frame + 1, "retained frames stay contiguous")
 	context.equal(report.frames[-1].frame, 8, "window ends at the last simulated frame")
+	context.equal(report.frames[0].state_available, true, "the re-opened window keeps a restorable boundary")
+	context.equal(Reader.decode(report, 2, 1, 8).size() > 0, true, "the re-opened window is consumable")
 	session._originals[7].bytes[0] ^= 1
 	context.equal(driver.step(9, fixture._samples(9)).code, Types.Code.DESYNC, "canonical mismatch detected after the rollbacks")
 	var divergence: Dictionary = session.call("diagnostic_trace").first_divergence
