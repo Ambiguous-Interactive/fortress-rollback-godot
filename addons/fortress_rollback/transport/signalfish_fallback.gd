@@ -30,6 +30,9 @@ var _last_now: int = -1
 var _route_cursor: int = 0
 var _pending: Array[Peer.Packet] = []
 var _pending_bytes: int = 0
+# Last poll's traffic and sends, so a caller can tell an idle route from a busy one.
+var _activity: int = 0
+var _sent: int = 0
 var _unavailable_since: Dictionary = {}
 var _relay_peers: Dictionary = {}
 var _ready_since: Dictionary = {}
@@ -142,6 +145,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 	_pending = reclaimed + _pending
 	result.sent += direct_result.sent
 	result.received += direct_result.received
+	result.activity = direct_result.activity
 	result.peer_code = direct_result.peer_code
 	if direct_result.code in [Code.PEER_FAILURE, Code.INVALID_ARGUMENT] \
 		or (direct_result.code == Code.WRONG_STATE and _adapter.status().route == "mesh"):
@@ -150,6 +154,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 		var relay_result: Relay.Result = _relay.poll(now_us, next_token_factory)
 		result.sent += relay_result.sent
 		result.received += relay_result.received
+		result.activity += relay_result.activity
 		result.peer_code = relay_result.peer_code
 		if relay_result.code not in [Code.OK, Code.BACKPRESSURE]:
 			_failure = relay_result.code
@@ -160,11 +165,23 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 	for uuid: String in _unavailable_since.keys():
 		if not _relay_peers.has(uuid) and not _has_pending(uuid):
 			_unavailable_since.erase(uuid)
+	_activity = result.activity
+	_sent = result.sent
 	_busy = false
 	gate = _gate()
 	if gate != Code.OK:
 		result.code = gate
 	return result
+
+
+## True when the composed routes took nothing off the wire, sent nothing and hold no queued work.
+## A refused packet still counts as traffic, so valid work queued behind it is never left queued.
+func idle() -> bool:
+	if _activity > 0 or _sent > 0 or not _pending.is_empty():
+		return false
+	if _direct == null or _relay == null:
+		return true
+	return _direct.idle() and _relay.idle()
 
 
 func status() -> Dictionary:
@@ -214,6 +231,8 @@ func detach() -> void:
 	_adapter = null
 	_pending.clear()
 	_pending_bytes = 0
+	_activity = 0
+	_sent = 0
 	_unavailable_since.clear()
 	_relay_peers.clear()
 	_ready_since.clear()

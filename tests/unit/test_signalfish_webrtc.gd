@@ -10,7 +10,8 @@ const V: String = M.V
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["send", "atomic", "channel", "receive", "fences", "reentry", "plan_cycle", "plan_roles", "plan_repeat", "plan_detach", "configuration"])
+	return PackedStringArray(["send", "atomic", "channel", "receive", "fences", "reentry", "plan_cycle", "plan_roles", "plan_repeat", "plan_detach",
+		"configuration", "activity"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -32,6 +33,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_plan_revision(context, fixture, name)
 		"reentry":
 			_reentry(context, fixture)
+		"activity":
+			_activity(context, fixture)
 	destroy(fixture)
 	context.finish()
 
@@ -180,6 +183,38 @@ func _reentry(context: RefCounted, fixture: Dictionary) -> void:
 	fixture.mesh.transport.on_poll = fixture.direct.detach
 	context.equal(fixture.direct.poll(0).code, W.Code.WRONG_STATE, "callback teardown fails closed")
 	context.equal(fixture.direct.status().code, W.Code.WRONG_STATE, "reentry failure latched")
+
+
+# Value: protects=idle service batches; fails_when=refused traffic looks like an empty socket; why_new=receive counts only accepted packets; seam=direct poll result
+func _activity(context: RefCounted, fixture: Dictionary) -> void:
+	var helper: RefCounted = M.new()
+	var remote_membership: RefCounted = helper._membership(context, V, PackedStringArray([U, V]))
+	var remote: P = helper._peer(context, remote_membership)
+	var bytes: PackedByteArray = remote.drain_outbox()[0].bytes
+	var transport: Transport = fixture.mesh.transport
+	context.equal(fixture.direct.idle(), true, "a fresh direct transport is idle")
+	context.equal(fixture.direct.poll(0).activity, 0, "an empty socket moves no traffic")
+	context.equal(fixture.direct.idle(), true, "an empty socket keeps the transport idle")
+	transport.incoming.append({"source": 987, "channel": 0, "mode": 0, "bytes": bytes})
+	var refused: W.Result = fixture.direct.poll(1)
+	context.equal(refused.activity, 1, "a refused packet is still traffic")
+	context.equal(refused.received, 0, "a refused packet delivers no input")
+	context.equal(fixture.direct.idle(), false, "refused traffic keeps a service batch alive")
+	transport.incoming.append({"source": remote_membership.uuid_to_peer_id(V), "channel": 0, "mode": 0, "bytes": bytes})
+	var accepted: W.Result = fixture.direct.poll(2)
+	context.equal(accepted.activity, 1, "an accepted packet is traffic")
+	context.equal(accepted.received, 1, "an accepted packet delivers one input")
+	context.equal(fixture.direct.poll(3).activity, 0, "a drained socket moves no traffic")
+	context.equal(fixture.direct.idle(), true, "a drained socket is idle again")
+	var queued: Array[P.Packet] = [packet(fixture, 3)]
+	fixture.direct.enqueue_batch(queued)
+	context.equal(fixture.direct.idle(), false, "queued output keeps the transport busy")
+	var sent: W.Result = fixture.direct.poll(4)
+	context.equal(sent.sent, 1, "the queued packet is sent")
+	context.equal(sent.activity, 0, "a sent packet is not inbound traffic")
+	context.equal(fixture.direct.idle(), false, "a send keeps the batch alive for its answer")
+	context.equal(fixture.direct.poll(5).activity, 0, "a drained output queue moves no traffic")
+	context.equal(fixture.direct.idle(), true, "a drained output queue is idle again")
 
 
 class FakeMesh:

@@ -20,6 +20,8 @@ const PACKET_BYTES: int = 1024
 ## Frames a suggestion stays on offer. Latency can recover, and a raise cannot be undone.
 const SUGGESTION_FRAMES: int = 600
 const REPLAY_FRAMES: int = 36000
+## Bounded service rounds per tick. The batch stops early once the transport is idle.
+const SERVICE_ROUNDS: int = 8
 
 var game: Simulation = Simulation.new()
 var peer: Peer = Peer.new()
@@ -140,10 +142,14 @@ func tick(now_us: int, buttons: int) -> void:
 		failure = "Invalid clock or input. Leave and create a new room."
 		return
 	_last_now = now_us
-	for _batch: int in 8:
+	for _batch: int in SERVICE_ROUNDS:
 		if not _poll_protocol(now_us):
 			break
 		if not _service(now_us):
+			break
+		# An idle route has nothing to deliver, send or wait for. Stop early and
+		# leave the rest of the frame's budget to the browser and the game.
+		if _pending.is_empty() and fallback.idle():
 			break
 	if failure.is_empty() and peer.network_status().state == "running":
 		if _held < 0:
