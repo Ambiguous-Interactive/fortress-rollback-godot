@@ -16,8 +16,26 @@ const Mixed = preload("res://webrtc_mixed.gd")
 class RetainedMixed:
 	extends Mixed
 	var calls: int = 0
+	var traffic_per_call: bool = false
+	func service(host: Node) -> bool:
+		calls += 1
+		if traffic_per_call: host.sent_packets += 1
+		return true
+
+class RouteFallback:
+	extends "res://addons/fortress_rollback/transport/signalfish_fallback.gd"
+	var routed: bool = false
+	func status() -> Dictionary:
+		return {"pending_packets": 0, "direct": {}, "relay": {}, "relay_peers": ["remote"] if routed else []}
+
+class RouteMixed:
+	extends RetainedMixed
+	func _init() -> void:
+		fallback = RouteFallback.new()
 	func service(_host: Node) -> bool:
 		calls += 1
+		var selected: RouteFallback = fallback as RouteFallback
+		selected.routed = not selected.routed
 		return true
 
 class BufferedCompletionMixed:
@@ -38,11 +56,15 @@ class ClockProbe:
 	var ticks_us: int = 10000000
 	var service_calls: int = 0
 	var failed_service_call: int = -1
+	var force_service_work: bool = false
 	var diagnostic_snapshots: Array[Dictionary] = []
 
 	func _service() -> bool:
 		service_calls += 1
-		return false if service_calls == failed_service_call else super._service()
+		if service_calls == failed_service_call: return false
+		var serviced: bool = super._service()
+		if force_service_work: _service_had_work = true
+		return serviced
 
 	func _wait_diagnostic(attempt: int) -> void:
 		for peer: Peer in peers:
@@ -56,12 +78,18 @@ func _initialize() -> void:
 	var probe: ClockProbe = ClockProbe.new()
 	probe.service_calls = 0
 	if not _check(await probe._wait(func() -> bool: return true, true), "actual wait services an immediately ready condition"): return
-	if not _check(probe.service_calls == 8, "actual wait selects the tested bounded eight-poll schedule"): return
+	if not _check(probe.service_calls == 1, "an idle wait stops after one service"): return
 	probe.service_calls = 0
+	probe.force_service_work = true
+	if not _check(await probe._wait(func() -> bool: return true, true), "a busy wait remains serviceable"): return
+	if not _check(probe.service_calls == 8, "a busy wait retains the bounded eight-poll schedule"): return
+	probe.service_calls = 0
+	probe.force_service_work = true
 	probe.failed_service_call = 3
 	if not _check(not await probe._wait(func() -> bool: return true, true), "wait preserves a failed transport service"): return
 	if not _check(probe.service_calls == 3, "failed service stops the remaining bounded polls"): return
 	probe.failed_service_call = -1
+	probe.force_service_work = false
 	probe.player_count = 8
 	var transport_options: RefCounted = probe._direct_options()
 	# Bind the actual host selection to the independently exercised eight-peer FIFO workload.
@@ -128,6 +156,7 @@ func _initialize() -> void:
 	if not _check(retained._service(), "retained mixed transport remains serviceable"): return
 	if not _check(peer.network_status().last_now_us == 400000, "retained mixed output cannot suppress actual peer elapsed time"): return
 	if not _check(mixed.calls == 1 and mixed.has_pending(), "poll preserves caller-owned mixed batch until service"): return
+	if not _mixed_batches(fixture, peer): return
 	if not _expired_handshake(fixture, config, lifecycle): return
 	retained.meshes[0].free()
 	retained.clients[0].free()
@@ -144,6 +173,38 @@ func _check(condition: bool, message: String) -> bool:
 	push_error(message)
 	quit(1)
 	return false
+
+
+# Value: protects=bounded mixed service batches; fails_when=an idle or a busy route stops the wrong schedule; why_new=the batch rule needs route work; seam=actual mixed service
+func _mixed_batches(fixture: Fixture, peer: Peer) -> bool:
+	var probe: RetainedProbe = RetainedProbe.new()
+	probe.clients.append(probe.SDK.new())
+	probe.meshes.append(probe.SDKMesh.new())
+	probe.peers.append(peer)
+	probe.mixed_enabled = true
+	# The completed handshake leaves no pending event, so the route is the only work in the batch.
+	peer.drain_events()
+	peer.drain_transitions()
+	# The shared peer's clock already advanced, so this probe owns the same elapsed epoch.
+	probe.transport_epoch_us = probe.ticks_us - 400000
+	var mixed: RetainedMixed = RetainedMixed.new()
+	mixed.pending.append(Peer.Packet.new(fixture._id(2), PackedByteArray([1])))
+	probe.mixed = mixed
+	if not _check(probe._service_batch() and mixed.calls == 8, "retained mixed output keeps the bounded service batch"): return false
+	mixed.pending.clear()
+	mixed.calls = 0
+	if not _check(probe._service_batch() and mixed.calls == 1, "empty mixed queues stop after one service"): return false
+	mixed.calls = 0
+	mixed.traffic_per_call = true
+	if not _check(probe._service_batch() and mixed.calls == 8, "physical mixed traffic keeps the bounded service batch"): return false
+	mixed.traffic_per_call = false
+	var routes: RouteMixed = RouteMixed.new()
+	probe.mixed = routes
+	if not _check(probe._service_batch() and routes.calls == 8, "mixed route changes keep the bounded service batch"): return false
+	probe.meshes[0].free()
+	probe.clients[0].free()
+	probe.free()
+	return true
 
 
 # Value: protects=bounded gameplay stall snapshots; fails_when=only final wait logs or clock/count drift; why_new=retry test omits diagnostic waits; seam=probe clock ticks

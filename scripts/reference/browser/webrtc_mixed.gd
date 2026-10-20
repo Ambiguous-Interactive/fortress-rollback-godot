@@ -75,6 +75,11 @@ func _early_input(message: T.Message) -> bool:
 func has_pending() -> bool:
 	return not pending.is_empty()
 
+
+## True when the composed routes hold no queued work and took nothing off the wire.
+func idle() -> bool:
+	return pending.is_empty() and fallback.idle()
+
 func service(host: Node) -> bool:
 	_record_bounds()
 	if not physical_closed and host.local_index == 0 and host.peers[0].status().current_frame == 5 \

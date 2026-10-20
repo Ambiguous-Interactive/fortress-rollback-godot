@@ -19,6 +19,8 @@ const Mixed = preload("res://webrtc_mixed.gd")
 const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "room_join_failed", "authentication_error", "connection_failed",
 	"reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
+## Bounded service rounds per rendered turn. The batch stops early once every route is idle.
+const SERVICE_ROUNDS: int = 8
 var clients: Array[SDK] = []
 var infos: Dictionary = {}
 var lobby_ready: Dictionary = {}
@@ -47,6 +49,8 @@ var membership_frozen: bool = false
 var tearing_down: bool = false
 var mixed_enabled: bool = false
 var mixed: Mixed = Mixed.new()
+# The last service round moved bytes, sent bytes or still holds queued work.
+var _service_had_work: bool = false
 
 func _ready() -> void:
 	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
@@ -122,8 +126,7 @@ func _play(count: int) -> bool:
 				errors.append("canonical_prefix_frame_%d" % (frame - 2))
 				return false
 			active_comparisons += 1
-		for turn: int in 8:
-			if not _service(): return false
+		if not _service_batch(): return false
 		await get_tree().create_timer(0.002).timeout
 	stage = "final_confirmation"
 	if not await _wait(func() -> bool:
@@ -175,8 +178,7 @@ func _wait(condition: Callable, use_transport: bool = false) -> bool:
 		for client: SDK in clients: client.poll()
 		for mesh: SDKMesh in meshes: mesh.poll()
 		if use_transport:
-			for turn: int in 8:
-				if not _service(): return false
+			if not _service_batch(): return false
 		if not errors.is_empty(): return false
 		if condition.call(): return true
 		_service_wait_diagnostics(attempt, diagnostics)
@@ -241,7 +243,19 @@ func _poll_tokens(peer: Peer) -> Array[PackedByteArray]:
 	for remote: PackedByteArray in peer.peer_ids(): tokens.append(_next_token())
 	return tokens
 
+## Bounded service rounds. A round that neither moved bytes nor holds queued work ends the batch,
+## so an idle page does not spend its whole frame budget on repeated polls.
+func _service_batch() -> bool:
+	for _turn: int in SERVICE_ROUNDS:
+		if not _service():
+			return false
+		if not _service_had_work:
+			break
+	return true
+
+
 func _service() -> bool:
+	_service_had_work = false
 	_update_transport_clock()
 	if not _healthy(): return false
 	for index: int in clients.size():
@@ -254,16 +268,23 @@ func _service() -> bool:
 				errors.append("peer_poll_%d" % polled)
 				return false
 			for event: Dictionary in peers[index].drain_events():
+				_service_had_work = true
 				if event.kind == "sync_timeout":
 					errors.append("peer_sync_timeout")
 					return false
-			peers[index].drain_transitions()
+			if not peers[index].drain_transitions().is_empty(): _service_had_work = true
 			if polled == I.Code.OK: break
 		if mixed_enabled:
+			var routes: Array = mixed.fallback.status().relay_peers
+			var traffic: int = sent_packets + received_packets
 			if not mixed.service(self): return false
+			# A refused packet is still traffic, so a busy route keeps the whole bounded batch.
+			_service_had_work = _service_had_work or not mixed.idle() or mixed.fallback.status().relay_peers != routes \
+				or sent_packets + received_packets > traffic
 		else:
 			var packets: Array[Peer.Packet] = peers[index].drain_outbox()
 			if not packets.is_empty():
+				_service_had_work = true
 				var accepted: int = transports[index].enqueue_batch(packets)
 				if accepted != 0:
 					errors.append("direct_enqueue_%d" % accepted)
@@ -274,8 +295,9 @@ func _service() -> bool:
 				return false
 			sent_packets += result.sent
 			received_packets += result.received
-		peers[index].drain_events()
-		peers[index].drain_transitions()
+			if not transports[index].idle(): _service_had_work = true
+		if not peers[index].drain_events().is_empty(): _service_had_work = true
+		if not peers[index].drain_transitions().is_empty(): _service_had_work = true
 	if transport_us >= next_progress_us:
 		Setup.publish_progress(self)
 		next_progress_us = transport_us + 500000

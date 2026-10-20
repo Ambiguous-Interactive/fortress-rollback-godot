@@ -30,6 +30,11 @@ var _token_ready: bool = false
 var _failure: int = Code.OK
 var _busy: bool = false
 var _rejected: int = 0
+# Packets taken off the socket, refused ones included. A refused packet is still traffic.
+var _consumed: int = 0
+# Last poll's traffic and sends, so a caller can tell an idle transport from a busy one.
+var _activity: int = 0
+var _sent: int = 0
 var _refused_destination: PackedByteArray = PackedByteArray()
 
 
@@ -116,8 +121,10 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 	var transport: Object = _transport.get_ref()
 	transport.call("poll")
 	var result: Types.Result = Types.Result.new(_gate())
+	var consumed: int = _consumed
 	if result.code == Code.OK:
 		_receive(transport, now_us, next_token_factory, result)
+	result.activity = _consumed - consumed
 	var receive_pressure: bool = result.code == Code.BACKPRESSURE
 	if result.code in [Code.OK, Code.BACKPRESSURE]:
 		for _index: int in mini(_options.max_sends_per_poll, _pending.size()):
@@ -145,8 +152,16 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 			result.sent += 1
 	if receive_pressure and result.code == Code.OK:
 		result.code = Code.BACKPRESSURE
+	_activity = result.activity
+	_sent = result.sent
 	_busy = false
 	return result
+
+
+## True when the last poll took nothing off the socket, sent nothing and holds no queued work.
+## A refused packet still counts as traffic, so valid work queued behind it is never left queued.
+func idle() -> bool:
+	return _activity == 0 and _sent == 0 and _pending.is_empty() and _incoming.is_empty()
 
 
 func _receive(transport: Object, now_us: int, factory: Callable, result: Types.Result) -> void:
@@ -163,6 +178,7 @@ func _receive(transport: Object, now_us: int, factory: Callable, result: Types.R
 			var mode: int = transport.call("get_packet_mode")
 			_incoming = transport.call("get_packet")
 			_incoming = _incoming.duplicate()
+			_consumed += 1
 			if transport.call("get_packet_error") != OK:
 				_failure = Code.SDK_FAILURE
 				result.code = _failure
@@ -270,6 +286,9 @@ func detach() -> void:
 	_generation = ""
 	_revision = -1
 	_failure = Code.OK
+	_consumed = 0
+	_activity = 0
+	_sent = 0
 	_refused_destination.clear()
 
 
