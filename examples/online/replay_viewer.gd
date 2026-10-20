@@ -27,7 +27,7 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	var recording: Replay = Replay.new()
 	var code: int = recording.decode(bytes, MAX_BYTES)
 	if code != Replay.DecodeCode.OK:
-		message = "Could not open replay (file code %d)." % code
+		message = _open_failure_message(code)
 		return false
 	if not _compatible(recording):
 		message = "This viewer needs a complete online integer game recording (up to ten minutes)."
@@ -39,6 +39,17 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 			_recorded_checksum_count += 1
 	restart()
 	return true
+
+
+## The reason a file was refused, so an old recording names the rule that rejects it.
+func _open_failure_message(code: int) -> String:
+	match code:
+		Replay.DecodeCode.UNSUPPORTED_VERSION:
+			return "This replay uses another format version. Recordings from an older release cannot be replayed; record the match again."
+		Replay.DecodeCode.TOO_LARGE:
+			return "This replay file is larger than the viewer accepts."
+		_:
+			return "This replay file is malformed or incomplete."
 
 
 func _compatible(recording: Replay) -> bool:

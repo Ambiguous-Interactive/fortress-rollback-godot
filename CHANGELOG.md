@@ -200,6 +200,8 @@
 
 - **Breaking**: Change the replay file format to version 3. The file ends with a digest of the final frame's input row, so a corrupted last input stops playback with `DESYNC` at that frame instead of ending in a wrong final state. Version 2 files are refused with `UNSUPPORTED_VERSION`.
 
+- Name the reason the replay viewer refuses a file. An older format version, a malformed file and an oversized file each get their own message.
+
 - Build the pinned relay server into one revision-keyed shared cargo tree instead of a per-run output directory. The executable is still published at `<output>/target/debug/signal-fish-server`, so every documented path and the build receipt keep working.
 
 - Reuse the pinned relay server's compiled dependencies across builds and across the six SignalFish CI jobs. The build now keeps its crates at one fixed Cargo home, the CI caches the dependency tree, and the server itself is still rebuilt from the pinned source every time.
