@@ -3,7 +3,7 @@
 Run the source and Godot multiplayer gate with either pinned editor:
 
 ```sh
-python3 scripts/oracle/p2p_launch.py --godot /path/to/godot --offline
+python3 scripts/oracle/p2p_launch.py --godot godot --offline
 ```
 
 This P3/P4 development harness executes the pinned upstream

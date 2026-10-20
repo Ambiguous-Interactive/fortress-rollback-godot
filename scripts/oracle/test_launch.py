@@ -73,7 +73,10 @@ class LauncherTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / 'receipt.json'
             receipt.write_text('{"passed":true}')
-            with patch.object(launch.sys, 'argv', ['launch', '--godot', 'missing', '--output', directory]):
+            engine = Path(directory) / 'godot'
+            engine.write_text('#!/bin/sh\n', encoding='utf-8')
+            engine.chmod(0o755)
+            with patch.object(launch.sys, 'argv', ['launch', '--godot', str(engine), '--output', directory]):
                 with patch.object(launch, 'sources', side_effect=RuntimeError('unavailable')):
                     with self.assertRaises(RuntimeError):
                         launch.main()

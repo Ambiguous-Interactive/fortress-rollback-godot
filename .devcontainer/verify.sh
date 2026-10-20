@@ -91,6 +91,9 @@ section "GDScript tooling (gdtoolkit via uv)"
 check_cmd gdformat --version
 check_cmd gdlint --version
 
+section "Disk hygiene"
+check_disk_budget "$ROOT"
+
 section "Secrets (.env passthrough; all optional)"
 for secret in GITHUB_TOKEN OPENROUTER_API_KEY ZAI_API_KEY OPENAI_API_KEY ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN; do
   check_secret "$secret"

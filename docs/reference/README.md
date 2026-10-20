@@ -39,6 +39,13 @@ from the other runner are preserved. It uses Rust 1.94.0, the upstream checked-i
 `PROPTEST_RNG_SEED=1` and `PROPTEST_RNG_ALGORITHM=xs`. The network smoke uses
 upstream's fixed seeds `1,2,3,5,8,13,21,34` for 2, 3 and 4 players.
 
+Two local probes that share `.cache/reference/` damage each other: one deletes
+the other's logs and both write the same project and export trees. The
+ownership probe therefore claims those paths before it uses them. A second
+local run reports who holds the claim instead of overwriting the first run's
+work. Continuous integration never contends, because every job has its own
+checkout and cache directory.
+
 The repeated-trace test compares real upstream traces internally; the outer
 runner additionally compares test outcome records. Outcome equality alone
 cannot establish byte/state/trace identity. The planted state-divergence test
@@ -88,6 +95,10 @@ then repeat with:
 python3 scripts/reference/run.py --offline
 python3 scripts/reference/godot_smoke.py --offline --web
 ```
+
+The cache and the container's scratch are machine-local and disposable. The
+[cache hygiene guide](../cache-hygiene.md) documents how to report and reclaim
+them without touching cited evidence.
 
 Source archives preserve upstream notices in their original locations:
 Fortress `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`; SignalFish SDK

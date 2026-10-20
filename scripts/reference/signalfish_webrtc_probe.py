@@ -21,6 +21,7 @@ from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from godot_smoke import run
+from engine_path import resolve_engine
 from receipt_arguments import ReceiptParser
 from signalfish_live_probe import (build_cargo, extract, native_inventory, source_inventory, validate_build_receipt, wait_ready)
 from signalfish_probe import inventory
@@ -342,7 +343,7 @@ def main():
     parser.add_argument('--server-source', type=Path, required=True)
     parser.add_argument('--build-receipt', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--godot', type=Path, help='supplied pinned editor; requires exactly one --version')
+    parser.add_argument('--godot', help='engine name on PATH or a path to it; requires exactly one --version')
     parser.add_argument('--version', action='append', help='pinned engine version; defaults to minimum and current')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--browser-pair', choices=PAIRS, default='chromium', help='two independent browser processes; default chromium')
@@ -463,7 +464,7 @@ def main():
         with zipfile.ZipFile(archive) as package:
             expected_engine = hashlib.sha256(package.read(name[:-4])).hexdigest()
             package.extractall(editor_dir)
-        engine = args.godot.resolve() if args.godot else editor_dir / name[:-4]
+        engine = resolve_engine(args.godot) if args.godot else editor_dir / name[:-4]
         validate_engine(engine, expected_engine)
         if not args.godot:
             engine.chmod(0o755)

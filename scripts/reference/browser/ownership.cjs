@@ -28,7 +28,25 @@ const path = require('node:path');
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
-    await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 120000 });
+    try {
+      await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 120000 });
+    } catch (error) {
+      // The watchdog rejected the run before the inventory could be
+      // printed. Report what the page saw, so an engine or script failure
+      // can be told apart from a run that was merely too slow. The
+      // inventory is printed first: reading the page can fail when the
+      // renderer is gone, and that failure must not hide this one.
+      const detail = { stage: 'ownership-result', errors };
+      console.error(JSON.stringify(detail));
+      try {
+        detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
+      } catch (page_error) {
+        detail.reported = null;
+        detail.page_error = String(page_error).slice(0, 200);
+      }
+      console.error(JSON.stringify(detail));
+      throw error;
+    }
     if (errors.length) throw new Error(JSON.stringify(errors));
     const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
     console.log(JSON.stringify({ browser: 'Chromium', version: browser.version(), result, errors }));

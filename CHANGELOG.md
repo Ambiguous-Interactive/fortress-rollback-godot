@@ -4,6 +4,14 @@
 
 ### Added
 
+- Add explicit local ownership of the shared reference cache. A second local probe reports who owns the cache instead of deleting the first run's logs.
+
+- Add `make prune`, `make prune-apply`, `make disk` and `make scratch` to keep the machine-local caches and scratch bounded. The pruner never removes a path a tracked file names, never removes a tree a running session still holds, and a dry run is the default.
+
+- Add a scratch-copy helper at `scripts/scratch_workspace.py`. It skips `.cache/`, `.git`, `.godot` and `progress/`, so an isolated run no longer copies the whole cache with the tree.
+
+- Add a disk budget to the devcontainer acceptance harness. `verify.sh` reports the repository cache and container scratch sizes and fails above 25 GB and 20 GB. The reading keeps the size `du` reported when part of the tree could not be read.
+
 - Add expert replay requests through `FortressReplayPlayer.configure_expert()`. Dispatch the same ordered saves and advances used by callback playback.
 
 - Add N-key single-frame inspection to the spectator example. It preserves viewing delay and pause, and can drain a clean final tail.
@@ -96,6 +104,13 @@
 
 ### Fixed
 
+- Fix the oracle launchers so the documented `make` commands find a Godot engine installed on `PATH`. The engine is resolved before the Rust toolchain is installed, and the receipt names the executable that ran.
+
+- Apply one engine-resolution rule to every probe and launcher. A name on `PATH`, a relative path and an absolute path now resolve the same way, and a name that names nothing fails with a readable message.
+
+- Keep the browser error inventory when the ownership watchdog rejects a run, and record each ownership round as it starts, so a timeout names the round that was running.
+
+
 - Fix driver input submission hiding terminal frame or batch exhaustion. Exhausted calls terminate before retaining new samples.
 
 - Fix replay Step and Pause accepting an unchecked displayed boundary. Both actions now report checksum failures immediately and preserve the failed input for inspection.
@@ -157,5 +172,11 @@
 - Improve driver handling of repeated identical local samples. Each player submits once after the complete list passes validation.
 
 ### Changed
+
+- Build the pinned relay server into one revision-keyed shared cargo tree instead of a per-run output directory. The executable is still published at `<output>/target/debug/signal-fish-server`, so every documented path and the build receipt keep working.
+
+- Reuse the pinned relay server's compiled dependencies across builds and across the six SignalFish CI jobs. The build now keeps its crates at one fixed Cargo home, the CI caches the dependency tree, and the server itself is still rebuilt from the pinned source every time.
+
+- Prune stale scratch and superseded container caches on every container start, and report the repository cache without modifying it.
 
 - **Breaking**: Change exact endpoint byte budgets to reserve one extra local input frame for acknowledged-input recovery.

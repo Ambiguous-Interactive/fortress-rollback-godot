@@ -11,10 +11,12 @@ import os
 from pathlib import Path
 import platform
 import re
-import shutil
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
+from engine_path import resolve_engine  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
@@ -228,7 +230,7 @@ class _Parser(argparse.ArgumentParser):
 def main(argv: list[str] | None = None) -> int:
     parser = _Parser(description=__doc__, allow_abbrev=False)
     parser.arguments = sys.argv[1:] if argv is None else argv
-    parser.add_argument("--godot", required=True, type=Path)
+    parser.add_argument("--godot", required=True, help="engine name on PATH or a path to it")
     parser.add_argument("--category", choices=("unit", "determinism", "integration"), default="unit")
     parser.add_argument("--suite", action="append", default=[])
     parser.add_argument("--filter", default="")
@@ -252,8 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     args.results.parent.mkdir(parents=True, exist_ok=True)
     args.results.write_text(json.dumps({"format": 1, "passed": False,
                                        "failure": "in_progress"}) + "\n", encoding="utf-8")
-    located = shutil.which(str(args.godot))
-    executable = Path(located).resolve() if located else args.godot.resolve()
+    executable = resolve_engine(args.godot)
     command = [str(executable), "--headless", "--path", str(ROOT), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
                "--seed", str(args.seed)]

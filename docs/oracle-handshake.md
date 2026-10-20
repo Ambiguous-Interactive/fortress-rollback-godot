@@ -9,7 +9,7 @@ input exchange, WebRTC delivery, browser multiplayer, or full P2P parity.
 Run after the normal pinned reference tool setup, with Java 11 or newer installed:
 
 ```sh
-python3 scripts/oracle/handshake_launch.py --godot /path/to/godot
+python3 scripts/oracle/handshake_launch.py --godot godot
 ```
 
 The launcher downloads the upstream-pinned TLC 1.8.0 jar once and verifies its

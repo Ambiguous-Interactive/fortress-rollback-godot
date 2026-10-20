@@ -63,7 +63,8 @@ class LiveRelayEvidenceControls(unittest.TestCase):
         build = {'format': 1, 'passed': True, 'source_revision': revision, 'source_inventory': source,
                  'binary_sha256': digest, 'exit_codes': [0, 0], 'tool_sha256': {'cargo': 'd' * 64, 'rustc': 'e' * 64},
                  'commands': [['/toolchain/cargo', 'clean', '-p', 'signal-fish-server'],
-                              ['/toolchain/cargo', 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']]}
+                              ['/toolchain/cargo', 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']],
+                 'cargo_home': str(probe.server_cargo_home())}
         inputs = {name: 'f' * 64 for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'archive', 'cargo', 'rustc')}
         inputs.update(cargo='d' * 64, rustc='e' * 64)
         log_digest = '1' * 64
@@ -82,6 +83,34 @@ class LiveRelayEvidenceControls(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe.validate_build_receipt(changed, revision, source, digest, inputs, log_digest)
 
+    def test_build_receipt_must_name_the_shared_cargo_home(self):
+        """A stale or swapped cargo home invalidates the receipt."""
+        revision, digest = 'a' * 40, 'b' * 64
+        source = {'Cargo.toml': 'c' * 64}
+        inputs = {name: 'f' * 64 for name in ('builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'archive', 'cargo', 'rustc')}
+        inputs.update(cargo='d' * 64, rustc='e' * 64)
+        log_digest = '1' * 64
+        build = {'format': 1, 'passed': True, 'source_revision': revision, 'source_inventory': source,
+                 'binary': '/build/server', 'binary_sha256': digest, 'exit_codes': [0, 0],
+                 'tool_sha256': {'cargo': inputs['cargo'], 'rustc': inputs['rustc']},
+                 'commands': [['/toolchain/cargo', 'clean', '-p', 'signal-fish-server'],
+                              ['/toolchain/cargo', 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']],
+                 'builder_sha256': inputs['builder'], 'server_archive_sha256': inputs['archive'],
+                 'input_inventory': inputs, 'log_sha256': log_digest,
+                 'cargo_home': str(probe.server_cargo_home())}
+        probe.validate_build_receipt(build, revision, source, digest, inputs, log_digest)
+        for field, value in [('cargo_home', None), ('cargo_home', ''), ('cargo_home', '/tmp/other-cargo-home'),
+                             ('cargo_home', str(probe.server_cargo_home() / 'nested')),
+                             ('cargo_home', str(probe.server_cargo_home().parent))]:
+            changed = copy.deepcopy(build)
+            changed[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                probe.validate_build_receipt(changed, revision, source, digest, inputs, log_digest)
+        changed = copy.deepcopy(build)
+        del changed['cargo_home']
+        with self.assertRaises(ValueError):
+            probe.validate_build_receipt(changed, revision, source, digest, inputs, log_digest)
+
     def test_build_provenance_fields_are_required(self):
         revision, digest = 'a' * 40, 'b' * 64
         source = {'Cargo.toml': 'c' * 64}
@@ -94,7 +123,8 @@ class LiveRelayEvidenceControls(unittest.TestCase):
                  'commands': [['/toolchain/cargo', 'clean', '-p', 'signal-fish-server'],
                               ['/toolchain/cargo', 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']],
                  'builder_sha256': inputs['builder'], 'server_archive_sha256': inputs['archive'],
-                 'input_inventory': inputs, 'log_sha256': log_digest}
+                 'input_inventory': inputs, 'log_sha256': log_digest,
+                 'cargo_home': str(probe.server_cargo_home())}
         for field in ('builder_sha256', 'server_archive_sha256', 'input_inventory', 'log_sha256'):
             changed = copy.deepcopy(build)
             del changed[field]

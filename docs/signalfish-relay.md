@@ -184,8 +184,11 @@ python3 scripts/reference/signalfish_live_probe.py \
 ```
 
 The builder verifies the supplied source against the pinned archive and runs
-locked commands with a fresh Cargo source directory. It retains crate archives
-for later `--offline` builds. Source, compiler and executable hashes bind its
+locked commands in one shared Cargo home under the reference cache. That home
+keeps the crate registry and the dependency build tree at one fixed path, so a
+later build reuses the compiled dependencies and still rebuilds the server
+itself from the pinned source. It retains crate archives for later `--offline`
+builds. Source, compiler and executable hashes and the Cargo home path bind its
 build receipt; the witness validates that receipt before launching a temporary
 server. All servers stop after the witness. Source/tool inventories and native
 and server logs bind the final gameplay result. Both programs invalidate prior

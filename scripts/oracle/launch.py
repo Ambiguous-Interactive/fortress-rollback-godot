@@ -7,13 +7,14 @@ import platform
 import subprocess
 import sys
 
-from contract import fields, integer, validate_scenario, validate_trace
-from corpus import scenarios, validate_history
-from controls import negative_controls
-from session_compare import compare_result, negative_controls as session_negative_controls
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
+
+from contract import fields, integer, validate_scenario, validate_trace  # noqa: E402
+from corpus import scenarios, validate_history  # noqa: E402
+from controls import negative_controls  # noqa: E402
+from session_compare import compare_result, negative_controls as session_negative_controls  # noqa: E402
+from engine_path import resolve_engine  # noqa: E402
 from fetch import CACHE, digest, load_manifest, sources  # noqa: E402
 from receipt_arguments import ReceiptParser  # noqa: E402
 from run import rust_environment, setup_rust  # noqa: E402
@@ -129,7 +130,7 @@ def versioned_controls(binary, engine, control_cases, output):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--jobs', default='4', help='independent scenario workers (default: 4)')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/oracle')
@@ -143,6 +144,7 @@ def main():
         parser.error('workers must be an integer in 1..8')
     if not 1 <= args.jobs <= 8:
         parser.error('workers must be an integer in 1..8')
+    engine = resolve_engine(args.godot)
     manifest = load_manifest()
     trees = sources(manifest, args.offline)
     cargo, _ = setup_rust(manifest, args.offline)
@@ -153,7 +155,6 @@ def main():
         command.append('--offline')
     execute(command, args.output / 'build.log', timeout=600)
     binary = CACHE / 'target/debug/fortress-development-oracle'
-    engine = args.godot.resolve()
     engine_version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     cases = []
     control_cases = {}
@@ -177,9 +178,11 @@ def main():
         'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'cargo': version.strip(),
         'binary_sha256': digest(binary), 'engine': engine_version.strip(), 'engine_sha256': digest(engine),
+        'engine_path': str(engine),
         'platform': platform.platform(), 'features': [], 'default_features': False, 'cases': cases, 'negative_controls': controls['1'], 'versioned_negative_controls': controls,
         'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
-            list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
+            list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py',
+                                                               ROOT / 'scripts/reference/engine_path.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
             + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')))},
         'limitations': ['Sync-test public API only; no P2P, transport or protocol parity.',
                         'Production Godot sync-test session parity only; P2P parity remains a separate gate.',

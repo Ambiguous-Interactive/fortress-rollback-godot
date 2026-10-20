@@ -3,12 +3,12 @@
 import hashlib
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 
+from engine_path import resolve_engine
 from receipt_arguments import ReceiptParser
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -225,13 +225,12 @@ func _deliver(peers: Array[Peer], roster: Array[PackedByteArray], now_us: int) -
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='package-audit.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'package-audit.json'
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
-    executable = Path(shutil.which(str(args.godot)) or args.godot).resolve()
     archive = args.output / 'fortress-addon-candidate.tar'
     files = build_archive(ROOT, archive)
     with tempfile.TemporaryDirectory(prefix='fortress-clean-addon-') as temporary:
@@ -246,6 +245,10 @@ def main():
             package.extractall(project, filter='data')
         (project / 'project.godot').write_text('config_version=5\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
         (project / 'smoke.gd').write_text(SMOKE)
+        # The engine is resolved only once the package itself has passed.
+        # A defective candidate must be reported as such, not as a missing
+        # engine.
+        executable = resolve_engine(args.godot)
         command = [str(executable), '--headless', '--path', str(project), '--script', 'res://smoke.gd']
         process = subprocess.run(command, capture_output=True, encoding='utf-8', timeout=30)
         output = process.stdout + process.stderr

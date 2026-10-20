@@ -35,5 +35,8 @@ Thumbs.db
 # Agent measurement and issue-read artifacts
 /.cache/session-*/
 
+# Scratch copies of the working tree (machine-local, regenerable)
+/.cache/scratch/
+
 # Machine-local session logs (never committed)
 /progress/

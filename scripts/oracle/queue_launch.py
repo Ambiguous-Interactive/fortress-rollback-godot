@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
+from engine_path import resolve_engine
 from fetch import retain_verified_tree
 from receipt_arguments import ReceiptParser
 from queue_contract import compare, validate_bundle
@@ -111,13 +112,14 @@ def startup_divergence(binary, game_command, output):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/queue')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
+    engine = resolve_engine(args.godot)
     manifest = load_manifest()
     trees = sources(manifest, args.offline)
     observed_manifest, observation = observation_source(trees['fortress'])
@@ -128,7 +130,6 @@ def main():
         command.append('--offline')
     execute(command, args.output / 'build.log', timeout=600)
     binary = CACHE / 'target/debug/queue'
-    engine = args.godot.resolve()
     scenario = validate_bundle(bundle())
     fixture = args.output / 'bundle.json'
     fixture.write_text(json.dumps(scenario, indent=2) + '\n')
@@ -177,7 +178,8 @@ def main():
     result = {'format': 1, 'passed': True, 'upstream_revision': manifest['sources']['fortress']['revision'],
               'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
               'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)),
-              'engine': version.strip(), 'engine_sha256': digest(engine), 'platform': platform.platform(),
+              'engine': version.strip(), 'engine_sha256': digest(engine), 'engine_path': str(engine),
+              'platform': platform.platform(),
               'cases': len(names), 'operations': sum(counts), 'repeat_equal': True, 'controls': controls, 'reviewed_divergence': divergence,
               'observation': observation, 'upstream_archive': manifest['sources']['fortress']['archive'],
               'ordinary_cases': 705, 'reclaim_cases': len(names) - 705, 'features': [], 'default_features': False, 'binary_sha256': digest(binary),
@@ -185,7 +187,7 @@ def main():
               'bundle_sha256': digest(fixture), 'rust_trace_sha256': digest(args.output / 'rust-trace.json'),
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),
               'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
-                  list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py'))
+                  list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py')) + [ROOT / 'scripts/reference/engine_path.py']
                   + [ROOT / 'scripts/oracle/rust/src/bin/queue.rs', ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py'])},
               'limitations': ['Raw queue only; no session confirmation, prediction window, transport or rollback history.',
                               'Zero neutral input in differential corpus; custom neutral verified independently.',

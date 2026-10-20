@@ -12,7 +12,8 @@ import tarfile
 import tempfile
 import time
 
-from fetch import fetch, load_manifest
+from fetch import CACHE, fetch, load_manifest
+from engine_path import resolve_engine
 from receipt_arguments import ReceiptParser
 from signalfish_probe import inventory
 
@@ -102,6 +103,18 @@ def run_native(command, log):
     return process, raw.decode('utf-8')
 
 
+def server_cargo_home():
+    """One stable cargo home for every relay server build.
+
+    Cargo writes the absolute path of each registry source into its build
+    fingerprints, so a per-run cargo home changes every source path and
+    recompiles all 206 dependencies. One shared home under the reference
+    cache keeps those paths identical across runs and across CI jobs, and
+    keeps the downloaded crates in a place the CI can cache.
+    """
+    return CACHE / 'server-cargo'
+
+
 def build_cargo(build):
     if not isinstance(build, dict):
         raise ValueError('server build receipt must be an object')
@@ -128,6 +141,9 @@ def validate_build_receipt(build, revision, source, binary_digest, expected_inpu
             or build.get('binary_sha256') != binary_digest or not valid_tools
             or not isinstance(exits, list) or len(exits) != 2 or any(type(code) is not int or code != 0 for code in exits)):
         raise ValueError('server build receipt does not bind the pinned source and executable')
+    home = build.get('cargo_home')
+    if (not isinstance(home, str) or not home or Path(home).resolve() != server_cargo_home().resolve()):
+        raise ValueError('server build receipt does not name the shared cargo home')
     names = {'builder', 'fetch', 'pins', 'run', 'native_launcher', 'sdk_launcher', 'receipt_arguments', 'archive', 'cargo', 'rustc'}
     inputs = build.get('input_inventory')
     if (not isinstance(inputs, dict) or set(inputs) != names or inputs != expected_inputs
@@ -159,7 +175,7 @@ def native_inventory(paths):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='signalfish-live.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--server', required=True, type=Path)
     parser.add_argument('--server-source', required=True, type=Path)
     parser.add_argument('--build-receipt', required=True, type=Path)
@@ -174,7 +190,7 @@ def main():
     server_pin = manifest['sources']['server']
     sdk_archive = fetch(sdk_pin['archive'], 'sdk.tar.gz', args.offline)
     server_archive = fetch(server_pin['archive'], 'server.tar.gz', args.offline)
-    engine = Path(shutil.which(str(args.godot)) or args.godot).resolve()
+    engine = resolve_engine(args.godot)
     server_binary = args.server.resolve()
     sources = {'addon': ROOT / 'addons/fortress_rollback', 'engine': engine, 'server': server_binary,
                'sdk_archive': sdk_archive, 'server_archive': server_archive, 'launcher': Path(__file__).resolve(), 'build_receipt': args.build_receipt,

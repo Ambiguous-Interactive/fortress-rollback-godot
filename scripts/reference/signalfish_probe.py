@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import tarfile
 
+from engine_path import resolve_engine
 from fetch import fetch, load_manifest
 from receipt_arguments import ReceiptParser
 
@@ -35,7 +36,7 @@ def inventory(paths):
 
 def main():
     parser = ReceiptParser(description=__doc__, receipt='signalfish-sdk.json')
-    parser.add_argument('--godot', required=True, type=Path)
+    parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--offline', action='store_true')
     args = parser.parse_args()
@@ -45,7 +46,7 @@ def main():
     manifest = load_manifest()
     sdk_pin = manifest['sources']['sdk']
     archive = fetch(sdk_pin['archive'], 'sdk.tar.gz', args.offline)
-    executable = Path(shutil.which(str(args.godot)) or args.godot).resolve()
+    executable = resolve_engine(args.godot)
     inputs = {'addon': ROOT / 'addons/fortress_rollback', 'probe': ROOT / 'scripts/reference/signalfish_probe.gd',
               'new_peer_probe': ROOT / 'scripts/reference/signalfish_probe_new_peer.gd',
               'relay_probe': ROOT / 'scripts/reference/signalfish_probe_relay.gd',

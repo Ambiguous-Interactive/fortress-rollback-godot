@@ -393,7 +393,7 @@ class P2PContractTests(unittest.TestCase):
             upstream = tree / 'upstream'; upstream.mkdir()
             for name in ('lib.rs', 'Cargo.toml', 'Cargo.lock'):
                 (upstream / name).write_text('original', encoding='utf-8')
-            engine = tree / 'godot'; engine.write_bytes(b'engine')
+            engine = tree / 'godot'; engine.write_bytes(b'engine'); engine.chmod(0o755)
             binary = tree / 'target/debug/p2p'; binary.parent.mkdir(parents=True)
             def execute(command, *_args, **_kwargs):
                 if 'build' in command:
