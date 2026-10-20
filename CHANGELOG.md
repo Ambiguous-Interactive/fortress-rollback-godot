@@ -173,6 +173,8 @@
 
 - Build the pinned relay server into one revision-keyed shared cargo tree instead of a per-run output directory. The executable is still published at `<output>/target/debug/signal-fish-server`, so every documented path and the build receipt keep working.
 
+- Reuse the pinned relay server's compiled dependencies across builds and across the six SignalFish CI jobs. The build now keeps its crates at one fixed Cargo home, the CI caches the dependency tree, and the server itself is still rebuilt from the pinned source every time.
+
 - Prune stale scratch and superseded container caches on every container start, and report the repository cache without modifying it.
 
 - **Breaking**: Change exact endpoint byte budgets to reserve one extra local input frame for acknowledged-input recovery.

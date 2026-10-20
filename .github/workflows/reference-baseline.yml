@@ -215,6 +215,30 @@ jobs:
             .cache/reference/cargo/registry/cache
             .cache/reference/cargo/registry/index
           key: reference-signalfish-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/reference/browser/package-lock.json') }}
+      - name: Verify the pinned sources and name the server build cache
+        id: pinned
+        run: |
+          PYTHONPATH=scripts/reference python3 - <<'PY'
+          from fetch import load_manifest, sources
+          manifest = load_manifest()
+          trees = sources(manifest)
+          lock = trees['server'] / 'Cargo.lock'
+          if not lock.is_file():
+              raise SystemExit('the pinned server source has no Cargo.lock')
+          print(lock)
+          PY
+          echo "pins=$(sha256sum docs/reference/pins.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          digest="$(sha256sum .cache/reference/signal-fish-server-*/Cargo.lock scripts/reference/signalfish_build_server.py | sha256sum | cut -d' ' -f1)"
+          echo "build=$digest" >> "$GITHUB_OUTPUT"
+      - name: Restore the shared relay server build tree
+        uses: actions/cache@v5
+        with:
+          path: |
+            .cache/reference/server-target
+            .cache/reference/server-cargo
+          key: reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-${{ steps.pinned.outputs.build }}
+          restore-keys: |
+            reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-
       - name: Install pinned browser runner and operating system dependencies
         run: |
           mkdir -p .cache/reference/browser
@@ -224,10 +248,9 @@ jobs:
       - name: Build the pinned local SignalFish server
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
-          from fetch import load_manifest, sources
+          from fetch import load_manifest
           from run import setup_rust
           manifest = load_manifest()
-          sources(manifest)
           setup_rust(manifest, False)
           PY
           cargo="$(RUSTUP_HOME="$PWD/.cache/reference/rustup" .cache/reference/cargo/bin/rustup which --toolchain 1.94.0 cargo)"
@@ -270,9 +293,8 @@ jobs:
         if: always()
         with:
           name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}
-          # The build receipt keeps the server binary's digest and build log; the cargo output is not evidence.
+          # The build receipt keeps the server binary's digest and build log; the published copy is not evidence.
           path: |
             .cache/reference/results/
             !.cache/reference/results/signalfish-server-build/target/
-            !.cache/reference/results/signalfish-server-build/cargo-cache/
           if-no-files-found: error

@@ -11,7 +11,7 @@ import tempfile
 
 from fetch import CACHE, MANIFEST, fetch, load_manifest
 from receipt_arguments import ReceiptParser
-from signalfish_live_probe import extract, source_inventory
+from signalfish_live_probe import extract, server_cargo_home, source_inventory
 from signalfish_probe import inventory
 from run import rust_environment
 
@@ -34,6 +34,25 @@ def shared_target(revision):
     third-party artifacts that are expensive to rebuild.
     """
     return CACHE / 'server-target' / revision
+
+
+def cargo_home():
+    """One stable cargo home, seeded once from the reference registry.
+
+    Cargo records the absolute path of every registry source in its build
+    fingerprints. A per-run cargo home changes every one of those paths, so
+    every dependency is recompiled from scratch. A stable home keeps the
+    paths identical between runs and between CI jobs, and it holds the
+    downloaded crates in one place the CI can cache.
+    """
+    home = server_cargo_home()
+    home.mkdir(parents=True, exist_ok=True)
+    seed = CACHE / 'cargo'
+    for relative in ('registry/cache', 'registry/index'):
+        cached = seed / relative
+        if cached.exists() and not (home / relative).exists():
+            shutil.copytree(cached, home / relative)
+    return home
 
 
 def locked(target):
@@ -76,18 +95,12 @@ def main():
                 [str(cargo), 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']]
     log_path = output / 'build.log'
     target = shared_target(pin['revision'])
+    home = cargo_home()
     with tempfile.TemporaryDirectory(prefix='fortress-server-build-') as temporary:
         workspace = Path(temporary)
         reference = extract(archive, pin, workspace / 'reference')
         if before != source_inventory(reference):
             raise ValueError('server source differs from pinned archive')
-        home = workspace / 'cargo'
-        home.mkdir()
-        seed = output / 'cargo-cache' if (output / 'cargo-cache').exists() else CACHE / 'cargo'
-        for relative in ('registry/cache', 'registry/index'):
-            cached = seed / relative
-            if cached.exists():
-                shutil.copytree(cached, home / relative)
         environment = rust_environment()
         environment.update(CARGO_HOME=str(home), CARGO_TARGET_DIR=str(target),
                            RUSTC=str(cargo.parent / 'rustc'), PATH=str(cargo.parent) + os.pathsep + environment.get('PATH', ''))
@@ -101,11 +114,13 @@ def main():
                     exits.append(process.returncode)
                     if process.returncode != 0:
                         raise ValueError('local server build failed; see build.log')
+                    if command[1] == 'clean':
+                        # The clean drops the server package's own artifacts. Drop the
+                        # published binary too, so a restored build tree can never
+                        # supply the server executable itself.
+                        (target / 'debug/signal-fish-server').unlink(missing_ok=True)
             if before != source_inventory(source) or input_before != inventory(inputs):
                 raise ValueError('server build source or compiler changed')
-            for relative in ('registry/cache', 'registry/index'):
-                if (home / relative).exists():
-                    shutil.copytree(home / relative, output / 'cargo-cache' / relative, dirs_exist_ok=True)
             # Publish the executable at the path the probes and the docs
             # name. It is a copy, never a link: a later rebuild in the shared
             # tree must not be able to mutate bytes an older receipt binds.
@@ -117,7 +132,8 @@ def main():
     report = {'format': 1, 'passed': True, 'commands': commands, 'exit_codes': exits,
               'source_revision': pin['revision'], 'source_inventory': before, 'tool_sha256': tools,
               'binary': str(binary), 'binary_sha256': digest(binary), 'log_sha256': digest(log_path),
-              'input_inventory': input_before, 'builder_sha256': digest(Path(__file__)), 'server_archive_sha256': digest(archive)}
+              'input_inventory': input_before, 'builder_sha256': digest(Path(__file__)), 'server_archive_sha256': digest(archive),
+              'cargo_home': str(home)}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'receipt': str(receipt), 'server': str(binary)}))
 

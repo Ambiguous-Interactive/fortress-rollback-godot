@@ -69,6 +69,13 @@ from the whole target directory. The executable is published as a copy at
 `<output>/target/debug/signal-fish-server`, the path the probes and the docs
 name, so a later rebuild cannot mutate bytes an existing receipt binds.
 
+The crates live in one shared Cargo home under `.cache/reference/server-cargo/`.
+Cargo records the absolute path of every registry source in its build
+fingerprints, so a per-run home changed all of them and recompiled every
+dependency on every build. One fixed home keeps those paths identical between
+runs and between CI jobs, and it lets the CI cache the dependency tree for the
+six SignalFish jobs instead of rebuilding it in each of them.
+
 ## Container lifecycle
 
 `postStartCommand` runs `scripts/prune_caches.py` over the scratch and
