@@ -25,7 +25,8 @@ class ReentrantGame:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive", "viewer_lifetime", "viewer_lifetime_control"]
+		["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
+			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "wide_shapes"]
 	)
 
 
@@ -293,3 +294,54 @@ func _keepalive(context: RefCounted) -> void:
 	context.equal(ending.receive_packet(ending.encode_keepalive(), 101), CODE.TERMINATED, "completed end cannot reopen stream")
 	context.equal(ending.poll(1000), CODE.OK, "completed clean stream needs no liveness")
 	context.equal(Stream.new().encode_keepalive().is_empty(), true, "unconfigured keepalive cannot encode")
+
+
+# Value: protects=reconfiguration keeps the caller's playback policy; fails_when=a fresh viewer silently drops the
+# declared delay; why_new=lifetime cases replace the viewer without a policy; seam=none
+func _policy_preserved(context: RefCounted) -> void:
+	var stream: RefCounted = _stream(context)
+	context.equal(stream.playback_session().set_playback(2, 1, 3), CODE.OK, "declared playback policy")
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), 0, 100, 50), CODE.OK, "reconfigured viewer")
+	context.equal(stream.playback_session().playback_policy(), PackedInt64Array([2, 1, 3]), "reconfigured viewer keeps the declared policy")
+	var narrow: RefCounted = Fixture.new()._config()
+	narrow.queue_capacity = 2
+	context.equal(stream.configure(narrow, _identity(), 0, 100, 50), CODE.OK, "narrower viewer")
+	context.equal(stream.playback_session().playback_policy(), PackedInt64Array([0, 1, 1]), "a policy that no longer fits falls back to the defaults")
+
+
+# Value: protects=the byte envelope carries every supported roster and sample width; fails_when=the header or the
+# body drifts from the configured shape; why_new=other wire cases use two players and one byte; seam=none
+func _wide_shapes(context: RefCounted) -> void:
+	for players: int in [2, 4, 8]:
+		for width: int in [1, 4]:
+			var label: String = "shape %d x %d" % [players, width]
+			var config: RefCounted = Fixture.new()._config()
+			config.player_count = players
+			config.input_width = width
+			config.neutral_input.resize(width)
+			var stream: RefCounted = Stream.new()
+			context.equal(stream.configure(config, _identity(), 0, 100, 65536), CODE.OK, label + " configures")
+			var game: GameFixture.Game = GameFixture.Game.new()
+			var driver: RefCounted = Driver.new(stream.playback_session(), game)
+			var expected: int = 0
+			for frame: int in range(3):
+				var row: Array[PackedByteArray] = []
+				for player: int in range(players):
+					var bytes: PackedByteArray = PackedByteArray()
+					bytes.resize(width)
+					bytes.fill((frame + player) % 256)
+					row.append(bytes)
+					expected = expected * 3 + bytes[0] + frame
+				var packet: PackedByteArray = stream.encode_row(frame, row)
+				context.equal(packet.size(), 48 + players * width, label + " row size")
+				context.equal(packet[6], players, label + " header roster")
+				context.equal(packet.decode_u32(8), width, label + " header width")
+				context.equal(stream.receive_packet(packet, frame), CODE.OK, label + " row accepted")
+				context.equal(driver.step(frame, _empty()).code, CODE.OK, label + " advance")
+			context.equal(game.value, expected, label + " canonical state")
+			var sample: PackedByteArray = PackedByteArray()
+			sample.resize(width)
+			sample.fill(7)
+			var short: PackedByteArray = Stream.encode_header(Stream.ROW, 3, players, width, _identity())
+			short.append_array(sample)
+			context.equal(stream.receive_packet(short, 4), CODE.PROTOCOL_FAILED, label + " short row is refused")

@@ -71,12 +71,16 @@ suggests up to `catchup_speed` single-frame steps. Otherwise it suggests one.
 No available frame returns zero while the host stream remains open. Gaps never
 move the contiguous frontier. After a clean end, one final recommended call
 publishes termination without advancing the game.
+`playback_policy()` returns the current `[stream_delay, max_frames_behind, catchup_speed]`.
 
 Call `driver.step(now_us, empty_local_inputs)` that many times using an explicitly
 typed `Array[Driver.LocalInput]`. Alternatively, consume `begin_advance()` and
 `complete_request()` manually. Each batch uses the shared session engine and
 advances one frame, except the final termination call. `begin_advance()` enforces stream delay even if the caller
-ignores the recommendation. Protocol time must remain monotonic.
+ignores the recommendation. The catch-up rate stays the caller's: take the reported
+number of steps per service cycle. Protocol time must remain monotonic.
+Playback never guesses a row. If the retained host row for the current frame is gone,
+the advance is refused with `HISTORY_UNAVAILABLE` and no game callback runs.
 
 ## Deliver confirmed rows
 
@@ -179,6 +183,8 @@ The caller must authenticate the host and agree neutral input, seed, initial sta
 and game rules separately. Use fresh identities for a new network lifetime.
 
 Reconfigure through `stream.configure` when starting another viewer lifetime.
+The new viewer keeps your playback policy when it still fits the new ring; a policy that
+no longer fits falls back to the session defaults.
 If you configure the returned playback session directly, the existing stream loses
 authority over it. Packet delivery and polling then return `INVALID_CONFIGURATION`;
 row, END and keepalive encoders return empty bytes. Old packets and deadlines
@@ -280,7 +286,7 @@ views, and manual/driver request equality. The local game example compares every
 viewer state with independent original-input game history while the host rolls
 back. Pausing and history loss leave host progress unaffected.
 
-An independent finite playback model checks 72 seeded byte-delivery schedules:
+An independent finite playback model checks 120 seeded byte-delivery schedules:
 queue capacities 2, 3 and 5, zero and maximum delay, duplicate and reordered rows,
 caller-owned retries, and END arriving before or after its tail. It compares every
 played prefix with the original host transcript and checks unchanged host confirmation.

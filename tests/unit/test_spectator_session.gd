@@ -32,7 +32,8 @@ class WideGame:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["configuration", "confirmed_playback", "buffering", "delay_and_loss", "expert_parity", "host_export", "storage_budget", "host_export_repair", "exhaustion", "shapes"]
+		["configuration", "confirmed_playback", "buffering", "delay_and_loss", "expert_parity", "host_export",
+			"storage_budget", "host_export_repair", "exhaustion", "shapes", "retained_row", "delay_bounds"]
 	)
 
 
@@ -335,3 +336,30 @@ func _clean_end_advice(context: RefCounted) -> void:
 		context.equal(session.status().current_frame, scenario.frames, "only contiguous prefix is played")
 		context.equal(game.trace.size(), scenario.frames, "terminal control step simulates no input")
 		context.equal(session.recommended_steps(), 0, "terminated viewer needs no further service")
+
+
+# Value: protects=playback simulates the row the host sent; fails_when=a recycled ring slot is played as confirmed
+# host input; why_new=other cases keep the ring consistent; seam=none
+func _retained_row(context: RefCounted) -> void:
+	var session: RefCounted = _spectator(context)
+	context.equal(session.receive_host_frame(0, _row(0)).code, Types.Code.OK, "host row")
+	# The retained row for the current frame disappears before playback.
+	session._host_tags[0] = -1
+	var game: RefCounted = Fixture.Game.new()
+	var driver: RefCounted = Driver.new(session, game)
+	context.equal(driver.step(0, _empty()).code, Types.Code.HISTORY_UNAVAILABLE, "a missing host row is not played as confirmed input")
+	context.equal(game.trace.is_empty(), true, "no game callback runs without the host row")
+	context.equal(session.status().current_frame, 0, "refused playback keeps the boundary")
+	context.equal(session.status().lifecycle, Types.Lifecycle.RUNNING, "a missing row is a refusal, not a terminal cause")
+
+
+# Value: protects=playback policy fits the retained ring; fails_when=a delay, threshold or speed beyond the ring is accepted; why_new=model cases use fixed policies; seam=none
+func _delay_bounds(context: RefCounted) -> void:
+	var session: RefCounted = _spectator(context)
+	context.equal(session.set_playback(4, 1, 1), Types.Code.OK, "largest legal stream delay")
+	context.equal(session.set_playback(5, 1, 1), Types.Code.INVALID_CONFIGURATION, "delay beyond the ring is refused")
+	context.equal(session.set_playback(0, 5, 1), Types.Code.OK, "largest legal behind threshold")
+	context.equal(session.set_playback(0, 6, 1), Types.Code.INVALID_CONFIGURATION, "behind threshold beyond the ring is refused")
+	context.equal(session.set_playback(0, 1, 5), Types.Code.OK, "largest legal catchup speed")
+	context.equal(session.set_playback(0, 1, 6), Types.Code.INVALID_CONFIGURATION, "catchup speed beyond the ring is refused")
+	context.equal(session.playback_policy(), PackedInt64Array([0, 1, 5]), "the accepted policy is reported back")
