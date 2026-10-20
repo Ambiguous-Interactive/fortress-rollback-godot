@@ -123,6 +123,8 @@
 
 ### Fixed
 
+- Fix the exported online witness failing its corrupt control at random. The corruption is applied while a peer restores a snapshot, and the control held one input for the whole round, so the repeat-the-last-actual prediction was always correct and no peer ever rolled back. The witness now holds the changed input until every peer has restored, so the deliberate corruption always lands, and the corrupted peer must terminate with the desync reason while the healthy peer keeps its confirmed history.
+
 - Fix the canonical diagnostic trace losing the divergence region after a rollback. The window follows the simulation back to the restored frame, so the frames that follow a rollback are recorded instead of rejected, and the restored boundary keeps its canonical state so the re-opened window stays restorable.
 
 - Fix spectator playback simulating a stale host row. A missing retained row now ends the advance with `HISTORY_UNAVAILABLE` and no game callback.

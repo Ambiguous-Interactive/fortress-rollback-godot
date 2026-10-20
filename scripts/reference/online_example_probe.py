@@ -304,6 +304,36 @@ def validate_stale_callbacks(peer):
 
 
 
+def validate_corrupt_control(record, peers):
+    """The corrupt control must reach a restore on every peer and the desync must be caught.
+
+    The corruption is applied while a peer restores a snapshot, so a peer that never rolled back
+    never corrupted anything. The witness therefore waits for the restore it needs and records the
+    restore counts it waited for. The corrupted peer must terminate with the desync reason and the
+    healthy peer must keep its confirmed history.
+    """
+    control = record.get('corrupt_control')
+    if (not isinstance(control, dict) or set(control) != {'restores', 'corrupt_page', 'desync_page', 'desync_reason'}
+            or type(control.get('corrupt_page')) is not int or type(control.get('desync_page')) is not int
+            or type(control.get('desync_reason')) is not int or control['desync_reason'] != DESYNC_REASON):
+        raise ValueError('online example corrupt control evidence missing')
+    pages = {peer['page_index']: peer for peer in peers}
+    if set(pages) != {0, 1} or control['corrupt_page'] not in pages or control['desync_page'] not in pages:
+        raise ValueError('online example corrupt control evidence missing')
+    ordered = sorted(peers, key=lambda peer: peer['page_index'])
+    corrupt = pages[control['corrupt_page']]
+    healthy = [peer for peer in ordered if peer['page_index'] != control['corrupt_page']]
+    if (corrupt.get('corrupt') is not True or any(peer.get('corrupt') is not False for peer in healthy)
+            or not isinstance(control['restores'], list) or control['restores'] != [peer['restores'] for peer in ordered]
+            or any(type(value) is not int or value < 1 for value in control['restores'])):
+        raise ValueError('online example corrupt control evidence missing')
+    desynced = pages[control['desync_page']]
+    if desynced.get('state') != 'failed' or desynced.get('terminal_reason') != DESYNC_REASON:
+        raise ValueError('online example corrupt control observed no desync')
+    if any(peer.get('terminal_reason') not in (0, DESYNC_REASON) for peer in healthy):
+        raise ValueError('online example corrupt control lost the healthy peer')
+
+
 def validate_result(value, corrupt=False, expected_engine=None):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
@@ -339,7 +369,18 @@ def validate_result(value, corrupt=False, expected_engine=None):
             raise ValueError('online example frozen player slots invalid')
         peers.sort(key=lambda peer: peer['slot'])
         rooms.append(record['room'])
-        uuids = [peer.get('room_id') for peer in peers]
+        identity = record.get('identity')
+        if (not isinstance(identity, list) or len(identity) != 2
+                or any(not isinstance(value, dict) or type(value.get('page_index')) is not int for value in identity)):
+            raise ValueError('online example room identity missing')
+        identified = {value['page_index']: value for value in identity}
+        if set(identified) != {0, 1}:
+            raise ValueError('online example room identity missing')
+        identity_rooms = [identified[index].get('room_id') for index in (0, 1)]
+        if (any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value)
+                for value in identity_rooms) or identity_rooms[0] != identity_rooms[1]):
+            raise ValueError('online example actual room UUID evidence invalid')
+        uuids = [peer.get('room_id') or identified[peer['page_index']].get('room_id') for peer in peers]
         if (any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', value) for value in uuids)
                 or uuids[0] != uuids[1]):
             raise ValueError('online example actual room UUID evidence invalid')
@@ -368,10 +409,13 @@ def validate_result(value, corrupt=False, expected_engine=None):
             # A desynced peer stops capturing at termination; the session still bounds its confirmation.
             confirmed_limit = (peer['frame'] + INPUT_DELAY if intended_desync and type(peer.get('frame')) is int
                                else len(peer['inputs']) - 1)
+            # A closed room clears the lobby state but never the session, so a peer without a session failure stays valid.
+            session_intact = peer.get('failure') == '' and peer.get('terminal_reason') == 0
             if (type(peer.get('restores')) is not int or peer['restores'] < 1 or (peer.get('failure') != '' and not intended_desync)
                     or type(peer.get('confirmed')) is not int or not (20 if corrupt else 90) <= peer['confirmed'] <= confirmed_limit
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
-                    or (peer.get('state') != 'playing' and not intended_desync) or peer.get('room') != record['room']):
+                    or (peer.get('state') != 'playing' and not intended_desync and not session_intact)
+                    or (peer.get('room') or identified[peer['page_index']].get('room')) != record['room']):
                 raise ValueError('online example rollback or confirmation missing')
             validate_scheduling(peer.get('scheduling'), peer.get('confirmed'))
             page_index = peer['page_index']
@@ -405,7 +449,7 @@ def validate_result(value, corrupt=False, expected_engine=None):
                 frame = int(key)
                 if frame >= peer['confirmed'] or frame >= peer['frame'] or frame >= min(map(len, histories)):
                     raise ValueError('online example snapshot exceeds completed confirmed history')
-                comparisons.append((frame, expected[frame], state))
+                comparisons.append((page_index, frame, expected[frame], state))
         common = set(peers[0]['snapshots']) & set(peers[1]['snapshots'])
         if len(common) < (6 if corrupt else 50):
             raise ValueError('online example common confirmed history incomplete')
@@ -430,11 +474,26 @@ def validate_result(value, corrupt=False, expected_engine=None):
                     or any(type(count) is not int for count in record.get('stale_received', []))
                     or any(type(peer.get('direct_rejected')) is not int or peer['direct_rejected'] != 1 for peer in peers)):
                 raise ValueError('online example omitted old-room input delivery in the fresh match')
+        elif corrupt:
+            validate_corrupt_control(record, peers)
     if (not corrupt and (len(set(rooms)) != 5 or len(set(room_ids)) != 5 or len(set(identities)) != 5)) or value.get('teardown') is not True:
         raise ValueError('online example reused room or retained connections')
-    for frame, expected, state in comparisons:
+    mismatched = {}
+    for page_index, frame, expected, state in comparisons:
         if expected != state:
-            raise ValueError(f'online example canonical prefix mismatch at frame {frame}')
+            mismatched.setdefault(page_index, []).append(frame)
+    if corrupt:
+        # Only the corrupted peer may leave the canonical history. The healthy peer keeps its own prefix.
+        corrupt_page = rounds[0]['corrupt_control']['corrupt_page']
+        healthy = [page for page in mismatched if page != corrupt_page]
+        if healthy:
+            raise ValueError('online example healthy peer lost its canonical history')
+        if corrupt_page not in mismatched:
+            raise ValueError('online example corruption did not reach the canonical state')
+        raise ValueError(f'online example canonical prefix mismatch at frame {mismatched[corrupt_page][0]}')
+    if mismatched:
+        first = next(frame for page_index, frame, expected, state in comparisons if expected != state)
+        raise ValueError(f'online example canonical prefix mismatch at frame {first}')
     if not corrupt:
         validate_replay_download(rounds[0].get('replay_download'), expected_engine, rounds[0])
         validate_viewer(value.get('viewer'), rounds[0]['replay_download'])
@@ -621,7 +680,8 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     except ValueError as error:
         if not str(error).startswith('online example canonical prefix mismatch at frame '):
             raise
-        result['restore_mutation'] = {'rejected': True, 'reason': str(error), 'teardown': control['teardown'], 'command': control_command}
+        result['restore_mutation'] = {'rejected': True, 'reason': str(error), 'teardown': control['teardown'], 'command': control_command,
+                                      'corrupt_control': control['rounds'][0].get('corrupt_control')}
     else:
         raise ValueError('online example accepted altered restored game state')
     if (inventory(executed) != frozen or inventory({'export': export}) != exported

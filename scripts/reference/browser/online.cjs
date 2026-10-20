@@ -252,10 +252,17 @@ async function main() {
     await page.evaluate(value => { window.fortressOnlineCommand = value; }, { ...values, kind, id });
     await page.waitForFunction(expected => window.fortressOnline?.command_id === expected, id, { timeout: 10000 });
   };
-  const wait = async (page, expression, timeout = 30000) => {
-    await page.waitForFunction(expression, null, { timeout });
+  const wait = async (page, expression, timeout = 30000, argument = null) => {
+    await page.waitForFunction(expression, argument, { timeout });
     if (errors.length) throw new Error(JSON.stringify(errors));
   };
+  // Value: a rejected wait names the observed peers, so a timing failure is diagnosable from the artifact.
+  const observe = async () => Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({
+    page_index: pageIndex, state: window.fortressOnline?.state, frame: window.fortressOnline?.frame,
+    confirmed: window.fortressOnline?.confirmed, restores: window.fortressOnline?.restores,
+    corrupt: window.fortressOnline?.corrupt, terminal_reason: window.fortressOnline?.terminal_reason,
+    failure: window.fortressOnline?.failure, inputs: (window.fortressOnline?.inputs || []).slice(-8),
+  }), index).catch(() => null)));
   const suspend = async (label, duration) => {
     await Promise.all(pages.map(page => page.evaluate(value => { window.fortressOnlineResumeLabel = value; }, label)));
     await Promise.all(sessions.map(async session => {
@@ -288,8 +295,10 @@ async function main() {
         if (logs.length < 128) logs.push(text);
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push(text);
       });
+      // Only the joiner corrupts its restored state, so the clean peer stays a healthy observer and the
+      // desync between them is a certainty rather than a coincidence of two matching corruptions.
       await registerOnlineInit(page, { endpoint, count: 2, index, faults: false, corrupt: false,
-        defaultFactory: false, mixed: false, mixedDefault: false, disableFallback: false, onlineCorrupt: corrupt });
+        defaultFactory: false, mixed: false, mixedDefault: false, disableFallback: false, onlineCorrupt: corrupt && index === 1 });
       pages.push(page);
       await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
       await wait(page, () => window.fortressOnlineReady === true);
@@ -303,11 +312,15 @@ async function main() {
       await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.ready_enabled)));
       await Promise.all(pages.map((page, index) => command(page, 'ready', {
         capture_trace: !corrupt && round === 0 && index === 0, record_replay: !corrupt && round === 0 && index === 1 })));
+      // The room identity is observed while the room is open, so a round that ends in a failure keeps its evidence.
+      const identity = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({
+        page_index: pageIndex, room: window.fortressOnline.room, room_id: window.fortressOnline.room_id,
+        uuid: window.fortressOnline.uuid }), index)));
       await wait(pages[0], () => window.fortressOnline.start_enabled);
       await pages[0].keyboard.down('KeyD');
       await pages[1].keyboard.down('KeyW');
       await command(pages[0], 'start');
-      await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.frame >= (window.fortressOnlineCorrupt ? 12 : 45), 90000)));
+      await Promise.all(pages.map(page => wait(page, target => window.fortressOnline.frame >= target, 90000, corrupt ? 12 : 45)));
       if (round === 3 && !corrupt) await Promise.all(pages.map(page => command(page, 'capture_callbacks')));
       if (round === 4 && !corrupt) {
         const payloads = rounds[3].server_restart.boundary.map(value => value.fault.held[0]);
@@ -327,12 +340,33 @@ async function main() {
       await pages[1].keyboard.up('KeyW');
       await pages[0].keyboard.down('KeyS');
       await pages[1].keyboard.down('KeyA');
-      await Promise.all(pages.map(page => wait(page, () => window.fortressOnline.confirmed >= (window.fortressOnlineCorrupt ? 20 : 100), 90000)));
+      await Promise.all(pages.map(page => wait(page, target => window.fortressOnline.confirmed >= target, 90000, corrupt ? 20 : 100)));
+      let desyncPage = -1;
+      if (corrupt) {
+        // The corruption is applied while a peer restores a snapshot. Every peer must reach one restore
+        // before the control judges the round, so the outcome never depends on when a remote input arrives.
+        await Promise.all(pages.map(page => page.waitForFunction(() => window.fortressOnline?.restores >= 1, null, { timeout: 90000 })
+          .catch(async error => { throw new Error(`the corrupt control observed no restore: ${JSON.stringify(await observe())}`); })));
+        if (errors.length) throw new Error(JSON.stringify(errors));
+        // The corrupted state must be caught by the production desync detection before the round is judged.
+        desyncPage = await Promise.any(pages.map((page, position) => page.waitForFunction(() => {
+          const value = window.fortressOnline;
+          return value?.state === 'failed' && value?.terminal_reason === 18;
+        }, null, { timeout: 90000 }).then(() => position))).catch(async () => {
+          throw new Error(`the corrupt control observed no desync: ${JSON.stringify(await observe())}`);
+        });
+        if (errors.length) throw new Error(JSON.stringify(errors));
+      }
       await Promise.all([pages[0].keyboard.up('KeyS'), pages[1].keyboard.up('KeyA')]);
       if (round === 0 && !corrupt) await pages[0].screenshot({ path: diagnostic.replace('-events.log', '.png') });
       const peers = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({ ...window.fortressOnline, page_index: pageIndex,
         rtc: { ...window.fortressRtc, channels: window.fortressRtc.channels.slice(-3) }, delayed: window.fortressOnlineDelayed }), index)));
-      rounds.push({ room, peers, diagnostics: [] });
+      rounds.push({ room, peers, diagnostics: [], identity });
+      if (corrupt) {
+        rounds[round].corrupt_control = { restores: peers.map(peer => peer.restores),
+          corrupt_page: peers.find(peer => peer.corrupt)?.page_index, desync_page: desyncPage,
+          desync_reason: peers[desyncPage].terminal_reason };
+      }
       if (round === 4 && !corrupt) {
         rounds[round].stale_sent = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleSent)));
         rounds[round].stale_received = await Promise.all(pages.map(page => page.evaluate(() => window.fortressStaleReceived)));

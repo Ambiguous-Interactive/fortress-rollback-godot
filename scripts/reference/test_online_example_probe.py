@@ -81,7 +81,7 @@ def evidence():
         channels = [{'id': index, 'sent': 40 if index == 3 else 0, 'received': 40 if index == 3 else 0,
                      'ordered': index != 3, 'negotiated': True, 'maxPacketLifeTime': 1, 'maxRetransmits': None} for index in (1, 2, 3)]
         peers.append({'slot': slot, 'page_index': slot, 'inputs': histories[slot], 'restores': 1, 'confirmed': 110, 'frame': 110,
-                      'state': 'playing', 'room': 'ROOM01', 'session_id': '01' * 16,
+                      'state': 'playing', 'room': 'ROOM01', 'session_id': '01' * 16, 'terminal_reason': 0, 'corrupt': False,
                       'uuid': f'00000000-0000-0000-0000-{slot + 1:012}', 'direct_rejected': 0,
                       'room_id': '00000000-0000-0000-0000-000000000001', 'failure': '',
                       'snapshots': {str(frame): state for frame, state in states.items()},
@@ -90,7 +90,9 @@ def evidence():
                                      'max_gap_turns': 3, 'max_gap_transport_us': 50000,
                                      'confirmation_max_gap_us': 33334, 'confirmation_max_gap_turns': 2,
                                      'confirmed_frames': 110}})
-    rounds = [{'room': room, 'peers': copy.deepcopy(peers), 'teardown': [
+    rounds = [{'room': room, 'peers': copy.deepcopy(peers), 'identity': [
+        {'page_index': slot, 'room': room, 'room_id': f'00000000-0000-0000-0000-{index + 1:012}',
+         'uuid': f'00000000-0000-0000-0000-{slot + 1:012}'} for slot in range(2)], 'teardown': [
         {'channels': 3 * (index + 1), 'channels_closed': 3 * (index + 1), 'connections': index + 1,
          'connections_closed': index + 1, 'ice_closed': index + 1, 'websockets': index + 1,
          'websockets_closed': index + 1} for _ in range(2)]} for index, room in enumerate(('ROOM01', 'ROOM02', 'ROOM03', 'ROOM04', 'ROOM05'))]
@@ -165,6 +167,29 @@ def evidence():
                                    'before': boundary, 'after': copy.deepcopy(boundary)}
     return {'passed': True, 'corrupt': False, 'browser_instances': 2, 'errors': [], 'teardown': True, 'rounds': rounds, 'viewer': viewer,
             'diagnostic_viewer': diagnostic_viewer_evidence(rounds[0]['diagnostics'][0]['report']['trace'], histories)}
+
+
+def corrupt_evidence():
+    """The corrupt control evidence: the joiner corrupts its restored state and both peers restore."""
+    changed = evidence()
+    changed['corrupt'] = True
+    changed['rounds'][0]['diagnostics'][0]['report'].pop('trace')
+    changed['rounds'] = changed['rounds'][:1]
+    peers = changed['rounds'][0]['peers']
+    for peer in peers:
+        peer['corrupt'] = peer['page_index'] == 1
+    corrupt = next(peer for peer in peers if peer['page_index'] == 1)
+    corrupt.update(state='failed', failure='Game stopped (18). Leave and create a new room.', terminal_reason=18)
+    ordered = sorted(peers, key=lambda peer: peer['page_index'])
+    changed['rounds'][0]['corrupt_control'] = {'corrupt_page': 1, 'desync_page': 1, 'desync_reason': 18,
+                                               'restores': [peer['restores'] for peer in ordered]}
+    return changed
+
+
+def corrupt_snapshot(changed, page_index, frame='3'):
+    peer = next(peer for peer in changed['rounds'][0]['peers'] if peer['page_index'] == page_index)
+    peer['snapshots'][frame] = '00' + peer['snapshots'][frame][2:]
+    return changed
 
 
 class OnlineExampleEvidenceTests(unittest.TestCase):
@@ -355,14 +380,8 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                     server_config(source, port)
 
     def test_corruption_control_reaches_canonical_comparison_after_an_intended_desync(self):
-        changed = evidence()
-        changed['corrupt'] = True
-        changed['rounds'][0]['diagnostics'][0]['report'].pop('trace')
-        changed['rounds'] = changed['rounds'][:1]
-        peer = changed['rounds'][0]['peers'][1]
-        peer.update(state='failed', failure='Game stopped (18). Leave and create a new room.', terminal_reason=18)
-        snapshot = peer['snapshots']['3']
-        peer['snapshots']['3'] = '00' + snapshot[2:]
+        changed = corrupt_evidence()
+        corrupt_snapshot(changed, 1)
         with self.assertRaisesRegex(ValueError, 'canonical prefix mismatch at frame 3'):
             validate_result(changed, corrupt=True)
         for reason in (0, 14, 23, True, 18.0, None):
@@ -391,6 +410,58 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
             validate_result(clean)
 
+    def test_corrupt_control_requires_the_restore_it_waited_for_and_the_desync_reason(self):
+        corrupt_snapshot(corrupt_evidence(), 1)
+        # The control that removes the corruption keeps every canonical prefix and must fail.
+        uncorrupted = corrupt_evidence()
+        with self.assertRaisesRegex(ValueError, 'corruption did not reach the canonical state'):
+            validate_result(uncorrupted, corrupt=True)
+        # The control that removes the desync detection leaves the peer playing and must fail.
+        undetected = corrupt_evidence()
+        corrupt_snapshot(undetected, 1)
+        undetected['rounds'][0]['peers'][1].update(state='playing', terminal_reason=0)
+        with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
+            validate_result(undetected, corrupt=True)
+        # The healthy peer keeps its own confirmed history.
+        unhealthy = corrupt_evidence()
+        corrupt_snapshot(unhealthy, 1)
+        corrupt_snapshot(unhealthy, 0)
+        with self.assertRaisesRegex(ValueError, 'healthy peer lost its canonical history'):
+            validate_result(unhealthy, corrupt=True)
+        mutations = [('corrupt_page', 0), ('restores', [1, 0]),
+                     ('restores', [2, 1]), ('restores', '11')]
+        for key, value in mutations:
+            broken = corrupt_evidence()
+            corrupt_snapshot(broken, 1)
+            broken['rounds'][0]['corrupt_control'][key] = value
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, 'corrupt control evidence missing'):
+                validate_result(broken, corrupt=True)
+        for key in ('corrupt_control', 'corrupt_page', 'restores'):
+            broken = corrupt_evidence()
+            corrupt_snapshot(broken, 1)
+            if key == 'corrupt_control':
+                broken['rounds'][0].pop(key)
+            else:
+                broken['rounds'][0]['corrupt_control'].pop(key)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'corrupt control evidence missing'):
+                validate_result(broken, corrupt=True)
+        both = corrupt_evidence()
+        corrupt_snapshot(both, 1)
+        both['rounds'][0]['peers'][0]['corrupt'] = True
+        with self.assertRaisesRegex(ValueError, 'corrupt control evidence missing'):
+            validate_result(both, corrupt=True)
+        # The control that removes the desync detection leaves the corrupted peer running and must fail.
+        undetected = corrupt_evidence()
+        corrupt_snapshot(undetected, 1)
+        undetected['rounds'][0]['peers'][1].update(state='playing', failure='', terminal_reason=0)
+        with self.assertRaisesRegex(ValueError, 'corrupt control observed no desync'):
+            validate_result(undetected, corrupt=True)
+        lost = corrupt_evidence()
+        corrupt_snapshot(lost, 1)
+        lost['rounds'][0]['peers'][0].update(terminal_reason=23)
+        with self.assertRaisesRegex(ValueError, 'corrupt control lost the healthy peer'):
+            validate_result(lost, corrupt=True)
+
     def test_complete_evidence_and_missing_or_wrong_transport_contracts(self):
         original = evidence()
         self.assertIs(validate_result(original), original)
@@ -418,17 +489,15 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             validate_result(changed)
 
     def test_corruption_cannot_hide_later_invalid_peer_or_unclosed_transport(self):
-        changed = evidence()
-        changed['corrupt'] = True
-        changed['rounds'][0]['diagnostics'][0]['report'].pop('trace')
-        changed['rounds'] = changed['rounds'][:1]
-        snapshot = changed['rounds'][0]['peers'][0]['snapshots']['3']
-        changed['rounds'][0]['peers'][0]['snapshots']['3'] = '00' + snapshot[2:]
+        changed = corrupt_evidence()
+        corrupt_snapshot(changed, 1)
         with self.assertRaisesRegex(ValueError, 'canonical prefix mismatch at frame 3'):
             validate_result(changed, corrupt=True)
         changed['rounds'][0]['peers'][1]['rtc']['channels'][2]['maxPacketLifeTime'] = 0
         with self.assertRaisesRegex(ValueError, 'physical unreliable channel contract missing'):
             validate_result(changed, corrupt=True)
+        changed = corrupt_evidence()
+        corrupt_snapshot(changed, 1)
         changed['rounds'][0]['teardown'][1]['channels_closed'] = 2
         with self.assertRaisesRegex(ValueError, 'retained physical channels'):
             validate_result(changed, corrupt=True)
