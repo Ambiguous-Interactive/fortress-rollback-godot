@@ -4,7 +4,7 @@
 
 ### Added
 
-- Report the elapsed time of every test case. The scenario runner measures each case with an injected clock, the native runner injects a deterministic tick clock, and the exported browser host injects the real host clock. A rejected browser run now names the last completed case, how long it took and the case that was in flight. The canonical results are unchanged.
+- Report the progress of every test case with the time it took. The runner measures each case with an injected clock: a deterministic tick clock in the native runner, the real host clock in the exported browser host. A rejected browser run names the last completed case and the case in flight.
 
 - Copy snapshot bytes with one native append instead of one interpreted step per byte. A game that saves 4 KiB of state per frame now spends about 3 microseconds on the write instead of about 60, and the writer no longer reserves its full capacity up front. The saved bytes, the overflow behavior and the caller-owned copy are unchanged.
 

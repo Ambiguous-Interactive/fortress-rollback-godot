@@ -49,22 +49,38 @@ func _progress(context: RefCounted) -> void:
 
 
 # A deliberately slow case reports a long elapsed time, and a fast run reports
-# a bounded one.
+# a bounded one. The scripted clock proves that the runner measures the
+# injected clock, and the real clock only orders the two cases.
 func _elapsed_time(context: RefCounted) -> void:
+	var readings: Array[int] = [0, 900, 1000, 1100]
+	var reads: Array[int] = [0]
+	var scripted: Callable = func() -> int:
+		var index: int = reads[0]
+		reads[0] = mini(index + 1, readings.size() - 1)
+		return readings[index]
 	var seen: Array[Dictionary] = []
 	var result: Dictionary = Scenarios.new().execute([Timing], "unit", "", 1701, PackedStringArray(),
-		func(value: Dictionary) -> void: seen.append(value), _wall_clock())
+		func(value: Dictionary) -> void: seen.append(value), scripted)
 	context.equal(result["passed"], true, "the timing suite passes")
 	var elapsed: Dictionary = {}
 	for record: Dictionary in seen:
 		var completion: Variant = record["last_completed"]
 		if completion != null:
 			elapsed[completion["case"]] = completion["elapsed"]
-	context.equal(elapsed.has("slow"), true, "the slow case reports its elapsed time")
-	context.equal(elapsed.has("fast"), true, "the fast case reports its elapsed time")
-	context.equal(elapsed["slow"] > 10000, true, "the slow case reports a long elapsed time")
-	context.equal(elapsed["fast"] < 5000000, true, "the fast case reports a bounded elapsed time")
-	context.equal(elapsed["slow"] > elapsed["fast"], true, "the slow case is reported as slower than the fast case")
+	context.equal(elapsed.get("slow", -1), 900, "the slow case reports the injected elapsed time")
+	context.equal(elapsed.get("fast", -1), 100, "the fast case reports the injected elapsed time")
+	# The real clock orders the same two cases without a machine-dependent bound.
+	var measured: Dictionary = {}
+	var wall_seen: Array[Dictionary] = []
+	var wall: Dictionary = Scenarios.new().execute([Timing], "unit", "", 1701, PackedStringArray(),
+		func(value: Dictionary) -> void: wall_seen.append(value), _wall_clock())
+	context.equal(wall["passed"], true, "the timing suite passes with the real clock")
+	for record: Dictionary in wall_seen:
+		var completion: Variant = record["last_completed"]
+		if completion != null:
+			measured[completion["case"]] = completion["elapsed"]
+	context.equal(measured.has("slow") and measured.has("fast"), true, "the real clock reports both cases")
+	context.equal(measured["slow"] > measured["fast"], true, "the slow case is reported as slower than the fast case")
 	context.finish()
 
 
@@ -82,10 +98,10 @@ func _canonical_result(context: RefCounted) -> void:
 
 # A deterministic clock: every reading is the next tick.
 func _tick_clock() -> Callable:
-	var ticks: int = 0
+	var ticks: Array[int] = [0]
 	return func() -> int:
-		ticks += 1
-		return ticks
+		ticks[0] += 1
+		return ticks[0]
 
 
 # The real monotonic host clock, in microseconds.

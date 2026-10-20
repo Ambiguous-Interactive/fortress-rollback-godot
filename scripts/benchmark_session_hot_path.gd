@@ -1,13 +1,16 @@
 extends SceneTree
 
-# Measures the production session hot path: steady frames, snapshot save and
-# restore, the maximum rollback and protocol codec work, for 2, 4 and 8
-# players. Every workload reports a canonical checksum, so a faster path can
-# never change the simulated result.
+# Measures the production session hot path: steady frames, the maximum
+# rollback, the snapshot write and protocol codec work, for 2, 4 and 8
+# players. Every workload reports p50, p95, p99 and a canonical checksum, so a
+# faster path can never change the simulated result.
 #
 # The snapshot workload measures the production writer and an embedded control
 # that keeps the previous per-byte copy, in the same process, so the difference
 # is not a machine-state artifact.
+#
+# The checksums are the published baseline. A change in the simulated result
+# fails the benchmark until the baseline is reviewed and updated.
 #
 # The results are published in docs/experiments/session-hot-path-performance.md.
 
@@ -25,6 +28,18 @@ const SAMPLES: int = 15
 const WINDOW: int = 8
 const PLAYER_COUNTS: Array[int] = [2, 4, 8]
 const LOCAL: Array[int] = [7]
+const HASH_OFFSET: int = 1469598103934665
+const HASH_PRIME: int = 1099511628211
+const HASH_MASK: int = 9223372036854775807
+
+# The published baseline. A changed checksum means the simulated result
+# changed, which is a reviewed change and not a benchmark repair.
+const BASELINE: Dictionary = {
+	"snapshot": 4150103641047209673,
+	"steady": {2: 1276642125363926553, 4: 193693954048565353, 8: 167760427949277961},
+	"rollback": {2: 804470947006420549, 4: 8216305103245225058, 8: 7771464832153107854},
+	"codec": {2: 1009799064992073792, 4: 5039977378390133760, 8: 8583044641210005760},
+}
 
 
 # The previous snapshot writer: a preallocated buffer filled one byte at a time.
@@ -52,17 +67,23 @@ class ControlWriter:
 
 
 func _initialize() -> void:
+	var snapshot: Dictionary = _snapshot()
 	var reports: Array[Dictionary] = []
 	for players: int in PLAYER_COUNTS:
 		reports.append({
 			"players": players,
 			"steady": _steady(players),
 			"rollback": _rollback(players),
-			"snapshot": _snapshot(players),
 			"codec": _codec(players),
 		})
-	print(JSON.stringify({"engine": Engine.get_version_info().string, "state_bytes": STATE_BYTES,
-		"frames": FRAMES, "samples": SAMPLES, "window": WINDOW, "reports": reports}))
+	var report: Dictionary = {"engine": Engine.get_version_info().string, "state_bytes": STATE_BYTES,
+		"frames": FRAMES, "samples": SAMPLES, "window": WINDOW, "snapshot": snapshot, "reports": reports}
+	if not _matches_baseline(report):
+		push_error("the measured result differs from the published baseline")
+		print(JSON.stringify(report))
+		quit(1)
+		return
+	print(JSON.stringify(report))
 	quit()
 
 
@@ -78,7 +99,7 @@ func _steady(players: int) -> Dictionary:
 
 
 # The maximum rollback: the remote inputs arrive one window late, so every
-# correction resimulates the whole prediction window.
+# correction loads a snapshot and resimulates the whole prediction window.
 func _rollback(players: int) -> Dictionary:
 	var samples: Array[int] = []
 	var checksum: int = 0
@@ -90,7 +111,7 @@ func _rollback(players: int) -> Dictionary:
 
 
 # The snapshot path: the production writer and the previous per-byte control.
-func _snapshot(players: int) -> Dictionary:
+func _snapshot() -> Dictionary:
 	var payload: PackedByteArray = PackedByteArray()
 	payload.resize(STATE_BYTES)
 	payload.fill(9)
@@ -140,15 +161,13 @@ func _codec(players: int) -> Dictionary:
 		for index: int in range(FRAMES):
 			var encoded: RefCounted = Codec.encode(message, limits)
 			if encoded.code != PTypes.Code.OK:
-				push_error("codec encode failed")
-				quit(1)
+				_fail("codec encode failed")
 				return {}
 			var decoded: RefCounted = Codec.decode(encoded.bytes, limits)
 			if decoded.code != PTypes.Code.OK:
-				push_error("codec decode failed")
-				quit(1)
+				_fail("codec decode failed")
 				return {}
-			checksum += decoded.message.data[0] + encoded.bytes.size()
+			checksum = _hash_bytes(decoded.message.data, checksum)
 		samples.append(Time.get_ticks_usec() - start)
 	return _summary(samples, checksum, FRAMES)
 
@@ -158,7 +177,7 @@ func _steady_run(players: int) -> Dictionary:
 	var state: PackedByteArray = PackedByteArray()
 	state.resize(STATE_BYTES)
 	state.fill(1)
-	var checksum: int = 0
+	var checksum: int = HASH_OFFSET
 	var start: int = Time.get_ticks_usec()
 	var frame: int = 0
 	while frame < FRAMES:
@@ -166,11 +185,13 @@ func _steady_run(players: int) -> Dictionary:
 		for player: int in range(1, players):
 			var remote: PackedByteArray = PackedByteArray([(frame + player) & 255])
 			if session.receive_input(player, frame, remote).code != Types.Code.OK:
-				push_error("remote input rejected")
-				quit(1)
+				_fail("remote input rejected")
 				return {}
-		checksum += _advance(session, state)
+		checksum = _advance(session, state, checksum)
 		frame = session.status().current_frame
+	if session.status().current_frame != FRAMES:
+		_fail("the steady run did not reach the last frame")
+		return {}
 	var usec: int = Time.get_ticks_usec() - start
 	return {"usec": usec, "checksum": checksum}
 
@@ -180,63 +201,76 @@ func _rollback_run(players: int) -> Dictionary:
 	var state: PackedByteArray = PackedByteArray()
 	state.resize(STATE_BYTES)
 	state.fill(1)
-	var checksum: int = 0
+	var checksum: int = HASH_OFFSET
 	var start: int = Time.get_ticks_usec()
 	var delivered: int = 0
 	var steps: int = 0
 	while session.status().current_frame < FRAMES and steps < FRAMES * 4:
 		steps += 1
 		var current: int = session.status().current_frame
-		if current >= delivered + WINDOW:
+		if current >= delivered + WINDOW - 1:
 			# The remote inputs arrive one window late, so the session corrects
 			# its prediction and resimulates the whole window.
 			for pending: int in range(WINDOW):
 				for player: int in range(1, players):
 					var remote: PackedByteArray = PackedByteArray([(delivered + player) & 255])
 					if session.receive_input(player, delivered, remote).code != Types.Code.OK:
-						push_error("remote input rejected")
-						quit(1)
+						_fail("remote input rejected")
 						return {}
 				delivered += 1
-		checksum += _advance(session, state)
+		checksum = _advance(session, state, checksum)
+	if session.status().current_frame != FRAMES:
+		_fail("the rollback run did not reach the last frame")
+		return {}
+	var statistics: RefCounted = session.statistics()
+	# The session predicts WINDOW frames ahead of the last confirmed frame, so
+	# the deepest correction it can reach rewinds WINDOW - 1 frames.
+	if statistics.rollback_count == 0 or statistics.max_rollback_depth != WINDOW - 1:
+		_fail("the rollback run did not correct the window: %d rollbacks, depth %d" % [statistics.rollback_count, statistics.max_rollback_depth])
+		return {}
 	var usec: int = Time.get_ticks_usec() - start
 	return {"usec": usec, "checksum": checksum}
 
 
 func _snapshot_run(payload: PackedByteArray) -> Dictionary:
-	var checksum: int = 0
+	# The written bytes are hashed after the measured region, so the checksum
+	# never shares the measurement with the copy it checks.
+	var production_bytes: Array[PackedByteArray] = []
+	var control_bytes: Array[PackedByteArray] = []
 	var start: int = Time.get_ticks_usec()
 	for index: int in range(FRAMES):
 		var writer: RefCounted = Writer.new(STATE_BYTES)
 		if writer.write_bytes(payload) != Status.Code.OK:
-			push_error("production writer failed")
-			quit(1)
+			_fail("production writer failed")
 			return {}
-		checksum += writer._written_copy()[0]
+		production_bytes.append(writer._written_copy())
 	var production: int = Time.get_ticks_usec() - start
 	start = Time.get_ticks_usec()
 	for index: int in range(FRAMES):
 		var writer: RefCounted = ControlWriter.new(STATE_BYTES)
 		if writer.write_bytes(payload) != Status.Code.OK:
-			push_error("control writer failed")
-			quit(1)
+			_fail("control writer failed")
 			return {}
-		checksum += writer.written()[0]
+		control_bytes.append(writer.written())
 	var control: int = Time.get_ticks_usec() - start
+	var checksum: int = HASH_OFFSET
+	for bytes: PackedByteArray in production_bytes:
+		checksum = _hash_bytes(bytes, checksum)
+	for bytes: PackedByteArray in control_bytes:
+		checksum = _hash_bytes(bytes, checksum)
 	return {"production_us": production, "control_us": control, "checksum": checksum}
 
 
-# Advances the session by one batch and returns the canonical checksum.
-func _advance(session: RefCounted, state: PackedByteArray) -> int:
+# Advances the session by one batch and returns the updated checksum.
+func _advance(session: RefCounted, state: PackedByteArray, checksum: int) -> int:
 	var current: int = session.status().current_frame
 	if session.submit_local_input(0, current, PackedByteArray(LOCAL)).code != Types.Code.OK:
-		push_error("local input rejected")
-		quit(1)
-		return 0
+		_fail("local input rejected")
+		return checksum
 	var result: RefCounted = session.begin_advance()
 	if result.code != Types.Code.READY:
-		return 0
-	var checksum: int = 0
+		_fail("the session did not accept the advance")
+		return checksum
 	while true:
 		var request: RefCounted = result.batch.next_request()
 		if request == null:
@@ -244,24 +278,22 @@ func _advance(session: RefCounted, state: PackedByteArray) -> int:
 		match request.kind:
 			Types.Kind.SAVE:
 				if request.writer.write_bytes(state) != Status.Code.OK:
-					push_error("save failed")
-					quit(1)
-					return 0
+					_fail("save failed")
+					return checksum
 			Types.Kind.LOAD:
 				var restored: RefCounted = request.reader.read_bytes(STATE_BYTES)
 				if restored.code != Status.Code.OK:
-					push_error("load failed")
-					quit(1)
-					return 0
+					_fail("load failed")
+					return checksum
 				state = restored.bytes
 			Types.Kind.ADVANCE:
 				for player: int in range(request.inputs.player_count()):
 					var sample: RefCounted = request.inputs.read(player)
-					checksum += sample.bytes[0] + sample.status
+					checksum = _hash_bytes(sample.bytes, checksum)
+					checksum = _hash_bytes(PackedByteArray([sample.status]), checksum)
 		if session.complete_request(request.batch_id, request.request_id, true, _checksum()).code != Types.Code.OK:
-			push_error("request completion rejected")
-			quit(1)
-			return 0
+			_fail("request completion rejected")
+			return checksum
 	return checksum
 
 
@@ -282,9 +314,15 @@ func _session(players: int) -> RefCounted:
 	config.sync_test = false
 	var session: RefCounted = Session.new()
 	if session.configure(config) != Types.Code.OK:
-		push_error("session configuration failed")
-		quit(1)
+		_fail("session configuration failed")
 	return session
+
+
+func _hash_bytes(bytes: PackedByteArray, seed: int) -> int:
+	var value: int = seed
+	for index: int in range(bytes.size()):
+		value = ((value ^ bytes[index]) * HASH_PRIME) & HASH_MASK
+	return value
 
 
 func _checksum() -> PackedByteArray:
@@ -295,12 +333,14 @@ func _checksum() -> PackedByteArray:
 
 
 func _summary(samples: Array[int], checksum: int, iterations: int) -> Dictionary:
+	var sorted: Array[int] = samples.duplicate()
+	sorted.sort()
 	return {
 		"p50_us": _percentile(samples, 50),
 		"p95_us": _percentile(samples, 95),
 		"p99_us": _percentile(samples, 99),
-		"min_us": samples[0],
-		"max_us": samples[samples.size() - 1],
+		"min_us": sorted[0],
+		"max_us": sorted[sorted.size() - 1],
 		"iterations": iterations,
 		"checksum": checksum,
 	}
@@ -311,3 +351,19 @@ func _percentile(samples: Array[int], percentile: int) -> int:
 	sorted.sort()
 	var index: int = int(ceil(percentile / 100.0 * sorted.size())) - 1
 	return sorted[clampi(index, 0, sorted.size() - 1)]
+
+
+func _matches_baseline(report: Dictionary) -> bool:
+	if report["snapshot"]["checksum"] != BASELINE["snapshot"]:
+		return false
+	for entry: Dictionary in report["reports"]:
+		var players: int = entry["players"]
+		for name: String in ["steady", "rollback", "codec"]:
+			if entry[name]["checksum"] != BASELINE[name][players]:
+				return false
+	return true
+
+
+func _fail(reason: String) -> void:
+	push_error(reason)
+	quit(1)

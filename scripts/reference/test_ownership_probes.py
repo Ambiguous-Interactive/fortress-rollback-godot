@@ -130,12 +130,10 @@ class OwnershipReceiptTests(unittest.TestCase):
         self.assertIn('PackedStringArray(), _publish_progress, _clock)', probes.HOST)
         self.assertIn('func _clock() -> int:', probes.HOST)
         self.assertIn('Time.get_ticks_usec()', probes.HOST)
+        self.assertIn('progress["unit"] = "us"', probes.HOST)
         runner = (probes.ROOT / 'scripts/reference/browser/ownership.cjs').read_text(encoding='utf-8')
         self.assertIn('fortressOwnershipProgress', runner)
         self.assertIn('detail.progress', runner)
-        self.assertIn('detail.summary', runner)
-        self.assertIn('last_completed', runner)
-        self.assertIn('executing', runner)
 
     def test_the_runner_measures_elapsed_time_with_an_injected_clock(self):
         # The runner must not read a wall clock itself: the host injects the

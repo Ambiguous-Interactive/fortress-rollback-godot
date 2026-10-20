@@ -3,8 +3,8 @@
 This is one measured production improvement toward [issue 43](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/43).
 It publishes the steady-frame, snapshot, rollback and codec costs of the
 production session, and it records the one change those measurements selected.
-It does not close that issue's allocation, sustained-memory and release-matrix
-gates.
+It does not close that issue's allocation-count, sustained-memory and
+release-matrix gates.
 
 `FortressSnapshotWriter.write_bytes()` copied the caller's bytes into the
 writer's buffer one interpreted step per byte, and the writer reserved its whole
@@ -18,8 +18,8 @@ caller-owned copy are unchanged.
 Run from the repository root with each desired engine executable:
 
 ```sh
-godot --headless --path . --script scripts/benchmark_session_hot_path.gd
-.cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64 --headless --path . --script scripts/benchmark_session_hot_path.gd
+make hot-path-probes GODOT=godot
+make hot-path-probes GODOT=.cache/reference/editors/4.3/Godot_v4.3-stable_linux.arm64
 ```
 
 The [benchmark](../../scripts/benchmark_session_hot_path.gd) prints one JSON
@@ -28,12 +28,16 @@ p95, p99, minimum, maximum and a canonical checksum. The snapshot workload
 also measures an embedded control that keeps the previous per-byte copy, in the
 same process, so the two candidates see the same machine state.
 
+The benchmark compares its checksums with the published baseline and fails
+when they differ. A changed checksum means the simulated result changed, which
+is a reviewed change and not a benchmark repair.
+
 ## Workloads
 
 | Workload | What it measures | Shape |
 | --- | --- | --- |
 | `steady` | A whole session frame: local sample, confirmed remote samples, the ordered save and advance requests, the game's own save and the input view | 4 KiB game state, one local player, 400 frames, 15 samples |
-| `rollback` | The same session with the remote inputs one window late, so every correction loads a snapshot and resimulates the whole prediction window | 8-frame window, 400 frames, 15 samples |
+| `rollback` | The same session with the remote inputs one window late, so every correction loads a snapshot and resimulates the prediction window | 8-frame window, 400 frames, 15 samples |
 | `snapshot` | One snapshot write: the production writer against the previous per-byte control | 4 KiB payload, 400 writes, 15 samples |
 | `codec` | One protocol input packet: encode plus decode, with every player's input and status | 1-byte inputs, 400 packets, 15 samples |
 
@@ -42,25 +46,37 @@ no check distance, a nine-slot history, checksums enabled and one local player.
 The game saves a 4 KiB state, restores it byte for byte and reads the frame
 inputs, which is the shape of a real client's per-frame work.
 
+The session predicts eight frames ahead of the last confirmed frame, so the
+deepest correction it can reach rewinds seven frames. The benchmark fails
+unless the run corrects the window that often.
+
 Every workload accumulates a canonical checksum. The steady and rollback
 checksums cover the applied input bytes and statuses of every simulated frame,
-the snapshot checksum covers the written bytes and the codec checksum covers
-the decoded payload and the packet size. The checksums are identical before and
-after the change, so the faster path simulates exactly the same match.
+the snapshot checksum covers every written byte, and the codec checksum covers
+every decoded input byte. The checksums are identical before and after the
+change, on both pinned engines, so the faster path simulates exactly the same
+match.
 
 ## Results
 
 All times are microseconds per iteration. The `steady`, `rollback` and `codec`
 rows are per frame or per packet; the `snapshot` row is per 4 KiB write.
 
-| Engine | Players | Steady p50 | Steady p95 | Rollback p50 | Snapshot p50 (control p50) | Codec p50 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 4.7.2 | 2 | 92.6 → 32.2 | 103.2 → 44.4 | 33.2 → 29.8 | 59.0 → 2.8 (59.0) | 25.7 → 25.6 |
-| 4.7.2 | 4 | 101.6 → 44.5 | 129.3 → 46.5 | 42.9 → 33.4 | 60.1 → 2.8 (60.7) | 36.3 → 29.7 |
-| 4.7.2 | 8 | 132.3 → 68.2 | 147.4 → 78.6 | 44.6 → 40.6 | 58.8 → 2.8 (60.5) | 38.8 → 37.9 |
-| 4.3 | 2 | 161.8 → 45.2 | 182.8 → 52.8 | 40.2 → 34.9 | 114.8 → 9.7 (116.3) | 29.4 → 30.4 |
-| 4.3 | 4 | 170.7 → 61.8 | 178.4 → 78.7 | 44.4 → 37.9 | 114.1 → 10.2 (117.0) | 34.2 → 34.6 |
-| 4.3 | 8 | 197.3 → 84.2 | 202.9 → 88.9 | 51.0 → 47.1 | 116.3 → 9.8 (115.0) | 44.9 → 45.9 |
+| Engine | Players | Steady p50 | Steady p95 | Rollback p50 | Codec p50 |
+| --- | --- | --- | --- | --- | --- |
+| 4.7.2 | 2 | 88.7 → 31.7 | 94.8 → 36.3 | 146.7 → 51.7 | 25.9 → 26.4 |
+| 4.7.2 | 4 | 102.6 → 44.6 | 104.9 → 45.6 | 165.0 → 67.2 | 29.3 → 29.5 |
+| 4.7.2 | 8 | 124.6 → 68.5 | 129.4 → 72.8 | 212.4 → 99.8 | 38.5 → 37.0 |
+| 4.3 | 2 | 157.8 → 69.3 | 160.9 → 146.3 | 286.6 → 118.1 | 33.7 → 30.6 |
+| 4.3 | 4 | 178.4 → 62.7 | 184.8 → 66.2 | 292.9 → 98.5 | 36.7 → 35.2 |
+| 4.3 | 8 | 233.5 → 88.2 | 299.3 → 93.4 | 328.8 → 133.4 | 45.1 → 44.0 |
+
+The snapshot write does not depend on the player count, so it is measured once:
+
+| Engine | Snapshot p50 | Snapshot p95 | Control p50 (previous copy) |
+| --- | --- | --- | --- |
+| 4.7.2 | 58.3 → 2.9 | 60.4 → 3.3 | 57.9 |
+| 4.3 | 122.8 → 10.0 | 183.9 → 13.2 | 118.9 |
 
 The snapshot write is the dominant cost of the steady frame with a 4 KiB state:
 it was about two thirds of the frame before the change. After the change the
@@ -69,7 +85,7 @@ about half for 8 players, because the per-frame input view, the request
 bookkeeping and the game's own read of the frame inputs are now the larger
 share. The codec is unchanged, as expected: it never used a per-byte loop.
 
-The rollback workload improves less, because a correction resimulates eight
+The rollback workload improves less, because a correction resimulates seven
 frames and each resimulated frame saves a snapshot of the same size.
 
 Measurements were collected on Linux 6.12.76, ARM64, 16 CPU cores; the exact
@@ -95,7 +111,7 @@ latency claim is made here.
 ## Regression budget
 
 On the reference host, a steady frame with a 4 KiB state costs about 32 to 45
-microseconds for 2 and 4 players and about 68 to 84 microseconds for 8 players,
+microseconds for 2 and 4 players and about 68 to 88 microseconds for 8 players,
 with an observed spread of up to about 30 percent of the median. A change that
 raises the steady p50 above twice the measured median on the same hardware is
 worth investigating. The budget is deliberately not a CI gate: portable CI must
@@ -114,13 +130,21 @@ both pinned engines.
 | Source | SHA-256 |
 | --- | --- |
 | `addons/fortress_rollback/core/snapshot_writer.gd` | `eead54ea8f14c8e3c6cf3d99965731d629ea0a2bff7dd69e0a6796e9ed6152a3` |
-| `scripts/benchmark_session_hot_path.gd` | `51fdb77e62744dbace25e2f13e91dad6fdd477b87b4ec4dbef4c3e5898feab88` |
-| `tests/unit/test_snapshot_history.gd` | `dd7295fd2abbeca968fec8915fd2bd6604f1e9c45216065401ded79491abe4a8` |
+| `scripts/benchmark_session_hot_path.gd` | `f526edb8d652049428ff9f2f034e8cbacdf258c30d9517df41f3dc1d16c49a25` |
+| `tests/unit/test_snapshot_history.gd` | `964f680eb51be6899f5d970008c26132d4b6aa2dfd1996de3a405549547a20e6` |
+| `tests/unit/test_scenario_runner.gd` | `d738f21a70c2a691af1f45ce7828844a98ad85904f66d947a59368be5ec1d219` |
 
 Matching benchmark checksums before and after the change:
 
-| Players | Steady | Rollback | Snapshot | Codec |
-| --- | --- | --- | --- | --- |
-| 2 | 46680 | 314 | 7200 | 468000 |
-| 4 | 134072 | 619 | 7200 | 576000 |
-| 8 | 310584 | 1409 | 7200 | 792000 |
+| Workload | Players | Checksum |
+| --- | --- | --- |
+| snapshot | - | 4150103641047209673 |
+| steady | 2 | 1276642125363926553 |
+| steady | 4 | 193693954048565353 |
+| steady | 8 | 167760427949277961 |
+| rollback | 2 | 804470947006420549 |
+| rollback | 4 | 8216305103245225058 |
+| rollback | 8 | 7771464832153107854 |
+| codec | 2 | 1009799064992073792 |
+| codec | 4 | 5039977378390133760 |
+| codec | 8 | 8583044641210005760 |
