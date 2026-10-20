@@ -7,6 +7,11 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const MAX_WINDOW: int = 128
 const MAX_STORAGE_BYTES: int = 67108864
+## Shared roster and sample shape limits for every session, transport and recording surface.
+const MIN_PLAYERS: int = 2
+const MAX_PLAYERS: int = 8
+const MIN_INPUT_WIDTH: int = 1
+const MAX_INPUT_WIDTH: int = 65536
 
 var player_count: int = 2
 var local_players: PackedInt32Array = PackedInt32Array([0, 1])
@@ -45,7 +50,7 @@ func validate() -> int:
 		return Types.Code.INVALID_CONFIGURATION
 	if replay_max_frames > 0 and not (Replay.valid_text(diagnostic_seed) and Replay.valid_text(diagnostic_version)):
 		return Types.Code.INVALID_CONFIGURATION
-	if player_count < 2 or player_count > 8 or input_width < 1 or input_width > 65536 or neutral_input.size() != input_width:
+	if player_count < MIN_PLAYERS or player_count > MAX_PLAYERS or input_width < MIN_INPUT_WIDTH or input_width > MAX_INPUT_WIDTH or neutral_input.size() != input_width:
 		return Types.Code.INVALID_CONFIGURATION
 	if max_prediction_frames < 0 or max_prediction_frames > MAX_WINDOW or check_distance < 0 or check_distance > max_prediction_frames:
 		return Types.Code.INVALID_CONFIGURATION

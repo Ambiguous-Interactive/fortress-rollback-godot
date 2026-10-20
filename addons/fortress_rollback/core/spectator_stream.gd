@@ -4,10 +4,10 @@ extends RefCounted
 # gdlint: disable=constant-name,max-returns
 const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Code = Types.Code
 const HEADER_BYTES: int = 48
-const FRAME_MAX: int = 2147483647
 const ROW: int = 1
 const END: int = 2
 const KEEPALIVE: int = 3
@@ -29,6 +29,7 @@ var _is_finished: bool = false
 
 ## Identity is session (16 bytes), host (8 bytes), then connection lifetime (8 bytes).
 ## Reconfiguration creates a fresh viewer; create a fresh game/driver with playback_session().
+## The caller's playback policy survives reconfiguration when it still fits the new ring.
 func configure(config: Config, identity: PackedByteArray, now_us: int, timeout_us: int, max_packet_bytes: int) -> int:
 	if config == null or identity.size() != 32 or now_us < 0 or timeout_us < 1:
 		return Code.INVALID_CONFIGURATION
@@ -36,6 +37,9 @@ func configure(config: Config, identity: PackedByteArray, now_us: int, timeout_u
 		return Code.INVALID_CONFIGURATION
 	if _session != null and _session._mutation_code() == Code.BUSY:
 		return Code.BUSY
+	var policy: PackedInt64Array = PackedInt64Array()
+	if _session != null:
+		policy = _session.playback_policy()
 	var session: Spectator = Spectator.new()
 	var code: int = session.configure(config)
 	if code != Code.OK:
@@ -49,6 +53,9 @@ func configure(config: Config, identity: PackedByteArray, now_us: int, timeout_u
 	_end_frame = -1
 	_highest_frame = -1
 	_is_finished = false
+	if policy.size() == 3:
+		# A policy that no longer fits the new ring falls back to the session defaults.
+		session.set_playback(policy[0], policy[1], policy[2])
 	return Code.OK
 
 
@@ -59,7 +66,7 @@ func playback_session() -> Spectator:
 ## Encode only host-confirmed complete rows. Empty bytes mean invalid dimensions or frame.
 ## The host must obtain its rows through confirmed_inputs(), after correction completes.
 func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
-	if _config == null or _session._config != _config or frame < 0 or frame >= FRAME_MAX or inputs.size() != _config.player_count:
+	if _config == null or _session._config != _config or frame < 0 or frame >= Queue.FRAME_MAX or inputs.size() != _config.player_count:
 		return PackedByteArray()
 	for bytes: PackedByteArray in inputs:
 		if bytes.size() != _config.input_width:
@@ -72,7 +79,7 @@ func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
 
 ## Exclusive final frame; END may arrive before its rows, which remain receivable until complete.
 func encode_end(final_frame: int) -> PackedByteArray:
-	if _config == null or _session._config != _config or final_frame < 0 or final_frame > FRAME_MAX:
+	if _config == null or _session._config != _config or final_frame < 0 or final_frame > Queue.FRAME_MAX:
 		return PackedByteArray()
 	return _header(END, final_frame)
 
@@ -105,7 +112,7 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	):
 		return Code.PROTOCOL_FAILED
 	var frame: int = packet.decode_u32(44)
-	if frame > FRAME_MAX or (kind == ROW and frame == FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
+	if frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
 		return Code.INVALID_FRAME
 	var code: int = poll(now_us)
 	if code != Code.OK:
@@ -169,9 +176,11 @@ func _header(kind: int, frame: int) -> PackedByteArray:
 
 ## Shared fixed-width writer for configured stream and host publisher implementations.
 static func encode_header(kind: int, frame: int, players: int, width: int, identity: PackedByteArray) -> PackedByteArray:
-	if identity.size() != 32 or players < 2 or players > 8 or width < 1 or width > 65536 or kind not in [ROW, END, KEEPALIVE]:
+	if identity.size() != 32 or kind not in [ROW, END, KEEPALIVE]:
 		return PackedByteArray()
-	if frame < 0 or frame > FRAME_MAX or (kind == ROW and frame == FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
+	if players < Config.MIN_PLAYERS or players > Config.MAX_PLAYERS or width < Config.MIN_INPUT_WIDTH or width > Config.MAX_INPUT_WIDTH:
+		return PackedByteArray()
+	if frame < 0 or frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
 		return PackedByteArray()
 	var buffer: StreamPeerBuffer = StreamPeerBuffer.new()
 	buffer.big_endian = false

@@ -86,6 +86,7 @@ func cases() -> PackedStringArray:
 	return PackedStringArray([
 		"parity", "reentry", "failure", "validation", "stall", "terminate_reconfigure",
 		"notifications", "input_validation", "missing_samples", "input_exhaustion",
+		"client_status",
 	])
 
 
@@ -111,6 +112,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_missing_samples(context)
 		"input_exhaustion":
 			_input_exhaustion(context)
+		"client_status":
+			_client_status(context)
 	context.finish()
 
 
@@ -464,3 +467,28 @@ func _input_exhaustion(context: RefCounted) -> void:
 		context.equal(session.received_frames(), received, "exhausted step stages no new inputs")
 		context.equal(game.trace.is_empty(), true, "exhausted step invokes no game callback")
 		context.equal(driver.step(1, _samples(frame)).code, Types.Code.TERMINATED, "exhaustion remains terminal")
+
+
+# Value: protects=a client that only holds the driver learns the session state and cause; fails_when=status, counters
+# or the terminal reason stay hidden; why_new=other cases read the session directly; seam=none
+func _client_status(context: RefCounted) -> void:
+	var driver: RefCounted = Driver.new(_session(), Game.new())
+	context.equal(driver.status().current_frame, 0, "fresh driver reports its boundary")
+	context.equal(driver.statistics().advanced_frames, 0, "fresh driver has no counters")
+	var result: RefCounted = driver.step(0, _samples(0))
+	context.equal(result.code, Types.Code.OK, "first step advances")
+	context.equal(driver.status().current_frame, 1, "driver reports the advanced boundary")
+	context.equal(driver.statistics().advanced_frames, 1, "driver reports the advanced counter")
+	context.equal(result.reason, Types.Code.OK, "a running session has no reason")
+	context.equal(result.failure_frame, -1, "a running session has no failure frame")
+
+	var game: Game = Game.new()
+	game.fail_kind = Types.Kind.ADVANCE
+	var failed_driver: RefCounted = Driver.new(_session(), game)
+	var failed: RefCounted = failed_driver.step(0, _samples(0))
+	context.equal(failed.code, Types.Code.CALLBACK_FAILED, "callback failure stops the step")
+	context.equal(failed.reason, Types.Code.CALLBACK_FAILED, "the step keeps the exact cause")
+	context.equal(failed.failure_frame, 0, "the step reports the failing frame")
+	context.equal(failed_driver.status().reason, Types.Code.CALLBACK_FAILED, "the driver reports the exact cause")
+	context.equal(failed_driver.status().lifecycle, Types.Lifecycle.TERMINATED, "the driver reports the stopped lifecycle")
+	context.equal(failed_driver.status().failure_frame, 0, "the driver reports the failing frame")

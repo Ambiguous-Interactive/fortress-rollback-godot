@@ -43,19 +43,21 @@ EXPECTED.update({
     'res://tests/unit/test_diagnostic_viewer.gd': {'imports', 'controls', 'divergence', 'scene_controls'},
     'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls', 'navigation', 'navigation_boundaries'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
-        'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit'},
+        'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit', 'refuses_foreign_recording'},
 })
 EXPECTED.update({
     'res://tests/unit/test_spectator_session.gd': {'configuration', 'confirmed_playback', 'buffering', 'delay_and_loss',
-        'expert_parity', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes'},
+        'expert_parity', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes',
+        'retained_row', 'delay_bounds'},
     'res://tests/unit/test_driver_callback_results.gd': {'valid', 'malformed', 'termination', 'peer_failure'},
 })
 EXPECTED.update({
     'res://tests/unit/test_driver.gd': {'parity', 'reentry', 'failure', 'validation', 'stall',
-        'terminate_reconfigure', 'notifications', 'input_validation', 'missing_samples'},
+        'terminate_reconfigure', 'notifications', 'input_validation', 'missing_samples', 'client_status'},
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed',
-        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control'},
+        'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
+        'policy_preserved', 'wide_shapes'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},

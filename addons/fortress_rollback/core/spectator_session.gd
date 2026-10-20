@@ -55,6 +55,8 @@ func configure(config: Config) -> int:
 
 ## Delay trails the contiguous host frontier. Catch-up is a caller-owned loop of at most catchup_speed steps.
 ## Each step still consumes one ordinary shared-engine batch. All limits fit the configured input ring.
+## The engine enforces the delay even when the caller exceeds the advice; the catch-up rate stays the
+## caller's, because recommended_steps() already reports the exact per-cycle bound.
 func set_playback(stream_delay: int, max_frames_behind: int, catchup_speed: int) -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
@@ -66,6 +68,12 @@ func set_playback(stream_delay: int, max_frames_behind: int, catchup_speed: int)
 	_max_frames_behind = max_frames_behind
 	_catchup_speed = catchup_speed
 	return Code.OK
+
+
+## Current playback policy as [stream_delay, max_frames_behind, catchup_speed].
+## A reconfigured viewer keeps these values when they still fit the new ring.
+func playback_policy() -> PackedInt64Array:
+	return PackedInt64Array([_stream_delay, _max_frames_behind, _catchup_speed])
 
 
 ## Accepts owned complete rows, including out-of-order arrivals within queue_capacity of the next frame.
@@ -144,7 +152,11 @@ func begin_advance() -> Types.Result:
 		return Types.Result.new(Code.TERMINATED)
 	if recommended_steps() == 0:
 		return Types.Result.new(Code.PREDICTION_STALL)
-	var row: PackedByteArray = _host_rows[_current % _host_tags.size()]
+	var index: int = _current % _host_tags.size()
+	if _host_tags[index] != _current:
+		# The retained row for this frame is gone. Never simulate a stale row as confirmed host input.
+		return Types.Result.new(Code.HISTORY_UNAVAILABLE)
+	var row: PackedByteArray = _host_rows[index]
 	for player: int in range(_config.player_count):
 		var start: int = player * _config.input_width
 		var received: Types.Result = super.receive_input(player, _current, row.slice(start, start + _config.input_width))
