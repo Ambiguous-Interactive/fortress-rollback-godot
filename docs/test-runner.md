@@ -132,7 +132,11 @@ after all work; asynchronous/yielding cases are unsupported and fail incomplete.
 
 `scenario_runner.gd` has no SceneTree, Node, filesystem, timer or OS dependency.
 A future browser host can preload the same suite scripts and call
-`execute(scripts: Array[Script], category, filter_text, seed) -> Dictionary`.
+`execute(scripts: Array[Script], category, filter_text, seed, case_names, progress) -> Dictionary`.
+The optional `case_names` runs only those cases; the optional `progress` callable
+receives one dictionary with the suite, the case and the number of completed
+cases before each case runs, so an interrupted host can name the case that was
+executing.
 The result contains format, completion, pass flag, count, errors and ordered
 case records with both runs. Browser export/execution is **not implemented or
 verified by this runner**. It still needs its own host watchdog/error handling.

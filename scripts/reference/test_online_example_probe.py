@@ -36,10 +36,10 @@ def replay_download(histories):
     states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
     texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8',
              '1701', 'fortress-online-integer-v1']
-    raw = b'FRRP' + struct.pack('<HBIIIHBB', 3, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
+    raw = b'FRRP' + struct.pack('<HBIIIHBB', 4, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
     raw += b''.join(bytes([len(text)]) + text.encode('ascii') for text in texts)
-    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1]) + bytes.fromhex(game_checksum(states[frame])) for frame in range(frames))
-    raw += hashlib.sha256(bytes([histories[0][frames - 1], histories[1][frames - 1]])).digest()[:16]
+    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1]) + bytes.fromhex(game_checksum(states[frame]))
+                    + hashlib.sha256(bytes([histories[0][frame], histories[1][frame]])).digest()[:16] for frame in range(frames))
     return {'filename': 'fortress-online.frrp', 'hex': raw.hex(), 'disabled_peer': True,
             'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
             'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],
@@ -85,7 +85,11 @@ def evidence():
                       'uuid': f'00000000-0000-0000-0000-{slot + 1:012}', 'direct_rejected': 0,
                       'room_id': '00000000-0000-0000-0000-000000000001', 'failure': '',
                       'snapshots': {str(frame): state for frame, state in states.items()},
-                      'rtc': {'channels': channels}, 'delayed': 25})
+                      'rtc': {'channels': channels}, 'delayed': 25,
+                      'scheduling': {'turns': 240, 'ticks_per_second': 60, 'max_gap_us': 50000,
+                                     'max_gap_turns': 3, 'max_gap_transport_us': 50000,
+                                     'confirmation_max_gap_us': 33334, 'confirmation_max_gap_turns': 2,
+                                     'confirmed_frames': 110}})
     rounds = [{'room': room, 'peers': copy.deepcopy(peers), 'teardown': [
         {'channels': 3 * (index + 1), 'channels_closed': 3 * (index + 1), 'connections': index + 1,
          'connections_closed': index + 1, 'ice_closed': index + 1, 'websockets': index + 1,
@@ -287,6 +291,31 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             with self.subTest(count=len(downloads)), self.assertRaisesRegex(ValueError, 'missing real diagnostic downloads'):
                 validate_result(changed)
 
+    # Value: protects=published host scheduling gaps; fails_when=a room omits or fakes the cadence; why_new=#147 needs the stall evidence
+    def test_scheduling_summary_is_required_and_consistent(self):
+        original = evidence()
+        self.assertIs(validate_result(original), original)
+        for label, mutate in (
+                ('missing', lambda summary: summary.pop('max_gap_us')),
+                ('empty', lambda summary: summary.clear()),
+                ('not a dict', lambda summary: None),
+                ('negative gap', lambda summary: summary.update(max_gap_us=-1)),
+                ('no turns', lambda summary: summary.update(turns=0)),
+                ('fractional turn', lambda summary: summary.update(turns=1.5)),
+                ('inconsistent turns', lambda summary: summary.update(max_gap_turns=99)),
+                ('inconsistent confirmation turns', lambda summary: summary.update(confirmation_max_gap_turns=99)),
+                ('more confirmations than the room observed', lambda summary: summary.update(confirmed_frames=1000))):
+            changed = evidence()
+            summary = changed['rounds'][0]['peers'][0]['scheduling']
+            if label == 'not a dict':
+                changed['rounds'][0]['peers'][0]['scheduling'] = None
+            else:
+                mutate(summary)
+            reasons = ('scheduling summary missing or malformed|disagrees with its nominal turn count'
+                       '|claims more confirmations than the room observed')
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, reasons):
+                validate_result(changed)
+
     # Value: protects=standalone runtime-only install; fails_when=missing licenses/files or overwrites; why_new=browser staging was handwritten; seam=none
     def test_clean_installer_copies_complete_runtime_and_licenses_without_repository_tools(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -349,8 +378,10 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             early = copy.deepcopy(changed)
             failed = early['rounds'][0]['peers'][1]
             failed.update(inputs=failed['inputs'][:108], frame=107, confirmed=107)
+            failed['scheduling'] = dict(failed['scheduling'], confirmed_frames=108)
             peer = early['rounds'][0]['peers'][slot]
             peer.update(inputs=peer['inputs'][:108], frame=107, confirmed=confirmed)
+            peer['scheduling'] = dict(peer['scheduling'], confirmed_frames=confirmed + 1)
             for peer in early['rounds'][0]['peers']:
                 peer['snapshots'] = {frame: state for frame, state in peer['snapshots'].items() if int(frame) < 107}
             with self.subTest(slot=slot, confirmed=confirmed), self.assertRaisesRegex(ValueError, message):

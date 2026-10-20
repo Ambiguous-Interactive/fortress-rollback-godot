@@ -127,9 +127,9 @@ func _failure(context: RefCounted) -> void:
 		viewer.toggle_play()
 		for tick: int in 48:
 			viewer.tick()
-		context.equal(viewer.current_frame(), 8, "fast playback cannot skip first mismatch")
+		context.equal(viewer.current_frame(), 7, "fast playback cannot skip the corrupted input")
 		context.equal(viewer.can_step(), false, "mismatch stops all speeds")
-		context.equal(viewer.message.contains("stopped at frame 8"), true, "failure identifies recorded boundary")
+		context.equal(viewer.message.contains("stopped at frame 7"), true, "failure identifies the corrupted frame")
 		context.state(quarters, viewer.game.canonical_bytes())
 
 

@@ -45,7 +45,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls', 'navigation', 'navigation_boundaries'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit', 'refuses_foreign_recording',
-        'protects_final_input'},
+        'protects_input_rows'},
 })
 EXPECTED.update({
     'res://tests/unit/test_spectator_session.gd': {'configuration', 'confirmed_playback', 'buffering', 'delay_and_loss',
@@ -165,9 +165,14 @@ func _ready() -> void:
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
-\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701)
+\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress)
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
+\n\n## A rejected run must name the case that was executing, so a slow run can be told
+## apart from an engine or script failure.
+func _publish_progress(value: Dictionary) -> void:
+\tvar progress: String = JSON.stringify(value)
+\tJavaScriptBridge.eval("document.body.dataset.fortressOwnershipProgress = " + JSON.stringify(progress))
 '''
 
 

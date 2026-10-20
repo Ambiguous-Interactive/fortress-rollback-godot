@@ -198,7 +198,7 @@
 
 ### Changed
 
-- **Breaking**: Change the replay file format to version 3. The file ends with a digest of the final frame's input row, so a corrupted last input stops playback with `DESYNC` at that frame instead of ending in a wrong final state. Version 1 and version 2 files are refused with `UNSUPPORTED_VERSION`.
+- **Breaking**: Change the replay file format to version 4. Every frame now carries the digest of its own input row, so a corrupted input is refused with `DESYNC` at the frame that owns it - including a row in front of a frame that carries no state checksum. Version 1, version 2 and version 3 files are refused with `UNSUPPORTED_VERSION`. A recording now spends 16 more bytes per frame, so the largest recording a configuration can hold is smaller.
 
 - Name the reason the replay viewer refuses a file. An older format version, a malformed file and an oversized file each get their own message.
 

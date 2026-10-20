@@ -129,17 +129,17 @@ func _stops_at_divergence(context: RefCounted) -> void:
 	viewer.toggle_play()
 	for _tick: int in range(30):
 		viewer.tick()
-	context.equal(viewer.current_frame(), 8, "stops before first mismatching saved boundary")
+	context.equal(viewer.current_frame(), 7, "stops at the frame that owns the corrupted input")
 	context.equal(viewer.is_playing, false, "divergence pauses")
-	context.equal(viewer.message.contains("stopped at frame 8"), true, "identifies first failed checksum")
+	context.equal(viewer.message.contains("stopped at frame 7"), true, "identifies the frame with the corrupted input")
 	var bytes: PackedByteArray = viewer.game.canonical_bytes()
 	viewer.step()
 	viewer.toggle_play()
 	viewer.tick()
-	context.bytes_equal(viewer.game.canonical_bytes(), bytes, 8, "failed replay remains stopped")
+	context.bytes_equal(viewer.game.canonical_bytes(), bytes, 7, "failed replay remains stopped")
 	viewer.restart()
 	context.equal(viewer.current_frame(), 0, "can restart after failure")
-	context.state(8, bytes)
+	context.state(7, bytes)
 
 
 static func _button(node: Node, caption: String) -> Button:
@@ -172,7 +172,7 @@ func _scene_controls(context: RefCounted) -> void:
 	_button(node, "Play").pressed.emit()
 	for tick: int in range(30):
 		node._physics_process(0.0)
-	context.equal(node.viewer.current_frame(), 8, "real scene stops at first mismatch")
+	context.equal(node.viewer.current_frame(), 7, "real scene stops at the frame with the corrupted input")
 	context.equal(_button(node, "Play").disabled, true, "failed playback disables Play")
 	context.equal(_button(node, "Step").disabled, true, "failed playback disables Step")
 	context.equal(_button(node, "Restart").disabled, false, "failed playback permits restart")
@@ -227,11 +227,11 @@ func _navigation(context: RefCounted) -> void:
 	context.equal(viewer.open_bytes(replay.to_bytes()), true, "load shape-correct corruption")
 	viewer.call("seek", 300)
 	viewer.tick()
-	context.equal(viewer.current_frame(), 8, "seek cannot skip checksum failure")
+	context.equal(viewer.current_frame(), 7, "seek cannot skip the corrupted input")
 	context.equal(viewer.call("is_seeking"), false, "failure cancels seek")
 	context.equal(viewer.can_step(), false, "failure remains terminal")
-	context.equal(viewer.message.contains("stopped at frame 8"), true, "failure visible during navigation")
-	context.state(8, viewer.game.canonical_bytes())
+	context.equal(viewer.message.contains("stopped at frame 7"), true, "failure visible during navigation")
+	context.state(7, viewer.game.canonical_bytes())
 	var node: Node2D = Scene.instantiate()
 	node._ready()
 	node.viewer.open_bytes(recording(300).to_bytes())
@@ -266,9 +266,12 @@ func _navigation_boundaries(context: RefCounted) -> void:
 		viewer.tick()
 		if boundary == 120:
 			viewer.cancel_seek()
-		context.equal(viewer.current_frame(), boundary, "navigation stops at selected boundary")
-		context.equal(viewer.can_step(), false, "selected saved boundary checksum must match")
-		context.equal(viewer.message.contains("stopped at frame %d" % boundary), true, "boundary mismatch visible")
+		# A corrupted input row is refused by the frame that owns it, one frame before the
+		# boundary whose checksum used to report it.
+		var failure: int = 0 if boundary == 0 else boundary - 1
+		context.equal(viewer.current_frame(), failure, "navigation stops at the frame that owns the failure")
+		context.equal(viewer.can_step(), false, "selected saved boundary must match")
+		context.equal(viewer.message.contains("stopped at frame %d" % failure), true, "boundary mismatch visible")
 		context.equal([viewer.is_playing, viewer.is_seeking()], [false, false], "boundary failure stops all work")
 		var message: String = viewer.message
 		viewer.cancel_seek()

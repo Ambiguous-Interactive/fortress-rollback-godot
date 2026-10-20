@@ -364,16 +364,13 @@ func _is_cache_boundary() -> bool:
 	return _checkpoint_interval > 0 and _frame < _replay.frame_count() and _frame % _checkpoint_interval == 0
 
 
-## The final frame's input row is anchored by a recorded digest, because the state checksum of
-## the following frame - which covers every other row - does not exist for it. A mismatch
-## stops playback at that frame.
+## Every frame carries the digest of its own input row, so a corrupted row is refused at the
+## frame that owns it. A recording without that digest cannot be verified and is refused.
 func _verify_input_digest() -> int:
-	if _frame != _replay.frame_count() - 1:
-		return Types.Code.OK
-	var expected: PackedByteArray = _replay.final_digest()
+	var expected: PackedByteArray = _replay.input_digest(_frame)
 	if expected.size() != Replay.DIGEST_BYTES:
-		return Types.Code.OK
-	var actual: PackedByteArray = _replay.input_digest(_frame)
+		return _fail(Types.Code.DESYNC)
+	var actual: PackedByteArray = _replay.computed_input_digest(_frame)
 	if actual == expected:
 		return Types.Code.OK
 	_failure_expected_checksum = expected.duplicate()

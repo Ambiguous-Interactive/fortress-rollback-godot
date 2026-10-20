@@ -5,8 +5,8 @@ extends RefCounted
 
 ## Confirmed inputs for frames 0..frame_count() - 1, with optional 16-byte state checksums.
 ## Frame F's checksum covers the state before input F. Sessions record; FortressReplayPlayer plays back.
-## The trailing input digest covers the final frame's input row, which no following frame's
-## state checksum can reach.
+## Every frame carries a 16-byte digest of its own input row, so every recorded row is covered
+## independently of the state checksums.
 ## Load a file with FortressReplay.new().decode(bytes). The layout is in docs/integration.md.
 
 enum DecodeCode { OK, MALFORMED, UNSUPPORTED_VERSION, TOO_LARGE }
@@ -14,7 +14,7 @@ enum DecodeCode { OK, MALFORMED, UNSUPPORTED_VERSION, TOO_LARGE }
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const MAGIC: String = "FRRP"
-const FORMAT_VERSION: int = 3
+const FORMAT_VERSION: int = 4
 const ADDON_VERSION: String = "0.1.0"
 const UPSTREAM_REVISION: String = "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"
 const FIXED_BYTES: int = 23
@@ -40,13 +40,13 @@ var _text: PackedStringArray = PackedStringArray(["", "", "", "", ""])
 var _inputs: PackedByteArray = PackedByteArray()
 var _checksums: PackedByteArray = PackedByteArray()
 var _flags: PackedByteArray = PackedByteArray()
-var _final_digest: PackedByteArray = PackedByteArray()
+var _digests: PackedByteArray = PackedByteArray()
 
 
 static func valid_shape(players: int, width: int, frames: int) -> bool:
 	if players < 2 or players > 8 or width < 1 or width > 65536 or frames < 0 or frames > MAX_FRAMES:
 		return false
-	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (players * width + 1 + CHECKSUM_BYTES) + DIGEST_BYTES <= MAX_BYTES
+	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (players * width + 1 + CHECKSUM_BYTES + DIGEST_BYTES) <= MAX_BYTES
 
 
 ## The digest of one recorded input row: the first 16 bytes of its SHA-256.
@@ -73,8 +73,9 @@ static func _printable(bytes: PackedByteArray) -> bool:
 
 ## Replaces this replay only when the result is OK; any other DecodeCode leaves it unchanged.
 ## Nothing is allocated before the declared frame count is checked against the bytes actually present.
-## Version 1 and version 2 files are UNSUPPORTED_VERSION: version 1 lacks the metadata that
-## version 2 requires, and version 2 lacks the final input digest that version 3 records.
+## Version 1, version 2 and version 3 files are UNSUPPORTED_VERSION: version 1 lacks the metadata
+## that version 2 requires, version 2 lacks the input digest that version 3 records, and version 3
+## anchors only the final input row instead of every row.
 func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	if bytes.size() > mini(max_bytes, MAX_BYTES):
 		return DecodeCode.TOO_LARGE
@@ -107,7 +108,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 		text.append(value.get_string_from_ascii())
 		cursor += 1 + size
 	var row: int = players * width
-	if frames * (row + 1) + DIGEST_BYTES > bytes.size() - cursor:
+	if frames * (row + 1 + DIGEST_BYTES) > bytes.size() - cursor:
 		return DecodeCode.MALFORMED
 	var neutral_row: PackedByteArray = PackedByteArray()
 	for player: int in range(players):
@@ -115,11 +116,12 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	var inputs: PackedByteArray = PackedByteArray()
 	var checksums: PackedByteArray = PackedByteArray()
 	var flags: PackedByteArray = PackedByteArray()
+	var digests: PackedByteArray = PackedByteArray()
 	var skipped_seen: int = 0
 	for frame: int in range(frames):
 		var flag: int = bytes[cursor + row] if cursor + row < bytes.size() else 0xff
 		var end: int = cursor + row + 1 + (CHECKSUM_BYTES if flag == FLAG_CHECKSUM else 0)
-		if (flag != 0 and flag != FLAG_CHECKSUM and flag != FLAG_SKIPPED) or end > bytes.size():
+		if (flag != 0 and flag != FLAG_CHECKSUM and flag != FLAG_SKIPPED) or end + DIGEST_BYTES > bytes.size():
 			return DecodeCode.MALFORMED
 		var input_row: PackedByteArray = bytes.slice(cursor, cursor + row)
 		if flag == FLAG_SKIPPED and input_row != neutral_row:
@@ -131,8 +133,9 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 			checksums.append_array(bytes.slice(cursor + row + 1, end))
 		else:
 			checksums.resize(checksums.size() + CHECKSUM_BYTES)
-		cursor = end
-	if cursor + DIGEST_BYTES != bytes.size() or skipped_seen != skipped:
+		digests.append_array(bytes.slice(end, end + DIGEST_BYTES))
+		cursor = end + DIGEST_BYTES
+	if cursor != bytes.size() or skipped_seen != skipped:
 		return DecodeCode.MALFORMED
 	_players = players
 	_width = width
@@ -146,7 +149,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	_inputs = inputs
 	_checksums = checksums
 	_flags = flags
-	_final_digest = bytes.slice(cursor, cursor + DIGEST_BYTES)
+	_digests = digests
 	return DecodeCode.OK
 
 
@@ -248,27 +251,21 @@ func checksum(frame: int) -> PackedByteArray:
 	return _checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES)
 
 
-## The digest of one frame's recorded input row.
+## The digest recorded for one frame's input row. A decoded file keeps the digest it carried, so a
+## corrupted row cannot silently agree with it.
 func input_digest(frame: int) -> PackedByteArray:
+	if frame < 0 or frame >= _frames:
+		return PackedByteArray()
+	return _digests.slice(frame * DIGEST_BYTES, (frame + 1) * DIGEST_BYTES)
+
+
+## The digest computed from one frame's stored input row. It differs from the recorded digest
+## exactly when the row or its recorded digest was changed after the file was written.
+func computed_input_digest(frame: int) -> PackedByteArray:
 	if frame < 0 or frame >= _frames:
 		return PackedByteArray()
 	var row: int = _players * _width
 	return digest_row(_inputs.slice(frame * row, (frame + 1) * row))
-
-
-## The digest that anchors the final frame's input row. A decoded file keeps the digest it
-## carried, so a corrupted row cannot silently agree with it.
-func final_digest() -> PackedByteArray:
-	return _recorded_digest()
-
-
-## The digest written to the file: the recorded anchor, or zeros without frames.
-func _recorded_digest() -> PackedByteArray:
-	if _final_digest.size() == DIGEST_BYTES:
-		return _final_digest.duplicate()
-	var empty: PackedByteArray = PackedByteArray()
-	empty.resize(DIGEST_BYTES)
-	return empty
 
 
 func to_bytes() -> PackedByteArray:
@@ -292,7 +289,7 @@ func to_bytes() -> PackedByteArray:
 		bytes.append(_flags[frame])
 		if _flags[frame] == FLAG_CHECKSUM:
 			bytes.append_array(_checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES))
-	bytes.append_array(_recorded_digest())
+		bytes.append_array(_digests.slice(frame * DIGEST_BYTES, (frame + 1) * DIGEST_BYTES))
 	return bytes
 
 
@@ -310,7 +307,7 @@ func owned_copy() -> RefCounted:
 	copy._inputs = _inputs.duplicate()
 	copy._checksums = _checksums.duplicate()
 	copy._flags = _flags.duplicate()
-	copy._final_digest = _final_digest.duplicate()
+	copy._digests = _digests.duplicate()
 	return copy
 
 
@@ -336,7 +333,7 @@ func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: boo
 		_checksums.append_array(saved_checksum)
 	else:
 		_checksums.resize(_checksums.size() + CHECKSUM_BYTES)
+	# The digest covers the stored bytes, not the caller's array.
+	_digests.append_array(digest_row(_inputs.slice(_inputs.size() - row.size(), _inputs.size())))
 	_frames += 1
 	_skipped += int(skipped)
-	# The anchor covers the stored bytes, not the caller's array.
-	_final_digest = digest_row(_inputs.slice(_inputs.size() - row.size(), _inputs.size()))

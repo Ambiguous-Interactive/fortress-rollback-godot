@@ -47,7 +47,7 @@ def expected_states(histories, count):
 
 def validate_replay_download(value, expected_engine, round_record):
     if (not isinstance(value, dict) or value.get('filename') != 'fortress-online.frrp' or value.get('disabled_peer') is not True
-            or not isinstance(value.get('hex'), str) or not re.fullmatch(r'(?:[0-9a-f]{2}){23,8192}', value['hex'])):
+            or not isinstance(value.get('hex'), str) or not re.fullmatch(r'(?:[0-9a-f]{2}){23,16384}', value['hex'])):
         raise ValueError('online replay download missing or unbounded')
     before, after = value.get('before'), value.get('after')
     if (not isinstance(before, dict) or not isinstance(after, dict) or before != after or before.get('state') != 'failed'
@@ -56,7 +56,7 @@ def validate_replay_download(value, expected_engine, round_record):
         raise ValueError('online replay download advanced a stopped match')
     raw = bytes.fromhex(value['hex'])
     version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
-    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (3, 2, 1, 0, 2, 8, 0)
+    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (4, 2, 1, 0, 2, 8, 0)
             or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
         raise ValueError('online replay configuration differs from the played match')
     cursor, texts = 24, []
@@ -88,6 +88,7 @@ def validate_replay_download(value, expected_engine, round_record):
     for frame in range(frames):
         if cursor + 3 > len(raw) or raw[cursor:cursor + 2] != bytes(history[frame] for history in histories):
             raise ValueError('online replay differs from original submitted input')
+        row = raw[cursor:cursor + 2]
         flag = raw[cursor + 2]
         cursor += 3
         if flag not in (0, 1):
@@ -97,16 +98,40 @@ def validate_replay_download(value, expected_engine, round_record):
                 raise ValueError('online replay checksum differs from canonical history')
             checksums += 1
             cursor += 16
-    if cursor + 16 != len(raw) or checksums == 0:
+        if raw[cursor:cursor + 16] != hashlib.sha256(row).digest()[:16]:
+            raise ValueError('online replay input digest differs from the original row')
+        cursor += 16
+    if cursor != len(raw) or checksums == 0:
         raise ValueError('online replay missing checksum evidence or has trailing bytes')
-    final_row = bytes(history[frames - 1] for history in histories)
-    if raw[cursor:cursor + 16] != hashlib.sha256(final_row).digest()[:16]:
-        raise ValueError('online replay final input digest differs from the original row')
     playback = value.get('playback')
     if (not isinstance(playback, dict) or any(type(playback.get(key)) is not int for key in ('decode_code', 'code', 'frames', 'failure_frame'))
             or playback != {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}):
         raise ValueError('downloaded replay did not play back to its independent canonical state')
     return frames
+
+
+SCHEDULING_FIELDS = ('turns', 'ticks_per_second', 'max_gap_us', 'max_gap_turns', 'max_gap_transport_us',
+                     'confirmation_max_gap_us', 'confirmation_max_gap_turns', 'confirmed_frames')
+
+
+def validate_scheduling(summary, confirmed=None):
+    """The host's service cadence and confirmation waits must be published for every room.
+
+    The counters describe one room: the page restarts them with the next room.
+    ``confirmed_frames`` counts the frames the page saw confirmed, so it cannot
+    exceed the room's own confirmed frontier by more than the frontier's first frame.
+    """
+    if (not isinstance(summary, dict) or set(summary) != set(SCHEDULING_FIELDS)
+            or any(type(summary.get(field)) is not int or summary[field] < 0 for field in SCHEDULING_FIELDS)
+            or summary['turns'] < 1 or summary['ticks_per_second'] < 1):
+        raise ValueError('online example scheduling summary missing or malformed')
+    ticks = summary['ticks_per_second']
+    for gap, turns in (('max_gap_us', 'max_gap_turns'), ('confirmation_max_gap_us', 'confirmation_max_gap_turns')):
+        if summary[turns] != max(1, summary[gap] * ticks // 1000000):
+            raise ValueError('online example scheduling gap disagrees with its nominal turn count')
+    # The page cannot confirm more frames than the room itself observed.
+    if confirmed is not None and summary['confirmed_frames'] > confirmed + 1:
+        raise ValueError('online example scheduling summary claims more confirmations than the room observed')
 
 
 def validate_suspension(record, expired):
@@ -348,6 +373,7 @@ def validate_result(value, corrupt=False, expected_engine=None):
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
                     or (peer.get('state') != 'playing' and not intended_desync) or peer.get('room') != record['room']):
                 raise ValueError('online example rollback or confirmation missing')
+            validate_scheduling(peer.get('scheduling'), peer.get('confirmed'))
             page_index = peer['page_index']
             first, second = (2, 8) if page_index == 0 else (4, 1)
             if first not in peer['inputs'] or second not in peer['inputs']:

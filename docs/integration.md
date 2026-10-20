@@ -246,7 +246,7 @@ for the same non-mutating checks before calling `submit_local_input`.
 
 Set `config.replay_max_frames` before `configure` to record confirmed inputs as the match runs.
 Recording keeps the first frames and stops when full. At 60 frames per second, 216000 frames
-cover an hour; memory is about `replay_max_frames * (player_count * input_width + 17)` bytes,
+cover an hour; memory is about `replay_max_frames * (player_count * input_width + 33)` bytes,
 outside `storage_budget_bytes`.
 
 ```gdscript
@@ -354,14 +354,14 @@ The [replay applicability probe](oracle-replay.md) checks sequential playback ag
 
 ### Replay file format
 
-Version 3 is little-endian with fixed-width fields. `decode` checks every count and length against
+Version 4 is little-endian with fixed-width fields. `decode` checks every count and length against
 the bytes present before it allocates. It returns `MALFORMED` for truncated, corrupt or trailing bytes.
 It returns `UNSUPPORTED_VERSION` for any other version, and `TOO_LARGE` above the caller's `max_bytes`.
 
 | Field | Bytes | Accessor |
 | --- | --- | --- |
 | Magic `FRRP` | 4 | |
-| Format version, 3 | u16 | |
+| Format version, 4 | u16 | |
 | Players (2–8) | u8 | `player_count()` |
 | Input width (1–65536) | u32 | `input_width()` |
 | Frames | u32 | `frame_count()` |
@@ -372,24 +372,28 @@ It returns `UNSUPPORTED_VERSION` for any other version, and `TOO_LARGE` above th
 | Neutral input | width | `neutral_input()` |
 | Five texts: u8 length (0–128), then printable ASCII | varies | `engine_version()`, `addon_version()`, `upstream_revision()`, `game_seed()`, `game_version()` |
 | Per frame: every player's input, a flag, then a 16-byte checksum when the flag is 1 | varies | `inputs()`, `checksum()`, `is_skipped_frame()` |
-| Final input digest: the first 16 bytes of the last frame's input row SHA-256 | 16 | `final_digest()`, `input_digest()` |
+| Per frame: the first 16 bytes of that frame's input row SHA-256 | 16 | `input_digest()`, `computed_input_digest()` |
 
 The flag is 0 for no checksum, 1 for a checksum and 2 for a skipped frame, which must hold neutral input.
 The skipped count must equal the number of flag-2 frames. Every recorded input is confirmed.
 Metadata describes the recording; `decode` does not compare it with the running build.
 
 Each frame's checksum covers the state before that frame's input, so the state checksum of the
-following frame covers an input row whenever that following frame carries a checksum. The trailing
-digest anchors the final input row, which no following frame can cover: the player compares it
-with the row it applies and stops with `DESYNC` at that frame when they disagree. The digest is
-a Godot-side integrity extension; the pinned upstream session owns the input history itself.
+following frame covers an input row whenever that following frame carries a checksum. A recording
+whose last frames carry no checksum therefore leaves the rows in front of them uncovered. Every
+frame carries the digest of its own input row: the player compares the recorded digest with the
+row it applies and stops with `DESYNC` at the frame that owns the row when they disagree. The
+digests are a Godot-side integrity extension; the pinned upstream session owns the input history itself.
+The digest costs 16 bytes per frame, so the byte budget of a recording includes them and the
+largest recording a configuration can hold is smaller than before.
 
 Released format versions never change. A new version either reads older files with explicit
 defaults or rejects them with `UNSUPPORTED_VERSION`; this guide states which. Version 1 never
 shipped in a release and has no engine, addon, seed or configuration fields. Inventing them would
-give a migrated file a false origin, so versions 2 and 3 reject version 1 files. Version 2 shipped
-the recorded frames without the final input digest; a version 2 file is refused with
-`UNSUPPORTED_VERSION` rather than replayed without its integrity anchor. Record them again.
+give a migrated file a false origin, so versions 2, 3 and 4 reject version 1 files. Version 2 recorded
+the frames without any input digest, and version 3 anchored only the final input row; both leave rows
+in front of a checksum-less frame uncovered, so those files are refused with `UNSUPPORTED_VERSION`
+rather than replayed without full coverage. Record them again.
 The [golden fixture](../tests/fixtures/replay/golden.json) comes from an independent
 [Python generator](../scripts/reference/replay_golden.py); `make test-reference` checks that they match.
 
