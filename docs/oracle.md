@@ -11,8 +11,13 @@ and the sync-test portion of V3; P2P and advanced-feature evidence remain open.
 
 ```sh
 make test-oracle
-python3 scripts/oracle/launch.py --godot /absolute/path/to/godot
+python3 scripts/oracle/launch.py --godot godot
 ```
+
+`--godot` takes a name on `PATH` or a path to the engine. A name that `PATH`
+does not hold is resolved as a path, so `--godot /absolute/path/to/godot`
+works too. The launcher resolves the engine before it installs the Rust
+toolchain and builds the oracle, and the receipt names the executable that ran.
 
 Use `--offline` after the pinned references, Rust toolchain and crates are cached.
 The launcher validates source archive integrity and every extracted file before reuse.

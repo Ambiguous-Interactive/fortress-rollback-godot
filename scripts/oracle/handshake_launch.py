@@ -6,6 +6,7 @@ import subprocess
 from copy import deepcopy
 import sys
 
+from engine import resolve_engine
 from handshake_contract import compare, project, negative_controls, raw_negative_controls
 from launch import ROOT, execute
 from handshake_formal import check as check_formal, ensure_jar
@@ -77,6 +78,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
+    engine = resolve_engine(args.godot)
     ensure_jar(args.tlc_jar, args.offline)
     files = [* (ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'), ROOT / 'tests/oracle/handshake_trace.gd',
              *Path(__file__).parent.glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/handshake.rs',
@@ -89,7 +91,7 @@ def main():
     cargo, _ = setup_rust(manifest, args.offline)
     cargo_version, _ = execute([str(cargo), '+' + manifest['rust']['version'], '--version'], args.output / 'cargo-version.log')
     rust_version, _ = execute([str(cargo.with_name('rustc')), '+' + manifest['rust']['version'], '--version'], args.output / 'rustc-version.log')
-    engine_version, _ = execute([str(args.godot.resolve()), '--version'], args.output / 'engine-version.log')
+    engine_version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('unsupported handshake engine profile')
     execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--offline', '--manifest-path',
@@ -111,7 +113,7 @@ def main():
         fixture_path = args.output / f'{name}-godot.json'; fixture_path.write_text(json.dumps(fixture, indent=2) + '\n')
         actuals = []
         for repeat in (1, 2):
-            stdout, stderr = execute([str(args.godot.resolve()), '--headless', '--path', str(ROOT), '--script',
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                 'res://tests/oracle/handshake_trace.gd', '--', '--scenario', str(fixture_path.resolve())], args.output / f'{name}-godot-{repeat}.log')
             actual = parse_godot(stdout, stderr); compare(actual, expected); actuals.append(actual)
         if actuals[0] != actuals[1]:
@@ -134,7 +136,7 @@ def main():
                          'negative_controls': negative_controls(actuals[0], expected), 'raw_negative_controls': raw_negative_controls(outputs[0], scenario),
                          'Godot_repeat_equal': True, 'upstream_repeat_equal': True})
         print(f'{name}: actual upstream/Godot transitions, packets and events match twice', flush=True)
-    malformed = malformed_controls(fixture, args.godot, args.output)
+    malformed = malformed_controls(fixture, engine, args.output)
     if source_hashes != {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}:
         raise ValueError('source changed during handshake gate; rerun')
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True,
@@ -146,7 +148,7 @@ def main():
         'engine': engine_version.strip(), 'cargo': cargo_version.strip(), 'rustc': rust_version.strip(),
         'features': ['handshake-oracle', 'fortress-rollback/trace-validation'], 'default_features': False,
         'formal': formal, 'malformed_controls': malformed, 'binary_sha256': digest(binary),
-        'engine_sha256': digest(args.godot.resolve()), 'source_sha256': source_hashes, 'cases': evidence}, indent=2) + '\n')
+        'engine_sha256': digest(engine), 'engine_path': str(engine), 'source_sha256': source_hashes, 'cases': evidence}, indent=2) + '\n')
 
 
 if __name__ == '__main__':

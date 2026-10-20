@@ -28,7 +28,17 @@ const path = require('node:path');
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
-    await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 120000 });
+    try {
+      await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 120000 });
+    } catch (error) {
+      // The watchdog rejected the run before the inventory could be
+      // printed. Report what the page saw, so an engine or script failure
+      // can be told apart from a run that was merely too slow.
+      const detail = { stage: 'ownership-result', errors, reported: await page.evaluate(
+        () => document.body.dataset.fortressOwnership !== undefined) };
+      console.error(JSON.stringify(detail));
+      throw error;
+    }
     if (errors.length) throw new Error(JSON.stringify(errors));
     const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
     console.log(JSON.stringify({ browser: 'Chromium', version: browser.version(), result, errors }));

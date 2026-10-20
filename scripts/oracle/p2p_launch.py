@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import ROOT, CACHE, digest, load_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import setup_rust, rust_environment
+from engine import resolve_engine
 from launch import execute
 from p2p_contract import validate, validate_scenario, compare, REVISION
 from p2p_controls import process_controls
@@ -196,16 +197,17 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
+    engine = resolve_engine(args.godot)
     files = source_files()
     hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
     manifest = load_manifest(); trees = sources(manifest, offline=args.offline)
     upstream_hashes = upstream_inventory(trees['fortress'])
-    engine_identity = executable_identity(args.godot)
+    engine_identity = executable_identity(engine)
     cargo, _ = setup_rust(manifest, args.offline)
     version = manifest['rust']['version']
     cargo_version, _ = execute([str(cargo), '+' + version, '--version'], args.output / 'cargo-version.log')
     rust_version, _ = execute([str(cargo.with_name('rustc')), '+' + version, '--version'], args.output / 'rustc-version.log')
-    engine_version, _ = execute([str(args.godot.resolve()), '--version'], args.output / 'engine-version.log')
+    engine_version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     if not engine_version.startswith(('4.3.stable', '4.7.2.stable')):
         raise ValueError('unsupported engine profile')
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
@@ -213,7 +215,7 @@ def main():
     binary = CACHE / 'target/debug/p2p'
     binary_identity = executable_identity(binary)
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
-    require_unchanged('Godot executable', engine_identity, executable_identity(args.godot))
+    require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     cases = corpus(binary, args.case)
     if args.case:
         cases = {args.case: cases[args.case]}
@@ -238,7 +240,7 @@ def main():
         raw = args.output / (name + '-source.json'); raw.write_text(json.dumps(expected, indent=2) + '\n')
         actuals = []
         for repeat in (1, 2):
-            stdout, stderr = execute([str(args.godot.resolve()), '--headless', '--path', str(ROOT), '--script',
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                 'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())], args.output / f'{name}-godot-{repeat}.log')
             actual = parse_godot(stdout, stderr); compare(actual, expected, scenario); actuals.append(actual)
         if actuals[0] != actuals[1]:
@@ -250,13 +252,13 @@ def main():
             'scenario_sha256': digest(submitted), 'source_sha256': digest(raw), 'actual_sha256': digest(path),
             'negative_controls': controls, 'lifecycle_evidence': lifecycle_evidence, 'fresh_process_repeat_equal': True})
         print(name + ': actual input/ACK packets, ordered callbacks and confirmation match twice', flush=True)
-    process_evidence = process_controls(binary, args.godot, cases['mesh_2_delay_0'],
+    process_evidence = process_controls(binary, engine, cases['mesh_2_delay_0'],
         json.loads((args.output / 'mesh_2_delay_0-source.json').read_text()),
         json.loads((args.output / 'mesh_2_delay_0-actual.json').read_text()), args.output) if 'mesh_2_delay_0' in cases else []
-    process_evidence.extend(p2p_lifecycle_controls.process_controls(binary, args.godot, cases, args.output))
+    process_evidence.extend(p2p_lifecycle_controls.process_controls(binary, engine, cases, args.output))
     require_unchanged('local source inventory', hashes, {str(p.relative_to(ROOT)): digest(p) for p in sorted(source_files())})
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
-    require_unchanged('Godot executable', engine_identity, executable_identity(args.godot))
+    require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     require_unchanged('Rust oracle executable', binary_identity, executable_identity(binary))
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True,
         'upstream_revision': REVISION, 'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],

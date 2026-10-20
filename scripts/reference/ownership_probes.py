@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import time
 import zipfile
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
+from local_ownership import claim
 from receipt_arguments import ReceiptParser
 from godot_smoke import run
 from run import begin_results, capture
@@ -244,7 +246,29 @@ def main():
     parser.add_argument('--web', action='store_true')
     args = parser.parse_args()
     results = CACHE / 'results'
+    # One local run at a time owns these paths. A second run would delete
+    # the logs of the first, write the same project and export trees, and
+    # starve it of CPU, which is how a slow run became a timeout.
+    with claim('ownership', directory=CACHE / 'locks'):
+        return run_probes(args, results)
+
+
+def run_probes(args, results):
     begin_results(results, 'ownership.json', [p.name for p in results.glob('ownership-*.log')])
+    # Bounded per-round observations. A watchdog rejects the run before it
+    # can print its own inventory, so the round that was executing is
+    # written down as it starts and stays on disk when the run fails.
+    rounds = []
+    rounds_path = results / 'ownership-rounds.json'
+
+    def observe(label):
+        rounds.append({'label': label, 'outcome': 'running', 'started': time.time()})
+        rounds_path.write_text(json.dumps(rounds, indent=2) + '\n')
+        return time.monotonic()
+
+    def finish(started):
+        rounds[-1].update(outcome='passed', seconds=round(time.monotonic() - started, 3))
+        rounds_path.write_text(json.dumps(rounds, indent=2) + '\n')
     frozen_sources = source_inventory()
     data = load_manifest()
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
@@ -267,6 +291,7 @@ def main():
             raise ValueError('incorrect editor version')
         for negative in (True, False):
             label = f'{version}-' + ('negative' if negative else 'positive')
+            started = observe(label)
             project = CACHE / 'ownership-projects' / label
             if project.exists():
                 shutil.rmtree(project)
@@ -364,9 +389,10 @@ def main():
                     raise ValueError('native/web ownership divergence')
                 record.update(browser=browser, browser_artifact=browser_name, template_artifact=template_name)
             records.append(record)
+            finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
     verify_sources(frozen_sources)
-    report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
+    report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701', 'rounds': rounds,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
               'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '

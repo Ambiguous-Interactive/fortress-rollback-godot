@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add explicit local ownership of the shared reference cache. A second local probe reports who owns the cache instead of deleting the first run's logs.
+
 - Add `make prune`, `make prune-apply`, `make disk` and `make scratch` to keep the machine-local caches and scratch bounded. The pruner never removes a path a tracked file names, and a dry run is the default.
 
 - Add a scratch-copy helper at `scripts/scratch_workspace.py`. It skips `.cache/`, `.git`, `.godot` and `progress/`, so an isolated run no longer copies the whole cache with the tree.
@@ -101,6 +103,11 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix the oracle launchers so the documented `make` commands find a Godot engine installed on `PATH`. The engine is resolved before the Rust toolchain is installed, and the receipt names the executable that ran.
+
+- Keep the browser error inventory when the ownership watchdog rejects a run, and record each ownership round as it starts, so a timeout names the round that was running.
+
 
 - Fix driver input submission hiding terminal frame or batch exhaustion. Exhausted calls terminate before retaining new samples.
 

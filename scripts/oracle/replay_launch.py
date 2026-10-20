@@ -10,6 +10,7 @@ import struct
 import subprocess
 import zipfile
 
+from engine import resolve_engine
 from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
 from fetch import fetch
 from receipt_arguments import ReceiptParser
@@ -210,11 +211,11 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'replay.json'
     receipt.unlink(missing_ok=True)
+    engine = resolve_engine(args.godot)
     manifest = load_manifest()
     if manifest['sources']['fortress']['revision'] != REVISION:
         raise ValueError('replay adapter revision differs from pinned source')
     trees = sources(manifest, args.offline)
-    engine = args.godot.resolve()
     version, engine_hash = verified_engine(engine, manifest, args.offline)
     frozen = fingerprints()
     cargo, _ = setup_rust(manifest, args.offline)
@@ -256,7 +257,7 @@ def main():
     if fingerprints() != frozen or digest(engine) != engine_hash or digest(binary) != binary_hash:
         raise ValueError('source or tool changed during replay observation')
     receipt.write_text(json.dumps(dict(format=1, passed=True, repeat_equal=True, engine=version,
-        engine_sha256=engine_hash, binary_sha256=binary_hash, upstream_revision=manifest['sources']['fortress']['revision'],
+        engine_sha256=engine_hash, engine_path=str(engine), binary_sha256=binary_hash, upstream_revision=manifest['sources']['fortress']['revision'],
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         negative_controls=negative, standalone_rejections=rejected, observations=observations[0],
