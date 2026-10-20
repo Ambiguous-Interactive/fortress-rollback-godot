@@ -2,10 +2,11 @@ extends RefCounted
 
 # Value: protects=bounded transactional snapshots and view lifetime; fails_when=partial save publishes or tags alias; why_new=first production history; seam=none
 const History = preload("res://addons/fortress_rollback/core/snapshot_history.gd")
+const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["round_trip", "failures", "ownership", "validation", "misuse"])
+	return PackedStringArray(["round_trip", "failures", "ownership", "validation", "misuse", "wide_writes"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -20,6 +21,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_validation(context)
 		"misuse":
 			_misuse(context)
+		"wide_writes":
+			_wide_writes(context)
 	context.finish()
 
 
@@ -27,6 +30,29 @@ func _history() -> RefCounted:
 	var history: RefCounted = History.new()
 	history.configure(3, 4, 2, 2, 1000, true)
 	return history
+
+
+# The writer copies the caller's bytes without interpreting one step per byte.
+# Every width, chunk count and overflow boundary keeps the same written bytes.
+func _wide_writes(context: RefCounted) -> void:
+	for width: int in [1, 7, 64, 4096]:
+		for chunks: int in [1, 3]:
+			var capacity: int = width * chunks
+			var writer: RefCounted = Writer.new(capacity)
+			var expected: PackedByteArray = PackedByteArray()
+			for chunk: int in range(chunks):
+				var payload: PackedByteArray = PackedByteArray()
+				payload.resize(width)
+				for index: int in range(width):
+					payload[index] = (chunk * 31 + index) & 255
+				expected.append_array(payload)
+				context.equal(writer.write_bytes(payload), History.Code.OK, "width %d chunk %d accepted" % [width, chunk])
+				payload[0] = 99
+			context.bytes_equal(writer._written_copy(), expected, 0, "width %d chunks %d write the exact bytes" % [width, chunks])
+			context.equal(writer.position().value, capacity, "width %d chunks %d advance the cursor" % [width, chunks])
+			context.equal(writer.write_bytes(PackedByteArray([1])), History.Code.OVERFLOW, "width %d chunks %d reject the overflow" % [width, chunks])
+			context.bytes_equal(writer._written_copy(), expected, 0, "width %d chunks %d preserve the bytes after the overflow" % [width, chunks])
+			context.equal(writer.position().value, capacity, "width %d chunks %d keep the cursor after the overflow" % [width, chunks])
 
 
 func _checksum() -> PackedByteArray:
