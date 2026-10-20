@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build the pinned local game relay server and record source/tool provenance."""
+import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +18,36 @@ from run import rust_environment
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def shared_target(revision):
+    """One revision-keyed cargo build tree, shared by every session.
+
+    The cargo output of this server is about 970 MB. Building it into the
+    per-run output directory meant every session left another copy behind
+    (measured: twenty copies, 21 GB, all byte-identical). Keying the tree
+    by the pinned source revision keeps exactly one copy and lets every
+    later session reuse the dependency artifacts.
+
+    The `cargo clean -p` step still runs before every build, so the binary
+    is always compiled from the current source; the tree only holds the
+    third-party artifacts that are expensive to rebuild.
+    """
+    return CACHE / 'server-target' / revision
+
+
+def locked(target):
+    """Exclusive lock over a shared build tree.
+
+    `cargo clean -p` removes artifacts from the whole target directory, so
+    two sessions building at once would delete each other's work. The lock
+    serializes them.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    lock = target.with_name(target.name + '.lock')
+    handle = lock.open('w')
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    return handle
 
 
 def main():
@@ -44,6 +75,7 @@ def main():
     commands = [[str(cargo), 'clean', '-p', 'signal-fish-server'],
                 [str(cargo), 'build', '--locked', '--no-default-features', '--bin', 'signal-fish-server']]
     log_path = output / 'build.log'
+    target = shared_target(pin['revision'])
     with tempfile.TemporaryDirectory(prefix='fortress-server-build-') as temporary:
         workspace = Path(temporary)
         reference = extract(archive, pin, workspace / 'reference')
@@ -57,22 +89,30 @@ def main():
             if cached.exists():
                 shutil.copytree(cached, home / relative)
         environment = rust_environment()
-        environment.update(CARGO_HOME=str(home), CARGO_TARGET_DIR=str(output / 'target'),
+        environment.update(CARGO_HOME=str(home), CARGO_TARGET_DIR=str(target),
                            RUSTC=str(cargo.parent / 'rustc'), PATH=str(cargo.parent) + os.pathsep + environment.get('PATH', ''))
         if args.offline:
             environment['CARGO_NET_OFFLINE'] = 'true'
         exits = []
-        with log_path.open('wb') as log:
-            for command in commands:
-                process = subprocess.run(command, cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600)
-                exits.append(process.returncode)
-                if process.returncode != 0:
-                    raise ValueError('local server build failed; see build.log')
-        if before != source_inventory(source) or input_before != inventory(inputs):
-            raise ValueError('server build source or compiler changed')
-        for relative in ('registry/cache', 'registry/index'):
-            if (home / relative).exists():
-                shutil.copytree(home / relative, output / 'cargo-cache' / relative, dirs_exist_ok=True)
+        with locked(target):
+            with log_path.open('wb') as log:
+                for command in commands:
+                    process = subprocess.run(command, cwd=source, env=environment, stdout=log, stderr=subprocess.STDOUT, timeout=600)
+                    exits.append(process.returncode)
+                    if process.returncode != 0:
+                        raise ValueError('local server build failed; see build.log')
+            if before != source_inventory(source) or input_before != inventory(inputs):
+                raise ValueError('server build source or compiler changed')
+            for relative in ('registry/cache', 'registry/index'):
+                if (home / relative).exists():
+                    shutil.copytree(home / relative, output / 'cargo-cache' / relative, dirs_exist_ok=True)
+            # Publish the executable at the path the probes and the docs
+            # name. It is a copy, never a link: a later rebuild in the shared
+            # tree must not be able to mutate bytes an older receipt binds.
+            published = output / 'target/debug/signal-fish-server'
+            shutil.rmtree(output / 'target', ignore_errors=True)
+            published.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target / 'debug/signal-fish-server', published)
     binary = output / 'target/debug/signal-fish-server'
     report = {'format': 1, 'passed': True, 'commands': commands, 'exit_codes': exits,
               'source_revision': pin['revision'], 'source_inventory': before, 'tool_sha256': tools,
