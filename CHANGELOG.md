@@ -4,6 +4,17 @@
 
 ### Added
 
+- Add `driver.status()` and `driver.statistics()`. A client that only holds the driver now reads the current frame, the confirmed frame, the lifecycle and the counters.
+
+- Add the session's terminal `reason` and `failure_frame` to every driver step result. A desync or a callback failure is no longer reported as a plain stop.
+
+- Add `replay.matches_config()` and a configuration argument to the replay player. A recording from another roster, sample width, neutral input, seed or version is refused with `INCOMPATIBLE_RECORDING`.
+
+- Add `player.skipped_frames()`. A recording whose input was substituted is no longer mistaken for a faithful copy of the original match.
+
+- Keep the viewer's playback policy when a spectator stream is reconfigured. A policy that no longer fits the new ring falls back to the session defaults.
+
+
 - Add explicit local ownership of the shared reference cache. A second local probe reports who owns the cache instead of deleting the first run's logs.
 
 - Add `make prune`, `make prune-apply`, `make disk` and `make scratch` to keep the machine-local caches and scratch bounded. The pruner never removes a path a tracked file names, never removes a tree a running session still holds, and a dry run is the default.
@@ -103,6 +114,14 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator playback simulating a stale host row. A missing retained row now ends the advance with `HISTORY_UNAVAILABLE` and no game callback.
+
+- Fix one source of truth for the roster and sample-width limits. The configuration and the spectator byte envelope share the same bounds.
+
+- Fix the spectator guide claiming 72 model schedules. The model runs 120.
+
+- Fix the integration guide promising a sound per shot and advising a bare reconfiguration. The example calls a game hook, and a restart needs a new game object.
 
 - Fix the oracle launchers so the documented `make` commands find a Godot engine installed on `PATH`. The engine is resolved before the Rust toolchain is installed, and the receipt names the executable that ran.
 

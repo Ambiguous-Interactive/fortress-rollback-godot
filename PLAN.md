@@ -194,7 +194,7 @@ Keep engine-version-specific syntax out of the Godot 4.3-compatible core.
 | `FortressConfig` | Validated input width, player setup, prediction/history and memory limits |
 | `FortressSession` | Poll, submit local input, advance, consume requests/events, inspect status |
 | `FortressGame` | Save to bounded writer, restore from snapshot reader, simulate frame inputs |
-| `FortressDriver` | Fulfill ordered requests synchronously through the same session engine |
+| `FortressDriver` | Fulfill ordered requests synchronously through the same session engine; report the session state, counters and terminal cause |
 | `FortressTransport` | Bounded nonblocking send/receive with identity and backpressure |
 
 Driver and expert API must never implement separate rollback algorithms.
@@ -385,6 +385,10 @@ Callback and expert replay playback share ordered save/advance requests in the s
 Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
+A recording carries the roster, sample width, neutral input, seed and game version
+of the session that produced it, and a player refuses a recording that does not
+match the running game. A recording with substituted inputs is reported as such
+instead of being presented as a faithful copy.
 Validated replay playback and paused navigation check callback success and bounded snapshot status before
 accepting a boundary; a matching checksum cannot override a failed snapshot write.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
@@ -395,6 +399,8 @@ supports delayed playback, caller-bounded catch-up and explicit host endings. Sp
 confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
 Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
+A viewer never simulates a host row it no longer retains, and a reconfigured viewer keeps
+the caller's playback policy when it still fits the new ring.
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
 or forward frame. The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
