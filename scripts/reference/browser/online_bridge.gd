@@ -61,8 +61,10 @@ class Scheduling:
 		turns += 1
 		_last_turn_us = now_us
 		_last_transport_us = transport_us
-		if not running or current < 0 or confirmed < 0:
+		if not running:
 			return
+		# A running session starts with no confirmed frame: the frames it submits are
+		# stamped anyway, so the first confirmation still reports its wait.
 		if current > _last_current:
 			for frame: int in range(_last_current + 1, current + 1):
 				_submitted[frame] = now_us
@@ -108,9 +110,11 @@ class ObservedLobby:
 
 	## A new room starts a new summary, so the counters describe one room.
 	func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
+		var previous: Variant = game_match
 		var code: Error = super.connect_room(endpoint, player_name, room, now_us)
-		_observed_match = game_match
-		scheduling.reset()
+		if game_match != previous:
+			_observed_match = game_match
+			scheduling.reset()
 		return code
 
 	func tick(now_us: int, buttons: int) -> void:

@@ -334,6 +334,13 @@ func _scheduling_gaps(context: RefCounted) -> void:
 	setup.record_turn(5200000, 5200000, 1, 1, true)
 	context.equal(setup.summary()["confirmed_frames"], 2, "only running frames are counted")
 	context.equal(setup.summary()["confirmation_max_gap_us"], 100000, "setup time is not a confirmation wait")
+	# A running session starts with no confirmed frame: the frames it submits are stamped
+	# anyway, so the first confirmation still reports the wait.
+	var initial: Bridge.Scheduling = Bridge.Scheduling.new()
+	initial.record_turn(0, 0, 1, -1, true)
+	initial.record_turn(16667, 16667, 2, 0, true)
+	context.equal(initial.summary()["confirmation_max_gap_us"], 16667, "the first confirmation reports its wait")
+	context.equal(initial.summary()["confirmed_frames"], 1, "the first confirmation is counted")
 	# A single turn has no gap, and the summary still names one nominal turn.
 	var single: Bridge.Scheduling = Bridge.Scheduling.new()
 	single.record_turn(1000, 1000, 1, 0)
