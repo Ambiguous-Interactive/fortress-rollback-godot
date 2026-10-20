@@ -1,5 +1,6 @@
 .PHONY: replay-probes p2p-probes handshake-probes queue-probes oracle-probes test-oracle representation-probes lint-source hooks lint-llm test-llm test-reference reference-baseline
 .PHONY: llm-index llm-index-prune pre-commit godot-check test-godot test-focus test-changed
+.PHONY: prune prune-apply disk scratch
 
 PY ?= python3
 GODOT ?= godot
@@ -15,6 +16,24 @@ lint-source:
 hooks:
 	git config core.hooksPath .githooks
 	@echo "Installed hooks: commits now run the .llm harness checks."
+
+## Report reclaimable machine-local caches and scratch; delete nothing
+prune:
+	$(PY) scripts/prune_caches.py
+
+## Delete reclaimable machine-local caches and scratch (cited evidence is never removed)
+prune-apply:
+	$(PY) scripts/prune_caches.py --apply
+
+## Report how much disk the machine-local caches and scratch occupy
+disk:
+	@echo "repository cache:"; du -sh .cache 2>/dev/null || true
+	@echo "container scratch:"; du -sh /tmp 2>/dev/null || true
+	@echo "reclaimable:"; $(PY) scripts/prune_caches.py --scope workspace | head -n 1
+
+## Create a scratch copy of the working tree without its caches (scratch=<name>)
+scratch:
+	$(PY) scripts/scratch_workspace.py create $(or $(SCRATCH),session)
 
 ## Validate the entire .llm harness (lengths, index, stubs, meta-lint)
 lint-llm:

@@ -1,0 +1,20 @@
+# Cache & Scratch Hygiene Facts
+
+Operational facts about machine-local growth in this repo's devcontainer.
+Feeding retrospective
+[foundations archive](../retrospectives/2026-10-18-foundations-archive.md);
+the procedure lives in
+[workspace hygiene](../skills/workspace-hygiene/SKILL.md).
+
+| Fact (one assertable sentence) | Evidence (command + output, file:line, or measurement) | Verified |
+| --- | --- | --- |
+| `shutil.copytree` of the repository root also copies the gitignored `.cache/` tree, so one scratch copy of this repo carried 33 GB and nineteen copies filled 627 GB. | `du -sh /tmp/claude-1000/rr/*` reported 33G for each of `base`, `m1_no_frame_guard` ... `t2`; the copy came from `/tmp/claude-1000/rr/mut.py` (`shutil.copytree(B, d)`). | 2026-10-19 |
+| The container's `/tmp` is not session-scoped: scratch survives every session in a long-lived container, and nothing removed it, so 634 GB accumulated in nine days. | `du -sh /tmp` reported 634G before cleanup and 0.23G after; the largest single entry was `/tmp/claude-1000/rr` at 589G. | 2026-10-19 |
+| The relay server's cargo output is about 970 MB, so building it into the per-run output directory left one byte-identical copy per session: twenty copies and 21 GB. | `du -sm` on twelve `*/signalfish-server-build/target` trees reported 970M each; `debug/deps` was 574M, `debug/incremental` 314M, the published binary only 53.8 MB. | 2026-10-19 |
+| The CI workflow already declares the cargo output of the server build to be non-evidence, so that tree is disposable by design. | `.github/workflows/reference-baseline.yml:274-277` uploads `.cache/reference/results/` but excludes `signalfish-server-build/target/` and `signalfish-server-build/cargo-cache/`, with the comment "the cargo output is not evidence". | 2026-10-19 |
+| `cargo clean -p <package>` removes artifacts from the whole target directory, so a shared target tree needs an exclusive lock or concurrent sessions delete each other's build. | `scripts/reference/signalfish_build_server.py` runs `clean -p signal-fish-server` before every build; the shared tree is now guarded by `fcntl.flock` on `<target>.lock`. | 2026-10-19 |
+| A published executable must be a copy, never a hard link into a shared build tree: a later rebuild would mutate the bytes an older receipt binds. | The build receipt records `binary_sha256` and the probe re-checks it (`scripts/reference/signalfish_live_probe.py:128`); the publisher therefore uses `shutil.copy2`. | 2026-10-19 |
+| A citation of a cache *directory* is a location reference, not a freeze: the docs name `.cache/reference/results` as where output goes, while only `results/<name>/receipt.json` is evidence. | `docs/reference/README.md:34` names the directory; `.llm/retrospectives/2026-10-18-spectator-streams.md:29` names a file. A pruner that protected a cited directory's whole subtree could never reclaim anything under it. | 2026-10-19 |
+| Ignore rules are not evidence citations: `/.cache/session-*/` in `.gitignore` otherwise protects every session directory from pruning. | The first pruner draft reported "session-013 protected" with no evidence behind it; excluding `.gitignore` from the citation scan released 13.2 GB. | 2026-10-19 |
+| The container's npm cache, the rust-docs component, and superseded app-server releases are container-layer growth that no running tool needs. | `python3 scripts/prune_caches.py --scope container` reported 982 MB (`~/.npm/_cacache`), 614 MB (`~/.rustup/.../share/doc`), and 389 MB (`.../app-server-daemon/releases/0.162.1` while 0.163.0 was running). | 2026-10-19 |
+| The harness's Rust toolchain lives in the cache, not in `$HOME`, so `$HOME/.rustup` is an orphan install that nothing reads. | `scripts/reference/run.py:26` sets `RUSTUP_HOME` to `.cache/reference/rustup`; `~/.rustup` had a 1.94.0 toolchain with 762 MB of `share/doc` that no script references. | 2026-10-19 |

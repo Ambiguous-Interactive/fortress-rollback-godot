@@ -89,6 +89,10 @@ python3 scripts/reference/run.py --offline
 python3 scripts/reference/godot_smoke.py --offline --web
 ```
 
+The cache and the container's scratch are machine-local and disposable. The
+[cache hygiene guide](../cache-hygiene.md) documents how to report and reclaim
+them without touching cited evidence.
+
 Source archives preserve upstream notices in their original locations:
 Fortress `LICENSE`, `LICENSE-MIT`, `LICENSE-APACHE`; SignalFish SDK
 `addons/signal_fish/LICENSE`; SignalFish server `LICENSE`. These sources and

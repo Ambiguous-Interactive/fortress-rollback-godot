@@ -108,6 +108,26 @@ across repository source files. File line-count caps remain separate.
 | Validate skills + pointers + links | `python3 scripts/llm/lint_llm_instructions.py` |
 | Run only suites affected by your changes (fastest loop) | `make test-changed` |
 | Run the game/tests headless | `godot --headless --path .` |
+| Report cache and scratch growth | `make disk` |
+| Report reclaimable caches and scratch | `make prune` |
+| Reclaim caches and scratch | `make prune-apply` |
+| Copy the tree for an isolated run | `make scratch SCRATCH=<name>` |
+
+## Workspace Hygiene
+
+Machine-local growth is the one failure mode nothing used to catch: the
+gitignored `.cache/` tree, scratch under the container's `/tmp`, and
+per-session copies of the working tree. One container reached 634 GB of
+stale scratch and a 36 GB `.cache/` without a single error.
+
+Never copy the whole working tree -- a bare `shutil.copytree` also copies
+`.cache/`, and one session wrote 627 GB that way. Use
+`make scratch SCRATCH=<name>`. Never let a build tree land in a per-run
+output directory; the Rust oracles share one revision-keyed target tree
+instead. Report growth with `make prune` and reclaim it with
+`make prune-apply`; the pruner never removes a path that a tracked file
+names. Full procedure:
+[workspace hygiene](./skills/workspace-hygiene/SKILL.md).
 
 ## The .llm Harness (Architecture)
 

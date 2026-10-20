@@ -21,6 +21,7 @@ are visible before activation; every body stays under the 300-line cap.
 | [`ship-session`](./ship-session/SKILL.md) | Finish a session PR: verify current-head CI, scan every feedback surface, address findings, squash merge to main, and synchronize local Git. Use after a push and before ending a session. |
 | [`testing`](./testing/SKILL.md) | Deterministic test strategy: headless Godot test runner, seed-fixed tests, run-twice equality, replay regression tests, checksum assertions, CI setup. Use when writing tests or debugging flaky/divergent behavior. |
 | [`user-copy`](./user-copy/SKILL.md) | Write plain comments, PR titles and descriptions, commit messages, and CHANGELOG entries. Use when authoring or reviewing these artifacts. |
+| [`workspace-hygiene`](./workspace-hygiene/SKILL.md) | How to keep this repo's machine-local caches, scratch directories, and build outputs from filling the disk. Use when creating scratch copies of the working tree, writing temporary artifacts, building the Rust oracles, noticing the container running low on disk, or deciding what may be deleted from .cache/ and /tmp. |
 
 ## Feature Skills
 

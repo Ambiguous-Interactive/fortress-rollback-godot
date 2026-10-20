@@ -231,3 +231,33 @@ check_opencode_runtime() {
   done
   bad "OpenCode MCP discovery timed out; discovered expected names: ${discovered:-none}"
 }
+
+# check_disk_budget: report machine-local cache and scratch size against a budget.
+# Agent sessions accumulate both, and nothing used to remove them, so a
+# long-lived container once carried 634 GB of stale scratch. The budgets
+# turn that silence into a visible failure. The pinned reference toolchain
+# alone is about 12 GB, so the thresholds leave it room to grow.
+check_disk_budget() {
+  local root="$1"
+  local cache_bytes scratch_bytes
+  cache_bytes="$(du -sb "$root/.cache" 2>/dev/null | cut -f1 || echo 0)"
+  scratch_bytes="$(du -sb /tmp 2>/dev/null | cut -f1 || echo 0)"
+  : "${cache_bytes:=0}"
+  : "${scratch_bytes:=0}"
+  local cache_gb=$((cache_bytes / 1073741824))
+  local scratch_gb=$((scratch_bytes / 1073741824))
+  if [ "$cache_bytes" -gt 32212254720 ]; then
+    bad "repository cache is ${cache_gb} GB (budget 30 GB) — run: make prune-apply"
+  elif [ "$cache_bytes" -gt 21474836480 ]; then
+    printf '  \033[33m opt\033[0m repository cache is %s GB (budget 30 GB) — run: make prune\n' "$cache_gb"
+  else
+    ok "repository cache is ${cache_gb} GB (budget 30 GB)"
+  fi
+  if [ "$scratch_bytes" -gt 21474836480 ]; then
+    bad "container scratch is ${scratch_gb} GB (budget 20 GB) — run: make prune-apply"
+  elif [ "$scratch_bytes" -gt 5368709120 ]; then
+    printf '  \033[33m opt\033[0m container scratch is %s GB (budget 20 GB) — run: make prune\n' "$scratch_gb"
+  else
+    ok "container scratch is ${scratch_gb} GB (budget 20 GB)"
+  fi
+}
