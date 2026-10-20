@@ -256,21 +256,18 @@ func input_digest(frame: int) -> PackedByteArray:
 
 
 ## The digest that anchors the final frame's input row. A decoded file keeps the digest it
-## carried, so a corrupted row cannot silently agree with it; an in-memory recording computes
-## the digest from its own rows.
+## carried, so a corrupted row cannot silently agree with it.
 func final_digest() -> PackedByteArray:
-	if _final_digest.size() == DIGEST_BYTES:
-		return _final_digest.duplicate()
 	return _recorded_digest()
 
 
-## The digest written to the file: the final frame's input row, or zeros without frames.
+## The digest written to the file: the recorded anchor, or zeros without frames.
 func _recorded_digest() -> PackedByteArray:
-	if _frames == 0:
-		var empty: PackedByteArray = PackedByteArray()
-		empty.resize(DIGEST_BYTES)
-		return empty
-	return input_digest(_frames - 1)
+	if _final_digest.size() == DIGEST_BYTES:
+		return _final_digest.duplicate()
+	var empty: PackedByteArray = PackedByteArray()
+	empty.resize(DIGEST_BYTES)
+	return empty
 
 
 func to_bytes() -> PackedByteArray:
@@ -340,3 +337,5 @@ func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: boo
 		_checksums.resize(_checksums.size() + CHECKSUM_BYTES)
 	_frames += 1
 	_skipped += int(skipped)
+	# The anchor covers the stored bytes, not the caller's array.
+	_final_digest = digest_row(_inputs.slice(_inputs.size() - row.size(), _inputs.size()))
