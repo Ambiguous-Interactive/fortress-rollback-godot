@@ -22,7 +22,7 @@ class Result:
 	var code: int = Code.OK
 	var sent: int = 0
 	var received: int = 0
-	## Transport items taken off the wire during this poll, refused ones included.
+	## Transport items taken off the wire since the previous poll, refused ones included.
 	## A refused item is still traffic: valid work can sit behind it.
 	var activity: int = 0
 	var peer_code: int = 0

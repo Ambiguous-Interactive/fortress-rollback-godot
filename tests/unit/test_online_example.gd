@@ -63,6 +63,16 @@ class RefusedCoordinator:
 		return Result.new(Code.OK)
 
 
+class IdleCoordinator:
+	extends Fallback
+	var polls: int = 0
+	func enqueue_batch(_packets: Array[Peer.Packet]) -> int:
+		return Code.OK
+	func poll(_now_us: int, _factory: Callable = Callable()) -> Result:
+		polls += 1
+		return Result.new(Code.OK)
+
+
 class Client:
 	extends MeshFixture.Client
 	func get_room_id() -> String:
@@ -70,7 +80,8 @@ class Client:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "terminal_callbacks", "handshake_timeout", "observer_history", "viewer_lifetime"])
+	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "idle_batch", "terminal_callbacks", "handshake_timeout",
+		"observer_history", "viewer_lifetime"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -126,6 +137,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			context.equal(duplicate.state, "failed", "duplicate room baseline refuses old lifetime")
 		"retained_batch":
 			_retained_batch(context)
+		"idle_batch":
+			_idle_batch(context)
 		"live_driver":
 			_live_driver(context)
 	context.finish()
@@ -250,6 +263,23 @@ func _retained_batch(context: RefCounted) -> void:
 	context.equal(coordinator.attempts, 9, "acceptance transfers original batch once")
 	context.equal(coordinator.observed.back(), original, "accepted bytes equal refused original")
 	context.equal(game_match.failure, "", "recoverable ownership pressure does not terminate")
+	game_match.detach()
+	fixture.mesh.free()
+	fixture.client.free()
+
+
+# Value: protects=idle service batches; fails_when=an idle route repeats the whole bounded batch; why_new=the retained case only covers refusal; seam=actual example tick
+func _idle_batch(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context, U)
+	var game_match: Match = fixture.driver
+	var coordinator: IdleCoordinator = IdleCoordinator.new()
+	game_match.fallback.detach()
+	game_match.fallback = coordinator
+	game_match.tick(0, Simulation.RIGHT)
+	context.equal(coordinator.polls, 1, "an idle route stops the service batch after one poll")
+	context.equal(game_match.failure, "", "an idle route does not terminate the match")
+	game_match.tick(1, Simulation.LEFT)
+	context.equal(coordinator.polls, 2, "every tick still services the transport once")
 	game_match.detach()
 	fixture.mesh.free()
 	fixture.client.free()

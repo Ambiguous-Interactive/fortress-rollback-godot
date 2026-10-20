@@ -14,7 +14,7 @@ const W: String = Fixtures.W
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["golden", "negotiation", "pressure", "atomic", "ingress", "receive_budget", "fences", "overflow"])
+	return PackedStringArray(["golden", "negotiation", "pressure", "atomic", "ingress", "receive_budget", "fences", "overflow", "traffic"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -35,6 +35,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_fences(context)
 		"overflow":
 			_overflow(context)
+		"traffic":
+			_traffic(context)
 	context.finish()
 
 
@@ -208,6 +210,36 @@ func _overflow(context: RefCounted) -> void:
 	context.equal(fixture.relay.status().received_packets, 2, "bounded receive occupancy")
 	context.equal(fixture.relay.poll(0).code, Relay.Code.RECEIVE_OVERFLOW, "cannot silently repair overflow")
 	context.equal(fixture.client.sent.size(), 0, "overflow cannot publish new sends")
+	_destroy(fixture)
+
+
+# Value: protects=idle relay service batches; fails_when=refused frames look like an empty wire; why_new=the SDK hands frames over between polls; seam=SDK public signal
+func _traffic(context: RefCounted) -> void:
+	var fixture: Dictionary = _build(context)
+	context.equal(fixture.relay.idle(), true, "a fresh relay transport is idle")
+	context.equal(fixture.relay.poll(0).activity, 0, "an empty wire moves no traffic")
+	context.equal(fixture.relay.idle(), true, "an empty wire keeps the transport idle")
+	var helpers: RefCounted = Fixtures.new()
+	var remote_membership: Membership = helpers._membership(context, V, PackedStringArray([U, V]))
+	var remote: Peer = helpers._peer(context, remote_membership)
+	var packet: PackedByteArray = remote.drain_outbox()[0].bytes
+	var session: PackedByteArray = fixture.membership.handshake_message().session_id
+	var envelope: PackedByteArray = Envelope.encode(session, V, U, packet)
+	fixture.client.game_data_binary_received.emit(V, 1, envelope)
+	context.equal(fixture.relay.status().received_packets, 1, "a delivered frame waits for the next poll")
+	context.equal(fixture.relay.idle(), false, "a queued frame keeps the transport busy")
+	var delivered: Relay.Result = fixture.relay.poll(1)
+	context.equal(delivered.activity, 1, "a delivered frame is traffic")
+	context.equal(delivered.received, 1, "a delivered frame reaches the peer")
+	context.equal(fixture.relay.poll(2).activity, 0, "a drained wire moves no traffic")
+	context.equal(fixture.relay.idle(), true, "a drained wire is idle again")
+	fixture.client.game_data_binary_received.emit(W, 1, envelope)
+	var refused: Relay.Result = fixture.relay.poll(3)
+	context.equal(refused.activity, 1, "a refused frame is still traffic")
+	context.equal(refused.received, 0, "a refused frame delivers no input")
+	context.equal(fixture.relay.idle(), false, "refused traffic keeps a service batch alive")
+	context.equal(fixture.relay.poll(4).activity, 0, "refused traffic is reported once")
+	context.equal(fixture.relay.idle(), true, "a refused wire is idle again")
 	_destroy(fixture)
 
 
