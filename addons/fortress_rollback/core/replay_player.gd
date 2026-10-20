@@ -152,6 +152,9 @@ func begin_advance() -> Types.Result:
 		return Types.Result.new(_reason)
 	if _frame >= _replay.frame_count():
 		return Types.Result.new(Types.Code.FRAME_EXHAUSTED)
+	var digest_code: int = _verify_input_digest()
+	if digest_code != Types.Code.OK:
+		return Types.Result.new(digest_code)
 	if _batch_id == 9223372036854775807:
 		return Types.Result.new(_fail(Types.Code.FRAME_EXHAUSTED))
 	_batch_id += 1
@@ -361,6 +364,23 @@ func _is_cache_boundary() -> bool:
 	return _checkpoint_interval > 0 and _frame < _replay.frame_count() and _frame % _checkpoint_interval == 0
 
 
+## The final frame's input row is anchored by a recorded digest, because the state checksum of
+## the following frame - which covers every other row - does not exist for it. A mismatch
+## stops playback at that frame.
+func _verify_input_digest() -> int:
+	if _frame != _replay.frame_count() - 1:
+		return Types.Code.OK
+	var expected: PackedByteArray = _replay.final_digest()
+	if expected.size() != Replay.DIGEST_BYTES:
+		return Types.Code.OK
+	var actual: PackedByteArray = _replay.input_digest(_frame)
+	if actual == expected:
+		return Types.Code.OK
+	_failure_expected_checksum = expected.duplicate()
+	_failure_actual_checksum = actual.duplicate()
+	return _fail(Types.Code.DESYNC)
+
+
 func _validate_frame() -> int:
 	if _needs_save():
 		var checkpoint: Checkpoint = Checkpoint.new()
@@ -409,9 +429,9 @@ func failure_frame() -> int:
 	return _failure_frame
 
 
-## Owned 16-byte evidence for the first checksum comparison failure; empty for other failures.
-## Expected is the recording's checksum during playback or the cached checksum during restore.
-## Successful configure clears both values; failed configure preserves them.
+## Owned 16-byte evidence for the first checksum or input-digest comparison failure; empty for
+## other failures. Expected is the recording's checksum during playback or the cached checksum
+## during restore. Successful configure clears both values; failed configure preserves them.
 func failure_expected_checksum() -> PackedByteArray:
 	return _failure_expected_checksum.duplicate()
 

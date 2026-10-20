@@ -10,7 +10,7 @@ const Fixture = preload("res://tests/unit/test_driver.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["owned_window", "disabled_equality", "bounds", "failed_callback", "local_divergence"])
+	return PackedStringArray(["owned_window", "disabled_equality", "bounds", "failed_callback", "local_divergence", "rollback_window"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -21,6 +21,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		return
 	if name == "bounds":
 		_bounds(context)
+	elif name == "rollback_window":
+		_rollback_window(context)
 	else:
 		_run(context, name)
 	context.finish()
@@ -96,6 +98,62 @@ func _run(context: RefCounted, name: String) -> void:
 		context.equal(driver.step(9, fixture._samples(9)).code, Types.Code.CALLBACK_FAILED, "failed callback terminates")
 		var failed: Dictionary = session.call("diagnostic_trace")
 		context.equal(failed.frames[-1].inputs.is_empty(), true, "failed ADVANCE never claims applied input")
+
+
+## A rollback that rewinds past the trace window must not blind the trace. The window follows the
+## simulation back, so the frames that follow the rollback are recorded again.
+func _rollback_window(context: RefCounted) -> void:
+	var config: Config = _config(true)
+	config.max_prediction_frames = 3
+	config.check_distance = 3
+	config.history_slots = 4
+	config.set("diagnostic_trace_frames", 2)
+	var session: Session = Session.new()
+	context.equal(session.configure(config), Types.Code.OK, "configure trace")
+	var game: RefCounted = Fixture.Game.new()
+	game.trace_session = session
+	var driver: Driver = Driver.new(session, game)
+	var fixture: RefCounted = Fixture.new()
+	for frame: int in range(9):
+		context.equal(driver.step(frame, fixture._samples(frame)).code, Types.Code.OK, "rollback step keeps the session healthy")
+	var captures: int = 0
+	var after_rollback: bool = false
+	for entry: String in game.trace:
+		if entry.begins_with("load:"):
+			after_rollback = true
+		elif entry.begins_with("save:"):
+			var captured: Dictionary = game.trace_reports[captures]
+			captures += 1
+			if after_rollback:
+				after_rollback = false
+				context.equal(captured.frames.size() > 0, true, "trace records the frames that follow a rollback")
+	context.equal(captures, game.trace_reports.size(), "every save captured the trace")
+	var report: Dictionary = session.call("diagnostic_trace")
+	context.equal(report.frames.size() <= 2, true, "trace keeps the retained frame bound")
+	for offset: int in range(report.frames.size() - 1):
+		context.equal(report.frames[offset + 1].frame, report.frames[offset].frame + 1, "retained frames stay contiguous")
+	context.equal(report.frames[-1].frame, 8, "window ends at the last simulated frame")
+	session._originals[7].bytes[0] ^= 1
+	context.equal(driver.step(9, fixture._samples(9)).code, Types.Code.DESYNC, "canonical mismatch detected after the rollbacks")
+	var divergence: Dictionary = session.call("diagnostic_trace").first_divergence
+	context.equal(divergence.frame, 7, "divergence frame frozen after a rollback")
+	context.equal(divergence.source, "sync_test_snapshot", "canonical mismatch source")
+	context.equal(divergence.snapshot_available, true, "divergence boundary kept its canonical state")
+	context.equal(divergence, _divergence_evidence(_config(true)), "divergence evidence matches a session whose window covers the rollback")
+
+
+## The frozen divergence of a session that diverges after the same frames.
+func _divergence_evidence(config: Config) -> Dictionary:
+	var session: Session = Session.new()
+	session.configure(config)
+	var game: RefCounted = Fixture.Game.new()
+	var driver: Driver = Driver.new(session, game)
+	var fixture: RefCounted = Fixture.new()
+	for frame: int in range(9):
+		driver.step(frame, fixture._samples(frame))
+	session._originals[7].bytes[0] ^= 1
+	driver.step(9, fixture._samples(9))
+	return session.call("diagnostic_trace").first_divergence
 
 
 func _bounds(context: RefCounted) -> void:
