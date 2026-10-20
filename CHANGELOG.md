@@ -6,7 +6,7 @@
 
 - Add `driver.status()` and `driver.statistics()`. A client that only holds the driver now reads the current frame, the confirmed frame, the lifecycle and the counters.
 
-- Add the session's terminal `reason` and `failure_frame` to every driver step result. A desync or a callback failure is no longer reported as a plain stop.
+- Add the session's terminal `reason` and `failure_frame` to every driver and peer step result. A desync or a callback failure is no longer reported as a plain stop.
 
 - Add `replay.matches_config()` and a configuration argument to the replay player. A recording from another roster, sample width, neutral input, seed or version is refused with `INCOMPATIBLE_RECORDING`.
 

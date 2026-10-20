@@ -206,15 +206,15 @@ func _recover(now_us: Variant) -> Driver.StepResult:
 	var before: int = status().current_frame
 	var gate: int = _gate(now_us)
 	if gate != I.Code.OK:
-		return Driver.StepResult.new(_step_code(gate), before, before)
+		return _result(_step_code(gate), before, before)
 	if not _running():
-		return Driver.StepResult.new(Types.Code.NOT_SYNCHRONIZED, before, before)
+		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
 	var polled: int = _poll(now_us, [], [], true)
 	if polled != I.Code.OK:
-		return Driver.StepResult.new(_step_failure(polled), before, before)
+		return _result(_step_failure(polled), before, before)
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
-		return Driver.StepResult.new(_step_failure(control_code), before, before)
+		return _result(_step_failure(control_code), before, before)
 	_busy = true
 	var recovered: Driver.StepResult = _driver.recover(now_us)
 	if recovered.code == Types.Code.OK:
@@ -222,7 +222,7 @@ func _recover(now_us: Variant) -> Driver.StepResult:
 	_busy = false
 	_service_controls(now_us, false)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
-		return Driver.StepResult.new(_core.status().reason, before, _core.status().current_frame)
+		return _result(_core.status().reason, before, _core.status().current_frame)
 	return recovered
 
 
@@ -231,26 +231,26 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	var before: int = status().current_frame
 	var gate: int = _gate(now_us)
 	if gate != I.Code.OK:
-		return Driver.StepResult.new(_step_code(gate), before, before)
+		return _result(_step_code(gate), before, before)
 	if not _running():
-		return Driver.StepResult.new(Types.Code.NOT_SYNCHRONIZED, before, before)
+		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
 	var code: int = _samples_code(local_inputs, before)
 	if code != Types.Code.OK:
-		return Driver.StepResult.new(code, before, before)
+		return _result(code, before, before)
 	_now = now_us
 	var polled: int = _poll(now_us, [])
 	if polled != I.Code.OK:
-		return Driver.StepResult.new(_step_failure(polled), before, before)
+		return _result(_step_failure(polled), before, before)
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
-		return Driver.StepResult.new(_step_failure(control_code), before, before)
+		return _result(_step_failure(control_code), before, before)
 	_busy = true
 	var scheduled: int = -1
 	for sample: Driver.LocalInput in local_inputs:
 		var result: Types.Result = _core.submit_local_input(sample.player, sample.sample_frame, sample.bytes)
 		if result.code != Types.Code.OK:
 			_busy = false
-			return Driver.StepResult.new(result.code, before, before)
+			return _result(result.code, before, before)
 		scheduled = result.value
 	var data: PackedByteArray = PackedByteArray()
 	for player: int in _config.local_players:
@@ -265,11 +265,11 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 			_busy = false
 			_collect_events()
 			_check_failure()
-			return Driver.StepResult.new(_step_failure(sent), before, before)
+			return _result(_step_failure(sent), before, before)
 	code = _confirmation_code()
 	if code != Types.Code.OK:
 		_busy = false
-		return Driver.StepResult.new(code, before, before)
+		return _result(code, before, before)
 	_now = now_us
 	var empty: Array[Driver.LocalInput] = []
 	var advanced: Driver.StepResult = _driver.step(now_us, empty)
@@ -278,7 +278,7 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	_busy = false
 	_service_controls(now_us, false)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
-		return Driver.StepResult.new(_core.status().reason, before, _core.status().current_frame)
+		return _result(_core.status().reason, before, _core.status().current_frame)
 	return advanced
 
 
@@ -646,6 +646,15 @@ func _check_failure() -> void:
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 		_remember_diagnostic()
+
+
+## Step result with the core session's terminal cause and failure frame attached.
+func _result(code: int, before: int, after: int) -> Driver.StepResult:
+	var result: Driver.StepResult = Driver.StepResult.new(code, before, after)
+	var status: Types.Status = _core.status() if _core != null else Types.Status.new()
+	result.reason = status.reason
+	result.failure_frame = status.failure_frame
+	return result
 
 
 func _step_failure(code: int) -> int:

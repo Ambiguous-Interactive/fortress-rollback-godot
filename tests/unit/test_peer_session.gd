@@ -430,7 +430,10 @@ func _request_mismatch_field(context: RefCounted, field: String) -> void:
 	context.equal(mesh.peers[0].diagnostics().failure.get("field"), field, "returned mismatch cannot change retained evidence")
 	context.equal(JSON.stringify(mesh.peers[0].diagnostics()).length() < 8192, true, "mismatch report stays bounded")
 	context.equal(mesh.peers[0].status().reason, Types.Code.PROTOCOL_FAILED, "mismatch reports protocol failure")
-	context.equal(mesh.peers[0].step(1, _inputs(mesh, 0)).code, Types.Code.TERMINATED, "failed handshake cannot advance game")
+	var stopped: Driver.StepResult = mesh.peers[0].step(1, _inputs(mesh, 0))
+	context.equal(stopped.code, Types.Code.TERMINATED, "failed handshake cannot advance game")
+	context.equal(stopped.reason, Types.Code.PROTOCOL_FAILED, "the stopped peer result keeps the exact cause")
+	context.equal(mesh.peers[0].status().failure_frame, stopped.failure_frame, "the peer result and the session agree on the failing frame")
 
 
 func _low_windows(context: RefCounted) -> void:

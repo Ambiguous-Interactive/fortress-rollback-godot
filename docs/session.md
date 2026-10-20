@@ -47,7 +47,8 @@ Construct `Driver.new(session, game)` and call `step(now_us, samples)` per tick.
 `reason` and its `failure_frame`. The driver consumes the expert engine's requests in
 order; it has no rollback algorithm. `driver.status()` and `driver.statistics()` report
 the session state and counters, so a client that only holds the driver still learns the
-current frame, the confirmed frame, the lifecycle and the exact cause of a stop.
+current frame, the confirmed frame, the lifecycle and the exact cause of a stop. Peer
+results carry the same cause from the shared core session.
 Connect `driver.step_completed(code, frame_before, frame_after)` to update
 presentation after an outer step finishes. The signal runs synchronously after
 all game callbacks and event collection, including repair-only stalls and
