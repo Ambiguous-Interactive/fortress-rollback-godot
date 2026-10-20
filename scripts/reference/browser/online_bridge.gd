@@ -237,6 +237,7 @@ func _process(_delta: float) -> void:
 		"failure_diagnostic": lobby.game_match.peer.diagnostics() if lobby.state == "failed" else {},
 		"failure_clocks": failure_clocks(lobby) if lobby.state == "failed" else [],
 		"restores": observed.restores if observed != null else 0,
+		"corrupt": observed.is_corrupt if observed != null else false,
 		"all_ready": lobby.all_ready,
 		"ready_enabled": not scene.ready_button.disabled,
 		"start_enabled": not scene.start_button.disabled,
