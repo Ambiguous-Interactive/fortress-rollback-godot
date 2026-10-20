@@ -47,7 +47,7 @@ def expected_states(histories, count):
 
 def validate_replay_download(value, expected_engine, round_record):
     if (not isinstance(value, dict) or value.get('filename') != 'fortress-online.frrp' or value.get('disabled_peer') is not True
-            or not isinstance(value.get('hex'), str) or not re.fullmatch(r'(?:[0-9a-f]{2}){23,8192}', value['hex'])):
+            or not isinstance(value.get('hex'), str) or not re.fullmatch(r'(?:[0-9a-f]{2}){23,16384}', value['hex'])):
         raise ValueError('online replay download missing or unbounded')
     before, after = value.get('before'), value.get('after')
     if (not isinstance(before, dict) or not isinstance(after, dict) or before != after or before.get('state') != 'failed'
@@ -56,7 +56,7 @@ def validate_replay_download(value, expected_engine, round_record):
         raise ValueError('online replay download advanced a stopped match')
     raw = bytes.fromhex(value['hex'])
     version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
-    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (3, 2, 1, 0, 2, 8, 0)
+    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (4, 2, 1, 0, 2, 8, 0)
             or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
         raise ValueError('online replay configuration differs from the played match')
     cursor, texts = 24, []
@@ -88,6 +88,7 @@ def validate_replay_download(value, expected_engine, round_record):
     for frame in range(frames):
         if cursor + 3 > len(raw) or raw[cursor:cursor + 2] != bytes(history[frame] for history in histories):
             raise ValueError('online replay differs from original submitted input')
+        row = raw[cursor:cursor + 2]
         flag = raw[cursor + 2]
         cursor += 3
         if flag not in (0, 1):
@@ -97,11 +98,11 @@ def validate_replay_download(value, expected_engine, round_record):
                 raise ValueError('online replay checksum differs from canonical history')
             checksums += 1
             cursor += 16
-    if cursor + 16 != len(raw) or checksums == 0:
+        if raw[cursor:cursor + 16] != hashlib.sha256(row).digest()[:16]:
+            raise ValueError('online replay input digest differs from the original row')
+        cursor += 16
+    if cursor != len(raw) or checksums == 0:
         raise ValueError('online replay missing checksum evidence or has trailing bytes')
-    final_row = bytes(history[frames - 1] for history in histories)
-    if raw[cursor:cursor + 16] != hashlib.sha256(final_row).digest()[:16]:
-        raise ValueError('online replay final input digest differs from the original row')
     playback = value.get('playback')
     if (not isinstance(playback, dict) or any(type(playback.get(key)) is not int for key in ('decode_code', 'code', 'frames', 'failure_frame'))
             or playback != {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}):

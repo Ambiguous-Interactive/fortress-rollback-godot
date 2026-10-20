@@ -34,6 +34,7 @@ FIELDS = {
     'game_seed': '18446744073709551615',
     'game_version': 'golden fixture ~!',
 }
+NAMES = ['engine_version', 'addon_version', 'upstream_revision', 'game_seed', 'game_version']
 
 
 def text(value):
@@ -42,35 +43,42 @@ def text(value):
     return struct.pack('<B', len(data)) + data
 
 
-def v3():
-    """The current layout: the version 2 body plus the digest of the final frame's input row."""
-    header = b'FRRP' + struct.pack('<HBIIIHBB', 3, FIELDS['player_count'], FIELDS['input_width'], FIELDS['frame_count'],
-                                   FIELDS['skipped_frames'], FIELDS['input_delay'], FIELDS['max_prediction_frames'], int(FIELDS['sync_test']))
-    assert len(header) == 23
-    names = ['engine_version', 'addon_version', 'upstream_revision', 'game_seed', 'game_version']
-    body = b''.join(row + struct.pack('<B', flag) + checksum for row, flag, checksum in FRAMES)
-    return header + NEUTRAL + b''.join(text(FIELDS[name]) for name in names) + body + digest(FRAMES[-1][0])
-
-
 def digest(row):
-    """The first 16 bytes of the row's SHA-256, the anchor for the final input row."""
+    """The first 16 bytes of the row's SHA-256, the digest that covers one input row."""
     return hashlib.sha256(row).digest()[:16]
+
+
+def header(version):
+    """The 23-byte fixed header: magic, version, roster, width, frame count, skipped, delay, window, sync."""
+    packed = b'FRRP' + struct.pack('<HBIIIHBB', version, FIELDS['player_count'], FIELDS['input_width'],
+                                   FIELDS['frame_count'], FIELDS['skipped_frames'], FIELDS['input_delay'],
+                                   FIELDS['max_prediction_frames'], int(FIELDS['sync_test']))
+    assert len(packed) == 23
+    return packed
+
+
+def v4():
+    """The current layout: every frame carries the digest of its own input row."""
+    body = b''.join(row + struct.pack('<B', flag) + checksum + digest(row) for row, flag, checksum in FRAMES)
+    return header(4) + NEUTRAL + b''.join(text(FIELDS[name]) for name in NAMES) + body
+
+
+def v3():
+    """The released version 3 layout, kept only to prove explicit UNSUPPORTED_VERSION rejection."""
+    body = b''.join(row + struct.pack('<B', flag) + checksum for row, flag, checksum in FRAMES)
+    return header(3) + NEUTRAL + b''.join(text(FIELDS[name]) for name in NAMES) + body + digest(FRAMES[-1][0])
 
 
 def v2():
     """The released version 2 layout, kept only to prove explicit UNSUPPORTED_VERSION rejection."""
-    header = b'FRRP' + struct.pack('<HBIIIHBB', 2, FIELDS['player_count'], FIELDS['input_width'], FIELDS['frame_count'],
-                                   FIELDS['skipped_frames'], FIELDS['input_delay'], FIELDS['max_prediction_frames'], int(FIELDS['sync_test']))
-    assert len(header) == 23
-    names = ['engine_version', 'addon_version', 'upstream_revision', 'game_seed', 'game_version']
     body = b''.join(row + struct.pack('<B', flag) + checksum for row, flag, checksum in FRAMES)
-    return header + NEUTRAL + b''.join(text(FIELDS[name]) for name in names) + body
+    return header(2) + NEUTRAL + b''.join(text(FIELDS[name]) for name in NAMES) + body
 
 
 def v1():
     """The unreleased session-027 layout: magic, version, players, width, frames, skipped, then rows with 0/1 flags."""
-    header = b'FRRP' + struct.pack('<HBIII', 1, 2, 2, 2, 0)
-    return header + FRAMES[0][0] + b'\x01' + CHECKSUM_A + FRAMES[1][0] + b'\x00'
+    packed = b'FRRP' + struct.pack('<HBIII', 1, 2, 2, 2, 0)
+    return packed + FRAMES[0][0] + b'\x01' + CHECKSUM_A + FRAMES[1][0] + b'\x00'
 
 
 def chunks(data):
@@ -85,10 +93,12 @@ def fixture():
             'Layout: docs/integration.md#replay-file-format; upstream replay semantics: fortress f13cd5c0f2815926785a395947e18da0dbea0dd8.',
             'v1 is the unreleased session-027 layout, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
             'v2 is the released layout without the final input digest, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
+            'v3 is the released layout that anchors only the final input row, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
         ],
-        'v3': chunks(v3()),
+        'v4': chunks(v4()),
         'fields': FIELDS,
         'checksums': {'0': CHECKSUM_A.hex(), '3': CHECKSUM_B.hex()},
+        'v3': chunks(v3()),
         'v2': chunks(v2()),
         'v1': chunks(v1()),
     }

@@ -36,10 +36,10 @@ def replay_download(histories):
     states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
     texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8',
              '1701', 'fortress-online-integer-v1']
-    raw = b'FRRP' + struct.pack('<HBIIIHBB', 3, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
+    raw = b'FRRP' + struct.pack('<HBIIIHBB', 4, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
     raw += b''.join(bytes([len(text)]) + text.encode('ascii') for text in texts)
-    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1]) + bytes.fromhex(game_checksum(states[frame])) for frame in range(frames))
-    raw += hashlib.sha256(bytes([histories[0][frames - 1], histories[1][frames - 1]])).digest()[:16]
+    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1]) + bytes.fromhex(game_checksum(states[frame]))
+                    + hashlib.sha256(bytes([histories[0][frame], histories[1][frame]])).digest()[:16] for frame in range(frames))
     return {'filename': 'fortress-online.frrp', 'hex': raw.hex(), 'disabled_peer': True,
             'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
             'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],

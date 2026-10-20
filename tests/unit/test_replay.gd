@@ -33,7 +33,7 @@ class FailingGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["records_corrected_match", "records_metadata", "detects_changed_rules", "golden", "rejects_malformed_files",
-			"bounds_recording", "lockstep_confirmation_limit", "refuses_foreign_recording", "protects_final_input"]
+			"bounds_recording", "lockstep_confirmation_limit", "refuses_foreign_recording", "protects_input_rows"]
 	)
 
 
@@ -55,8 +55,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_lockstep_confirmation_limit(context)
 		"refuses_foreign_recording":
 			_refuses_foreign_recording(context)
-		"protects_final_input":
-			_protects_final_input(context)
+		"protects_input_rows":
+			_protects_input_rows(context)
 	context.finish()
 
 
@@ -132,7 +132,7 @@ static func _decode(bytes: PackedByteArray, max_bytes: int = Replay.MAX_BYTES) -
 ## Golden bytes and fields from scripts/reference/replay_golden.py.
 static func _fixture() -> Dictionary:
 	var fixture: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/replay/golden.json"))
-	for version: String in ["v1", "v2", "v3"]:
+	for version: String in ["v1", "v2", "v3", "v4"]:
 		fixture[version] = "".join(fixture[version]).hex_decode()
 	return fixture
 
@@ -226,7 +226,7 @@ func _records_metadata(context: RefCounted) -> void:
 func _golden(context: RefCounted) -> void:
 	var fixture: Dictionary = _fixture()
 	var replay: Replay = Replay.new()
-	context.equal(replay.decode(fixture.v3), Replay.DecodeCode.OK, "decodes the golden")
+	context.equal(replay.decode(fixture.v4), Replay.DecodeCode.OK, "decodes the golden")
 	var fields: Dictionary = fixture.fields
 	for field: String in fields:
 		var actual: Variant = replay.call(field)
@@ -235,34 +235,39 @@ func _golden(context: RefCounted) -> void:
 		var expected: String = fixture.checksums.get(str(frame), "")
 		context.equal(replay.checksum(frame).hex_encode(), expected, "checksum %d" % frame)
 		context.equal(replay.is_skipped_frame(frame), frame == 2, "skipped flag %d" % frame)
+		context.equal(replay.input_digest(frame), replay.computed_input_digest(frame), "input digest %d" % frame)
 	context.equal(replay.inputs(2).read(1).bytes, PackedByteArray([0x00, 0x80]), "a skipped frame holds neutral input")
 	context.equal(replay.inputs(1).read(1).bytes, PackedByteArray([0x7f, 0x80]), "second player's input")
-	context.bytes_equal(replay.to_bytes(), fixture.v3, 0, "re-encodes the golden")
-	context.bytes_equal(replay.owned_copy().to_bytes(), fixture.v3, 0, "copies keep every field")
+	context.bytes_equal(replay.to_bytes(), fixture.v4, 0, "re-encodes the golden")
+	context.bytes_equal(replay.owned_copy().to_bytes(), fixture.v4, 0, "copies keep every field")
 	context.state(replay.frame_count(), replay.to_bytes())
-	context.equal(replay.final_digest(), replay.input_digest(replay.frame_count() - 1), "anchors the final input row")
 	context.equal(Replay.new().decode(fixture.v1), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the unreleased v1 layout explicitly")
 	context.equal(Replay.new().decode(fixture.v2), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the released v2 layout explicitly")
+	context.equal(Replay.new().decode(fixture.v3), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the released v3 layout explicitly")
 
 
 func _rejects_malformed_files(context: RefCounted) -> void:
-	var golden: PackedByteArray = _fixture().v3
+	var golden: PackedByteArray = _fixture().v4
 	var truncated: int = 0
 	for size: int in range(golden.size()):
 		truncated += int(Replay.new().decode(golden.slice(0, size)) != Replay.DecodeCode.MALFORMED)
 	context.equal(truncated, 0, "every truncation is malformed")
 	const MALFORMED: int = Replay.DecodeCode.MALFORMED
 	const UNSUPPORTED: int = Replay.DecodeCode.UNSUPPORTED_VERSION
-	# Golden frames: 4 input bytes and a flag each; frames 0 and 3 add a checksum; the file ends with the digest.
-	var body: int = golden.size() - 4 * 5 - 2 * Replay.CHECKSUM_BYTES - Replay.DIGEST_BYTES
+	# Golden frames: 4 input bytes, a flag and an input digest each; frames 0 and 3 add a checksum.
+	var body: int = golden.size() - 4 * (4 + 1 + Replay.DIGEST_BYTES) - 2 * Replay.CHECKSUM_BYTES
 	var engine_text: int = Replay.FIXED_BYTES + 2
+	# Frame 1 starts after frame 0's row, flag, checksum and digest; frame 2 follows frame 1's digest.
+	var frame1_flag: int = body + 4 + 1 + Replay.CHECKSUM_BYTES + Replay.DIGEST_BYTES + 4
+	var frame2_row: int = frame1_flag + 1 + Replay.DIGEST_BYTES
 	# Each row patches one field: [offset, encoder width, value].
 	var rows: Array[Dictionary] = [
 		{"label": "magic", "patch": [0, 1, 0x58], "code": MALFORMED},
 		{"label": "v1", "patch": [4, 2, 1], "code": UNSUPPORTED},
 		{"label": "version 0", "patch": [4, 2, 0], "code": UNSUPPORTED},
 		{"label": "released v2", "patch": [4, 2, 2], "code": UNSUPPORTED},
-		{"label": "future version", "patch": [4, 2, 4], "code": UNSUPPORTED},
+		{"label": "released v3", "patch": [4, 2, 3], "code": UNSUPPORTED},
+		{"label": "future version", "patch": [4, 2, 5], "code": UNSUPPORTED},
 		{"label": "largest version", "patch": [4, 2, 0xffff], "code": UNSUPPORTED},
 		{"label": "one player", "patch": [6, 1, 1], "code": MALFORMED},
 		{"label": "nine players", "patch": [6, 1, 9], "code": MALFORMED},
@@ -281,8 +286,8 @@ func _rejects_malformed_files(context: RefCounted) -> void:
 		{"label": "non-ASCII text", "patch": [engine_text + 1, 1, 0xc3], "code": MALFORMED},
 		{"label": "unknown frame flag", "patch": [body + 4, 1, 4], "code": MALFORMED},
 		{"label": "checksum and skipped together", "patch": [body + 4, 1, 3], "code": MALFORMED},
-		{"label": "skipped frame with real input", "patch": [body + 25, 1, 2], "code": MALFORMED},
-		{"label": "non-neutral skipped row", "patch": [body + 26, 1, 1], "code": MALFORMED},
+		{"label": "skipped frame with real input", "patch": [frame1_flag, 1, 2], "code": MALFORMED},
+		{"label": "non-neutral skipped row", "patch": [frame2_row, 1, 1], "code": MALFORMED},
 	]
 	for row: Dictionary in rows:
 		var bytes: PackedByteArray = golden.duplicate()
@@ -303,9 +308,9 @@ func _rejects_malformed_files(context: RefCounted) -> void:
 	context.equal(kept.to_bytes(), golden, "a failed decode keeps the previous replay")
 
 
-## The final frame's input row is anchored by a recorded digest: the state checksum of the
-## following frame covers every other row, but no frame follows the last one.
-func _protects_final_input(context: RefCounted) -> void:
+## Every frame carries the digest of its own input row, so a corrupted row is refused at the
+## frame that owns it - including a row in front of a frame that carries no state checksum.
+func _protects_input_rows(context: RefCounted) -> void:
 	var replay: Replay = _match(context, {"lag": 3, "burst": 1}, FRAMES * 2).replay()
 	var frames: int = replay.frame_count()
 	var bytes: PackedByteArray = replay.to_bytes()
@@ -316,7 +321,7 @@ func _protects_final_input(context: RefCounted) -> void:
 	corrupted[bytes.size() - tail - row_size] ^= 0xff
 	var decoded: Replay = _decode(corrupted)
 	context.equal(decoded != null, true, "a corrupted final row still decodes")
-	context.bytes_equal(decoded.to_bytes(), corrupted, last, "a decoded recording keeps its recorded anchor")
+	context.bytes_equal(decoded.to_bytes(), corrupted, last, "a decoded recording keeps its recorded digests")
 	var player: Player = Player.new()
 	context.equal(player.configure(decoded, Game.new(), Game.SNAPSHOT_BYTES), Types.Code.OK, "player configures")
 	var code: int = Types.Code.OK
@@ -334,7 +339,25 @@ func _protects_final_input(context: RefCounted) -> void:
 	while code == Types.Code.OK:
 		code = middle_player.step()
 	context.equal(code, Types.Code.DESYNC, "a corrupted middle input stops playback")
-	context.equal(middle_player.failure_frame(), 8, "the following state checksum still reports the failure")
+	context.equal(middle_player.failure_frame(), 7, "the owning frame reports the failure")
+	# A recording whose last frames carry no state checksum leaves the rows in front of them
+	# uncovered by any state checksum: only the per-frame digest can refuse them.
+	var sparse: Replay = Replay.new()
+	sparse._start(_config(false, 8))
+	sparse._append(PackedByteArray([1, 2]), PackedByteArray(), false)
+	sparse._append(PackedByteArray([3, 4]), PackedByteArray(), false)
+	sparse._append(PackedByteArray([5, 6]), PackedByteArray(), false)
+	var sparse_bytes: PackedByteArray = sparse.to_bytes()
+	context.equal(_decode(sparse_bytes) != null, true, "a sparse recording decodes")
+	var sparse_decoded: Replay = _decode(sparse_bytes)
+	sparse_decoded._inputs[2] = (sparse_decoded._inputs[2] + 1) % 8
+	var sparse_player: Player = Player.new()
+	context.equal(sparse_player.configure(sparse_decoded, Game.new(), 0), Types.Code.OK, "sparse player configures")
+	code = Types.Code.OK
+	while code == Types.Code.OK:
+		code = sparse_player.step()
+	context.equal(code, Types.Code.DESYNC, "a corrupted row without a later state checksum stops playback")
+	context.equal(sparse_player.failure_frame(), 1, "the owning frame reports the failure")
 
 
 func _bounds_recording(context: RefCounted) -> void:

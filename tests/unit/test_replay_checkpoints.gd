@@ -115,11 +115,11 @@ func _cached_navigation(context: RefCounted) -> void:
 	viewer.seek(750)
 	context.equal(viewer.current_frame(), 0, "new import discards all old checkpoints")
 	viewer.tick()
-	context.equal(viewer.current_frame(), 8, "corruption cannot reuse a healthy recording checkpoint")
+	context.equal(viewer.current_frame(), 7, "corruption cannot reuse a healthy recording checkpoint")
 	context.equal(viewer.can_step(), false, "checksum failure remains terminal")
 	viewer.seek(750)
 	viewer.tick()
-	context.equal(viewer.current_frame(), 8, "retry cannot skip the failed prefix")
+	context.equal(viewer.current_frame(), 7, "retry cannot skip the failed prefix")
 	context.state(viewer.current_frame(), viewer.game.canonical_bytes())
 
 

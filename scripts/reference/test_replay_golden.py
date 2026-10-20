@@ -15,10 +15,22 @@ class ReplayGoldenTests(unittest.TestCase):
     def test_layout_sizes(self):
         text = sum(1 + len(replay_golden.FIELDS[name]) for name in
                    ['engine_version', 'addon_version', 'upstream_revision', 'game_seed', 'game_version'])
+        # Every frame carries its own input digest, and the file carries no trailing anchor.
+        self.assertEqual(len(replay_golden.v4()), 23 + 2 + text + 4 * 5 + 2 * 16 + 4 * 16)
+        self.assertEqual(replay_golden.v4()[23 + 2 + text + 4], 1)
         self.assertEqual(len(replay_golden.v3()), 23 + 2 + text + 4 * 5 + 2 * 16 + 16)
-        self.assertEqual(replay_golden.v3()[23 + 2 + text + 4], 1)
         self.assertEqual(replay_golden.v3()[-16:], replay_golden.digest(replay_golden.FRAMES[-1][0]))
         self.assertEqual(len(replay_golden.v2()), 23 + 2 + text + 4 * 5 + 2 * 16)
+
+    def test_every_frame_carries_its_own_input_digest(self):
+        """The independent generator writes the digest of each row next to that row."""
+        data = replay_golden.v4()
+        cursor = 23 + 2 + sum(1 + len(replay_golden.FIELDS[name]) for name in replay_golden.NAMES)
+        for row, flag, checksum in replay_golden.FRAMES:
+            cursor += len(row) + 1 + (16 if flag == 1 else 0)
+            self.assertEqual(data[cursor:cursor + 16], replay_golden.digest(row))
+            cursor += 16
+        self.assertEqual(cursor, len(data))
 
 
 if __name__ == '__main__':

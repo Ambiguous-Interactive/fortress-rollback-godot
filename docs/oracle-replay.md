@@ -40,15 +40,15 @@ updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
 Python generates original inputs and independently computes every canonical
 state boundary. Rust consumes the original rows; Godot decodes independently
-packed version-3 FRRP files. Actual save/advance callbacks, player statuses,
+packed version-4 FRRP files. Actual save/advance callbacks, player statuses,
 events, completion and failure frames must match their full expected traces.
 Comparisons validate exact fields and numeric types before comparing values.
 Both engines run in two fresh processes with identical results.
 
-The version-3 file ends with a digest of the final frame's input row. That
-anchor is a Godot-side integrity extension: the pinned upstream session owns the
+Every frame of the version-4 file carries the digest of its own input row. Those
+digests are a Godot-side integrity extension: the pinned upstream session owns the
 input history and stores no such digest, so the corpus compares only the
-upstream-owned behaviour and never claims parity for the anchor.
+upstream-owned behaviour and never claims parity for the digests.
 
 Negative controls mutate intermediate state while preserving the final result,
 input status, frame convention, numeric type, missing/invented events and a
