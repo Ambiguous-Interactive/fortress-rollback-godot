@@ -244,6 +244,13 @@ func _negotiation(context: RefCounted) -> void:
 	context.equal(host.agreement_reason(), CODE.UNSUPPORTED, "one recorded host refusal reason")
 	context.equal(host.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "a refused host publishes no row")
 
+	# An answer that drops the kind that closes the stream is refused.
+	var partial: PackedByteArray = Stream.encode_header(Stream.ACCEPT, 0, 2, 1, _identity(), _digest(), Stream.VERSION)
+	partial.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(Stream.VERSION), Negotiation.CAP_ROW))
+	var closing: RefCounted = _publisher(context)
+	context.equal(closing.receive_accept(Stream.authenticate(partial, _key())), CODE.UNSUPPORTED, "an answer without the end kind is refused")
+	context.equal(closing.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "a refused host publishes no row")
+
 	# An offer that names an unknown optional kind is refused before the first row.
 	var unknown: RefCounted = Stream.new()
 	unknown.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)

@@ -102,14 +102,17 @@ static func common_version(offered: int, supported: int) -> int:
 	return highest_version(offered & supported)
 
 
-## True when the offered kinds are known and carry the mandatory row kind.
+## True when the offered kinds are known and carry the mandatory row and end kinds.
+## A host that cannot deliver a row or close its stream is refused.
 static func kinds_acceptable(offered: int) -> bool:
-	return (offered & ~CAP_ALL) == 0 and (offered & CAP_ROW) != 0
+	return (offered & ~CAP_ALL) == 0 and (offered & CAP_ROW) != 0 and (offered & CAP_END) != 0
 
 
-## True when the accepted kinds stay inside the offered kinds and keep the row kind.
+## True when the accepted kinds stay inside the offered kinds and keep the row and end kinds.
+## The optional keepalive kind may be dropped, so a viewer that does not want
+## liveness packets never receives one.
 static func kinds_within(accepted: int, offered: int) -> bool:
-	return (accepted & ~offered) == 0 and (accepted & CAP_ROW) != 0
+	return (accepted & ~offered) == 0 and (accepted & CAP_ROW) != 0 and (accepted & CAP_END) != 0
 
 
 ## The capability body: the version mask, then the kind mask.

@@ -275,11 +275,13 @@ capability body: a u32 version mask and a u32 kind mask. The agreed envelope
 version is the version byte of the accepted packet.
 
 - The viewer accepts an offer when the offered kinds are known, carry the
-  mandatory row kind, and the two sides share at least one envelope version. It
-  answers with the highest shared version, so a host that offers several
-  versions is not forced onto a version the viewer cannot speak.
+  mandatory row and end kinds, and the two sides share at least one envelope
+  version. It answers with the highest shared version, so a host that offers
+  several versions is not forced onto a version the viewer cannot speak.
 - The host accepts an answer only when it names a version the host offered and
-  kinds inside the offer that keep the row kind.
+  kinds inside the offer that keep the row and end kinds. The optional keepalive
+  kind may be dropped, so a viewer that does not want liveness packets never
+  receives one.
 - A refusal is explicit and happens before any row is played. The viewer reports
   `UNSUPPORTED` for another envelope version or an unknown optional kind, and
   `PROTOCOL_FAILED` for a forged, foreign or malformed packet. The reason is
