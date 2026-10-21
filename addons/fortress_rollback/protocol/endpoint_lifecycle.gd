@@ -83,10 +83,20 @@ static func receive_control(plan: Dictionary, message: T.Message, packet: Callab
 			plan.events.append({
 				"kind": "drop_barrier",
 				"phase": message.phase,
+				"stage": message.stage,
+				"reason": message.reason,
 				"operation": message.operation,
+				"coordinator": message.coordinator,
+				"coordinator_generation": message.coordinator_generation,
+				"target_set_digest": message.target_set_digest,
 				"cut": message.cut,
 				"bound": message.bound,
+				"available_through": message.available_through,
+				"cut_digest": message.cut_digest,
+				"chunk_index": message.chunk_index,
+				"chunk_count": message.chunk_count,
 				"slots": message.data.duplicate(),
+				"bytes": message.bytes.duplicate(),
 			})
 		T.Kind.KEEP_ALIVE:
 			pass

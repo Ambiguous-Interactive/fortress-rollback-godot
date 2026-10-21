@@ -269,6 +269,27 @@ func freeze_at(frame: int) -> int:
 	return Code.OK
 
 
+## Freeze the slot at an agreed frame with an explicit certified value. The value
+## replaces the retained row, so a survivor that already released the row still
+## freezes on the same bytes as the other survivors.
+func freeze_with_value(frame: int, bytes: PackedByteArray) -> int:
+	if _capacity == 0:
+		return Code.NOT_CONFIGURED
+	if _frozen:
+		return Code.OK
+	if not _valid_frame(frame):
+		return Code.FRAME_RANGE
+	if bytes.size() != _neutral.size():
+		return Code.INPUT_WIDTH
+	_frozen = true
+	_frozen_frame = frame
+	_last_actual = bytes.duplicate()
+	# Frames past the agreed frame used the later actual value and must be resimulated.
+	if _last_added > frame:
+		_first_incorrect = frame + 1 if _first_incorrect == -1 else mini(_first_incorrect, frame + 1)
+	return Code.OK
+
+
 ## The value the simulation used at a frame: the frozen value for a dropped slot past the
 ## agreed frame, otherwise the retained actual input.
 func simulated_input(frame: int) -> Result:

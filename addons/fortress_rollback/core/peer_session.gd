@@ -46,6 +46,8 @@ var _busy: bool = false
 var _now: int = -1
 var _lifecycle: L.Options
 var _checksums: Checksums
+## The connection identity of the local peer; it names the local connected era.
+var _local_connection: PackedByteArray = PackedByteArray()
 var _events: Array[Dictionary] = []
 var _fatal_event: Dictionary = {}
 var _next_wait: int = 0
@@ -129,6 +131,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	for key: String in keys:
 		_ids.append(remotes[key].duplicate())
 	_lifecycle = L.copy_options(controls)
+	_local_connection = local.connection_id.duplicate()
 	_checksums = Checksums.new()
 	# A peer can confirm up to max_prediction + its delay frames ahead, and delays never exceed max_input_delay.
 	_checksums.configure(
@@ -527,6 +530,18 @@ func drain_transitions() -> Array[Dictionary]:
 
 func _endpoint(index: int) -> Endpoint:
 	return _peers[_ids[index].hex_encode()]
+
+
+## The connected era of one peer: the first two bytes of its connection identity.
+## A peer that connects again with a new connection identity starts a new era.
+## The local peer uses index -1.
+func _era(index: int) -> int:
+	var connection: String = _local_connection.hex_encode()
+	if index >= 0:
+		connection = str(_endpoint(index).status().get("remote_connection", ""))
+	if connection.length() < 4:
+		return 0
+	return connection.substr(0, 4).hex_to_int()
 
 
 func _gate(now_us: Variant) -> int:

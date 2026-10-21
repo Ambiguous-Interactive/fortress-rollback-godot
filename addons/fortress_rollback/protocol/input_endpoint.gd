@@ -557,30 +557,33 @@ func send_checksum(frame: Variant, checksum: Variant, now_us: Variant) -> int:
 	return _commit(plan)
 
 
-## A coordinated drop barrier message. The slot list names the departed peer's slots;
-## the cut and bound carry the sender's agreed frame window for that drop.
-func send_drop_barrier(phase: Variant, operation: Variant, cut: Variant, bound: Variant, slots: Variant, now_us: Variant) -> int:
+## A coordinated drop barrier message. The payload carries the barrier phase, the pinned
+## operation identity, the agreed frame window and the frozen value's digest.
+func send_drop_barrier(payload: Variant, now_us: Variant) -> int:
 	var code: int = _gate(now_us)
 	if code != I.Code.OK:
 		return code
 	if _lifecycle == null or _handshake.status().state != "running":
 		return I.Code.WRONG_STATE
-	if typeof(phase) != TYPE_INT or phase < 1 or phase > 3:
+	if not payload is Dictionary:
 		return I.Code.INVALID_ARGUMENT
-	if typeof(operation) != TYPE_INT or operation < 0 or operation > 4294967295:
-		return I.Code.INVALID_ARGUMENT
-	if typeof(cut) != TYPE_INT or not V.frame(cut) or typeof(bound) != TYPE_INT or not V.frame(bound):
-		return I.Code.INVALID_ARGUMENT
-	if not slots is PackedByteArray or slots.is_empty() or slots.size() > _limits.player_count:
-		return I.Code.INVALID_ARGUMENT
-	var plan: Dictionary = _plan(now_us)
 	var message: T.Message = _packet(T.Kind.DROP_BARRIER)
-	message.phase = phase
-	message.operation = operation
-	message.cut = cut
-	message.bound = bound
-	message.data = slots.duplicate()
-	plan.outbox.append(_encode(message))
+	var fields: Array[String] = ["phase", "stage", "reason", "coordinator", "coordinator_generation", "operation"]
+	fields.append_array(["target_set_digest", "cut", "bound", "available_through", "cut_digest", "chunk_index", "chunk_count"])
+	for field: String in fields:
+		if not payload.get(field, null) is int:
+			return I.Code.INVALID_ARGUMENT
+		message.set(field, payload[field])
+	if not payload.get("data", null) is PackedByteArray or not payload.get("bytes", null) is PackedByteArray:
+		return I.Code.INVALID_ARGUMENT
+	message.data = payload["data"]
+	message.bytes = payload["bytes"]
+	var plan: Dictionary = _plan(now_us)
+	var encoded: PackedByteArray = _encode(message)
+	if encoded.is_empty():
+		# The codec refuses an out-of-range or unbounded barrier field.
+		return I.Code.INVALID_ARGUMENT
+	plan.outbox.append(encoded)
 	return _commit(plan)
 
 

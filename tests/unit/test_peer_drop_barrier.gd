@@ -15,7 +15,7 @@ const Game = preload("res://tests/oracle/p2p_game.gd")
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "second_departure", "codec_round_trip"]
+		["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "second_departure", "codec_round_trip", "conflicting_certificate", "stale_messages"]
 	)
 
 
@@ -33,6 +33,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_second_departure(context)
 		"codec_round_trip":
 			_codec_round_trip(context)
+		"conflicting_certificate":
+			_conflicting_certificate(context)
+		"stale_messages":
+			_stale_messages(context)
 	context.finish()
 
 
@@ -106,7 +110,7 @@ func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3)
 		tokens.append(peer_tokens)
 	for index: int in range(peers.size()):
 		context.equal(peers[index].begin(0, tokens[index]), I.Code.OK, "begin mesh")
-	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0, "count": count}
+	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0, "reasons": [], "count": count}
 	for iteration: int in range(6):
 		_deliver(context, mesh, _drain(mesh))
 	return mesh
@@ -131,12 +135,17 @@ func _drain(mesh: Dictionary) -> Array[Dictionary]:
 				mesh.cuts[source] = event.frame
 			elif event.kind == "peer_drop_unconfirmed":
 				mesh.unconfirmed += 1
+				mesh.reasons.append(event.reason)
 	return result
 
 
-func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary]) -> void:
+func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
 	for packet: Dictionary in packets:
-		context.equal(mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now), I.Code.OK, "deliver encoded packet")
+		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
+		if terminated and code == I.Code.TERMINATED:
+			# A closed match refuses further packets.
+			continue
+		context.equal(code, I.Code.OK, "deliver encoded packet")
 
 
 ## Every peer advances and exchanges packets for the given frames.
@@ -180,13 +189,26 @@ func _leave(context: RefCounted, mesh: Dictionary, departed: int) -> void:
 
 ## The survivors keep their links alive until the silent peer reaches its timeout.
 ## The silent peer receives nothing more, so it stops answering and its links expire.
-func _detect(context: RefCounted, mesh: Dictionary, survivors: Array[int], elapsed: int = 600000, deliver_acks: bool = true) -> void:
+func _detect(
+	context: RefCounted,
+	mesh: Dictionary,
+	survivors: Array[int],
+	elapsed: int = 600000,
+	deliver_acks: bool = true,
+	alterations: Array[Dictionary] = [],
+	injections: Array[Dictionary] = [],
+	terminated: bool = false
+) -> void:
 	var waited: int = 0
+	var pending: Array[Dictionary] = injections.duplicate()
 	while waited < elapsed:
 		mesh.now += 1000
 		waited += 1000
 		for survivor: int in survivors:
-			context.equal(mesh.peers[survivor].poll(mesh.now), I.Code.OK, "poll the survivor")
+			var polled: int = mesh.peers[survivor].poll(mesh.now)
+			if terminated and polled == I.Code.TERMINATED:
+				continue
+			context.equal(polled, I.Code.OK, "poll the survivor")
 		var packets: Array[Dictionary] = []
 		for packet: Dictionary in _drain(mesh):
 			if not survivors.has(packet.to) or not survivors.has(packet.from):
@@ -195,7 +217,65 @@ func _detect(context: RefCounted, mesh: Dictionary, survivors: Array[int], elaps
 			packets.append(packet)
 		if not deliver_acks:
 			packets = _without_acks(packets, mesh.count)
-		_deliver(context, mesh, packets)
+		packets = _alter(context, mesh, packets, alterations)
+		if not pending.is_empty() and _barrier_started(mesh, survivors):
+			for injection: Dictionary in pending:
+				_inject(context, mesh, injection)
+			pending.clear()
+		_deliver(context, mesh, packets, terminated)
+
+
+## True once the survivors hold a coordinated drop barrier for the departed peer.
+func _barrier_started(mesh: Dictionary, survivors: Array[int]) -> bool:
+	for survivor: int in survivors:
+		if mesh.peers[survivor]._drops.has_barrier(_id(2).hex_encode()):
+			return true
+	return false
+
+
+## Deliver one altered copy of every barrier message that matches an alteration.
+## A replaced message never reaches its recipient; an extra message is delivered beside it.
+func _alter(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], alterations: Array[Dictionary]) -> Array[Dictionary]:
+	if alterations.is_empty():
+		return packets
+	var result: Array[Dictionary] = []
+	for packet: Dictionary in packets:
+		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+		var matched: Dictionary = {}
+		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			for alteration: Dictionary in alterations:
+				if int(alteration["phase"]) == decoded.message.phase and int(alteration["stage"]) == decoded.message.stage:
+					matched = alteration
+					break
+		if matched.is_empty():
+			result.append(packet)
+			continue
+		for field: String in matched["fields"]:
+			decoded.message.set(field, matched["fields"][field])
+		var encoded: T.Result = Codec.encode(decoded.message, _limits(mesh.count))
+		context.equal(encoded.code, T.Code.OK, "encode the altered barrier")
+		var altered: Dictionary = {"from": packet.from, "to": packet.to, "bytes": encoded.bytes}
+		if bool(matched.get("replace", false)):
+			result.append(altered)
+		else:
+			result.append(packet)
+			result.append(altered)
+	return result
+
+
+## Deliver one synthetic barrier message to a survivor.
+func _inject(context: RefCounted, mesh: Dictionary, injection: Dictionary) -> void:
+	var message: T.Message = T.Message.new()
+	message.kind = T.Kind.DROP_BARRIER
+	message.session_id = _id(90, 16)
+	message.sender_id = _id(int(injection["from"]))
+	message.connection_id = _id(int(injection["from"]) + 20)
+	message.data = PackedByteArray([2, 3, 0])
+	for field: String in injection["fields"]:
+		message.set(field, injection["fields"][field])
+	var encoded: T.Result = Codec.encode(message, _limits(mesh.count))
+	context.equal(encoded.code, T.Code.OK, "encode the injected barrier")
+	context.equal(mesh.peers[int(injection["to"])].receive(encoded.bytes, _id(int(injection["from"])), mesh.now), I.Code.OK, "deliver the injected barrier")
 
 
 ## The answer of a survivor carries the answer phase of the coordinated drop.
@@ -335,40 +415,109 @@ func _second_departure(context: RefCounted) -> void:
 	for survivor: int in [2, 3]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives both departures")
 
-
-## The barrier message keeps its phase, operation, window and slot list on the wire.
+## The barrier message keeps its operation identity, its stage and its frozen value on the wire.
 func _codec_round_trip(context: RefCounted) -> void:
 	var limits: T.Limits = _limits()
 	var message: T.Message = T.Message.new()
 	message.kind = T.Kind.DROP_BARRIER
 	message.phase = 2
+	message.stage = 2
+	message.reason = 3
+	message.coordinator = 1
+	message.coordinator_generation = 2
 	message.operation = 7
+	message.target_set_digest = 11
 	message.cut = 42
 	message.bound = 11
-	message.data = PackedByteArray([1, 2])
+	message.available_through = 40
+	message.cut_digest = 13
+	message.chunk_index = 1
+	message.chunk_count = 2
+	message.data = PackedByteArray([2, 3, 0])
+	message.bytes = PackedByteArray([9, 8])
 	var encoded: T.Result = Codec.encode(message, limits)
 	context.equal(encoded.code, T.Code.OK, "encode the barrier")
 	var decoded: T.Result = Codec.decode(encoded.bytes, limits)
 	context.equal(decoded.code, T.Code.OK, "decode the barrier")
 	context.equal(decoded.message.kind, T.Kind.DROP_BARRIER, "the barrier keeps its kind")
 	context.equal(decoded.message.phase, 2, "the barrier keeps its phase")
+	context.equal(decoded.message.stage, 2, "the barrier keeps its stage")
+	context.equal(decoded.message.reason, 3, "the barrier keeps its reason")
+	context.equal(decoded.message.coordinator, 1, "the barrier keeps its coordinator")
+	context.equal(decoded.message.coordinator_generation, 2, "the barrier keeps the coordinator era")
 	context.equal(decoded.message.operation, 7, "the barrier keeps its operation")
+	context.equal(decoded.message.target_set_digest, 11, "the barrier keeps its target digest")
 	context.equal(decoded.message.cut, 42, "the barrier keeps its cut")
 	context.equal(decoded.message.bound, 11, "the barrier keeps its bound")
-	context.equal(decoded.message.data, PackedByteArray([1, 2]), "the barrier keeps its slots")
-	# An unknown phase and an empty slot list are refused.
+	context.equal(decoded.message.available_through, 40, "the barrier keeps its retained range")
+	context.equal(decoded.message.cut_digest, 13, "the barrier keeps the frozen value's digest")
+	context.equal(decoded.message.chunk_index, 1, "the barrier keeps its chunk index")
+	context.equal(decoded.message.chunk_count, 2, "the barrier keeps its chunk count")
+	context.equal(decoded.message.data, PackedByteArray([2, 3, 0]), "the barrier keeps its target list")
+	context.equal(decoded.message.bytes, PackedByteArray([9, 8]), "the barrier keeps its frozen value")
+	# An unknown phase, an unknown stage and a malformed target list are refused.
 	var invalid: T.Message = T.Message.new()
 	invalid.kind = T.Kind.DROP_BARRIER
 	invalid.phase = 9
 	invalid.operation = 1
 	invalid.cut = 1
 	invalid.bound = 0
-	invalid.data = PackedByteArray([0])
+	invalid.data = PackedByteArray([0, 0, 0])
 	context.equal(Codec.encode(invalid, limits).code, T.Code.INVALID_MESSAGE, "an unknown phase is refused")
+	var unknown_stage: T.Message = T.Message.new()
+	unknown_stage.kind = T.Kind.DROP_BARRIER
+	unknown_stage.phase = 1
+	unknown_stage.stage = 7
+	unknown_stage.operation = 1
+	unknown_stage.cut = 1
+	unknown_stage.bound = 0
+	unknown_stage.data = PackedByteArray([0, 0, 0])
+	context.equal(Codec.encode(unknown_stage, limits).code, T.Code.INVALID_MESSAGE, "an unknown stage is refused")
 	var empty: T.Message = T.Message.new()
 	empty.kind = T.Kind.DROP_BARRIER
 	empty.phase = 1
 	empty.operation = 1
 	empty.cut = 1
 	empty.bound = 0
-	context.equal(Codec.encode(empty, limits).code, T.Code.INVALID_MESSAGE, "an empty slot list is refused")
+	empty.data = PackedByteArray()
+	context.equal(Codec.encode(empty, limits).code, T.Code.INVALID_MESSAGE, "an empty target list is refused")
+	var unordered: T.Message = T.Message.new()
+	unordered.kind = T.Kind.DROP_BARRIER
+	unordered.phase = 1
+	unordered.operation = 1
+	unordered.cut = 1
+	unordered.bound = 0
+	unordered.data = PackedByteArray([2, 0, 0, 1, 0, 0])
+	context.equal(Codec.encode(unordered, limits).code, T.Code.INVALID_MESSAGE, "an unordered target list is refused")
+
+
+## A certificate that names another value ends the match instead of freezing divergent values.
+func _conflicting_certificate(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	# The certificate of one survivor names another value.
+	_detect(context, mesh, [0, 1], 600000, true, [{"phase": 2, "stage": 2, "fields": {"cut_digest": 1}, "replace": true}], [], true)
+	context.equal(mesh.reasons.has("conflicting_history"), true, "the survivors report the conflicting history")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "the match ends instead of freezing divergent values")
+		context.equal(mesh.peers[survivor].status().reason, Types.Code.PROTOCOL_FAILED, "the terminal cause is the conflicting history")
+
+
+## A stale operation, a stale era and a commit without a certificate change nothing.
+func _stale_messages(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	var injections: Array[Dictionary] = [
+		{"to": 1, "from": 0, "fields": {"phase": 1, "operation": 0, "target_set_digest": 0, "cut": 2}},
+		{"to": 1, "from": 0, "fields": {"phase": 1, "operation": 1, "cut": 2, "data": PackedByteArray([2, 99, 0])}},
+		{"to": 1, "from": 0, "fields": {"phase": 4, "operation": 1, "cut": 2, "cut_digest": 5}},
+	]
+	_detect(context, mesh, [0, 1], 600000, true, [], injections)
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the first survivor publishes the drop")
+	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
+	context.equal(mesh.unconfirmed, 0, "the stale messages change no agreement")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the stale messages")

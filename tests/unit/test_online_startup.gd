@@ -113,7 +113,7 @@ func _early_validation(context: RefCounted) -> void:
 			message.operation = 1
 			message.cut = 0
 			message.bound = 0
-			message.data = PackedByteArray([0])
+			message.data = PackedByteArray([0, 0, 0])
 		var encoded: Protocol.Result = Codec.encode(message, Protocol.Limits.new())
 		context.equal(encoded.code, Protocol.Code.OK, "control fixture valid kind=%d" % kind)
 		context.equal(receiver.peer.receive(encoded.bytes, profile.sender_id, 3), Match.Inputs.Code.OK, "valid early control discarded without handshake barrier kind=%d" % kind)

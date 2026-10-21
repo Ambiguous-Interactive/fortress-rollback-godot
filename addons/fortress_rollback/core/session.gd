@@ -241,6 +241,26 @@ func frozen_frame(player: int) -> int:
 	return _frozen_frames[player]
 
 
+## Freeze a dropped slot with an explicit certified value. The value replaces the
+## retained row, so a survivor that already released the row still freezes on the
+## same bytes as the other survivors.
+func freeze_player_with_value(player: int, frame: int, bytes: PackedByteArray) -> int:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return code
+	if _config == null or player < 0 or player >= _queues.size() or player in _config.local_players:
+		return Code.INVALID_PLAYER
+	if not bytes is PackedByteArray or bytes.size() != _config.input_width:
+		return Code.INPUT_WIDTH
+	if _frozen_frames[player] != -1:
+		return Code.OK
+	var result: int = _queues[player].freeze_with_value(frame, bytes)
+	if result != Queue.Code.OK:
+		return Code.INPUT_FAILED
+	_frozen_frames[player] = frame
+	return Code.OK
+
+
 ## The global rollback floor: frames below it are no longer retained by any queue.
 func rollback_floor() -> int:
 	if _config == null:
