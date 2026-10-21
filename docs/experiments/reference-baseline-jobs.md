@@ -40,6 +40,37 @@ The duplicated exported web probe is gone: `godot_smoke.py --web` runs in the
 engine probes because its upstream trace comparison needs the pinned editor.
 The four `Godot ...` jobs sum to 23.0 minutes of the 68.2 minutes.
 
+## Warm runs of the recent main line
+
+The spread between warm runs of the recent main line is wider than the
+remaining gap to the target, so one run is not a baseline. The table lists the
+last eight `main` runs with the commit each one ran. They are eight different
+commits, so the spread mixes machine noise with the tree changes between them.
+
+| Run | Commit | Cache | Summed job time |
+| --- | --- | --- | --- |
+| 39527781430 | 7ca07ec | warm | 68.2 min |
+| 39514898835 | cc1ae3a | warm | 68.2 min |
+| 39492851106 | 33bfa1c | warm | 70.4 min |
+| 39477990792 | 508ac91 | warm | 71.7 min |
+| 39383559398 | 86a5b99 | warm | 64.5 min |
+| 39374317270 | 0502dd5 | warm | 67.0 min |
+| 39372426632 | 22af4ee | warm | 73.2 min |
+| 39355664025 | 39d20ea | cold | 76.1 min |
+
+The warm runs measure 64.5 to 73.2 minutes. A later change compares against
+this spread, not against the fastest or the slowest run.
+
+The table is recomputed from the public run records:
+
+```sh
+for run in 39527781430 39514898835 39492851106 39477990792 \
+           39383559398 39374317270 39372426632 39355664025; do
+  gh run view "$run" --json jobs --jq '[.jobs[] |
+    ((.completedAt | fromdate) - (.startedAt | fromdate))] | add / 60'
+done
+```
+
 ## What dominates each job
 
 | Job family | Work that dominates the wall time |
@@ -49,6 +80,29 @@ The four `Godot ...` jobs sum to 23.0 minutes of the 68.2 minutes.
 | `Native and Chromium snapshot ownership` | The ownership probe exports the project twice per engine and replays every recorded case in the browser |
 | `Godot ... suites` and `... oracles` | The native suites in the suites leg and the upstream traces in the oracles leg, plus the exported representation and protocol probes that the suites leg runs once per engine |
 | `Pinned Rust reference` | The pinned upstream build and its own test run |
+
+The browser jobs carry 55.3 of the 68.2 minutes of run `39527781430`, or 81
+percent. The step records of that run name the dominant work:
+
+| Step family | Measured time | Source |
+| --- | --- | --- |
+| `Verify real browser WebRTC on the pinned engine` | 18.1 min over four jobs | the job records of run `39527781430` |
+| `Verify integer encoding, snapshot ownership and byte sessions` | 4.8 min | the ownership job record and the `ownership.json` receipt |
+| `Play the shipped online example in two independent browsers` | 2.3 min | the online job record |
+| `Verify native relay and late-event controls` | 3.2 to 3.9 min | the online job record |
+| `Verify runner failure controls and fresh-process suites` | 4.7 to 5.9 min | the suites job record |
+
+Inside the browser work, the measured label times are 82 to 114 s for each of
+the three mixed-path labels, 74 to 85 s for each direct-path label, 285 s for
+the four ownership rounds and 91 s for the online browser flow. Each mixed or
+direct label runs three rooms, one for two, four and eight peers, and each
+room submits 40 frames per peer. The ownership rounds take 65 to 78 s each and
+export the project once per round. The receipts that carry these numbers are
+`signalfish-live-reference-results-4.7.2-mixed/signalfish-webrtc/signalfish-webrtc.json`,
+`signalfish-live-reference-results-4.7.2-direct/signalfish-webrtc/signalfish-webrtc.json`,
+`ownership-reference-results/ownership.json` and
+`signalfish-live-reference-results-4.7.2-online/online-example/online-example.json`
+of run `39527781430`.
 
 The dominant step of the `... online` row comes from the measured per-step
 durations in the `online-example.json` receipt of run `39527781430`: the

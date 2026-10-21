@@ -2,6 +2,7 @@ extends RefCounted
 
 const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Fixture = preload("res://tests/unit/test_spectator_session.gd")
@@ -19,6 +20,20 @@ class DrainingGame:
 		viewer.terminate(Types.Code.PROTOCOL_FAILED)
 		drain_counts.append(viewer.drain_events().size())
 
+
+
+
+func _key() -> PackedByteArray:
+	var key: PackedByteArray = PackedByteArray()
+	key.resize(32)
+	for value: int in range(32):
+		key[value] = value + 1
+	return key
+
+
+func _digest(config: Variant = null) -> PackedByteArray:
+	var agreed: Variant = config if config != null else Fixture.new()._config()
+	return Stream.configuration_digest(agreed, "seed-1", "rules-1")
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["confirmation_policy", "playback_events", "failure_events", "empty_end_and_reentry"])
@@ -120,7 +135,7 @@ func _failure_events(context: RefCounted) -> void:
 	var stream: RefCounted = preload("res://addons/fortress_rollback/core/spectator_stream.gd").new()
 	var identity: PackedByteArray = PackedByteArray()
 	identity.resize(32)
-	context.equal(stream.configure(Fixture.new()._config(), identity, 0, 100, 50), Types.Code.OK, "configure expiry fixture")
+	context.equal(stream.configure(Fixture.new()._config(), identity, _key(), _digest(), 0, 100, 128), Types.Code.OK, "configure expiry fixture")
 	var viewer: RefCounted = stream.playback_session()
 	context.equal(stream.receive_packet(stream.encode_row(0, Fixture.new()._row(0)), 0), Types.Code.OK, "accepted buffered row")
 	context.equal(stream.poll(100), Types.Code.PROTOCOL_FAILED, "host loss commits termination")

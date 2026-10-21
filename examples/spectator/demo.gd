@@ -44,11 +44,16 @@ func start() -> int:
 	# A local fixture identity; network integrations supply a fresh agreed lifetime.
 	var identity: PackedByteArray = PackedByteArray()
 	identity.resize(32)
-	code = stream.configure(config, identity, 0, 10000000, 256)
+	# The local fixture shares one key and one agreed configuration with the host.
+	# A network integration must replace this fixture key with a fresh shared secret.
+	var key: PackedByteArray = PackedByteArray()
+	key.resize(Stream.KEY_BYTES)
+	var digest: PackedByteArray = Stream.configuration_digest(config, "demo-seed", "demo-rules")
+	code = stream.configure(config, identity, key, digest, 0, 10000000, 256)
 	if code != Types.Code.OK:
 		return code
 	publisher = Publisher.new()
-	code = publisher.configure(host.loop.session, identity, 256)
+	code = publisher.configure(host.loop.session, identity, key, digest, 256)
 	if code != Types.Code.OK:
 		return code
 	viewer = stream.playback_session()

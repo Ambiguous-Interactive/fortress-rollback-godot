@@ -50,6 +50,37 @@ class Model:
 		played += 1
 
 
+
+
+func _key() -> PackedByteArray:
+	var key: PackedByteArray = PackedByteArray()
+	key.resize(32)
+	for value: int in range(32):
+		key[value] = value + 1
+	return key
+
+
+func _digest(config: Variant = null) -> PackedByteArray:
+	var agreed: Variant = config if config != null else Fixture.new()._config()
+	return Stream.configuration_digest(agreed, "seed-1", "rules-1")
+
+
+## A signed packet without its tag, so a test can change a field and sign it again.
+func _unsigned(packet: PackedByteArray) -> PackedByteArray:
+	var body: PackedByteArray = packet.slice(0, Stream.HEADER_BYTES - Stream.TAG_BYTES)
+	body.append_array(packet.slice(Stream.HEADER_BYTES))
+	return body
+
+
+## A row packet with a valid tag, built from the raw header and the row body.
+func _signed_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
+	var config: RefCounted = Fixture.new()._config()
+	var packet: PackedByteArray = Stream.encode_header(Stream.ROW, frame, config.player_count, config.input_width, _identity(), _digest())
+	for bytes: PackedByteArray in inputs:
+		packet.append_array(bytes)
+	return Stream.authenticate(packet, _key())
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(["bounded_delivery_model", "caller_bounded_catchup_model", "loss_and_conflict_model", "transcript_mutation_control"])
 
@@ -92,7 +123,7 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 	var host_game: TranscriptGame = TranscriptGame.new()
 	var host_driver: RefCounted = Driver.new(host, host_game)
 	var publisher: RefCounted = Publisher.new()
-	context.equal(publisher.configure(host, _identity(), 50), CODE.OK, label + " publisher configuration")
+	context.equal(publisher.configure(host, _identity(), _key(), _digest(), 128), CODE.OK, label + " publisher configuration")
 	# The fixture transport owns a finite twelve-row backlog, independently of host retention.
 	var packets: Array[PackedByteArray] = []
 	for frame: int in range(FRAMES):
@@ -108,7 +139,7 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 	var end: PackedByteArray = publisher.prepare_packet().bytes
 	context.equal(publisher.acknowledge_packet(end), CODE.OK, label + " transport owns end")
 	var stream: RefCounted = Stream.new()
-	context.equal(stream.configure(_config(capacity), _identity(), 0, 10000, 50), CODE.OK, label + " viewer configuration")
+	context.equal(stream.configure(_config(capacity), _identity(), _key(), _digest(), 0, 10000, 128), CODE.OK, label + " viewer configuration")
 	var viewer: RefCounted = stream.playback_session()
 	var game: TranscriptGame = TranscriptGame.new()
 	var driver: RefCounted = Driver.new(viewer, game)
@@ -177,7 +208,7 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 # Value: protects=caller catchup bound; fails_when=speed clamp or strict threshold is lost; why_new=seeded schedules use speed=capacity; seam=none
 func _caller_bounded_catchup_model(context: RefCounted) -> void:
 	var stream: RefCounted = Stream.new()
-	context.equal(stream.configure(_config(5), _identity(), 0, 10000, 50), CODE.OK, "catchup model configuration")
+	context.equal(stream.configure(_config(5), _identity(), _key(), _digest(), 0, 10000, 128), CODE.OK, "catchup model configuration")
 	var viewer: RefCounted = stream.playback_session()
 	var game: TranscriptGame = TranscriptGame.new()
 	var driver: RefCounted = Driver.new(viewer, game)
@@ -214,7 +245,7 @@ func _caller_bounded_catchup_model(context: RefCounted) -> void:
 func _loss_and_conflict_model(context: RefCounted) -> void:
 	for failure: String in ["deadline", "foreign", "conflict"]:
 		var stream: RefCounted = Stream.new()
-		context.equal(stream.configure(_config(3), _identity(), 0, 10, 50), CODE.OK, failure + " configuration")
+		context.equal(stream.configure(_config(3), _identity(), _key(), _digest(), 0, 10, 128), CODE.OK, failure + " configuration")
 		var viewer: RefCounted = stream.playback_session()
 		var game: TranscriptGame = TranscriptGame.new()
 		var driver: RefCounted = Driver.new(viewer, game)
@@ -223,8 +254,10 @@ func _loss_and_conflict_model(context: RefCounted) -> void:
 		context.equal(stream.receive_packet(stream.encode_keepalive(), 9), CODE.OK, "liveness does not supply rows")
 		context.equal(viewer.recommended_steps(), 0, "live gap remains unplayable")
 		if failure == "conflict":
-			var conflict: PackedByteArray = stream.encode_row(2, Fixture.new()._row(2))
-			conflict[48] ^= 1
+			# A conflicting row keeps a valid tag, so the conflict is detected as history, not as a forged packet.
+			var conflict: PackedByteArray = _signed_row(2, Fixture.new()._row(2))
+			conflict[Stream.HEADER_BYTES] ^= 1
+			conflict = Stream.authenticate(_unsigned(conflict), _key())
 			context.equal(stream.receive_packet(conflict, 10), CODE.PROTOCOL_FAILED, "conflict is terminal before expiry")
 		else:
 			if failure == "foreign":
@@ -244,17 +277,19 @@ func _transcript_mutation_control(context: RefCounted) -> void:
 	var totals: PackedInt64Array = PackedInt64Array()
 	for mutate: bool in [false, true]:
 		var stream: RefCounted = Stream.new()
-		context.equal(stream.configure(_config(3), _identity(), 0, 100, 50), CODE.OK, "mutation fixture configured")
+		context.equal(stream.configure(_config(3), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "mutation fixture configured")
 		var game: TranscriptGame = TranscriptGame.new()
 		var driver: RefCounted = Driver.new(stream.playback_session(), game)
 		var model: Model = Model.new()
 		for frame: int in range(2):
-			var packet: PackedByteArray = stream.encode_row(frame, Fixture.new()._row(frame))
+			var packet: PackedByteArray = _signed_row(frame, Fixture.new()._row(frame))
 			if mutate:
 				# Change actual encoded body bytes while preserving frame, identity and dimensions.
 				var replacement: Array[PackedByteArray] = Fixture.new()._row(1 - frame)
-				packet[48] = replacement[0][0]
-				packet[49] = replacement[1][0]
+				packet[Stream.HEADER_BYTES] = replacement[0][0]
+				packet[Stream.HEADER_BYTES + 1] = replacement[1][0]
+				# The host signs the changed row, so only the transcript comparison can detect it.
+				packet = Stream.authenticate(_unsigned(packet), _key())
 			context.equal(stream.receive_packet(packet, frame), CODE.OK, "well-formed temporal mutation reaches real decoder")
 			var empty: Array[Driver.LocalInput] = []
 			context.equal(driver.step(frame, empty).code, CODE.OK, "well-formed temporal mutation reaches real callback")

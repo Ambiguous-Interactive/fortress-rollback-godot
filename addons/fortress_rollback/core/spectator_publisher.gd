@@ -12,6 +12,8 @@ const Code = Types.Code
 var _host: Session
 var _source_config: RefCounted
 var _identity: PackedByteArray
+var _key: PackedByteArray
+var _digest: PackedByteArray
 var _players: int = 0
 var _width: int = 0
 var _next_frame: int = 0
@@ -21,10 +23,11 @@ var _finished: bool = false
 
 
 ## A fresh publisher starts from frame zero; later admission needs separate state transfer.
-func configure(host: Session, identity: PackedByteArray, max_packet_bytes: int) -> int:
+## The key authenticates every published packet; the digest binds the agreed match configuration.
+func configure(host: Session, identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, max_packet_bytes: int) -> int:
 	if _host != null and _host._mutation_code() == Code.BUSY:
 		return Code.BUSY
-	if host == null or host._config == null or identity.size() != 32:
+	if host == null or host._config == null or identity.size() != 32 or key.size() != Stream.KEY_BYTES or digest.size() != Stream.DIGEST_BYTES:
 		return Code.INVALID_CONFIGURATION
 	var code: int = host._mutation_code()
 	if code != Code.OK:
@@ -34,6 +37,8 @@ func configure(host: Session, identity: PackedByteArray, max_packet_bytes: int) 
 	_host = host
 	_source_config = host._config
 	_identity = identity.duplicate()
+	_key = key.duplicate()
+	_digest = digest.duplicate()
 	_players = host._config.player_count
 	_width = host._config.input_width
 	_next_frame = 0
@@ -82,15 +87,16 @@ func prepare_packet() -> Types.InputResult:
 		result.bytes = _packet.duplicate()
 		return result
 	if _end_frame == _next_frame:
-		_packet = _header(Stream.END, _end_frame)
+		_packet = _signed(_header(Stream.END, _end_frame))
 	elif _next_frame < status.current_frame and _next_frame <= status.confirmed_frame:
 		var inputs: Types.FrameInputs = _host.confirmed_inputs(_next_frame)
 		if inputs == null:
 			result.code = Code.PREDICTION_STALL if status.pending_rollback_frame >= 0 else Code.HISTORY_UNAVAILABLE
 			return result
-		_packet = _header(Stream.ROW, _next_frame)
+		var packet: PackedByteArray = _header(Stream.ROW, _next_frame)
 		for player: int in range(_players):
-			_packet.append_array(inputs.read(player).bytes)
+			packet.append_array(inputs.read(player).bytes)
+		_packet = _signed(packet)
 	else:
 		result.code = Code.PREDICTION_STALL
 		return result
@@ -124,7 +130,7 @@ func encode_keepalive() -> PackedByteArray:
 		return PackedByteArray()
 	if _end_frame >= 0 and _host.status().current_frame != _end_frame:
 		return PackedByteArray()
-	return _header(Stream.KEEPALIVE, 0)
+	return _signed(_header(Stream.KEEPALIVE, 0))
 
 
 ## Freeze the exclusive fully confirmed end, then publish retained rows before END.
@@ -147,4 +153,9 @@ func finish_host() -> int:
 
 
 func _header(kind: int, frame: int) -> PackedByteArray:
-	return Stream.encode_header(kind, frame, _players, _width, _identity)
+	return Stream.encode_header(kind, frame, _players, _width, _identity, _digest)
+
+
+## Every published packet carries the keyed tag that the viewer verifies.
+func _signed(packet: PackedByteArray) -> PackedByteArray:
+	return Stream.authenticate(packet, _key)

@@ -76,6 +76,27 @@ workflow did not run. Report actual Safari/device evidence separately from WebKi
 automation. Performance budgets come from repeated measurements of noise and
 reference hardware, not arbitrary portable-CI time thresholds.
 
+## One owner at a time on a development host
+
+The local test runner starts one process per suite. Its default worker count is
+the number of CPUs, so on a many core host `make test-godot` saturates the
+machine. A browser witness that runs at the same time then misses the two
+second production deadline, and its session ends with `PROTOCOL_FAILED`. That
+failure looks like a transport fault, but a scheduling pause causes it.
+
+`scripts/host_capacity.py` makes the ownership explicit. The host is one
+exclusive file lock, so exactly one process owns it. A probe that needs a
+responsive host takes the host before it starts, and the runner reads the
+owner before its parallel wave and runs that wave serially while another owner
+holds it. The runner takes the host of its own while its wave runs, so a
+witness that starts later waits for the host instead of competing for it. The
+operating system ends the lock with its owner, so the host of a process that
+is gone never blocks the next probe.
+
+The lock lives under the machine-local cache. A CI runner has its own machine,
+so its jobs never share the host: the gate jobs keep their parallelism and
+their gates.
+
 ## Seeds and repeatability
 
 Use explicit fixed seeds in the PR corpus. Exploring jobs record each seed and

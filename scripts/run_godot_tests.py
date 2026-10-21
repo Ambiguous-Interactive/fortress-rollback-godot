@@ -16,7 +16,9 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from engine_path import resolve_engine  # noqa: E402
+import host_capacity  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
@@ -28,6 +30,8 @@ DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
 # Seconds per suite from earlier runs. It only orders shards, so a stale or missing file is harmless.
 DURATIONS = ROOT / ".cache/tests/durations.json"
 ENGINE_ERROR = re.compile(r"(?m)^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)")
+# The lease names this runner as the owner of the development host's CPU capacity.
+LEASE_NAME = "godot-tests"
 
 
 def validate_result(value: object) -> dict:
@@ -295,7 +299,21 @@ def main(argv: list[str] | None = None) -> int:
             return 0
     suites = sorted(args.suite) or discover(args.category)
     durations = load_durations(args.durations)
-    if args.jobs > 1:
+    # Take the development host for this run. Another owner means a browser witness needs a
+    # responsive host, so this run stays serial: it does not split slow suites into one
+    # process per case, and it runs one process at a time.
+    host_capacity.acquire(LEASE_NAME)
+    lease_holder = host_capacity.holder()
+    shared_host = lease_holder != LEASE_NAME
+    if shared_host:
+        print(json.dumps({"host_capacity_lease": lease_holder, "jobs": 1}), file=sys.stderr)
+        args.jobs = 1
+    if shared_host:
+        # One process per suite, one suite at a time. Every suite keeps its own watchdog, so a
+        # slow suite cannot time out the whole run, and no suite is split into one process per case.
+        keys = [(suite, None) for suite in suites]
+        shards = [command + ["--suite", suite] for suite in suites]
+    elif args.jobs > 1:
         slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
         cases = split_cases(command, slow, args.timeout) if slow else {}
         # Shards stay in suite order, then inventory order, so merged records match one process.
@@ -323,11 +341,15 @@ def main(argv: list[str] | None = None) -> int:
             return durations.get(suite + "::" + case, durations.get(suite, math.inf)) if case else durations.get(suite, math.inf)
         order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
         pending = [[None] * len(shards), [None] * len(shards)]
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            for index in order:
-                for repetition in pending:
-                    repetition[index] = pool.submit(timed, shards[index], args.timeout)
-            completed = [[future.result() for future in repetition] for repetition in pending]
+        # The wave keeps the development host, so a witness that starts later waits for it.
+        try:
+            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+                for index in order:
+                    for repetition in pending:
+                        repetition[index] = pool.submit(timed, shards[index], args.timeout)
+                completed = [[future.result() for future in repetition] for repetition in pending]
+        finally:
+            host_capacity.release()
         runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
         if not args.filter and args.jobs > 1:
             times = [max(completed[0][index][1], completed[1][index][1]) for index in range(len(keys))]
