@@ -171,11 +171,24 @@ static func _write_body(writer: StreamPeerBuffer, message: T.Message) -> void:
 					writer.put_32(frame)
 		T.Kind.DROP_BARRIER:
 			writer.put_u8(message.phase)
+			writer.put_u8(message.stage)
+			writer.put_u8(message.reason)
+			writer.put_u8(0)
+			writer.put_u16(message.coordinator)
+			writer.put_u16(message.coordinator_generation)
 			writer.put_u32(message.operation)
+			writer.put_u64(message.target_set_digest)
 			writer.put_32(message.cut)
 			writer.put_32(message.bound)
-			writer.put_u8(message.data.size())
+			writer.put_32(message.available_through)
+			writer.put_u64(message.cut_digest)
+			writer.put_u16(message.chunk_index)
+			writer.put_u16(message.chunk_count)
+			writer.put_u16(0)
+			writer.put_u32(message.data.size())
 			writer.put_data(message.data)
+			writer.put_u32(message.bytes.size())
+			writer.put_data(message.bytes)
 
 
 static func _read_config(reader: Reader) -> T.Config:
@@ -234,14 +247,34 @@ static func _read_body(reader: Reader, message: T.Message, limits: T.Limits) -> 
 					message.floors.append(reader.number(4, true))
 		T.Kind.DROP_BARRIER:
 			message.phase = reader.number(1)
-			message.operation = reader.number(4)
-			message.cut = reader.number(4, true)
-			message.bound = reader.number(4, true)
-			var slots: int = reader.number(1)
-			if slots < 1 or slots > limits.player_count:
+			message.stage = reader.number(1)
+			message.reason = reader.number(1)
+			if reader.number(1) != 0:
 				reader.valid = false
 				return
-			message.data = reader.take(slots)
+			message.coordinator = reader.number(2)
+			message.coordinator_generation = reader.number(2)
+			message.operation = reader.number(4)
+			message.target_set_digest = reader.number(8)
+			message.cut = reader.number(4, true)
+			message.bound = reader.number(4, true)
+			message.available_through = reader.number(4, true)
+			message.cut_digest = reader.number(8)
+			message.chunk_index = reader.number(2)
+			message.chunk_count = reader.number(2)
+			if reader.number(2) != 0:
+				reader.valid = false
+				return
+			var targets: int = reader.number(4)
+			if targets < 0 or targets > limits.max_packet_bytes:
+				reader.valid = false
+				return
+			message.data = reader.take(targets)
+			var payload: int = reader.number(4)
+			if payload < 0 or payload > limits.max_packet_bytes:
+				reader.valid = false
+				return
+			message.bytes = reader.take(payload)
 
 
 static func _read_input(reader: Reader, message: T.Message, limits: T.Limits) -> void:

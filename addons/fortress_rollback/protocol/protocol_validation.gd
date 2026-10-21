@@ -118,18 +118,44 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 					return -1
 			return 5 + 4 * message.floors.size()
 		T.Kind.DROP_BARRIER:
-			if message.phase < 1 or message.phase > 3:
+			if message.phase < 1 or message.phase > 5:
+				return -1
+			if message.stage < 0 or message.stage > 4:
+				return -1
+			if message.reason < 0 or message.reason > 255:
+				return -1
+			if message.coordinator < 0 or message.coordinator > 65535:
+				return -1
+			if message.coordinator_generation < 0 or message.coordinator_generation > 65535:
 				return -1
 			if message.operation < 0 or message.operation > 4294967295:
 				return -1
-			if not frame(message.cut) or not frame(message.bound):
+			if message.target_set_digest < 0 or message.cut_digest < 0:
 				return -1
-			if message.data.is_empty() or message.data.size() > bounds.player_count:
+			if not frame(message.cut) or not frame(message.bound) or not frame(message.available_through):
 				return -1
-			var previous_slot: int = -1
-			for slot: int in message.data:
-				if slot <= previous_slot or slot >= bounds.player_count:
-					return -1
-				previous_slot = slot
-			return 14 + message.data.size()
+			if message.chunk_index < 0 or message.chunk_index > 65535:
+				return -1
+			if message.chunk_count < 0 or message.chunk_count > 64:
+				return -1
+			if message.bytes.size() > 4096:
+				return -1
+			if not _targets(message.data, bounds.player_count):
+				return -1
+			return 54 + message.data.size() + message.bytes.size()
 	return -1
+
+
+## The barrier's target list: a bounded count of strictly increasing slots, each with its era.
+static func _targets(data: PackedByteArray, player_count: int) -> bool:
+	if data.is_empty() or data.size() % 3 != 0:
+		return false
+	var previous: int = -1
+	var index: int = 0
+	while index < data.size():
+		var slot: int = data[index]
+		if slot <= previous or slot >= player_count:
+			return false
+		previous = slot
+		index += 3
+	return true

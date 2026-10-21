@@ -67,6 +67,17 @@ class Message:
 	var operation: int = 0
 	var cut: int = -1
 	var bound: int = -1
+	## The coordinated drop barrier carries the pinned operation identity, the
+	## certificate stage and the frozen value's digest.
+	var stage: int = 0
+	var coordinator: int = 0
+	var coordinator_generation: int = 0
+	var target_set_digest: int = 0
+	var cut_digest: int = 0
+	var available_through: int = -1
+	var chunk_index: int = 0
+	var chunk_count: int = 0
+	var bytes: PackedByteArray = PackedByteArray()
 
 
 class Result:

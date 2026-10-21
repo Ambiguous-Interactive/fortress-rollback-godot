@@ -432,11 +432,19 @@ the survivors keep playing and reports a disconnected input status. The
 survivors now agree that frame first: the survivor that owns the lowest
 surviving slot proposes the cut, every other survivor answers with the frame
 window it can still freeze, and the proposer commits the frame all of them can
-retain, so the survivors keep one confirmed history. The match holds while the
-barrier runs and a barrier that cannot agree falls back to the survivor's own
-frontier with a recorded reason. The pinned prepare, backfill, certificate and
-commit barrier and its all-survivor certificate remain open in
-[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
+retain, so the survivors keep one confirmed history. The survivors also certify
+the value they freeze on: every survivor answers with the frame through which
+it retains the departed slot's inputs, the proposer sends the frozen value to
+the survivors that already released it in bounded chunks, and every survivor
+certifies the frame and the digest of that value before the irreversible commit.
+A certificate that names another value ends the match with a recorded reason
+instead of freezing divergent values. The match holds while the barrier runs
+and a barrier that cannot agree falls back to the survivor's own frontier with
+a recorded reason. The pinned prepare, backfill, certificate and commit barrier
+and its all-survivor certificate remain open in
+[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
+and its live witness in
+[#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 Hot join uses reserved/dropped slots with fixed player cardinality,
 bounded session-bound snapshot transfer and agreed activation frames.
 It must not infer admission from SignalFish reconnection alone.

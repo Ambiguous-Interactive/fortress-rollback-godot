@@ -107,20 +107,47 @@ itself, so one peer cannot drop a live peer. The match holds while the barrier
 runs: the survivors stop advancing, so the frames the cut needs stay retained.
 `drop_barrier_timeout_us` bounds that hold.
 
-Every survivor then freezes the departed slot at the same frame and repeats the
-same value, so the survivors keep one confirmed history instead of splitting at
-their own frontiers. The barrier publishes `peer_drop_pending` when it starts
-and `peer_dropped` with the agreed frame when it commits. A barrier that cannot
-agree - no common frame window, a timeout, or a commit outside the survivor's
-window - publishes `peer_drop_unconfirmed` and falls back to the survivor's own
-confirmed frontier, which is the graceful drop of the pinned source. That
-fallback keeps the match running but leaves the survivors on their own
-frontiers, so the mesh checksum comparison can still report a disagreement as a
-desync.
+The survivors then certify the value they freeze on. Every survivor answers
+the proposal with its own window and with the frame through which it still
+retains the departed slot's inputs. The proposer selects the agreed frame from
+those windows, reads the departed slot's value at that frame and sends it as
+the final candidate. A survivor that still holds the row computes the digest of
+its own value; a survivor that already released the row receives the value in
+bounded backfill chunks and checks the received bytes against the certified
+digest. Every survivor then certifies the frame and the digest, and the
+proposer commits only after every survivor certified the same pair. The commit
+is irreversible and freezes the departed slot at the certified frame, so the
+survivors keep one confirmed history and one frozen value instead of splitting
+at their own frontiers.
 
-The barrier is a Godot-scoped tier. The pinned source keeps its coordinated drop
-in a different byte layout with a prepare, backfill, certificate and commit
-barrier, so the remaining upstream acceptance stays open. See
+The barrier refuses a stale operation, a prepare of another connected era, a
+duplicated certificate and a commit that arrives without the local
+certificate. A certificate that names another value ends the match with
+`peer_drop_unconfirmed` and the reason `conflicting_history`, because the
+survivors would otherwise freeze different values for the same frame.
+
+Every field that decides the agreement is derived locally. The target set, the
+connected eras and the coordinator are re-derived from the roster, so a peer
+that does not own the lowest surviving slot cannot propose and a message that
+names another target set is refused. The digest of the frozen value is a
+consistency check between the survivors, not an integrity primitive.
+
+The barrier publishes `peer_drop_pending` when it starts and `peer_dropped`
+with the agreed frame when it commits. A barrier that cannot agree - no common
+frame window, a timeout, or a commit outside the survivor's window - publishes
+`peer_drop_unconfirmed` and falls back to the survivor's own confirmed
+frontier, which is the graceful drop of the pinned source. That fallback keeps
+the match running but leaves the survivors on their own frontiers, so the mesh
+checksum comparison can still report a disagreement as a desync.
+
+The barrier is a Godot-scoped tier. It carries the pinned source's operation
+identity, its prepare, its inventory report, its backfill, its all-survivor
+certificate and its irreversible commit, but it keeps its own byte layout and
+its own rule for choosing the frame: the pinned source lets every participant
+derive the cut from the inventory reports, while the Godot tier's proposer
+owns the selection and sends the final candidate. The pinned source's
+all-survivor certificate over a participant list, its retransmission journal
+and its live witness stay open. See
 [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
 

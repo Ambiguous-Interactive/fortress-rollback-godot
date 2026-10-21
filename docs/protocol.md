@@ -91,20 +91,27 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 9 | `GOODBYE` | reason:u8 |
 | 10 | `FLOOR_REQUEST` | round_seq:u32 |
 | 11 | `FLOOR_REPLY` | round_seq:u32, count:u8, floors[count]:i32, nullable |
-| 12 | `DROP_BARRIER` | phase:u8, operation:u32, cut:i32, nullable, bound:i32, nullable, slot_count:u8, slots[slot_count] |
+| 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, reserved:u16, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
 Parsing a feature bit does not enable its behavior. `GOODBYE.reason` preserves
 all u8 values; policy maps known reasons and handles unknown reasons explicitly.
 
 `DROP_BARRIER` carries the coordinated drop of a departed peer. Its phase is
-`1` for the proposal, `2` for a survivor's answer and `3` for the agreed
-commit. Its operation identifies the barrier, its cut is the frame the sender
-proposes or accepts, its bound is the oldest frame the sender can still freeze
-and its slot list names the departed peer's slots in increasing order. The
-barrier is a Godot-scoped tier: the pinned source keeps its coordinated drop in
-a different byte layout, so the eleven pinned kinds keep the golden fixtures
-and this kind has its own round-trip and rejection coverage.
+`1` for the prepare, `2` for a survivor's report, `3` for the backfill of the
+frozen value, `4` for the commit and `5` for the abort. Its stage is `1` for
+an inventory report, `2` for a certificate and `3` for the committed
+acknowledgement. The operation identity names the coordinator slot, the
+coordinator's connected era, the operation sequence and the digest of the
+target set; an older identity never joins the agreement. The cut is the frame
+the sender proposes or accepts, the bound is the oldest frame the sender can
+still freeze and `available_through` is the frame through which the sender
+still retains the departed slot's inputs. The target list names the departed
+peer's slots in increasing order, each with its connected era, and the value
+bytes carry one bounded chunk of the frozen value. The barrier is a Godot-scoped
+tier: the pinned source keeps its coordinated drop in a different byte layout,
+so the eleven pinned kinds keep the golden fixtures and this kind has its own
+round-trip and rejection coverage.
 
 An input packet carries at least one complete frame and one slot. `players`
 contains strictly increasing, unique slot indices in the fixed roster.

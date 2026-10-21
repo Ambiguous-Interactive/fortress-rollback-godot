@@ -73,8 +73,19 @@ static func project(message: T.Message) -> Dictionary:
 			record["operation"] = message.operation
 			record["cut"] = message.cut
 			record["bound"] = message.bound
+			record["stage"] = message.stage
+			record["coordinator"] = message.coordinator
+			record["coordinator_generation"] = message.coordinator_generation
+			record["target_set_digest"] = message.target_set_digest
+			record["cut_digest"] = message.cut_digest
+			record["available_through"] = message.available_through
+			record["chunk_index"] = message.chunk_index
+			record["chunk_count"] = message.chunk_count
 			var slots: Array[int] = []
-			for slot: int in message.data:
-				slots.append(slot)
+			var index: int = 0
+			while index < message.data.size():
+				slots.append(message.data[index])
+				index += 3
 			record["slots"] = slots
+			record["bytes"] = message.bytes.hex_encode()
 	return record

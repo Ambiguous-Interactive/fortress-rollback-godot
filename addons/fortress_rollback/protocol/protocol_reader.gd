@@ -28,5 +28,7 @@ func number(width: int, signed_value: bool = false) -> int:
 			return stream.get_16() if signed_value else stream.get_u16()
 		4:
 			return stream.get_32() if signed_value else stream.get_u32()
+		8:
+			return stream.get_64() if signed_value else stream.get_u64()
 	valid = false
 	return 0
