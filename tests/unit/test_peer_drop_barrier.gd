@@ -14,7 +14,9 @@ const Game = preload("res://tests/oracle/p2p_game.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "codec_round_trip"])
+	return PackedStringArray(
+		["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "second_departure", "codec_round_trip"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -27,6 +29,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_held_match(context)
 		"unconfirmed_fallback":
 			_unconfirmed_fallback(context)
+		"second_departure":
+			_second_departure(context)
 		"codec_round_trip":
 			_codec_round_trip(context)
 	context.finish()
@@ -46,13 +50,13 @@ func _sample(player: int, frame: int) -> PackedByteArray:
 	return bytes
 
 
-## Three peers with the lifecycle enabled, so a silent peer is detected by the timeout.
-func _build(context: RefCounted, behavior: int, window: int = 8) -> Dictionary:
+## Peers with the lifecycle enabled, so a silent peer is detected by the timeout.
+func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
-	for player: int in range(3):
+	for player: int in range(count):
 		var config: Config = Config.new()
-		config.player_count = 3
+		config.player_count = count
 		config.local_players = PackedInt32Array([player])
 		config.input_width = 4
 		config.neutral_input = PackedByteArray([0, 0, 0, 0])
@@ -69,13 +73,16 @@ func _build(context: RefCounted, behavior: int, window: int = 8) -> Dictionary:
 		local.sender_id = _id(player)
 		local.connection_id = _id(player + 20)
 		local.session_id = _id(90, 16)
-		local.config.player_count = 3
+		local.config.player_count = count
 		local.config.input_width = 4
 		local.config.input_delay = 0
 		local.config.max_prediction = window
 		local.config.desync_interval = 60
 		local.config.neutral_input = config.neutral_input.duplicate()
-		local.config.roster = [_id(0), _id(1), _id(2)]
+		var roster: Array[PackedByteArray] = []
+		for slot: int in range(count):
+			roster.append(_id(slot))
+		local.config.roster = roster
 		var handshake: H.Options = H.Options.new()
 		handshake.roundtrips = 1
 		var input: I.Options = I.Options.new()
@@ -86,7 +93,7 @@ func _build(context: RefCounted, behavior: int, window: int = 8) -> Dictionary:
 		controls.keepalive_interval_us = 1000
 		controls.quality_report_interval_us = 1000
 		controls.disconnect_behavior = behavior
-		var game: RefCounted = Game.new(3)
+		var game: RefCounted = Game.new(count)
 		var peer: Peer = Peer.new()
 		context.equal(peer.configure(config, local, game, handshake, input, controls), I.Code.OK, "configure mesh")
 		peers.append(peer)
@@ -99,7 +106,7 @@ func _build(context: RefCounted, behavior: int, window: int = 8) -> Dictionary:
 		tokens.append(peer_tokens)
 	for index: int in range(peers.size()):
 		context.equal(peers[index].begin(0, tokens[index]), I.Code.OK, "begin mesh")
-	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0}
+	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "cuts": {}, "unconfirmed": 0, "count": count}
 	for iteration: int in range(6):
 		_deliver(context, mesh, _drain(mesh))
 	return mesh
@@ -187,24 +194,24 @@ func _detect(context: RefCounted, mesh: Dictionary, survivors: Array[int], elaps
 				continue
 			packets.append(packet)
 		if not deliver_acks:
-			packets = _without_acks(packets)
+			packets = _without_acks(packets, mesh.count)
 		_deliver(context, mesh, packets)
 
 
 ## The answer of a survivor carries the answer phase of the coordinated drop.
-func _without_acks(packets: Array[Dictionary]) -> Array[Dictionary]:
+func _without_acks(packets: Array[Dictionary], count: int) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for packet: Dictionary in packets:
-		var decoded: T.Result = Codec.decode(packet.bytes, _limits())
+		var decoded: T.Result = Codec.decode(packet.bytes, _limits(count))
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == 2:
 			continue
 		result.append(packet)
 	return result
 
 
-func _limits() -> T.Limits:
+func _limits(count: int = 3) -> T.Limits:
 	var limits: T.Limits = T.Limits.new()
-	limits.player_count = 3
+	limits.player_count = count
 	limits.input_width = 4
 	limits.max_packet_bytes = 65536
 	limits.max_input_frames = 128
@@ -309,6 +316,24 @@ func _unconfirmed_fallback(context: RefCounted) -> void:
 	_detect(context, mesh, [0, 1], 800000, false)
 	context.equal(mesh.cuts.size() > 0, true, "the survivors still keep the match running")
 	context.equal(mesh.unconfirmed > 0, true, "the survivors report the missing agreement")
+
+
+## A departure after the owner of the lowest slot left still agrees one frame.
+func _second_departure(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4)
+	_play(context, mesh, 6, true)
+	# The owner of the lowest slot leaves first, so the next departure has no owner of
+	# the lowest surviving slot among the peers that are still in the match.
+	_leave(context, mesh, 0)
+	_detect(context, mesh, [1, 2, 3])
+	_leave(context, mesh, 1)
+	_detect(context, mesh, [2, 3], 800000)
+	var cuts: Array[int] = _cuts(mesh, [2, 3])
+	context.equal(cuts[0] >= 0, true, "the second survivor publishes the drop")
+	context.equal(cuts[1], cuts[0], "the remaining survivors freeze the same frame")
+	context.equal(mesh.unconfirmed, 0, "both departures agree without a fallback")
+	for survivor: int in [2, 3]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives both departures")
 
 
 ## The barrier message keeps its phase, operation, window and slot list on the wire.

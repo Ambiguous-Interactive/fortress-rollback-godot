@@ -148,13 +148,20 @@ func service(host: Variant, now_us: int) -> void:
 		if barrier.sent_us < 0 or now_us - barrier.sent_us >= RETRY_US:
 			_send(host, barrier, Phase.PROPOSE if barrier.role == Role.PROPOSER else Phase.ACK)
 			barrier.sent_us = now_us
-		if barrier.role != Role.PROPOSER or barrier.answers.size() < _live_survivors(host):
+		if barrier.role != Role.PROPOSER:
 			continue
+		var live: int = 0
 		var cut: int = barrier.cut
 		var lower: int = barrier.lower
 		for identity: String in barrier.answers:
+			if is_gone(identity):
+				# A survivor that left after its answer does not hold the agreement back.
+				continue
+			live += 1
 			cut = mini(cut, int(barrier.answers[identity]["cut"]))
 			lower = maxi(lower, int(barrier.answers[identity]["bound"]))
+		if live < _live_survivors(host):
+			continue
 		if cut < lower:
 			# No frame is retained by every survivor, so they cannot freeze the same value.
 			_fail(host, barrier, "no_common_window")
@@ -265,12 +272,13 @@ func _live_survivors(host: Variant) -> int:
 
 
 ## The lowest surviving slot decides which survivor proposes the coordinated drop.
+## A peer that already left does not own a surviving slot, so it never proposes.
 func _lowest_slot(host: Variant, dropped: int) -> int:
 	var lowest: int = 2147483647
 	for slot: int in host._config.local_players:
 		lowest = mini(lowest, slot)
 	for index: int in range(host._ids.size()):
-		if index == dropped:
+		if index == dropped or is_gone(host._ids[index].hex_encode()):
 			continue
 		for slot: int in host._slots_by_peer[index]:
 			lowest = mini(lowest, slot)
