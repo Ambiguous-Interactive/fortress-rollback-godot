@@ -93,10 +93,12 @@ player's slot at the frame the mesh had confirmed, and the survivors keep
 playing. The frozen slot repeats the value confirmed at that frame, reports a
 `DISCONNECTED` input status and no longer holds the confirmed frontier back.
 Confirmed history before that frame never changes; the frames after it are
-resimulated with the frozen value. Every peer of a mesh must use the same
-policy. This is the graceful drop of the pinned source, not its coordinated
-drop barrier: the agreed frame is the mesh-confirmed frontier rather than an
-all-survivor certificate, so a coordinated drop remains open work. See
+resimulated with the frozen value. A departure before the mesh confirmed any
+frame ends the match, because there is no agreed value to freeze. Every peer of
+a mesh must use the same policy. This is the graceful drop of the pinned
+source, not its coordinated drop barrier: the agreed frame is the
+mesh-confirmed frontier rather than an all-survivor certificate, so a
+coordinated drop remains open work. See
 [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
 
