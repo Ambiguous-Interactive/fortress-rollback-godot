@@ -36,7 +36,9 @@ Every job in the matrix runs; no gate is optional.
 The table is the measured run as it stood. The duplicated exported web probe
 has since been removed: `godot_smoke.py --web` now runs in the `suites` leg
 only, once per pinned engine, so the next run measures a shorter `Godot ...
-oracles` job. These numbers are not re-measured yet.
+oracles` job. The `oracles` leg keeps the native engine probes because its
+upstream trace comparison needs the pinned editor. These numbers are not
+re-measured yet.
 
 ## What dominates each job
 

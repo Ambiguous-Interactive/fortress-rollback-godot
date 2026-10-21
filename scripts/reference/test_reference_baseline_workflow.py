@@ -115,6 +115,24 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertNotEqual(mutant, text)
         self.assertNotIn('scripts/oracle/launch.py', leg_commands(mutant, 'oracles'))
 
+    # Value: protects=the pinned engine of the oracle leg; fails_when=the oracle launchers lose it; seam=workflow text
+    def test_the_oracle_leg_still_installs_the_pinned_engine(self):
+        text = WORKFLOW.read_text(encoding='utf-8')
+        oracles = leg_commands(text, 'oracles')
+        # The oracle launchers run the pinned editor, so the native probes stay in this leg.
+        self.assertIn('scripts/reference/godot_smoke.py', oracles)
+        self.assertIn('--version "${{ matrix.version }}"', oracles)
+        self.assertNotIn('--web', oracles)
+        # The mutant moves the native probes out of the oracle leg and leaves it without an engine.
+        mutant = text.replace(
+            '      - name: Execute the native engine probes for the oracle launchers\n'
+            '        # The oracle launchers need the pinned engine, so this leg keeps the native probes\n'
+            '        # and leaves the exported web probe to the suites leg.\n'
+            '        if: matrix.part == \'oracles\'\n'
+            '        run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"\n', '')
+        self.assertNotEqual(mutant, text)
+        self.assertNotIn('scripts/reference/godot_smoke.py', leg_commands(mutant, 'oracles'))
+
     # Value: protects=the published artifacts of every leg; fails_when=the upload step disappears; seam=workflow text
     def test_every_leg_still_publishes_its_artifacts(self):
         uploads = [step for step in godot_steps(WORKFLOW.read_text(encoding='utf-8'))

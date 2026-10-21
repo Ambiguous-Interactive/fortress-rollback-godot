@@ -154,6 +154,11 @@ jobs:
         # suites leg owns them and the oracles leg keeps only its own native work.
         if: matrix.part == 'suites'
         run: python3 scripts/reference/godot_smoke.py --web --version "${{ matrix.version }}"
+      - name: Execute the native engine probes for the oracle launchers
+        # The oracle launchers need the pinned engine, so this leg keeps the native probes
+        # and leaves the exported web probe to the suites leg.
+        if: matrix.part == 'oracles'
+        run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"
       - name: Verify runner failure controls and fresh-process suites
         if: matrix.part == 'suites'
         run: |
