@@ -11,6 +11,9 @@ import zipfile
 
 from online_diagnostics import validate_download, validate_trace_history, game_checksum
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import host_capacity  # noqa: E402
+
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_runner import run_browser
 from godot_smoke import run
@@ -18,6 +21,9 @@ from signalfish_probe import inventory
 from wire import INPUT_HEADER
 
 DESYNC_REASON = 18
+# The witness owns the development host while it runs.
+HOST_LEASE_NAME = "online-witness"
+HOST_WAIT_SECONDS = 900.0
 # examples/online/match.gd schedules local input this many frames ahead of the current frame.
 INPUT_DELAY = 2
 
@@ -652,6 +658,11 @@ def validate_diagnostic_playback(output, trace):
 
 
 def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
+    # The browser witness needs a responsive host. It waits for a local probe to finish and then holds
+    # the host, so a native suite that starts meanwhile runs its wave serially instead of starving it.
+    if not host_capacity.wait_for_free(HOST_WAIT_SECONDS):
+        raise ValueError('the development host stayed busy; the online witness needs a responsive host')
+    host_capacity.acquire(HOST_LEASE_NAME)
     project, export = root / version, root / ('export-' + version)
     export.mkdir()
     timings = StepTimings()

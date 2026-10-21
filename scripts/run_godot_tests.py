@@ -16,7 +16,9 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from engine_path import resolve_engine  # noqa: E402
+import host_capacity  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
@@ -28,6 +30,8 @@ DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
 # Seconds per suite from earlier runs. It only orders shards, so a stale or missing file is harmless.
 DURATIONS = ROOT / ".cache/tests/durations.json"
 ENGINE_ERROR = re.compile(r"(?m)^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)")
+# The lease names this runner as the owner of the development host's CPU capacity.
+LEASE_NAME = "godot-tests"
 
 
 def validate_result(value: object) -> dict:
@@ -323,11 +327,21 @@ def main(argv: list[str] | None = None) -> int:
             return durations.get(suite + "::" + case, durations.get(suite, math.inf)) if case else durations.get(suite, math.inf)
         order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
         pending = [[None] * len(shards), [None] * len(shards)]
-        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            for index in order:
-                for repetition in pending:
-                    repetition[index] = pool.submit(timed, shards[index], args.timeout)
-            completed = [[future.result() for future in repetition] for repetition in pending]
+        # A live lease means a browser witness needs a responsive host, so this wave runs serially.
+        lease_holder = host_capacity.holder()
+        requested_jobs = args.jobs
+        args.jobs = host_capacity.worker_count(args.jobs)
+        if lease_holder and args.jobs != requested_jobs:
+            print(json.dumps({"host_capacity_lease": lease_holder, "jobs": args.jobs}), file=sys.stderr)
+        host_capacity.acquire(LEASE_NAME)
+        try:
+            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+                for index in order:
+                    for repetition in pending:
+                        repetition[index] = pool.submit(timed, shards[index], args.timeout)
+                completed = [[future.result() for future in repetition] for repetition in pending]
+        finally:
+            host_capacity.release(LEASE_NAME)
         runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
         if not args.filter and args.jobs > 1:
             times = [max(completed[0][index][1], completed[1][index][1]) for index in range(len(keys))]
