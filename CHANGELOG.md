@@ -4,6 +4,8 @@
 
 ### Added
 
+- Agree the frozen frame when a player leaves. With `disconnect_behavior = CONTINUE` and more than one survivor left, the survivors exchange their freezable frame windows and freeze the departed slot at one common frame, so they keep the same confirmed history instead of splitting at their own frontiers. The match holds while the survivors agree, the agreement is bounded by `drop_barrier_timeout_us`, and a barrier that cannot agree reports `peer_drop_unconfirmed` and falls back to the survivor's own frontier.
+
 - Negotiate the spectator envelope before the first row. The host offers the envelope version and the optional kinds it can publish, the viewer answers with the version it can speak, and the two sides refuse each other at startup with one recorded reason when they cannot agree. A viewer that only speaks version 1 now fails before it plays anything, and a host without an agreement publishes no row.
 
 - Authenticate the spectator byte envelope. Every packet now carries a keyed tag and the digest of the agreed match, so a viewer accepts only the host and the match it agreed with. The envelope version moves from 1 to 2.

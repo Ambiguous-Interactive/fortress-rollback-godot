@@ -241,6 +241,13 @@ func frozen_frame(player: int) -> int:
 	return _frozen_frames[player]
 
 
+## The global rollback floor: frames below it are no longer retained by any queue.
+func rollback_floor() -> int:
+	if _config == null:
+		return 0
+	return _floor()
+
+
 ## Owned actual bytes a local player scheduled for a retained frame, or empty when unavailable.
 func retained_local_input(player: int, frame: int) -> PackedByteArray:
 	if _config == null or player < 0 or player >= _queues.size() or player not in _config.local_players:

@@ -101,12 +101,19 @@ func _early_validation(context: RefCounted) -> void:
 	context.equal(endpoint._handshake.status().remote_connection.is_empty(), false, "received first reply freezes expected remote incarnation")
 	var profile: Protocol.Message = fixtures[0].driver.membership.handshake_message()
 	var kinds: Array[int] = [Protocol.Kind.INPUT_ACK, Protocol.Kind.QUALITY_REPORT, Protocol.Kind.QUALITY_REPLY,
-		Protocol.Kind.CHECKSUM_REPORT, Protocol.Kind.KEEP_ALIVE, Protocol.Kind.GOODBYE, Protocol.Kind.FLOOR_REQUEST, Protocol.Kind.FLOOR_REPLY]
+		Protocol.Kind.CHECKSUM_REPORT, Protocol.Kind.KEEP_ALIVE, Protocol.Kind.GOODBYE, Protocol.Kind.FLOOR_REQUEST, Protocol.Kind.FLOOR_REPLY,
+		Protocol.Kind.DROP_BARRIER]
 	for kind: int in kinds:
 		var message: Protocol.Message = fixtures[0].driver.membership.handshake_message()
 		message.kind = kind
 		message.frame = 0
 		message.floors = PackedInt32Array([-1, -1])
+		if kind == Protocol.Kind.DROP_BARRIER:
+			message.phase = 1
+			message.operation = 1
+			message.cut = 0
+			message.bound = 0
+			message.data = PackedByteArray([0])
 		var encoded: Protocol.Result = Codec.encode(message, Protocol.Limits.new())
 		context.equal(encoded.code, Protocol.Code.OK, "control fixture valid kind=%d" % kind)
 		context.equal(receiver.peer.receive(encoded.bytes, profile.sender_id, 3), Match.Inputs.Code.OK, "valid early control discarded without handshake barrier kind=%d" % kind)
