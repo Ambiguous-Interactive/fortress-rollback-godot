@@ -56,6 +56,7 @@ class Barrier:
 	var chunks: Dictionary = {}
 	var chunk_count: int = 0
 	var certified: bool = false
+	var acknowledged: Dictionary = {}
 	var adopted: bool = false
 	var sent_us: int = -1
 	var sent_digest: int = 0
@@ -164,6 +165,13 @@ func observed(host: Variant, index: int) -> bool:
 func service(host: Variant, now_us: int) -> void:
 	for key: String in _barriers.keys():
 		var barrier: Barrier = _barriers[key]
+		if barrier.state == COMMITTED:
+			if barrier.role == Role.PROPOSER and not _acknowledged_by_all(host, barrier):
+				# The commit is irreversible, so it is retried until every survivor
+				# acknowledges it. A lost commit must not leave a survivor behind.
+				if now_us - barrier.started_us < host._lifecycle.drop_barrier_timeout_us:
+					_retry(host, barrier, now_us, Phase.COMMIT)
+			continue
 		if barrier.state != PENDING:
 			continue
 		if now_us - barrier.started_us >= host._lifecycle.drop_barrier_timeout_us:
@@ -261,6 +269,10 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 		_retry(host, barrier, now_us, Phase.REPORT)
 		return
 	if barrier.certified:
+		# The certificate is retried until the proposer commits it.
+		if barrier.sent_us < 0 or now_us - barrier.sent_us >= RETRY_US:
+			barrier.sent_us = now_us
+			_send(host, barrier, Phase.REPORT, Stage.READY)
 		return
 	if barrier.value.is_empty():
 		barrier.value = _frozen_value(host, barrier, barrier.cut)
@@ -274,6 +286,7 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 		return
 	barrier.digest = digest
 	barrier.certified = true
+	barrier.sent_us = now_us
 	_send(host, barrier, Phase.REPORT, Stage.READY)
 
 
@@ -328,6 +341,9 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			# A duplicated certificate never counts twice.
 			return
 		barrier.certificates[identity] = {"cut": int(event.get("cut", -1)), "digest": int(event.get("cut_digest", 0))}
+		return
+	if stage == Stage.COMMITTED:
+		barrier.acknowledged[identity] = true
 
 
 ## The frozen value arrived in a bounded chunk.
@@ -461,7 +477,21 @@ func _fail(host: Variant, barrier: Barrier, reason: String) -> void:
 	if reason == "conflicting_history":
 		host._core.terminate(Types.Code.PROTOCOL_FAILED)
 		return
+	if barrier.certified:
+		# The survivor certified the frame and the value, so it freezes the same value
+		# as the other survivors even when the commit never arrived.
+		_freeze(host, barrier.index, barrier.cut, barrier.value)
+		return
 	_freeze(host, barrier.index, barrier.upper, PackedByteArray())
+
+
+## True when every survivor that still takes part in the match acknowledged the commit.
+func _acknowledged_by_all(host: Variant, barrier: Barrier) -> bool:
+	var live: int = 0
+	for identity: String in barrier.acknowledged:
+		if not is_gone(identity):
+			live += 1
+	return live >= _live_survivors(host)
 
 
 ## A conflicting history closes the operation and ends the match.
