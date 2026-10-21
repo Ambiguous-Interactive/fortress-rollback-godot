@@ -26,6 +26,7 @@
 | 7 | The online probe named no step durations, so the per-job table could not say which step dominated a job. | gap | `scripts/reference/online_example_probe.py` before the change did not import `time` and the receipt carried no step durations |
 | 8 | The ownership probe lost the diagnosis with the error: the browser error inventory and the case in flight only reached the log file. | gap | `scripts/reference/ownership_probes.py` before the change kept only `label` and `outcome` in the receipt |
 | 9 | A GDScript typed array rejects an array of arrays, so a fixture that collects one token list per peer silently produced invalid tokens and every `begin` failed with `INVALID_ARGUMENT`. | fact | `tests/unit/test_peer_drop.gd`: `var tokens: Array[PackedByteArray]` holding `Array[PackedByteArray]` values failed every `begin mesh` assertion until the outer array was untyped |
+| 10 | The engine probe also installs the pinned editor. Gating the whole probe to the suites leg took the engine with it, so the oracle leg had no engine and its upstream trace comparison failed. | bug | the current-head CI run: `ValueError: godot executable not found: .cache/reference/editors/4.7.2/Godot_v4.7.2-stable_linux.x86_64` in the `Godot 4.7.2 and Chromium oracles` job |
 
 ## Actions Taken
 
@@ -36,6 +37,7 @@
 | 3 | A later actual value schedules a correction, so the frames after the agreed frame are resimulated with the frozen value | `addons/fortress_rollback/core/input_queue.gd` | the frozen-value case asserts that every later frame repeats one value and reports a disconnected status |
 | 4 | The departed peer releases the shared checksum window and is skipped by the poll, submit, confirmation, checksum and teardown paths | `addons/fortress_rollback/core/peer_checksums.gd`, `addons/fortress_rollback/core/peer_session.gd` | the continued-match case |
 | 5 | The exported web probes run once per pinned engine, the online probe times every step and the ownership probe keeps its rejection diagnosis | `.github/workflows/reference-baseline.yml`, `scripts/reference/` | `scripts/reference/test_reference_baseline_workflow.py`, `scripts/reference/test_online_example_probe.py`, `scripts/reference/test_ownership_probes.py` |
+| 6 | The oracle leg keeps the native engine probes, because its upstream trace comparison needs the pinned editor, and a test now pins that dependency | `.github/workflows/reference-baseline.yml`, `scripts/reference/test_reference_baseline_workflow.py` | the new `test_the_oracle_leg_still_installs_the_pinned_engine` case and the current-head CI run |
 
 Routing: procedures -> `.llm/skills/`; facts -> `../skills/gdscript-style/`;
 external evidence -> none; invariants -> unchanged; tooling gaps -> the probe
