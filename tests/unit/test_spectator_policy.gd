@@ -132,10 +132,12 @@ func _playback_events(context: RefCounted) -> void:
 
 # Value: protects=immediate loss notification; fails_when=expiry or callbacks omit terminal cause; why_new=stream tests inspect status only; seam=none
 func _failure_events(context: RefCounted) -> void:
-	var stream: RefCounted = preload("res://addons/fortress_rollback/core/spectator_stream.gd").new()
+	var stream: RefCounted = Stream.new()
 	var identity: PackedByteArray = PackedByteArray()
 	identity.resize(32)
 	context.equal(stream.configure(Fixture.new()._config(), identity, _key(), _digest(), 0, 100, 128), Types.Code.OK, "configure expiry fixture")
+	var offer: PackedByteArray = Stream.encode_offer(identity, _digest(), 2, 1, _key())
+	context.equal(stream.receive_packet(offer, 0), Types.Code.OK, "agree the envelope before the first row")
 	var viewer: RefCounted = stream.playback_session()
 	context.equal(stream.receive_packet(stream.encode_row(0, Fixture.new()._row(0)), 0), Types.Code.OK, "accepted buffered row")
 	context.equal(stream.poll(100), Types.Code.PROTOCOL_FAILED, "host loss commits termination")

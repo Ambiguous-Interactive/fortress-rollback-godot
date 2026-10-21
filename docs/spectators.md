@@ -26,7 +26,8 @@ After the last frame, press N once more to report completion. R starts a fresh g
 A long viewer pause can exhaust retained host history. The viewer then stops
 with `HISTORY_UNAVAILABLE`; the host keeps playing. The example encodes and receives spectator byte packets
 in the same process, with an injected ten-second host deadline. It requires no server,
-SDK or native extension. The example sends keepalives on ticks without accepted rows,
+SDK or native extension. The example negotiates the envelope version before its
+first row and sends keepalives on ticks without accepted rows,
 including initial prediction and viewer backpressure.
 
 ![Local host and delayed spectator](images/spectator-example.png)
@@ -128,11 +129,27 @@ The local example uses this publisher for its byte delivery.
 const Publisher = preload("res://addons/fortress_rollback/core/spectator_publisher.gd")
 var publisher: Publisher = Publisher.new()
 var code: int = publisher.configure(host_session, agreed_identity, agreed_key, agreed_digest, 65536)
+# The startup exchange comes first.
+var offer: PackedByteArray = publisher.encode_offer()
+# Send the offer, then the viewer's answer:
+code = publisher.receive_accept(viewer_answer_bytes)
 var packet: Types.InputResult = publisher.prepare_packet()
 # On OK, pass packet.bytes to the transport.
 # Only after transport acceptance:
 code = publisher.acknowledge_packet(packet.bytes)
 ```
+
+`encode_offer()` returns one authenticated startup offer that names the envelope
+version and the optional kinds the host can publish. The viewer answers it with
+its own accept packet; `receive_accept()` validates that answer and records the
+agreement. The answer is authenticated with the shared key, so a peer cannot
+choose a weaker envelope without it. An answer that names another envelope
+version or an optional kind outside the offer is refused with `UNSUPPORTED`, and
+the host publishes no row afterwards. `agreement_state()`, `agreement_version()`,
+`agreement_kinds()` and `agreement_reason()` report the agreement and its one
+recorded refusal reason. Before the agreement, `prepare_packet()` returns
+`NOT_SYNCHRONIZED` and `encode_keepalive()` returns empty bytes: an unagreed
+host publishes nothing.
 
 `prepare_packet()` returns `PREDICTION_STALL` when no corrected confirmed row is
 available. On `OK`, the caller owns the returned bytes. Refusal needs no acknowledgement;
@@ -177,6 +194,10 @@ var stream: Stream = Stream.new()
 var digest: PackedByteArray = Stream.configuration_digest(config, "seed-1", "rules-1")
 var code: int = stream.configure(config, agreed_identity, agreed_key, digest, 0, 2000000, 65536)
 # Continue only on OK.
+# The startup exchange comes first:
+code = stream.receive_packet(host_offer_bytes, now_us)
+var answer: PackedByteArray = stream.encode_accept()
+# Send the answer to the host.
 var viewer: Spectator = stream.playback_session()
 code = stream.receive_packet(received_bytes, now_us)
 code = stream.poll(now_us)
@@ -217,9 +238,10 @@ Send it before the deadline when no row can be delivered, including confirmation
 stalls, game pauses, or viewer backpressure. Poll the viewer independently.
 
 ROW (kind 1), END (kind 2) and keepalive (kind 3) share the version 2 envelope.
-Version 2 replaces the unauthenticated version 1 bytes, so both sides must agree
-the version before a match starts. There is no capability negotiation and no
-downgrade path. Keepalive delivery requires the same key and lifetime as input rows.
+Version 2 replaces the unauthenticated version 1 bytes. The envelope version and
+the optional kinds are negotiated before the first row, so a peer that speaks
+another envelope fails at startup instead of at the first packet. Keepalive
+delivery requires the same key and lifetime as input rows.
 
 `receive_packet` validates lengths, version, dimensions, identity, configuration
 digest and tag before touching playback. Foreign or malformed packets, packets
@@ -243,6 +265,36 @@ a known unrecoverable gap. The caller owns transport closure.
 This envelope is separate from the player wire protocol. It supplies neither
 handshake negotiation, retransmission nor SignalFish spectator admission. Player
 rosters and player confirmation remain unchanged.
+
+## Negotiate the envelope before the first row
+
+The host offers the envelope version and the optional kinds it can publish with
+one `OFFER` packet (kind 4). The viewer answers with one `ACCEPT` packet (kind 5).
+Both packets carry the same 80-byte header, the same keyed tag and an eight-byte
+capability body: a u32 version mask and a u32 kind mask. The agreed envelope
+version is the version byte of the accepted packet.
+
+- The viewer accepts an offer when the offered kinds are known, carry the
+  mandatory row kind, and the two sides share at least one envelope version. It
+  answers with the highest shared version, so a host that offers several
+  versions is not forced onto a version the viewer cannot speak.
+- The host accepts an answer only when it names a version the host offered and
+  kinds inside the offer that keep the row kind.
+- A refusal is explicit and happens before any row is played. The viewer reports
+  `UNSUPPORTED` for another envelope version or an unknown optional kind, and
+  `PROTOCOL_FAILED` for a forged, foreign or malformed packet. The reason is
+  recorded in `agreement_reason()`, the agreement state becomes `REFUSED`, and
+  the viewer terminates, so a partial playback never starts.
+- The exchange is authenticated with the shared key, so an unauthenticated
+  exchange cannot move the agreement to a weaker envelope.
+- A retried offer repeats the same agreement. A different offer is a protocol
+  failure.
+
+`agreement_state()` reports `PENDING` before the exchange, `AGREED` after it and
+`REFUSED` after it fails. A row, an END or a keepalive that arrives before the
+agreement is refused with `NOT_SYNCHRONIZED`, and the publisher publishes no row
+before it. The version 1 bytes stay frozen: a change of the envelope version is
+a new envelope version with its own golden.
 
 ## Observe playback lifecycle
 
@@ -309,6 +361,15 @@ another agreed configuration digest, and a foreign identity, and none of them
 changes the accepted history or the host liveness clock. A conflicting row that
 keeps a valid tag still terminates the viewer, so the tag does not replace the
 history check.
+
+The startup exchange has its own negative controls. A version 1 peer is refused
+before any row is played: the viewer records `UNSUPPORTED` for the frozen
+version 1 bytes and for a version 1 offer, the host records `UNSUPPORTED` for a
+version 1 answer, and the viewer terminates without a partial playback. An
+offer that names an unknown optional kind is refused the same way. An offer
+signed with another key is a protocol failure and agrees nothing. A retried
+offer repeats the agreement and a different offer terminates the viewer. The
+version 2 row golden and its negative controls keep passing unchanged.
 
 An independent finite playback model checks 120 seeded byte-delivery schedules:
 queue capacities 2, 3 and 5, zero and maximum delay, duplicate and reordered rows,

@@ -81,6 +81,13 @@ func _signed_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
 	return Stream.authenticate(packet, _key())
 
 
+## One startup offer for a viewer that only encodes its own rows.
+func _agree(context: RefCounted, stream: RefCounted, label: String) -> void:
+	var config: RefCounted = Fixture.new()._config()
+	var offer: PackedByteArray = Stream.encode_offer(_identity(), _digest(), config.player_count, config.input_width, _key())
+	context.equal(stream.receive_packet(offer, 0), CODE.OK, label + " envelope agreement")
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(["bounded_delivery_model", "caller_bounded_catchup_model", "loss_and_conflict_model", "transcript_mutation_control"])
 
@@ -124,6 +131,9 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 	var host_driver: RefCounted = Driver.new(host, host_game)
 	var publisher: RefCounted = Publisher.new()
 	context.equal(publisher.configure(host, _identity(), _key(), _digest(), 128), CODE.OK, label + " publisher configuration")
+	var stream: RefCounted = Stream.new()
+	context.equal(stream.configure(_config(capacity), _identity(), _key(), _digest(), 0, 10000, 128), CODE.OK, label + " viewer configuration")
+	context.equal(Fixture.new().negotiate(publisher, stream), CODE.OK, label + " envelope agreement")
 	# The fixture transport owns a finite twelve-row backlog, independently of host retention.
 	var packets: Array[PackedByteArray] = []
 	for frame: int in range(FRAMES):
@@ -138,8 +148,6 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 	context.equal(publisher.finish_host(), CODE.OK, label + " freeze original history")
 	var end: PackedByteArray = publisher.prepare_packet().bytes
 	context.equal(publisher.acknowledge_packet(end), CODE.OK, label + " transport owns end")
-	var stream: RefCounted = Stream.new()
-	context.equal(stream.configure(_config(capacity), _identity(), _key(), _digest(), 0, 10000, 128), CODE.OK, label + " viewer configuration")
 	var viewer: RefCounted = stream.playback_session()
 	var game: TranscriptGame = TranscriptGame.new()
 	var driver: RefCounted = Driver.new(viewer, game)
@@ -209,6 +217,7 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 func _caller_bounded_catchup_model(context: RefCounted) -> void:
 	var stream: RefCounted = Stream.new()
 	context.equal(stream.configure(_config(5), _identity(), _key(), _digest(), 0, 10000, 128), CODE.OK, "catchup model configuration")
+	_agree(context, stream, "catchup model")
 	var viewer: RefCounted = stream.playback_session()
 	var game: TranscriptGame = TranscriptGame.new()
 	var driver: RefCounted = Driver.new(viewer, game)
@@ -246,6 +255,7 @@ func _loss_and_conflict_model(context: RefCounted) -> void:
 	for failure: String in ["deadline", "foreign", "conflict"]:
 		var stream: RefCounted = Stream.new()
 		context.equal(stream.configure(_config(3), _identity(), _key(), _digest(), 0, 10, 128), CODE.OK, failure + " configuration")
+		_agree(context, stream, failure)
 		var viewer: RefCounted = stream.playback_session()
 		var game: TranscriptGame = TranscriptGame.new()
 		var driver: RefCounted = Driver.new(viewer, game)
@@ -278,6 +288,7 @@ func _transcript_mutation_control(context: RefCounted) -> void:
 	for mutate: bool in [false, true]:
 		var stream: RefCounted = Stream.new()
 		context.equal(stream.configure(_config(3), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "mutation fixture configured")
+		_agree(context, stream, "mutation fixture")
 		var game: TranscriptGame = TranscriptGame.new()
 		var driver: RefCounted = Driver.new(stream.playback_session(), game)
 		var model: Model = Model.new()

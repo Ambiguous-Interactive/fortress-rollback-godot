@@ -62,6 +62,35 @@ func _spectator(context: RefCounted) -> RefCounted:
 	return session
 
 
+## A bounded player host configuration for the publisher side of the envelope exchange.
+func host_config() -> RefCounted:
+	var config: RefCounted = Config.new()
+	config.spectator = false
+	config.local_players = PackedInt32Array([0, 1])
+	config.sync_test = false
+	config.check_distance = 0
+	config.max_prediction_frames = 0
+	config.queue_capacity = 5
+	config.history_slots = 1
+	config.max_snapshot_bytes = 8
+	config.storage_budget_bytes = 65536
+	return config
+
+
+## One startup exchange between a host publisher and a viewer stream.
+func negotiate(publisher: RefCounted, stream: RefCounted, now_us: int = 0) -> int:
+	var offer: PackedByteArray = publisher.encode_offer()
+	if offer.is_empty():
+		return Types.Code.INVALID_CONFIGURATION
+	var code: int = stream.receive_packet(offer, now_us)
+	if code != Types.Code.OK:
+		return code
+	var accept: PackedByteArray = stream.encode_accept()
+	if accept.is_empty():
+		return Types.Code.INVALID_CONFIGURATION
+	return publisher.receive_accept(accept)
+
+
 func _row(frame: int) -> Array[PackedByteArray]:
 	return [PackedByteArray([frame % 7]), PackedByteArray([(frame + 1) % 7])]
 

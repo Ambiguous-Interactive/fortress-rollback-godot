@@ -40,10 +40,15 @@ func _identity() -> PackedByteArray:
 
 
 func _config() -> RefCounted:
-	var config: RefCounted = Fixture.new()._config()
-	config.spectator = false
-	config.local_players = PackedInt32Array([0, 1])
-	return config
+	return Fixture.new().host_config()
+
+
+## One startup exchange between the publisher and a viewer stream.
+func _negotiate(context: RefCounted, publisher: RefCounted) -> RefCounted:
+	var stream: RefCounted = Stream.new()
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "configured viewer")
+	context.equal(Fixture.new().negotiate(publisher, stream), CODE.OK, "envelope agreed before the first row")
+	return stream
 
 
 func _step(context: RefCounted, driver: RefCounted, frame: int) -> void:
@@ -60,6 +65,7 @@ func _retained_publication(context: RefCounted) -> void:
 	var driver: RefCounted = Driver.new(host, GameFixture.Game.new())
 	var publisher: RefCounted = Publisher.new()
 	context.equal(publisher.configure(host, _identity(), _key(), _digest(), 128), CODE.OK, "bounded publisher")
+	_negotiate(context, publisher)
 	context.equal(publisher.prepare_packet().code, CODE.PREDICTION_STALL, "idle host has no row")
 	_step(context, driver, 0)
 	context.equal(host.confirmed_inputs(0) != null, true, "control: original host row retained")
@@ -90,8 +96,7 @@ func _clean_end(context: RefCounted) -> void:
 		var driver: RefCounted = Driver.new(host, GameFixture.Game.new())
 		var publisher: RefCounted = Publisher.new()
 		publisher.configure(host, _identity(), _key(), _digest(), 128)
-		var stream: RefCounted = Stream.new()
-		stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+		var stream: RefCounted = _negotiate(context, publisher)
 		for frame: int in range(frames):
 			_step(context, driver, frame)
 		context.equal(publisher.finish_host(), CODE.OK, "freeze confirmed exclusive end")
@@ -115,6 +120,7 @@ func _clean_end(context: RefCounted) -> void:
 	var gated_driver: RefCounted = Driver.new(gated_host, GameFixture.Game.new())
 	var gated: RefCounted = Publisher.new()
 	gated.configure(gated_host, _identity(), _key(), _digest(), 128)
+	_negotiate(context, gated)
 	_step(context, gated_driver, 0)
 	context.equal(gated.finish_host(), CODE.PREDICTION_STALL, "unconfirmed tail cannot become clean END")
 	context.equal(gated.prepare_packet().code, CODE.PREDICTION_STALL, "unconfirmed row cannot publish")
@@ -128,6 +134,7 @@ func _clean_end(context: RefCounted) -> void:
 		var stopped_driver: RefCounted = Driver.new(stopped, GameFixture.Game.new())
 		var frozen: RefCounted = Publisher.new()
 		frozen.configure(stopped, _identity(), _key(), _digest(), 128)
+		_negotiate(context, frozen)
 		_step(context, stopped_driver, 0)
 		frozen.finish_host()
 		var pending: PackedByteArray = frozen.prepare_packet().bytes
@@ -149,6 +156,7 @@ func _lifetime_and_busy(context: RefCounted) -> void:
 	context.equal(publisher.configure(host, _identity(), _key(), _digest(), 81), CODE.INVALID_CONFIGURATION, "reject undersized packet bound")
 	context.equal(publisher.prepare_packet().code, CODE.NOT_CONFIGURED, "rejected configure remains inert")
 	publisher.configure(host, _identity(), _key(), _digest(), 128)
+	_negotiate(context, publisher)
 	_step(context, driver, 0)
 	var packet: PackedByteArray = publisher.prepare_packet().bytes
 	for player: int in range(2):
@@ -169,6 +177,7 @@ func _lifetime_and_busy(context: RefCounted) -> void:
 	context.equal(publisher.finish_host(), CODE.INVALID_CONFIGURATION, "fresh source cannot freeze old end")
 
 	context.equal(publisher.configure(host, _identity(), _key(), _digest(), 128), CODE.OK, "explicit fresh publisher lifetime")
+	_negotiate(context, publisher)
 	_step(context, driver, 0)
 	packet = publisher.prepare_packet().bytes
 	host.terminate(CODE.PROTOCOL_FAILED)
