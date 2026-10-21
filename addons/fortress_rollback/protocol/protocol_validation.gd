@@ -120,7 +120,7 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 		T.Kind.DROP_BARRIER:
 			if message.phase < 1 or message.phase > 5:
 				return -1
-			if message.stage < 0 or message.stage > 3:
+			if message.stage < 0 or message.stage > 4:
 				return -1
 			if message.reason < 0 or message.reason > 255:
 				return -1
@@ -136,7 +136,9 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 				return -1
 			if message.chunk_index < 0 or message.chunk_index > 65535:
 				return -1
-			if message.chunk_count < 0 or message.chunk_count > 65535:
+			if message.chunk_count < 0 or message.chunk_count > 64:
+				return -1
+			if message.bytes.size() > 4096:
 				return -1
 			if not _targets(message.data, bounds.player_count):
 				return -1

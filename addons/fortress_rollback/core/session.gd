@@ -276,6 +276,16 @@ func retained_local_input(player: int, frame: int) -> PackedByteArray:
 	return retained.bytes.duplicate() if retained.code == Queue.Code.OK else PackedByteArray()
 
 
+## Owned actual bytes one slot holds for a frame, or empty when the row was released.
+## The departed slot's row is the value the survivors freeze, so a survivor that
+## already released it needs the certified value from the barrier's backfill.
+func retained_input(player: int, frame: int) -> PackedByteArray:
+	if _config == null or player < 0 or player >= _queues.size():
+		return PackedByteArray()
+	var retained: Queue.Result = _queues[player].retained_confirmed_input(frame)
+	return retained.bytes.duplicate() if retained.code == Queue.Code.OK else PackedByteArray()
+
+
 ## Per-slot actual scheduled receipt bounds for transport gossip; never prediction frames.
 func received_frames() -> PackedInt64Array:
 	return _received.duplicate()

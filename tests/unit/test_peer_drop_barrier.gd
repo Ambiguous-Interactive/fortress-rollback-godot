@@ -128,6 +128,7 @@ func _drain(mesh: Dictionary) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for source: int in range(mesh.peers.size()):
 		for packet: Peer.Packet in mesh.peers[source].drain_outbox():
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 			result.append({"from": source, "to": packet.to[0] - 1, "bytes": packet.bytes})
 		mesh.peers[source].drain_transitions()
 		for event: Dictionary in mesh.peers[source].drain_events():
@@ -265,14 +266,17 @@ func _alter(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], a
 
 ## Deliver one synthetic barrier message to a survivor.
 func _inject(context: RefCounted, mesh: Dictionary, injection: Dictionary) -> void:
+	var fields: Variant = injection["fields"]
+	if fields is Callable:
+		fields = fields.call()
 	var message: T.Message = T.Message.new()
 	message.kind = T.Kind.DROP_BARRIER
 	message.session_id = _id(90, 16)
 	message.sender_id = _id(int(injection["from"]))
 	message.connection_id = _id(int(injection["from"]) + 20)
 	message.data = PackedByteArray([2, 3, 0])
-	for field: String in injection["fields"]:
-		message.set(field, injection["fields"][field])
+	for field: String in fields:
+		message.set(field, fields[field])
 	var encoded: T.Result = Codec.encode(message, _limits(mesh.count))
 	context.equal(encoded.code, T.Code.OK, "encode the injected barrier")
 	context.equal(mesh.peers[int(injection["to"])].receive(encoded.bytes, _id(int(injection["from"])), mesh.now), I.Code.OK, "deliver the injected barrier")
@@ -504,20 +508,98 @@ func _conflicting_certificate(context: RefCounted) -> void:
 		context.equal(mesh.peers[survivor].status().reason, Types.Code.PROTOCOL_FAILED, "the terminal cause is the conflicting history")
 
 
+## The barrier of the departed peer, read when a message is built.
+func _barrier(mesh: Dictionary) -> Variant:
+	return mesh.peers[0]._drops.barrier(_id(2).hex_encode())
+
+
+## The operation identity of the current barrier and the target list it names.
+func _identity_fields(mesh: Dictionary) -> Dictionary:
+	var barrier: Variant = _barrier(mesh)
+	var era: int = barrier.generations[0]
+	return {
+		"phase": 1,
+		"operation": barrier.operation,
+		"target_set_digest": barrier.target_set_digest,
+		"coordinator": barrier.coordinator,
+		"coordinator_generation": barrier.coordinator_generation,
+		"data": PackedByteArray([2, era & 255, (era >> 8) & 255]),
+	}
+
+
+## A prepare of an operation that already closed.
+func _stale_operation_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh)
+	fields["operation"] = int(fields["operation"]) - 1
+	fields["target_set_digest"] = 0
+	return fields
+
+
+## A prepare of another connected era.
+func _other_era_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh)
+	var era: int = _barrier(mesh).generations[0]
+	fields["data"] = PackedByteArray([2, (era + 1) & 255, (era >> 8) & 255])
+	fields["cut"] = 2
+	fields["cut_digest"] = 999
+	return fields
+
+
+## A prepare of another target set.
+func _other_target_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh)
+	fields["target_set_digest"] = int(fields["target_set_digest"]) + 1
+	fields["cut"] = 2
+	fields["cut_digest"] = 999
+	return fields
+
+
+## A proposal from a survivor that does not own the lowest surviving slot.
+func _foreign_proposal_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh)
+	fields["cut"] = 2
+	fields["cut_digest"] = 999
+	return fields
+
+
+## A commit that names a frame the survivor never certified.
+func _uncertified_commit_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh)
+	fields["phase"] = 4
+	fields["cut"] = 2
+	fields["cut_digest"] = 5
+	return fields
+
+
 ## A stale operation, a stale era and a commit without a certificate change nothing.
 func _stale_messages(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, true)
 	_leave(context, mesh, 2)
 	var injections: Array[Dictionary] = [
-		{"to": 1, "from": 0, "fields": {"phase": 1, "operation": 0, "target_set_digest": 0, "cut": 2}},
-		{"to": 1, "from": 0, "fields": {"phase": 1, "operation": 1, "cut": 2, "data": PackedByteArray([2, 99, 0])}},
-		{"to": 1, "from": 0, "fields": {"phase": 4, "operation": 1, "cut": 2, "cut_digest": 5}},
+		# A stale operation.
+		{"to": 1, "from": 0, "fields": _stale_operation_fields.bind(mesh)},
+		# A prepare of another connected era.
+		{"to": 1, "from": 0, "fields": _other_era_fields.bind(mesh)},
+		# A prepare of another target set.
+		{"to": 1, "from": 0, "fields": _other_target_fields.bind(mesh)},
+		# A proposal from a survivor that does not own the lowest surviving slot.
+		{"to": 0, "from": 1, "fields": _foreign_proposal_fields.bind(mesh)},
+		# A commit without a certificate.
+		{"to": 1, "from": 0, "fields": _uncertified_commit_fields.bind(mesh)},
 	]
-	_detect(context, mesh, [0, 1], 600000, true, [], injections)
+	_detect(context, mesh, [0, 1], 600000, true, [{"phase": 2, "stage": 2, "fields": {"cut_digest": 7}, "replace": false}], injections)
 	var cuts: Array[int] = _cuts(mesh, [0, 1])
 	context.equal(cuts[0] >= 0, true, "the first survivor publishes the drop")
 	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
 	context.equal(mesh.unconfirmed, 0, "the stale messages change no agreement")
 	for survivor: int in [0, 1]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the stale messages")
+	# The duplicated certificate never replaces the certified value.
+	var proposer: Variant = mesh.peers[0]._drops.barrier(_id(2).hex_encode())
+	context.equal(proposer.certificates.size(), 1, "the certificate is counted once")
+	context.equal(int(proposer.certificates.values()[0]["digest"]), int(proposer.digest), "the certificate names the certified value")
+	context.equal(int(proposer.certificates.values()[0]["cut"]), int(proposer.cut), "the certificate names the certified frame")
+	# The unauthorized commit never moves the certified frame of the survivor.
+	var follower: Variant = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	context.equal(int(follower.cut), int(proposer.cut), "the survivor keeps the certified frame")

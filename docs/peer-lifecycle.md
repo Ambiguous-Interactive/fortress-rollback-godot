@@ -126,6 +126,12 @@ certificate. A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the
 survivors would otherwise freeze different values for the same frame.
 
+Every field that decides the agreement is derived locally. The target set, the
+connected eras and the coordinator are re-derived from the roster, so a peer
+that does not own the lowest surviving slot cannot propose and a message that
+names another target set is refused. The digest of the frozen value is a
+consistency check between the survivors, not an integrity primitive.
+
 The barrier publishes `peer_drop_pending` when it starts and `peer_dropped`
 with the agreed frame when it commits. A barrier that cannot agree - no common
 frame window, a timeout, or a commit outside the survivor's window - publishes
