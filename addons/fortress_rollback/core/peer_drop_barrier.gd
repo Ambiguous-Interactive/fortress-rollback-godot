@@ -159,9 +159,9 @@ func observed(host: Variant, index: int) -> bool:
 	host._publish_event({"kind": "peer_drop_pending", "peer": host._ids[index].duplicate(), "frame": upper})
 	if _prepares.has(key):
 		# The proposer reached this survivor before it observed the departure itself.
-		var prepare: Dictionary = _prepares[key]
+		var stored: Dictionary = _prepares[key]
 		_prepares.erase(key)
-		_receive_prepare(host, index, key, barrier, prepare)
+		_receive_prepare(host, int(stored["sender"]), key, barrier, stored["event"])
 	return true
 
 
@@ -293,10 +293,11 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, event: Dictionary) -> void:
 	if barrier == null:
 		# This survivor has not observed the departure yet; it adopts the operation
-		# and answers once it observes the departure itself.
+		# and answers once it observes the departure itself. The sender is kept, so
+		# the replayed prepare is still checked against the coordinator.
 		if _prepares.size() >= 8:
 			_prepares.clear()
-		_prepares[key] = event.duplicate(true)
+		_prepares[key] = {"event": event.duplicate(true), "sender": index}
 		return
 	if not _owns_lowest(host, index, barrier.index):
 		# Only the survivor that owns the lowest surviving slot may propose.

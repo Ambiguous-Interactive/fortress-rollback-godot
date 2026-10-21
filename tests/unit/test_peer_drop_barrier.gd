@@ -15,7 +15,7 @@ const Game = preload("res://tests/oracle/p2p_game.gd")
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "second_departure", "codec_round_trip", "conflicting_certificate", "stale_messages"]
+		["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "second_departure", "codec_round_trip", "conflicting_certificate", "stale_messages", "early_prepare"]
 	)
 
 
@@ -37,6 +37,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_conflicting_certificate(context)
 		"stale_messages":
 			_stale_messages(context)
+		"early_prepare":
+			_early_prepare(context)
 	context.finish()
 
 
@@ -55,7 +57,7 @@ func _sample(player: int, frame: int) -> PackedByteArray:
 
 
 ## Peers with the lifecycle enabled, so a silent peer is detected by the timeout.
-func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3) -> Dictionary:
+func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3, timeouts: Array[int] = [], barrier_timeout_us: int = 250000) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	for player: int in range(count):
@@ -93,10 +95,11 @@ func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3)
 		var controls: L.Options = L.Options.new()
 		controls.enabled = true
 		controls.disconnect_notify_us = 100000
-		controls.disconnect_timeout_us = 400000
+		controls.disconnect_timeout_us = timeouts[player] if player < timeouts.size() else 400000
 		controls.keepalive_interval_us = 1000
 		controls.quality_report_interval_us = 1000
 		controls.disconnect_behavior = behavior
+		controls.drop_barrier_timeout_us = barrier_timeout_us
 		var game: RefCounted = Game.new(count)
 		var peer: Peer = Peer.new()
 		context.equal(peer.configure(config, local, game, handshake, input, controls), I.Code.OK, "configure mesh")
@@ -603,3 +606,19 @@ func _stale_messages(context: RefCounted) -> void:
 	# The unauthorized commit never moves the certified frame of the survivor.
 	var follower: Variant = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
 	context.equal(int(follower.cut), int(proposer.cut), "the survivor keeps the certified frame")
+
+
+## A prepare that arrives before the survivor observes the departure is adopted.
+func _early_prepare(context: RefCounted) -> void:
+	# The second survivor notices the departure later, so the proposer's prepare
+	# reaches it before it holds a barrier of its own.
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 3, [900000, 960000, 960000], 800000)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	_detect(context, mesh, [0, 1], 1800000)
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the first survivor publishes the drop")
+	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
+	context.equal(mesh.unconfirmed, 0, "the early prepare agrees without a fallback")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the early prepare")
