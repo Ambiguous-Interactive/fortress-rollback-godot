@@ -342,6 +342,10 @@ func set_input_delay(player: int, delay: int) -> int:
 	# A backpressured step leaves an endpoint behind the core; it receives its missing frames first.
 	var starts: PackedInt64Array = PackedInt64Array()
 	for index: int in range(_ids.size()):
+		if _is_dropped(index):
+			# A departed peer receives no more frames.
+			starts.append(-1)
+			continue
 		var observed: Dictionary = _endpoint(index).status()
 		var start: int = observed.last_submitted_frame + 1 if observed.last_submitted_frame != -1 else _config.input_delay
 		if observed.pending_frames + last + 1 - start + delay - current > _max_pending:
@@ -352,6 +356,8 @@ func set_input_delay(player: int, delay: int) -> int:
 		return changed.code
 	var statuses: Array[T.Status] = _statuses()
 	for index: int in range(_ids.size()):
+		if _is_dropped(index):
+			continue
 		var inputs: Array[PackedByteArray] = []
 		for frame: int in range(starts[index], changed.value + 1):
 			inputs.append(_core.retained_local_input(player, frame))
@@ -632,9 +638,12 @@ func _gossip_nudge_needed() -> bool:
 	if observed.current_frame - observed.confirmed_frame < _config.max_prediction_frames:
 		return false
 	var receipts: PackedInt64Array = _core.received_frames()
-	var receipt_fold: int = receipts[0]
-	for frame: int in receipts:
-		receipt_fold = mini(receipt_fold, frame)
+	var receipt_fold: int = Queue.FRAME_MAX
+	for slot: int in range(receipts.size()):
+		if _core.frozen_frame(slot) != -1:
+			# A dropped slot no longer holds the gossip refresh back.
+			continue
+		receipt_fold = mini(receipt_fold, receipts[slot])
 	return observed.confirmed_frame < receipt_fold
 
 
@@ -842,6 +851,9 @@ func _publish_delay_recommendation() -> bool:
 	var player: int = _config.local_players[0]
 	var round_trip_ms: int = 0
 	for index: int in range(_ids.size()):
+		if _is_dropped(index):
+			# A departed peer has no live round trip time.
+			continue
 		round_trip_ms = maxi(round_trip_ms, _endpoint(index).status().round_trip_time_ms)
 	var current: int = _core.input_delay(player)
 	# set_input_delay needs a prior sample, so none is suggested before one.

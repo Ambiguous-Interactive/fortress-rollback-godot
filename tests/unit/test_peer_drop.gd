@@ -15,7 +15,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["continue", "halt", "frozen_value", "exported_row", "confirmed_row"])
+	return PackedStringArray(["continue", "halt", "frozen_value", "exported_row", "confirmed_row", "lockstep", "delay"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -30,6 +30,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_exported_row(context)
 		"confirmed_row":
 			_confirmed_row(context)
+		"lockstep":
+			_lockstep(context)
+		"delay":
+			_delay(context)
 	context.finish()
 
 
@@ -48,7 +52,7 @@ func _sample(player: int, frame: int) -> PackedByteArray:
 
 
 ## Two peers with the lifecycle enabled, so a silent peer is detected by the timeout.
-func _build(context: RefCounted, behavior: int) -> Dictionary:
+func _build(context: RefCounted, behavior: int, window: int = 8) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	for player: int in range(2):
@@ -58,7 +62,7 @@ func _build(context: RefCounted, behavior: int) -> Dictionary:
 		config.input_width = 4
 		config.neutral_input = PackedByteArray([0, 0, 0, 0])
 		config.input_delay = 0
-		config.max_prediction_frames = 8
+		config.max_prediction_frames = window
 		config.history_slots = 9
 		config.check_distance = 0
 		config.sync_test = false
@@ -73,7 +77,7 @@ func _build(context: RefCounted, behavior: int) -> Dictionary:
 		local.config.player_count = 2
 		local.config.input_width = 4
 		local.config.input_delay = 0
-		local.config.max_prediction = 8
+		local.config.max_prediction = window
 		local.config.desync_interval = 60
 		local.config.neutral_input = config.neutral_input.duplicate()
 		local.config.roster = [_id(0), _id(1)]
@@ -239,6 +243,39 @@ func _exported_row(context: RefCounted) -> void:
 		context.equal(inputs.read(0).bytes.hex_encode(), rows[frame][0].bytes, "the exported row is the row the simulation used")
 	context.equal(exported > cut, true, "the exported rows reach past the agreed frame")
 	context.equal(replay.is_skipped_frame(cut), false, "the frozen row is not skipped")
+
+
+## A lockstep session keeps advancing after the drop.
+func _lockstep(context: RefCounted) -> void:
+	var settings: Config = Config.new()
+	settings.sync_test = false
+	settings.local_players = PackedInt32Array([0])
+	settings.check_distance = 0
+	settings.input_width = 1
+	settings.neutral_input = PackedByteArray([0])
+	settings.max_prediction_frames = 0
+	settings.max_snapshot_bytes = 16
+	settings.storage_budget_bytes = 65536
+	var session: RefCounted = Session.new()
+	context.equal(session.configure(settings), Session.Code.OK, "configure the lockstep session")
+	_advance(context, session, 0, PackedByteArray([1]))
+	_advance(context, session, 1, PackedByteArray([2]))
+	context.equal(session.freeze_player(1, 1), Session.Code.OK, "freeze the remote slot")
+	context.equal(session.submit_local_input(0, 2, PackedByteArray([7])).code, Session.Code.OK, "local sample")
+	# A frozen slot repeats its agreed value, so it never blocks a lockstep advance.
+	context.equal(session.begin_advance().code, Session.Code.READY, "the lockstep advance is ready")
+
+
+## A delay change after the drop does not end the match.
+func _delay(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6)
+	var survivor: Peer = mesh.peers[1]
+	_leave(context, mesh, 0, 1)
+	_detect(context, mesh, 1)
+	context.equal(survivor.set_input_delay(1, 1), Types.Code.OK, "the delay change is accepted")
+	context.equal(survivor.status().reason, Types.Code.OK, "the match survives the delay change")
+	context.equal(survivor.status().lifecycle, Types.Lifecycle.RUNNING, "the match is still running")
 
 
 ## The confirmed input row of a dropped slot is the row the simulation used.

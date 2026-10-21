@@ -590,7 +590,8 @@ func _consistent() -> bool:
 func _can_advance() -> bool:
 	if _config.max_prediction_frames == 0:
 		for queue: Queue in _queues:
-			if queue.retained_confirmed_input(_current).code != Queue.Code.OK:
+			# A frozen slot repeats its agreed value, so it never blocks a lockstep advance.
+			if queue.retained_simulated_input(_current).code != Queue.Code.OK:
 				return false
 		return true
 	var confirmed: int = _confirmed()
