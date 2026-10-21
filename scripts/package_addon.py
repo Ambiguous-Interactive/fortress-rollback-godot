@@ -32,6 +32,7 @@ RUNTIME_SCRIPTS = frozenset({
     'core/snapshot_status.gd',
     'core/snapshot_writer.gd',
     'core/spectator_publisher.gd',
+    'core/spectator_negotiation.gd',
     'core/spectator_session.gd',
     'core/spectator_stream.gd',
     'protocol/endpoint_lifecycle.gd',
