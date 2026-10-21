@@ -4,6 +4,8 @@
 
 ### Added
 
+- Certify the frozen value of a departed player. The survivors of a match now agree on one frame and one value for the departed slot: every survivor reports the frames it still holds, the survivor that proposes the cut sends the value to the survivors that already released it, and every survivor certifies that value before the departure is committed. A survivor that certifies another value ends the match with the recorded reason `conflicting_history` instead of freezing different bytes for the same frame.
+
 - Agree the frozen frame when a player leaves. With `disconnect_behavior = CONTINUE` and more than one survivor left, the survivors exchange their freezable frame windows and freeze the departed slot at one common frame, so they keep the same confirmed history instead of splitting at their own frontiers. The match holds while the survivors agree, the agreement is bounded by `drop_barrier_timeout_us`, and a barrier that cannot agree reports `peer_drop_unconfirmed` and falls back to the survivor's own frontier.
 
 - Negotiate the spectator envelope before the first row. The host offers the envelope version and the optional kinds it can publish, the viewer answers with the version it can speak, and the two sides refuse each other at startup with one recorded reason when they cannot agree. A viewer that only speaks version 1 now fails before it plays anything, and a host without an agreement publishes no row.
