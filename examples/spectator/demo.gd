@@ -56,6 +56,9 @@ func start() -> int:
 	code = publisher.configure(host.loop.session, identity, key, digest, 256)
 	if code != Types.Code.OK:
 		return code
+	code = _negotiate_envelope()
+	if code != Types.Code.OK:
+		return code
 	viewer = stream.playback_session()
 	code = viewer.set_playback(12, 4, 4)
 	if code != Types.Code.OK:
@@ -69,6 +72,20 @@ func start() -> int:
 	is_host_finished = false
 	_tick_count = 0
 	return Types.Code.OK
+
+
+## The local transport delivers the startup exchange before the first row.
+func _negotiate_envelope() -> int:
+	var offer: PackedByteArray = publisher.encode_offer()
+	if offer.is_empty():
+		return Types.Code.INVALID_CONFIGURATION
+	var code: int = stream.receive_packet(offer, 0)
+	if code != Types.Code.OK:
+		return code
+	var accept: PackedByteArray = stream.encode_accept()
+	if accept.is_empty():
+		return Types.Code.INVALID_CONFIGURATION
+	return publisher.receive_accept(accept)
 
 
 ## Pause continuous viewing and attempt exactly one ordinary confirmed playback step.

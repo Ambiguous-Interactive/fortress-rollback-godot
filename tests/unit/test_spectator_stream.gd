@@ -2,6 +2,9 @@ extends RefCounted
 
 # Value: protects=bounded confirmed spectator bytes; fails_when=wire reorder predicts or host loss plays buffered rows; why_new=row tests bypass bytes/time; seam=none
 const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
+const Publisher = preload("res://addons/fortress_rollback/core/spectator_publisher.gd")
+const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Negotiation = preload("res://addons/fortress_rollback/core/spectator_negotiation.gd")
 const Fixture = preload("res://tests/unit/test_spectator_session.gd")
 const GameFixture = preload("res://tests/unit/test_driver.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
@@ -28,7 +31,7 @@ class ReentrantGame:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["wire_golden", "byte_delivery", "malformed", "authentication", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
+		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
 			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "wide_shapes"]
 	)
 
@@ -59,9 +62,30 @@ func _identity() -> PackedByteArray:
 	return bytes
 
 
+## One host publisher that shares the viewer's identity, key and configuration digest.
+func _publisher(context: RefCounted) -> RefCounted:
+	return _publisher_for(context, _identity())
+
+
+## One host publisher for one agreed identity.
+func _publisher_for(context: RefCounted, identity: PackedByteArray) -> RefCounted:
+	var host: RefCounted = Session.new()
+	context.equal(host.configure(Fixture.new().host_config()), CODE.OK, "bounded host")
+	var publisher: RefCounted = Publisher.new()
+	context.equal(publisher.configure(host, identity, _key(), _digest(), 128), CODE.OK, "bounded publisher")
+	return publisher
+
+
+## One startup exchange for the viewer's own identity.
+func _negotiate(context: RefCounted, stream: RefCounted, identity: PackedByteArray, now_us: int = 0) -> void:
+	context.equal(Fixture.new().negotiate(_publisher_for(context, identity), stream, now_us), CODE.OK, "envelope agreed for this lifetime")
+
+
+## A configured viewer whose envelope version and optional kinds are already agreed.
 func _stream(context: RefCounted) -> RefCounted:
 	var stream: RefCounted = Stream.new()
 	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "bounded stream configured")
+	_negotiate(context, stream, _identity())
 	return stream
 
 
@@ -81,6 +105,56 @@ func _unsigned_row(frame: int, inputs: Array[PackedByteArray], digest: PackedByt
 	return packet
 
 
+## One frozen version 1 packet: the old header without the tag or the configuration digest.
+func _legacy_row(frame: int) -> PackedByteArray:
+	var packet: PackedByteArray = PackedByteArray()
+	packet.append_array("FRGS".to_ascii_buffer())
+	packet.append(1)
+	packet.append(Stream.ROW)
+	packet.append(2)
+	packet.append(0)
+	packet.append(0)
+	packet.append(0)
+	packet.append(0)
+	packet.append(1)
+	packet.append_array(_identity())
+	packet.append(0)
+	packet.append(0)
+	packet.append(0)
+	packet.append(frame)
+	return packet
+
+
+## One version 1 startup offer: the same shape with an envelope version this side cannot speak.
+func _legacy_offer() -> PackedByteArray:
+	var packet: PackedByteArray = Stream.encode_header(Stream.OFFER, 0, 2, 1, _identity(), _digest(), 1)
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(1), Negotiation.CAP_ALL))
+	return Stream.authenticate(packet, _key())
+
+
+## One version 1 answer to the startup offer.
+func _legacy_accept() -> PackedByteArray:
+	var packet: PackedByteArray = Stream.encode_header(Stream.ACCEPT, 0, 2, 1, _identity(), _digest(), 1)
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(1), Negotiation.CAP_ALL))
+	return Stream.authenticate(packet, _key())
+
+
+## One offer that names an optional kind this side does not know.
+func _unknown_kind_offer() -> PackedByteArray:
+	var packet: PackedByteArray = Stream.encode_header(Stream.OFFER, 0, 2, 1, _identity(), _digest(), Stream.VERSION)
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(Stream.VERSION), Negotiation.CAP_ALL | 8))
+	return Stream.authenticate(packet, _key())
+
+
+## One offer signed with another key.
+func _foreign_offer() -> PackedByteArray:
+	var other_key: PackedByteArray = _key()
+	other_key[0] = 99
+	var packet: PackedByteArray = Stream.encode_header(Stream.OFFER, 0, 2, 1, _identity(), _digest(), Stream.VERSION)
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(Stream.VERSION), Negotiation.CAP_ALL))
+	return Stream.authenticate(packet, other_key)
+
+
 ## A signed packet without its tag, so a test can change a field and sign it again.
 func _unsigned(packet: PackedByteArray) -> PackedByteArray:
 	var body: PackedByteArray = packet.slice(0, Stream.HEADER_BYTES - Stream.TAG_BYTES)
@@ -98,6 +172,7 @@ func _wire_golden(context: RefCounted) -> void:
 	context.equal(stream.encode_end(0).size(), 80, "empty stream has fixed header only")
 	var identity: PackedByteArray = _identity()
 	context.equal(stream.configure(Fixture.new()._config(), identity, _key(), _digest(), 0, 100, 128), CODE.OK, "own caller identity")
+	_negotiate(context, stream, _identity())
 	identity.fill(255)
 	context.equal(stream.encode_end(0).slice(12, 44), _identity(), "identity mutation does not change lifetime")
 
@@ -123,6 +198,102 @@ func _authentication(context: RefCounted) -> void:
 	context.equal(stream.receive_packet(foreign, 1), CODE.PROTOCOL_FAILED, "another agreed configuration is refused")
 	context.equal(viewer.host_frontier(), -1, "a foreign configuration changes no history")
 	context.equal(stream.poll(100), CODE.PROTOCOL_FAILED, "forged traffic does not extend the host deadline")
+
+
+# Value: protects=the envelope version and the optional kinds are agreed before the first row;
+# fails_when=a peer that speaks another envelope starts a partial playback; why_new=the byte cases
+# assume one agreed envelope; seam=none
+func _negotiation(context: RefCounted) -> void:
+	var publisher: RefCounted = _publisher(context)
+	var stream: RefCounted = Stream.new()
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "configured viewer")
+	context.equal(stream.agreement_state(), Negotiation.AgreementState.PENDING, "no agreement before the exchange")
+	context.equal(stream.encode_accept().is_empty(), true, "no answer before an offer")
+	context.equal(publisher.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "an unagreed host publishes no row")
+	context.equal(publisher.encode_keepalive().is_empty(), true, "an unagreed host sends no liveness")
+
+	var offer: PackedByteArray = publisher.encode_offer()
+	context.equal(offer.size(), Stream.NEGOTIATION_BYTES, "one fixed-width offer")
+	context.equal(offer[4], Stream.VERSION, "the offer names the envelope version")
+	context.equal(offer[5], Stream.OFFER, "the offer names its kind")
+	context.equal(stream.receive_packet(offer, 0), CODE.OK, "the viewer accepts the offer")
+	context.equal(stream.agreement_state(), Negotiation.AgreementState.AGREED, "the viewer agrees")
+	context.equal(stream.agreement_version(), Stream.VERSION, "the agreed envelope version")
+	context.equal(stream.agreement_kinds(), Negotiation.CAP_ALL, "the agreed optional kinds")
+	context.equal(stream.agreement_reason(), CODE.OK, "no refusal reason")
+	var accept: PackedByteArray = stream.encode_accept()
+	context.equal(accept.size(), Stream.NEGOTIATION_BYTES, "one fixed-width answer")
+	context.equal(publisher.receive_accept(accept), CODE.OK, "the host accepts the answer")
+	context.equal(publisher.agreement_state(), Negotiation.AgreementState.AGREED, "the host agrees")
+	context.equal(publisher.agreement_version(), Stream.VERSION, "the host agrees on the envelope version")
+	context.equal(publisher.agreement_kinds(), Negotiation.CAP_ALL, "the host agrees on the optional kinds")
+	context.equal(publisher.prepare_packet().code, CODE.PREDICTION_STALL, "the agreed host publishes its first row")
+
+	# A peer that speaks another envelope version is refused before any row is played.
+	var legacy_row: RefCounted = Stream.new()
+	legacy_row.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(legacy_row.receive_packet(_legacy_row(0), 0), CODE.PROTOCOL_FAILED, "an untagged version 1 row is malformed")
+	context.equal(legacy_row.playback_session().host_frontier(), -1, "a malformed row plays nothing")
+	var refused: RefCounted = Stream.new()
+	refused.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(refused.receive_packet(_legacy_offer(), 0), CODE.UNSUPPORTED, "another envelope version is refused")
+	context.equal(refused.agreement_reason(), CODE.UNSUPPORTED, "one recorded refusal reason")
+	context.equal(refused.agreement_state(), Negotiation.AgreementState.REFUSED, "the refused agreement is recorded")
+	context.equal(refused.playback_session().host_frontier(), -1, "a refused version plays no row")
+	context.equal(Driver.new(refused.playback_session(), GameFixture.Game.new()).step(0, _empty()).code, CODE.TERMINATED, "a refused version starts no playback")
+	context.equal(refused.receive_packet(offer, 1), CODE.TERMINATED, "a refused viewer never agrees again")
+
+	var host: RefCounted = _publisher(context)
+	context.equal(host.receive_accept(_legacy_accept()), CODE.UNSUPPORTED, "the host refuses another envelope version")
+	context.equal(host.agreement_reason(), CODE.UNSUPPORTED, "one recorded host refusal reason")
+	context.equal(host.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "a refused host publishes no row")
+
+	# An answer that drops the kind that closes the stream is refused.
+	var partial: PackedByteArray = Stream.encode_header(Stream.ACCEPT, 0, 2, 1, _identity(), _digest(), Stream.VERSION)
+	partial.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(Stream.VERSION), Negotiation.CAP_ROW))
+	var closing: RefCounted = _publisher(context)
+	context.equal(closing.receive_accept(Stream.authenticate(partial, _key())), CODE.UNSUPPORTED, "an answer without the end kind is refused")
+	context.equal(closing.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "a refused host publishes no row")
+
+	# An offer that names an unknown optional kind is refused before the first row.
+	var unknown: RefCounted = Stream.new()
+	unknown.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(unknown.receive_packet(_unknown_kind_offer(), 0), CODE.UNSUPPORTED, "an unknown optional kind is refused")
+	context.equal(unknown.agreement_reason(), CODE.UNSUPPORTED, "one recorded kind refusal reason")
+
+	# An unauthenticated exchange cannot move the agreement.
+	var forged: RefCounted = Stream.new()
+	forged.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(forged.receive_packet(_foreign_offer(), 0), CODE.PROTOCOL_FAILED, "an offer signed with another key is refused")
+	context.equal(forged.agreement_state(), Negotiation.AgreementState.PENDING, "a forged offer agrees nothing")
+	context.equal(forged.agreement_reason(), CODE.OK, "a forged offer records no refusal reason")
+
+	# An authenticated packet with an impossible version is malformed, not a playback row.
+	var impossible: RefCounted = _stream(context)
+	var broken: PackedByteArray = impossible.encode_row(0, _row(0))
+	broken[4] = 0
+	broken = Stream.authenticate(_unsigned(broken), _key())
+	context.equal(impossible.receive_packet(broken, 0), CODE.PROTOCOL_FAILED, "an authenticated packet with an impossible version is refused")
+	context.equal(impossible.playback_session().host_frontier(), -1, "an impossible version plays no row")
+
+	# A repeated offer repeats the agreement; a different one is a protocol failure.
+	var repeated: RefCounted = Stream.new()
+	repeated.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(repeated.receive_packet(offer, 0), CODE.OK, "the offer is accepted")
+	context.equal(repeated.receive_packet(offer, 50), CODE.OK, "a retried offer repeats the agreement")
+	context.equal(repeated.agreement_version(), Stream.VERSION, "the repeated agreement holds")
+	context.equal(repeated.poll(100), CODE.OK, "a retried offer refreshes the host liveness")
+	context.equal(repeated.receive_packet(_legacy_offer(), 100), CODE.PROTOCOL_FAILED, "a different offer is a protocol failure")
+	context.equal(repeated.playback_session().status().reason, CODE.PROTOCOL_FAILED, "the conflicting offer terminates the viewer")
+
+	# An agreed host keeps its agreement; a different answer cannot move it.
+	var agreed_host: RefCounted = _publisher(context)
+	var agreed_viewer: RefCounted = Stream.new()
+	agreed_viewer.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(Fixture.new().negotiate(agreed_host, agreed_viewer), CODE.OK, "the exchange agrees")
+	context.equal(agreed_host.receive_accept(agreed_viewer.encode_accept()), CODE.OK, "a retried answer repeats the agreement")
+	context.equal(agreed_host.receive_accept(_legacy_accept()), CODE.PROTOCOL_FAILED, "a different answer cannot move an agreed host")
+	context.equal(agreed_host.agreement_version(), Stream.VERSION, "the agreed host keeps its envelope version")
 
 
 func _byte_delivery(context: RefCounted) -> void:
@@ -183,6 +354,7 @@ func _lifetime_and_timeout(context: RefCounted) -> void:
 	var fresh: PackedByteArray = _identity()
 	fresh[31] += 1
 	context.equal(stream.configure(Fixture.new()._config(), fresh, _key(), _digest(), 10, 100, 128), CODE.OK, "new connection lifetime")
+	_negotiate(context, stream, fresh, 10)
 	context.equal(stream.receive_packet(stale, 109), CODE.PROTOCOL_FAILED, "old lifetime cannot inject input")
 	context.equal(stream.playback_session().host_frontier(), -1, "stale packet preserves fresh viewer")
 	context.equal(stream.poll(109), CODE.OK, "strictly before deadline")
@@ -244,6 +416,7 @@ func _check_viewer_lifetime(context: RefCounted, replace_viewer: bool) -> void:
 		var fresh: PackedByteArray = _identity()
 		fresh[31] += 1
 		context.equal(stream.configure(Fixture.new()._config(), fresh, _key(), _digest(), 10, 100, 128), CODE.OK, "explicit stream configuration restores fresh ownership")
+		_negotiate(context, stream, fresh, 10)
 		context.equal(stream.receive_packet(packets[0], 109), CODE.PROTOCOL_FAILED, "old identity remains fenced after stream recovery")
 		context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 11), CODE.OK, "fresh lifetime accepts its own row and clock")
 
@@ -277,6 +450,7 @@ func _clean_tail(context: RefCounted) -> void:
 func _bounds(context: RefCounted) -> void:
 	var stream: RefCounted = Stream.new()
 	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 81), CODE.INVALID_CONFIGURATION, "row cannot exceed physical packet cap")
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 87), CODE.INVALID_CONFIGURATION, "the packet cap must fit the startup exchange")
 	context.equal(stream.poll(0), CODE.NOT_CONFIGURED, "failed configure does not install viewer")
 	stream = _stream(context)
 	context.equal(stream.receive_packet(stream.encode_row(5, _row(5)), 0), CODE.NETWORK_BACKPRESSURE, "bounded future refused")
@@ -379,6 +553,8 @@ func _wide_shapes(context: RefCounted) -> void:
 			config.neutral_input.resize(width)
 			var stream: RefCounted = Stream.new()
 			context.equal(stream.configure(config, _identity(), _key(), _digest(), 0, 100, 65536), CODE.OK, label + " configures")
+			var offer: PackedByteArray = Stream.encode_offer(_identity(), _digest(), players, width, _key())
+			context.equal(stream.receive_packet(offer, 0), CODE.OK, label + " envelope agreed")
 			var game: GameFixture.Game = GameFixture.Game.new()
 			var driver: RefCounted = Driver.new(stream.playback_session(), game)
 			var expected: int = 0

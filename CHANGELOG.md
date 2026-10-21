@@ -4,6 +4,8 @@
 
 ### Added
 
+- Negotiate the spectator envelope before the first row. The host offers the envelope version and the optional kinds it can publish, the viewer answers with the version it can speak, and the two sides refuse each other at startup with one recorded reason when they cannot agree. A viewer that only speaks version 1 now fails before it plays anything, and a host without an agreement publishes no row.
+
 - Authenticate the spectator byte envelope. Every packet now carries a keyed tag and the digest of the agreed match, so a viewer accepts only the host and the match it agreed with. The envelope version moves from 1 to 2.
 
 - Keep the match running when a player leaves. Set `disconnect_behavior = CONTINUE` on the peer lifecycle options and a departed player's slot is frozen at the frame the mesh had confirmed. The survivors keep playing, the departed input repeats its last confirmed value and reports a `DISCONNECTED` status, and the confirmed history before that frame never changes. The default policy still ends the match when a peer stops answering.

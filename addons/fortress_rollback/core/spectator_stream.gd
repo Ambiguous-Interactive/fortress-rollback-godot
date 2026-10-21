@@ -6,6 +6,7 @@ const Spectator = preload("res://addons/fortress_rollback/core/spectator_session
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Negotiation = preload("res://addons/fortress_rollback/core/spectator_negotiation.gd")
 const Code = Types.Code
 const VERSION: int = 2
 const HEADER_BYTES: int = 80
@@ -15,11 +16,16 @@ const KEY_BYTES: int = 32
 const ROW: int = 1
 const END: int = 2
 const KEEPALIVE: int = 3
+const OFFER: int = Negotiation.OFFER
+const ACCEPT: int = Negotiation.ACCEPT
+const NEGOTIATION_BYTES: int = HEADER_BYTES + Negotiation.CAPABILITY_BYTES
 
 ## Confirmed-row byte envelope, separate from the player protocol.
 ## Every packet carries a keyed tag over its header and body, so only a host
 ## that holds the shared key can produce a packet the viewer accepts.
 ## One packet owns one complete row. Caller-owned transport retries refused packets.
+## The envelope version and the optional kinds are negotiated before the first row,
+## so a peer that speaks another envelope fails at startup instead of mid-playback.
 ## Callers agree neutral input, initial game state, seed and rules before opening this stream;
 ## the agreed configuration digest travels in every packet and fences a mismatched match.
 var _session: Spectator
@@ -33,18 +39,20 @@ var _last_received: int = 0
 var _end_frame: int = -1
 var _highest_frame: int = -1
 var _is_finished: bool = false
+var _negotiation: Negotiation = Negotiation.new()
+var _offer: PackedByteArray = PackedByteArray()
 
 
 ## Identity is session (16 bytes), host (8 bytes), then connection lifetime (8 bytes).
 ## The key authenticates the host, the digest binds the agreed match configuration.
-## Reconfiguration creates a fresh viewer; create a fresh game/driver with playback_session().
+## Reconfiguration creates a fresh viewer and a fresh envelope agreement.
 ## The caller's playback policy survives reconfiguration when it still fits the new ring.
 func configure(
 	config: Config, identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, now_us: int, timeout_us: int, max_packet_bytes: int
 ) -> int:
 	if config == null or identity.size() != 32 or key.size() != KEY_BYTES or digest.size() != DIGEST_BYTES or now_us < 0 or timeout_us < 1:
 		return Code.INVALID_CONFIGURATION
-	if config.validate() != Code.OK or not config.spectator or HEADER_BYTES + config.player_count * config.input_width > max_packet_bytes:
+	if config.validate() != Code.OK or not config.spectator or max(HEADER_BYTES + config.player_count * config.input_width, NEGOTIATION_BYTES) > max_packet_bytes:
 		return Code.INVALID_CONFIGURATION
 	if _session != null and _session._mutation_code() == Code.BUSY:
 		return Code.BUSY
@@ -66,6 +74,8 @@ func configure(
 	_end_frame = -1
 	_highest_frame = -1
 	_is_finished = false
+	_negotiation.reset()
+	_offer = PackedByteArray()
 	if policy.size() == 3:
 		# A policy that no longer fits the new ring falls back to the session defaults.
 		session.set_playback(policy[0], policy[1], policy[2])
@@ -76,10 +86,33 @@ func playback_session() -> Spectator:
 	return _session
 
 
+## PENDING before the startup exchange, AGREED after it and REFUSED after it fails.
+func agreement_state() -> int:
+	return _negotiation.state()
+
+
+## The agreed envelope version, or zero before the agreement.
+func agreement_version() -> int:
+	return _negotiation.version()
+
+
+## The agreed optional kinds, or zero before the agreement.
+func agreement_kinds() -> int:
+	return _negotiation.kinds()
+
+
+## The one recorded refusal reason, or OK while the agreement holds.
+func agreement_reason() -> int:
+	return _negotiation.reason()
+
+
 ## Encode only host-confirmed complete rows. Empty bytes mean invalid dimensions or frame.
 ## The host must obtain its rows through confirmed_inputs(), after correction completes.
+## A row needs the agreed envelope version, so it cannot be encoded before the startup exchange.
 func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
-	if _config == null or _session._config != _config or frame < 0 or frame >= Queue.FRAME_MAX or inputs.size() != _config.player_count:
+	if not _negotiation.agreed() or _config == null or _session._config != _config:
+		return PackedByteArray()
+	if frame < 0 or frame >= Queue.FRAME_MAX or inputs.size() != _config.player_count:
 		return PackedByteArray()
 	for bytes: PackedByteArray in inputs:
 		if bytes.size() != _config.input_width:
@@ -92,7 +125,9 @@ func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
 
 ## Exclusive final frame; END may arrive before its rows, which remain receivable until complete.
 func encode_end(final_frame: int) -> PackedByteArray:
-	if _config == null or _session._config != _config or final_frame < 0 or final_frame > Queue.FRAME_MAX:
+	if not _negotiation.agreed() or _config == null or _session._config != _config:
+		return PackedByteArray()
+	if final_frame < 0 or final_frame > Queue.FRAME_MAX:
 		return PackedByteArray()
 	return authenticate(_header(END, final_frame), _key)
 
@@ -100,9 +135,32 @@ func encode_end(final_frame: int) -> PackedByteArray:
 ## Authenticated host liveness without input progress; requires a receiver supporting kind 3.
 ## Send before the timeout while confirmation stalls or row delivery is backpressured.
 func encode_keepalive() -> PackedByteArray:
-	if _config == null or _session._config != _config:
+	if not _negotiation.agreed() or _config == null or _session._config != _config:
+		return PackedByteArray()
+	if not _kind_agreed(KEEPALIVE):
 		return PackedByteArray()
 	return authenticate(_header(KEEPALIVE, 0), _key)
+
+
+## One authenticated startup offer for the agreed identity and dimensions.
+## The host sends it before its first row; the viewer answers with encode_accept().
+static func encode_offer(identity: PackedByteArray, digest: PackedByteArray, players: int, width: int, key: PackedByteArray) -> PackedByteArray:
+	var packet: PackedByteArray = encode_header(OFFER, 0, players, width, identity, digest, VERSION)
+	if packet.is_empty():
+		return PackedByteArray()
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(VERSION), Negotiation.CAP_ALL))
+	return authenticate(packet, key)
+
+
+## The authenticated answer to one accepted offer. Empty bytes mean no agreement yet.
+func encode_accept() -> PackedByteArray:
+	if not _negotiation.agreed() or _config == null:
+		return PackedByteArray()
+	var packet: PackedByteArray = encode_header(ACCEPT, 0, _config.player_count, _config.input_width, _identity, _digest, _negotiation.version())
+	if packet.is_empty():
+		return PackedByteArray()
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(_negotiation.version()), _negotiation.kinds()))
+	return authenticate(packet, _key)
 
 
 ## No receive queue is retained. Backpressure/BUSY leave this packet caller-owned for retry.
@@ -112,15 +170,23 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		return Code.NOT_CONFIGURED
 	if _session._config != _config:
 		return Code.INVALID_CONFIGURATION
-	if packet.size() < HEADER_BYTES or packet.slice(12, 44) != _identity:
+	if packet.size() < 6:
 		return Code.PROTOCOL_FAILED
 	var kind: int = packet[5]
+	if kind == OFFER:
+		return _receive_offer(packet, now_us)
+	if packet.size() < HEADER_BYTES or packet.slice(12, 44) != _identity:
+		return Code.PROTOCOL_FAILED
+	if not _negotiation.agreed():
+		# The startup exchange owns the envelope version, so no row is accepted before it.
+		var state: int = _session._mutation_code()
+		return state if state != Code.OK else Code.NOT_SYNCHRONIZED
 	var expected_size: int = HEADER_BYTES + (_config.player_count * _config.input_width if kind == ROW else 0)
 	if (
 		packet.size() != expected_size
 		or packet.slice(0, 4) != "FRGS".to_ascii_buffer()
-		or packet[4] != VERSION
 		or kind not in [ROW, END, KEEPALIVE]
+		or not _kind_agreed(kind)
 		or packet[6] != _config.player_count
 		or packet[7] != 0
 		or packet.decode_u32(8) != _config.input_width
@@ -128,6 +194,12 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	):
 		return Code.PROTOCOL_FAILED
 	if not tag_matches(packet, _key):
+		return Code.PROTOCOL_FAILED
+	# The version is read after the tag, so only an authenticated peer can refuse the envelope.
+	var version: int = packet[4]
+	if version != _negotiation.version():
+		if version >= 1 and version <= Negotiation.MAX_VERSION:
+			return _refuse(Code.UNSUPPORTED)
 		return Code.PROTOCOL_FAILED
 	var frame: int = packet.decode_u32(60)
 	if frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
@@ -165,6 +237,48 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	return code
 
 
+## Accept one startup offer. The exchange is authenticated, so a peer cannot choose
+## a weaker envelope without the shared key. A refused offer records one reason and
+## terminates the viewer before any row is played.
+func _receive_offer(packet: PackedByteArray, now_us: int) -> int:
+	if now_us < _last_time:
+		return Code.INVALID_TIME
+	if packet.size() != NEGOTIATION_BYTES:
+		return Code.PROTOCOL_FAILED
+	if not header_matches(packet, OFFER, _identity, _digest, _config.player_count, _config.input_width):
+		return Code.PROTOCOL_FAILED
+	if not tag_matches(packet, _key):
+		return Code.PROTOCOL_FAILED
+	if packet.decode_u32(60) != 0:
+		return Code.PROTOCOL_FAILED
+	var capabilities: PackedInt64Array = Negotiation.decode_capabilities(packet, HEADER_BYTES)
+	if capabilities.size() != 2:
+		return Code.PROTOCOL_FAILED
+	var offered_versions: int = capabilities[0]
+	var offered_kinds: int = capabilities[1]
+	var preferred: int = packet[4]
+	if preferred < 1 or (offered_versions & (1 << preferred)) == 0:
+		return Code.PROTOCOL_FAILED
+	if _negotiation.agreed():
+		# A retried offer repeats the same agreement and refreshes the host liveness.
+		if packet != _offer:
+			return _fail()
+		_last_received = now_us
+		return Code.OK
+	if _negotiation.refused():
+		# A refused agreement is terminal; the viewer already stopped.
+		return Code.TERMINATED
+	if not Negotiation.kinds_acceptable(offered_kinds):
+		return _refuse(Code.UNSUPPORTED)
+	var version: int = Negotiation.common_version(offered_versions, Negotiation.supported_versions(VERSION))
+	if version == 0:
+		return _refuse(Code.UNSUPPORTED)
+	_negotiation.agree(version, offered_kinds)
+	_offer = packet.duplicate()
+	_last_received = now_us
+	return Code.OK
+
+
 ## Inject monotonic microseconds. Expiry wins over a newly arrived packet at the deadline.
 ## Poll independently of playback, including while a host gap or transport refusal persists.
 func poll(now_us: int) -> int:
@@ -188,8 +302,28 @@ func _fail() -> int:
 	return Code.PROTOCOL_FAILED
 
 
+## One refusal reason ends the viewer before it plays anything.
+func _refuse(reason: int) -> int:
+	_negotiation.refuse(reason)
+	_session.terminate(reason)
+	return reason
+
+
+## True when the agreed kinds carry the packet kind.
+func _kind_agreed(kind: int) -> bool:
+	var capability: int = 0
+	match kind:
+		ROW:
+			capability = Negotiation.CAP_ROW
+		END:
+			capability = Negotiation.CAP_END
+		KEEPALIVE:
+			capability = Negotiation.CAP_KEEPALIVE
+	return capability != 0 and (_negotiation.kinds() & capability) != 0
+
+
 func _header(kind: int, frame: int) -> PackedByteArray:
-	return encode_header(kind, frame, _config.player_count, _config.input_width, _identity, _digest)
+	return encode_header(kind, frame, _config.player_count, _config.input_width, _identity, _digest, _negotiation.version())
 
 
 ## The agreed configuration digest binds the dimensions, the neutral input, the seed and the rules version.
@@ -245,18 +379,35 @@ static func tag_matches(packet: PackedByteArray, key: PackedByteArray) -> bool:
 	return _equal(expected, packet)
 
 
+## True when the packet carries the expected envelope header fields.
+static func header_matches(packet: PackedByteArray, kind: int, identity: PackedByteArray, digest: PackedByteArray, players: int, width: int) -> bool:
+	if packet.size() < HEADER_BYTES or packet.slice(0, 4) != "FRGS".to_ascii_buffer() or packet[5] != kind:
+		return false
+	if packet.slice(12, 44) != identity or packet.slice(44, 60) != digest:
+		return false
+	return packet[6] == players and packet[7] == 0 and packet.decode_u32(8) == width
+
+
 ## Shared fixed-width writer for configured stream and host publisher implementations.
-static func encode_header(kind: int, frame: int, players: int, width: int, identity: PackedByteArray, digest: PackedByteArray) -> PackedByteArray:
-	if identity.size() != 32 or digest.size() != DIGEST_BYTES or kind not in [ROW, END, KEEPALIVE]:
+static func encode_header(
+	kind: int, frame: int, players: int, width: int, identity: PackedByteArray, digest: PackedByteArray, version: int = VERSION
+) -> PackedByteArray:
+	if identity.size() != 32 or digest.size() != DIGEST_BYTES:
+		return PackedByteArray()
+	if kind not in [ROW, END, KEEPALIVE, OFFER, ACCEPT]:
 		return PackedByteArray()
 	if players < Config.MIN_PLAYERS or players > Config.MAX_PLAYERS or width < Config.MIN_INPUT_WIDTH or width > Config.MAX_INPUT_WIDTH:
 		return PackedByteArray()
+	if version < 1 or version > Negotiation.MAX_VERSION:
+		return PackedByteArray()
 	if frame < 0 or frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
+		return PackedByteArray()
+	if kind in [OFFER, ACCEPT] and frame != 0:
 		return PackedByteArray()
 	var buffer: StreamPeerBuffer = StreamPeerBuffer.new()
 	buffer.big_endian = false
 	buffer.put_data("FRGS".to_ascii_buffer())
-	buffer.put_u8(VERSION)
+	buffer.put_u8(version)
 	buffer.put_u8(kind)
 	buffer.put_u8(players)
 	buffer.put_u8(0)

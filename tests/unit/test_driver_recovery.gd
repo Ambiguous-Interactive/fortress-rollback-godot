@@ -112,6 +112,9 @@ func _final_history(context: RefCounted) -> void:
 	context.equal(publisher.finish_host(), Types.Code.OK, "clean end needs no extra host frame")
 	var stream: RefCounted = Stream.new()
 	context.equal(stream.configure(SpectatorFixture.new()._config(), identity, _key(), _digest(), 0, 100, 128), Types.Code.OK, "viewer configured")
+	var offer: PackedByteArray = publisher.encode_offer()
+	context.equal(stream.receive_packet(offer, 0), Types.Code.OK, "viewer accepts the startup offer")
+	context.equal(publisher.receive_accept(stream.encode_accept()), Types.Code.OK, "host accepts the startup answer")
 	for frame: int in range(4):
 		var packet: RefCounted = publisher.prepare_packet()
 		context.equal(packet.code, Types.Code.OK, "final packet ready")
