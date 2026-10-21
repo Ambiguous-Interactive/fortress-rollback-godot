@@ -52,11 +52,13 @@ def release(name: str) -> None:
         path.unlink()
 
 
-def holder() -> str | None:
+def holder(ignore_pid: int | None = None) -> str | None:
     """The name of the live lease holder, or None when the host is free.
 
     A lease whose owner is gone, or whose lifetime ended, does not hold the
-    host. An unreadable lease file is ignored for the same reason.
+    host. An unreadable lease file is ignored for the same reason. A lease of
+    the given process is skipped, because a process does not conflict with
+    itself.
     """
     if not LEASE_DIR.is_dir():
         return None
@@ -69,6 +71,8 @@ def holder() -> str | None:
             continue
         if expires_at <= time.time() or not _alive(pid):
             continue
+        if ignore_pid is not None and pid == ignore_pid:
+            continue
         name = payload.get("name")
         if isinstance(name, str) and name:
             return name
@@ -76,10 +80,14 @@ def holder() -> str | None:
 
 
 def wait_for_free(timeout_seconds: float) -> bool:
-    """Wait until no owner holds the host. False when the wait ran out."""
+    """Wait until no other owner holds the host. False when the wait ran out.
+
+    A lease of this process does not block the wait, so one probe can run the
+    next pinned engine without waiting for its own earlier lease.
+    """
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
     while True:
-        if holder() is None:
+        if holder(ignore_pid=os.getpid()) is None:
             return True
         if time.monotonic() >= deadline:
             return False

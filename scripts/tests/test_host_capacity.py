@@ -14,6 +14,7 @@ ends with `PROTOCOL_FAILED`. The lease makes that ownership explicit:
 
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -80,6 +81,24 @@ class HostCapacityTest(unittest.TestCase):
 
     def test_wait_for_free_returns_when_the_host_is_free(self):
         self.assertTrue(host_capacity.wait_for_free(0.0))
+
+    def test_own_lease_does_not_block_the_wait(self):
+        # One probe runs the next pinned engine in the same process, so its own
+        # earlier lease must not make it wait for the host.
+        host_capacity.acquire("online-witness")
+        self.assertTrue(host_capacity.wait_for_free(0.0))
+        self.assertEqual(host_capacity.holder(), "online-witness")
+
+    def test_another_live_lease_blocks_the_wait(self):
+        # A live owner that is not this process holds the host.
+        owner = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            self.write_lease("other", owner.pid, host_capacity.time.time() + 600)
+            self.assertEqual(host_capacity.holder(), "other")
+            self.assertFalse(host_capacity.wait_for_free(0.0))
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
 
     def test_worker_count_rejects_a_non_positive_request(self):
         with self.assertRaises(ValueError):
