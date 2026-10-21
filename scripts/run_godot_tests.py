@@ -299,10 +299,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
     suites = sorted(args.suite) or discover(args.category)
     durations = load_durations(args.durations)
-    # Another owner holds the development host, so this run stays serial: it does not split
-    # slow suites into one process per case, and it runs one process at a time.
+    # Take the development host for this run. Another owner means a browser witness needs a
+    # responsive host, so this run stays serial: it does not split slow suites into one
+    # process per case, and it runs one process at a time.
+    host_capacity.acquire(LEASE_NAME)
     lease_holder = host_capacity.holder()
-    if lease_holder:
+    if lease_holder != LEASE_NAME:
         print(json.dumps({"host_capacity_lease": lease_holder, "jobs": 1}), file=sys.stderr)
         args.jobs = 1
     if args.jobs > 1:
@@ -333,8 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             return durations.get(suite + "::" + case, durations.get(suite, math.inf)) if case else durations.get(suite, math.inf)
         order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
         pending = [[None] * len(shards), [None] * len(shards)]
-        # The wave owns the development host while it runs, so a witness that starts later waits.
-        host_capacity.acquire(LEASE_NAME)
+        # The wave keeps the development host, so a witness that starts later waits for it.
         try:
             with ThreadPoolExecutor(max_workers=args.jobs) as pool:
                 for index in order:
