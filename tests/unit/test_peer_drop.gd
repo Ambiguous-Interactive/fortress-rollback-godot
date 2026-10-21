@@ -10,10 +10,12 @@ const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Game = preload("res://tests/oracle/p2p_game.gd")
+const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["continue", "halt", "frozen_value"])
+	return PackedStringArray(["continue", "halt", "frozen_value", "exported_row", "confirmed_row"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -24,6 +26,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_halt(context)
 		"frozen_value":
 			_frozen_value(context)
+		"exported_row":
+			_exported_row(context)
+		"confirmed_row":
+			_confirmed_row(context)
 	context.finish()
 
 
@@ -34,9 +40,10 @@ func _id(value: int, width: int = 8) -> PackedByteArray:
 	return result
 
 
+## A varying sample, so a prediction can disagree with the input that arrives later.
 func _sample(player: int, frame: int) -> PackedByteArray:
 	var bytes: PackedByteArray = PackedByteArray([0, 0, 0, 0])
-	bytes.encode_s32(0, (mini(frame, 3) + 1) * (player + 1))
+	bytes.encode_s32(0, (frame % 7 + 1) * (player + 1))
 	return bytes
 
 
@@ -98,6 +105,7 @@ func _build(context: RefCounted, behavior: int) -> Dictionary:
 		_deliver(context, mesh, _drain(mesh))
 	return mesh
 
+
 func _inputs(mesh: Dictionary, peer: int) -> Array[Driver.LocalInput]:
 	var result: Array[Driver.LocalInput] = []
 	var frame: int = mesh.peers[peer].status().current_frame
@@ -131,25 +139,42 @@ func _play(context: RefCounted, mesh: Dictionary, frames: int, keep: bool = fals
 		_deliver(context, mesh, _drain(mesh))
 
 
-## The surviving peer keeps playing after the other one goes silent.
+## The departed peer plays ahead while the survivor waits, so the survivor holds inputs that
+## its own confirmed frontier has not reached yet.
+func _leave(context: RefCounted, mesh: Dictionary, departed: int, survivor: int) -> void:
+	for frame: int in range(3):
+		mesh.now += 1000
+		mesh.peers[departed].step(mesh.now, _inputs(mesh, departed))
+		_deliver(context, mesh, _drain(mesh))
+	context.equal(mesh.peers[survivor].status().current_frame < mesh.peers[departed].status().current_frame, true, "the survivor lags the departed peer")
+
+
+## The survivor notices the silent peer and freezes its slot.
+func _detect(context: RefCounted, mesh: Dictionary, survivor: int) -> int:
+	mesh.now += 500000
+	context.equal(mesh.peers[survivor].poll(mesh.now), I.Code.OK, "poll detects the silent peer")
+	var cut: int = -1
+	for event: Dictionary in mesh.peers[survivor].drain_events():
+		if event.kind == "peer_dropped":
+			cut = event.frame
+	return cut
+
+
+## The survivor keeps playing after the other one goes silent.
 func _continue(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6)
-	var survivor: Peer = mesh.peers[0]
+	# The survivor is the second peer, so the departed player owns the first slot.
+	var survivor: Peer = mesh.peers[1]
 	var confirmed_before: int = survivor.status().confirmed_frame
 	var frame_before: int = survivor.status().current_frame
-	# The remote peer leaves: it stops sending and the survivor stops hearing from it.
-	mesh.now += 500000
-	context.equal(survivor.poll(mesh.now), I.Code.OK, "poll detects the silent peer")
-	var dropped: bool = false
-	for event: Dictionary in survivor.drain_events():
-		if event.kind == "peer_dropped":
-			dropped = true
-			context.equal(event.frame >= 0, true, "drop event names the agreed frame")
-	context.equal(dropped, true, "survivor publishes the drop")
+	_leave(context, mesh, 0, 1)
+	var cut: int = _detect(context, mesh, 1)
+	context.equal(cut >= 0, true, "the survivor publishes the drop")
 	context.equal(survivor.status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the departure")
-	_play(context, mesh, 4)
-	context.equal(survivor.status().current_frame > frame_before, true, "the survivor keeps advancing")
+	# More frames than the prediction window, so a frontier that stops moving stalls the match.
+	_play(context, mesh, 16, true)
+	context.equal(survivor.status().current_frame, frame_before + 16, "the survivor keeps advancing")
 	context.equal(survivor.status().confirmed_frame > confirmed_before, true, "the confirmed frontier keeps moving")
 	context.equal(survivor.status().reason, Types.Code.OK, "no terminal cause")
 
@@ -169,29 +194,92 @@ func _halt(context: RefCounted) -> void:
 func _frozen_value(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, true)
-	var survivor: Peer = mesh.peers[0]
-	var game: RefCounted = mesh.games[0]
+	var survivor: Peer = mesh.peers[1]
+	var game: RefCounted = mesh.games[1]
 	var rows_before: Dictionary = _rows(game)
-	mesh.now += 500000
-	survivor.poll(mesh.now)
-	var cut: int = -1
-	for row: Dictionary in survivor.diagnostics().peers:
-		if row.get("dropped", false):
-			cut = row.freeze_frame
+	_leave(context, mesh, 0, 1)
+	var cut: int = _detect(context, mesh, 1)
 	context.equal(cut >= 0, true, "the survivor records the agreed frame")
 	var frame_at_drop: int = survivor.status().current_frame
 	_play(context, mesh, 4, true)
 	var rows_after: Dictionary = _rows(game)
-	# The rows before the agreed frame are the confirmed history and never change.
+	# A confirmed input is immutable, so the confirmed history before the drop never changes.
 	for frame: int in range(mini(rows_before.size(), cut + 1)):
-		context.equal(rows_after[frame], rows_before[frame], "confirmed history before the drop is unchanged")
+		for slot: int in range(2):
+			if rows_before[frame][slot].status != "confirmed":
+				continue
+			context.equal(rows_after[frame][slot].bytes, rows_before[frame][slot].bytes, "confirmed history before the drop is unchanged")
 	# Every frame after the agreed frame repeats the value confirmed at that frame.
-	var departed: String = rows_after[cut][1].bytes
+	var departed: String = rows_after[cut][0].bytes
 	for frame: int in range(cut + 1, rows_after.size()):
-		context.equal(rows_after[frame][1].bytes, departed, "the departed slot repeats one frozen value")
+		context.equal(rows_after[frame][0].bytes, departed, "the departed slot repeats one frozen value")
 	# Frames simulated after the drop report the disconnected status.
-	for frame: int in range(frame_at_drop, rows_after.size()):
-		context.equal(rows_after[frame][1].status, "disconnected", "the departed slot reports a disconnected status")
+	for frame: int in range(frame_at_drop + 1, rows_after.size()):
+		context.equal(rows_after[frame][0].status, "disconnected", "the departed slot reports a disconnected status")
+
+
+## The exported confirmed rows are the rows the simulation consumed.
+func _exported_row(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	var survivor: Peer = mesh.peers[1]
+	var game: RefCounted = mesh.games[1]
+	_leave(context, mesh, 0, 1)
+	var cut: int = _detect(context, mesh, 1)
+	_play(context, mesh, 4, true)
+	var rows: Dictionary = _rows(game)
+	var replay: RefCounted = survivor.replay()
+	context.equal(replay != null, true, "the survivor records the confirmed rows")
+	var exported: int = 0
+	for frame: int in range(replay.frame_count()):
+		var inputs: Types.FrameInputs = replay.inputs(frame)
+		if inputs == null or not rows.has(frame):
+			continue
+		exported += 1
+		context.equal(inputs.read(0).bytes.hex_encode(), rows[frame][0].bytes, "the exported row is the row the simulation used")
+	context.equal(exported > cut, true, "the exported rows reach past the agreed frame")
+	context.equal(replay.is_skipped_frame(cut), false, "the frozen row is not skipped")
+
+
+## The confirmed input row of a dropped slot is the row the simulation used.
+func _confirmed_row(context: RefCounted) -> void:
+	var settings: Config = Config.new()
+	settings.sync_test = false
+	settings.local_players = PackedInt32Array([0])
+	settings.check_distance = 0
+	settings.input_width = 1
+	settings.neutral_input = PackedByteArray([0])
+	settings.max_snapshot_bytes = 16
+	settings.storage_budget_bytes = 65536
+	var session: RefCounted = Session.new()
+	context.equal(session.configure(settings), Session.Code.OK, "configure the core session")
+	_advance(context, session, 0, PackedByteArray([1]))
+	_advance(context, session, 1, PackedByteArray([2]))
+	# The departed peer sent one more input before it left, and that input is stale.
+	context.equal(session.receive_input(1, 2, PackedByteArray([3])).code, Session.Code.OK, "late remote input")
+	context.equal(session.freeze_player(1, 1), Session.Code.OK, "freeze the remote slot")
+	_advance(context, session, 2, PackedByteArray([9]))
+	var row: Types.FrameInputs = session.confirmed_inputs(2)
+	context.equal(row != null, true, "the confirmed row is available")
+	context.equal(row.read(1).bytes, PackedByteArray([2]), "the confirmed row is the frozen value")
+	context.equal(row.read(1).status, Queue.Status.DISCONNECTED, "the confirmed row reports the disconnected status")
+	context.equal(row.read(0).bytes, PackedByteArray([7]), "the local row is unchanged")
+
+
+## Advance one frame of the core session with a remote input for that frame.
+func _advance(context: RefCounted, session: RefCounted, frame: int, remote: PackedByteArray) -> void:
+	context.equal(session.receive_input(1, frame, remote).code, Session.Code.OK, "remote input")
+	context.equal(session.submit_local_input(0, frame, PackedByteArray([7])).code, Session.Code.OK, "local sample")
+	var result: RefCounted = session.begin_advance()
+	context.equal(result.code, Session.Code.READY, "ready")
+	var request: RefCounted = result.batch.next_request()
+	while request != null:
+		if request.kind == Session.Kind.SAVE:
+			request.writer.write_bytes(PackedByteArray([0]))
+		var checksum: PackedByteArray = PackedByteArray()
+		checksum.resize(16)
+		context.equal(session.complete_request(request.batch_id, request.request_id, true, checksum).code, Session.Code.OK, "complete request")
+		request = result.batch.next_request()
 
 
 ## The input rows the game actually simulated, keyed by frame; a resimulated frame wins.

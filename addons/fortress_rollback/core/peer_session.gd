@@ -15,6 +15,7 @@ const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Checksums = preload("res://addons/fortress_rollback/core/peer_checksums.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
 const Advisor = preload("res://addons/fortress_rollback/core/delay_advisor.gd")
 
@@ -639,7 +640,9 @@ func _gossip_nudge_needed() -> bool:
 
 func _confirmation_code() -> int:
 	var frames: PackedInt64Array = _core.received_frames()
-	var limit: int = frames[0]
+	# The fold starts above every slot, so a frozen slot cannot cap the frontier through
+	# the seed value of the first slot.
+	var limit: int = Queue.FRAME_MAX
 	for slot: int in range(frames.size()):
 		if _core.frozen_frame(slot) != -1:
 			# A dropped slot no longer holds the mesh frontier back.
@@ -651,6 +654,9 @@ func _confirmation_code() -> int:
 					continue
 				bound = mini(bound, _endpoint(index).status().peer_statuses[slot].last_frame)
 		limit = mini(limit, bound)
+	if limit == Queue.FRAME_MAX:
+		# Every slot is frozen, so the frontier cannot move.
+		return Types.Code.OK
 	return _core.set_confirmation_limit(limit).code
 
 

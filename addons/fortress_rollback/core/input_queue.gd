@@ -260,8 +260,10 @@ func freeze_at(frame: int) -> int:
 	if agreed.code == Code.OK:
 		_last_actual = agreed.bytes.duplicate()
 	# Frames past the agreed frame used the later actual value and must be resimulated.
+	# An earlier pending correction stays the earliest one, so a mismatch below the
+	# agreed frame is not lost.
 	if _last_added > frame:
-		_first_incorrect = frame + 1
+		_first_incorrect = frame + 1 if _first_incorrect == -1 else mini(_first_incorrect, frame + 1)
 	return Code.OK
 
 
@@ -278,6 +280,21 @@ func frozen_input(frame: int) -> Result:
 	if not _frozen or frame <= _frozen_frame:
 		return Result.new(Code.NO_CONFIRMED_INPUT)
 	return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
+
+
+## The value the simulation used at a frame: the frozen value for a dropped slot past the
+## agreed frame, otherwise the retained actual input.
+func simulated_input(frame: int) -> Result:
+	if _frozen and frame > _frozen_frame:
+		return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
+	return confirmed_input(frame)
+
+
+## The retained value the simulation used at a frame.
+func retained_simulated_input(frame: int) -> Result:
+	if _frozen and frame > _frozen_frame:
+		return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
+	return retained_confirmed_input(frame)
 
 
 func first_incorrect_frame() -> int:

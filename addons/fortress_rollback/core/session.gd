@@ -265,9 +265,7 @@ func confirmed_inputs(frame: int) -> Types.FrameInputs:
 	var bytes: Array[PackedByteArray] = []
 	var statuses: PackedInt32Array = PackedInt32Array()
 	for queue: Queue in _queues:
-		var actual: Queue.Result = queue.confirmed_input(frame)
-		if actual.code != Queue.Code.OK:
-			actual = queue.frozen_input(frame)
+		var actual: Queue.Result = queue.simulated_input(frame)
 		if actual.code != Queue.Code.OK:
 			return null
 		bytes.append(actual.bytes)
@@ -501,9 +499,7 @@ func _record_replay() -> void:
 		var row: PackedByteArray = PackedByteArray()
 		var neutral: PackedByteArray = PackedByteArray()
 		for queue: Queue in _queues:
-			var input: Queue.Result = queue.retained_confirmed_input(frame)
-			if input.code != Queue.Code.OK:
-				input = queue.frozen_input(frame)
+			var input: Queue.Result = queue.retained_simulated_input(frame)
 			row.append_array(input.bytes if input.code == Queue.Code.OK else PackedByteArray())
 			neutral.append_array(_config.neutral_input)
 		# Defensive: a missing input keeps frame alignment with a neutral, checksum-free row, as upstream does.
