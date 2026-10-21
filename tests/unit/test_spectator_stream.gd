@@ -442,6 +442,7 @@ func _clean_tail(context: RefCounted) -> void:
 func _bounds(context: RefCounted) -> void:
 	var stream: RefCounted = Stream.new()
 	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 81), CODE.INVALID_CONFIGURATION, "row cannot exceed physical packet cap")
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 87), CODE.INVALID_CONFIGURATION, "the packet cap must fit the startup exchange")
 	context.equal(stream.poll(0), CODE.NOT_CONFIGURED, "failed configure does not install viewer")
 	stream = _stream(context)
 	context.equal(stream.receive_packet(stream.encode_row(5, _row(5)), 0), CODE.NETWORK_BACKPRESSURE, "bounded future refused")

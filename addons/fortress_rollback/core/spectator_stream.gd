@@ -52,7 +52,7 @@ func configure(
 ) -> int:
 	if config == null or identity.size() != 32 or key.size() != KEY_BYTES or digest.size() != DIGEST_BYTES or now_us < 0 or timeout_us < 1:
 		return Code.INVALID_CONFIGURATION
-	if config.validate() != Code.OK or not config.spectator or HEADER_BYTES + config.player_count * config.input_width > max_packet_bytes:
+	if config.validate() != Code.OK or not config.spectator or max(HEADER_BYTES + config.player_count * config.input_width, NEGOTIATION_BYTES) > max_packet_bytes:
 		return Code.INVALID_CONFIGURATION
 	if _session != null and _session._mutation_code() == Code.BUSY:
 		return Code.BUSY

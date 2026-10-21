@@ -39,7 +39,7 @@ func configure(host: Session, identity: PackedByteArray, key: PackedByteArray, d
 	var code: int = host._mutation_code()
 	if code != Code.OK:
 		return code
-	if Stream.HEADER_BYTES + host._config.player_count * host._config.input_width > max_packet_bytes:
+	if max(Stream.HEADER_BYTES + host._config.player_count * host._config.input_width, Stream.NEGOTIATION_BYTES) > max_packet_bytes:
 		return Code.INVALID_CONFIGURATION
 	_host = host
 	_source_config = host._config

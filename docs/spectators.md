@@ -205,6 +205,9 @@ code = stream.poll(now_us)
 
 The identity contains a 16-byte session ID, eight-byte host ID and eight-byte
 connection lifetime. Identifiers fence delivery; the key authenticates the sender.
+The packet limit must fit the largest packet the envelope produces: the startup
+exchange is 88 bytes and a complete row is the header plus one sample per
+player.
 The key is a shared secret that never travels in a packet. The digest binds the
 agreed match: the player count, the input width, the neutral input, the seed and the
 rules version. `Stream.configuration_digest(config, seed, rules_version)` derives it
