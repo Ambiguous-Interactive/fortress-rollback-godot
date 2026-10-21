@@ -299,6 +299,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
     suites = sorted(args.suite) or discover(args.category)
     durations = load_durations(args.durations)
+    # Another owner holds the development host, so this run stays serial: it does not split
+    # slow suites into one process per case, and it runs one process at a time.
+    lease_holder = host_capacity.holder()
+    if lease_holder:
+        print(json.dumps({"host_capacity_lease": lease_holder, "jobs": 1}), file=sys.stderr)
+        args.jobs = 1
     if args.jobs > 1:
         slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
         cases = split_cases(command, slow, args.timeout) if slow else {}
@@ -327,12 +333,7 @@ def main(argv: list[str] | None = None) -> int:
             return durations.get(suite + "::" + case, durations.get(suite, math.inf)) if case else durations.get(suite, math.inf)
         order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
         pending = [[None] * len(shards), [None] * len(shards)]
-        # A live lease means a browser witness needs a responsive host, so this wave runs serially.
-        lease_holder = host_capacity.holder()
-        requested_jobs = args.jobs
-        args.jobs = host_capacity.worker_count(args.jobs)
-        if lease_holder and args.jobs != requested_jobs:
-            print(json.dumps({"host_capacity_lease": lease_holder, "jobs": args.jobs}), file=sys.stderr)
+        # The wave owns the development host while it runs, so a witness that starts later waits.
         host_capacity.acquire(LEASE_NAME)
         try:
             with ThreadPoolExecutor(max_workers=args.jobs) as pool:
@@ -341,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
                         repetition[index] = pool.submit(timed, shards[index], args.timeout)
                 completed = [[future.result() for future in repetition] for repetition in pending]
         finally:
-            host_capacity.release(LEASE_NAME)
+            host_capacity.release()
         runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
         if not args.filter and args.jobs > 1:
             times = [max(completed[0][index][1], completed[1][index][1]) for index in range(len(keys))]

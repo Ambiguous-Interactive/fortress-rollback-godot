@@ -188,7 +188,9 @@ The key is a shared secret that never travels in a packet. The digest binds the
 agreed match: the player count, the input width, the neutral input, the seed and the
 rules version. `Stream.configuration_digest(config, seed, rules_version)` derives it
 from the same values on both sides, so a viewer that agreed another match refuses
-every packet of this one. Use fresh identities and a fresh key for a new network
+every packet of this one. The seed and the rules version travel as printable ASCII,
+so both sides agree on one encoding. A digest helper returns empty bytes for a
+configuration it cannot describe, and the stream then refuses to configure. Use fresh identities and a fresh key for a new network
 lifetime, and derive a fresh digest for a new match.
 
 Reconfigure through `stream.configure` when starting another viewer lifetime.

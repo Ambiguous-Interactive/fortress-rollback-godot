@@ -7,15 +7,20 @@ loses the CPU it needs to deliver a packet inside the two second production
 deadline, and its session ends with `PROTOCOL_FAILED`. The failure looks like
 a transport fault, but a scheduling pause causes it.
 
-A probe that needs a responsive host takes a lease before it starts. The
-runner reads the lease before it starts its parallel wave and runs that wave
-serially while the lease is held. Nothing changes on a CI runner: every job
-has its own machine and no lease file, so the runner keeps its full
-parallelism.
+A probe that needs a responsive host takes the host before it starts. The
+runner reads the owner before it starts its parallel wave and runs that wave
+serially while another owner holds the host. The runner takes the host of its
+own while its wave runs, so a witness that starts later waits for it instead
+of competing for it.
 
-The lease lives under the machine-local cache, never in a tracked path.
+The host is one exclusive file lock, so exactly one process owns it. The
+operating system releases the lock when its owner ends, so a lease of a
+process that is gone never holds the host and a stale file never blocks it.
+
+The lock lives under the machine-local cache, never in a tracked path.
 """
 
+import fcntl
 import json
 import os
 import time
@@ -23,98 +28,112 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LEASE_DIR = ROOT / ".cache" / "host-capacity"
-# A lease without a live owner expires, so a killed probe never blocks the host.
-DEFAULT_TTL_SECONDS = 3600.0
+LEASE_FILE = LEASE_DIR / "host.lock"
+# The owner of this process, its lock handle and its name.
+_state = {"handle": None, "name": None}
 
 
-def lease_path(name: str) -> Path:
-    """The file that records the lease of one named owner in this process."""
-    return LEASE_DIR / f"{name}.{os.getpid()}.lease"
+def _ours() -> bool:
+    """True when this process holds the host."""
+    return _state["handle"] is not None
 
 
-def acquire(name: str, ttl_seconds: float = DEFAULT_TTL_SECONDS) -> Path:
-    """Take the lease for one named owner and return its file."""
-    LEASE_DIR.mkdir(parents=True, exist_ok=True)
-    path = lease_path(name)
-    payload = {
-        "name": name,
-        "pid": os.getpid(),
-        "expires_at": time.time() + max(0.0, float(ttl_seconds)),
-    }
-    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-    return path
+def acquire(name: str) -> bool:
+    """Take the host for one named owner. False when another owner holds it.
 
-
-def release(name: str) -> None:
-    """Give the lease of one named owner in this process back."""
-    path = lease_path(name)
-    if path.exists():
-        path.unlink()
-
-
-def holder(ignore_pid: int | None = None) -> str | None:
-    """The name of the live lease holder, or None when the host is free.
-
-    A lease whose owner is gone, or whose lifetime ended, does not hold the
-    host. An unreadable lease file is ignored for the same reason. A lease of
-    the given process is skipped, because a process does not conflict with
-    itself.
+    A process that already holds the host keeps it, so one probe can run its
+    next stage without taking the host twice.
     """
-    if not LEASE_DIR.is_dir():
+    if _ours():
+        return True
+    LEASE_DIR.mkdir(parents=True, exist_ok=True)
+    handle = open(LEASE_FILE, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return False
+    handle.seek(0)
+    handle.truncate()
+    handle.write(json.dumps({"name": name, "pid": os.getpid()}, sort_keys=True))
+    handle.flush()
+    _state["handle"] = handle
+    _state["name"] = name
+    return True
+
+
+def release() -> None:
+    """Give the host back. The lock ends with this process either way."""
+    handle = _state["handle"]
+    if handle is None:
+        return
+    _state["handle"] = None
+    _state["name"] = None
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    handle.close()
+
+
+def holder() -> str | None:
+    """The name of the owner that holds the host, or None when it is free."""
+    if _ours():
+        return str(_state["name"])
+    if not LEASE_FILE.exists():
         return None
-    for path in sorted(LEASE_DIR.glob("*.lease")):
+    try:
+        handle = open(LEASE_FILE, "r", encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        # Another owner holds the lock. Its record names the owner.
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            expires_at = float(payload["expires_at"])
-            pid = int(payload["pid"])
-        except (OSError, ValueError, KeyError, TypeError):
-            continue
-        if expires_at <= time.time() or not _alive(pid):
-            continue
-        if ignore_pid is not None and pid == ignore_pid:
-            continue
-        name = payload.get("name")
-        if isinstance(name, str) and name:
-            return name
+            handle.seek(0)
+            name = json.loads(handle.read()).get("name")
+        except (OSError, ValueError, AttributeError):
+            name = None
+        handle.close()
+        return name if isinstance(name, str) and name else "unknown"
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    handle.close()
     return None
 
 
 def wait_for_free(timeout_seconds: float) -> bool:
     """Wait until no other owner holds the host. False when the wait ran out.
 
-    A lease of this process does not block the wait, so one probe can run the
-    next pinned engine without waiting for its own earlier lease.
+    A process does not conflict with itself, so a probe that already holds the
+    host does not wait for it.
     """
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
     while True:
-        if holder(ignore_pid=os.getpid()) is None:
+        if _ours() or holder() is None:
             return True
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.5)
 
 
-def _alive(pid: int) -> bool:
-    """True when the process of a lease owner still runs."""
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
+def acquire_when_free(name: str, timeout_seconds: float) -> bool:
+    """Wait for the host and take it. False when the wait ran out."""
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    while True:
+        if wait_for_free(0.0) and acquire(name):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
 
 
 def worker_count(requested: int) -> int:
     """The worker count the runner may use for its next parallel wave.
 
-    A live lease means a witness is running on this host, so the wave runs
-    serially. The requested count is otherwise unchanged.
+    Another owner holds the host, so the wave runs serially. The requested
+    count is otherwise unchanged.
     """
     if requested < 1:
         raise ValueError("requested worker count must be positive")
-    return 1 if holder() else requested
+    return requested if _ours() or holder() is None else 1

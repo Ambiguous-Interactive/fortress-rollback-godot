@@ -112,10 +112,12 @@ func _authentication(context: RefCounted) -> void:
 	var forged: PackedByteArray = Stream.authenticate(_unsigned_row(0, _row(0), _digest()), other_key)
 	context.equal(stream.receive_packet(forged, 1), CODE.PROTOCOL_FAILED, "a foreign key cannot forge a row")
 	context.equal(viewer.host_frontier(), -1, "a forged row changes no history")
-	var mutated: PackedByteArray = stream.encode_row(0, _row(0))
+	# The changed body keeps its own stream, so the refusal cannot come from the row above.
+	var changed: RefCounted = _stream(context)
+	var mutated: PackedByteArray = changed.encode_row(0, _row(0))
 	mutated[Stream.HEADER_BYTES] = 200
-	context.equal(stream.receive_packet(mutated, 1), CODE.PROTOCOL_FAILED, "a changed body keeps the old tag")
-	context.equal(viewer.host_frontier(), -1, "a changed body changes no history")
+	context.equal(changed.receive_packet(mutated, 1), CODE.PROTOCOL_FAILED, "a changed body keeps the old tag")
+	context.equal(changed.playback_session().host_frontier(), -1, "a changed body changes no history")
 	var foreign_digest: PackedByteArray = Stream.configuration_digest(Fixture.new()._config(), "other-seed", "rules-1")
 	var foreign: PackedByteArray = Stream.authenticate(_unsigned_row(0, _row(0), foreign_digest), _key())
 	context.equal(stream.receive_packet(foreign, 1), CODE.PROTOCOL_FAILED, "another agreed configuration is refused")

@@ -40,25 +40,36 @@ The duplicated exported web probe is gone: `godot_smoke.py --web` runs in the
 engine probes because its upstream trace comparison needs the pinned editor.
 The four `Godot ...` jobs sum to 23.0 minutes of the 68.2 minutes.
 
-## Warm runs of the same tree
+## Warm runs of the recent main line
 
-The spread between identical warm runs is wider than the remaining gap to the
-target, so one run is not a baseline. The summed job time of the last eight
-`main` runs, read from the public run records, is:
+The spread between warm runs of the recent main line is wider than the
+remaining gap to the target, so one run is not a baseline. The table lists the
+last eight `main` runs with the commit each one ran. They are eight different
+commits, so the spread mixes machine noise with the tree changes between them.
 
-| Run | Cache | Summed job time |
-| --- | --- | --- |
-| 39527781430 | warm | 68.2 min |
-| 39514898835 | warm | 68.2 min |
-| 39492851106 | warm | 70.4 min |
-| 39477990792 | warm | 71.7 min |
-| 39383559398 | warm | 64.5 min |
-| 39374317270 | warm | 67.0 min |
-| 39372426632 | warm | 73.2 min |
-| 39355664025 | cold | 76.1 min |
+| Run | Commit | Cache | Summed job time |
+| --- | --- | --- | --- |
+| 39527781430 | 7ca07ec | warm | 68.2 min |
+| 39514898835 | cc1ae3a | warm | 68.2 min |
+| 39492851106 | 33bfa1c | warm | 70.4 min |
+| 39477990792 | 508ac91 | warm | 71.7 min |
+| 39383559398 | 86a5b99 | warm | 64.5 min |
+| 39374317270 | 0502dd5 | warm | 67.0 min |
+| 39372426632 | 22af4ee | warm | 73.2 min |
+| 39355664025 | 39d20ea | cold | 76.1 min |
 
 The warm runs measure 64.5 to 73.2 minutes. A later change compares against
 this spread, not against the fastest or the slowest run.
+
+The table is recomputed from the public run records:
+
+```sh
+for run in 39527781430 39514898835 39492851106 39477990792 \
+           39383559398 39374317270 39372426632 39355664025; do
+  gh run view "$run" --json jobs --jq '[.jobs[] |
+    ((.completedAt | fromdate) - (.startedAt | fromdate))] | add / 60'
+done
+```
 
 ## What dominates each job
 

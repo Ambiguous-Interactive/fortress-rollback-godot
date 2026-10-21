@@ -45,6 +45,7 @@ func start() -> int:
 	var identity: PackedByteArray = PackedByteArray()
 	identity.resize(32)
 	# The local fixture shares one key and one agreed configuration with the host.
+	# A network integration must replace this fixture key with a fresh shared secret.
 	var key: PackedByteArray = PackedByteArray()
 	key.resize(Stream.KEY_BYTES)
 	var digest: PackedByteArray = Stream.configuration_digest(config, "demo-seed", "demo-rules")

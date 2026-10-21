@@ -660,9 +660,8 @@ def validate_diagnostic_playback(output, trace):
 def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
     # The browser witness needs a responsive host. It waits for a local probe to finish and then holds
     # the host, so a native suite that starts meanwhile runs its wave serially instead of starving it.
-    if not host_capacity.wait_for_free(HOST_WAIT_SECONDS):
+    if not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
         raise ValueError('the development host stayed busy; the online witness needs a responsive host')
-    host_capacity.acquire(HOST_LEASE_NAME)
     project, export = root / version, root / ('export-' + version)
     export.mkdir()
     timings = StepTimings()
@@ -778,7 +777,7 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
         raise ValueError('online example executed sources changed')
     print(f'online {version} steps: ' + ', '.join(f'{step["step"]}={step["elapsed_us"]}us' for step in timings.steps),
           file=sys.stderr, flush=True)
-    host_capacity.release(HOST_LEASE_NAME)
+    host_capacity.release()
     return ({'engine': actual, 'command': clean_command, 'result': result, 'steps': timings.summary(),
              'diagnostic_reproduction': {'command': diagnostic_command, 'result': diagnostic_result},
              'clean_install': {'install_command': install_command, 'sdk_command': sdk_command, 'no_sdk_command': no_sdk_command,

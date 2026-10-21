@@ -84,15 +84,18 @@ machine. A browser witness that runs at the same time then misses the two
 second production deadline, and its session ends with `PROTOCOL_FAILED`. That
 failure looks like a transport fault, but a scheduling pause causes it.
 
-`scripts/host_capacity.py` makes the ownership explicit. A probe that needs a
-responsive host takes a lease before it starts, and the runner reads the lease
-before its parallel wave and runs that wave serially while the lease is held.
-The runner takes a lease of its own while its wave runs, so a witness that
-starts later waits for the host instead of competing for it. A lease of a
-process that is gone, or whose lifetime ended, does not hold the host.
+`scripts/host_capacity.py` makes the ownership explicit. The host is one
+exclusive file lock, so exactly one process owns it. A probe that needs a
+responsive host takes the host before it starts, and the runner reads the
+owner before its parallel wave and runs that wave serially while another owner
+holds it. The runner takes the host of its own while its wave runs, so a
+witness that starts later waits for the host instead of competing for it. The
+operating system ends the lock with its owner, so the host of a process that
+is gone never blocks the next probe.
 
-The lease lives under the machine-local cache. A CI runner has its own machine
-and no lease, so its parallelism and its gates are unchanged.
+The lock lives under the machine-local cache. A CI runner has its own machine,
+so its jobs never share the host: the gate jobs keep their parallelism and
+their gates.
 
 ## Seeds and repeatability
 
