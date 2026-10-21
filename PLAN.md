@@ -407,6 +407,9 @@ supports delayed playback, caller-bounded catch-up and explicit host endings. Sp
 confirmation comes from complete host rows; player-mesh confirmation controls are unavailable.
 Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
+Every envelope packet carries a keyed tag over its header and body and the digest of the
+agreed match, so a viewer accepts only a host that holds the shared key and only a match
+it agreed. The envelope version moves from 1 to 2; both sides must agree it.
 A viewer never simulates a host row it no longer retains, and a reconfigured viewer keeps
 the caller's playback policy when it still fits the new ring.
 Remote-input sessions can recover and finalize confirmed replay history without another local sample

@@ -20,12 +20,15 @@ class ReentrantGame:
 		stream_codes.append(stream.poll(1000))
 		stream_codes.append(stream.receive_packet(stream.encode_end(1), 1000))
 		stream_codes.append(stream.receive_packet(stream.encode_keepalive(), 1000))
-		stream_codes.append(stream.configure(Fixture.new()._config(), stream._identity, 1000, 100, 50))
+		var key: PackedByteArray = PackedByteArray()
+		key.resize(32)
+		var digest: PackedByteArray = Stream.configuration_digest(Fixture.new()._config(), "seed-1", "rules-1")
+		stream_codes.append(stream.configure(Fixture.new()._config(), stream._identity, key, digest, 1000, 100, 128))
 
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["wire_golden", "byte_delivery", "malformed", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
+		["wire_golden", "byte_delivery", "malformed", "authentication", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
 			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "wide_shapes"]
 	)
 
@@ -34,6 +37,20 @@ func run_case(name: String, context: RefCounted) -> void:
 	call("_" + name, context)
 	context.finish()
 
+
+
+
+func _key() -> PackedByteArray:
+	var key: PackedByteArray = PackedByteArray()
+	key.resize(32)
+	for value: int in range(32):
+		key[value] = value + 1
+	return key
+
+
+func _digest(config: Variant = null) -> PackedByteArray:
+	var agreed: Variant = config if config != null else Fixture.new()._config()
+	return Stream.configuration_digest(agreed, "seed-1", "rules-1")
 
 func _identity() -> PackedByteArray:
 	var bytes: PackedByteArray = PackedByteArray()
@@ -44,7 +61,7 @@ func _identity() -> PackedByteArray:
 
 func _stream(context: RefCounted) -> RefCounted:
 	var stream: RefCounted = Stream.new()
-	context.equal(stream.configure(Fixture.new()._config(), _identity(), 0, 100, 50), CODE.OK, "bounded stream configured")
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "bounded stream configured")
 	return stream
 
 
@@ -56,18 +73,54 @@ func _empty() -> Array[Driver.LocalInput]:
 	return []
 
 
+## The unsigned header and body of one row, so a test can sign it with a different key or digest.
+func _unsigned_row(frame: int, inputs: Array[PackedByteArray], digest: PackedByteArray) -> PackedByteArray:
+	var packet: PackedByteArray = Stream.encode_header(Stream.ROW, frame, 2, 1, _identity(), digest)
+	for bytes: PackedByteArray in inputs:
+		packet.append_array(bytes)
+	return packet
+
+
+## A signed packet without its tag, so a test can change a field and sign it again.
+func _unsigned(packet: PackedByteArray) -> PackedByteArray:
+	var body: PackedByteArray = packet.slice(0, Stream.HEADER_BYTES - Stream.TAG_BYTES)
+	body.append_array(packet.slice(Stream.HEADER_BYTES))
+	return body
+
+
 func _wire_golden(context: RefCounted) -> void:
 	var stream: RefCounted = _stream(context)
 	context.equal(
 		stream.encode_row(16909060, _row(0)).hex_encode(),
-		"465247530101020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f040302010001",
-		"independent little-endian frame, dimensions and identity golden"
+		"465247530201020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b04030201731411334fcded23e53b538704c81eba0001",
+		"independent little-endian frame, dimensions, identity, configuration and tag golden"
 	)
-	context.equal(stream.encode_end(0).size(), 48, "empty stream has fixed header only")
+	context.equal(stream.encode_end(0).size(), 80, "empty stream has fixed header only")
 	var identity: PackedByteArray = _identity()
-	context.equal(stream.configure(Fixture.new()._config(), identity, 0, 100, 50), CODE.OK, "own caller identity")
+	context.equal(stream.configure(Fixture.new()._config(), identity, _key(), _digest(), 0, 100, 128), CODE.OK, "own caller identity")
 	identity.fill(255)
 	context.equal(stream.encode_end(0).slice(12, 44), _identity(), "identity mutation does not change lifetime")
+
+
+# Value: protects=only the agreed host drives a viewer; fails_when=a forged or foreign packet changes playback;
+# why_new=the byte cases cover shape, order and lifetime, not the keyed tag; seam=none
+func _authentication(context: RefCounted) -> void:
+	var stream: RefCounted = _stream(context)
+	var viewer: RefCounted = stream.playback_session()
+	var other_key: PackedByteArray = _key()
+	other_key[0] = 99
+	var forged: PackedByteArray = Stream.authenticate(_unsigned_row(0, _row(0), _digest()), other_key)
+	context.equal(stream.receive_packet(forged, 1), CODE.PROTOCOL_FAILED, "a foreign key cannot forge a row")
+	context.equal(viewer.host_frontier(), -1, "a forged row changes no history")
+	var mutated: PackedByteArray = stream.encode_row(0, _row(0))
+	mutated[Stream.HEADER_BYTES] = 200
+	context.equal(stream.receive_packet(mutated, 1), CODE.PROTOCOL_FAILED, "a changed body keeps the old tag")
+	context.equal(viewer.host_frontier(), -1, "a changed body changes no history")
+	var foreign_digest: PackedByteArray = Stream.configuration_digest(Fixture.new()._config(), "other-seed", "rules-1")
+	var foreign: PackedByteArray = Stream.authenticate(_unsigned_row(0, _row(0), foreign_digest), _key())
+	context.equal(stream.receive_packet(foreign, 1), CODE.PROTOCOL_FAILED, "another agreed configuration is refused")
+	context.equal(viewer.host_frontier(), -1, "a foreign configuration changes no history")
+	context.equal(stream.poll(100), CODE.PROTOCOL_FAILED, "forged traffic does not extend the host deadline")
 
 
 func _byte_delivery(context: RefCounted) -> void:
@@ -102,7 +155,7 @@ func _malformed(context: RefCounted) -> void:
 		context.equal(stream.receive_packet(packet, 90), CODE.PROTOCOL_FAILED, "bad field refused at %d" % offset)
 		context.equal(stream.playback_session().host_frontier(), -1, "bad bytes preserve host history")
 		context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 1), CODE.OK, "rejection cannot consume stream clock")
-	for length: int in [0, 47, 48, 49, 51, 65536]:
+	for length: int in [0, 79, 80, 81, 83, 65536]:
 		var stream: RefCounted = _stream(context)
 		var packet: PackedByteArray = stream.encode_row(0, _row(0))
 		packet.resize(length)
@@ -110,7 +163,9 @@ func _malformed(context: RefCounted) -> void:
 		context.equal(stream.playback_session().host_frontier(), -1, "length error is atomic")
 	var invalid_frame: RefCounted = _stream(context)
 	var exhausted: PackedByteArray = invalid_frame.encode_row(0, _row(0))
-	exhausted.encode_u32(44, 4294967295)
+	exhausted.encode_u32(60, 4294967295)
+	# The host signs the exhausted frame, so the frame bound is the reason for the refusal.
+	exhausted = Stream.authenticate(_unsigned(exhausted), _key())
 	context.equal(invalid_frame.receive_packet(exhausted, 90), CODE.INVALID_FRAME, "exhausted wire frame")
 	context.equal(invalid_frame.poll(1), CODE.OK, "invalid frame consumes no clock")
 	var stream: RefCounted = _stream(context)
@@ -125,7 +180,7 @@ func _lifetime_and_timeout(context: RefCounted) -> void:
 	var stale: PackedByteArray = stream.encode_row(0, _row(0))
 	var fresh: PackedByteArray = _identity()
 	fresh[31] += 1
-	context.equal(stream.configure(Fixture.new()._config(), fresh, 10, 100, 50), CODE.OK, "new connection lifetime")
+	context.equal(stream.configure(Fixture.new()._config(), fresh, _key(), _digest(), 10, 100, 128), CODE.OK, "new connection lifetime")
 	context.equal(stream.receive_packet(stale, 109), CODE.PROTOCOL_FAILED, "old lifetime cannot inject input")
 	context.equal(stream.playback_session().host_frontier(), -1, "stale packet preserves fresh viewer")
 	context.equal(stream.poll(109), CODE.OK, "strictly before deadline")
@@ -186,7 +241,7 @@ func _check_viewer_lifetime(context: RefCounted, replace_viewer: bool) -> void:
 			context.equal(stream.poll(99), CODE.OK, "rejected configuration preserves stream clock")
 		var fresh: PackedByteArray = _identity()
 		fresh[31] += 1
-		context.equal(stream.configure(Fixture.new()._config(), fresh, 10, 100, 50), CODE.OK, "explicit stream configuration restores fresh ownership")
+		context.equal(stream.configure(Fixture.new()._config(), fresh, _key(), _digest(), 10, 100, 128), CODE.OK, "explicit stream configuration restores fresh ownership")
 		context.equal(stream.receive_packet(packets[0], 109), CODE.PROTOCOL_FAILED, "old identity remains fenced after stream recovery")
 		context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 11), CODE.OK, "fresh lifetime accepts its own row and clock")
 
@@ -219,7 +274,7 @@ func _clean_tail(context: RefCounted) -> void:
 
 func _bounds(context: RefCounted) -> void:
 	var stream: RefCounted = Stream.new()
-	context.equal(stream.configure(Fixture.new()._config(), _identity(), 0, 100, 49), CODE.INVALID_CONFIGURATION, "row cannot exceed physical packet cap")
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 81), CODE.INVALID_CONFIGURATION, "row cannot exceed physical packet cap")
 	context.equal(stream.poll(0), CODE.NOT_CONFIGURED, "failed configure does not install viewer")
 	stream = _stream(context)
 	context.equal(stream.receive_packet(stream.encode_row(5, _row(5)), 0), CODE.NETWORK_BACKPRESSURE, "bounded future refused")
@@ -229,7 +284,7 @@ func _bounds(context: RefCounted) -> void:
 	context.equal(driver.step(1, _empty()).code, CODE.OK, "free one ring slot")
 	context.equal(stream.receive_packet(stream.encode_row(5, _row(5)), 2), CODE.OK, "caller retries exact refused packet")
 	context.equal(stream.encode_row(2147483647, _row(0)).is_empty(), true, "exhausted row cannot encode")
-	context.equal(stream.encode_end(2147483647).size(), 48, "exclusive end accepts exhausted next frame")
+	context.equal(stream.encode_end(2147483647).size(), 80, "exclusive end accepts exhausted next frame")
 
 
 # Value: protects=callback and request ownership; fails_when=stream polls expire an active game callback; why_new=byte flows service completed batches; seam=none
@@ -262,8 +317,8 @@ func _keepalive(context: RefCounted) -> void:
 	var keepalive: PackedByteArray = stream.encode_keepalive()
 	context.equal(
 		keepalive.hex_encode(),
-		"465247530103020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f00000000",
-		"keepalive kind and reserved frame independent golden"
+		"465247530203020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b000000000f63910fb2758ff54f8fd57c2bc1a1eb",
+		"keepalive kind, reserved frame, configuration and tag independent golden"
 	)
 	context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 1), CODE.OK, "ordinary host packet control")
 	for now_us: int in [100, 199, 298, 397]:
@@ -280,7 +335,8 @@ func _keepalive(context: RefCounted) -> void:
 		if invalid_field == "foreign_identity":
 			invalid[12] ^= 1
 		elif invalid_field == "reserved_frame":
-			invalid.encode_u32(44, 1)
+			invalid.encode_u32(60, 1)
+			invalid = Stream.authenticate(_unsigned(invalid), _key())
 		else:
 			invalid.append(0)
 		context.equal(viewer.receive_packet(invalid, 90), CODE.INVALID_FRAME if invalid_field == "reserved_frame" else CODE.PROTOCOL_FAILED, "invalid keepalive refused")
@@ -301,11 +357,11 @@ func _keepalive(context: RefCounted) -> void:
 func _policy_preserved(context: RefCounted) -> void:
 	var stream: RefCounted = _stream(context)
 	context.equal(stream.playback_session().set_playback(2, 1, 3), CODE.OK, "declared playback policy")
-	context.equal(stream.configure(Fixture.new()._config(), _identity(), 0, 100, 50), CODE.OK, "reconfigured viewer")
+	context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "reconfigured viewer")
 	context.equal(stream.playback_session().playback_policy(), PackedInt64Array([2, 1, 3]), "reconfigured viewer keeps the declared policy")
 	var narrow: RefCounted = Fixture.new()._config()
 	narrow.queue_capacity = 2
-	context.equal(stream.configure(narrow, _identity(), 0, 100, 50), CODE.OK, "narrower viewer")
+	context.equal(stream.configure(narrow, _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "narrower viewer")
 	context.equal(stream.playback_session().playback_policy(), PackedInt64Array([0, 1, 1]), "a policy that no longer fits falls back to the defaults")
 
 
@@ -320,7 +376,7 @@ func _wide_shapes(context: RefCounted) -> void:
 			config.input_width = width
 			config.neutral_input.resize(width)
 			var stream: RefCounted = Stream.new()
-			context.equal(stream.configure(config, _identity(), 0, 100, 65536), CODE.OK, label + " configures")
+			context.equal(stream.configure(config, _identity(), _key(), _digest(), 0, 100, 65536), CODE.OK, label + " configures")
 			var game: GameFixture.Game = GameFixture.Game.new()
 			var driver: RefCounted = Driver.new(stream.playback_session(), game)
 			var expected: int = 0
@@ -333,7 +389,7 @@ func _wide_shapes(context: RefCounted) -> void:
 					row.append(bytes)
 					expected = expected * 3 + bytes[0] + frame
 				var packet: PackedByteArray = stream.encode_row(frame, row)
-				context.equal(packet.size(), 48 + players * width, label + " row size")
+				context.equal(packet.size(), 80 + players * width, label + " row size")
 				context.equal(packet[6], players, label + " header roster")
 				context.equal(packet.decode_u32(8), width, label + " header width")
 				context.equal(stream.receive_packet(packet, frame), CODE.OK, label + " row accepted")
@@ -342,6 +398,6 @@ func _wide_shapes(context: RefCounted) -> void:
 			var sample: PackedByteArray = PackedByteArray()
 			sample.resize(width)
 			sample.fill(7)
-			var short: PackedByteArray = Stream.encode_header(Stream.ROW, 3, players, width, _identity())
+			var short: PackedByteArray = Stream.encode_header(Stream.ROW, 3, players, width, _identity(), _digest())
 			short.append_array(sample)
 			context.equal(stream.receive_packet(short, 4), CODE.PROTOCOL_FAILED, label + " short row is refused")

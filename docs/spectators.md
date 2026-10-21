@@ -119,16 +119,17 @@ history explicitly. The playable example shows this loop.
 ## Publish from a host
 
 `FortressSpectatorPublisher` owns a bounded host send cursor and one prepared packet.
-Configure it with the host session, agreed 32-byte identity and maximum packet size.
+Configure it with the host session, the agreed 32-byte identity, the agreed 32-byte
+key, the agreed 16-byte configuration digest and the maximum packet size.
 It starts at frame zero and exports only corrected, simulated, confirmed inputs.
 The local example uses this publisher for its byte delivery.
 
 ```gdscript
 const Publisher = preload("res://addons/fortress_rollback/core/spectator_publisher.gd")
 var publisher: Publisher = Publisher.new()
-var code: int = publisher.configure(host_session, agreed_identity, 65536)
+var code: int = publisher.configure(host_session, agreed_identity, agreed_key, agreed_digest, 65536)
 var packet: Types.InputResult = publisher.prepare_packet()
-# On OK, pass packet.bytes to the authenticated transport.
+# On OK, pass packet.bytes to the transport.
 # Only after transport acceptance:
 code = publisher.acknowledge_packet(packet.bytes)
 ```
@@ -158,29 +159,37 @@ returns `TERMINATED`. Keep the host stopped and configured until publication fin
 past the frozen end, preparation and acknowledgement return `INVALID_FRAME`;
 keepalive encoding returns empty bytes.
 Each preparation and acknowledgement does bounded work for at most one packet.
-There is no recipient membership, authentication, transport queue or automatic reconnect.
+Every published packet carries the keyed tag that the viewer verifies, so a packet
+that did not come from a host holding the agreed key is refused.
+There is no recipient membership, transport queue or automatic reconnect.
 
 ## Deliver bytes over a caller-owned transport
 
 `FortressSpectatorStream` wraps a spectator session with versioned fixed-width packets.
-Configure it with the spectator `config`, an owned 32-byte identity, initial monotonic
+Configure it with the spectator `config`, an owned 32-byte identity, the agreed
+32-byte key, the agreed 16-byte configuration digest, initial monotonic
 microseconds, a positive timeout, and a packet limit large enough for one complete row.
 Use `playback_session()` with the ordinary driver and fresh initial game state.
 
 ```gdscript
 const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
 var stream: Stream = Stream.new()
-var code: int = stream.configure(config, agreed_identity, 0, 2000000, 65536)
-# Continue only on OK. Authenticate host delivery before accepting packets.
+var digest: PackedByteArray = Stream.configuration_digest(config, "seed-1", "rules-1")
+var code: int = stream.configure(config, agreed_identity, agreed_key, digest, 0, 2000000, 65536)
+# Continue only on OK.
 var viewer: Spectator = stream.playback_session()
 code = stream.receive_packet(received_bytes, now_us)
 code = stream.poll(now_us)
 ```
 
 The identity contains a 16-byte session ID, eight-byte host ID and eight-byte
-connection lifetime. Identifiers fence delivery; they do not authenticate a sender.
-The caller must authenticate the host and agree neutral input, seed, initial state
-and game rules separately. Use fresh identities for a new network lifetime.
+connection lifetime. Identifiers fence delivery; the key authenticates the sender.
+The key is a shared secret that never travels in a packet. The digest binds the
+agreed match: the player count, the input width, the neutral input, the seed and the
+rules version. `Stream.configuration_digest(config, seed, rules_version)` derives it
+from the same values on both sides, so a viewer that agreed another match refuses
+every packet of this one. Use fresh identities and a fresh key for a new network
+lifetime, and derive a fresh digest for a new match.
 
 Reconfigure through `stream.configure` when starting another viewer lifetime.
 The new viewer keeps your playback policy when it still fits the new ring; a policy that
@@ -192,8 +201,11 @@ cannot change the replacement viewer. A failed viewer configuration preserves
 the existing stream. Explicit stream configuration installs a fresh viewer;
 use a fresh initial game, driver and agreed connection identity with it.
 
-The 48-byte little-endian header contains `FRGS`, version 1, kind, player count,
-reserved zero byte, u32 input width, the identity, and a u32 frame. `encode_row`
+The 80-byte little-endian header contains `FRGS`, version 2, kind, player count,
+reserved zero byte, u32 input width, the identity, the 16-byte configuration digest,
+a u32 frame and the 16-byte keyed tag. The tag is an HMAC-SHA256 of the header and
+the body under the shared key, truncated to 16 bytes; it sits between the header and
+the body, so a row body keeps its fixed offset. `encode_row`
 appends exactly one complete row in stable player order. Obtain that row from the
 host's corrected `confirmed_inputs`; the encoder cannot prove it was confirmed.
 `encode_end(final_frame)` carries the exclusive final frame without a body.
@@ -202,14 +214,16 @@ host liveness without adding inputs, advancing playback, or completing an END ga
 Send it before the deadline when no row can be delivered, including confirmation
 stalls, game pauses, or viewer backpressure. Poll the viewer independently.
 
-ROW (kind 1) and END (kind 2) retain their existing version 1 bytes. Keepalive is
-an optional extension to this experimental envelope. Older receivers reject kind 3;
-callers must agree support before sending it. There is no capability negotiation.
-Keepalive delivery requires the same authenticated host and lifetime as input rows.
+ROW (kind 1), END (kind 2) and keepalive (kind 3) share the version 2 envelope.
+Version 2 replaces the unauthenticated version 1 bytes, so both sides must agree
+the version before a match starts. There is no capability negotiation and no
+downgrade path. Keepalive delivery requires the same key and lifetime as input rows.
 
-`receive_packet` validates lengths, version, dimensions and identity before touching
-playback. Foreign or malformed packets return `PROTOCOL_FAILED` without changing
-the session. Conflicting accepted history terminates the viewer. Reordering and
+`receive_packet` validates lengths, version, dimensions, identity, configuration
+digest and tag before touching playback. Foreign or malformed packets, packets
+signed with another key and packets for another agreed match return
+`PROTOCOL_FAILED` without changing the session and without refreshing host
+liveness. Conflicting accepted history terminates the viewer. Reordering and
 identical retained duplicates use the same bounded row ring as direct delivery.
 No extra receive queue is retained. On `BUSY` or `NETWORK_BACKPRESSURE`, keep the
 exact packet and retry after the active batch or playback frees capacity.
@@ -286,6 +300,14 @@ views, and manual/driver request equality. The local game example compares every
 viewer state with independent original-input game history while the host rolls
 back. Pausing and history loss leave host progress unaffected.
 
+The version 2 envelope adds an independent golden for the whole packet, including
+the keyed tag, computed outside the engine. Negative controls refuse a row signed
+with another key, a changed body that keeps the old tag, a packet that carries
+another agreed configuration digest, and a foreign identity, and none of them
+changes the accepted history or the host liveness clock. A conflicting row that
+keeps a valid tag still terminates the viewer, so the tag does not replace the
+history check.
+
 An independent finite playback model checks 120 seeded byte-delivery schedules:
 queue capacities 2, 3 and 5, zero and maximum delay, duplicate and reordered rows,
 caller-owned retries, and END arriving before or after its tail. It compares every
@@ -294,7 +316,7 @@ Separate controls reject loss, foreign liveness and conflicting history. Bypassi
 production delay gate fails the model's first service-advice comparison.
 These bounded schedules establish neither upstream model equivalence nor live transport support.
 
-This foundation does not close #47. Actual upstream spectator differential/model
+This foundation does not close #47 or #131. Actual upstream spectator differential/model
 checks, host protocol events and handshake, SignalFish spectator identity/routing, real relay
 delivery, and network lifecycle validation remain required. The existing player
 mesh roster must not be extended to admit spectators without those contracts.

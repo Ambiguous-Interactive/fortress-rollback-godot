@@ -24,6 +24,20 @@ class ReentrantGame:
 			codes.append(session_ref.get_ref().begin_recovery().code)
 
 
+
+
+func _key() -> PackedByteArray:
+	var key: PackedByteArray = PackedByteArray()
+	key.resize(32)
+	for value: int in range(32):
+		key[value] = value + 1
+	return key
+
+
+func _digest(config: Variant = null) -> PackedByteArray:
+	var agreed: Variant = config if config != null else SpectatorFixture.new()._config()
+	return Stream.configuration_digest(agreed, "seed-1", "rules-1")
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(["final_history", "staged_sample", "failures", "guards", "expert_parity", "matching_tail", "boundary_checksum"])
 
@@ -94,10 +108,10 @@ func _final_history(context: RefCounted) -> void:
 	var identity: PackedByteArray = PackedByteArray()
 	identity.resize(32)
 	var publisher: RefCounted = Publisher.new()
-	context.equal(publisher.configure(session, identity, 50), Types.Code.OK, "final history can publish")
+	context.equal(publisher.configure(session, identity, _key(), _digest(), 128), Types.Code.OK, "final history can publish")
 	context.equal(publisher.finish_host(), Types.Code.OK, "clean end needs no extra host frame")
 	var stream: RefCounted = Stream.new()
-	context.equal(stream.configure(SpectatorFixture.new()._config(), identity, 0, 100, 50), Types.Code.OK, "viewer configured")
+	context.equal(stream.configure(SpectatorFixture.new()._config(), identity, _key(), _digest(), 0, 100, 128), Types.Code.OK, "viewer configured")
 	for frame: int in range(4):
 		var packet: RefCounted = publisher.prepare_packet()
 		context.equal(packet.code, Types.Code.OK, "final packet ready")
