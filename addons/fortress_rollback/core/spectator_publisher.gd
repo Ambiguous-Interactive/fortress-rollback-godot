@@ -25,6 +25,7 @@ var _finished: bool = false
 var _negotiation: Negotiation = Negotiation.new()
 var _offered_versions: int = 0
 var _offered_kinds: int = 0
+var _accept: PackedByteArray = PackedByteArray()
 
 
 ## A fresh publisher starts from frame zero; later admission needs separate state transfer.
@@ -54,6 +55,7 @@ func configure(host: Session, identity: PackedByteArray, key: PackedByteArray, d
 	_negotiation.reset()
 	_offered_versions = Negotiation.supported_versions(Stream.VERSION)
 	_offered_kinds = Negotiation.CAP_ALL
+	_accept = PackedByteArray()
 	return Code.OK
 
 
@@ -107,6 +109,12 @@ func receive_accept(packet: PackedByteArray) -> int:
 		return Code.PROTOCOL_FAILED
 	if packet.decode_u32(60) != 0:
 		return Code.PROTOCOL_FAILED
+	if _negotiation.refused():
+		# A refused agreement is terminal; the host publishes nothing after it.
+		return _negotiation.reason()
+	if _negotiation.agreed():
+		# A retried answer repeats the same agreement; a different one is a protocol failure.
+		return Code.OK if packet == _accept else Code.PROTOCOL_FAILED
 	var capabilities: PackedInt64Array = Negotiation.decode_capabilities(packet, Stream.HEADER_BYTES)
 	if capabilities.size() != 2:
 		return Code.PROTOCOL_FAILED
@@ -120,6 +128,7 @@ func receive_accept(packet: PackedByteArray) -> int:
 	if not Negotiation.kinds_within(accepted_kinds, _offered_kinds):
 		return _refuse(Code.UNSUPPORTED)
 	_negotiation.agree(chosen, accepted_kinds)
+	_accept = packet.duplicate()
 	return Code.OK
 
 

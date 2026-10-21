@@ -281,16 +281,21 @@ version is the version byte of the accepted packet.
 - The host accepts an answer only when it names a version the host offered and
   kinds inside the offer that keep the row and end kinds. The optional keepalive
   kind may be dropped, so a viewer that does not want liveness packets never
-  receives one.
+  receives one. A refused answer is terminal, and an answer that differs from
+  the accepted one cannot move an agreed host.
 - A refusal is explicit and happens before any row is played. The viewer reports
   `UNSUPPORTED` for another envelope version or an unknown optional kind, and
   `PROTOCOL_FAILED` for a forged, foreign or malformed packet. The reason is
   recorded in `agreement_reason()`, the agreement state becomes `REFUSED`, and
-  the viewer terminates, so a partial playback never starts.
+  the viewer terminates, so a partial playback never starts. A refused
+  agreement is terminal: it never agrees again.
 - The exchange is authenticated with the shared key, so an unauthenticated
-  exchange cannot move the agreement to a weaker envelope.
-- A retried offer repeats the same agreement. A different offer is a protocol
-  failure.
+  exchange cannot move the agreement to a weaker envelope. The envelope version
+  of a row is read after the keyed tag, so only an authenticated peer can
+  refuse the envelope.
+- A retried offer repeats the same agreement and refreshes the host liveness,
+  so a lost answer does not expire a viewer that is still negotiating. A
+  different offer is a protocol failure.
 
 `agreement_state()` reports `PENDING` before the exchange, `AGREED` after it and
 `REFUSED` after it fails. A row, an END or a keepalive that arrives before the

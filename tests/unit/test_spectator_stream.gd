@@ -230,14 +230,18 @@ func _negotiation(context: RefCounted) -> void:
 	context.equal(publisher.prepare_packet().code, CODE.PREDICTION_STALL, "the agreed host publishes its first row")
 
 	# A peer that speaks another envelope version is refused before any row is played.
-	for legacy: PackedByteArray in [_legacy_row(0), _legacy_offer()]:
-		var refused: RefCounted = Stream.new()
-		refused.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
-		context.equal(refused.receive_packet(legacy, 0), CODE.UNSUPPORTED, "another envelope version is refused")
-		context.equal(refused.agreement_reason(), CODE.UNSUPPORTED, "one recorded refusal reason")
-		context.equal(refused.agreement_state(), Negotiation.AgreementState.REFUSED, "the refused agreement is recorded")
-		context.equal(refused.playback_session().host_frontier(), -1, "a refused version plays no row")
-		context.equal(Driver.new(refused.playback_session(), GameFixture.Game.new()).step(0, _empty()).code, CODE.TERMINATED, "a refused version starts no playback")
+	var legacy_row: RefCounted = Stream.new()
+	legacy_row.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(legacy_row.receive_packet(_legacy_row(0), 0), CODE.PROTOCOL_FAILED, "an untagged version 1 row is malformed")
+	context.equal(legacy_row.playback_session().host_frontier(), -1, "a malformed row plays nothing")
+	var refused: RefCounted = Stream.new()
+	refused.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(refused.receive_packet(_legacy_offer(), 0), CODE.UNSUPPORTED, "another envelope version is refused")
+	context.equal(refused.agreement_reason(), CODE.UNSUPPORTED, "one recorded refusal reason")
+	context.equal(refused.agreement_state(), Negotiation.AgreementState.REFUSED, "the refused agreement is recorded")
+	context.equal(refused.playback_session().host_frontier(), -1, "a refused version plays no row")
+	context.equal(Driver.new(refused.playback_session(), GameFixture.Game.new()).step(0, _empty()).code, CODE.TERMINATED, "a refused version starts no playback")
+	context.equal(refused.receive_packet(offer, 1), CODE.TERMINATED, "a refused viewer never agrees again")
 
 	var host: RefCounted = _publisher(context)
 	context.equal(host.receive_accept(_legacy_accept()), CODE.UNSUPPORTED, "the host refuses another envelope version")
@@ -268,10 +272,20 @@ func _negotiation(context: RefCounted) -> void:
 	var repeated: RefCounted = Stream.new()
 	repeated.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
 	context.equal(repeated.receive_packet(offer, 0), CODE.OK, "the offer is accepted")
-	context.equal(repeated.receive_packet(offer, 0), CODE.OK, "a retried offer repeats the agreement")
+	context.equal(repeated.receive_packet(offer, 50), CODE.OK, "a retried offer repeats the agreement")
 	context.equal(repeated.agreement_version(), Stream.VERSION, "the repeated agreement holds")
-	context.equal(repeated.receive_packet(_legacy_offer(), 0), CODE.PROTOCOL_FAILED, "a different offer is a protocol failure")
+	context.equal(repeated.poll(100), CODE.OK, "a retried offer refreshes the host liveness")
+	context.equal(repeated.receive_packet(_legacy_offer(), 100), CODE.PROTOCOL_FAILED, "a different offer is a protocol failure")
 	context.equal(repeated.playback_session().status().reason, CODE.PROTOCOL_FAILED, "the conflicting offer terminates the viewer")
+
+	# An agreed host keeps its agreement; a different answer cannot move it.
+	var agreed_host: RefCounted = _publisher(context)
+	var agreed_viewer: RefCounted = Stream.new()
+	agreed_viewer.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
+	context.equal(Fixture.new().negotiate(agreed_host, agreed_viewer), CODE.OK, "the exchange agrees")
+	context.equal(agreed_host.receive_accept(agreed_viewer.encode_accept()), CODE.OK, "a retried answer repeats the agreement")
+	context.equal(agreed_host.receive_accept(_legacy_accept()), CODE.PROTOCOL_FAILED, "a different answer cannot move an agreed host")
+	context.equal(agreed_host.agreement_version(), Stream.VERSION, "the agreed host keeps its envelope version")
 
 
 func _byte_delivery(context: RefCounted) -> void:

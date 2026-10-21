@@ -175,11 +175,6 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	var kind: int = packet[5]
 	if kind == OFFER:
 		return _receive_offer(packet, now_us)
-	# A peer that names another known envelope version is refused as unsupported.
-	var version: int = packet[4]
-	var speakable: int = (1 << _negotiation.version()) if _negotiation.agreed() else Negotiation.supported_versions(VERSION)
-	if version >= 1 and version <= Negotiation.MAX_VERSION and (speakable & (1 << version)) == 0:
-		return _refuse(Code.UNSUPPORTED)
 	if packet.size() < HEADER_BYTES or packet.slice(12, 44) != _identity:
 		return Code.PROTOCOL_FAILED
 	if not _negotiation.agreed():
@@ -190,7 +185,6 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	if (
 		packet.size() != expected_size
 		or packet.slice(0, 4) != "FRGS".to_ascii_buffer()
-		or packet[4] != _negotiation.version()
 		or kind not in [ROW, END, KEEPALIVE]
 		or not _kind_agreed(kind)
 		or packet[6] != _config.player_count
@@ -201,6 +195,11 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		return Code.PROTOCOL_FAILED
 	if not tag_matches(packet, _key):
 		return Code.PROTOCOL_FAILED
+	# The version is read after the tag, so only an authenticated peer can refuse the envelope.
+	var version: int = packet[4]
+	var speakable: int = (1 << _negotiation.version()) if _negotiation.agreed() else Negotiation.supported_versions(VERSION)
+	if version >= 1 and version <= Negotiation.MAX_VERSION and (speakable & (1 << version)) == 0:
+		return _refuse(Code.UNSUPPORTED)
 	var frame: int = packet.decode_u32(60)
 	if frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
 		return Code.INVALID_FRAME
@@ -260,8 +259,14 @@ func _receive_offer(packet: PackedByteArray, now_us: int) -> int:
 	if preferred < 1 or (offered_versions & (1 << preferred)) == 0:
 		return Code.PROTOCOL_FAILED
 	if _negotiation.agreed():
-		# A retried offer repeats the same agreement; a different one is a protocol failure.
-		return Code.OK if packet == _offer else _fail()
+		# A retried offer repeats the same agreement and refreshes the host liveness.
+		if packet != _offer:
+			return _fail()
+		_last_received = now_us
+		return Code.OK
+	if _negotiation.refused():
+		# A refused agreement is terminal; the viewer already stopped.
+		return Code.TERMINATED
 	if not Negotiation.kinds_acceptable(offered_kinds):
 		return _refuse(Code.UNSUPPORTED)
 	var version: int = Negotiation.common_version(offered_versions, Negotiation.supported_versions(VERSION))
