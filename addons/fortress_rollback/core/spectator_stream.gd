@@ -197,9 +197,10 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		return Code.PROTOCOL_FAILED
 	# The version is read after the tag, so only an authenticated peer can refuse the envelope.
 	var version: int = packet[4]
-	var speakable: int = (1 << _negotiation.version()) if _negotiation.agreed() else Negotiation.supported_versions(VERSION)
-	if version >= 1 and version <= Negotiation.MAX_VERSION and (speakable & (1 << version)) == 0:
-		return _refuse(Code.UNSUPPORTED)
+	if version != _negotiation.version():
+		if version >= 1 and version <= Negotiation.MAX_VERSION:
+			return _refuse(Code.UNSUPPORTED)
+		return Code.PROTOCOL_FAILED
 	var frame: int = packet.decode_u32(60)
 	if frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
 		return Code.INVALID_FRAME

@@ -268,6 +268,14 @@ func _negotiation(context: RefCounted) -> void:
 	context.equal(forged.agreement_state(), Negotiation.AgreementState.PENDING, "a forged offer agrees nothing")
 	context.equal(forged.agreement_reason(), CODE.OK, "a forged offer records no refusal reason")
 
+	# An authenticated packet with an impossible version is malformed, not a playback row.
+	var impossible: RefCounted = _stream(context)
+	var broken: PackedByteArray = impossible.encode_row(0, _row(0))
+	broken[4] = 0
+	broken = Stream.authenticate(_unsigned(broken), _key())
+	context.equal(impossible.receive_packet(broken, 0), CODE.PROTOCOL_FAILED, "an authenticated packet with an impossible version is refused")
+	context.equal(impossible.playback_session().host_frontier(), -1, "an impossible version plays no row")
+
 	# A repeated offer repeats the agreement; a different one is a protocol failure.
 	var repeated: RefCounted = Stream.new()
 	repeated.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128)
