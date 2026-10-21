@@ -33,6 +33,11 @@ is below 66 minutes.
 
 Every job in the matrix runs; no gate is optional.
 
+The table is the measured run as it stood. The duplicated exported web probe
+has since been removed: `godot_smoke.py --web` now runs in the `suites` leg
+only, once per pinned engine, so the next run measures a shorter `Godot ...
+oracles` job. These numbers are not re-measured yet.
+
 ## What dominates each job
 
 | Job family | Work that dominates the wall time |
@@ -40,8 +45,15 @@ Every job in the matrix runs; no gate is optional.
 | `... online` | Two independent exported Chromium pages play the shipped online example against a local relay: export, import, room setup, then the frames each room submits |
 | `... direct` and `... mixed` | One exported Chromium page per peer pair, the WebRTC mesh handshake and the gameplay frames |
 | `Native and Chromium snapshot ownership` | The ownership probe exports the project twice per engine and replays every recorded case in the browser |
-| `Godot ... suites` and `... oracles` | The native suites plus the exported representation and protocol probes |
+| `Godot ... suites` and `... oracles` | The native suites in the suites leg and the upstream traces in the oracles leg, plus the exported representation and protocol probes that the suites leg runs once per engine |
 | `Pinned Rust reference` | The pinned upstream build and its own test run |
+
+The dominant step of the `... online` row comes from the measured per-step
+durations in the `online-example.json` receipt. The online probe records the
+elapsed time of every step it ran, including the browser sub-steps, so the
+dominant step is read from the published receipt instead of from a local run.
+The `Godot ...` row no longer repeats the exported probes, because that probe
+now runs once per pinned engine and not once per leg.
 
 No single job is slow enough to remove on its own; the cost is distributed
 across the browser work. A reduction has to come from what each browser job

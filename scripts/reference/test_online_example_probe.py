@@ -11,7 +11,8 @@ from unittest.mock import patch
 import unittest
 
 from browser import webrtc_runner
-from online_example_probe import (expected_states, run_online, validate_result as observe_result,
+from online_example_probe import (StepTimings, browser_step_durations, expected_states, run_online,
+                                  validate_result as observe_result,
                                   validate_replay_download as observe_replay, validate_viewer, validate_diagnostic_playback, validate_diagnostic_viewer)
 from online_diagnostics import game_checksum
 from test_online_diagnostics import diagnostic_download, trace_evidence
@@ -21,6 +22,48 @@ from wire import INPUT_HEADER
 
 
 ENGINE_IDENTITY = '4.3.0.stable 77dcf97d8'
+
+# Every step the online probe runs, in the order it runs them.
+ONLINE_STEPS = ['install', 'engine_version', 'no_sdk_import', 'no_sdk_check', 'install_sdk', 'sdk_import',
+                'documented_export', 'import', 'export', 'browser_flow', 'diagnostic_reproduction', 'corrupt_control']
+
+
+def measures_a_step(expression):
+    return (isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
+            and expression.func.attr == 'measure' and isinstance(expression.func.value, ast.Name)
+            and expression.func.value.id == 'timings' and len(expression.args) == 1
+            and isinstance(expression.args[0], ast.Constant) and isinstance(expression.args[0].value, str))
+
+
+def measured_steps(source):
+    """The measured step names of a probe body and the run calls that no measured step covers."""
+    tree = ast.parse(source)
+    measured, covered = [], set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.With) and node.items and all(measures_a_step(item.context_expr) for item in node.items):
+            for item in node.items:
+                measured.append((item.context_expr.lineno, item.context_expr.args[0].value))
+            for statement in node.body:
+                covered.update(id(child) for child in ast.walk(statement))
+    unmeasured = []
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ('run', 'run_browser')
+                and id(node) not in covered):
+            unmeasured.append(node.func.id)
+    return [name for _, name in sorted(measured)], unmeasured
+
+
+def publishes_measured_steps(source):
+    """The record the probe returns must publish the measured durations."""
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Tuple) and node.value.elts:
+            record = node.value.elts[0]
+            if isinstance(record, ast.Dict):
+                for key, value in zip(record.keys, record.values):
+                    if isinstance(key, ast.Constant) and key.value == 'steps':
+                        return isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute) and value.func.attr == 'summary'
+    return False
 
 
 def validate_result(value, corrupt=False):
@@ -671,3 +714,61 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             changed['rounds'][4]['stale_sent'][0] = raw.hex()
             with self.subTest(position=position), self.assertRaisesRegex(ValueError, 'delayed'):
                 validate_result(changed)
+
+
+class OnlineProbeStepTimingTests(unittest.TestCase):
+    # Value: protects=the elapsed time of every online probe step; fails_when=a step runs without a duration; seam=source shape
+    def test_every_online_probe_step_records_its_elapsed_time(self):
+        source = inspect.getsource(run_online)
+        steps, unmeasured = measured_steps(source)
+        self.assertEqual(unmeasured, [])
+        self.assertEqual(steps, ONLINE_STEPS)
+        self.assertTrue(publishes_measured_steps(source))
+        # The mutant drops the duration recording, so no step covers the work it runs.
+        mutant = source.replace('timings.measure(', 'unmeasured.measure(')
+        mutant_steps, mutant_unmeasured = measured_steps(mutant)
+        self.assertEqual(mutant_steps, [])
+        self.assertNotEqual(mutant_unmeasured, [])
+
+    # Value: protects=the rejected run names the step that failed; fails_when=a failed step loses its measurement; seam=StepTimings
+    def test_a_failing_step_still_reports_its_elapsed_time(self):
+        timings = StepTimings()
+        with self.assertRaises(RuntimeError) as caught:
+            with timings.measure('install'):
+                raise RuntimeError('the installer failed')
+        error = caught.exception
+        self.assertEqual(error.failed_step, 'install')
+        self.assertIn('online example step install failed after', str(error))
+        self.assertIn('the installer failed', str(error))
+        self.assertEqual(len(error.step_durations), 1)
+        self.assertEqual(error.step_durations[0]['step'], 'install')
+        self.assertIs(error.step_durations[0]['failed'], True)
+        self.assertGreaterEqual(error.step_durations[0]['elapsed_us'], 0)
+        self.assertEqual(timings.failed()['step'], 'install')
+        self.assertEqual(json.loads(json.dumps(timings.summary())), timings.summary())
+        with timings.measure('export'):
+            pass
+        self.assertEqual([step['step'] for step in timings.summary()], ['install', 'export'])
+        self.assertIs(timings.summary()[1]['failed'], False)
+
+    # Value: protects=the browser sub-step durations in the receipt; fails_when=a duration is missing or malformed; seam=browser result
+    def test_the_browser_sub_step_durations_join_the_receipt_steps(self):
+        self.assertEqual(browser_step_durations({'timings': {'replay_import_us': 12, 'replay_playback_us': 34,
+                                                             'diagnostic_viewer_us': 5}}),
+                         [('browser.diagnostic_viewer', 5), ('browser.replay_import', 12), ('browser.replay_playback', 34)])
+        for value in ({}, {'timings': None}, {'timings': []}, {'timings': {'replay_import_us': -1}},
+                      {'timings': {'replay_import_us': 1.5}}, {'timings': {'replay_import_us': True}},
+                      {'timings': {'replay_import_us': '12'}}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                browser_step_durations(value)
+
+    # Value: protects=pure JSON on the browser stdout; fails_when=the probe cannot parse the browser result; seam=script source
+    def test_the_browser_script_prints_one_json_result_and_names_its_sub_steps(self):
+        source = (Path(__file__).resolve().parent / 'browser' / 'online.cjs').read_text(encoding='utf-8')
+        printed = [line for line in source.splitlines() if 'console.log(' in line]
+        self.assertEqual(len(printed), 1)
+        self.assertIn('JSON.stringify(', printed[0])
+        self.assertIn('timings', printed[0])
+        for name in ('replay_import_us', 'replay_playback_us', 'diagnostic_viewer_us'):
+            self.assertIn(name, source)
+        self.assertIn('process.hrtime.bigint()', source)

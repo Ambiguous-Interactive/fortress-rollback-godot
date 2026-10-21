@@ -96,6 +96,21 @@ async function pauseElapsed(milliseconds, now = () => process.hrtime.bigint(), s
   return Number(elapsed / 1000n);
 }
 
+// Value: the elapsed time of one sub-step, in whole microseconds.
+function elapsedMicros(started) {
+  return Number((process.hrtime.bigint() - started) / 1000n);
+}
+
+// Value: the browser reports the elapsed time of its own sub-steps, so the receipt names them.
+async function measured(timings, name, operation) {
+  const started = process.hrtime.bigint();
+  try {
+    return await operation();
+  } finally {
+    timings[name] = elapsedMicros(started);
+  }
+}
+
 async function collectDiagnostics(pages, command) {
   const diagnostics = [];
   for (const page of pages) {
@@ -128,7 +143,7 @@ async function collectDiagnostics(pages, command) {
 }
 
 
-async function watchReplay(page, command, recording, diagnostic) {
+async function watchReplay(page, command, recording, diagnostic, timings) {
   await command(page, 'watch_replay');
   const control = button => command(page, 'viewer_control', { button });
   const choose = async buffer => {
@@ -138,48 +153,53 @@ async function watchReplay(page, command, recording, diagnostic) {
     await chooser.setFiles({ name: 'fortress-online.frrp', mimeType: 'application/octet-stream', buffer });
   };
   const bytes = Buffer.from(recording.hex, 'hex');
-  await choose(bytes);
-  await page.waitForFunction(() => window.fortressOnline.viewer.frames > 0, null, { timeout: 10000 });
-  const initial = await page.evaluate(() => window.fortressOnline.viewer);
-  if (initial.frame !== 0 || initial.playing) throw new Error('viewer did not open paused');
-  await control('Step');
-  const stepped = await page.evaluate(() => window.fortressOnline.viewer);
-  if (stepped.frame !== 1 || stepped.playing) throw new Error('viewer single step failed');
-  await control('Play');
-  await page.waitForFunction(() => window.fortressOnline.viewer.frame >= 4, null, { timeout: 10000 });
-  await control('Pause');
-  const paused = await page.evaluate(() => window.fortressOnline.viewer);
-  await page.waitForTimeout(100);
-  if (paused.playing || await page.evaluate(() => window.fortressOnline.viewer.frame) !== paused.frame)
-    throw new Error('viewer advanced while paused');
-  await control('Restart');
-  const restarted = await page.evaluate(() => window.fortressOnline.viewer);
-  if (restarted.frame !== 0 || restarted.state !== initial.state || restarted.playing) throw new Error('viewer restart failed');
-  await choose(Buffer.from('malformed replay'));
-  await page.waitForFunction(() => window.fortressOnline.viewer.message.includes('Could not open'), null, { timeout: 10000 });
-  const rejected = await page.evaluate(() => window.fortressOnline.viewer);
-  if (rejected.frames !== initial.frames || rejected.frame !== 0 || rejected.state !== initial.state)
-    throw new Error('failed import replaced the recording');
-  await control('Play');
-  await page.waitForFunction(() => window.fortressOnline.viewer.message.startsWith('Replay complete.'), null, { timeout: 30000 });
-  const completed = await page.evaluate(() => window.fortressOnline.viewer);
-  if (completed.playing || completed.frame !== initial.frames || completed.state !== recording.playback.canonical)
-    throw new Error('viewer differs from independently validated replay');
-  await command(page, 'viewer_target', { frame: 6 });
-  await control('Go');
-  await page.waitForFunction(() => window.fortressOnline.viewer.frame === 6, null, { timeout: 10000 });
-  const backward = await page.evaluate(() => window.fortressOnline.viewer);
-  await command(page, 'viewer_target', { frame: 12 });
-  await control('Go');
-  await page.waitForFunction(() => window.fortressOnline.viewer.frame === 12, null, { timeout: 10000 });
-  const forward = await page.evaluate(() => window.fortressOnline.viewer);
-  if (forward.playing || backward.playing) throw new Error('navigation did not finish paused');
-  await page.screenshot({ path: diagnostic.replace('-events.log', '-viewer.png') });
+  const initial = await measured(timings, 'replay_import_us', async () => {
+    await choose(bytes);
+    await page.waitForFunction(() => window.fortressOnline.viewer.frames > 0, null, { timeout: 10000 });
+    const opened = await page.evaluate(() => window.fortressOnline.viewer);
+    if (opened.frame !== 0 || opened.playing) throw new Error('viewer did not open paused');
+    return opened;
+  });
+  let stepped, paused, restarted, rejected, completed, forward, backward;
+  await measured(timings, 'replay_playback_us', async () => {
+    await control('Step');
+    stepped = await page.evaluate(() => window.fortressOnline.viewer);
+    if (stepped.frame !== 1 || stepped.playing) throw new Error('viewer single step failed');
+    await control('Play');
+    await page.waitForFunction(() => window.fortressOnline.viewer.frame >= 4, null, { timeout: 10000 });
+    await control('Pause');
+    paused = await page.evaluate(() => window.fortressOnline.viewer);
+    await page.waitForTimeout(100);
+    if (paused.playing || await page.evaluate(() => window.fortressOnline.viewer.frame) !== paused.frame)
+      throw new Error('viewer advanced while paused');
+    await control('Restart');
+    restarted = await page.evaluate(() => window.fortressOnline.viewer);
+    if (restarted.frame !== 0 || restarted.state !== initial.state || restarted.playing) throw new Error('viewer restart failed');
+    await choose(Buffer.from('malformed replay'));
+    await page.waitForFunction(() => window.fortressOnline.viewer.message.includes('Could not open'), null, { timeout: 10000 });
+    rejected = await page.evaluate(() => window.fortressOnline.viewer);
+    if (rejected.frames !== initial.frames || rejected.frame !== 0 || rejected.state !== initial.state)
+      throw new Error('failed import replaced the recording');
+    await control('Play');
+    await page.waitForFunction(() => window.fortressOnline.viewer.message.startsWith('Replay complete.'), null, { timeout: 30000 });
+    completed = await page.evaluate(() => window.fortressOnline.viewer);
+    if (completed.playing || completed.frame !== initial.frames || completed.state !== recording.playback.canonical)
+      throw new Error('viewer differs from independently validated replay');
+    await command(page, 'viewer_target', { frame: 6 });
+    await control('Go');
+    await page.waitForFunction(() => window.fortressOnline.viewer.frame === 6, null, { timeout: 10000 });
+    backward = await page.evaluate(() => window.fortressOnline.viewer);
+    await command(page, 'viewer_target', { frame: 12 });
+    await control('Go');
+    await page.waitForFunction(() => window.fortressOnline.viewer.frame === 12, null, { timeout: 10000 });
+    forward = await page.evaluate(() => window.fortressOnline.viewer);
+    if (forward.playing || backward.playing) throw new Error('navigation did not finish paused');
+    await page.screenshot({ path: diagnostic.replace('-events.log', '-viewer.png') });
+  });
   return { initial, stepped, paused, restarted, rejected, completed, forward, backward };
 }
 
-async function inspectDiagnostic(page, command, report, diagnostic) {
-  await command(page, 'inspect_diagnostic');
+async function inspectDiagnostic(page, command, report, diagnostic, timings) {
   const control = button => command(page, 'diagnostic_control', { button });
   const choose = async data => {
     const pending = page.waitForEvent('filechooser', { timeout: 10000 });
@@ -188,31 +208,35 @@ async function inspectDiagnostic(page, command, report, diagnostic) {
     await chooser.setFiles({ name: 'fortress-diagnostics.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
   };
   const observe = () => page.evaluate(() => window.fortressOnline.diagnostic_viewer);
-  await choose(report);
-  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.loaded, null, { timeout: 10000 });
-  const initial = await observe();
-  await control('Step');
-  const stepped = await observe();
-  await control('Restart');
-  const restarted = await observe();
-  await choose({ invalid: true });
-  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.message.includes('This viewer needs'), null, { timeout: 10000 });
-  const rejected = await observe();
-  await control('Play');
-  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.complete, null, { timeout: 15000 });
-  const completed = await observe();
-  await page.screenshot({ path: diagnostic.replace('-events.log', '-diagnostic-viewer.png') });
-  const corrupt = JSON.parse(JSON.stringify(report));
-  const changed = corrupt.trace.frames.find((row, index) => index > 0 && row.state_available);
-  if (!changed) throw new Error('diagnostic window needs a later canonical boundary');
-  const bytes = Buffer.from(changed.state, 'hex'); bytes[24] ^= 1; changed.state = bytes.toString('hex');
-  await choose(corrupt);
-  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.rows_consumed === 0, null, { timeout: 10000 });
-  await control('Play');
-  await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.failure.kind === 'state', null, { timeout: 15000 });
-  const diverged = await observe();
-  if (diverged.status.failure.frame !== changed.frame || diverged.status.failure.byte !== 24)
-    throw new Error('diagnostic viewer did not localize deliberately corrupted canonical bytes');
+  let initial, stepped, restarted, rejected, completed, diverged;
+  await measured(timings, 'diagnostic_viewer_us', async () => {
+    await command(page, 'inspect_diagnostic');
+    await choose(report);
+    await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.loaded, null, { timeout: 10000 });
+    initial = await observe();
+    await control('Step');
+    stepped = await observe();
+    await control('Restart');
+    restarted = await observe();
+    await choose({ invalid: true });
+    await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.message.includes('This viewer needs'), null, { timeout: 10000 });
+    rejected = await observe();
+    await control('Play');
+    await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.complete, null, { timeout: 15000 });
+    completed = await observe();
+    await page.screenshot({ path: diagnostic.replace('-events.log', '-diagnostic-viewer.png') });
+    const corrupt = JSON.parse(JSON.stringify(report));
+    const changed = corrupt.trace.frames.find((row, index) => index > 0 && row.state_available);
+    if (!changed) throw new Error('diagnostic window needs a later canonical boundary');
+    const bytes = Buffer.from(changed.state, 'hex'); bytes[24] ^= 1; changed.state = bytes.toString('hex');
+    await choose(corrupt);
+    await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.rows_consumed === 0, null, { timeout: 10000 });
+    await control('Play');
+    await page.waitForFunction(() => window.fortressOnline.diagnostic_viewer.status.failure.kind === 'state', null, { timeout: 15000 });
+    diverged = await observe();
+    if (diverged.status.failure.frame !== changed.frame || diverged.status.failure.byte !== 24)
+      throw new Error('diagnostic viewer did not localize deliberately corrupted canonical bytes');
+  });
   return { initial, stepped, restarted, rejected, completed, diverged };
 }
 
@@ -490,10 +514,11 @@ async function main() {
       rounds[round].diagnostics = await collectDiagnostics(pages, command);
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
-    const viewer = corrupt ? null : await watchReplay(pages[1], command, rounds[0].replay_download, diagnostic);
-    const diagnostic_viewer = corrupt ? null : await inspectDiagnostic(pages[0], command, rounds[0].diagnostics[0].report, diagnostic);
+    const timings = {};
+    const viewer = corrupt ? null : await watchReplay(pages[1], command, rounds[0].replay_download, diagnostic, timings);
+    const diagnostic_viewer = corrupt ? null : await inspectDiagnostic(pages[0], command, rounds[0].diagnostics[0].report, diagnostic, timings);
     if (errors.length) throw new Error(JSON.stringify(errors));
-    console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, diagnostic_viewer, errors, teardown: true }));
+    console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, diagnostic_viewer, timings, errors, teardown: true }));
   } catch (error) {
     const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
     const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));
@@ -504,5 +529,5 @@ async function main() {
     await new Promise(resolve => server.close(resolve));
   }
 }
-module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics };
+module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics, measured, elapsedMicros };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

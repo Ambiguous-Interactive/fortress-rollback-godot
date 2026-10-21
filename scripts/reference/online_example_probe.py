@@ -6,6 +6,7 @@ import re
 import shutil
 import struct
 import sys
+import time
 import zipfile
 
 from online_diagnostics import validate_download, validate_trace_history, game_checksum
@@ -19,6 +20,67 @@ from wire import INPUT_HEADER
 DESYNC_REASON = 18
 # examples/online/match.gd schedules local input this many frames ahead of the current frame.
 INPUT_DELAY = 2
+
+
+class StepTimings:
+    """The elapsed time of every step of the online probe, next to the step it belongs to."""
+
+    def __init__(self):
+        self.steps = []
+
+    def measure(self, name):
+        """Measure one step. The elapsed time is recorded even when the step raises."""
+        return _MeasuredStep(self, name)
+
+    def record(self, name, elapsed_us, failed=False):
+        self.steps.append({'step': name, 'elapsed_us': int(elapsed_us), 'failed': failed})
+
+    def failed(self):
+        return next((step for step in self.steps if step['failed']), None)
+
+    def summary(self):
+        """The measured durations, ready for the receipt."""
+        return [dict(step) for step in self.steps]
+
+
+class _MeasuredStep:
+    """One measured step of the online probe."""
+
+    def __init__(self, timings, name):
+        self.timings = timings
+        self.name = name
+        self.started = 0.0
+
+    def __enter__(self):
+        self.started = time.monotonic()
+        return self
+
+    def __exit__(self, kind, value, traceback):
+        elapsed_us = round((time.monotonic() - self.started) * 1000000)
+        self.timings.record(self.name, elapsed_us, failed=kind is not None)
+        if kind is not None and value is not None:
+            report_step_failure(value, self.timings, self.name, elapsed_us)
+        return False
+
+
+def report_step_failure(error, timings, name, elapsed_us):
+    """A rejected run names the step that failed and how long it took."""
+    error.step_durations = timings.summary()
+    error.failed_step = name
+    error.args = (f'online example step {name} failed after {elapsed_us} us: {error}',)
+
+
+def browser_step_durations(result):
+    """The sub-step durations the browser reported, as step names and elapsed times."""
+    timings = result.get('timings')
+    if not isinstance(timings, dict):
+        raise ValueError('online example browser step timings missing')
+    durations = []
+    for name, value in sorted(timings.items()):
+        if not isinstance(name, str) or type(value) is not int or value < 0:
+            raise ValueError('online example browser step timing invalid')
+        durations.append((f'browser.{name.removesuffix("_us")}', value))
+    return durations
 
 
 def expected_states(histories, count):
@@ -592,8 +654,10 @@ def validate_diagnostic_playback(output, trace):
 def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
     project, export = root / version, root / ('export-' + version)
     export.mkdir()
+    timings = StepTimings()
     install_command = [sys.executable, str(sources['online_installer']), '--project', str(project)]
-    run(install_command, environment, output / f'{version}-install.log')
+    with timings.measure('install'):
+        run(install_command, environment, output / f'{version}-install.log')
     installed = {'addon': project / 'addons/fortress_rollback', 'examples': project / 'examples', 'license': project / 'LICENSE',
                  'project': project / 'project.godot', 'preset': project / 'export_presets.cfg'}
     installed_inventory = inventory(installed)
@@ -605,13 +669,16 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
         location.mkdir()
         environment['XDG_' + kind + '_HOME'] = str(location)
     command = [str(engine), '--headless', '--path', str(project)]
-    actual = run([str(engine), '--version'], environment, output / f'{version}-version.log').strip()
+    with timings.measure('engine_version'):
+        actual = run([str(engine), '--version'], environment, output / f'{version}-version.log').strip()
     if not actual.startswith(version + '.stable.'):
         raise ValueError('unexpected online example engine version')
-    run(command + ['--editor', '--quit'], environment, output / f'{version}-no-sdk-import.log')
+    with timings.measure('no_sdk_import'):
+        run(command + ['--editor', '--quit'], environment, output / f'{version}-no-sdk-import.log')
     installed_frozen = freeze_after_import(installed, installed_inventory)
     no_sdk_command = command + ['--script', str(sources['online_install_check'])]
-    no_sdk = run(no_sdk_command, environment, output / f'{version}-no-sdk.log')
+    with timings.measure('no_sdk_check'):
+        no_sdk = run(no_sdk_command, environment, output / f'{version}-no-sdk.log')
     markers = [line.removeprefix('FORTRESS_CLEAN_INSTALL:') for line in no_sdk.splitlines() if line.startswith('FORTRESS_CLEAN_INSTALL:')]
     if len(markers) != 1:
         raise ValueError('clean install did not complete missing-SDK and offline checks')
@@ -624,7 +691,8 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     if inventory(installed) != installed_frozen:
         raise ValueError('clean install runtime sources changed during missing-SDK checks')
     sdk_command = install_command + ['--sdk', str(sdk)]
-    run(sdk_command, environment, output / f'{version}-install-sdk.log')
+    with timings.measure('install_sdk'):
+        run(sdk_command, environment, output / f'{version}-install-sdk.log')
     # Templates are verified tools, copied into a fresh user directory rather than a cached editor profile.
     template_target = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates' / (version + '.stable')
     template_target.mkdir(parents=True)
@@ -636,10 +704,12 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     documented_export.mkdir()
     installed['sdk'] = project / 'addons/signal_fish'
     before_sdk_import = inventory(installed)
-    run(command + ['--editor', '--quit'], environment, output / f'{version}-sdk-import.log')
+    with timings.measure('sdk_import'):
+        run(command + ['--editor', '--quit'], environment, output / f'{version}-sdk-import.log')
     installed_frozen = freeze_after_import(installed, before_sdk_import)
     documented_command = command + ['--export-release', 'Web', str(documented_export / 'index.html')]
-    run(documented_command, environment, output / f'{version}-documented-export.log')
+    with timings.measure('documented_export'):
+        run(documented_command, environment, output / f'{version}-documented-export.log')
     if inventory(installed) != installed_frozen:
         raise ValueError('documented export changed installed runtime sources')
     documented_inventory = inventory({'export': documented_export})
@@ -653,41 +723,51 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
                 'bridge': project / 'bridge.gd', 'diagnostic_cli': project / 'diagnose_trace.gd', 'project': project / 'project.godot', 'scene': project / 'main.tscn',
                 'preset': project / 'export_presets.cfg', 'license': project / 'LICENSE', 'certificate': certificate, 'private_key': private_key}
     frozen = inventory(executed)
-    run(command + ['--editor', '--quit'], environment, output / f'{version}-import.log')
+    with timings.measure('import'):
+        run(command + ['--editor', '--quit'], environment, output / f'{version}-import.log')
     frozen = freeze_after_import(executed, frozen)
-    run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, output / f'{version}-export.log')
+    with timings.measure('export'):
+        run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, output / f'{version}-export.log')
     exported = inventory({'export': export})
     browser = [str(sources['node']), str(sources['online_browser']), str(export), f'ws://127.0.0.1:{port}/v3/ws']
     clean_command = browser + ['clean', str(output / f'{version}-online-events.log')]
     offset = len(server.events)
-    result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=5)),
-                             expected_engine=no_sdk['engine_identity'])
+    with timings.measure('browser_flow'):
+        result = validate_result(json.loads(run_browser(clean_command, environment, output / f'{version}-online.log', rooms=5)),
+                                 expected_engine=no_sdk['engine_identity'])
+        durations = browser_step_durations(result)
+    for name, elapsed_us in durations:
+        timings.record(name, elapsed_us)
     if (output / f'{version}-online-replay.frrp').read_bytes().hex() != result['rounds'][0]['replay_download']['hex']:
         raise ValueError('saved replay artifact differs from the downloaded bytes')
     diagnostic_path = (output / f'{version}-diagnostic.json').resolve()
     diagnostic_path.write_text(json.dumps(result['rounds'][0]['diagnostics'][0]['report']), encoding='utf-8')
     diagnostic_command = command + ['--script', 'res://diagnose_trace.gd', '--', str(diagnostic_path)]
-    diagnostic_output = run(diagnostic_command, environment, output / f'{version}-diagnostic-reproduction.log')
+    with timings.measure('diagnostic_reproduction'):
+        diagnostic_output = run(diagnostic_command, environment, output / f'{version}-diagnostic-reproduction.log')
     diagnostic_result = validate_diagnostic_playback(diagnostic_output, result['rounds'][0]['diagnostics'][0]['report']['trace'])
     restart = result['rounds'][3]['server_restart']
     if server.events[offset:] != [restart['stopped'], restart['started']]:
         raise ValueError('browser process evidence disagrees with owned handles')
     server.verify_live()
     control_command = browser + ['corrupt', str(output / f'{version}-online-corrupt-events.log')]
-    control = json.loads(run_browser(control_command, environment, output / f'{version}-online-corrupt.log', rooms=1))
-    try:
-        validate_result(control, corrupt=True, expected_engine=no_sdk['engine_identity'])
-    except ValueError as error:
-        if not str(error).startswith('online example canonical prefix mismatch at frame '):
-            raise
-        result['restore_mutation'] = {'rejected': True, 'reason': str(error), 'teardown': control['teardown'], 'command': control_command,
-                                      'corrupt_control': control['rounds'][0].get('corrupt_control')}
-    else:
-        raise ValueError('online example accepted altered restored game state')
+    with timings.measure('corrupt_control'):
+        control = json.loads(run_browser(control_command, environment, output / f'{version}-online-corrupt.log', rooms=1))
+        try:
+            validate_result(control, corrupt=True, expected_engine=no_sdk['engine_identity'])
+        except ValueError as error:
+            if not str(error).startswith('online example canonical prefix mismatch at frame '):
+                raise
+            result['restore_mutation'] = {'rejected': True, 'reason': str(error), 'teardown': control['teardown'], 'command': control_command,
+                                          'corrupt_control': control['rounds'][0].get('corrupt_control')}
+        else:
+            raise ValueError('online example accepted altered restored game state')
     if (inventory(executed) != frozen or inventory({'export': export}) != exported
             or inventory({'export': documented_export}) != documented_inventory):
         raise ValueError('online example executed sources changed')
-    return ({'engine': actual, 'command': clean_command, 'result': result,
+    print(f'online {version} steps: ' + ', '.join(f'{step["step"]}={step["elapsed_us"]}us' for step in timings.steps),
+          file=sys.stderr, flush=True)
+    return ({'engine': actual, 'command': clean_command, 'result': result, 'steps': timings.summary(),
              'diagnostic_reproduction': {'command': diagnostic_command, 'result': diagnostic_result},
              'clean_install': {'install_command': install_command, 'sdk_command': sdk_command, 'no_sdk_command': no_sdk_command,
                                'import_commands': [command + ['--editor', '--quit']],

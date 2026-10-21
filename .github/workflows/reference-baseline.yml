@@ -150,6 +150,9 @@ jobs:
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Execute native and exported web probes
+        # The exported representation and protocol probes are identical for both legs, so the
+        # suites leg owns them and the oracles leg keeps only its own native work.
+        if: matrix.part == 'suites'
         run: python3 scripts/reference/godot_smoke.py --web --version "${{ matrix.version }}"
       - name: Verify runner failure controls and fresh-process suites
         if: matrix.part == 'suites'
