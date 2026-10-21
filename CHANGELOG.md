@@ -4,6 +4,8 @@
 
 ### Added
 
+- Keep the match running when a player leaves. Set `disconnect_behavior = CONTINUE` on the peer lifecycle options and a departed player's slot is frozen at the frame the mesh had confirmed. The survivors keep playing, the departed input repeats its last confirmed value and reports a `DISCONNECTED` status, and the confirmed history before that frame never changes. The default policy still ends the match when a peer stops answering.
+
 - Report the progress of every test case with the time it took. The runner measures each case with an injected clock: a deterministic tick clock in the native runner, the real host clock in the exported browser host. A rejected browser run names the last completed case and the case in flight.
 
 - Copy snapshot bytes with one native append instead of one interpreted step per byte. A game that saves 4 KiB of state per frame now spends about 3 microseconds on the write instead of about 60, and the writer no longer reserves its full capacity up front. The saved bytes, the overflow behavior and the caller-owned copy are unchanged.

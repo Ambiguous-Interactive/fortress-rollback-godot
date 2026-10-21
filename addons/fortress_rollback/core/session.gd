@@ -17,6 +17,7 @@ var _queues: Array[Queue] = []
 var _history: History
 var _samples: Array[PackedByteArray] = []
 var _received: PackedInt64Array = PackedInt64Array()
+var _frozen_frames: PackedInt64Array = PackedInt64Array()
 var _current: int = 0
 var _time: int = -1
 var _reason: int = Code.OK
@@ -72,6 +73,8 @@ func configure(config: Config) -> int:
 		_samples[player] = PackedByteArray()
 	_received.resize(config.player_count)
 	_received.fill(-1)
+	_frozen_frames.resize(config.player_count)
+	_frozen_frames.fill(-1)
 	_current = 0
 	_time = -1
 	_reason = Code.OK
@@ -146,6 +149,9 @@ func receive_input(player: int, frame: int, bytes: PackedByteArray) -> Types.Res
 		return Types.Result.new(code)
 	if player < 0 or player >= _queues.size() or player in _config.local_players:
 		return Types.Result.new(Code.INVALID_PLAYER)
+	if _frozen_frames[player] != -1:
+		# A dropped slot ignores later inputs; the frozen value keeps every survivor aligned.
+		return Types.Result.new(Code.OK)
 	if frame < 0 or frame > Queue.FRAME_MAX or frame < _floor():
 		return Types.Result.new(Code.INVALID_FRAME)
 	if bytes.size() != _config.input_width:
@@ -210,6 +216,31 @@ func set_input_delay(player: int, delay: int) -> Types.Result:
 	return changed
 
 
+## Freeze a remote slot at an agreed frame so the survivors keep playing.
+## The slot repeats the value confirmed at that frame, stops holding back the confirmed
+## frontier and reports a disconnected status. Confirmed history before the frame is unchanged.
+func freeze_player(player: int, frame: int) -> int:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return code
+	if _config == null or player < 0 or player >= _queues.size() or player in _config.local_players:
+		return Code.INVALID_PLAYER
+	if _frozen_frames[player] != -1:
+		return Code.OK
+	var result: int = _queues[player].freeze_at(frame)
+	if result != Queue.Code.OK:
+		return Code.INPUT_FAILED
+	_frozen_frames[player] = frame
+	return Code.OK
+
+
+## The agreed freeze frame of a dropped slot, or -1 while the slot still plays.
+func frozen_frame(player: int) -> int:
+	if _config == null or player < 0 or player >= _frozen_frames.size():
+		return -1
+	return _frozen_frames[player]
+
+
 ## Owned actual bytes a local player scheduled for a retained frame, or empty when unavailable.
 func retained_local_input(player: int, frame: int) -> PackedByteArray:
 	if _config == null or player < 0 or player >= _queues.size() or player not in _config.local_players:
@@ -236,9 +267,11 @@ func confirmed_inputs(frame: int) -> Types.FrameInputs:
 	for queue: Queue in _queues:
 		var actual: Queue.Result = queue.confirmed_input(frame)
 		if actual.code != Queue.Code.OK:
+			actual = queue.frozen_input(frame)
+		if actual.code != Queue.Code.OK:
 			return null
 		bytes.append(actual.bytes)
-		statuses.append(Queue.Status.CONFIRMED)
+		statuses.append(actual.status)
 	return Types.FrameInputs.new(bytes, statuses)
 
 
@@ -469,6 +502,8 @@ func _record_replay() -> void:
 		var neutral: PackedByteArray = PackedByteArray()
 		for queue: Queue in _queues:
 			var input: Queue.Result = queue.retained_confirmed_input(frame)
+			if input.code != Queue.Code.OK:
+				input = queue.frozen_input(frame)
 			row.append_array(input.bytes if input.code == Queue.Code.OK else PackedByteArray())
 			neutral.append_array(_config.neutral_input)
 		# Defensive: a missing input keeps frame alignment with a neutral, checksum-free row, as upstream does.
@@ -573,9 +608,14 @@ func _confirmed() -> int:
 
 func _receipt_minimum() -> int:
 	var confirmed: int = Queue.FRAME_MAX
-	for frame: int in _received:
-		confirmed = mini(confirmed, frame)
-	return confirmed
+	var open_slot: bool = false
+	for index: int in range(_received.size()):
+		if _frozen_frames[index] != -1:
+			# A dropped slot no longer holds the confirmed frontier back.
+			continue
+		open_slot = true
+		confirmed = mini(confirmed, _received[index])
+	return confirmed if open_slot else _current
 
 
 func _floor() -> int:

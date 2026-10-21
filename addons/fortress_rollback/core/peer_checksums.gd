@@ -85,6 +85,11 @@ func sent(peer: PackedByteArray, frame: int) -> void:
 				reports.erase(old)
 
 
+## A departed peer never reports again and must not hold the shared window back.
+func abandon(peer: PackedByteArray) -> void:
+	_sent[peer.hex_encode()] = FRAME_MAX
+
+
 func compare(core: RefCounted, ids: Array[PackedByteArray], confirmation_ceiling: int) -> int:
 	if interval == 0:
 		return Types.Code.OK

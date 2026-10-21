@@ -20,7 +20,7 @@ enum Code {
 	PREDICTION_MISMATCH,
 	DELAY_DECREASE_UNSUPPORTED,
 }
-enum Status { NONE, CONFIRMED, PREDICTED }
+enum Status { NONE, CONFIRMED, PREDICTED, DISCONNECTED }
 
 const FRAME_MAX: int = 2147483647
 const MAX_CAPACITY: int = 65536
@@ -57,6 +57,8 @@ var _first_incorrect: int = -1
 var _last_requested: int = -1
 var _reclaimed_frame: int = -1
 var _reclaimed_bytes: PackedByteArray = PackedByteArray()
+var _frozen: bool = false
+var _frozen_frame: int = -1
 
 
 ## Allocate fixed-width history. Invalid reconfiguration preserves existing state.
@@ -80,6 +82,8 @@ func configure(capacity: int, neutral: PackedByteArray) -> int:
 	_last_actual = _neutral.duplicate()
 	_reclaimed_frame = -1
 	_reclaimed_bytes = _neutral.duplicate()
+	_frozen = false
+	_frozen_frame = -1
 	reset_prediction()
 	return Code.OK
 
@@ -137,6 +141,9 @@ func add_input_with_reclaim_floor(sample_frame: int, bytes: PackedByteArray, rec
 func _add_input(sample_frame: int, bytes: PackedByteArray, reclaim_floor: int) -> Result:
 	if _capacity == 0:
 		return Result.new(Code.NOT_CONFIGURED)
+	if _frozen:
+		# A dropped slot stops accepting inputs; the frozen value keeps every survivor aligned.
+		return Result.new(Code.OK, _frozen_frame)
 	if not _valid_frame(sample_frame) or _delay > FRAME_MAX - sample_frame:
 		return Result.new(Code.FRAME_RANGE)
 	if bytes.size() != _neutral.size():
@@ -165,6 +172,8 @@ func input(frame: int) -> Result:
 		return Result.new(Code.PREDICTION_MISMATCH)
 	# Rust records this request even if the frame predates the logical tail.
 	_last_requested = frame
+	if _frozen and frame > _frozen_frame:
+		return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
 	if frame == _reclaimed_frame:
 		return Result.new(Code.OK, frame, _reclaimed_bytes, Status.CONFIRMED)
 	if frame < _tail_frame:
@@ -233,6 +242,42 @@ func reset_prediction() -> void:
 	_prediction_bytes = PackedByteArray()
 	_first_incorrect = -1
 	_last_requested = -1
+
+
+## Freeze the slot at an agreed frame. Frames past the frame repeat the value confirmed
+## there and later inputs are ignored, so the survivors read one deterministic value.
+## A frame whose value was already evicted leaves the confirmed value unchanged.
+func freeze_at(frame: int) -> int:
+	if _capacity == 0:
+		return Code.NOT_CONFIGURED
+	if _frozen:
+		return Code.OK
+	if not _valid_frame(frame):
+		return Code.FRAME_RANGE
+	_frozen = true
+	_frozen_frame = frame
+	var agreed: Result = confirmed_input(frame)
+	if agreed.code == Code.OK:
+		_last_actual = agreed.bytes.duplicate()
+	# Frames past the agreed frame used the later actual value and must be resimulated.
+	if _last_added > frame:
+		_first_incorrect = frame + 1
+	return Code.OK
+
+
+func is_frozen() -> bool:
+	return _frozen
+
+
+func frozen_frame() -> int:
+	return _frozen_frame
+
+
+## The frozen value for a frame past the agreed freeze frame, or an unavailable result.
+func frozen_input(frame: int) -> Result:
+	if not _frozen or frame <= _frozen_frame:
+		return Result.new(Code.NO_CONFIRMED_INPUT)
+	return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
 
 
 func first_incorrect_frame() -> int:

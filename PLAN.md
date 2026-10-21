@@ -421,6 +421,10 @@ Live SignalFish spectator routing, handshake/events and upstream spectator
 differential/model acceptance remain open in #47.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
+The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
+the survivors keep playing and reports a disconnected input status; the
+coordinated barrier and its all-survivor certificate remain open in
+[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
 Hot join uses reserved/dropped slots with fixed player cardinality,
 bounded session-bound snapshot transfer and agreed activation frames.
 It must not infer admission from SignalFish reconnection alone.
