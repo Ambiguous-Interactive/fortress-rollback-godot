@@ -15,6 +15,7 @@ const H = preload("res://addons/fortress_rollback/protocol/handshake_types.gd")
 const V = preload("res://addons/fortress_rollback/protocol/protocol_validation.gd")
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Checksums = preload("res://addons/fortress_rollback/core/peer_checksums.gd")
+const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
 const Advisor = preload("res://addons/fortress_rollback/core/delay_advisor.gd")
@@ -36,7 +37,11 @@ var _config: Config = null
 var _peers: Dictionary = {}
 var _ids: Array[PackedByteArray] = []
 var _slots_by_peer: Array[PackedInt32Array] = []
-var _dropped: Dictionary = {}
+## A coordinated drop barrier agrees the frozen frame between the survivors.
+## The survivor that owns the lowest surviving slot proposes the cut, every other
+## survivor answers with the frame window it can still freeze, and the proposer
+## commits the frame that all of them can retain.
+var _drops: Drop = Drop.new()
 var _busy: bool = false
 var _now: int = -1
 var _lifecycle: L.Options
@@ -120,7 +125,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	_config.local_players = locals
 	_peers = peers
 	_slots_by_peer = slots_by_peer
-	_dropped.clear()
+	_drops.reset()
 	for key: String in keys:
 		_ids.append(remotes[key].duplicate())
 	_lifecycle = L.copy_options(controls)
@@ -251,6 +256,9 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
 		return _result(_step_failure(control_code), before, before)
+	if _barrier_pending():
+		# The coordinated drop holds the match until the survivors agree the frozen frame.
+		return _result(Types.Code.PREDICTION_STALL, before, before)
 	_busy = true
 	var scheduled: int = -1
 	for sample: Driver.LocalInput in local_inputs:
@@ -264,7 +272,7 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 		data.append_array(_core.scheduled_local_input(player).bytes)
 	var statuses: Array[T.Status] = _statuses()
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			continue
 		var endpoint: Endpoint = _endpoint(index)
 		if endpoint.status().last_submitted_frame == scheduled:
@@ -342,7 +350,7 @@ func set_input_delay(player: int, delay: int) -> int:
 	# A backpressured step leaves an endpoint behind the core; it receives its missing frames first.
 	var starts: PackedInt64Array = PackedInt64Array()
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			# A departed peer receives no more frames.
 			starts.append(-1)
 			continue
@@ -356,7 +364,7 @@ func set_input_delay(player: int, delay: int) -> int:
 		return changed.code
 	var statuses: Array[T.Status] = _statuses()
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			continue
 		var inputs: Array[PackedByteArray] = []
 		for frame: int in range(starts[index], changed.value + 1):
@@ -385,7 +393,9 @@ func diagnostics() -> Dictionary:
 			row[field] = endpoint.get(field, 0)
 		if _is_dropped(index):
 			row["dropped"] = true
-			row["freeze_frame"] = _dropped[_ids[index].hex_encode()].frame
+			row["freeze_frame"] = _drops.freeze_frame(_ids[index].hex_encode())
+		elif _is_gone(index):
+			row["departed"] = true
 		peers.append(row)
 	var report: Dictionary = {
 		"schema": "fortress-peer-diagnostics-v1",
@@ -492,7 +502,7 @@ func close(now_us: Variant, reason: Variant = 0) -> int:
 		return I.Code.INVALID_ARGUMENT
 	_now = now_us
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			# A departed peer holds no open link.
 			continue
 		var closed: int = _endpoint(index).close(now_us, reason)
@@ -576,7 +586,7 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = [], force_sta
 	var status_nudge: bool = force_status_gossip or _gossip_nudge_needed()
 	var result: int = I.Code.OK
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			continue
 		if _lifecycle.enabled:
 			_endpoint(index).update_local_frame_advantage(_core.status().current_frame)
@@ -600,7 +610,7 @@ func _running() -> bool:
 	if _core == null:
 		return false
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			# A departed peer no longer holds the match.
 			continue
 		if _peers[_ids[index].hex_encode()].status().state != "running":
@@ -662,7 +672,7 @@ func _confirmation_code() -> int:
 		var bound: int = frames[slot]
 		if not _config.local_players.has(slot):
 			for index: int in range(_ids.size()):
-				if _is_dropped(index):
+				if _is_gone(index):
 					continue
 				bound = mini(bound, _endpoint(index).status().peer_statuses[slot].last_frame)
 		limit = mini(limit, bound)
@@ -684,7 +694,7 @@ func _accept_remote(frame: int, bytes: PackedByteArray, slots: PackedInt32Array)
 
 func _check_failure() -> void:
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			# A departed peer is no longer a failure of the match.
 			continue
 		var observed: Dictionary = _endpoint(index).status()
@@ -741,6 +751,10 @@ func _collect_events(local_close: bool = false) -> void:
 				_drop_peer(index)
 				_publish_event(event)
 				continue
+			if event.kind == "drop_barrier":
+				# A survivor answers the coordinated drop of a departed peer.
+				_drops.received(self, index, event)
+				continue
 			if event.kind == "event_capacity_exceeded":
 				_core.terminate(Types.Code.PROTOCOL_FAILED)
 			_publish_event(event)
@@ -748,34 +762,24 @@ func _collect_events(local_close: bool = false) -> void:
 		_terminate_links()
 
 
-## Freeze a departed peer's slots at the confirmed frontier this survivor knows and keep
-## the match running. The frontier is the mesh-confirmed frame, so a survivor whose status
-## gossip lagged can freeze at a different frame; the mesh checksum comparison reports that
-## disagreement as a desync. A coordinated drop would agree the frame between all survivors.
-## Returns false when the configured policy ends the match instead.
+## The coordinated drop of a departed peer owns the agreement state.
+## The peer session keeps the transport, the simulation and the publication.
 func _drop_peer(index: int) -> bool:
-	if _lifecycle.disconnect_behavior != L.Disconnect.CONTINUE:
-		_core.terminate(Types.Code.PROTOCOL_FAILED)
-		return false
-	var key: String = _ids[index].hex_encode()
-	if _dropped.has(key):
-		return true
-	var cut: int = _core.status().confirmed_frame
-	for slot: int in _slots_by_peer[index]:
-		if _core.freeze_player(slot, cut) != Types.Code.OK:
-			# Without an agreed value the survivors would freeze on different bytes.
-			_publish_event({"kind": "peer_dropped", "peer": _ids[index].duplicate(), "frame": cut})
-			_core.terminate(Types.Code.PROTOCOL_FAILED)
-			return false
-	_dropped[key] = {"frame": cut, "slots": _slots_by_peer[index].duplicate()}
-	# The departed peer never reports another checksum and must not hold the window back.
-	_checksums.abandon(_ids[index])
-	_publish_event({"kind": "peer_dropped", "peer": _ids[index].duplicate(), "frame": cut})
-	return true
+	return _drops.observed(self, index)
+
+
+## A pending coordinated drop holds the match until the survivors agree the frozen frame.
+func _barrier_pending() -> bool:
+	return _drops.pending()
 
 
 func _is_dropped(index: int) -> bool:
-	return _dropped.has(_ids[index].hex_encode())
+	return _drops.is_dropped(_ids[index].hex_encode())
+
+
+## A departed peer is gone from the match; a dropped peer is gone and frozen.
+func _is_gone(index: int) -> bool:
+	return _drops.is_gone(_ids[index].hex_encode())
 
 
 func _publish_event(event: Dictionary) -> void:
@@ -805,11 +809,12 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 		return I.Code.TERMINATED
 	if not _lifecycle.enabled:
 		return I.Code.OK
+	_drops.service(self, now_us)
 	var current: int = _core.status().current_frame
 	if send_reports:
 		_frames_ahead = -2147483648
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			continue
 		if send_reports:
 			_frames_ahead = maxi(_frames_ahead, _endpoint(index).status().average_frame_advantage)
@@ -832,7 +837,7 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 			return _checksum_failure(Types.Code.HISTORY_UNAVAILABLE, _checksums.failure)
 		if not scheduled.is_empty():
 			for index: int in range(_ids.size()):
-				if _is_dropped(index):
+				if _is_gone(index):
 					continue
 				if _checksums.needs_send(_ids[index], scheduled.frame):
 					var sent: int = _endpoint(index).send_checksum(scheduled.frame, scheduled.checksum, now_us)
@@ -858,7 +863,7 @@ func _publish_delay_recommendation() -> bool:
 	var player: int = _config.local_players[0]
 	var round_trip_ms: int = 0
 	for index: int in range(_ids.size()):
-		if _is_dropped(index):
+		if _is_gone(index):
 			# A departed peer has no live round trip time.
 			continue
 		round_trip_ms = maxi(round_trip_ms, _endpoint(index).status().round_trip_time_ms)

@@ -79,6 +79,15 @@ static func receive_control(plan: Dictionary, message: T.Message, packet: Callab
 		T.Kind.GOODBYE:
 			plan.state.terminated = true
 			plan.events.append({"kind": "disconnected", "reason": message.reason})
+		T.Kind.DROP_BARRIER:
+			plan.events.append({
+				"kind": "drop_barrier",
+				"phase": message.phase,
+				"operation": message.operation,
+				"cut": message.cut,
+				"bound": message.bound,
+				"slots": message.data.duplicate(),
+			})
 		T.Kind.KEEP_ALIVE:
 			pass
 		_:

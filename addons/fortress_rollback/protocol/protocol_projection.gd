@@ -68,4 +68,13 @@ static func project(message: T.Message) -> Dictionary:
 				for floor_frame: int in message.floors:
 					floors.append(floor_frame)
 				record["floors"] = floors
+		T.Kind.DROP_BARRIER:
+			record["phase"] = message.phase
+			record["operation"] = message.operation
+			record["cut"] = message.cut
+			record["bound"] = message.bound
+			var slots: Array[int] = []
+			for slot: int in message.data:
+				slots.append(slot)
+			record["slots"] = slots
 	return record

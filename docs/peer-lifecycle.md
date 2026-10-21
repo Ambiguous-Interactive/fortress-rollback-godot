@@ -89,19 +89,38 @@ Returned byte arrays belong to the caller.
 The default policy ends the match when a peer stops answering: the session
 reports `PROTOCOL_FAILED` and every peer stops. The optional
 `disconnect_behavior = CONTINUE` lifecycle policy instead freezes the departed
-player's slot at the frame the mesh had confirmed, and the survivors keep
-playing. The frozen slot repeats the value confirmed at that frame, reports a
-`DISCONNECTED` input status and no longer holds the confirmed frontier back.
-Confirmed history before that frame never changes; the frames after it are
-resimulated with the frozen value. A departure before the mesh confirmed any
-frame ends the match, because there is no agreed value to freeze. Every peer of
-a mesh must use the same policy. Each survivor detects the departure on its
-own and freezes the slot at its own confirmed frontier, so the survivors agree
-only while those frontiers agree; the mesh checksum comparison reports a
-disagreement as a desync. This is the graceful drop of the pinned source, not
-its coordinated drop barrier: the agreed frame is the mesh-confirmed frontier
-rather than an all-survivor certificate, so a coordinated drop remains open
-work. See
+player's slot and the survivors keep playing. The frozen slot repeats the value
+confirmed at the agreed frame, reports a `DISCONNECTED` input status and no
+longer holds the confirmed frontier back. Confirmed history before that frame
+never changes; the frames after it are resimulated with the frozen value. A
+departure before the mesh confirmed any frame ends the match, because there is
+no agreed value to freeze. Every peer of a mesh must use the same policy.
+
+### The coordinated drop
+
+With more than one survivor left, the survivors agree the frozen frame before
+any of them freezes a slot. The survivor that owns the lowest surviving slot
+proposes the cut, every other survivor answers with the frame window it can
+still freeze, and the proposer commits the frame that all of them can retain.
+A survivor only answers a proposal for a peer whose departure it observed
+itself, so one peer cannot drop a live peer. The match holds while the barrier
+runs: the survivors stop advancing, so the frames the cut needs stay retained.
+`drop_barrier_timeout_us` bounds that hold.
+
+Every survivor then freezes the departed slot at the same frame and repeats the
+same value, so the survivors keep one confirmed history instead of splitting at
+their own frontiers. The barrier publishes `peer_drop_pending` when it starts
+and `peer_dropped` with the agreed frame when it commits. A barrier that cannot
+agree - no common frame window, a timeout, or a commit outside the survivor's
+window - publishes `peer_drop_unconfirmed` and falls back to the survivor's own
+confirmed frontier, which is the graceful drop of the pinned source. That
+fallback keeps the match running but leaves the survivors on their own
+frontiers, so the mesh checksum comparison can still report a disagreement as a
+desync.
+
+The barrier is a Godot-scoped tier. The pinned source keeps its coordinated drop
+in a different byte layout with a prepare, backfill, certificate and commit
+barrier, so the remaining upstream acceptance stays open. See
 [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
 

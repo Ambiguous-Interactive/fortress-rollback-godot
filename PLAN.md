@@ -428,8 +428,14 @@ differential/model acceptance remain open in #47.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
-the survivors keep playing and reports a disconnected input status; the
-coordinated barrier and its all-survivor certificate remain open in
+the survivors keep playing and reports a disconnected input status. The
+survivors now agree that frame first: the survivor that owns the lowest
+surviving slot proposes the cut, every other survivor answers with the frame
+window it can still freeze, and the proposer commits the frame all of them can
+retain, so the survivors keep one confirmed history. The match holds while the
+barrier runs and a barrier that cannot agree falls back to the survivor's own
+frontier with a recorded reason. The pinned prepare, backfill, certificate and
+commit barrier and its all-survivor certificate remain open in
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
 Hot join uses reserved/dropped slots with fixed player cardinality,
 bounded session-bound snapshot transfer and agreed activation frames.

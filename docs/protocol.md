@@ -91,10 +91,20 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 9 | `GOODBYE` | reason:u8 |
 | 10 | `FLOOR_REQUEST` | round_seq:u32 |
 | 11 | `FLOOR_REPLY` | round_seq:u32, count:u8, floors[count]:i32, nullable |
+| 12 | `DROP_BARRIER` | phase:u8, operation:u32, cut:i32, nullable, bound:i32, nullable, slot_count:u8, slots[slot_count] |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
 Parsing a feature bit does not enable its behavior. `GOODBYE.reason` preserves
 all u8 values; policy maps known reasons and handles unknown reasons explicitly.
+
+`DROP_BARRIER` carries the coordinated drop of a departed peer. Its phase is
+`1` for the proposal, `2` for a survivor's answer and `3` for the agreed
+commit. Its operation identifies the barrier, its cut is the frame the sender
+proposes or accepts, its bound is the oldest frame the sender can still freeze
+and its slot list names the departed peer's slots in increasing order. The
+barrier is a Godot-scoped tier: the pinned source keeps its coordinated drop in
+a different byte layout, so the eleven pinned kinds keep the golden fixtures
+and this kind has its own round-trip and rejection coverage.
 
 An input packet carries at least one complete frame and one slot. `players`
 contains strictly increasing, unique slot indices in the fixed roster.
@@ -187,7 +197,7 @@ The semantic reference is Fortress
 | ChecksumReport | Preserve full frame domain and u128 checksum bytes |
 | KeepAlive/Goodbye | Preserve empty keepalive and u8 terminal reason |
 | FloorRequest/FloorReply | Preserve u32 round sequence and all nullable roster floors |
-| DropPrepare/DropReport/DropBackfill/DropCommit/DropAbort | Deferred coordinated graceful-drop tier; unknown kinds rejected |
+| DropPrepare/DropReport/DropBackfill/DropCommit/DropAbort | Deferred coordinated graceful-drop tier; the Godot scoped `DROP_BARRIER` kind carries its own layout |
 | JoinRequest/StateSnapshot/StateSnapshotAck/ReactivateSlot/ReactivateSlotAck/JoinCommitted/JoinAborted | Deferred snapshot transfer, hot join and reactivation; unknown kinds rejected |
 
 Floor/status representation does not advertise recovery or coordinated drop

@@ -1,7 +1,7 @@
 class_name FortressProtocolTypes
 extends RefCounted
 
-enum Kind { SYNC_REQUEST = 1, SYNC_REPLY, INPUT, INPUT_ACK, QUALITY_REPORT, QUALITY_REPLY, CHECKSUM_REPORT, KEEP_ALIVE, GOODBYE, FLOOR_REQUEST, FLOOR_REPLY }
+enum Kind { SYNC_REQUEST = 1, SYNC_REPLY, INPUT, INPUT_ACK, QUALITY_REPORT, QUALITY_REPLY, CHECKSUM_REPORT, KEEP_ALIVE, GOODBYE, FLOOR_REQUEST, FLOOR_REPLY, DROP_BARRIER }
 enum Code { OK, INVALID_TYPE, INVALID_LIMITS, INVALID_MESSAGE, INVALID_PACKET, UNSUPPORTED_VERSION, UNSUPPORTED_KIND, LIMIT_EXCEEDED, IDENTITY_MISMATCH }
 
 
@@ -63,6 +63,10 @@ class Message:
 	var reason: int = 0
 	var round_seq: int = 0
 	var floors: PackedInt32Array = PackedInt32Array()
+	var phase: int = 0
+	var operation: int = 0
+	var cut: int = -1
+	var bound: int = -1
 
 
 class Result:

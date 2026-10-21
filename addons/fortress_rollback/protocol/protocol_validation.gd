@@ -117,4 +117,19 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 				if not frame(floor_frame):
 					return -1
 			return 5 + 4 * message.floors.size()
+		T.Kind.DROP_BARRIER:
+			if message.phase < 1 or message.phase > 3:
+				return -1
+			if message.operation < 0 or message.operation > 4294967295:
+				return -1
+			if not frame(message.cut) or not frame(message.bound):
+				return -1
+			if message.data.is_empty() or message.data.size() > bounds.player_count:
+				return -1
+			var previous_slot: int = -1
+			for slot: int in message.data:
+				if slot <= previous_slot or slot >= bounds.player_count:
+					return -1
+				previous_slot = slot
+			return 14 + message.data.size()
 	return -1

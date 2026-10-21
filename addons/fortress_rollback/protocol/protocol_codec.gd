@@ -16,7 +16,7 @@ static func encode(message: Variant, limits: Variant) -> T.Result:
 		return T.Result.new(T.Code.INVALID_TYPE)
 	if not V.limits(limits):
 		return T.Result.new(T.Code.INVALID_LIMITS)
-	if message.kind < T.Kind.SYNC_REQUEST or message.kind > T.Kind.FLOOR_REPLY:
+	if message.kind < T.Kind.SYNC_REQUEST or message.kind > T.Kind.DROP_BARRIER:
 		return T.Result.new(T.Code.UNSUPPORTED_KIND)
 	var size: int = V.body_size(message, limits)
 	if size < 0:
@@ -57,7 +57,7 @@ static func decode(packet: Variant, limits: Variant) -> T.Result:
 		return T.Result.new(T.Code.UNSUPPORTED_VERSION)
 	var message: T.Message = T.Message.new()
 	message.kind = reader.number(1)
-	if message.kind < T.Kind.SYNC_REQUEST or message.kind > T.Kind.FLOOR_REPLY:
+	if message.kind < T.Kind.SYNC_REQUEST or message.kind > T.Kind.DROP_BARRIER:
 		return T.Result.new(T.Code.UNSUPPORTED_KIND)
 	if reader.number(1) != 0:
 		return T.Result.new(T.Code.INVALID_PACKET)
@@ -169,6 +169,13 @@ static func _write_body(writer: StreamPeerBuffer, message: T.Message) -> void:
 				writer.put_u8(message.floors.size())
 				for frame: int in message.floors:
 					writer.put_32(frame)
+		T.Kind.DROP_BARRIER:
+			writer.put_u8(message.phase)
+			writer.put_u32(message.operation)
+			writer.put_32(message.cut)
+			writer.put_32(message.bound)
+			writer.put_u8(message.data.size())
+			writer.put_data(message.data)
 
 
 static func _read_config(reader: Reader) -> T.Config:
@@ -225,6 +232,16 @@ static func _read_body(reader: Reader, message: T.Message, limits: T.Limits) -> 
 					return
 				for index: int in range(count):
 					message.floors.append(reader.number(4, true))
+		T.Kind.DROP_BARRIER:
+			message.phase = reader.number(1)
+			message.operation = reader.number(4)
+			message.cut = reader.number(4, true)
+			message.bound = reader.number(4, true)
+			var slots: int = reader.number(1)
+			if slots < 1 or slots > limits.player_count:
+				reader.valid = false
+				return
+			message.data = reader.take(slots)
 
 
 static func _read_input(reader: Reader, message: T.Message, limits: T.Limits) -> void:
