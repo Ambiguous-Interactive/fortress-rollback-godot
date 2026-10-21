@@ -492,6 +492,9 @@ func close(now_us: Variant, reason: Variant = 0) -> int:
 		return I.Code.INVALID_ARGUMENT
 	_now = now_us
 	for index: int in range(_ids.size()):
+		if _is_dropped(index):
+			# A departed peer holds no open link.
+			continue
 		var closed: int = _endpoint(index).close(now_us, reason)
 		if closed != I.Code.OK:
 			code = closed
@@ -745,8 +748,10 @@ func _collect_events(local_close: bool = false) -> void:
 		_terminate_links()
 
 
-## Freeze a departed peer's slots at the mesh-confirmed frame and keep the match running.
-## Every survivor confirmed that frame, so every survivor repeats the same departed value.
+## Freeze a departed peer's slots at the confirmed frontier this survivor knows and keep
+## the match running. The frontier is the mesh-confirmed frame, so a survivor whose status
+## gossip lagged can freeze at a different frame; the mesh checksum comparison reports that
+## disagreement as a desync. A coordinated drop would agree the frame between all survivors.
 ## Returns false when the configured policy ends the match instead.
 func _drop_peer(index: int) -> bool:
 	if _lifecycle.disconnect_behavior != L.Disconnect.CONTINUE:
@@ -758,6 +763,8 @@ func _drop_peer(index: int) -> bool:
 	var cut: int = _core.status().confirmed_frame
 	for slot: int in _slots_by_peer[index]:
 		if _core.freeze_player(slot, cut) != Types.Code.OK:
+			# Without an agreed value the survivors would freeze on different bytes.
+			_publish_event({"kind": "peer_dropped", "peer": _ids[index].duplicate(), "frame": cut})
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 			return false
 	_dropped[key] = {"frame": cut, "slots": _slots_by_peer[index].duplicate()}

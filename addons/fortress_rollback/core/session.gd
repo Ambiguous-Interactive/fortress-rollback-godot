@@ -149,13 +149,13 @@ func receive_input(player: int, frame: int, bytes: PackedByteArray) -> Types.Res
 		return Types.Result.new(code)
 	if player < 0 or player >= _queues.size() or player in _config.local_players:
 		return Types.Result.new(Code.INVALID_PLAYER)
-	if _frozen_frames[player] != -1:
-		# A dropped slot ignores later inputs; the frozen value keeps every survivor aligned.
-		return Types.Result.new(Code.OK)
 	if frame < 0 or frame > Queue.FRAME_MAX or frame < _floor():
 		return Types.Result.new(Code.INVALID_FRAME)
 	if bytes.size() != _config.input_width:
 		return Types.Result.new(Code.INPUT_WIDTH)
+	if _frozen_frames[player] != -1:
+		# A dropped slot ignores later inputs; the frozen value keeps every survivor aligned.
+		return Types.Result.new(Code.OK)
 	if frame <= _received[player]:
 		var existing: Queue.Result = _queues[player].retained_confirmed_input(frame)
 		return Types.Result.new(Code.OK if existing.code == Queue.Code.OK and existing.bytes == bytes else Code.INPUT_ALREADY_SUBMITTED)

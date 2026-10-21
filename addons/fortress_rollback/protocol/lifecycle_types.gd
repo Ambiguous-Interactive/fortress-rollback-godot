@@ -2,8 +2,8 @@ class_name FortressLifecycleTypes
 extends RefCounted
 
 ## What a session does when a peer stops answering. Every peer of a mesh must use the same
-## behavior: Halt ends the match for everybody, ContinueWithout freezes the departed
-## player's slot at the agreed confirmed frame and keeps the survivors playing.
+## behavior: Halt ends the match for everybody, Continue freezes the departed player's slot
+## at the agreed confirmed frame and keeps the survivors playing.
 enum Disconnect { HALT, CONTINUE }
 
 

@@ -35,6 +35,10 @@
 | 16 | A lockstep session cannot advance after the freeze, because the advance gate asked every queue for a retained actual input and a frozen queue has none. | bug | `addons/fortress_rollback/core/session.gd` `_can_advance` reads the value the simulation used; the `lockstep` case fails with the old read |
 | 17 | A delay change after the drop ended the match, because the catch-up frames were still sent to the departed endpoint. | bug | `addons/fortress_rollback/core/peer_session.gd` `set_input_delay` skips a departed peer; the `delay` case fails with the old path |
 | 18 | The gossip refresh folded the frozen slot's stale receipt, so the refresh never fired for a dropped player. | bug | `addons/fortress_rollback/core/peer_session.gd` `_gossip_nudge_needed` skips a frozen slot |
+| 19 | The agreed frame is the local confirmed frontier, not a frame every survivor agreed, so a survivor whose gossip lagged can freeze at another frame. The code comment claimed the opposite. | honesty | `addons/fortress_rollback/core/peer_session.gd` `_drop_peer` now states the limit, and `docs/peer-lifecycle.md` states that the survivors agree only while their frontiers agree |
+| 20 | Without the agreed value the freeze silently used the last received input, so the frozen bytes depended on local receipt state. | bug | `addons/fortress_rollback/core/input_queue.gd` `freeze_at` refuses the freeze when the agreed value is gone |
+| 21 | A frozen slot accepted malformed input, because the frozen check ran before the frame and width checks. | bug | `addons/fortress_rollback/core/session.gd` `receive_input` and `addons/fortress_rollback/core/input_queue.gd` `_add_input` validate first |
+| 22 | A departed peer's pending checksum reports were compared against the survivors' resimulated checksums, which ends the match with a desync. | bug | `addons/fortress_rollback/core/peer_checksums.gd` `abandon` drops the pending reports and the peer is skipped in the comparison |
 
 ## Actions Taken
 
@@ -48,6 +52,7 @@
 | 6 | The oracle leg keeps the native engine probes, because its upstream trace comparison needs the pinned editor, and a test now pins that dependency | `.github/workflows/reference-baseline.yml`, `scripts/reference/test_reference_baseline_workflow.py` | the new `test_the_oracle_leg_still_installs_the_pinned_engine` case and the current-head CI run |
 | 7 | The oracle control rejects a status that is still invalid, accepts the disconnected status as evidence and keeps its check count in step | `tests/oracle/p2p_game_controls.gd`, `scripts/oracle/p2p_controls.py` | the local control run reports 28 checks and no failures |
 | 8 | The confirmation fold, the exported rows and the pending correction are repaired, and the drop test now fails for each of those defects | `addons/fortress_rollback/core/peer_session.gd`, `addons/fortress_rollback/core/session.gd`, `addons/fortress_rollback/core/input_queue.gd`, `tests/unit/test_peer_drop.gd` | four mutations of the production code fail the suite and the clean tree passes |
+| 9 | The freeze refuses a missing agreed value, a frozen slot validates before it ignores, a departed peer's checksum reports are dropped, and the code states the agreement limit of the graceful drop | `addons/fortress_rollback/core/input_queue.gd`, `addons/fortress_rollback/core/session.gd`, `addons/fortress_rollback/core/peer_checksums.gd`, `addons/fortress_rollback/core/peer_session.gd`, `docs/peer-lifecycle.md` | the whole native suite and the reference control suite pass |
 
 Routing: procedures -> `.llm/skills/`; facts -> `../skills/gdscript-style/`;
 external evidence -> none; invariants -> unchanged; tooling gaps -> the probe

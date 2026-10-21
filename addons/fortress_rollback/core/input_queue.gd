@@ -141,13 +141,13 @@ func add_input_with_reclaim_floor(sample_frame: int, bytes: PackedByteArray, rec
 func _add_input(sample_frame: int, bytes: PackedByteArray, reclaim_floor: int) -> Result:
 	if _capacity == 0:
 		return Result.new(Code.NOT_CONFIGURED)
-	if _frozen:
-		# A dropped slot stops accepting inputs; the frozen value keeps every survivor aligned.
-		return Result.new(Code.OK, _frozen_frame)
 	if not _valid_frame(sample_frame) or _delay > FRAME_MAX - sample_frame:
 		return Result.new(Code.FRAME_RANGE)
 	if bytes.size() != _neutral.size():
 		return Result.new(Code.INPUT_WIDTH)
+	if _frozen:
+		# A dropped slot stops accepting inputs; the frozen value keeps every survivor aligned.
+		return Result.new(Code.OK, _frozen_frame)
 	var scheduled: int = sample_frame + _delay
 	if _last_added != -1 and scheduled != _last_added + 1:
 		return Result.new(Code.OUT_OF_ORDER)
@@ -246,7 +246,8 @@ func reset_prediction() -> void:
 
 ## Freeze the slot at an agreed frame. Frames past the frame repeat the value confirmed
 ## there and later inputs are ignored, so the survivors read one deterministic value.
-## A frame whose value was already evicted leaves the confirmed value unchanged.
+## The agreed value must still be retained: without it the survivors would freeze on
+## different bytes, so the freeze is refused instead.
 func freeze_at(frame: int) -> int:
 	if _capacity == 0:
 		return Code.NOT_CONFIGURED
@@ -254,32 +255,18 @@ func freeze_at(frame: int) -> int:
 		return Code.OK
 	if not _valid_frame(frame):
 		return Code.FRAME_RANGE
+	var agreed: Result = confirmed_input(frame)
+	if agreed.code != Code.OK:
+		return Code.NO_CONFIRMED_INPUT
 	_frozen = true
 	_frozen_frame = frame
-	var agreed: Result = confirmed_input(frame)
-	if agreed.code == Code.OK:
-		_last_actual = agreed.bytes.duplicate()
+	_last_actual = agreed.bytes.duplicate()
 	# Frames past the agreed frame used the later actual value and must be resimulated.
 	# An earlier pending correction stays the earliest one, so a mismatch below the
 	# agreed frame is not lost.
 	if _last_added > frame:
 		_first_incorrect = frame + 1 if _first_incorrect == -1 else mini(_first_incorrect, frame + 1)
 	return Code.OK
-
-
-func is_frozen() -> bool:
-	return _frozen
-
-
-func frozen_frame() -> int:
-	return _frozen_frame
-
-
-## The frozen value for a frame past the agreed freeze frame, or an unavailable result.
-func frozen_input(frame: int) -> Result:
-	if not _frozen or frame <= _frozen_frame:
-		return Result.new(Code.NO_CONFIRMED_INPUT)
-	return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
 
 
 ## The value the simulation used at a frame: the frozen value for a dropped slot past the

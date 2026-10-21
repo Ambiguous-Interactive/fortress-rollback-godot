@@ -13,6 +13,7 @@ var _local: Dictionary = {}
 var _remote: Dictionary = {}
 var _sent: Dictionary = {}
 var _verified: Dictionary = {}
+var _abandoned: Dictionary = {}
 
 
 func configure(ids: Array[PackedByteArray], checksum_interval: int, limit: int, ahead: int) -> void:
@@ -28,6 +29,9 @@ func configure(ids: Array[PackedByteArray], checksum_interval: int, limit: int, 
 
 func receive(peer: PackedByteArray, frame: int, checksum: PackedByteArray, current: int) -> int:
 	if interval == 0:
+		return Types.Code.OK
+	if _abandoned.has(peer.hex_encode()):
+		# A departed peer reports frames the survivors resimulated.
 		return Types.Code.OK
 	if frame < 0 or frame > FRAME_MAX or checksum.size() != 16 or frame % interval != 0 or frame == 0:
 		return _fail(Types.Code.PROTOCOL_FAILED, "invalid_checksum_report", peer, frame)
@@ -86,8 +90,11 @@ func sent(peer: PackedByteArray, frame: int) -> void:
 
 
 ## A departed peer never reports again and must not hold the shared window back.
+## Its pending reports are dropped, because the frames it reported are resimulated.
 func abandon(peer: PackedByteArray) -> void:
 	_sent[peer.hex_encode()] = FRAME_MAX
+	_remote[peer.hex_encode()].clear()
+	_abandoned[peer.hex_encode()] = true
 
 
 func compare(core: RefCounted, ids: Array[PackedByteArray], confirmation_ceiling: int) -> int:
@@ -99,6 +106,9 @@ func compare(core: RefCounted, ids: Array[PackedByteArray], confirmation_ceiling
 		if frame < mini(core.status().confirmed_frame, confirmation_ceiling):
 			eligible[frame] = _local[frame]
 	for peer: PackedByteArray in ids:
+		if _abandoned.has(peer.hex_encode()):
+			# A departed peer's reports belong to frames the survivors resimulated.
+			continue
 		var reports: Dictionary = _remote[peer.hex_encode()]
 		var frames: Array = reports.keys()
 		frames.sort()
