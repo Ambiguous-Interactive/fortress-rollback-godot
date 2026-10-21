@@ -20,7 +20,7 @@ enum Code {
 	PREDICTION_MISMATCH,
 	DELAY_DECREASE_UNSUPPORTED,
 }
-enum Status { NONE, CONFIRMED, PREDICTED }
+enum Status { NONE, CONFIRMED, PREDICTED, DISCONNECTED }
 
 const FRAME_MAX: int = 2147483647
 const MAX_CAPACITY: int = 65536
@@ -57,6 +57,8 @@ var _first_incorrect: int = -1
 var _last_requested: int = -1
 var _reclaimed_frame: int = -1
 var _reclaimed_bytes: PackedByteArray = PackedByteArray()
+var _frozen: bool = false
+var _frozen_frame: int = -1
 
 
 ## Allocate fixed-width history. Invalid reconfiguration preserves existing state.
@@ -80,6 +82,8 @@ func configure(capacity: int, neutral: PackedByteArray) -> int:
 	_last_actual = _neutral.duplicate()
 	_reclaimed_frame = -1
 	_reclaimed_bytes = _neutral.duplicate()
+	_frozen = false
+	_frozen_frame = -1
 	reset_prediction()
 	return Code.OK
 
@@ -141,6 +145,9 @@ func _add_input(sample_frame: int, bytes: PackedByteArray, reclaim_floor: int) -
 		return Result.new(Code.FRAME_RANGE)
 	if bytes.size() != _neutral.size():
 		return Result.new(Code.INPUT_WIDTH)
+	if _frozen:
+		# A dropped slot stops accepting inputs; the frozen value keeps every survivor aligned.
+		return Result.new(Code.OK, _frozen_frame)
 	var scheduled: int = sample_frame + _delay
 	if _last_added != -1 and scheduled != _last_added + 1:
 		return Result.new(Code.OUT_OF_ORDER)
@@ -165,6 +172,8 @@ func input(frame: int) -> Result:
 		return Result.new(Code.PREDICTION_MISMATCH)
 	# Rust records this request even if the frame predates the logical tail.
 	_last_requested = frame
+	if _frozen and frame > _frozen_frame:
+		return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
 	if frame == _reclaimed_frame:
 		return Result.new(Code.OK, frame, _reclaimed_bytes, Status.CONFIRMED)
 	if frame < _tail_frame:
@@ -233,6 +242,46 @@ func reset_prediction() -> void:
 	_prediction_bytes = PackedByteArray()
 	_first_incorrect = -1
 	_last_requested = -1
+
+
+## Freeze the slot at an agreed frame. Frames past the frame repeat the value confirmed
+## there and later inputs are ignored, so the survivors read one deterministic value.
+## The agreed value must still be retained: without it the survivors would freeze on
+## different bytes, so the freeze is refused instead.
+func freeze_at(frame: int) -> int:
+	if _capacity == 0:
+		return Code.NOT_CONFIGURED
+	if _frozen:
+		return Code.OK
+	if not _valid_frame(frame):
+		return Code.FRAME_RANGE
+	var agreed: Result = confirmed_input(frame)
+	if agreed.code != Code.OK:
+		return Code.NO_CONFIRMED_INPUT
+	_frozen = true
+	_frozen_frame = frame
+	_last_actual = agreed.bytes.duplicate()
+	# Frames past the agreed frame used the later actual value and must be resimulated.
+	# An earlier pending correction stays the earliest one, so a mismatch below the
+	# agreed frame is not lost.
+	if _last_added > frame:
+		_first_incorrect = frame + 1 if _first_incorrect == -1 else mini(_first_incorrect, frame + 1)
+	return Code.OK
+
+
+## The value the simulation used at a frame: the frozen value for a dropped slot past the
+## agreed frame, otherwise the retained actual input.
+func simulated_input(frame: int) -> Result:
+	if _frozen and frame > _frozen_frame:
+		return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
+	return confirmed_input(frame)
+
+
+## The retained value the simulation used at a frame.
+func retained_simulated_input(frame: int) -> Result:
+	if _frozen and frame > _frozen_frame:
+		return Result.new(Code.OK, frame, _last_actual, Status.DISCONNECTED)
+	return retained_confirmed_input(frame)
 
 
 func first_incorrect_frame() -> int:

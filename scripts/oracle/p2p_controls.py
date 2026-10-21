@@ -220,7 +220,7 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
     result = json.loads(rows[0])
     if (type(result) is not dict or set(result) != {'complete', 'passed', 'checks', 'failures'}
             or result['complete'] is not True or result['passed'] is not True
-            or type(result['checks']) is not int or result['checks'] != 26 or result['failures'] != []):
+            or type(result['checks']) is not int or result['checks'] != 28 or result['failures'] != []):
         raise ValueError('game input control completion')
     controls.append('game_rejects_invalid_status_and_view_codes_without_mutation')
     raw = deepcopy(expected)

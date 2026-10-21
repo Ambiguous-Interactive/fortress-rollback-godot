@@ -86,10 +86,24 @@ service iteration. Event overflow preserves a reserved `event_capacity_exceeded`
 fatal diagnostic and halts advancement; it does not silently discard a failure.
 Returned byte arrays belong to the caller.
 
-This terminal policy differs deliberately from the pinned source's callback and
-continued drop-player behavior. Membership repair and continued play after a
-peer leaves require a separate policy. See [source observations](oracle-p2p.md)
-for the comparison boundary and [the example](peer-example.md) for visible faults.
+The default policy ends the match when a peer stops answering: the session
+reports `PROTOCOL_FAILED` and every peer stops. The optional
+`disconnect_behavior = CONTINUE` lifecycle policy instead freezes the departed
+player's slot at the frame the mesh had confirmed, and the survivors keep
+playing. The frozen slot repeats the value confirmed at that frame, reports a
+`DISCONNECTED` input status and no longer holds the confirmed frontier back.
+Confirmed history before that frame never changes; the frames after it are
+resimulated with the frozen value. A departure before the mesh confirmed any
+frame ends the match, because there is no agreed value to freeze. Every peer of
+a mesh must use the same policy. Each survivor detects the departure on its
+own and freezes the slot at its own confirmed frontier, so the survivors agree
+only while those frontiers agree; the mesh checksum comparison reports a
+disagreement as a desync. This is the graceful drop of the pinned source, not
+its coordinated drop barrier: the agreed frame is the mesh-confirmed frontier
+rather than an all-survivor certificate, so a coordinated drop remains open
+work. See
+[source observations](oracle-p2p.md) for the comparison boundary and
+[the example](peer-example.md) for visible faults.
 
 ## Downloadable observations
 

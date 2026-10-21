@@ -521,8 +521,15 @@ def main():
                 for version, engine in engines.items():
                     if args.online_example:
                         from online_example_probe import run_online
-                        record, executed_record = run_online(root, version, engine, sdk, sources, environment,
-                                                             args.output, certificate, tls_private_key, port, server)
+                        try:
+                            record, executed_record = run_online(root, version, engine, sdk, sources, environment,
+                                                                 args.output, certificate, tls_private_key, port, server)
+                        except Exception as error:
+                            # A rejected run names the step that failed and how long it took.
+                            receipt.write_text(json.dumps({'passed': False, 'failure': str(error),
+                                                          'step_durations': getattr(error, 'step_durations', [])},
+                                                         indent=2) + '\n')
+                            raise
                         records.append(record)
                         executed_records.append(executed_record)
                         continue

@@ -10,7 +10,7 @@ var checks: int = 0
 
 
 func _initialize() -> void:
-	for status: int in [Queue.Status.NONE, -1, 3, 2147483647]:
+	for status: int in [Queue.Status.NONE, -1, 4, 2147483647]:
 		for slot: int in range(2):
 			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.PREDICTED])
 			statuses[slot] = status
@@ -28,6 +28,14 @@ func _initialize() -> void:
 	checks += 1
 	if valid.game.frame != 1 or valid.requests.size() != 1 or valid.requests[0].inputs[1].status != "predicted":
 		failures.append("valid callback evidence missing")
+	# A dropped slot reports its own status, which the game keeps as evidence.
+	var dropped: RefCounted = Game.new(2)
+	checks += 1
+	if not dropped.simulate_frame(0, Types.FrameInputs.new(_bytes(), PackedInt32Array([1, Queue.Status.DISCONNECTED]))):
+		failures.append("valid disconnected status rejected")
+	checks += 1
+	if dropped.game.frame != 1 or dropped.requests.size() != 1 or dropped.requests[0].inputs[1].status != "disconnected":
+		failures.append("disconnected callback evidence missing")
 	print("FORTRESS_P2P_GAME_CONTROL " + JSON.stringify({"complete": true, "passed": failures.is_empty(), "checks": checks, "failures": failures}))
 	quit(0 if failures.is_empty() else 1)
 

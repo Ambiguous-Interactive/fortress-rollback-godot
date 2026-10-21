@@ -5,7 +5,7 @@ const { instrument } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const { pauseElapsed, registerOnlineInit, collectDiagnostics } = require('./online.cjs');
+const { pauseElapsed, registerOnlineInit, collectDiagnostics, measured } = require('./online.cjs');
 
 // Value: download latency cannot extend gameplay; the real collector accepts only retained offline matches and restores storage methods on failure.
 test('diagnostic downloads require an offline match that stays frozen throughout completion', async () => {
@@ -66,6 +66,17 @@ test('actual suspension wait cannot finish early after timer truncation', async 
     assert.ok(elapsed >= milliseconds * 1000, 'the actual pause must meet its strict observation threshold');
     assert.deepEqual(waits, [milliseconds, 1], 'an early callback rearms only the remaining duration');
   }
+});
+
+// Value: the browser publishes the elapsed time of its own sub-steps, including a rejected one.
+test('browser sub-steps report their elapsed time', async () => {
+  const timings = {};
+  await measured(timings, 'replay_import_us', async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+  assert.equal(typeof timings.replay_import_us, 'number');
+  assert.ok(Number.isInteger(timings.replay_import_us) && timings.replay_import_us >= 0);
+  await assert.rejects(measured(timings, 'failed_us', async () => { throw new Error('the sub-step failed'); }), /the sub-step failed/);
+  assert.equal(typeof timings.failed_us, 'number');
+  assert.ok(Number.isInteger(timings.failed_us) && timings.failed_us >= 0);
 });
 
 test('all constructed peer connections must close, including channel-free orphans', () => {

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+import subprocess
 import time
 import zipfile
 
@@ -12,9 +13,15 @@ from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from local_ownership import claim
 from receipt_arguments import ReceiptParser
 from godot_smoke import run
-from run import begin_results, capture
+from run import begin_results, capture, captured_text
 
 PREFIX = 'FORTRESS_TEST_RESULT '
+PROGRESS_PREFIX = 'FORTRESS_TEST_PROGRESS '
+# The observation of a round is bounded: a fixed number of fields, a fixed
+# number of retained errors and a fixed error length. A rejected run keeps its
+# diagnosis without buffering the output that produced it.
+MAX_RETAINED_ERRORS = 8
+MAX_ERROR_LENGTH = 200
 EXPECTED = {
     'res://tests/unit/test_protocol_codec.gd': {'golden', 'truncation', 'malformed', 'limits', 'types', 'ownership', 'semantics', 'hostile_bytes'},
     'res://tests/unit/test_protocol_handshake_fields.gd': {'compatibility', 'geometry', 'bounds'},
@@ -243,6 +250,90 @@ def validate(result, negative):
     return result
 
 
+def last_progress(output):
+    """Return the last progress record, so an interrupted run names its case."""
+    record = None
+    for line in output.splitlines():
+        if not line.startswith(PROGRESS_PREFIX):
+            continue
+        try:
+            value = json.loads(line[len(PROGRESS_PREFIX):])
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            record = value
+    return record
+
+
+def bounded_progress(record, stage):
+    """Reduce a progress record to the few fields a reader needs."""
+    if not isinstance(record, dict):
+        return None
+    executing = record.get('executing')
+    last = record.get('last_completed')
+    executing = executing if isinstance(executing, dict) else {}
+    last = last if isinstance(last, dict) else {}
+    return {'stage': stage, 'completed': record.get('completed'), 'suite': executing.get('suite'),
+            'case': executing.get('case'), 'last_case': last.get('case'), 'elapsed': last.get('elapsed'),
+            'unit': record.get('unit')}
+
+
+def bounded_errors(errors):
+    """Keep a fixed number of error strings, each one truncated."""
+    if not isinstance(errors, list):
+        return []
+    return [str(error)[:MAX_ERROR_LENGTH] for error in errors[:MAX_RETAINED_ERRORS]]
+
+
+def failure_lines(output):
+    """Return the engine, script or tool failure lines of a run."""
+    markers = ('SCRIPT ERROR:', 'TOOL_FAILURE:', 'TIMEOUT:')
+    lines = [line for line in output.splitlines()
+             if any(marker in line for marker in markers) or line.startswith('ERROR:')]
+    return bounded_errors(lines)
+
+
+def watchdog_detail(text):
+    """Return the last watchdog detail the browser runner printed."""
+    detail = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get('stage') == 'ownership-result':
+            detail = value
+    return detail
+
+
+def detail_errors(detail):
+    """Return the browser and engine errors the rejected page reported."""
+    if not isinstance(detail, dict):
+        return []
+    errors = list(detail.get('errors') or [])
+    for key in ('page_error', 'progress_error'):
+        if detail.get(key):
+            errors.append(str(detail[key]))
+    return bounded_errors(errors)
+
+
+def detail_alive(detail):
+    """Report whether the page was still readable when the watchdog fired."""
+    if not isinstance(detail, dict):
+        return False
+    if detail.get('page_error') or detail.get('progress_error'):
+        return False
+    return detail.get('reported') is not None or isinstance(detail.get('progress'), dict)
+
+
+def rejected_state(progress):
+    """Name the state of a run that a deadline rejected."""
+    return 'progressing' if progress and progress.get('case') else 'watchdog'
+
+
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
@@ -274,18 +365,32 @@ def run_probes(args, results):
     begin_results(results, 'ownership.json', [p.name for p in results.glob('ownership-*.log')] + ['ownership-rounds.json'])
     # Bounded per-round observations. A watchdog rejects the run before it
     # can print its own inventory, so the round that was executing is
-    # written down as it starts and stays on disk when the run fails.
+    # written down as it starts and stays on disk when the run fails. A
+    # rejected round also keeps the progress of its last case, the errors
+    # the engine or the browser reported and the state the rejection found.
     rounds = []
     rounds_path = results / 'ownership-rounds.json'
 
-    def observe(label):
-        rounds.append({'label': label, 'outcome': 'running', 'started': time.time()})
+    def write_rounds():
         rounds_path.write_text(json.dumps(rounds, indent=2) + '\n')
+
+    def observe(label):
+        rounds.append({'label': label, 'outcome': 'running', 'started': time.time(), 'seconds': None,
+                       'alive': None, 'native_progress': None, 'browser_progress': None, 'errors': []})
+        write_rounds()
         return time.monotonic()
 
+    def update(**fields):
+        rounds[-1].update(fields)
+        write_rounds()
+
     def finish(started):
-        rounds[-1].update(outcome='passed', seconds=round(time.monotonic() - started, 3))
-        rounds_path.write_text(json.dumps(rounds, indent=2) + '\n')
+        update(outcome='passed', seconds=round(time.monotonic() - started, 3))
+
+    def reject(started, state, **fields):
+        """Keep why the round ended before the failure is raised again."""
+        update(outcome=state, seconds=round(time.monotonic() - started, 3), **fields)
+
     frozen_sources = source_inventory()
     data = load_manifest()
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
@@ -359,15 +464,37 @@ def run_probes(args, results):
             base = [str(editor), '--headless', '--path', str(project)]
             run(base + ['--editor', '--quit'], environment, results / f'ownership-{label}-import.log')
             # A failed negative test is expected, so inspect the exit code separately.
-            code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
-                                   + [argument for suite in EXPECTED for argument in ('--suite', suite)],
-                                   environment, results / f'ownership-{label}-native.log', timeout=180)
-            if code != (1 if negative else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
-                raise ValueError('native command failed outside the intended control')
-            markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
-            if len(markers) != 1:
-                raise ValueError('missing/duplicate native report')
-            native = validate(json.loads(markers[0]), negative)
+            native_log = results / f'ownership-{label}-native.log'
+            try:
+                code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
+                                       + [argument for suite in EXPECTED for argument in ('--suite', suite)],
+                                       environment, native_log, timeout=180)
+            except subprocess.TimeoutExpired as error:
+                # The native deadline rejected the run. Its progress record
+                # names the case that was executing when the deadline fired.
+                output = captured_text(error.output) + captured_text(error.stderr)
+                progress = bounded_progress(last_progress(output), 'native')
+                reject(started, rejected_state(progress), native_progress=progress, alive=False,
+                       errors=failure_lines(output))
+                raise
+            except Exception:
+                # The engine never ran: the tool failed before it produced output.
+                reject(started, 'failed', alive=False,
+                       errors=failure_lines(native_log.read_text(encoding='utf-8', errors='replace')
+                                            if native_log.exists() else ''))
+                raise
+            progress = bounded_progress(last_progress(output), 'native')
+            update(native_progress=progress)
+            try:
+                if code != (1 if negative else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
+                    raise ValueError('native command failed outside the intended control')
+                markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
+                if len(markers) != 1:
+                    raise ValueError('missing/duplicate native report')
+                native = validate(json.loads(markers[0]), negative)
+            except Exception:
+                reject(started, 'failed', alive=False, errors=failure_lines(output))
+                raise
             record = {'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
@@ -398,19 +525,34 @@ def run_probes(args, results):
                 registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'
                 if digest(registry) != data['browser']['browser_registry_sha256']:
                     raise ValueError('browser registry differs from pin')
-                output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export)], environment,
-                             results / f'ownership-{label}-browser.log')
-                browser = json.loads(output)
-                validate(browser['result'], negative)
-                if browser['result'] != native:
-                    raise ValueError('native/web ownership divergence')
+                browser_log = results / f'ownership-{label}-browser.log'
+                try:
+                    output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export)], environment, browser_log)
+                    browser = json.loads(output)
+                    validate(browser['result'], negative)
+                    if browser['result'] != native:
+                        raise ValueError('native/web ownership divergence')
+                except Exception:
+                    # The browser watchdog rejected the run. Its inventory of
+                    # page and engine errors, and the progress the page
+                    # published, are in the log and not in the raised error,
+                    # so they are read back before the failure is raised again.
+                    text = browser_log.read_text(encoding='utf-8', errors='replace') if browser_log.exists() else ''
+                    detail = watchdog_detail(text)
+                    if detail is None:
+                        reject(started, 'failed', alive=False, errors=bounded_errors(text.splitlines()[-4:]))
+                        raise
+                    browser_progress = bounded_progress(detail.get('progress'), 'browser')
+                    reject(started, rejected_state(browser_progress), browser_progress=browser_progress,
+                           alive=detail_alive(detail), errors=detail_errors(detail))
+                    raise
                 record.update(browser=browser, browser_artifact=browser_name, template_artifact=template_name)
             records.append(record)
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
     verify_sources(frozen_sources)
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
-              'rounds': [{'label': entry['label'], 'outcome': entry['outcome']} for entry in rounds],
+              'rounds': rounds,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
               'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '

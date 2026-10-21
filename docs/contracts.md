@@ -177,8 +177,10 @@ already accepted frame returns `INPUT_ALREADY_SUBMITTED`. Once accepted, a
 sample survives stalls and is consumed only by the appropriate scheduling step.
 Actual confirmed input is immutable. `FortressFrameInputs` exposes ascending
 slots, owned read access and typed `CONFIRMED`, `PREDICTED`, `DISCONNECTED`
-statuses; disconnected dummy inputs are specified for later advanced parity,
-while loss of an active peer terminates this first fixed-membership tier.
+statuses. A `DISCONNECTED` slot is a dropped peer under the optional
+`disconnect_behavior = CONTINUE` lifecycle policy: it repeats the value
+confirmed at the agreed frame and no longer holds the confirmed frontier back.
+Loss of an active peer otherwise terminates this first fixed-membership tier.
 
 The library owns history slot bytes, exact used length, frame tag, generation
 and checksum. `FortressSnapshotWriter` offers checked writes and a cursor;
