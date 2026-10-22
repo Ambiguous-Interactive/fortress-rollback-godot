@@ -15,8 +15,8 @@ executed.
 
 | Item | Supported | Evidence |
 | --- | --- | --- |
-| Godot 4.3 (minimum) | Yes, native and exported Web | Every CI gate runs both pins |
-| Godot 4.7.2 (current) | Yes, native and exported Web | Every CI gate runs both pins |
+| Godot 4.3 (minimum) | Yes, native and exported Web | Every CI gate that exercises the engine runs both pins |
+| Godot 4.7.2 (current) | Yes, native and exported Web | Every CI gate that exercises the engine runs both pins |
 | Linux | Yes | CI runs on Linux; the local witnesses are Linux |
 | macOS, Windows | Not qualified | Native state-byte equality for those platforms is release work, not done |
 | Rust, C#, GDExtension | Not required | The addon is GDScript only; Rust is a development oracle |

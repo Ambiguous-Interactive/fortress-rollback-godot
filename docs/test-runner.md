@@ -174,12 +174,14 @@ engine's own verdict. The logger source is compiled at runtime, so the
 repository never holds a script that the older pinned engine cannot parse.
 
 A host that can see the script error passes it to the runner as an observer.
-The runner reads the observer before and after every repetition, so the entry
-that names the abort belongs to the repetition that died: a case that dies in
-one repetition and not in the other keeps that difference visible, and a case
-that dies in both keeps its two repetitions comparable. The entry names the
-suite, the case, the aborting file, the line, the engine message and the
-number of repetitions that died.
+The runner reads the observer once per repetition with the suite, the case and
+the repetition index, so the entry that names the abort belongs to the
+repetition that died: a case that dies in one repetition and not in the other
+keeps that difference visible, and a case that dies in both keeps its two
+repetitions comparable. The entry names the suite, the case, the aborting file,
+the line, the engine message and the number of repetitions that died. An error
+that arrives before the first repetition, such as one in a suite constructor,
+belongs to the case that was being prepared and fails that case.
 
 Mutable fixture state belongs on each suite instance/context. Static fields,
 autoloads, engine globals and external resources are forbidden as fixture state;

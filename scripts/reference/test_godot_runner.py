@@ -201,10 +201,12 @@ class EngineControls(unittest.TestCase):
             "res://tests/runner/run_tests.gd", "--suite",
             "res://tests/runner-controls/control_suite.gd", "--filter", "nested_abort")
         self.assertEqual(result["count"], 1)
-        self.assertEqual(watch.get("errors"), 2 if watch.get("available") else 0, watch)
         if not watch.get("available"):
+            # This engine cannot observe a script error in process, so the engine
+            # result keeps the engine's own verdict and the launcher is the gate.
             self.assertIs(result["passed"], True)
-            return
+            self.skipTest("this engine cannot observe a script error in process")
+        self.assertEqual(watch.get("errors"), 2, watch)
         self.assertIs(result["passed"], False)
         entry = result["errors"][0]
         self.assertEqual(entry["kind"], "case_aborted")

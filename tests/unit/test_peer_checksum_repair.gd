@@ -11,7 +11,7 @@ const Game = preload("res://tests/oracle/p2p_game.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["pending_repair_is_not_a_loss", "lost_snapshot_still_fails"])
+	return PackedStringArray(["pending_repair_is_not_a_loss", "lost_snapshot_still_fails", "lost_snapshot_under_a_repair_still_fails"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -20,6 +20,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_pending_repair_is_not_a_loss(context)
 		"lost_snapshot_still_fails":
 			_lost_snapshot_still_fails(context)
+		"lost_snapshot_under_a_repair_still_fails":
+			_lost_snapshot_under_a_repair_still_fails(context)
 	context.finish()
 
 
@@ -68,12 +70,32 @@ func _lost_snapshot_still_fails(context: RefCounted) -> void:
 	context.equal(checksums.failure.get("frame"), 11, "the lost frame is named")
 
 
+# A pending repair must not hide a snapshot that the repair cannot restore. The
+# scheduler waits for the repair, and the history loss is reported once the
+# repair no longer explains the missing snapshot.
+func _lost_snapshot_under_a_repair_still_fails(context: RefCounted) -> void:
+	var core: LostCore = LostCore.new()
+	core.repair_frame = 6
+	var checksums: Checksums = Checksums.new()
+	checksums.configure([_peer()], 1, 128, 128)
+	checksums.sent(_peer(), 10)
+	context.equal(checksums.scheduled(core, 100), {}, "the boundary waits for the repair")
+	context.equal(checksums.failure, {}, "the pending repair is not a loss yet")
+	core.repair_frame = -1
+	context.equal(checksums.scheduled(core, 100), {}, "no checksum is scheduled")
+	context.equal(checksums.failure.get("kind"), "checksum_history_unavailable", "the lost history is reported")
+	context.equal(checksums.failure.get("frame"), 11, "the lost frame is named")
+
+
 # A core whose snapshot at the boundary is gone and no repair will restore it.
 class LostCore extends RefCounted:
+	var repair_frame: int = -1
+
 	func status() -> RefCounted:
 		var result: Types.Status = Types.Status.new()
 		result.current_frame = 12
 		result.confirmed_frame = 11
+		result.pending_rollback_frame = repair_frame
 		return result
 
 

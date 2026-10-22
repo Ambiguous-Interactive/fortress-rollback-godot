@@ -15,10 +15,14 @@ const Context = preload("res://tests/runner/test_context.gd")
 # host clock. The observation never enters the canonical result: the case
 # records and their assertion counts stay exactly as they are.
 # An optional observer callable returns the script errors the host has recorded
-# so far. A GDScript runtime error aborts the innermost function, so a case that
-# dies inside a nested helper still reaches its completion marker and the engine
-# reports that case as passed. A host that can see the script error reports the
-# case as failed instead, and the observer is how the runner learns about it.
+# so far. It is called once per repetition with the suite, the case and the
+# repetition index, so a host can report an error for one identity. A GDScript
+# runtime error aborts the innermost function, so a case that dies inside a
+# nested helper still reaches its completion marker and the engine reports that
+# case as passed. A host that can see the script error reports the case as
+# failed instead, and the observer is how the runner learns about it. The
+# observer is read after the repetition, so an error in a suite constructor
+# belongs to the case that was being prepared.
 func execute(
 	scripts: Array[Script],
 	category: String,
@@ -33,6 +37,8 @@ func execute(
 	var errors: Array[Dictionary] = []
 	var completed: int = 0
 	var last_completed: Variant = null
+	# The script errors the host has already attributed to an earlier repetition.
+	var attributed: int = 0
 	for script: Script in scripts:
 		if not script.can_instantiate():
 			errors.append({"kind": "uninstantiable_suite", "suite": script.resource_path})
@@ -63,7 +69,6 @@ func execute(
 			for repetition: int in range(2):
 				var instance: Variant = script.new()
 				var context: RefCounted = Context.new(fixed_seed)
-				var before: int = _observed(observer).size()
 				if not instance is RefCounted or not instance.has_method("run_case"):
 					context.failures.append({"kind": "invalid_suite"})
 				else:
@@ -72,7 +77,9 @@ func execute(
 					context.failures.append({"kind": "incomplete_case"})
 				if context.assertions == 0:
 					context.failures.append({"kind": "zero_assertions"})
-				aborts.append(_observed(observer).slice(before))
+				var recorded: Array = _observed(observer, script.resource_path, name, repetition)
+				aborts.append(recorded.slice(attributed))
+				attributed = recorded.size()
 				runs.append({"assertions": context.assertions, "failures": context.failures, "states": context.states})
 			_report_abort(script.resource_path, name, runs, aborts, errors)
 			if runs[0] != runs[1]:
@@ -102,10 +109,10 @@ func _read_clock(clock: Callable) -> int:
 
 # The script errors the host has recorded so far. A host that cannot see them
 # reports an empty list, so the runner keeps the engine's own verdict.
-func _observed(observer: Callable) -> Array:
+func _observed(observer: Callable, suite: String, case_name: String, repetition: int) -> Array:
 	if not observer.is_valid():
 		return []
-	var value: Variant = observer.call()
+	var value: Variant = observer.call(suite, case_name, repetition)
 	return value if value is Array else []
 
 

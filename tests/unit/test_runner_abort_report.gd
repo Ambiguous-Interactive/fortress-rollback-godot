@@ -8,7 +8,7 @@ const SUITE_PATH: String = "res://tests/fixtures/runner/abort_suite.gd"
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["aborted_case_fails", "healthy_case_passes", "one_repetition_dies"])
+	return PackedStringArray(["aborted_case_fails", "healthy_case_passes", "one_repetition_dies", "constructor_error_fails"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -19,20 +19,20 @@ func run_case(name: String, context: RefCounted) -> void:
 			_healthy_case_passes(context)
 		"one_repetition_dies":
 			_one_repetition_dies(context)
+		"constructor_error_fails":
+			_constructor_error_fails(context)
 	context.finish()
 
 
-# The observer stands in for the engine's script error. The runner reads it
-# before and after every repetition, so an error that appears during a
-# repetition is the one that repetition reported.
+# The observer stands in for the engine's script error. The runner reads it once
+# per repetition with the suite, the case and the repetition index, so the
+# observer reports an error for one identity rather than for one read.
 class Observer extends RefCounted:
-	var calls: int = 0
 	var records: Array = []
-	var report_at: PackedInt32Array = PackedInt32Array()
+	var report_at: Array[int] = []
 
-	func read() -> Array:
-		calls += 1
-		if report_at.has(calls):
+	func read(_suite: String, _case: String, repetition: int) -> Array:
+		if report_at.has(repetition):
 			records.append({"file": "res://tests/fixtures/runner/abort_suite.gd", "line": 12, "message": "boom"})
 		return records
 
@@ -40,7 +40,7 @@ class Observer extends RefCounted:
 # A case that dies in both repetitions fails the run and names the abort.
 func _aborted_case_fails(context: RefCounted) -> void:
 	var observer: Observer = Observer.new()
-	observer.report_at = PackedInt32Array([2, 4])
+	observer.report_at = [0, 1]
 	var result: Dictionary = _run(observer)
 	context.equal(result["passed"], false, "an aborted case fails the run")
 	context.equal(result["errors"].size(), 1, "the run names the abort once")
@@ -71,13 +71,28 @@ func _healthy_case_passes(context: RefCounted) -> void:
 # visible: the repetition that reached the end keeps its own verdict.
 func _one_repetition_dies(context: RefCounted) -> void:
 	var observer: Observer = Observer.new()
-	observer.report_at = PackedInt32Array([2])
+	observer.report_at = [0]
 	var result: Dictionary = _run(observer)
 	context.equal(result["passed"], false, "the case fails")
 	var runs: Array = result["records"][0]["runs"]
 	context.equal(runs[0]["failures"].size(), 1, "the repetition that died carries the abort")
 	context.equal(runs[1]["failures"], [], "the repetition that finished keeps its verdict")
 	context.equal(runs[0] != runs[1], true, "the difference between the repetitions stays visible")
+
+
+# An error that arrives before the first repetition belongs to the case that is
+# being prepared. The engine result must not report that case as passed.
+func _constructor_error_fails(context: RefCounted) -> void:
+	var observer: Observer = Observer.new()
+	observer.records.append({"file": SUITE_PATH, "line": 3, "message": "boom"})
+	var result: Dictionary = _run(observer)
+	context.equal(result["passed"], false, "the case fails")
+	context.equal(result["errors"].size(), 2, "the run names the abort and the divergence")
+	context.equal(result["errors"][0]["kind"], "case_aborted", "the run names the abort")
+	context.equal(result["errors"][1]["kind"], "repeat_divergence", "the run names the divergence")
+	var runs: Array = result["records"][0]["runs"]
+	context.equal(runs[0]["failures"].size(), 1, "the first repetition carries the abort")
+	context.equal(runs[1]["failures"], [], "the second repetition keeps its verdict")
 
 
 func _run(observer: Observer) -> Dictionary:
