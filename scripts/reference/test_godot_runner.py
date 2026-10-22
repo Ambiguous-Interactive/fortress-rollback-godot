@@ -222,21 +222,18 @@ class EngineControls(unittest.TestCase):
         return result, watch
 
     # Value: the engine result itself must report an aborted case as failed, so a
-    # reader of the engine output never sees a green aborted case. Godot 4.3
-    # cannot observe a script error in process, so the launcher stays the gate
-    # there and the engine keeps its own verdict.
+    # reader of the engine output never sees a green aborted case. Godot 4.3 has
+    # no logger, so the runner supervises a child and reports the abort from the
+    # child's merged output instead of leaving the verdict to the launcher.
     def test_engine_result_reports_the_aborted_case(self) -> None:
         result, watch = self.engine_result(
             "res://tests/runner/run_tests.gd", "--suite",
             "res://tests/runner-controls/control_suite.gd", "--filter", "nested_abort")
         self.assertEqual(result["count"], 1)
-        if not watch.get("available"):
-            # This engine cannot observe a script error in process, so the engine
-            # result keeps the engine's own verdict and the launcher is the gate.
-            self.assertIs(result["passed"], True)
-            self.skipTest("this engine cannot observe a script error in process")
+        self.assertTrue(watch.get("available"), watch)
         self.assertEqual(watch.get("errors"), 2, watch)
         self.assertIs(result["passed"], False)
+        self.assertEqual(len(result["errors"]), 1, result)
         entry = result["errors"][0]
         self.assertEqual(entry["kind"], "case_aborted")
         self.assertEqual(entry["case"], "nested_abort")
@@ -258,8 +255,8 @@ class EngineControls(unittest.TestCase):
         self.assertEqual(result["count"], 2)
         self.assertEqual(records["pass"]["runs"][0]["failures"], [])
         self.assertEqual(records["pass"]["runs"][1]["failures"], [])
-        if watch.get("available"):
-            self.assertEqual(records["nested_abort"]["runs"][0]["failures"][0]["kind"], "case_aborted")
+        self.assertTrue(watch.get("available"), watch)
+        self.assertEqual(records["nested_abort"]["runs"][0]["failures"][0]["kind"], "case_aborted")
 
     # Value: guards false-green on real engine errors/partial completion and checks
     # failure reason, so watchdog/parse errors cannot masquerade as assertion red.

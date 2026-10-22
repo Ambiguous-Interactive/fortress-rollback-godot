@@ -6,11 +6,16 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import time
 import zipfile
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest
 from local_ownership import claim
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import host_capacity  # noqa: E402
+
 from receipt_arguments import ReceiptParser
 from godot_smoke import run
 from run import begin_results, capture, captured_text
@@ -93,6 +98,7 @@ EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
+    'tests/runner/abort_supervisor.gd',
     'tests/determinism/test_buffer_ownership.gd', 'tests/determinism/ownership_slots.gd',
     'tests/determinism/test_integer_encoding.gd', 'tests/determinism/integer_codec.gd', 'tests/determinism/integer_vectors.json',
     '.llm/code-samples/state_checksum.gd',
@@ -358,9 +364,11 @@ def main():
     parser.add_argument('--web', action='store_true')
     args = parser.parse_args()
     results = CACHE / 'results'
-    # One local run at a time owns these paths. A second run would delete
-    # the logs of the first, write the same project and export trees, and
-    # starve it of CPU, which is how a slow run became a timeout.
+    # One local run at a time owns these paths, and the browser part needs a
+    # responsive host: a local test wave would otherwise starve it and turn a
+    # slow run into a timeout.
+    if not host_capacity.acquire_when_free('ownership-witness', 900.0):
+        raise ValueError('the development host stayed busy; the ownership witness needs a responsive host')
     with claim('ownership', directory=CACHE / 'locks'):
         return run_probes(args, results)
 
@@ -448,7 +456,7 @@ def run_probes(args, results):
             if integers.read_bytes() != adapted_integers:
                 raise ValueError(f'ownership copied source changed after adaptation: {integers_source}')
             if negative:
-                suite = project / FILES[3]
+                suite = project / 'tests/determinism/test_buffer_ownership.gd'
                 text = suite.read_text()
                 before = 'var history: PackedByteArray = caller.duplicate()'
                 if text.count(before) != 1:
