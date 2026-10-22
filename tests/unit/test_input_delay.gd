@@ -313,6 +313,7 @@ func _refused_raise_keeps_the_match(context: RefCounted) -> void:
 	var rows: Array[Dictionary] = [
 		{"label": "a full endpoint", "control": "transitions"},
 		{"label": "a released catch-up row", "control": "lagging"},
+		{"label": "an endpoint ahead of the core", "control": "ahead"},
 	]
 	for row: Dictionary in rows:
 		var label: String = row.label
@@ -331,10 +332,14 @@ func _refused_raise_keeps_the_match(context: RefCounted) -> void:
 			# full cannot hand the endpoint another batch.
 			for index: int in range(endpoint._options.max_transitions):
 				endpoint._transitions.append({"action": "control", "disposition": "full"})
-		else:
+		elif row.control == "lagging":
 			# The catch-up frames are the local queue's retained rows, so an endpoint that
 			# lags behind the core asks for a row that was already released.
 			endpoint._state.last_submitted_frame = session._core.rollback_floor() - 4
+		else:
+			# The endpoint submitted frames the core has not scheduled, so the batch it
+			# would send is empty.
+			endpoint._state.last_submitted_frame = session._core.received_frames()[0] + 8
 		context.equal(session.set_input_delay(0, delay + 1), Types.Code.NETWORK_BACKPRESSURE, label + " refuses the raise")
 		context.equal(session.status().lifecycle, Types.Lifecycle.RUNNING, label + " keeps the match running")
 		context.equal(session.input_delay(0), delay, label + " leaves the delay unchanged")

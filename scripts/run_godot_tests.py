@@ -273,10 +273,17 @@ def invoke(command: list[str], timeout: float) -> dict:
                                stderr=subprocess.STDOUT, start_new_session=True)
     try:
         output, _ = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         group = os.getpgid(process.pid) if hasattr(os, "getpgid") else None
         _kill_group(process)
-        output, _ = process.communicate()
+        # A process that escaped the group can still hold the pipe open, so the report
+        # uses the output read so far instead of waiting for the end of the stream.
+        output = exc.output or b""
+        if process.stdout is not None:
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
         report = {"command": command, "exit": None, "failure": "watchdog",
                   "process_group": group, "stdout": _decode(output), "stderr": ""}
         progress = last_progress(report["stdout"])
@@ -327,7 +334,9 @@ def _kill_group(process: subprocess.Popen) -> None:
         # A platform without process groups only has the engine itself to stop.
         process.kill()
     try:
-        process.wait(timeout=10)
+        # Waiting for the killed process does not wait for the pipe, so a process that
+        # escaped the group cannot keep this call open.
+        process.wait(timeout=5)
     except subprocess.TimeoutExpired:
         process.kill()
 

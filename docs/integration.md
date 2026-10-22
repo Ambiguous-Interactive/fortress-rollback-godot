@@ -415,15 +415,17 @@ as ordinary input and stay in agreement. Replays record them like any other inpu
 | `OK` | The new delay applies to the next sample. Asking for the current delay is also `OK`. |
 | `UNSUPPORTED` | A decrease after the first sample. Peer sessions also refuse changes before the first step and with several local players. |
 | `INVALID_CONFIGURATION` | `delay + max(max_prediction_frames, check_distance) + 2` exceeds `queue_capacity`. Peer sessions allow at most `FortressPeerSession.max_input_delay(config)`, which leaves room for every peer's delay. |
-| `NETWORK_BACKPRESSURE` | A peer still holds too many unacknowledged frames to send the added ones, or the added frames are no longer retained. Try again later. |
+| `NETWORK_BACKPRESSURE` | A peer still holds too many unacknowledged frames to send the added ones, or the catch-up frames the peer needs are no longer retained. Try again later. |
 | `INVALID_PLAYER` | The slot is not a local player. |
 | `NOT_SYNCHRONIZED` / `BUSY` / `TERMINATED` | The peer session is not running, a step or callback is in progress, or the match has ended. |
 | `PROTOCOL_FAILED` | Sending the added frames failed after the change was applied. The match ends rather than let peers disagree. |
 
 A peer session checks every peer and every retained row before it applies the new delay, so a
-refused raise leaves the match running and the delay unchanged. A refused raise is safe to repeat
-later: the added frames repeat the player's latest input, so a retry schedules the same frames on
-every peer.
+refused raise leaves the match running and the delay unchanged. The check covers the frames a
+peer still holds, the frames the local queue still retains for the catch-up, and the peer's
+bounded pending, outgoing and observation queues. A refused raise is safe to repeat later: the
+added frames repeat the player's latest input, so a retry schedules the same frames on every
+peer.
 
 Before the first sample, a plain `FortressSession` accepts any delay that fits, including a lower one.
 Every peer must use the same `queue_capacity`, because it sets how far delay can rise. Set the handshake
