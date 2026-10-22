@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -265,25 +266,29 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
 
 
 def invoke(command: list[str], timeout: float) -> dict:
+    # The engine runs in its own process group, so a timeout kills the engine and
+    # every process it started. A child that outlives its parent would keep the
+    # host busy and would own the result that the report names.
+    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, start_new_session=True)
     try:
-        # The engine's stdout and stderr are merged into one stream: the order of
-        # the progress records and the script errors is the only evidence that names
-        # the case that was executing when the engine reported the error.
-        process = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        group = os.getpgid(process.pid)
+        _kill_group(process)
+        output, _ = process.communicate()
         report = {"command": command, "exit": None, "failure": "watchdog",
-                  "stdout": _decode(exc.stdout), "stderr": ""}
+                  "process_group": group, "stdout": _decode(output), "stderr": ""}
         progress = last_progress(report["stdout"])
         if progress is not None:
             report["progress"] = progress
         return report
     report = {"command": command, "exit": process.returncode,
-              "stdout": _decode(process.stdout), "stderr": ""}
+              "stdout": _decode(output), "stderr": ""}
     progress = last_progress(report["stdout"])
     if progress is not None:
         report["progress"] = progress
-    if _invalid_utf8(process.stdout):
+    if _invalid_utf8(output):
         report["failure"] = "invalid_utf8_output"
         return report
     lines = [line[len(PREFIX):] for line in report["stdout"].splitlines()
@@ -309,6 +314,18 @@ def invoke(command: list[str], timeout: float) -> dict:
     except (ValueError, TypeError) as exc:
         report["failure"] = str(exc)
     return report
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    """Kill the engine's whole process group, so no child outlives the timeout."""
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
 
 
 def timed(command: list[str], timeout: float) -> tuple[dict, float]:
