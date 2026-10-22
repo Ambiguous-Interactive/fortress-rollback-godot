@@ -33,6 +33,7 @@ Local development contracts and evidence entry points:
 - [Confirmed-input spectator playback, bounded byte envelopes, retained host publication and local delayed-view example](docs/spectators.md).
 - [Online match recording, downloads and offline replay viewer with one-frame backward inspection](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
+- [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).

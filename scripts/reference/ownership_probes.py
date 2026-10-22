@@ -41,6 +41,7 @@ EXPECTED.update({
     'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save'},
     'res://tests/unit/test_peer_session.gd': {'mesh', 'loss', 'multiple_locals', 'backpressure', 'ingress',
         'partial_publication', 'reentry', 'begin_preflight', 'long_runtime', 'request_mismatch', 'low_windows', 'packet_service'},
+    'res://tests/unit/test_peer_checksum_repair.gd': {'pending_repair_is_not_a_loss', 'lost_snapshot_still_fails'},
 })
 EXPECTED.update({
     'res://tests/unit/test_diagnostic_trace.gd': {'owned_window', 'disabled_equality', 'bounds', 'failed_callback', 'local_divergence',
@@ -91,7 +92,6 @@ EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
-    'tests/runner/abort_watch.gd',
     'tests/determinism/test_buffer_ownership.gd', 'tests/determinism/ownership_slots.gd',
     'tests/determinism/test_integer_encoding.gd', 'tests/determinism/integer_codec.gd', 'tests/determinism/integer_vectors.json',
     '.llm/code-samples/state_checksum.gd',
@@ -123,6 +123,7 @@ FILES += ['tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
 FILES += ['tests/unit/test_spectator_policy.gd', 'tests/unit/test_replay_speed.gd', 'tests/unit/test_spectator_publisher.gd']
 FILES += ['tests/unit/test_driver_recovery.gd', 'tests/unit/test_peer_recovery.gd']
 FILES += ['tests/unit/test_replay_coverage.gd']
+FILES += ['tests/unit/test_peer_checksum_repair.gd', 'tests/runner/abort_watch.gd']
 FILES += ['tests/unit/test_spectator_model.gd']
 FILES += ['tests/unit/test_frame_inputs.gd']
 FILES += ['tests/unit/test_input_queue.gd']
@@ -167,11 +168,12 @@ const SpectatorModel = preload("res://tests/unit/test_spectator_model.gd")
 const FrameInputs = preload("res://tests/unit/test_frame_inputs.gd")
 const InputQueue = preload("res://tests/unit/test_input_queue.gd")
 const ReplayExpert = preload("res://tests/unit/test_replay_expert.gd")
+const PeerChecksumRepair = preload("res://tests/unit/test_peer_checksum_repair.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
-		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert]
+		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, PeerChecksumRepair]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)
