@@ -167,6 +167,37 @@ def engine_errors(output: str) -> list[dict]:
     return entries
 
 
+def engine_aborts(result: object, suite: str | None = None, case: str | None = None) -> bool:
+    """True when the engine's own result already reports an aborted case.
+
+    An engine that hands a script error to a custom logger fails the aborted
+    case in its result. The launcher stays the gate on every engine, so it
+    reads that verdict instead of reporting the same abort a second time. With
+    no suite and case, every aborted case counts.
+    """
+    if not isinstance(result, dict):
+        return False
+    records = result.get("records")
+    if not isinstance(records, list):
+        return False
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        if suite is not None and (record.get("suite") != suite or record.get("case") != case):
+            continue
+        runs = record.get("runs")
+        if not isinstance(runs, list):
+            continue
+        for run in runs:
+            failures = run.get("failures") if isinstance(run, dict) else None
+            if not isinstance(failures, list):
+                continue
+            for failure in failures:
+                if isinstance(failure, dict) and failure.get("kind") == "case_aborted":
+                    return True
+    return False
+
+
 def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
     """Fail every case the engine aborted, naming the aborting file, line and message.
 
@@ -189,6 +220,15 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
         entry = {"kind": "case_aborted", "suite": suite, "case": case,
                  "file": first["file"], "line": first["line"],
                  "message": first["message"], "aborts": len(reports)}
+        if engine_aborts(result, suite, case):
+            # The engine reported the abort in its own result. The launcher keeps
+            # the reason and does not report the same abort twice.
+            if isinstance(result.get("errors"), list) and not any(
+                    isinstance(item, dict) and item.get("kind") == "case_aborted"
+                    and item.get("suite") == suite and item.get("case") == case
+                    for item in result["errors"]):
+                result["errors"].append(dict(entry))
+            continue
         if isinstance(result.get("errors"), list):
             result["errors"].append(dict(entry))
         records = result.get("records")
@@ -218,6 +258,9 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
             run["failures"].append(dict(entry))
         if result.get("passed") is True:
             result["passed"] = False
+    # An engine that reported the abort in its own result failed the run even when
+    # its output did not name the script error.
+    aborted = aborted or engine_aborts(result)
     return result, aborted
 
 

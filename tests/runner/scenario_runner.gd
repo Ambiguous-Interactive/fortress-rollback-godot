@@ -14,6 +14,11 @@ const Context = preload("res://tests/runner/test_context.gd")
 # native suite keeps its deterministic clock and a browser host injects the real
 # host clock. The observation never enters the canonical result: the case
 # records and their assertion counts stay exactly as they are.
+# An optional observer callable returns the script errors the host has recorded
+# so far. A GDScript runtime error aborts the innermost function, so a case that
+# dies inside a nested helper still reaches its completion marker and the engine
+# reports that case as passed. A host that can see the script error reports the
+# case as failed instead, and the observer is how the runner learns about it.
 func execute(
 	scripts: Array[Script],
 	category: String,
@@ -21,7 +26,8 @@ func execute(
 	fixed_seed: int,
 	case_names: PackedStringArray = [],
 	progress: Callable = Callable(),
-	clock: Callable = Callable()
+	clock: Callable = Callable(),
+	observer: Callable = Callable()
 ) -> Dictionary:
 	var records: Array[Dictionary] = []
 	var errors: Array[Dictionary] = []
@@ -53,9 +59,11 @@ func execute(
 			var started: int = _read_clock(clock)
 			_publish(progress, {"completed": completed, "executing": {"suite": script.resource_path, "case": name, "started": started}, "last_completed": last_completed})
 			var runs: Array[Dictionary] = []
+			var aborts: Array[Array] = []
 			for repetition: int in range(2):
 				var instance: Variant = script.new()
 				var context: RefCounted = Context.new(fixed_seed)
+				var before: int = _observed(observer).size()
 				if not instance is RefCounted or not instance.has_method("run_case"):
 					context.failures.append({"kind": "invalid_suite"})
 				else:
@@ -64,7 +72,9 @@ func execute(
 					context.failures.append({"kind": "incomplete_case"})
 				if context.assertions == 0:
 					context.failures.append({"kind": "zero_assertions"})
+				aborts.append(_observed(observer).slice(before))
 				runs.append({"assertions": context.assertions, "failures": context.failures, "states": context.states})
+			_report_abort(script.resource_path, name, runs, aborts, errors)
 			if runs[0] != runs[1]:
 				errors.append(_first_difference(script.resource_path, name, runs))
 			records.append({"suite": script.resource_path, "case": name, "category": category, "seed": str(fixed_seed), "runs": runs})
@@ -88,6 +98,41 @@ func _read_clock(clock: Callable) -> int:
 	if not clock.is_valid():
 		return 0
 	return int(clock.call())
+
+
+# The script errors the host has recorded so far. A host that cannot see them
+# reports an empty list, so the runner keeps the engine's own verdict.
+func _observed(observer: Callable) -> Array:
+	if not observer.is_valid():
+		return []
+	var value: Variant = observer.call()
+	return value if value is Array else []
+
+
+# A case that died is a failure of that case, not of the run: the entry names
+# the suite, the case, the aborting file, the line and the engine message, and
+# only the repetitions that died carry it. A case that dies in one repetition
+# and not in the other keeps that difference visible.
+func _report_abort(suite: String, case_name: String, runs: Array[Dictionary], aborts: Array[Array], errors: Array[Dictionary]) -> void:
+	var died: Array[int] = []
+	for index: int in range(aborts.size()):
+		if not aborts[index].is_empty():
+			died.append(index)
+	if died.is_empty():
+		return
+	var first: Dictionary = aborts[died[0]][0]
+	var entry: Dictionary = {
+		"kind": "case_aborted",
+		"suite": suite,
+		"case": case_name,
+		"file": str(first.get("file", "")),
+		"line": int(first.get("line", 0)),
+		"message": str(first.get("message", "")),
+		"aborts": died.size(),
+	}
+	for index: int in died:
+		runs[index]["failures"].append(entry)
+	errors.append(entry)
 
 
 func _publish(progress: Callable, value: Dictionary) -> void:

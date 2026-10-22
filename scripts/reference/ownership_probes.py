@@ -91,6 +91,7 @@ EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
+    'tests/runner/abort_watch.gd',
     'tests/determinism/test_buffer_ownership.gd', 'tests/determinism/ownership_slots.gd',
     'tests/determinism/test_integer_encoding.gd', 'tests/determinism/integer_codec.gd', 'tests/determinism/integer_vectors.json',
     '.llm/code-samples/state_checksum.gd',

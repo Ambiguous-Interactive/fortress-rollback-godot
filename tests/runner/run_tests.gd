@@ -1,14 +1,21 @@
 extends SceneTree
 
+const AbortWatch = preload("res://tests/runner/abort_watch.gd")
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
 const PREFIX: String = "FORTRESS_TEST_RESULT "
 const CASES_PREFIX: String = "FORTRESS_TEST_CASES "
 const PROGRESS_PREFIX: String = "FORTRESS_TEST_PROGRESS "
+const WATCH_PREFIX: String = "FORTRESS_TEST_ABORT_WATCH "
 
 # The native runner injects a deterministic tick clock, so its progress output
 # is byte-stable and the canonical result stays untouched. A browser host
 # injects the real host clock instead.
 var _ticks: int = 0
+
+# The engine that can hand a script error to a custom logger reports an aborted
+# case as failed. Godot 4.3 cannot, so the watch stays unavailable there and the
+# Python launcher remains the gate.
+var _watch: AbortWatch = AbortWatch.new()
 
 
 func _clock() -> int:
@@ -85,9 +92,17 @@ func _initialize() -> void:
 	if list_cases:
 		_list(scripts)
 		return
-	var result: Dictionary = Scenarios.new().execute(scripts, category, filter_text, fixed_seed, case_names, _publish_progress, _clock)
+	var result: Dictionary = Scenarios.new().execute(scripts, category, filter_text, fixed_seed, case_names, _publish_progress, _clock, Callable(_watch, "errors"))
 	print(PREFIX + JSON.stringify(result))
+	_publish_watch()
 	quit(0 if result["passed"] else 1)
+
+
+# The watch record names the capability of this engine, so a host never claims
+# an engine result that only one pinned engine provides.
+func _publish_watch() -> void:
+	var record: Dictionary = {"available": _watch.available(), "errors": _watch.errors().size()}
+	print(WATCH_PREFIX + JSON.stringify(record))
 
 
 # Print each suite's case inventory so a launcher can run one case per process.
@@ -100,6 +115,7 @@ func _list(scripts: Array[Script]) -> void:
 			return
 		inventory[script.resource_path] = suite.cases()
 	print(CASES_PREFIX + JSON.stringify(inventory))
+	_publish_watch()
 	quit(0)
 
 
@@ -119,4 +135,5 @@ func _discover(path: String, paths: Array[String]) -> void:
 
 func _fail(reason: String) -> void:
 	print(PREFIX + JSON.stringify({"format": 1, "complete": true, "passed": false, "count": 0, "records": [], "errors": [{"kind": reason}]}))
+	_publish_watch()
 	quit(1)

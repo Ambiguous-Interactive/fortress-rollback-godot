@@ -4,6 +4,8 @@
 
 ### Added
 
+- Report an aborted test case in the engine result. A case that dies inside a nested helper no longer looks green: on the Godot 4.7.2 pin the runner sees the script error and fails the case with the aborting file, line and message, and the entry belongs to the repetition that died. Godot 4.3 cannot observe a script error in process, so its engine result keeps the engine's own verdict and the Python launcher stays the gate there. The runner prints the capability of its engine, so a release never claims an engine result that only one pin provides.
+
 - Prove the coordinated drop with two survivors in one session. Three real peer sessions now run the barrier end to end: one peer stops answering, the two survivors notice the silence, agree one frame, publish the drop and keep one confirmed history while they keep playing, and a second departure leaves one survivor that freezes the slot on its own frontier and keeps the match running.
 
 - Certify the frozen value of a departed player. The survivors of a match now agree on one frame and one value for the departed slot: every survivor reports the frames it still holds, the survivor that proposes the cut sends the value to the survivors that already released it, and every survivor certifies that value before the departure is committed. A survivor that certifies another value ends the match with the recorded reason `conflicting_history` instead of freezing different bytes for the same frame.
