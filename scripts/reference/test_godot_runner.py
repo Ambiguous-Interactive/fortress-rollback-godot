@@ -71,6 +71,15 @@ class CompletionContract(unittest.TestCase):
         self.assertEqual(diagnostic["frame"], 0)
         self.assertNotIn("byte", diagnostic)
 
+    # Value: one fresh process can finish without a result, and the divergence
+    # report must name the missing result instead of raising.
+    def test_first_divergence_without_a_result(self) -> None:
+        for expected, actual in [(valid_result(), None), (None, valid_result()), (None, None)]:
+            with self.subTest(expected=expected is not None, actual=actual is not None):
+                diagnostic = RUNNER.first_divergence(expected, actual)
+                self.assertEqual(diagnostic["expected_present"], expected is not None)
+                self.assertEqual(diagnostic["actual_present"], actual is not None)
+
 
 class AbortAttribution(unittest.TestCase):
     # Value: the launcher must fail the case the engine aborted, keep every other

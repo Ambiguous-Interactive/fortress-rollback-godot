@@ -330,8 +330,14 @@ def merge(reports: list[dict], filtered: bool) -> dict:
     return run
 
 
-def first_divergence(expected: dict, actual: dict) -> dict:
+def first_divergence(expected: dict | None, actual: dict | None) -> dict:
     """Find the first ordered case/state difference without normalizing bytes."""
+    if not isinstance(expected, dict) or not isinstance(actual, dict):
+        # One of the runs produced no result at all, so there is no record to
+        # compare: the missing result is the divergence.
+        return {"expected_present": isinstance(expected, dict), "actual_present": isinstance(actual, dict),
+                "expected": expected if isinstance(expected, dict) else None,
+                "actual": actual if isinstance(actual, dict) else None}
     for case_index, (left, right) in enumerate(zip(expected["records"], actual["records"])):
         if left == right:
             continue
@@ -500,10 +506,10 @@ def main(argv: list[str] | None = None) -> int:
         # The fresh-process divergence is reported whenever the two runs differ, even
         # when a run already failed: a case that aborts in one process and not in the
         # other is a divergence, and the failed run alone does not explain it.
-        if runs[0].get("result") is not None and runs[0]["result"] != runs[1].get("result"):
+        if runs[0].get("result") != runs[1].get("result"):
             failed = True
             runs[1]["failure"] = "fresh_process_divergence"
-            runs[1]["divergence"] = first_divergence(runs[0]["result"], runs[1]["result"])
+            runs[1]["divergence"] = first_divergence(runs[0].get("result"), runs[1].get("result"))
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                 capture_output=True, text=True, check=True).stdout.strip()
         manifest = ROOT / "docs/reference/pins.json"
