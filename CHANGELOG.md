@@ -4,6 +4,8 @@
 
 ### Added
 
+- Prove the coordinated drop with two survivors in one session. Three real peer sessions now run the barrier end to end: one peer stops answering, the two survivors notice the silence, agree one frame, publish the drop and keep one confirmed history while they keep playing, and a second departure leaves one survivor that freezes the slot on its own frontier and keeps the match running.
+
 - Certify the frozen value of a departed player. The survivors of a match now agree on one frame and one value for the departed slot: every survivor reports the frames it still holds, the survivor that proposes the cut sends the value to the survivors that already released it, and every survivor certifies that value before the departure is committed. A survivor that certifies another value ends the match with the recorded reason `conflicting_history` instead of freezing different bytes for the same frame.
 
 - Agree the frozen frame when a player leaves. With `disconnect_behavior = CONTINUE` and more than one survivor left, the survivors exchange their freezable frame windows and freeze the departed slot at one common frame, so they keep the same confirmed history instead of splitting at their own frontiers. The match holds while the survivors agree, the agreement is bounded by `drop_barrier_timeout_us`, and a barrier that cannot agree reports `peer_drop_unconfirmed` and falls back to the survivor's own frontier.
@@ -132,6 +134,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fail a test case that dies before its last assertion. A GDScript runtime error inside a case aborts that function, the caller resumes and still marks the case complete, so the runner reported a broken case as passed with a truncated assertion count. The launcher now attributes the abort to the case that was executing, fails that case with the suite, the aborting line and the engine message, and keeps every other case's record.
 
 - Fix the exported online witness failing its corrupt control at random. The corruption is applied while a peer restores a snapshot, and the control held one input for the whole round, so the repeat-the-last-actual prediction was always correct and no peer ever rolled back. The witness now holds the changed input until every peer has restored, so the deliberate corruption always lands, and the corrupted peer must terminate with the desync reason while the healthy peer keeps its confirmed history.
 

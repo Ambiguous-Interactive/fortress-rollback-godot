@@ -151,6 +151,16 @@ and its live witness stay open. See
 [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
 
+The agreement runs in real sessions, not only in unit tests. Three peer
+sessions on the deterministic test transport play, one peer stops answering,
+and the two survivors notice the silence, agree one frame, publish the drop
+and keep one confirmed history; a second departure leaves one survivor that
+freezes the slot on its own frontier and keeps the match running. That
+session-level witness covers the barrier and the match around it. The
+exported Chromium witness of the same departure - a real SignalFish room
+where a browser peer leaves mid-match - stays open in
+[#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
+
 ## Downloadable observations
 
 `peer.diagnostics()` returns a fresh JSON-compatible dictionary with schema

@@ -440,10 +440,14 @@ certifies the frame and the digest of that value before the irreversible commit.
 A certificate that names another value ends the match with a recorded reason
 instead of freezing divergent values. The match holds while the barrier runs
 and a barrier that cannot agree falls back to the survivor's own frontier with
-a recorded reason. The pinned prepare, backfill, certificate and commit barrier
+a recorded reason. Three real peer sessions now run that barrier end to end:
+one peer stops answering, the two survivors agree one frame, keep one
+confirmed history and keep playing, and a second departure leaves one
+survivor that freezes the slot on its own frontier. The pinned prepare,
+backfill, certificate and commit barrier
 and its all-survivor certificate remain open in
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
-and its live witness in
+and its exported live witness in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 Hot join uses reserved/dropped slots with fixed player cardinality,
 bounded session-bound snapshot transfer and agreed activation frames.
