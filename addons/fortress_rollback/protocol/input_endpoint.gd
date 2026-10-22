@@ -280,6 +280,8 @@ func submit_frames(start_frame: Variant, inputs: Variant, statuses: Variant, now
 func can_submit_frames(start_frame: int, count: int) -> int:
 	if _handshake == null or _handshake.status().state != "running":
 		return I.Code.WRONG_STATE
+	if _state.terminated:
+		return I.Code.TERMINATED
 	if count < 1:
 		return I.Code.INVALID_ARGUMENT
 	if start_frame != _state.last_submitted_frame + 1 and not (_state.last_submitted_frame == -1 and start_frame == _local.config.input_delay):

@@ -364,7 +364,8 @@ func set_input_delay(player: int, delay: int) -> int:
 		var accepted: int = _endpoint(index).can_submit_frames(start, last + added - start + 1)
 		if accepted != I.Code.OK:
 			# The endpoint cannot take the added frames yet, so the raise waits for a later attempt.
-			return Types.Code.NETWORK_BACKPRESSURE if accepted == I.Code.BACKPRESSURE else _step_code(accepted)
+			# Every refusal is retryable: the match keeps running and the delay stays unchanged.
+			return Types.Code.NETWORK_BACKPRESSURE
 		starts.append(start)
 		earliest = start if earliest == -1 else mini(earliest, start)
 	# The catch-up frames are the local queue's retained rows. A released row cannot be rebuilt,

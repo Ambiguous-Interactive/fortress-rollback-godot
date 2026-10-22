@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -181,6 +182,20 @@ class ReceiptControls(unittest.TestCase):
         self.assertIsInstance(group, int)
         with self.assertRaises(ProcessLookupError):
             os.killpg(group, 0)
+
+    # Value: a process that escapes the group still holds the output pipe open.
+    # The watchdog must report the failure instead of waiting for that pipe.
+    def test_watchdog_reports_promptly_when_a_process_escapes_the_group(self) -> None:
+        if not hasattr(os, 'killpg'):
+            self.skipTest("this platform has no process groups")
+        escape = ("import subprocess,sys,time;"
+                  "subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True);"
+                  "time.sleep(120)")
+        started = time.monotonic()
+        result = RUNNER.invoke([sys.executable, '-c', escape], 1)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.get('failure'), 'watchdog', result)
+        self.assertLess(elapsed, 20, f"the watchdog waited {elapsed:.1f}s for an escaped process")
 
 
 class EngineControls(unittest.TestCase):
