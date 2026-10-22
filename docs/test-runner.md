@@ -192,9 +192,16 @@ contradictory and vacuous structured results.
 Godot can log an uncaught GDScript error and still exit zero after a completed
 case. A GDScript runtime error aborts the innermost function and the caller
 resumes, so a case that dies inside a nested helper still reaches `finish()` and
-the engine reports that case as passed with a truncated assertion count. The
-engine cannot detect the abort: GDScript has no `try`/`catch` and a custom
-logger never receives the script error. The standalone `godot --headless --path .
+the engine reports that case as passed with a truncated assertion count. Moving
+the completion marker into the case body does not change that: the body resumes
+after the aborted helper and still reaches the marker.
+The engine result cannot detect the abort today: GDScript has no `try`/`catch`,
+and the runner does not read the engine's error stream. A Godot 4.7.2 engine
+does hand the script error to a custom logger, through `OS.add_logger` and a
+`Logger` that overrides `_log_error`, and names the aborting file and line.
+Godot 4.3 has neither the `Logger` class nor `OS.add_logger`, so one mechanism
+cannot cover both pinned engines.
+The standalone `godot --headless --path .
 --script res://tests/runner/run_tests.gd` invocation therefore cannot guarantee
 interception of all engine errors or interrupt a synchronous infinite loop. Use
 the **Python entry point** for CI: it rejects engine `ERROR`/`SCRIPT ERROR`
