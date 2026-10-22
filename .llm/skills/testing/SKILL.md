@@ -136,6 +136,12 @@ A benchmark is a test of a measurement, and it fails like a test.
 5. Every bug fix adds the regression test that would have caught it, proven
    with the triple proof above (fails at HEAD, passes at base, passes after
    fix).
+6. A test of an **agreement** must fail when the agreement is removed. Assert
+   the mechanism, not only the outcome: a survivor that freezes its own
+   frontier publishes the same event as a coordinated freeze, so the test reads
+   the coordination's own record and compares the agreed value with the
+   contract. The engine's runtime semantics are in
+   [GDScript runtime facts](../../knowledge/gdscript-runtime.md).
 
 ## Evidence references
 

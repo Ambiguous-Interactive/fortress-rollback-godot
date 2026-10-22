@@ -41,3 +41,5 @@ evidence. Facts without evidence do not get in (curation gate).
   copies, per-run build trees, citation semantics, container-layer caches
 - [transport-tooling.md](./transport-tooling.md) — browser SignalFish
   secure-context and development-hosting facts
+- [gdscript-runtime.md](./gdscript-runtime.md) — how the GDScript runtime
+  reports an aborted function and what the test host must do about it
