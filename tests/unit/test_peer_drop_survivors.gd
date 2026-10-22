@@ -177,7 +177,7 @@ func _depart(context: RefCounted, mesh: Dictionary, departed: int) -> PackedInt3
 
 
 ## The frame every survivor froze, keyed by the peer that published it.
-func _drops(context: RefCounted, mesh: Dictionary) -> Dictionary:
+func _drops(mesh: Dictionary) -> Dictionary:
 	var result: Dictionary = {}
 	for index: int in range(PLAYERS):
 		for event: Dictionary in mesh.peers[index].drain_events():
@@ -204,7 +204,7 @@ func _agreed_frame(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, PackedInt32Array([0, 1, 2]))
 	_depart(context, mesh, 2)
-	var dropped: Dictionary = _drops(context, mesh)
+	var dropped: Dictionary = _drops(mesh)
 	context.equal(dropped.has(0), true, "the first survivor publishes the drop")
 	context.equal(dropped.has(1), true, "the second survivor publishes the drop")
 	if not dropped.has(0) or not dropped.has(1):
@@ -220,7 +220,7 @@ func _one_history(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, PackedInt32Array([0, 1, 2]))
 	var survivors: PackedInt32Array = _depart(context, mesh, 2)
-	var dropped: Dictionary = _drops(context, mesh)
+	var dropped: Dictionary = _drops(mesh)
 	context.equal(dropped.size(), 2, "both survivors publish the drop")
 	var before: Array[int] = []
 	var confirmed_before: Array[int] = []
@@ -264,11 +264,11 @@ func _second_departure(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, PackedInt32Array([0, 1, 2]))
 	_depart(context, mesh, 2)
-	var dropped: Dictionary = _drops(context, mesh)
+	var dropped: Dictionary = _drops(mesh)
 	context.equal(dropped.size(), 2, "both survivors publish the first drop")
 	_service(context, mesh, 2, PackedInt32Array([0, 1]))
 	_depart(context, mesh, 1)
 	_service(context, mesh, 4, PackedInt32Array([0]))
-	var second: Dictionary = _drops(context, mesh)
+	var second: Dictionary = _drops(mesh)
 	context.equal(second.has(0), true, "the last survivor publishes the second drop")
 	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.RUNNING, "the last survivor keeps running")
