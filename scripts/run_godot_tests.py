@@ -29,7 +29,13 @@ SPLIT_SECONDS = 4.0
 DEFAULT_RESULTS = ROOT / ".cache/tests/latest.json"
 # Seconds per suite from earlier runs. It only orders shards, so a stale or missing file is harmless.
 DURATIONS = ROOT / ".cache/tests/durations.json"
-ENGINE_ERROR = re.compile(r"(?m)^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)")
+# The engine reports a script error as a header line, followed by an "at:" line
+# that names the aborting file and line.
+ENGINE_ERROR_LINE = re.compile(r"^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)\s*(?P<message>.*)$")
+# Only a script-level header belongs to the case that was executing. A generic
+# engine error names a condition of the engine, not an aborted test case.
+SCRIPT_ERROR_LINE = re.compile(r"^\s*(?:SCRIPT ERROR:|Parse Error:)\s*(?P<message>.*)$")
+ENGINE_ERROR_AT = re.compile(r"^\s*at:\s[^(]*\((?P<file>[^()]+):(?P<line>\d+)\)")
 # The lease names this runner as the owner of the development host's CPU capacity.
 LEASE_NAME = "godot-tests"
 
@@ -73,9 +79,13 @@ def validate_result(value: object) -> dict:
         for run in runs:
             if not isinstance(run, dict) or set(run) != {"assertions", "failures", "states"}:
                 raise ValueError("unknown or missing run fields")
-            if (type(run["assertions"]) is not int or run["assertions"] < 1
+            if (type(run["assertions"]) is not int or run["assertions"] < 0
                     or not isinstance(run["failures"], list)
                     or not isinstance(run["states"], list)):
+                raise ValueError("incomplete run")
+            # A run that recorded a failure is evidence even without an assertion:
+            # a case that aborted before its first assertion has none.
+            if run["assertions"] == 0 and not run["failures"]:
                 raise ValueError("incomplete run")
             failed |= bool(run["failures"])
             for state in run["states"]:
@@ -105,35 +115,153 @@ def last_progress(stdout: str) -> dict | None:
     return record
 
 
+def executing_case(line: str) -> tuple[str, str] | None:
+    """Return the suite and case a progress record says is executing."""
+    try:
+        value = json.loads(line[len(PROGRESS_PREFIX):])
+    except ValueError:
+        return None
+    if not isinstance(value, dict):
+        return None
+    executing = value.get("executing")
+    if not isinstance(executing, dict):
+        return None
+    suite, case = executing.get("suite"), executing.get("case")
+    if isinstance(suite, str) and isinstance(case, str) and suite and case:
+        return suite, case
+    return None
+
+
+def engine_errors(output: str) -> list[dict]:
+    """Return every engine error with the case that was executing when it was reported.
+
+    A GDScript runtime error aborts the innermost function and the caller resumes,
+    so the engine cannot report the abort itself. The runner publishes the case it
+    is about to execute before every case, so the error is attributed to the case
+    the last progress record named. Only a script-level header names an aborted
+    case; a generic engine error belongs to the engine and stays unattributed.
+    """
+    entries: list[dict] = []
+    executing: tuple[str, str] | None = None
+    pending: dict | None = None
+    for line in output.splitlines():
+        if line.startswith(PROGRESS_PREFIX):
+            executing = executing_case(line)
+            pending = None
+            continue
+        header = ENGINE_ERROR_LINE.match(line)
+        if header:
+            attributable = SCRIPT_ERROR_LINE.match(line) is not None
+            suite, case = (executing if attributable else (None, None)) if executing else (None, None)
+            pending = {"suite": suite, "case": case, "file": None, "line": None,
+                       "message": header.group("message").strip()}
+            entries.append(pending)
+            continue
+        location = ENGINE_ERROR_AT.match(line)
+        if pending is not None and location:
+            pending["file"] = location.group("file")
+            pending["line"] = int(location.group("line"))
+            pending = None
+            continue
+        pending = None
+    return entries
+
+
+def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
+    """Fail every case the engine aborted, naming the aborting file, line and message.
+
+    The aborted case keeps its record and the other cases keep theirs: a case that
+    died before its last assertion is a failure of that case, not of the run.
+    """
+    if not isinstance(result, dict):
+        return result, False
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for error in errors:
+        suite, case = error["suite"], error["case"]
+        if not suite or not case:
+            continue
+        grouped.setdefault((suite, case), []).append(error)
+    aborted = False
+    for (suite, case), reports in grouped.items():
+        aborted = True
+        first = reports[0]
+        # One entry names the abort; the count says how many repetitions died.
+        entry = {"kind": "case_aborted", "suite": suite, "case": case,
+                 "file": first["file"], "line": first["line"],
+                 "message": first["message"], "aborts": len(reports)}
+        if isinstance(result.get("errors"), list):
+            result["errors"].append(dict(entry))
+        records = result.get("records")
+        record = next((item for item in records if isinstance(item, dict)
+                       and item.get("suite") == suite and item.get("case") == case), None) \
+            if isinstance(records, list) else None
+        if record is None:
+            if result.get("passed") is True:
+                result["passed"] = False
+            continue
+        runs = record.get("runs")
+        runs = runs if isinstance(runs, list) else []
+        counts = [run["assertions"] for run in runs if isinstance(run, dict) and type(run.get("assertions")) is int]
+        top = max(counts) if counts else 0
+        # A repetition that the abort truncated recorded fewer assertions, so it is
+        # the one that died and the other repetition keeps its own verdict: a case
+        # that dies in one repetition and not in the other stays a divergence. When
+        # every repetition recorded the same count, the abort came after the last
+        # assertion, so the launcher cannot name the repetition that died and every
+        # repetition carries the entry. The report count says how many repetitions
+        # the engine actually reported.
+        truncated = [run for run in runs if isinstance(run, dict) and run.get("assertions", 0) < top]
+        targets = truncated if truncated else runs
+        for run in targets:
+            if not isinstance(run, dict) or not isinstance(run.get("failures"), list):
+                continue
+            run["failures"].append(dict(entry))
+        if result.get("passed") is True:
+            result["passed"] = False
+    return result, aborted
+
+
 def invoke(command: list[str], timeout: float) -> dict:
     try:
-        process = subprocess.run(command, cwd=ROOT, capture_output=True,
-                                 timeout=timeout)
+        # The engine's stdout and stderr are merged into one stream: the order of
+        # the progress records and the script errors is the only evidence that names
+        # the case that was executing when the engine reported the error.
+        process = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         report = {"command": command, "exit": None, "failure": "watchdog",
-                  "stdout": _decode(exc.stdout), "stderr": _decode(exc.stderr)}
+                  "stdout": _decode(exc.stdout), "stderr": ""}
         progress = last_progress(report["stdout"])
         if progress is not None:
             report["progress"] = progress
         return report
     report = {"command": command, "exit": process.returncode,
-              "stdout": _decode(process.stdout), "stderr": _decode(process.stderr)}
+              "stdout": _decode(process.stdout), "stderr": ""}
     progress = last_progress(report["stdout"])
     if progress is not None:
         report["progress"] = progress
-    if _invalid_utf8(process.stdout, process.stderr):
+    if _invalid_utf8(process.stdout):
         report["failure"] = "invalid_utf8_output"
         return report
     lines = [line[len(PREFIX):] for line in report["stdout"].splitlines()
              if line.startswith(PREFIX)]
+    errors = engine_errors(report["stdout"])
     try:
-        if ENGINE_ERROR.search(report["stdout"] + report["stderr"]):
-            raise ValueError("engine_error")
         if len(lines) != 1:
-            raise ValueError("missing_or_duplicate_completion")
-        result = validate_result(json.loads(lines[0]))
-        report["result"] = result
-        if process.returncode != 0 or not result["passed"]:
+            raise ValueError("engine_error" if errors else "missing_or_duplicate_completion")
+        try:
+            parsed = json.loads(lines[0])
+        except ValueError as exc:
+            # A truncated or corrupted completion record is a stable reason, not a
+            # parser message: the merged stream can carry a stray fragment.
+            raise ValueError("malformed_completion") from exc
+        result, aborted = apply_aborts(parsed, errors)
+        report["result"] = validate_result(result)
+        if aborted:
+            raise ValueError("case_aborted")
+        if errors:
+            raise ValueError("engine_error")
+        if process.returncode != 0 or not report["result"]["passed"]:
             raise ValueError("test_failure")
     except (ValueError, TypeError) as exc:
         report["failure"] = str(exc)
@@ -202,8 +330,14 @@ def merge(reports: list[dict], filtered: bool) -> dict:
     return run
 
 
-def first_divergence(expected: dict, actual: dict) -> dict:
+def first_divergence(expected: dict | None, actual: dict | None) -> dict:
     """Find the first ordered case/state difference without normalizing bytes."""
+    if not isinstance(expected, dict) or not isinstance(actual, dict):
+        # One of the runs produced no result at all, so there is no record to
+        # compare: the missing result is the divergence.
+        return {"expected_present": isinstance(expected, dict), "actual_present": isinstance(actual, dict),
+                "expected": expected if isinstance(expected, dict) else None,
+                "actual": actual if isinstance(actual, dict) else None}
     for case_index, (left, right) in enumerate(zip(expected["records"], actual["records"])):
         if left == right:
             continue
@@ -369,10 +503,13 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
         failed = any("failure" in run for run in runs)
-        if not failed and runs[0]["result"] != runs[1]["result"]:
+        # The fresh-process divergence is reported whenever the two runs differ, even
+        # when a run already failed: a case that aborts in one process and not in the
+        # other is a divergence, and the failed run alone does not explain it.
+        if runs[0].get("result") != runs[1].get("result"):
             failed = True
             runs[1]["failure"] = "fresh_process_divergence"
-            runs[1]["divergence"] = first_divergence(runs[0]["result"], runs[1]["result"])
+            runs[1]["divergence"] = first_divergence(runs[0].get("result"), runs[1].get("result"))
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                 capture_output=True, text=True, check=True).stdout.strip()
         manifest = ROOT / "docs/reference/pins.json"
