@@ -46,4 +46,6 @@ func run_case(name: String, context: RefCounted) -> void:
 func _nested_failure(context: RefCounted) -> void:
 	var empty: Array[int] = []
 	var value: int = empty[4]
+	# The abort above ends the helper, so this assertion never runs. It is here
+	# to show that the assertions of an aborted helper are lost with it.
 	context.equal(value, 0, "nested abort helper")

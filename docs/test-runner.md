@@ -207,15 +207,21 @@ this host boundary. Fresh-process divergence records the first differing ordered
 case/state/byte when available.
 
 The launcher fails the case that the last progress record named. That failure
-is a `case_aborted` entry with the case, the suite, the aborting file and line,
-the engine message and the number of repetitions that died; the receipt fails
-with `case_aborted`. The other cases keep their records, because an aborted case
-is a failure of that case and not of the run. An engine error outside a case
-stays `engine_error`. Both repetitions of a case carry the same entry when they
-die at the same point, so the abort does not manufacture a divergence between
-them; a repetition that reached the end keeps its own verdict, so a case that
-dies in one repetition and not in the other stays a divergence. The in-process
-comparison of the two run dictionaries is unchanged.
+is a `case_aborted` entry with the case, the suite, the aborting file and line
+when the engine names them, the engine message and the number of error reports
+the engine printed for the case; the receipt fails with `case_aborted`. The
+other cases keep their records, because an aborted case is a failure of that
+case and not of the run. A script level header (`SCRIPT ERROR:` or
+`Parse Error:`) names an aborted case; a generic engine error (`ERROR:`) names
+a condition of the engine and stays `engine_error`, as does an engine error
+outside a case. A repetition that the abort truncated recorded fewer
+assertions, so it carries the entry and the other repetition keeps its own
+verdict: a case that dies in one repetition and not in the other stays a
+divergence. When every repetition recorded the same count, the abort came
+after the last assertion of the case, so the launcher cannot name the
+repetition that died and every repetition carries the entry; the report count
+says how many repetitions the engine reported. The in-process comparison of
+the two run dictionaries is unchanged.
 
 No pinned Fortress parity claim applies: these assertions test the Godot host
 contract, not translated simulation behavior. Product differential, browser,

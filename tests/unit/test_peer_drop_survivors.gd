@@ -17,13 +17,13 @@ const Game = preload("res://tests/oracle/p2p_game.gd")
 const PLAYERS: int = 3
 const WINDOW: int = 8
 ## The silence of a departed peer is noticed after this long without an answer.
-const DISCONNECT_TIMEOUT_US: int = 400000
+const DISCONNECT_TIMEOUT_US: int = 800000
 ## The barrier must finish inside this window, and it never exceeds the disconnect timeout.
-const BARRIER_TIMEOUT_US: int = 350000
+const BARRIER_TIMEOUT_US: int = 700000
 ## One service round. The barrier retries on the same interval.
 const ROUND_US: int = 50000
 ## Rounds of silence that outlast the disconnect timeout, plus the rounds of the barrier.
-const SILENCE_ROUNDS: int = 16
+const SILENCE_ROUNDS: int = 30
 
 
 func cases() -> PackedStringArray:
@@ -177,12 +177,19 @@ func _depart(context: RefCounted, mesh: Dictionary, departed: int) -> PackedInt3
 
 
 ## The frame every survivor froze, keyed by the peer that published it.
+## A survivor that starts the coordinated drop publishes the pending frame first.
 func _drops(mesh: Dictionary) -> Dictionary:
 	var result: Dictionary = {}
 	for index: int in range(PLAYERS):
 		for event: Dictionary in mesh.peers[index].drain_events():
 			if event.kind == "peer_dropped":
-				result[index] = {"frame": int(event.frame)}
+				var entry: Dictionary = result.get(index, {})
+				entry["frame"] = int(event.frame)
+				result[index] = entry
+			elif event.kind == "peer_drop_pending":
+				var entry: Dictionary = result.get(index, {})
+				entry["pending"] = int(event.frame)
+				result[index] = entry
 	return result
 
 
@@ -209,6 +216,9 @@ func _agreed_frame(context: RefCounted) -> void:
 	context.equal(dropped.has(1), true, "the second survivor publishes the drop")
 	if not dropped.has(0) or not dropped.has(1):
 		return
+	# The survivors coordinated the drop instead of freezing their own frontiers.
+	context.equal(dropped[0].has("pending"), true, "the first survivor starts the coordinated drop")
+	context.equal(dropped[1].has("pending"), true, "the second survivor starts the coordinated drop")
 	context.equal(int(dropped[0]["frame"]), int(dropped[1]["frame"]), "the survivors agree the frozen frame")
 	context.equal(int(dropped[0]["frame"]) >= 0, true, "the agreed frame is a real frame")
 	for index: int in [0, 1]:
@@ -241,15 +251,19 @@ func _one_history(context: RefCounted) -> void:
 	# The simulated row of the confirmed frontier may still hold a predicted input, because the
 	# correction that confirms it arrives with the next step. The confirmed history itself is the
 	# replayed row, and it is compared for every confirmed frame below.
+	var compared: int = 0
 	for frame: int in range(shared):
 		if not rows[0].has(frame) or not rows[1].has(frame):
 			continue
 		for slot: int in range(PLAYERS):
 			context.equal(rows[1][frame][slot]["bytes"], rows[0][frame][slot]["bytes"], "the survivors agree the row at frame %d slot %d" % [frame, slot])
+			compared += 1
+	context.equal(compared > 0, true, "the survivors compared their simulated rows")
 	# The confirmed history is the row the session itself confirmed, not the simulated one.
 	var replays: Array[RefCounted] = []
 	for index: int in survivors:
 		replays.append(mesh.peers[index].replay())
+	var confirmed: int = 0
 	for frame: int in range(shared + 1):
 		var first: Variant = replays[0].inputs(frame)
 		var second: Variant = replays[1].inputs(frame)
@@ -257,6 +271,8 @@ func _one_history(context: RefCounted) -> void:
 			continue
 		for slot: int in range(PLAYERS):
 			context.equal(second.read(slot).bytes, first.read(slot).bytes, "the survivors confirm the same input at frame %d slot %d" % [frame, slot])
+			confirmed += 1
+	context.equal(confirmed > 0, true, "the survivors compared their confirmed rows")
 
 
 ## A second departure leaves one survivor, which freezes the slot on its own frontier.
@@ -271,4 +287,8 @@ func _second_departure(context: RefCounted) -> void:
 	_service(context, mesh, 4, PackedInt32Array([0]))
 	var second: Dictionary = _drops(mesh)
 	context.equal(second.has(0), true, "the last survivor publishes the second drop")
+	if second.has(0):
+		# The last survivor has nobody to agree with, so it freezes on its own frontier.
+		context.equal(int(second[0]["frame"]), mesh.peers[0].status().confirmed_frame,
+			"the last survivor freezes on its own frontier")
 	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.RUNNING, "the last survivor keeps running")

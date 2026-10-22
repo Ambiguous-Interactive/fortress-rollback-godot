@@ -32,6 +32,9 @@ DURATIONS = ROOT / ".cache/tests/durations.json"
 # The engine reports a script error as a header line, followed by an "at:" line
 # that names the aborting file and line.
 ENGINE_ERROR_LINE = re.compile(r"^\s*(?:SCRIPT ERROR:|ERROR:|Parse Error:|Failed to load script)\s*(?P<message>.*)$")
+# Only a script-level header belongs to the case that was executing. A generic
+# engine error names a condition of the engine, not an aborted test case.
+SCRIPT_ERROR_LINE = re.compile(r"^\s*(?:SCRIPT ERROR:|Parse Error:)\s*(?P<message>.*)$")
 ENGINE_ERROR_AT = re.compile(r"^\s*at:\s[^(]*\((?P<file>[^()]+):(?P<line>\d+)\)")
 # The lease names this runner as the owner of the development host's CPU capacity.
 LEASE_NAME = "godot-tests"
@@ -135,7 +138,8 @@ def engine_errors(output: str) -> list[dict]:
     A GDScript runtime error aborts the innermost function and the caller resumes,
     so the engine cannot report the abort itself. The runner publishes the case it
     is about to execute before every case, so the error is attributed to the case
-    the last progress record named.
+    the last progress record named. Only a script-level header names an aborted
+    case; a generic engine error belongs to the engine and stays unattributed.
     """
     entries: list[dict] = []
     executing: tuple[str, str] | None = None
@@ -147,7 +151,8 @@ def engine_errors(output: str) -> list[dict]:
             continue
         header = ENGINE_ERROR_LINE.match(line)
         if header:
-            suite, case = executing if executing else (None, None)
+            attributable = SCRIPT_ERROR_LINE.match(line) is not None
+            suite, case = (executing if attributable else (None, None)) if executing else (None, None)
             pending = {"suite": suite, "case": case, "file": None, "line": None,
                        "message": header.group("message").strip()}
             entries.append(pending)
@@ -198,15 +203,19 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
         runs = runs if isinstance(runs, list) else []
         counts = [run["assertions"] for run in runs if isinstance(run, dict) and type(run.get("assertions")) is int]
         top = max(counts) if counts else 0
-        # Both repetitions die at the same point in a deterministic case, so equal
-        # counts mean both died. A shorter repetition is the one the abort truncated,
-        # and the other repetition keeps its own verdict, so a divergence stays visible.
-        uniform = all(count == top for count in counts)
-        for run in runs:
+        # A repetition that the abort truncated recorded fewer assertions, so it is
+        # the one that died and the other repetition keeps its own verdict: a case
+        # that dies in one repetition and not in the other stays a divergence. When
+        # every repetition recorded the same count, the abort came after the last
+        # assertion, so the launcher cannot name the repetition that died and every
+        # repetition carries the entry. The report count says how many repetitions
+        # the engine actually reported.
+        truncated = [run for run in runs if isinstance(run, dict) and run.get("assertions", 0) < top]
+        targets = truncated if truncated else runs
+        for run in targets:
             if not isinstance(run, dict) or not isinstance(run.get("failures"), list):
                 continue
-            if uniform or run.get("assertions", 0) < top:
-                run["failures"].append(dict(entry))
+            run["failures"].append(dict(entry))
         if result.get("passed") is True:
             result["passed"] = False
     return result, aborted
@@ -240,7 +249,13 @@ def invoke(command: list[str], timeout: float) -> dict:
     try:
         if len(lines) != 1:
             raise ValueError("engine_error" if errors else "missing_or_duplicate_completion")
-        result, aborted = apply_aborts(json.loads(lines[0]), errors)
+        try:
+            parsed = json.loads(lines[0])
+        except ValueError as exc:
+            # A truncated or corrupted completion record is a stable reason, not a
+            # parser message: the merged stream can carry a stray fragment.
+            raise ValueError("malformed_completion") from exc
+        result, aborted = apply_aborts(parsed, errors)
         report["result"] = validate_result(result)
         if aborted:
             raise ValueError("case_aborted")
@@ -482,7 +497,10 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
         failed = any("failure" in run for run in runs)
-        if not failed and runs[0]["result"] != runs[1]["result"]:
+        # The fresh-process divergence is reported whenever the two runs differ, even
+        # when a run already failed: a case that aborts in one process and not in the
+        # other is a divergence, and the failed run alone does not explain it.
+        if runs[0].get("result") is not None and runs[0]["result"] != runs[1].get("result"):
             failed = True
             runs[1]["failure"] = "fresh_process_divergence"
             runs[1]["divergence"] = first_divergence(runs[0]["result"], runs[1]["result"])

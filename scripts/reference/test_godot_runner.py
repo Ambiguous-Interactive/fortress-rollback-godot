@@ -194,8 +194,10 @@ class EngineControls(unittest.TestCase):
                     self.assertEqual(result["result"]["records"][0]["runs"][0]["failures"],
                                      [{"kind": "incomplete_case"}])
                 if case in ("uncaught", "after_completion_error", "nested_abort"):
-                    # The engine reported the case as passed; the host fails it and
-                    # names the case, the suite, the aborting line and the message.
+                    # The host fails the case and names the case, the suite, the
+                    # aborting line and the message. The engine itself never
+                    # reports the case as passed when the abort came before its
+                    # last assertion, so the entry is the only failure of the case.
                     self.assertIs(result["result"]["passed"], False)
                     failure = result["result"]["records"][0]["runs"][0]["failures"][-1]
                     self.assertEqual(failure["kind"], "case_aborted")
@@ -204,6 +206,11 @@ class EngineControls(unittest.TestCase):
                     self.assertEqual(failure["file"], "res://tests/runner-controls/control_suite.gd")
                     self.assertIsInstance(failure["line"], int)
                     self.assertIn("Out of bounds", failure["message"])
+                if case in ("after_completion_error", "nested_abort"):
+                    # The engine reported this case as passed; the host's entry is
+                    # the only failure of the case, so the case cannot pass quietly.
+                    self.assertEqual(len(result["result"]["records"][0]["runs"][0]["failures"]), 1, result)
+                    self.assertEqual(result["result"]["records"][0]["runs"][0]["failures"][0]["kind"], "case_aborted")
         cases = [
             (["--suite", "res://tests/runner-controls/parse_error.gd"], "engine_error"),
             (["--suite", "res://tests/runner-controls/absent.gd"], "test_failure"),
@@ -251,6 +258,9 @@ class EngineControls(unittest.TestCase):
                 self.assertEqual(entry["case"], "nested_abort")
                 self.assertEqual(entry["suite"], "res://tests/runner-controls/control_suite.gd")
                 self.assertIsInstance(entry["line"], int)
+                # The case aborts in both in-process repetitions, so the engine
+                # printed two reports for it.
+                self.assertEqual(entry["aborts"], 2, entry)
             # The two fresh processes must agree on the failed run.
             self.assertEqual(report["runs"][0]["result"], report["runs"][1]["result"])
 
