@@ -56,6 +56,10 @@ Delivery runs in process; live spectator networking remains planned.
 
 For an addon-only install, [build and verify a candidate archive](./docs/package.md).
 
+The [supported features](./docs/supported.md) page states the supported Godot
+versions, browsers, player counts, transports and game-facing features, and
+lists the features that are deliberately not supported yet.
+
 To add rollback to your own game, follow the [integration guide](./docs/integration.md).
 It covers inputs, snapshots, the frame loop, stalls, errors and sounds that must not replay after rollback.
 

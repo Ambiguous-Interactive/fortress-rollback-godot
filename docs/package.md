@@ -38,7 +38,8 @@ installing the SignalFish SDK. A game using those adapters must supply the SDK
 objects described in [SignalFish membership](signalfish-membership.md).
 For a complete online example with its separate SDK installation, follow the
 [online example guide](online-example.md). The SDK and its license are not
-redistributed in this archive.
+redistributed in this archive. The [supported features](supported.md) page
+states what the shipped addon supports and what it deliberately does not.
 
 ## Verify a candidate locally
 

@@ -177,6 +177,61 @@ class EngineControls(unittest.TestCase):
     def command(self, script: str = "res://tests/runner/run_tests.gd", *args: str) -> list[str]:
         return [str(GODOT), "--headless", "--path", str(ROOT), "--script", script, "--", *args]
 
+    def engine_result(self, script: str, *args: str) -> tuple[dict, dict]:
+        """Run the engine directly and return its result record and its watch record."""
+        process = subprocess.run(self.command(script, *args), cwd=ROOT, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, timeout=30)
+        text = process.stdout.decode("utf-8", errors="replace")
+        result: dict = {}
+        watch: dict = {}
+        for line in text.splitlines():
+            if line.startswith("FORTRESS_TEST_RESULT "):
+                result = json.loads(line[len("FORTRESS_TEST_RESULT "):])
+            elif line.startswith("FORTRESS_TEST_ABORT_WATCH "):
+                watch = json.loads(line[len("FORTRESS_TEST_ABORT_WATCH "):])
+        self.assertTrue(result, text)
+        return result, watch
+
+    # Value: the engine result itself must report an aborted case as failed, so a
+    # reader of the engine output never sees a green aborted case. Godot 4.3
+    # cannot observe a script error in process, so the launcher stays the gate
+    # there and the engine keeps its own verdict.
+    def test_engine_result_reports_the_aborted_case(self) -> None:
+        result, watch = self.engine_result(
+            "res://tests/runner/run_tests.gd", "--suite",
+            "res://tests/runner-controls/control_suite.gd", "--filter", "nested_abort")
+        self.assertEqual(result["count"], 1)
+        if not watch.get("available"):
+            # This engine cannot observe a script error in process, so the engine
+            # result keeps the engine's own verdict and the launcher is the gate.
+            self.assertIs(result["passed"], True)
+            self.skipTest("this engine cannot observe a script error in process")
+        self.assertEqual(watch.get("errors"), 2, watch)
+        self.assertIs(result["passed"], False)
+        entry = result["errors"][0]
+        self.assertEqual(entry["kind"], "case_aborted")
+        self.assertEqual(entry["case"], "nested_abort")
+        self.assertEqual(entry["suite"], "res://tests/runner-controls/control_suite.gd")
+        self.assertEqual(entry["file"], "res://tests/runner-controls/control_suite.gd")
+        self.assertIsInstance(entry["line"], int)
+        self.assertIn("Out of bounds", entry["message"])
+        self.assertEqual(entry["aborts"], 2)
+        for run in result["records"][0]["runs"]:
+            self.assertEqual(run["failures"][0]["kind"], "case_aborted")
+
+    # Value: an aborted case must not erase the other cases' records: the engine
+    # result keeps every case and names the one that died.
+    def test_engine_result_keeps_the_other_cases(self) -> None:
+        result, watch = self.engine_result(
+            "res://tests/runner/run_tests.gd", "--suite", "res://tests/runner-controls/control_suite.gd",
+            "--case", "nested_abort", "--case", "pass")
+        records = {record["case"]: record for record in result["records"]}
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(records["pass"]["runs"][0]["failures"], [])
+        self.assertEqual(records["pass"]["runs"][1]["failures"], [])
+        if watch.get("available"):
+            self.assertEqual(records["nested_abort"]["runs"][0]["failures"][0]["kind"], "case_aborted")
+
     # Value: guards false-green on real engine errors/partial completion and checks
     # failure reason, so watchdog/parse errors cannot masquerade as assertion red.
     def test_controls(self) -> None:

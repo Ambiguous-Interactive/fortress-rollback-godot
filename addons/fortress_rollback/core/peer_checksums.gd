@@ -66,6 +66,12 @@ func scheduled(core: RefCounted, confirmation_ceiling: int) -> Dictionary:
 			_local[_next] = saved.checksum.duplicate()
 		return {"frame": _next, "checksum": _local[_next].duplicate()}
 	if _next < status.current_frame:
+		# A pending repair withholds the snapshots above the earliest incorrect
+		# frame, because those states are not trustworthy until the next advance
+		# resimulates them. The checksum is late, not lost: the match keeps
+		# running and the next boundary is scheduled after the repair.
+		if status.pending_rollback_frame != -1 and _next > status.pending_rollback_frame:
+			return {}
 		_fail(Types.Code.HISTORY_UNAVAILABLE, "checksum_history_unavailable", PackedByteArray(), _next)
 	return {}
 
