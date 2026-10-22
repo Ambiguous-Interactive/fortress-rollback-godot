@@ -1,6 +1,7 @@
 extends SceneTree
 
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
+const Supervisor = preload("res://tests/runner/abort_supervisor.gd")
 const PREFIX: String = "FORTRESS_TEST_RESULT "
 const CASES_PREFIX: String = "FORTRESS_TEST_CASES "
 const PROGRESS_PREFIX: String = "FORTRESS_TEST_PROGRESS "
@@ -26,9 +27,10 @@ func _log_error(_function: String, file: String, line: int, code: String, _ratio
 var _ticks: int = 0
 
 # The engine that can hand a script error to a custom logger reports an aborted
-# case as failed. Godot 4.3 cannot, so the watch stays unavailable there and
-# the Python launcher remains the gate.
+# case as failed. Godot 4.3 cannot, so the runner starts a supervised child and
+# reports the abort from the child's merged output instead.
 var _logger: Object = null
+var _supervised: bool = false
 
 
 func _clock() -> int:
@@ -52,6 +54,7 @@ func _initialize() -> void:
 	var filter_text: String = ""
 	var case_names: PackedStringArray = []
 	var list_cases: bool = false
+	var supervised_child: bool = false
 	var fixed_seed: int = 1701
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
 	var index: int = 0
@@ -59,6 +62,10 @@ func _initialize() -> void:
 		var option: String = arguments[index]
 		if option == "--list-cases":
 			list_cases = true
+			index += 1
+			continue
+		if option == "--abort-child":
+			supervised_child = true
 			index += 1
 			continue
 		if index + 1 >= arguments.size():
@@ -106,6 +113,18 @@ func _initialize() -> void:
 	if list_cases:
 		_list(scripts)
 		return
+	# Godot 4.3 cannot hand a script error to a logger. The supervised child
+	# writes its merged output to an engine log file, so the parent can name the
+	# aborted case without changing the child's canonical result.
+	if _logger == null and not supervised_child:
+		var outcome: Dictionary = Supervisor.new().supervise(arguments)
+		var watched: Variant = outcome.get("result")
+		if watched is Dictionary:
+			print(PREFIX + JSON.stringify(watched))
+		_supervised = true
+		_publish_watch(int(outcome.get("errors", 0)))
+		_finish(int(outcome.get("exit", 1)))
+		return
 	var observer: Callable = Callable(self, "_watch_errors") if _logger != null else Callable()
 	var result: Dictionary = Scenarios.new().execute(scripts, category, filter_text, fixed_seed, case_names, _publish_progress, _clock, observer)
 	print(PREFIX + JSON.stringify(result))
@@ -113,10 +132,12 @@ func _initialize() -> void:
 	_finish(0 if result["passed"] else 1)
 
 
-# The watch record names the capability of this engine, so a host never claims
-# an engine result that only one pinned engine provides.
-func _publish_watch() -> void:
-	print(WATCH_PREFIX + JSON.stringify({"available": _logger != null, "errors": _watch_errors().size()}))
+# The watch record names the capability of this runner, so a host never claims
+# an engine result that the run did not provide. A supervised child counts its
+# script errors in the parent, so the same record is available on both pins.
+func _publish_watch(error_count: int = -1) -> void:
+	var count: int = _watch_errors().size() if error_count < 0 else error_count
+	print(WATCH_PREFIX + JSON.stringify({"available": _logger != null or _supervised, "errors": count}))
 
 
 # The script errors this engine reported so far, in the order it reported them.

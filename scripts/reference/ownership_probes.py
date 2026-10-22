@@ -93,6 +93,7 @@ EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
+    'tests/runner/abort_supervisor.gd',
     'tests/determinism/test_buffer_ownership.gd', 'tests/determinism/ownership_slots.gd',
     'tests/determinism/test_integer_encoding.gd', 'tests/determinism/integer_codec.gd', 'tests/determinism/integer_vectors.json',
     '.llm/code-samples/state_checksum.gd',
@@ -448,7 +449,7 @@ def run_probes(args, results):
             if integers.read_bytes() != adapted_integers:
                 raise ValueError(f'ownership copied source changed after adaptation: {integers_source}')
             if negative:
-                suite = project / FILES[3]
+                suite = project / 'tests/determinism/test_buffer_ownership.gd'
                 text = suite.read_text()
                 before = 'var history: PackedByteArray = caller.duplicate()'
                 if text.count(before) != 1:

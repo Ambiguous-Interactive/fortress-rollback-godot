@@ -136,11 +136,13 @@ def executing_case(line: str) -> tuple[str, str] | None:
 def engine_errors(output: str) -> list[dict]:
     """Return every engine error with the case that was executing when it was reported.
 
-    A GDScript runtime error aborts the innermost function and the caller resumes,
-    so the engine cannot report the abort itself. The runner publishes the case it
-    is about to execute before every case, so the error is attributed to the case
-    the last progress record named. Only a script-level header names an aborted
-    case; a generic engine error belongs to the engine and stays unattributed.
+    A GDScript runtime error aborts the innermost function and the caller resumes.
+    The runner publishes the case it is about to execute before every case, so the
+    error is attributed to the case the last progress record named. On Godot 4.3
+    the runner's supervised child reports the same attribution in its own result;
+    this scan remains the host's independent gate. Only a script-level header names
+    an aborted case; a generic engine error belongs to the engine and stays
+    unattributed.
     """
     entries: list[dict] = []
     executing: tuple[str, str] | None = None
@@ -169,12 +171,12 @@ def engine_errors(output: str) -> list[dict]:
 
 
 def engine_aborts(result: object, suite: str | None = None, case: str | None = None) -> bool:
-    """True when the engine's own result already reports an aborted case.
+    """True when the runner's own result already reports an aborted case.
 
-    An engine that hands a script error to a custom logger fails the aborted
-    case in its result. The launcher stays the gate on every engine, so it
-    reads that verdict instead of reporting the same abort a second time. With
-    no suite and case, every aborted case counts.
+    A logger or a supervised child fails the aborted case in the runner's result.
+    The launcher stays the gate on every engine, so it reads that verdict instead
+    of reporting the same abort a second time. With no suite and case, every
+    aborted case counts.
     """
     if not isinstance(result, dict):
         return False
@@ -222,7 +224,7 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
                  "file": first["file"], "line": first["line"],
                  "message": first["message"], "aborts": len(reports)}
         if engine_aborts(result, suite, case):
-            # The engine reported the abort in its own result. The launcher keeps
+            # The runner reported the abort in its own result. The launcher keeps
             # the reason and does not report the same abort twice.
             if isinstance(result.get("errors"), list) and not any(
                     isinstance(item, dict) and item.get("kind") == "case_aborted"
@@ -259,7 +261,7 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
             run["failures"].append(dict(entry))
         if result.get("passed") is True:
             result["passed"] = False
-    # An engine that reported the abort in its own result failed the run even when
+    # A runner that reported the abort in its own result failed the run even when
     # its output did not name the script error.
     aborted = aborted or engine_aborts(result)
     return result, aborted

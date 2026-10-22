@@ -167,15 +167,19 @@ and the launcher adds a `case_aborted` entry to the repetition that died.
 Browser export/execution is **not implemented or
 verified by this runner**. It still needs its own host watchdog/error handling.
 
-The native runner installs a custom logger when the engine has one, so an
-aborted case is reported by the engine result itself on the pins that expose a
-script error. The runner prints `FORTRESS_TEST_ABORT_WATCH {"available": true,
-"errors": 2}` after the result: `available` says whether this engine can
-observe a script error in process, and `errors` counts the script errors it
-reported. Godot 4.3 has neither the `Logger` class nor `OS.add_logger`, so it
-prints `{"available": false, "errors": 0}` and its engine result keeps the
-engine's own verdict. The logger source is compiled at runtime, so the
-repository never holds a script that the older pinned engine cannot parse.
+The native runner reports an aborted case in its own result on both pins. It
+installs a custom logger when the engine has one. Godot 4.3 has neither the
+`Logger` class nor `OS.add_logger`, so the runner starts itself as a child
+process with `--log-file`: that file holds the merged progress records and
+script errors in the order that names the executing case. The parent publishes
+the file while the child runs, so a host that interrupts the run still sees the
+progress record and the watchdog marker. The child keeps the same two
+repetitions and assertion counts, and it inherits the host's process group, so
+a timeout leaves no process behind. The runner prints `FORTRESS_TEST_ABORT_WATCH
+{"available": true, "errors": 2}` after the result: `available` says whether the
+run can report a script error, and `errors` counts the errors it reported. The
+logger source is compiled at runtime, so the repository never holds a script
+that the older pinned engine cannot parse.
 
 A host that can see the script error passes it to the runner as an observer.
 The runner reads the observer once per repetition with the suite, the case and
@@ -222,12 +226,12 @@ after the aborted helper and still reaches the marker.
 A Godot 4.7.2 engine does hand the script error to a custom logger, through
 `OS.add_logger` and a
 `Logger` that overrides `_log_error`, and names the aborting file and line.
-Godot 4.3 has neither the `Logger` class nor `OS.add_logger`, so one mechanism
-cannot cover both pinned engines.
-The standalone `godot --headless --path .
---script res://tests/runner/run_tests.gd` invocation therefore reports an
-aborted case as failed on Godot 4.7.2 and keeps the engine's own verdict on
-Godot 4.3. Use the **Python entry point** for CI: it rejects engine `ERROR`/`SCRIPT ERROR`
+Godot 4.3 has neither the `Logger` class nor `OS.add_logger`, so the runner
+spawns itself with `--log-file` and reads the merged stream instead. Both
+mechanisms produce the same `case_aborted` entry, and the standalone `godot
+--headless --path . --script res://tests/runner/run_tests.gd` invocation
+reports an aborted case as failed on both pins. Use the **Python entry point**
+for CI: it rejects engine `ERROR`/`SCRIPT ERROR`
 output, nonzero exit,
 missing/duplicate completion, malformed result records, incomplete consumption,
 repeat disagreement and wall-clock watchdog expiry. Wall-clock timeout belongs
