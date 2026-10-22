@@ -89,7 +89,11 @@ exclusive file lock, so exactly one process owns it. A probe that needs a
 responsive host takes the host before it starts, and the runner reads the
 owner before its parallel wave and runs that wave serially while another owner
 holds it. The runner takes the host of its own while its wave runs, so a
-witness that starts later waits for the host instead of competing for it. The
+witness that starts later waits for the host instead of competing for it. Every
+host-sensitive launcher takes the host: the ownership, native relay, transport
+and online example witnesses wait for a free host, and the runner takes it
+without waiting. A rejected invocation still fails fast, because the transport
+witness leases only after its cheap argument checks. The
 operating system ends the lock with its owner, so the host of a process that
 is gone never blocks the next probe.
 
