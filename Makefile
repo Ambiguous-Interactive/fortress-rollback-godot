@@ -1,4 +1,4 @@
-.PHONY: replay-probes p2p-probes handshake-probes queue-probes oracle-probes test-oracle
+.PHONY: replay-probes p2p-probes handshake-probes spectator-model queue-probes oracle-probes test-oracle
 .PHONY: hot-path-probes representation-probes lint-source hooks lint-llm test-llm
 .PHONY: test-reference reference-baseline llm-index llm-index-prune pre-commit
 .PHONY: godot-check test-godot test-focus test-changed prune prune-apply disk scratch
@@ -66,6 +66,10 @@ p2p-probes:
 ## Actual pinned upstream P2P handshake and production Godot byte endpoint
 handshake-probes:
 	$(PY) scripts/oracle/handshake_launch.py --godot $(GODOT)
+
+## Pinned upstream SpectatorSession model and its unsafe-mutant control
+spectator-model:
+	$(PY) scripts/oracle/spectator_launch.py
 
 ## Actual pinned upstream replay and production Godot playback
 replay-probes:

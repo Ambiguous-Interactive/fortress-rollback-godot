@@ -186,6 +186,9 @@ jobs:
           python3 scripts/oracle/replay_launch.py --godot "$editor" --output ".cache/reference/results/replay-$version"
           python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
           python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
+      - name: Verify the pinned SpectatorSession model and its unsafe control
+        if: matrix.part == 'oracles' && matrix.version == '4.7.2'
+        run: python3 scripts/oracle/spectator_launch.py --output ".cache/reference/results/spectator-model"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
