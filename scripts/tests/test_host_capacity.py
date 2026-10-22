@@ -13,6 +13,7 @@ ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 * a process that holds the host does not wait for itself.
 """
 
+import ast
 import os
 import subprocess
 import sys
@@ -114,6 +115,72 @@ class HostCapacityTest(unittest.TestCase):
         default = self.previous[0]
         self.assertEqual(default.parent.name, ".cache")
         self.assertTrue(default.is_relative_to(SCRIPTS.parent / ".cache"))
+
+
+class HostSensitiveLauncherTest(unittest.TestCase):
+    """Every probe that needs a responsive host takes the host lease.
+
+    A launcher that runs a browser witness or a parallel engine wave can be
+    starved by a concurrent local test wave, so it waits for a free host and
+    then holds it. The wiring is otherwise invisible: a later refactor could
+    drop the lease and the probe would only fail as a flaky timeout, so this
+    locks the call, the bounded wait and the lease name into the source.
+    """
+
+    LEASED = ('scripts/reference/signalfish_live_probe.py', 'scripts/reference/signalfish_webrtc_probe.py',
+              'scripts/reference/ownership_probes.py', 'scripts/reference/online_example_probe.py')
+
+    @staticmethod
+    def _calls(source, attribute):
+        """Every named host_capacity call in a module's source, in order."""
+        tree = ast.parse(source)
+        return [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute) and node.func.attr == attribute]
+
+    def test_each_host_sensitive_launcher_waits_for_the_host(self):
+        for relative in self.LEASED:
+            with self.subTest(launcher=relative):
+                source = (SCRIPTS.parent / relative).read_text(encoding='utf-8')
+                self.assertTrue(self._calls(source, 'acquire_when_free'), f'{relative} no longer takes the host lease')
+
+    def test_each_lease_names_its_owner_and_bounds_the_wait(self):
+        # The wait must be bounded: an unbounded probe would hang the build
+        # forever instead of failing with a diagnosis.
+        for relative in self.LEASED:
+            with self.subTest(launcher=relative):
+                source = (SCRIPTS.parent / relative).read_text(encoding='utf-8')
+                for call in self._calls(source, 'acquire_when_free'):
+                    self.assertEqual(len(call.args), 2, f'{relative} passes a name and a wait budget')
+                    name, timeout = call.args
+                    self.assertIsInstance(name, (ast.Constant, ast.Name), f'{relative} names its owner')
+                    if isinstance(name, ast.Constant):
+                        self.assertTrue(name.value, f'{relative} names its owner')
+                    self.assertIsInstance(timeout, (ast.Constant, ast.Name), f'{relative} bounds its wait')
+                    if isinstance(timeout, ast.Constant):
+                        self.assertGreater(timeout.value, 0, f'{relative} waits a positive time')
+                    self.assertFalse(call.keywords, f'{relative} passes the name and budget positionally')
+
+    def test_the_local_runner_takes_the_host_without_waiting(self):
+        # The runner must never block on the host: it takes it when free and
+        # runs serially otherwise, so it takes it with the non-waiting call.
+        source = (SCRIPTS.parent / 'scripts/run_godot_tests.py').read_text(encoding='utf-8')
+        self.assertTrue(self._calls(source, 'acquire'), 'the local runner no longer takes the host')
+        self.assertFalse(self._calls(source, 'acquire_when_free'), 'the local runner must not wait for the host')
+
+    def test_the_transport_witness_leases_after_cheap_argument_checks(self):
+        # A rejected invocation (an unknown pin, a bad --version) must fail
+        # fast, not wait for a busy host, so the lease call comes after the
+        # version validation in the transport witness.
+        source = (SCRIPTS.parent / 'scripts/reference/signalfish_webrtc_probe.py').read_text(encoding='utf-8')
+        tree = ast.parse(source)
+        acquire = self._calls(source, 'acquire_when_free')[0]
+        rejections = [node for node in ast.walk(tree) if isinstance(node, ast.Raise)
+                      and isinstance(node.exc, ast.Call) and isinstance(node.exc.func, ast.Name) and node.exc.func.id == 'ValueError'
+                      and any(isinstance(arg, ast.Constant) and 'pinned engine versions' in str(arg.value) for arg in node.exc.args)]
+        self.assertEqual(len(rejections), 1, 'the version rejection stays in the transport witness')
+        self.assertLess(rejections[0].lineno, acquire.lineno, 'the version check must run before the host wait')
+
+
 
 
 if __name__ == "__main__":

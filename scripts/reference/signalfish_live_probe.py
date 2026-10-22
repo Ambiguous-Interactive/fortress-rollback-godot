@@ -8,6 +8,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -17,8 +18,13 @@ from engine_path import resolve_engine
 from receipt_arguments import ReceiptParser
 from signalfish_probe import inventory
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import host_capacity  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[2]
 MARKER = 'FORTRESS_LIVE_RELAY_RESULT '
+HOST_LEASE_NAME = 'live-relay-witness'
+HOST_WAIT_SECONDS = 900.0
 TIMEOUT = 180
 LATE_ERRORS = {name: name for name in ('protocol_error', 'server_error', 'room_join_failed', 'authentication_error', 'connection_failed',
                                     'reconnection_failed', 'disconnected', 'going_away', 'room_left', 'reconnected', 'room_joined',
@@ -185,6 +191,10 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'signalfish-live.json'
     receipt.write_text('{"passed": false, "failure": "in_progress"}\n')
+    # The native relay journey needs a responsive host, so it waits for a local
+    # test wave to finish and then holds the host while it runs.
+    if not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
+        raise ValueError('the development host stayed busy; the relay witness needs a responsive host')
     manifest = load_manifest()
     sdk_pin = manifest['sources']['sdk']
     server_pin = manifest['sources']['server']

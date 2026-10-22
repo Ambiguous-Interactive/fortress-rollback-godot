@@ -27,6 +27,12 @@ from signalfish_live_probe import (build_cargo, extract, native_inventory, sourc
 from signalfish_probe import inventory
 from run import capture
 from wire import INPUT_HEADER
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import host_capacity  # noqa: E402
+
+HOST_LEASE_NAME = 'webrtc-witness'
+HOST_WAIT_SECONDS = 900.0
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close')
 
 
@@ -368,6 +374,13 @@ def main():
         raise ValueError('only pinned engine versions are accepted')
     if args.godot and len(versions) != 1:
         raise ValueError('--godot requires exactly one --version')
+    # A browser witness needs a responsive host. The lease comes after the
+    # cheap argument checks so a rejected invocation never waits for the host.
+    # The online example takes its own lease in run_online; the transport
+    # witness takes it here, before it starts the heavy browser work.
+    if not args.online_example and not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
+        raise ValueError('the development host stayed busy; the browser witness needs a responsive host')
+
     owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
