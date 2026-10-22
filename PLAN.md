@@ -444,8 +444,10 @@ a recorded reason. Three real peer sessions now run that barrier end to end:
 one peer stops answering, the two survivors agree one frame, keep one
 confirmed history and keep playing, and a second departure leaves one
 survivor that freezes the slot on its own frontier. The pinned prepare,
-backfill, certificate and commit barrier
-and its all-survivor certificate remain open in
+backfill, certificate and commit barrier is ported: the Godot tier agrees the
+frame and the pinned tier certifies the frozen value. The pinned source's
+participant list, its retransmission journal and its own cut selection remain
+open in
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
 and its exported live witness in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
