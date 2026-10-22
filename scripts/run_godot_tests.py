@@ -274,7 +274,7 @@ def invoke(command: list[str], timeout: float) -> dict:
     try:
         output, _ = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        group = os.getpgid(process.pid)
+        group = os.getpgid(process.pid) if hasattr(os, "getpgid") else None
         _kill_group(process)
         output, _ = process.communicate()
         report = {"command": command, "exit": None, "failure": "watchdog",
@@ -318,10 +318,14 @@ def invoke(command: list[str], timeout: float) -> dict:
 
 def _kill_group(process: subprocess.Popen) -> None:
     """Kill the engine's whole process group, so no child outlives the timeout."""
-    try:
-        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        pass
+    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+    else:
+        # A platform without process groups only has the engine itself to stop.
+        process.kill()
     try:
         process.wait(timeout=10)
     except subprocess.TimeoutExpired:
