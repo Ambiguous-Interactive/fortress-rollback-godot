@@ -274,6 +274,26 @@ func submit_frames(start_frame: Variant, inputs: Variant, statuses: Variant, now
 	return _commit(plan)
 
 
+## Whether the endpoint can accept a batch of frames right now. The checks mirror the
+## submission path, so a caller can refuse a change before it changes any state.
+## A batch carries at least one frame, and its first frame continues the submitted run.
+func can_submit_frames(start_frame: int, count: int) -> int:
+	if _handshake == null or _handshake.status().state != "running":
+		return I.Code.WRONG_STATE
+	if count < 1:
+		return I.Code.INVALID_ARGUMENT
+	if start_frame != _state.last_submitted_frame + 1 and not (_state.last_submitted_frame == -1 and start_frame == _local.config.input_delay):
+		return I.Code.INVALID_FRAME
+	if _state.pending.size() + count > _options.max_pending_frames:
+		return I.Code.BACKPRESSURE
+	# One batch sends one packet and records one transition.
+	if _outbox.size() + 1 > _options.max_outbox:
+		return I.Code.BACKPRESSURE
+	if _transitions.size() + 1 > _options.max_transitions:
+		return I.Code.BACKPRESSURE
+	return I.Code.OK
+
+
 func status() -> Dictionary:
 	if _handshake == null:
 		return {}

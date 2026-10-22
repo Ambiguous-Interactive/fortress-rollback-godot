@@ -18,6 +18,8 @@ Preload `protocol/input_endpoint.gd`, `input_endpoint_types.gd`,
 | `poll(now_us, next_token = null, statuses = [], status_nudge = false)` | Drive synchronization or strict running retry; optional full roster statuses and boolean idle-carrier policy. |
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Decode and validate the actual packet before retaining new inputs. |
 | `submit(frame, data, statuses, now_us)` | Retain one complete local frame and send the oldest pending prefix. |
+| `submit_frames(start_frame, inputs, statuses, now_us, sampled_through)` | Retain a run of consecutive frames and send them in one input packet, as a delay gap fill is flushed once. |
+| `can_submit_frames(start_frame, count)` | Answer whether the endpoint can take that batch now, without changing any state. The checks mirror the submission path. |
 | `status()` | Owned observations, including handshake, history, slot ownership and ACK floors. |
 | `drain_outbox/events/transitions()` | Drain owned packets, events or transition observations. |
 

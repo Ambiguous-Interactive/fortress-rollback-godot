@@ -1,6 +1,7 @@
 extends RefCounted
 
-# Value: protects=runtime input-delay changes; fails_when=added frames lose or alter input, decreases rewrite frames, or peers disagree; why_new=no runtime delay API; seam=none
+# Value: protects=runtime input-delay changes; fails_when=added frames lose or alter input, decreases rewrite frames, peers disagree, or a refused raise ends the match;
+# why_new=no runtime delay API; seam=none
 const Game = preload("res://examples/integration/game.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
@@ -9,12 +10,14 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const PeerMatch = preload("res://examples/peer/match.gd")
+const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const FRAMES: int = 90
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["validates_changes", "repeats_latest_input", "peers_agree_after_changes", "raise_sends_one_packet"])
+	return PackedStringArray(["validates_changes", "repeats_latest_input", "peers_agree_after_changes", "raise_sends_one_packet",
+		"refused_raise_keeps_the_match"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -27,6 +30,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_peers_agree_after_changes(context)
 		"raise_sends_one_packet":
 			_raise_sends_one_packet(context)
+		"refused_raise_keeps_the_match":
+			_refused_raise_keeps_the_match(context)
 	context.finish()
 
 
@@ -299,3 +304,46 @@ func _raise_sends_one_packet(context: RefCounted) -> void:
 		context.equal([sent.start_frame, sent.frame_count], [frames[0], frames.size()], label + " carries every pending frame")
 		context.equal(sent.start_frame + sent.frame_count - 1, after.last_submitted_frame, label + " ends at the raised frame")
 		context.equal(sent.statuses[0].last_frame, after.last_submitted_frame, label + " carries the raised connect status")
+
+
+## A raise that cannot be sent is refused with the retryable status, and the match keeps running.
+## The endpoint's bounded observation queue and the local queue's retained window are the two
+## reasons a raise can be refused: neither may end the match.
+func _refused_raise_keeps_the_match(context: RefCounted) -> void:
+	var rows: Array[Dictionary] = [
+		{"label": "a full endpoint", "control": "transitions"},
+		{"label": "a released catch-up row", "control": "lagging"},
+	]
+	for row: Dictionary in rows:
+		var label: String = row.label
+		var peers: PeerMatch = PeerMatch.new()
+		peers.drop_every = 0
+		context.equal(peers.reset(), PeerMatch.I.Code.OK, label + " starts")
+		for tick: int in range(30):
+			peers.tick(PackedInt32Array([tick % 13 % 16, (tick * 7) % 11 % 16]))
+		var session: PeerMatch.Peer = peers.sessions[0]
+		context.equal(session.status().lifecycle, Types.Lifecycle.RUNNING, label + " runs before the raise")
+		var delay: int = session.input_delay(0)
+		var endpoint: Endpoint = session._endpoint(0)
+		var submitted: int = endpoint._state.last_submitted_frame
+		if row.control == "transitions":
+			# The endpoint's observation queue is bounded, and a caller that leaves it
+			# full cannot hand the endpoint another batch.
+			for index: int in range(endpoint._options.max_transitions):
+				endpoint._transitions.append({"action": "control", "disposition": "full"})
+		else:
+			# The catch-up frames are the local queue's retained rows, so an endpoint that
+			# lags behind the core asks for a row that was already released.
+			endpoint._state.last_submitted_frame = session._core.rollback_floor() - 4
+		context.equal(session.set_input_delay(0, delay + 1), Types.Code.NETWORK_BACKPRESSURE, label + " refuses the raise")
+		context.equal(session.status().lifecycle, Types.Lifecycle.RUNNING, label + " keeps the match running")
+		context.equal(session.input_delay(0), delay, label + " leaves the delay unchanged")
+		endpoint._state.last_submitted_frame = submitted
+		# The caller drains the endpoint's bounded queues, so the match resumes.
+		session.drain_transitions()
+		var before: int = session.status().current_frame
+		for tick: int in range(10):
+			peers.tick(PackedInt32Array([tick % 13 % 16, (tick * 7) % 11 % 16]))
+		context.equal(session.status().current_frame > before, true, label + " keeps playing after the refusal")
+		context.equal(peers.sessions[1].status().lifecycle, Types.Lifecycle.RUNNING, label + " keeps the remote peer running")
+		context.equal(session.input_delay(0), delay, label + " never applied a delay")

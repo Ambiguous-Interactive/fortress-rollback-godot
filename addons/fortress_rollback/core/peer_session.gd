@@ -55,7 +55,6 @@ var _frames_ahead: int = 0
 var _terminal_notified: bool = false
 var _checksum_confirmation: int = -1
 var _diagnostic_failure: Dictionary = {}
-var _max_pending: int = 0
 var _fps: int = 60
 var _advisor: Advisor = Advisor.new()
 
@@ -120,7 +119,6 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		peers[key] = endpoint
 		slots_by_peer.append(slots)
 	_core = core
-	_max_pending = input_options.max_pending_frames
 	_fps = profile.fps
 	_driver = driver
 	_config = core_config.owned_copy()
@@ -351,7 +349,11 @@ func set_input_delay(player: int, delay: int) -> int:
 	if _config.local_players.size() > 1 or last == -1 or delay < current:
 		return Types.Code.UNSUPPORTED
 	# A backpressured step leaves an endpoint behind the core; it receives its missing frames first.
+	# Every endpoint must be able to take the whole batch before the core changes, so a refused
+	# raise leaves the match running instead of ending it.
 	var starts: PackedInt64Array = PackedInt64Array()
+	var earliest: int = -1
+	var added: int = delay - current
 	for index: int in range(_ids.size()):
 		if _is_gone(index):
 			# A departed peer receives no more frames.
@@ -359,19 +361,36 @@ func set_input_delay(player: int, delay: int) -> int:
 			continue
 		var observed: Dictionary = _endpoint(index).status()
 		var start: int = observed.last_submitted_frame + 1 if observed.last_submitted_frame != -1 else _config.input_delay
-		if observed.pending_frames + last + 1 - start + delay - current > _max_pending:
-			return Types.Code.NETWORK_BACKPRESSURE
+		var accepted: int = _endpoint(index).can_submit_frames(start, last + added - start + 1)
+		if accepted != I.Code.OK:
+			# The endpoint cannot take the added frames yet, so the raise waits for a later attempt.
+			return Types.Code.NETWORK_BACKPRESSURE if accepted == I.Code.BACKPRESSURE else _step_code(accepted)
 		starts.append(start)
+		earliest = start if earliest == -1 else mini(earliest, start)
+	# The catch-up frames are the local queue's retained rows. A released row cannot be rebuilt,
+	# so the raise is refused before the core changes and the match keeps running.
+	var rows: Array[PackedByteArray] = []
+	if earliest != -1:
+		for frame: int in range(earliest, last + 1):
+			var retained: PackedByteArray = _core.retained_local_input(player, frame)
+			if retained.is_empty():
+				return Types.Code.NETWORK_BACKPRESSURE
+			rows.append(retained)
 	var changed: Types.Result = _core.set_input_delay(player, delay)
 	if changed.code != Types.Code.OK:
 		return changed.code
+	# The added frames repeat the player's latest input, and the queue holds them now.
+	var fresh: Array[PackedByteArray] = []
+	for frame: int in range(last + 1, changed.value + 1):
+		fresh.append(_core.retained_local_input(player, frame))
 	var statuses: Array[T.Status] = _statuses()
 	for index: int in range(_ids.size()):
 		if _is_gone(index):
 			continue
 		var inputs: Array[PackedByteArray] = []
-		for frame: int in range(starts[index], changed.value + 1):
-			inputs.append(_core.retained_local_input(player, frame))
+		if starts[index] <= last:
+			inputs.append_array(rows.slice(starts[index] - earliest, rows.size()))
+		inputs.append_array(fresh)
 		# One packet per remote carries the catch-up and added frames, as upstream flushes once.
 		var sent: int = _endpoint(index).submit_frames(starts[index], inputs, statuses, _now, last)
 		if sent != I.Code.OK:

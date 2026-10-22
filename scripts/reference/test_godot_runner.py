@@ -5,6 +5,7 @@ import argparse
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -167,6 +168,19 @@ class ReceiptControls(unittest.TestCase):
         result = RUNNER.invoke([sys.executable, '-c', "import sys;sys.stdout.buffer.write(b'bad\\xff')"], 10)
         self.assertEqual(result.get('failure'), 'invalid_utf8_output', result)
         self.assertEqual(result['stdout'], 'bad\ufffd')
+
+    # Value: a timeout must leave no process behind. The engine runs in its own
+    # process group, so the host kills the whole group and no child of the
+    # engine can outlive the run that named it.
+    def test_watchdog_kills_the_whole_process_group(self) -> None:
+        if not hasattr(os, 'killpg'):
+            self.skipTest("this platform has no process groups")
+        result = RUNNER.invoke([sys.executable, '-c', "import time;time.sleep(30)"], 1)
+        self.assertEqual(result.get('failure'), 'watchdog', result)
+        group = result.get('process_group')
+        self.assertIsInstance(group, int)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(group, 0)
 
 
 class EngineControls(unittest.TestCase):
