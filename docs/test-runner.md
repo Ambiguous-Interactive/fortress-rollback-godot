@@ -56,6 +56,10 @@ Use the CI command above for the full verification budget. Ordinary focused suit
 the default budget. The slower integration category uses the budget below.
 Deliberate watchdog controls keep their short limits.
 
+Every engine runs in its own process group. A run that exceeds its timeout kills that whole
+group, so the engine and every process it started stop together and no process outlives the
+run that named it. The watchdog report names the group it killed.
+
 The integration category includes the slower eight-peer transport scheduling regression. Run each
 case separately. The single-poll workload uses 180 seconds; the other cases use 120 seconds.
 Keep the single-poll control, batched workload, and ordering controls in separate processes.
