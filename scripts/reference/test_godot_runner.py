@@ -120,7 +120,6 @@ class AbortAttribution(unittest.TestCase):
         self.assertEqual(amended["errors"], [])
 
 
-
 class ReceiptControls(unittest.TestCase):
     # Value: a failed new engine probe must supersede prior success, including
     # before the external executable gets control and when its bytes are invalid.
