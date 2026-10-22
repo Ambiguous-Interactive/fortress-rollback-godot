@@ -46,7 +46,10 @@ shard processes under `shards`. Default results live in ignored
 `.cache/tests/latest.json`. They contain engine version/digest, repository commit
 and dirty flag, pin digest, platform, commands, working directory, seeds, complete
 semantic records, raw engine output, exit status and failure reason. A dirty flag
-means the commit alone does not reproduce the worktree.
+means the commit alone does not reproduce the worktree. The launcher merges the
+engine's stdout and stderr into one stream and keeps that stream in `stdout`,
+because the order of the progress records and the script errors is the evidence
+that names the case that was executing; `stderr` stays empty.
 
 CI uses `--timeout 180` for the complete unit category; `make test-godot` uses 120 seconds.
 Use the CI command above for the full verification budget. Ordinary focused suites retain
@@ -154,7 +157,10 @@ the same record to the page, and the browser runner reports it with the browser
 error inventory when its watchdog rejects the run.
 
 The result contains format, completion, pass flag, count, errors and ordered
-case records with both runs. Browser export/execution is **not implemented or
+case records with both runs. A repetition records its assertion count, its
+failure entries and its canonical states; every failure entry names its kind,
+and the launcher adds a `case_aborted` entry to the repetition that died.
+Browser export/execution is **not implemented or
 verified by this runner**. It still needs its own host watchdog/error handling.
 
 Mutable fixture state belongs on each suite instance/context. Static fields,
@@ -175,24 +181,41 @@ python3 scripts/reference/test_godot_runner.py \
 
 The table drives real engine controls: known pass; byte failure at frame 7/byte
 1; incomplete case; uncaught script error; an error after a case already marked
-complete; static-state leakage; watchdog; parse error; missing suite; empty filter;
-and zero-exit missing completion. It checks intended failure reasons so a timeout
-cannot count as a successful assertion rejection. It also runs the runner suite
-in each category with the maximum signed seed, comparing in-process and
-fresh-process results. Standard-library tests reject truncated, unknown,
+complete; a script error inside a nested helper, which the engine reports as a
+passed case; static-state leakage; watchdog; parse error; missing suite; empty
+filter; and zero-exit missing completion. It checks intended failure reasons so
+a timeout cannot count as a successful assertion rejection. It also runs the
+runner suite in each category with the maximum signed seed, comparing in-process
+and fresh-process results. Standard-library tests reject truncated, unknown,
 contradictory and vacuous structured results.
 
 Godot can log an uncaught GDScript error and still exit zero after a completed
-case. The standalone `godot --headless --path . --script
-res://tests/runner/run_tests.gd` invocation cannot guarantee interception of all
-engine errors or interrupt a synchronous infinite loop. Use the **Python entry
-point** for CI: it rejects engine `ERROR`/`SCRIPT ERROR` output, nonzero exit,
+case. A GDScript runtime error aborts the innermost function and the caller
+resumes, so a case that dies inside a nested helper still reaches `finish()` and
+the engine reports that case as passed with a truncated assertion count. The
+engine cannot detect the abort: GDScript has no `try`/`catch` and a custom
+logger never receives the script error. The standalone `godot --headless --path .
+--script res://tests/runner/run_tests.gd` invocation therefore cannot guarantee
+interception of all engine errors or interrupt a synchronous infinite loop. Use
+the **Python entry point** for CI: it rejects engine `ERROR`/`SCRIPT ERROR`
+output, nonzero exit,
 missing/duplicate completion, malformed result records, incomplete consumption,
 repeat disagreement and wall-clock watchdog expiry. Wall-clock timeout belongs
 only to the host and never enters scenario simulation state. The after-completion
 error control specifically proves that a green marker/zero exit cannot bypass
 this host boundary. Fresh-process divergence records the first differing ordered
 case/state/byte when available.
+
+The launcher fails the case that the last progress record named. That failure
+is a `case_aborted` entry with the case, the suite, the aborting file and line,
+the engine message and the number of repetitions that died; the receipt fails
+with `case_aborted`. The other cases keep their records, because an aborted case
+is a failure of that case and not of the run. An engine error outside a case
+stays `engine_error`. Both repetitions of a case carry the same entry when they
+die at the same point, so the abort does not manufacture a divergence between
+them; a repetition that reached the end keeps its own verdict, so a case that
+dies in one repetition and not in the other stays a divergence. The in-process
+comparison of the two run dictionaries is unchanged.
 
 No pinned Fortress parity claim applies: these assertions test the Godot host
 contract, not translated simulation behavior. Product differential, browser,

@@ -35,6 +35,7 @@ class CompletionContract(unittest.TestCase):
             "zero cases": lambda x: x.update(records=[], count=0),
             "missing repeat": lambda x: x["records"][0]["runs"].pop(),
             "zero assertions": lambda x: x["records"][0]["runs"][0].update(assertions=0),
+            "negative assertions": lambda x: x["records"][0]["runs"][0].update(assertions=-1),
             "unknown run": lambda x: x["records"][0]["runs"][0].update(unknown=True),
             "invalid bytes": lambda x: x["records"][0]["runs"][0]["states"][0].update(bytes="x"),
             "run disagreement": lambda x: x["records"][0]["runs"][0]["states"][0].update(bytes="02"),
@@ -48,6 +49,15 @@ class CompletionContract(unittest.TestCase):
                     RUNNER.validate_result(result)
         self.assertEqual(RUNNER.validate_result(valid_result()), valid_result())
 
+    # Value: a run that recorded a failure is evidence even without an assertion:
+    # a case that aborted before its first assertion has none.
+    def test_unasserted_failure_is_evidence(self) -> None:
+        result = valid_result()
+        for run in result["records"][0]["runs"]:
+            run["assertions"] = 0
+            run["failures"] = [{"kind": "case_aborted"}]
+        result["passed"] = False
+        self.assertEqual(RUNNER.validate_result(result), result)
 
     def test_first_divergence(self) -> None:
         expected = valid_result()
@@ -60,6 +70,55 @@ class CompletionContract(unittest.TestCase):
         diagnostic = RUNNER.first_divergence(expected, actual)
         self.assertEqual(diagnostic["frame"], 0)
         self.assertNotIn("byte", diagnostic)
+
+
+class AbortAttribution(unittest.TestCase):
+    # Value: the launcher must fail the case the engine aborted, keep every other
+    # case's record and keep the two repetitions comparable.
+    def error(self) -> list[dict]:
+        return [{"suite": "res://suite.gd", "case": "pass", "file": "res://suite.gd",
+                 "line": 12, "message": "boom"}]
+
+    def test_abort_fails_only_the_aborted_case(self) -> None:
+        result = valid_result()
+        result["records"].append(copy.deepcopy(result["records"][0]))
+        result["records"][1]["case"] = "other"
+        result["count"] = 2
+        amended, aborted = RUNNER.apply_aborts(result, self.error())
+        self.assertTrue(aborted)
+        self.assertIs(amended["passed"], False)
+        self.assertEqual(amended["records"][0]["runs"][0]["failures"][0]["kind"], "case_aborted")
+        self.assertEqual(amended["records"][0]["runs"][0]["failures"][0]["case"], "pass")
+        self.assertEqual(amended["records"][1]["runs"][0]["failures"], [])
+        self.assertEqual(amended["errors"][0]["kind"], "case_aborted")
+        self.assertEqual(amended["errors"][0]["case"], "pass")
+
+    def test_abort_keeps_the_repetitions_comparable(self) -> None:
+        # Both repetitions died at the same point: they stay equal, so the abort
+        # does not manufacture a divergence.
+        amended, aborted = RUNNER.apply_aborts(valid_result(), self.error())
+        self.assertTrue(aborted)
+        self.assertEqual(amended["records"][0]["runs"][0], amended["records"][0]["runs"][1])
+        # One repetition died: the difference between the repetitions stays visible
+        # and the repetition that reached the end keeps its own verdict.
+        result = valid_result()
+        result["records"][0]["runs"][0]["assertions"] = 5
+        result["records"][0]["runs"][1]["assertions"] = 9
+        amended, aborted = RUNNER.apply_aborts(result, self.error())
+        self.assertTrue(aborted)
+        self.assertEqual(amended["records"][0]["runs"][0]["failures"][0]["kind"], "case_aborted")
+        self.assertEqual(amended["records"][0]["runs"][1]["failures"], [])
+        self.assertNotEqual(amended["records"][0]["runs"][0], amended["records"][0]["runs"][1])
+
+    # Value: an error the engine reported outside a case has no case to fail, so
+    # the launcher keeps the reason and does not invent a case.
+    def test_unattributed_error_names_no_case(self) -> None:
+        amended, aborted = RUNNER.apply_aborts(valid_result(), [
+            {"suite": None, "case": None, "file": "res://suite.gd", "line": 12, "message": "boom"}])
+        self.assertFalse(aborted)
+        self.assertEqual(amended["records"][0]["runs"][0]["failures"], [])
+        self.assertEqual(amended["errors"], [])
+
 
 
 class ReceiptControls(unittest.TestCase):
@@ -115,8 +174,8 @@ class EngineControls(unittest.TestCase):
     def test_controls(self) -> None:
         cases = [
             ("pass", None), ("fail", "test_failure"),
-            ("incomplete", "test_failure"), ("uncaught", "engine_error"),
-            ("after_completion_error", "engine_error"),
+            ("incomplete", "test_failure"), ("uncaught", "case_aborted"),
+            ("after_completion_error", "case_aborted"), ("nested_abort", "case_aborted"),
             ("static_leak", "test_failure"), ("watchdog", "watchdog"),
         ]
         for case, failure in cases:
@@ -135,6 +194,17 @@ class EngineControls(unittest.TestCase):
                 if case == "incomplete":
                     self.assertEqual(result["result"]["records"][0]["runs"][0]["failures"],
                                      [{"kind": "incomplete_case"}])
+                if case in ("uncaught", "after_completion_error", "nested_abort"):
+                    # The engine reported the case as passed; the host fails it and
+                    # names the case, the suite, the aborting line and the message.
+                    self.assertIs(result["result"]["passed"], False)
+                    failure = result["result"]["records"][0]["runs"][0]["failures"][-1]
+                    self.assertEqual(failure["kind"], "case_aborted")
+                    self.assertEqual(failure["suite"], "res://tests/runner-controls/control_suite.gd")
+                    self.assertEqual(failure["case"], case)
+                    self.assertEqual(failure["file"], "res://tests/runner-controls/control_suite.gd")
+                    self.assertIsInstance(failure["line"], int)
+                    self.assertIn("Out of bounds", failure["message"])
         cases = [
             (["--suite", "res://tests/runner-controls/parse_error.gd"], "engine_error"),
             (["--suite", "res://tests/runner-controls/absent.gd"], "test_failure"),
@@ -146,6 +216,44 @@ class EngineControls(unittest.TestCase):
                 self.assertEqual(result.get("failure"), failure, result)
         result = RUNNER.invoke(self.command("res://tests/runner-controls/missing_completion.gd"), 10)
         self.assertEqual(result.get("failure"), "missing_or_duplicate_completion", result)
+
+    # Value: an aborted case must not erase the other cases' records: the receipt
+    # keeps every case and names the one that died.
+    def test_aborted_case_keeps_the_other_records(self) -> None:
+        result = RUNNER.invoke(self.command(
+            "res://tests/runner/run_tests.gd", "--suite",
+            "res://tests/runner-controls/control_suite.gd", "--case", "nested_abort", "--case", "pass"), 10)
+        self.assertEqual(result.get("failure"), "case_aborted", result)
+        self.assertIs(result["result"]["passed"], False)
+        self.assertEqual(result["result"]["count"], 2)
+        records = {record["case"]: record for record in result["result"]["records"]}
+        self.assertEqual(records["pass"]["runs"][0]["failures"], [])
+        self.assertEqual(records["pass"]["runs"][1]["failures"], [])
+        self.assertEqual(records["nested_abort"]["runs"][0]["failures"][0]["kind"], "case_aborted")
+        self.assertEqual(records["nested_abort"]["runs"][1]["failures"][0]["kind"], "case_aborted")
+
+    # Value: the receipt of a run with an aborted case must fail with a reason a
+    # reader can act on, and must name the case, the suite and the aborting line.
+    def test_receipt_fails_with_the_aborted_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "aborted.json"
+            process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(GODOT),
+                "--suite", "res://tests/runner-controls/control_suite.gd", "--filter", "nested_abort",
+                "--results", str(output), "--durations", str(Path(directory) / "durations.json")],
+                cwd=ROOT, capture_output=True, text=True)
+            self.assertEqual(process.returncode, 1, process.stdout + process.stderr)
+            report = json.loads(output.read_text())
+            self.assertIs(report["passed"], False)
+            for run in report["runs"]:
+                self.assertEqual(run["failure"], "case_aborted")
+                self.assertIs(run["result"]["passed"], False)
+                entry = run["result"]["errors"][0]
+                self.assertEqual(entry["kind"], "case_aborted")
+                self.assertEqual(entry["case"], "nested_abort")
+                self.assertEqual(entry["suite"], "res://tests/runner-controls/control_suite.gd")
+                self.assertIsInstance(entry["line"], int)
+            # The two fresh processes must agree on the failed run.
+            self.assertEqual(report["runs"][0]["result"], report["runs"][1]["result"])
 
     def test_fresh_process_repeat_and_categories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
