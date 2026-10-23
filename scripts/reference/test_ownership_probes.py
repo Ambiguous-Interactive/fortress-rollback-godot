@@ -147,7 +147,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                     log.write_text('preserved owned diagnostics', encoding='utf-8')
                     return int(negative), probes.PREFIX + json.dumps(value)
 
-                def run(command, environment, log):
+                def run(command, environment, log, timeout=180):
                     return '4.3.stable.fixture' if '--version' in command else ''
 
                 data = {'godot': {'minimum': '4.3', 'current_stable': '4.3'},
@@ -301,7 +301,7 @@ class OwnershipRejectionTests(unittest.TestCase):
         results = cache / 'results'
         results.mkdir(parents=True)
 
-        def run(command, environment, log):
+        def run(command, environment, log, timeout=180):
             if '--version' in command:
                 return f'{Path(command[0]).parent.name}.stable.fixture'
             if str(command[1]).endswith('ownership.cjs'):

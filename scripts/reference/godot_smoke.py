@@ -14,8 +14,8 @@ from run import begin_results, capture
 MARKER = 'FORTRESS_BASELINE_SMOKE_OK:78563412'
 
 
-def run(cmd, environment, log):
-    returncode, output = capture(cmd, environment, log, timeout=180)
+def run(cmd, environment, log, timeout=180):
+    returncode, output = capture(cmd, environment, log, timeout=timeout)
     if returncode or 'SCRIPT ERROR:' in output or any(line.startswith('ERROR:') for line in output.splitlines()):
         raise RuntimeError(f'Godot/browser command failed: {cmd}; see {log}')
     return output

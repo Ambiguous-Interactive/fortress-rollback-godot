@@ -29,7 +29,8 @@ const path = require('node:path');
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
     try {
-      await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 120000 });
+      // The full inventory can exceed two minutes on bounded CI runners.
+      await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
     } catch (error) {
       // The watchdog rejected the run before the inventory could be
       // printed. Report what the page saw, so an engine or script failure

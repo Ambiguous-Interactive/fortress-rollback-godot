@@ -15,6 +15,8 @@ New capability, source investigation and debugging triggered this retrospective.
 | Missing rows need complete range installation before a certificate, rather than frozen-value substitution. | Original-main missing-row probe terminates; donor journal repairs it and preserves canonical continuation. | Replaced stale range-transfer exclusions in lifecycle, protocol, supported-feature and plan documentation. |
 | Retried plans and donor data can starve each other at capacity one. | Fast and complete-history controls pass, but 50 ms donor service emitted 36 plans and one chunk before timeout; a lost-plan and remote-donor control isolated two more publication paths. | Preserve refused publication turns, yield donor rounds to certificates, and piggyback the final candidate. Add the minimum-capacity/cadence cross to the networking skill. |
 
+| A growing full browser suite outlasted its absolute page deadline. | CI completed all 280 cases at 131.4 seconds and reported a result, but the 120-second page watchdog rejected before saving it. | Apply existing phase-budget guidance: 180 seconds for the page and 240 seconds for its subprocess, with all semantic checks and the 30-minute job bound preserved. |
+
 ## Verification
 
 The session log records both pinned-engine runs, the original-main red control,

@@ -565,7 +565,7 @@ def run_probes(args, results):
                     raise ValueError('browser registry differs from pin')
                 browser_log = results / f'ownership-{label}-browser.log'
                 try:
-                    output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export)], environment, browser_log)
+                    output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export)], environment, browser_log, timeout=240)
                     browser = json.loads(output)
                     validate(browser['result'], negative)
                     if browser['result'] != native:
