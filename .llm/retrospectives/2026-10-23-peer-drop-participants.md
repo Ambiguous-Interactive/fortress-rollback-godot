@@ -47,6 +47,17 @@ The first broad integration invocation used 120 seconds for a heavy control
 whose CI entry explicitly declares 180. The corrected invocation follows that
 existing bound; no watchdog contract changes.
 
+A further acceptance review on PR #184 found that the new teardown gate counted
+RTC resources but omitted signaling WebSockets. It also found inherited receipt
+omissions for Python and imported helpers. The focused repairs require every
+tracked socket to close and extend the executed source/tool inventory. Existing
+infrastructure and browser guidance already require complete execution identity
+and physical socket closure; retain those contracts rather than add duplicates.
+Fresh clean, fault, drop and corrupt-drop browser runs pass on both engine pins.
+Their receipts bind the missing helper/tool hashes and prove every signaling
+socket closed. A new cold review reports no findings. Current-head CI follows
+these source changes.
+
 ## Outcome
 
 State: `findings-acted`. Keep wire participant certificates, the pinned journal

@@ -33,7 +33,9 @@ def validate_drop_browser(result, corrupt=False):
         teardown = rtc.get('teardown', {})
         if (type(teardown.get('channels')) is not int or teardown['channels'] != 6 or type(teardown.get('connections_created')) is not int
                 or teardown['connections_created'] < 2 or type(teardown.get('connections')) is not int
-                or teardown['connections'] != teardown['connections_created']):
+                or teardown['connections'] != teardown['connections_created']
+                or type(teardown.get('websockets_created')) is not int or teardown['websockets_created'] < 1
+                or type(teardown.get('websockets')) is not int or teardown['websockets'] != teardown['websockets_created']):
             raise ValueError('peer-drop browser resources survived teardown')
         if corrupt and index < 2:
             failure = witness.get('failure', {})

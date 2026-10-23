@@ -151,19 +151,19 @@ test('actual default main orchestration waits for delayed terminal setup before 
   const fakeResult = JSON.stringify({ passed: false, failure: { stage: 'handshake', errors: ['direct_poll_3_peer_0'] } });
   const makePage = () => {
     const document = { body: { dataset: { fortressRoom: 'ROOM' } } };
-    const window = { fortressRtc: {}, fortressResources: { channels: [], connections: [] } };
-    const invoke = (operation, argument) => vm.runInNewContext(`(${operation.toString()})(argument)`, { document, window, argument });
+    const window = { fortressRtc: {}, fortressResources: { channels: [], connections: [] }, fortressSockets: [] };
+    const invoke = (operation, argument) => vm.runInNewContext(`(${operation.toString()})(argument)`, { document, window, argument, WebSocket: { CLOSED: 3 } });
     return {
       on() {}, async addInitScript() {}, async goto() {},
-      async waitForFunction(operation) {
-        if (invoke(operation)) return;
+      async waitForFunction(operation, argument) {
+        if (invoke(operation, argument)) return;
         // The real setup phase can require 25s, without any submitted gameplay frame.
         if (operation.toString().includes('fortressGameplayDone')) {
           terminalWaits++;
           now = 25000;
           document.body.dataset.fortressGameplayDone = 'true';
         }
-        assert.equal(invoke(operation), true, 'unexpected unmet browser barrier');
+        assert.equal(invoke(operation, argument), true, 'unexpected unmet browser barrier');
       },
       async evaluate(operation, argument) {
         if (operation.toString().includes('progress:') && document.body.dataset.fortressGameplayDone !== 'true') {

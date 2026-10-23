@@ -159,6 +159,13 @@ function isDropCanonicalFailure(witness) {
     && /^peer_drop_canonical_(?:[89]|[12][0-9]|3[0-7])$/.test(failure.errors[0]);
 }
 
+function resourcesClosed(requireSockets) {
+  return window.fortressResources.channels.every(channel => channel.readyState === 'closed')
+    && window.fortressResources.connections.every(connection => connection.connectionState === 'closed')
+    && (!requireSockets || (window.fortressSockets.length > 0
+      && window.fortressSockets.every(record => record.socket.readyState === WebSocket.CLOSED)));
+}
+
 async function captureFailure(pages, players) {
   return Promise.all(pages.slice(0, 8).map(async (page, index) => {
     let timer;
@@ -306,14 +313,14 @@ async function main() {
         await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressWebrtc !== undefined,
           null, { timeout: 10000 })));
         try {
-          await Promise.all(pages.map(page => page.waitForFunction(() => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
-            && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), null, { timeout: 10000 })));
+          await Promise.all(pages.map(page => page.waitForFunction(resourcesClosed, peerDrop, { timeout: 10000 })));
         } catch (error) {
           const resources = await Promise.all(pages.map(page => page.evaluate(() => ({
             result: document.body.dataset.fortressWebrtc,
             connections: window.fortressResources.connections.map(connection => ({ state: connection.connectionState,
               ice: connection.iceConnectionState, signaling: connection.signalingState })),
             channels: window.fortressResources.channels.map(channel => ({ id: channel.id, state: channel.readyState })),
+            websockets: window.fortressSockets.map(record => record.socket.readyState),
           }))));
           throw new Error(JSON.stringify({ teardown: resources, cause: String(error) }));
         }
@@ -321,7 +328,9 @@ async function main() {
           result: JSON.parse(document.body.dataset.fortressWebrtc), rtc: { ...window.fortressRtc, teardown: {
             channels: window.fortressResources.channels.filter(channel => channel.readyState === 'closed').length,
             connections_created: window.fortressResources.connections.length,
-            connections: window.fortressResources.connections.filter(connection => connection.connectionState === 'closed').length } },
+            connections: window.fortressResources.connections.filter(connection => connection.connectionState === 'closed').length,
+            websockets_created: window.fortressSockets.length,
+            websockets: window.fortressSockets.filter(record => record.socket.readyState === WebSocket.CLOSED).length } },
         }))));
         if (errors.length) throw new Error(JSON.stringify({ errors, peers }));
         for (const [index, peer] of peers.entries()) {
@@ -362,5 +371,5 @@ async function main() {
   }
 }
 
-module.exports = { instrument, isDropCanonicalFailure };
+module.exports = { instrument, isDropCanonicalFailure, resourcesClosed };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

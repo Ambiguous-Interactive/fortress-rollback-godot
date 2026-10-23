@@ -28,7 +28,8 @@ def evidence(corrupt=False):
                      'maxRetransmits': None, 'sent': 20, 'received': 20}
                     for unused in range(2) for channel_id in (1, 2, 3)]
         peers.append({'result': result, 'rtc': {'sent': 20, 'received': 20, 'channels': channels,
-                      'teardown': {'channels': 6, 'connections_created': 2, 'connections': 2}}})
+                      'teardown': {'channels': 6, 'connections_created': 2, 'connections': 2,
+                                   'websockets_created': 1, 'websockets': 1}}})
     return {'passed': True, 'peerDrop': True, 'dropCorrupt': corrupt, 'errors': [], 'browser_instances': 2,
             'records': [{'players': 3, 'peers': peers}]}
 
@@ -44,6 +45,10 @@ class PeerDropEvidence(unittest.TestCase):
             lambda value: value['records'][0]['peers'][0]['rtc'].update(received=0),
             lambda value: value['records'][0]['peers'][0]['rtc']['channels'][2].update(ordered=True),
             lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].update(connections=1),
+            lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].update(websockets=0),
+            lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].update(websockets_created=0),
+            lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].pop('websockets'),
+            lambda value: value['records'][0]['peers'][0]['rtc']['teardown'].pop('websockets_created'),
         ]
         for field, replacement in [('drop_events', 2), ('canonical_comparisons', 0), ('active_comparisons', 0),
                                    ('freeze_frame', -1), ('frozen_value', '00'), ('minimum_confirmed', 0),
@@ -56,7 +61,7 @@ class PeerDropEvidence(unittest.TestCase):
         mutations.append(lambda value: value['records'][0]['peers'][0]['result']['records'][0].update(participants=['00' * 8]))
         for replacement in (3.0, True):
             mutations.append(lambda value, replacement=replacement: value['records'][0].update(players=replacement))
-        for key in ('channels', 'connections', 'connections_created'):
+        for key in ('channels', 'connections', 'connections_created', 'websockets', 'websockets_created'):
             for replacement in (6.0 if key == 'channels' else 2.0, True):
                 mutations.append(lambda value, key=key, replacement=replacement:
                                  value['records'][0]['peers'][0]['rtc']['teardown'].update({key: replacement}))
@@ -84,6 +89,12 @@ class PeerDropEvidence(unittest.TestCase):
             value['records'][0]['peers'][0]['result']['failure'][field] = replacement
             with self.subTest(field=field, replacement=replacement), self.assertRaises(ValueError):
                 validate_drop_browser(value, True)
+
+    def test_corrupt_control_requires_signaling_teardown_too(self):
+        value = evidence(True)
+        value['records'][0]['peers'][0]['rtc']['teardown']['websockets'] = 0
+        with self.assertRaisesRegex(ValueError, 'resources survived teardown'):
+            validate_drop_browser(value, True)
 
 
 if __name__ == '__main__':

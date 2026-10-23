@@ -398,6 +398,8 @@ def main():
                'server_archive': server_archive, 'build_receipt': args.build_receipt, 'build_log': args.build_receipt.parent / 'build.log',
                'builder': ROOT / 'scripts/reference/signalfish_build_server.py', 'fetch': ROOT / 'scripts/reference/fetch.py',
                'godot_helper': ROOT / 'scripts/reference/godot_smoke.py', 'pins': ROOT / 'docs/reference/pins.json', 'run': ROOT / 'scripts/reference/run.py',
+               'python': Path(sys.executable).resolve(), 'host_capacity': ROOT / 'scripts/host_capacity.py',
+               'engine_path': ROOT / 'scripts/reference/engine_path.py', 'wire': ROOT / 'scripts/reference/wire.py',
                'native_launcher': ROOT / 'scripts/reference/signalfish_live_probe.py', 'sdk_launcher': ROOT / 'scripts/reference/signalfish_probe.py',
                'cargo': cargo, 'rustc': cargo.with_name('rustc'), 'launcher': Path(__file__).resolve(),
                'clock_test': ROOT / 'scripts/reference/signalfish_webrtc_probe_clock_test.gd', 'clock_fixture': ROOT / 'tests/unit/test_input_endpoint.gd',
@@ -413,6 +415,7 @@ def main():
                'watchdog': ROOT / 'scripts/reference/browser/webrtc_watchdog.cjs', 'browser_runner': ROOT / 'scripts/reference/browser/webrtc_runner.py',
                'server_owner': ROOT / 'scripts/reference/browser/owned_server.py',
                'instrument_test': ROOT / 'scripts/reference/browser/webrtc_instrument.test.cjs',
+               'online_browser': ROOT / 'scripts/reference/browser/online.cjs', 'online_host': ROOT / 'scripts/reference/browser/online_host.cjs',
                'display_test': ROOT / 'scripts/reference/browser/webrtc_display.test.cjs',
                'watchdog_test': ROOT / 'scripts/reference/browser/webrtc_watchdog.test.cjs', 'node': Path(shutil.which('node')),
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
@@ -422,12 +425,10 @@ def main():
                        online_diagnostics=ROOT / 'scripts/reference/online_diagnostics.py',
                        diagnostic_cli=ROOT / 'scripts/diagnose_trace.gd',
                        online_installer=ROOT / 'scripts/reference/online_install.py',
-                       python=Path(sys.executable).resolve(),
                        online_install_check=ROOT / 'scripts/reference/browser/online_install_check.gd',
-                       online_host=ROOT / 'scripts/reference/browser/online_host.cjs', license=ROOT / 'LICENSE',
+                       license=ROOT / 'LICENSE',
                        diagnostic_guide=ROOT / 'docs/diagnostic-viewer.md',
                        online_guide=ROOT / 'docs/online-example.md', integration_guide=ROOT / 'docs/integration.md',
-                       online_browser=ROOT / 'scripts/reference/browser/online.cjs',
                        online_bridge=ROOT / 'scripts/reference/browser/online_bridge.gd')
         online_labels = ('online', 'online-corrupt', 'online-events', 'online-corrupt-events', 'install', 'no-sdk-import',
                          'no-sdk', 'install-sdk', 'sdk-import', 'documented-export')
