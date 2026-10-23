@@ -6,7 +6,7 @@ extends RefCounted
 ## Confirmed inputs for frames 0..frame_count() - 1, with optional 16-byte state checksums.
 ## Frame F's checksum covers the state before input F. Sessions record; FortressReplayPlayer plays back.
 ## Every frame carries a 16-byte digest of its own input row, so every recorded row is covered
-## independently of the state checksums.
+## and player statuses independently of the state checksums.
 ## Load a file with FortressReplay.new().decode(bytes). The layout is in docs/integration.md.
 
 enum DecodeCode { OK, MALFORMED, UNSUPPORTED_VERSION, TOO_LARGE }
@@ -14,7 +14,7 @@ enum DecodeCode { OK, MALFORMED, UNSUPPORTED_VERSION, TOO_LARGE }
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const MAGIC: String = "FRRP"
-const FORMAT_VERSION: int = 4
+const FORMAT_VERSION: int = 5
 const ADDON_VERSION: String = "0.1.0"
 const UPSTREAM_REVISION: String = "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"
 const FIXED_BYTES: int = 23
@@ -27,6 +27,8 @@ const MAX_BYTES: int = 268435456
 const FLAG_CHECKSUM: int = 1
 const FLAG_SKIPPED: int = 2
 
+var _format_version: int = FORMAT_VERSION
+var _statuses: PackedByteArray = PackedByteArray()
 var _players: int = 0
 var _width: int = 0
 var _frames: int = 0
@@ -43,10 +45,11 @@ var _flags: PackedByteArray = PackedByteArray()
 var _digests: PackedByteArray = PackedByteArray()
 
 
-static func valid_shape(players: int, width: int, frames: int) -> bool:
+static func valid_shape(players: int, width: int, frames: int, version: int = FORMAT_VERSION) -> bool:
 	if players < 2 or players > 8 or width < 1 or width > 65536 or frames < 0 or frames > MAX_FRAMES:
 		return false
-	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (players * width + 1 + CHECKSUM_BYTES + DIGEST_BYTES) <= MAX_BYTES
+	var row: int = players * (width + (1 if version >= 5 else 0))
+	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (row + 1 + CHECKSUM_BYTES + DIGEST_BYTES) <= MAX_BYTES
 
 
 ## The digest of one recorded input row: the first 16 bytes of its SHA-256.
@@ -73,6 +76,7 @@ static func _printable(bytes: PackedByteArray) -> bool:
 
 ## Replaces this replay only when the result is OK; any other DecodeCode leaves it unchanged.
 ## Nothing is allocated before the declared frame count is checked against the bytes actually present.
+## Version 4 reads with CONFIRMED statuses and retains its original byte-only digests.
 ## Version 1, version 2 and version 3 files are UNSUPPORTED_VERSION: version 1 lacks the metadata
 ## that version 2 requires, version 2 lacks the input digest that version 3 records, and version 3
 ## anchors only the final input row instead of every row.
@@ -81,7 +85,8 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 		return DecodeCode.TOO_LARGE
 	if bytes.size() < 6 or bytes.slice(0, 4) != MAGIC.to_ascii_buffer():
 		return DecodeCode.MALFORMED
-	if bytes.decode_u16(4) != FORMAT_VERSION:
+	var version: int = bytes.decode_u16(4)
+	if version not in [4, FORMAT_VERSION]:
 		return DecodeCode.UNSUPPORTED_VERSION
 	if bytes.size() < FIXED_BYTES:
 		return DecodeCode.MALFORMED
@@ -91,7 +96,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	var skipped: int = bytes.decode_u32(15)
 	var prediction: int = bytes.decode_u8(21)
 	var sync_test: int = bytes.decode_u8(22)
-	if not valid_shape(players, width, frames) or skipped > frames or prediction > 128 or sync_test > 1:
+	if not valid_shape(players, width, frames, version) or skipped > frames or prediction > 128 or sync_test > 1:
 		return DecodeCode.MALFORMED
 	var cursor: int = FIXED_BYTES + width
 	if cursor > bytes.size():
@@ -108,7 +113,8 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 		text.append(value.get_string_from_ascii())
 		cursor += 1 + size
 	var row: int = players * width
-	if frames * (row + 1 + DIGEST_BYTES) > bytes.size() - cursor:
+	var status_bytes: int = players if version >= 5 else 0
+	if frames * (row + status_bytes + 1 + DIGEST_BYTES) > bytes.size() - cursor:
 		return DecodeCode.MALFORMED
 	var neutral_row: PackedByteArray = PackedByteArray()
 	for player: int in range(players):
@@ -117,26 +123,34 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	var checksums: PackedByteArray = PackedByteArray()
 	var flags: PackedByteArray = PackedByteArray()
 	var digests: PackedByteArray = PackedByteArray()
+	var statuses: PackedByteArray = PackedByteArray()
 	var skipped_seen: int = 0
 	for frame: int in range(frames):
-		var flag: int = bytes[cursor + row] if cursor + row < bytes.size() else 0xff
-		var end: int = cursor + row + 1 + (CHECKSUM_BYTES if flag == FLAG_CHECKSUM else 0)
+		var flag: int = bytes[cursor + row + status_bytes] if cursor + row + status_bytes < bytes.size() else 0xff
+		var end: int = cursor + row + status_bytes + 1 + (CHECKSUM_BYTES if flag == FLAG_CHECKSUM else 0)
 		if (flag != 0 and flag != FLAG_CHECKSUM and flag != FLAG_SKIPPED) or end + DIGEST_BYTES > bytes.size():
 			return DecodeCode.MALFORMED
 		var input_row: PackedByteArray = bytes.slice(cursor, cursor + row)
 		if flag == FLAG_SKIPPED and input_row != neutral_row:
 			return DecodeCode.MALFORMED
+		for player: int in range(players):
+			var status: int = bytes[cursor + row + player] if version >= 5 else Queue.Status.CONFIRMED
+			if status not in [Queue.Status.CONFIRMED, Queue.Status.DISCONNECTED] or (flag == FLAG_SKIPPED and status != Queue.Status.CONFIRMED):
+				return DecodeCode.MALFORMED
+			statuses.append(status)
 		skipped_seen += int(flag == FLAG_SKIPPED)
 		inputs.append_array(input_row)
 		flags.append(flag)
 		if flag == FLAG_CHECKSUM:
-			checksums.append_array(bytes.slice(cursor + row + 1, end))
+			checksums.append_array(bytes.slice(cursor + row + status_bytes + 1, end))
 		else:
 			checksums.resize(checksums.size() + CHECKSUM_BYTES)
 		digests.append_array(bytes.slice(end, end + DIGEST_BYTES))
 		cursor = end + DIGEST_BYTES
 	if cursor != bytes.size() or skipped_seen != skipped:
 		return DecodeCode.MALFORMED
+	_format_version = version
+	_statuses = statuses
 	_players = players
 	_width = width
 	_frames = frames
@@ -231,7 +245,7 @@ func game_version() -> String:
 	return _text[4]
 
 
-## Fresh confirmed inputs for one frame, in the same form simulate_frame receives during a session.
+## Fresh finalized inputs and confirmed/disconnected player statuses for one frame, in the same form simulate_frame receives during a session.
 func inputs(frame: int) -> Types.FrameInputs:
 	if frame < 0 or frame >= _frames:
 		return null
@@ -240,7 +254,7 @@ func inputs(frame: int) -> Types.FrameInputs:
 	var row: int = _players * _width
 	for player: int in range(_players):
 		bytes.append(_inputs.slice(frame * row + player * _width, frame * row + (player + 1) * _width))
-		statuses.append(Queue.Status.CONFIRMED)
+		statuses.append(_statuses[frame * _players + player])
 	return Types.FrameInputs.new(bytes, statuses)
 
 
@@ -265,13 +279,16 @@ func computed_input_digest(frame: int) -> PackedByteArray:
 	if frame < 0 or frame >= _frames:
 		return PackedByteArray()
 	var row: int = _players * _width
-	return digest_row(_inputs.slice(frame * row, (frame + 1) * row))
+	var payload: PackedByteArray = _inputs.slice(frame * row, (frame + 1) * row)
+	if _format_version >= 5:
+		payload.append_array(_statuses.slice(frame * _players, (frame + 1) * _players))
+	return digest_row(payload)
 
 
 func to_bytes() -> PackedByteArray:
 	var bytes: PackedByteArray = MAGIC.to_ascii_buffer()
 	bytes.resize(FIXED_BYTES)
-	bytes.encode_u16(4, FORMAT_VERSION)
+	bytes.encode_u16(4, _format_version)
 	bytes.encode_u8(6, _players)
 	bytes.encode_u32(7, _width)
 	bytes.encode_u32(11, _frames)
@@ -286,6 +303,8 @@ func to_bytes() -> PackedByteArray:
 	var row: int = _players * _width
 	for frame: int in range(_frames):
 		bytes.append_array(_inputs.slice(frame * row, (frame + 1) * row))
+		if _format_version >= 5:
+			bytes.append_array(_statuses.slice(frame * _players, (frame + 1) * _players))
 		bytes.append(_flags[frame])
 		if _flags[frame] == FLAG_CHECKSUM:
 			bytes.append_array(_checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES))
@@ -295,6 +314,8 @@ func to_bytes() -> PackedByteArray:
 
 func owned_copy() -> RefCounted:
 	var copy: RefCounted = get_script().new()
+	copy._format_version = _format_version
+	copy._statuses = _statuses.duplicate()
 	copy._players = _players
 	copy._width = _width
 	copy._frames = _frames
@@ -311,6 +332,36 @@ func owned_copy() -> RefCounted:
 	return copy
 
 
+## Export only finalized history while keeping receipt-only rows private for later confirmation.
+func owned_prefix(frames: int) -> RefCounted:
+	var copy: RefCounted = owned_copy()
+	copy._frames = clampi(frames, 0, _frames)
+	copy._inputs.resize(copy._frames * _players * _width)
+	copy._statuses.resize(copy._frames * _players)
+	copy._checksums.resize(copy._frames * CHECKSUM_BYTES)
+	copy._flags.resize(copy._frames)
+	copy._digests.resize(copy._frames * DIGEST_BYTES)
+	copy._skipped = copy._flags.count(FLAG_SKIPPED)
+	return copy
+
+
+## A coordinated drop may replace receipt-only rows beyond the mesh-confirmed cut.
+## Preserve other players' retained bytes, including rows the live queue already released.
+func _freeze_player(player: int, cut: int, value: PackedByteArray) -> void:
+	for frame: int in range(cut + 1, _frames):
+		if _flags[frame] == FLAG_SKIPPED:
+			continue
+		var offset: int = (frame * _players + player) * _width
+		for index: int in range(_width):
+			_inputs[offset + index] = value[index]
+		_statuses[frame * _players + player] = Queue.Status.DISCONNECTED
+		if frame > cut + 1:
+			_flags[frame] = 0
+		var digest: PackedByteArray = computed_input_digest(frame)
+		for index: int in range(DIGEST_BYTES):
+			_digests[frame * DIGEST_BYTES + index] = digest[index]
+
+
 ## Session recording from a validated FortressConfig: one confirmed row per frame, in frame order,
 ## with neutral rows for skipped frames.
 func _start(config: RefCounted) -> void:
@@ -325,8 +376,10 @@ func _start(config: RefCounted) -> void:
 	_text = PackedStringArray([engine if valid_text(engine) else "", ADDON_VERSION, UPSTREAM_REVISION, config.diagnostic_seed, config.diagnostic_version])
 
 
-func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: bool) -> void:
+func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: bool, statuses: PackedByteArray = PackedByteArray()) -> void:
 	_inputs.append_array(row)
+	for player: int in range(_players):
+		_statuses.append(statuses[player] if not statuses.is_empty() and not skipped else Queue.Status.CONFIRMED)
 	var flag: int = FLAG_SKIPPED if skipped else (FLAG_CHECKSUM if saved_checksum.size() == CHECKSUM_BYTES else 0)
 	_flags.append(flag)
 	if flag == FLAG_CHECKSUM:
@@ -334,6 +387,6 @@ func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: boo
 	else:
 		_checksums.resize(_checksums.size() + CHECKSUM_BYTES)
 	# The digest covers the stored bytes, not the caller's array.
-	_digests.append_array(digest_row(_inputs.slice(_inputs.size() - row.size(), _inputs.size())))
 	_frames += 1
+	_digests.append_array(computed_input_digest(_frames - 1))
 	_skipped += int(skipped)

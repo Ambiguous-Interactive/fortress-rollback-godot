@@ -59,7 +59,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls', 'navigation', 'navigation_boundaries'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit', 'refuses_foreign_recording',
-        'protects_input_rows'},
+        'protects_input_rows', 'status_integrity'},
 })
 EXPECTED.update({
     'res://tests/unit/test_spectator_session.gd': {'configuration', 'confirmed_playback', 'buffering', 'delay_and_loss',

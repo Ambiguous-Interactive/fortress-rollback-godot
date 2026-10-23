@@ -33,7 +33,7 @@ class FailingGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["records_corrected_match", "records_metadata", "detects_changed_rules", "golden", "rejects_malformed_files",
-			"bounds_recording", "lockstep_confirmation_limit", "refuses_foreign_recording", "protects_input_rows"]
+			"bounds_recording", "lockstep_confirmation_limit", "refuses_foreign_recording", "protects_input_rows", "status_integrity"]
 	)
 
 
@@ -55,6 +55,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_lockstep_confirmation_limit(context)
 		"refuses_foreign_recording":
 			_refuses_foreign_recording(context)
+		"status_integrity":
+			_status_integrity(context)
 		"protects_input_rows":
 			_protects_input_rows(context)
 	context.finish()
@@ -132,7 +134,7 @@ static func _decode(bytes: PackedByteArray, max_bytes: int = Replay.MAX_BYTES) -
 ## Golden bytes and fields from scripts/reference/replay_golden.py.
 static func _fixture() -> Dictionary:
 	var fixture: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://tests/fixtures/replay/golden.json"))
-	for version: String in ["v1", "v2", "v3", "v4"]:
+	for version: String in ["v1", "v2", "v3", "v4", "v5"]:
 		fixture[version] = "".join(fixture[version]).hex_decode()
 	return fixture
 
@@ -224,9 +226,14 @@ func _records_metadata(context: RefCounted) -> void:
 
 ## Independent golden: decode every field, then re-encode the same bytes.
 func _golden(context: RefCounted) -> void:
+	for version: String in ["v4", "v5"]:
+		_golden_version(context, version)
+
+
+func _golden_version(context: RefCounted, version: String) -> void:
 	var fixture: Dictionary = _fixture()
 	var replay: Replay = Replay.new()
-	context.equal(replay.decode(fixture.v4), Replay.DecodeCode.OK, "decodes the golden")
+	context.equal(replay.decode(fixture[version]), Replay.DecodeCode.OK, "decodes the golden")
 	var fields: Dictionary = fixture.fields
 	for field: String in fields:
 		var actual: Variant = replay.call(field)
@@ -235,11 +242,13 @@ func _golden(context: RefCounted) -> void:
 		var expected: String = fixture.checksums.get(str(frame), "")
 		context.equal(replay.checksum(frame).hex_encode(), expected, "checksum %d" % frame)
 		context.equal(replay.is_skipped_frame(frame), frame == 2, "skipped flag %d" % frame)
+		for player: int in 2:
+			context.equal(replay.inputs(frame).read(player).status, fixture.statuses[frame][player] if version == "v5" else 1, "player status")
 		context.equal(replay.input_digest(frame), replay.computed_input_digest(frame), "input digest %d" % frame)
 	context.equal(replay.inputs(2).read(1).bytes, PackedByteArray([0x00, 0x80]), "a skipped frame holds neutral input")
 	context.equal(replay.inputs(1).read(1).bytes, PackedByteArray([0x7f, 0x80]), "second player's input")
-	context.bytes_equal(replay.to_bytes(), fixture.v4, 0, "re-encodes the golden")
-	context.bytes_equal(replay.owned_copy().to_bytes(), fixture.v4, 0, "copies keep every field")
+	context.bytes_equal(replay.to_bytes(), fixture[version], 0, "re-encodes the golden")
+	context.bytes_equal(replay.owned_copy().to_bytes(), fixture[version], 0, "copies keep every field")
 	context.state(replay.frame_count(), replay.to_bytes())
 	context.equal(Replay.new().decode(fixture.v1), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the unreleased v1 layout explicitly")
 	context.equal(Replay.new().decode(fixture.v2), Replay.DecodeCode.UNSUPPORTED_VERSION, "rejects the released v2 layout explicitly")
@@ -267,7 +276,7 @@ func _rejects_malformed_files(context: RefCounted) -> void:
 		{"label": "version 0", "patch": [4, 2, 0], "code": UNSUPPORTED},
 		{"label": "released v2", "patch": [4, 2, 2], "code": UNSUPPORTED},
 		{"label": "released v3", "patch": [4, 2, 3], "code": UNSUPPORTED},
-		{"label": "future version", "patch": [4, 2, 5], "code": UNSUPPORTED},
+		{"label": "future version", "patch": [4, 2, 6], "code": UNSUPPORTED},
 		{"label": "largest version", "patch": [4, 2, 0xffff], "code": UNSUPPORTED},
 		{"label": "one player", "patch": [6, 1, 1], "code": MALFORMED},
 		{"label": "nine players", "patch": [6, 1, 9], "code": MALFORMED},
@@ -316,7 +325,7 @@ func _protects_input_rows(context: RefCounted) -> void:
 	var bytes: PackedByteArray = replay.to_bytes()
 	var last: int = frames - 1
 	var row_size: int = replay.player_count() * replay.input_width()
-	var tail: int = Replay.DIGEST_BYTES + 1 + (Replay.CHECKSUM_BYTES if not replay.checksum(last).is_empty() else 0)
+	var tail: int = replay.player_count() + Replay.DIGEST_BYTES + 1 + (Replay.CHECKSUM_BYTES if not replay.checksum(last).is_empty() else 0)
 	var corrupted: PackedByteArray = bytes.duplicate()
 	corrupted[bytes.size() - tail - row_size] ^= 0xff
 	var decoded: Replay = _decode(corrupted)
@@ -392,7 +401,7 @@ func _bounds_recording(context: RefCounted) -> void:
 
 
 ## Peer lockstep advances on received input while the mesh confirmation limit trails by a round trip.
-## Recording must not wait for that limit: the queues discard each frame once it is simulated.
+## Private staging preserves discarded queue rows; public export waits for mesh confirmation.
 func _lockstep_confirmation_limit(context: RefCounted) -> void:
 	var config: Config = _config(false, FRAMES)
 	config.max_prediction_frames = 0
@@ -409,7 +418,10 @@ func _lockstep_confirmation_limit(context: RefCounted) -> void:
 		if frame % 10 == 9:
 			context.equal(session.set_confirmation_limit(frame - 5).code, Types.Code.OK, "limit trails receipts")
 	var replay: Replay = session.replay()
-	context.equal(replay.frame_count(), 30, "records every simulated frame")
+	context.equal(replay.frame_count(), 25, "exports only mesh-confirmed frames")
+	context.equal(session.set_confirmation_limit(29).code, Types.Code.OK, "finalizes the staged tail")
+	replay = session.replay()
+	context.equal(replay.frame_count(), 30, "retains every receipt row until confirmation")
 	context.equal(replay.skipped_frames(), 0, "skips nothing while the limit trails")
 	var checksums: int = 0
 	for frame: int in range(replay.frame_count()):
@@ -463,3 +475,28 @@ func _refuses_foreign_recording(context: RefCounted) -> void:
 		context.equal(Player.new().configure(recording, Game.new(), 0, 0, 0, foreign), Types.Code.INCOMPATIBLE_RECORDING, "the player refuses a foreign " + field)
 		context.equal(Player.new().configure_expert(recording, 0, foreign), Types.Code.INCOMPATIBLE_RECORDING, "expert playback refuses a foreign " + field)
 	context.equal(Player.new().configure_expert(recording, 0, config), Types.Code.OK, "expert playback accepts the matching configuration")
+
+
+# Value: protects=portable statuses are bounded and integrity checked; fails_when=status changes silently alter playback; why_new=v4 had no status bytes; seam=none
+func _status_integrity(context: RefCounted) -> void:
+	var golden: PackedByteArray = _fixture().v5
+	var body: int = golden.size() - 4 * (4 + 2 + 1 + Replay.DIGEST_BYTES) - 2 * Replay.CHECKSUM_BYTES
+	for size: int in range(golden.size()):
+		context.equal(Replay.new().decode(golden.slice(0, size)), Replay.DecodeCode.MALFORMED, "status-aware truncation refused")
+	for status: int in [0, 2, 4, 255]:
+		var malformed: PackedByteArray = golden.duplicate()
+		malformed[body + 4] = status
+		var kept: Replay = _decode(golden)
+		context.equal(kept.decode(malformed), Replay.DecodeCode.MALFORMED, "only finalized player statuses load")
+		context.equal(kept.to_bytes(), golden, "malformed status preserves prior recording")
+	var corrupt: PackedByteArray = golden.duplicate()
+	corrupt[body + 4] = 3
+	var replay: Replay = _decode(corrupt)
+	context.equal(replay != null, true, "a changed valid status still decodes")
+	for expert: bool in [false, true]:
+		var player: Player = Player.new()
+		var code: int = player.configure_expert(replay) if expert else player.configure(replay, Game.new())
+		context.equal(code, Types.Code.OK, "configures status integrity playback")
+		code = player.begin_advance().code if expert else player.step()
+		context.equal(code, Types.Code.DESYNC, "status corruption fails before simulation without state checksums")
+		context.equal(player.failure_frame(), 0, "status digest identifies owning row")

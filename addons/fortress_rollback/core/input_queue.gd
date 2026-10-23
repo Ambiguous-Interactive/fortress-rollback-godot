@@ -261,10 +261,11 @@ func freeze_at(frame: int) -> int:
 	_frozen = true
 	_frozen_frame = frame
 	_last_actual = agreed.bytes.duplicate()
-	# Frames past the agreed frame used the later actual value and must be resimulated.
+	# A simulated tail must adopt the frozen bytes and disconnected status, even
+	# when its predicted bytes already matched the frozen value.
 	# An earlier pending correction stays the earliest one, so a mismatch below the
 	# agreed frame is not lost.
-	if _last_added > frame:
+	if maxi(_last_added, _last_requested) > frame:
 		_first_incorrect = frame + 1 if _first_incorrect == -1 else mini(_first_incorrect, frame + 1)
 	return Code.OK
 
@@ -284,8 +285,8 @@ func freeze_with_value(frame: int, bytes: PackedByteArray) -> int:
 	_frozen = true
 	_frozen_frame = frame
 	_last_actual = bytes.duplicate()
-	# Frames past the agreed frame used the later actual value and must be resimulated.
-	if _last_added > frame:
+	# Both actual and predicted tails must adopt the certified value and status.
+	if maxi(_last_added, _last_requested) > frame:
 		_first_incorrect = frame + 1 if _first_incorrect == -1 else mini(_first_incorrect, frame + 1)
 	return Code.OK
 

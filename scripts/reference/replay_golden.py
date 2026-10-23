@@ -57,8 +57,16 @@ def header(version):
     return packed
 
 
+def v5():
+    """Status-aware layout: one status per player, covered by the row digest."""
+    statuses = [bytes([1, 1]), bytes([1, 3]), bytes([1, 1]), bytes([3, 3])]
+    body = b''.join(row + status + struct.pack('<B', flag) + checksum + digest(row + status)
+                    for (row, flag, checksum), status in zip(FRAMES, statuses))
+    return header(5) + NEUTRAL + b''.join(text(FIELDS[name]) for name in NAMES) + body
+
+
 def v4():
-    """The current layout: every frame carries the digest of its own input row."""
+    """The legacy byte-only layout: every frame carries the digest of its own input row."""
     body = b''.join(row + struct.pack('<B', flag) + checksum + digest(row) for row, flag, checksum in FRAMES)
     return header(4) + NEUTRAL + b''.join(text(FIELDS[name]) for name in NAMES) + body
 
@@ -95,6 +103,8 @@ def fixture():
             'v2 is the released layout without the final input digest, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
             'v3 is the released layout that anchors only the final input row, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
         ],
+        'v5': chunks(v5()),
+        'statuses': [[1, 1], [1, 3], [1, 1], [3, 3]],
         'v4': chunks(v4()),
         'fields': FIELDS,
         'checksums': {'0': CHECKSUM_A.hex(), '3': CHECKSUM_B.hex()},

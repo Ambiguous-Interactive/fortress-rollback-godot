@@ -55,7 +55,7 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, ch
 		return Types.Code.BUSY
 	if replay == null or game == null or not Driver.accepts_callback_arguments(game, "simulate_frame") or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
-	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count()):
+	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count(), replay._format_version):
 		return Types.Code.INVALID_CONFIGURATION
 	if config != null and not replay.matches_config(config):
 		return Types.Code.INCOMPATIBLE_RECORDING
@@ -98,7 +98,7 @@ func configure_expert(replay: Replay, max_snapshot_bytes: int = 0, config: RefCo
 		return Types.Code.BUSY
 	if replay == null or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
 		return Types.Code.INVALID_CONFIGURATION
-	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count()):
+	if not Replay.valid_shape(replay.player_count(), replay.input_width(), replay.frame_count(), replay._format_version):
 		return Types.Code.INVALID_CONFIGURATION
 	if config != null and not replay.matches_config(config):
 		return Types.Code.INCOMPATIBLE_RECORDING

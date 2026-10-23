@@ -153,6 +153,10 @@ Recovery can succeed without a forward frame. Consume staged local samples only 
 exposed frame advances, and refresh any retained current boundary after correction before
 publishing its checksum. Finalize late matching inputs without fabricating another sample.
 
+A peer drop changes simulation status even when frozen bytes equal prior predictions; repair
+every simulated frame after the cut. Keep receipt-only replay rows private until mesh confirmation,
+and rewrite their bytes, statuses and checksum coverage when the agreed drop replaces them.
+
 Specialized session modes must audit inherited public mutators. A confirmed-only spectator
 cannot accept player freezing or player-mesh confirmation limits: playback may succeed while exports lose
 their confirmed rows. Test public confirmation and row export alongside game state, using changing host inputs.
