@@ -14,6 +14,7 @@ and replay integrity after a dropped slot. Trigger: production debugging and a f
 | Receipt-only staging is provisional, even when all samples are actual. | `test_replay_drop.gd` holds mesh confirmation behind receipt progress, freezes the tail, then compares independent status-sensitive canonical states. | Export only finalized prefixes; rewrite staged rows and remove stale checksum coverage. |
 | Equal predicted bytes can still require drop correction. | The predicted-tail control reported no pending rollback, wrong live state and replay DESYNC. | Both queue freeze APIs inspect requested simulation progress as well as actual receipt. |
 | Online download verification kept its old format tuple despite the core/golden upgrade. | Candidate browser jobs on both pins rejected version 5; updating only their synthetic packing fixtures reproduced four verifier errors locally. | Update the independent verifier and add status rejection cases; record the format-consumer sweep in the transport skill. |
+| Hosted package downloads can consume the outer verification budget. | Ownership setup fetched25.9MB in9m18s, leaving5m08s before its15-minute timeout. A Java apt step spent over17 minutes downloading on another runner. | Preserve internal probe deadlines, reserve30 minutes outside them, and verify/reuse hosted Java17 while retaining apt fallback and receipt provenance. |
 
 ## Curation and pruning
 
