@@ -19,6 +19,7 @@ const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
 const Advisor = preload("res://addons/fortress_rollback/core/delay_advisor.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 
 
 class Packet:
@@ -95,6 +96,21 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		return I.Code.INVALID_ARGUMENT
 	if remotes.size() > 1 and (config.max_prediction_frames == 0 or (config.max_prediction_frames == 1 and config.input_delay == 0)):
 		return I.Code.INVALID_ARGUMENT
+	var agreed_local: T.Message = local
+	if controls.enabled and controls.disconnect_behavior == L.Disconnect.CONTINUE:
+		# Every target needs an era, a retained interval and its bounded control header.
+		var control_bytes: int = Codec.HEADER_BYTES + 54 + 2 + profile.player_count * 12
+		if handshake_options.max_packet_bytes < control_bytes or local.features != 0:
+			return I.Code.INVALID_ARGUMENT
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = profile.player_count
+		limits.input_width = profile.input_width
+		limits.max_packet_bytes = handshake_options.max_packet_bytes
+		var encoded: T.Result = Codec.encode(local, limits)
+		if encoded.code != T.Code.OK:
+			return I.Code.INVALID_ARGUMENT
+		agreed_local = Codec.decode(encoded.bytes, limits).message
+		agreed_local.features = T.FEATURE_RETAINED_DROP
 	var core_config: Config = config.owned_copy()
 	core_config.capture_confirmed_snapshots = controls.enabled and config.checksums_enabled and profile.desync_interval > 0
 	var core: Session = Session.new()
@@ -113,7 +129,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 			if profile.roster[slot] == remotes[key]:
 				slots.append(slot)
 		var endpoint: Endpoint = Endpoint.new()
-		var code: int = endpoint.configure(local, remotes[key], handshake_options, input_options, _accept_remote.bind(slots), controls)
+		var code: int = endpoint.configure(agreed_local, remotes[key], handshake_options, input_options, _accept_remote.bind(slots), controls)
 		if code != I.Code.OK:
 			return code
 		peers[key] = endpoint

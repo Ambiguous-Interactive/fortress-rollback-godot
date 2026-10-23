@@ -34,6 +34,7 @@ var transports: Array[Direct] = []
 var games: Array[Game] = []
 var errors: Array[String] = []
 var records: Array[Dictionary] = []
+var peer_failures: Array[Dictionary] = []
 var received_binary: int = 0
 var sent_packets: int = 0
 var received_packets: int = 0
@@ -86,7 +87,7 @@ func _run() -> void:
 			errors.append("teardown_barrier")
 	_cleanup()
 	if not ok or not errors.is_empty():
-		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors}})
+		_publish({"passed": false, "failure": {"players": player_count, "stage": stage, "errors": errors, "peer_failures": peer_failures}})
 		return
 	_publish({"passed": true, "records": records, "binary_receives": received_binary})
 
@@ -270,6 +271,7 @@ func _service() -> bool:
 		for _attempt: int in 2:
 			var polled: int = peers[index].poll(transport_us, _poll_tokens(peers[index]))
 			if polled not in [I.Code.OK, I.Code.BACKPRESSURE] or peers[index].status().lifecycle == S.Lifecycle.TERMINATED:
+				_capture_peer_failure(peers[index], index, polled)
 				errors.append("peer_poll_%d" % polled)
 				return false
 			for event: Dictionary in peers[index].drain_events():
@@ -340,6 +342,36 @@ func _healthy(final: bool = false) -> bool:
 			errors.append("protocol_not_running")
 			return false
 	return true
+
+
+func _capture_peer_failure(peer: Peer, index: int, polled: int) -> void:
+	if peer_failures.size() >= 8:
+		return
+	var status: S.Status = peer.status()
+	var events: Array[Dictionary] = []
+	var drained: Array[Dictionary] = peer.drain_events()
+	for event: Dictionary in drained.slice(maxi(0, drained.size() - 16)):
+		var selected: Dictionary = {}
+		for field: String in ["kind", "reason", "frame"]:
+			if event.has(field) and typeof(event[field]) in [TYPE_INT, TYPE_BOOL, TYPE_STRING]:
+				selected[field] = String(event[field]).left(128) if typeof(event[field]) == TYPE_STRING else event[field]
+		events.append(selected)
+	var barriers: Array[Dictionary] = []
+	for remote: PackedByteArray in peer.peer_ids():
+		var barrier: RefCounted = peer._drops.barrier(remote.hex_encode())
+		if barrier == null:
+			continue
+		var answers: Array[Dictionary] = []
+		for answer: Dictionary in barrier.answers.values():
+			var selected: Dictionary = {}
+			for field: String in ["cut", "bound", "available_through"]:
+				if answer.has(field): selected[field] = int(answer[field])
+			answers.append(selected)
+		barriers.append({"cut": barrier.cut, "lower": barrier.lower, "upper": barrier.upper, "available_through": barrier.available_through,
+			"state": barrier.state, "role": barrier.role, "certified": barrier.certified, "answers": answers,
+			"certificates": barrier.certificates.size()})
+	peer_failures.append({"index": index, "stage": stage, "poll_code": polled, "reason": status.reason, "current_frame": status.current_frame,
+		"confirmed_frame": status.confirmed_frame, "pending_rollback_frame": status.pending_rollback_frame, "events": events, "barriers": barriers})
 
 static func _sample(frame: int, slot: int) -> int:
 	return (frame * 17 + slot * 31 + 1) & 255

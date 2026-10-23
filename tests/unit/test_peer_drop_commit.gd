@@ -224,10 +224,10 @@ func _healthy_after_commit(context: RefCounted, mesh: Dictionary, commit: T.Mess
 		for player: int in [0, 1]:
 			context.equal(first[frame][player].bytes, _sample(player, frame).hex_encode(), "continuing inputs match the deterministic script")
 			context.equal(second[frame][player].bytes, first[frame][player].bytes, "survivors simulate identical continuing inputs")
-		context.equal(first[frame][2].bytes, _sample(2, commit.cut).hex_encode(), "the departed slot retains its certified frozen input")
+		context.equal(first[frame][2].bytes, _sample(2, mini(frame, commit.cut)).hex_encode(), "the departed slot preserves actual inputs through the raised cut")
 		context.equal(second[frame][2].bytes, first[frame][2].bytes, "survivors retain the same frozen input")
-		context.equal(first[frame][2].status, "disconnected", "the departed slot remains disconnected")
-		context.equal(second[frame][2].status, "disconnected", "the follower keeps the slot disconnected")
+		context.equal(first[frame][2].status, "disconnected" if frame > commit.cut else "confirmed", "disconnect starts strictly after the raised cut")
+		context.equal(second[frame][2].status, "disconnected" if frame > commit.cut else "confirmed", "the follower preserves actual history through the cut")
 	# Compare canonical state bytes after a shared confirmed frame, choosing the
 	# latest simulation of that frame so any rollback correction is included.
 	var states: Array[String] = []

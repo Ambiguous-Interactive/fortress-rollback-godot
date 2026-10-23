@@ -143,7 +143,7 @@
 
 ### Fixed
 
-- Fix peer drops rewriting exposed confirmed history. Cuts below the protected frontier are refused, and failed agreements end the match instead of freezing uncertified local frontiers. Unequal-frontier recovery remains planned.
+- Fix peer drops rewriting exposed confirmed history. Survivors certify retained actual history before agreeing a raised cut. Missing history ends the match safely. The handshake requires the new drop feature; update every peer together.
 
 - Fix disconnected player statuses in replay recordings. New version 5 files cover input bytes and statuses with each row digest; version 4 files still load with all-confirmed defaults.
 

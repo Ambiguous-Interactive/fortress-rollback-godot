@@ -2,7 +2,7 @@
 
 ## Work Under Review
 
-- Scope: finalized spectator statuses, authenticated v3 delivery and protected drop frontiers.
+- Scope: finalized spectator statuses, authenticated v3 delivery, protected drop frontiers and certified retained-history cuts.
 - Trigger: new wire format, production divergence and dependency qualification.
 - Evidence: `test_spectator_status.gd` canonical history regression and status-erasing mutant;
   `test_peer_drop_history.gd` unequal-frontier freeze rejection; native SDK relay qualification.
@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | Equal input bytes can hide different disconnected-player simulation behavior across a spectator bridge. | technique | `tests/unit/test_spectator_status.gd`: `host_drop` fails against the byte-only path and the status-erasing mutant. |
 | An unaudited dependency upgrade is unnecessary to prove the current SDK can decode spectator delivery. | fact | [Qualification](../../docs/reference/spectator-relay-qualification.md): identical public drill passes with reviewed and current SDK on both pins. |
-| Full unequal-frontier recovery requires missing historical rows, beyond agreement on one frozen value. | rule | [Drop contract](../../docs/peer-lifecycle.md#unequal-confirmation-frontiers); #188 retains receipt-raised cut and range backfill acceptance. |
+| Receipt-raised cuts require exact per-target retained coverage; missing rows require a separate historical donor protocol. | rule | [Drop contract](../../docs/peer-lifecycle.md#unequal-confirmation-frontiers); #188 retains receipt-raised cut and range backfill acceptance. |
 
 | Manual model packets omitted the new status trailer, bypassing their intended conflict and mutation gates. | technique | Full460-case suites fail the original fixtures; corrected v3 fixtures pass both pins without changed assertions. |
 | Teardown disconnections must not start new drop decisions after a terminal cause commits. | rule | `commit_deadline` detects duplicate timeout/missing-history outcomes after draining teardown events. |
@@ -38,4 +38,4 @@
 ## Outcome
 
 - State: `findings-acted`.
-- Follow-ups: #188 full receipt-raised history transfer; #131 dependency review and exported authenticated spectator witness; #47 upstream differential acceptance.
+- Follow-ups: #188 full missing-history donor transfer; #131 dependency review and exported authenticated spectator witness; #47 upstream differential acceptance.

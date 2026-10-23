@@ -164,6 +164,7 @@ func _initialize() -> void:
 	probe.peers.append(peer)
 	probe.player_count = 2
 	if not _wait_diagnostics(probe): return
+	if not _terminal_diagnostics(peer): return
 	probe.free()
 	print("WEBRTC_CLOCK_TEST passed")
 	quit(0)
@@ -173,6 +174,36 @@ func _check(condition: bool, message: String) -> bool:
 	push_error(message)
 	quit(1)
 	return false
+
+
+# Value: protects=terminal witness causes; fails_when=poll rejection discards lifecycle events; why_new=wait snapshots omit terminal polls; seam=actual peer close
+func _terminal_diagnostics(peer: Peer) -> bool:
+	var probe: RetainedProbe = RetainedProbe.new()
+	probe.clients.append(probe.SDK.new())
+	probe.meshes.append(probe.SDKMesh.new())
+	probe.peers.append(peer)
+	probe.mixed_enabled = true
+	probe.stage = "peer_drop_agreement"
+	probe.mixed = RetainedMixed.new()
+	probe.transport_epoch_us = probe.ticks_us - 400002
+	peer.close(400001)
+	for frame: int in 20:
+		peer._publish_event({"kind": "peer_drop_pending", "frame": frame, "peer": PackedByteArray([2])})
+	peer._publish_event({"kind": "peer_drop_unconfirmed", "reason": "no_common_window", "peer": PackedByteArray([2])})
+	if not _check(peer.status().lifecycle == probe.S.Lifecycle.TERMINATED, "close actual peer before failed service"): return false
+	if not _check(not probe._service(), "terminal peer still rejects browser service"): return false
+	if not _check(probe.peer_failures.size() == 1, "failed poll retains one terminal snapshot before teardown"): return false
+	var snapshot: Dictionary = probe.peer_failures[0]
+	if not _check(snapshot.reason == probe.S.Code.TERMINATED and snapshot.poll_code == I.Code.TERMINATED,
+		"failure distinguishes the committed terminal cause from poll result"): return false
+	if not _check(snapshot.stage == "peer_drop_agreement" and snapshot.events.size() == 16
+		and snapshot.events[-1].reason == "no_common_window", "terminal snapshot retains the bounded event tail and exact last cause"): return false
+	for event: Dictionary in snapshot.events:
+		if not _check(not event.has("peer") and not event.has("bytes"), "terminal diagnostics omit packet and peer byte payloads"): return false
+	probe.meshes[0].free()
+	probe.clients[0].free()
+	probe.free()
+	return true
 
 
 # Value: protects=bounded mixed service batches; fails_when=an idle or a busy route stops the wrong schedule; why_new=the batch rule needs route work; seam=actual mixed service

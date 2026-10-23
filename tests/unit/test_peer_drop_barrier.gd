@@ -362,7 +362,7 @@ func _agreed_frame(context: RefCounted) -> void:
 		context.equal(rows_second[frame][2].status, "disconnected", "the other survivor reports a disconnected status")
 
 
-## Unequal held frontiers cannot authorize a lower cut without full historical backfill.
+## A lagging confirmation frontier still freezes only after all retained target receipts.
 func _lagging_survivor(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, true)
@@ -370,10 +370,12 @@ func _lagging_survivor(context: RefCounted) -> void:
 	# The second survivor stops stepping, so its confirmed frontier trails the first one.
 	mesh.now += 1000
 	mesh.peers[0].step(mesh.now, _inputs(mesh, 0))
-	_detect(context, mesh, [0, 1], 600000, true, [], [], true)
-	context.equal(mesh.cuts.is_empty(), true, "unequal frontiers cannot authorize an unsafe cut")
+	_detect(context, mesh, [0, 1])
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0], 8, "the cut includes every retained target receipt")
+	context.equal(cuts[1], cuts[0], "the lagging survivor agrees the raised frame")
 	for survivor: int in [0, 1]:
-		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "unbackfilled history fails closed")
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "complete history keeps the match running")
 
 
 ## The match holds while the survivors agree the frozen frame.

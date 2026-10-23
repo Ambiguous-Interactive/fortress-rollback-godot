@@ -23,6 +23,7 @@ RUNTIME_SCRIPTS = frozenset({
     'core/input_queue.gd',
     'core/peer_checksums.gd',
     'core/peer_drop_barrier.gd',
+    'core/peer_drop_inventory.gd',
     'core/peer_session.gd',
     'core/replay.gd',
     'core/replay_player.gd',

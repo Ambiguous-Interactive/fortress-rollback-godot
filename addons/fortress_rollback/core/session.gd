@@ -310,6 +310,13 @@ func retained_input(player: int, frame: int) -> PackedByteArray:
 	return retained.bytes.duplicate() if retained.code == Queue.Code.OK else PackedByteArray()
 
 
+## Exact retained contiguous actual frame interval for one slot; empty means unavailable.
+func retained_input_range(player: int) -> PackedInt64Array:
+	if _config == null or player < 0 or player >= _queues.size():
+		return PackedInt64Array()
+	return _queues[player].retained_frame_range()
+
+
 ## Per-slot actual scheduled receipt bounds for transport gossip; never prediction frames.
 func received_frames() -> PackedInt64Array:
 	return _received.duplicate()

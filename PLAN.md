@@ -461,8 +461,10 @@ one peer stops answering, the two survivors agree one frame, keep one
 confirmed history and keep playing, and a second departure leaves one
 survivor that freezes the slot on its own frontier. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
-frame and the pinned tier certifies the frozen value. The scoped min-cut tier fails closed when unequal survivor confirmation frontiers leave no common protected cut;
-[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188) owns the receipt-raised cut and full missing-history backfill.
+frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
+cover exposed frontiers and target receipts, and certifies complete retained actual
+intervals. Missing rows still fail closed; [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
+owns donor selection and full missing-history backfill.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission
 journal and its own cut selection remain open in

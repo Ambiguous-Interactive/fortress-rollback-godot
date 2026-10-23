@@ -271,7 +271,7 @@ func _valid_local(local: T.Message, remote_sender: PackedByteArray) -> bool:
 		return false
 	if not _nonzero(local.session_id, 16) or not _nonzero(local.connection_id, 8) or local.sender_id == remote_sender:
 		return false
-	if local.min_compat_version != 1 or local.features != 0 or local.config == null:
+	if local.min_compat_version != 1 or local.features & ~T.FEATURE_RETAINED_DROP != 0 or local.config == null:
 		return false
 	var identities: Dictionary = {}
 	for identity: PackedByteArray in local.config.roster:

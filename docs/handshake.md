@@ -34,9 +34,12 @@ requires a fresh endpoint and session identity when no progress can free space.
 The caller supplies nonnegative, nondecreasing integer microseconds. Equal time
 is allowed. The endpoint never calls a clock or RNG. Tokens are opaque sixteen
 bytes, including zero; the caller controls their generation and must avoid
-reusing consumed tokens. Local configuration currently supports semantic
-compatibility version 1 and feature mask 0, while valid remote values are decoded
-and diagnosed as incompatibilities.
+reusing consumed tokens. Local configuration supports semantic compatibility
+version 1 and the retained-history drop feature bit (`1`). Player sessions advertise
+that bit automatically for `disconnect_behavior = CONTINUE`; other policies keep
+feature mask zero. Exact feature agreement refuses peers using the older drop tier
+before gameplay. Unknown local feature bits are refused; remote masks remain
+decodable so mismatches have an explicit diagnosis.
 
 Local session, sender and connection IDs and the remote sender ID must have the
 specified widths and contain a nonzero byte. Local and remote identities differ

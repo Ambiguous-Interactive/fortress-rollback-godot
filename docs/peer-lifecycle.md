@@ -95,13 +95,17 @@ longer holds the confirmed frontier back. Confirmed history before that frame
 never changes; the frames after it are resimulated with the frozen value. A
 departure before the mesh confirmed any frame ends the match, because there is
 no agreed value to freeze. Every peer of a mesh must use the same policy.
+`CONTINUE` advertises the retained-history drop feature in the handshake, so
+a peer using the older drop tier is refused before gameplay.
 
 ### The coordinated drop
 
 With more than one survivor left, the survivors agree the frozen frame before
 any of them freezes a slot. The survivor that owns the lowest surviving slot
-proposes the cut, every other survivor answers with the frame window it can
-still freeze, and the proposer commits the frame that all of them can retain.
+proposes the operation. Every survivor reports its protected confirmed frontier
+and a versioned per-player interval of retained actual inputs. The proposer raises
+the cut to cover reported confirmation and target receipts, and commits only when
+every survivor certifies complete retained history through that cut.
 A survivor only answers a proposal for a peer whose departure it observed
 itself, so one peer cannot drop a live peer. The match holds while the barrier
 runs: the survivors stop advancing, so the frames the cut needs stay retained.
@@ -111,13 +115,13 @@ messages, including a valid COMMIT. A commit accepted before the deadline stays
 irreversible and can still be acknowledged again after the deadline.
 
 The survivors then certify the value they freeze on. Every survivor answers
-the proposal with its own window and with the frame through which it still
-retains the departed slot's inputs. The proposer selects the agreed frame from
-those windows, reads the departed slot's value at that frame and sends it as
-the final candidate. A survivor that still holds the row computes the digest of
-its own value; a survivor that already released the row receives the value in
-bounded backfill chunks and checks the received bytes against the certified
-digest. Every survivor then certifies the frame and the digest, and the
+the proposal with its protected frontier and exact retained actual intervals.
+The proposer selects the receipt-raised frame, reads the departed slots' values
+at that frame and sends the final candidate. Every survivor checks its retained
+actual coverage and computes the digest of its own frozen value. The wire retains
+bounded frozen-value backfill chunks, but those chunks cannot replace missing
+historical rows or authorize a certificate without complete coverage.
+Every survivor then certifies the frame, the digest and its unchanged inventory. The
 proposer commits only after every survivor certified the same pair. The commit
 is irreversible and freezes the departed slot at the certified frame, so the
 survivors keep one confirmed history and one frozen value instead of splitting
@@ -173,20 +177,22 @@ derives its sequence from target eras. See
 #### Unequal confirmation frontiers
 
 Every public freeze must preserve the session's exposed confirmed history.
-The freezable window starts at the greater of the retained rollback floor and
-the protected confirmed frontier. A cut below that frontier is refused before
-input queues or replay history change. Barrier participants advertise this
-protected lower bound, so unequal frontiers without a common retained cut end
-the match instead of rewriting a survivor's confirmed history.
+A public freeze refuses a cut below the protected confirmed frontier before
+input queues or replay history change. Barrier participants advertise that frontier
+and their rollback floor separately, alongside exact retained actual intervals.
+The raised cut must cover every frontier and retain every needed row; otherwise
+the match ends instead of rewriting a survivor's confirmed history.
 
 This is a safety prerequisite, not complete unequal-frontier recovery.
 The pinned source raises the cut to cover every survivor's exposed confirmation
 and target-input receipts, then backfills missing actual input ranges before
-certification. The Godot tier still backfills only the frozen value. Full
-receipt-raised selection, range donors and bounded historical installation remain in
+certification. The Godot tier can agree unequal frontiers when every survivor already retains
+the required actual rows. It still transfers only the frozen value, so range
+donors and bounded missing-history installation remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
-Until that work lands, `CONTINUE` may terminate a match with unequal frontiers.
+Until that work lands, `CONTINUE` terminates a match when the raised cut requires
+actual history a survivor does not retain.
 
 The agreement runs in real sessions, not only in unit tests. Three peer
 sessions on the deterministic test transport play, one peer stops answering,
