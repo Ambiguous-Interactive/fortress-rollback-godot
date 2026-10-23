@@ -383,7 +383,7 @@ known-allocation positive control; flat memory alone is insufficient.
 ## Advanced parity boundaries
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
-Pausing or stepping a replay validates the displayed boundary before allowing further playback.
+Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
 in-memory snapshots without changing the portable file format. Viewer speed controls change
 only the bounded number of recorded frames serviced; each simulation step stays fixed.
@@ -424,8 +424,12 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
+Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
+Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 Live SignalFish spectator routing, handshake/events and upstream spectator
-differential/model acceptance remain open in #47.
+differential/model acceptance remain open in #47. The upstream server has added
+spectator relay routing; qualifying the SDK and upgrading the reviewed pins remain
+part of #131 before the exported spectator witness can use it.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so

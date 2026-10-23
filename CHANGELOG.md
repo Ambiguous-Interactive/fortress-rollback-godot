@@ -141,6 +141,10 @@
 
 ### Fixed
 
+- Fix spectator startup offers bypassing host expiry and active callback guards. Retries cannot revive an ended viewer or answer for a replaced viewer.
+- Fix spectator player-freeze calls replacing confirmed host inputs. Both freeze methods now return `UNSUPPORTED` for spectators.
+- Fix replay Pause, Step and seek destinations accepting corrupted input rows until playback resumed.
+
 - Keep the match running when a mid-match input delay raise cannot be sent. A peer session that could not hand the added frames to a peer ended the match with `PROTOCOL_FAILED`. The raise is now checked before the delay changes, so a peer that cannot take the frames or a catch-up row that was already released is reported as `NETWORK_BACKPRESSURE` and the match keeps running with the old delay.
 
 - Fail a test case that dies before its last assertion. A GDScript runtime error inside a case aborts that function, the caller resumes and still marks the case complete, so the runner reported a broken case as passed with a truncated assertion count. The launcher now merges the engine's output into one stream, attributes the abort to the case that was executing, fails that case with the suite, the aborting line and the engine message, and keeps every other case's record.

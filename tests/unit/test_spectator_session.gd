@@ -33,7 +33,7 @@ class WideGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["configuration", "confirmed_playback", "buffering", "delay_and_loss", "expert_parity", "host_export",
-			"storage_budget", "host_export_repair", "exhaustion", "shapes", "retained_row", "delay_bounds"]
+			"storage_budget", "host_export_repair", "exhaustion", "shapes", "retained_row", "delay_bounds", "mesh_mutators"]
 	)
 
 
@@ -392,3 +392,31 @@ func _delay_bounds(context: RefCounted) -> void:
 	context.equal(session.set_playback(0, 1, 5), Types.Code.OK, "largest legal catchup speed")
 	context.equal(session.set_playback(0, 1, 6), Types.Code.INVALID_CONFIGURATION, "catchup speed beyond the ring is refused")
 	context.equal(session.playback_policy(), PackedInt64Array([0, 1, 5]), "the accepted policy is reported back")
+
+
+# Value: protects=host rows remain authoritative after player-mesh calls; fails_when=inherited freezes replace host input;
+# why_new=configuration tests reject local input but not inherited remote-slot mutators; seam=none
+func _mesh_mutators(context: RefCounted) -> void:
+	for method: String in ["control", "freeze_player", "freeze_player_with_value"]:
+		var session: RefCounted = _spectator(context)
+		var game: RefCounted = Fixture.Game.new()
+		var driver: RefCounted = Driver.new(session, game)
+		var expected: int = 0
+		for frame: int in range(3):
+			if frame == 1 and method != "control":
+				var rejected: int = session.freeze_player(0, 0) if method == "freeze_player" else session.freeze_player_with_value(0, 0, PackedByteArray([9]))
+				context.equal(rejected, Types.Code.UNSUPPORTED, "spectators reject mesh slot freezing")
+				context.equal(session.frozen_frame(0), -1, "refusal does not freeze a host slot")
+			var row: Array[PackedByteArray] = _row(frame)
+			context.equal(session.receive_host_frame(frame, row).code, Types.Code.OK, "host remains authoritative")
+			context.equal(driver.step(frame, _empty()).code, Types.Code.OK, "play every complete host row")
+			for bytes: PackedByteArray in row:
+				expected = expected * 3 + bytes[0] + frame
+			context.equal(game.value, expected, "canonical state uses changing host bytes")
+			context.equal(session.status().confirmed_frame, frame, "confirmation follows complete host rows")
+			context.equal(session.received_frames(), PackedInt64Array([frame, frame]), "every slot receives the host row")
+			var exported: Types.FrameInputs = session.confirmed_inputs(frame)
+			context.equal(exported != null, true, "completed host row remains exportable")
+			if exported != null:
+				for player: int in range(row.size()):
+					context.equal(exported.read(player).bytes, row[player], "exports retain original host bytes")

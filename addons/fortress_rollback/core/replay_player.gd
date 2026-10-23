@@ -333,8 +333,8 @@ func restore_before(target: int) -> int:
 	return code
 
 
-## Validate a paused state boundary without consuming its input. Uses the same bounded save callback
-## as step; failures latch the frame and checksum evidence. Input-only playback and checksum-absent
+## Validate a paused state boundary and its input digest without consuming the input. Uses the same
+## bounded save callback as step; failures latch the frame and evidence. Input-only and checksum-absent
 ## boundaries succeed without invoking save_state, except when checkpoint caching requires a save.
 func validate_current_frame() -> int:
 	if _is_stepping or _batch != null:
@@ -379,6 +379,10 @@ func _verify_input_digest() -> int:
 
 
 func _validate_frame() -> int:
+	if _frame < _replay.frame_count():
+		var digest_code: int = _verify_input_digest()
+		if digest_code != Types.Code.OK:
+			return digest_code
 	if _needs_save():
 		var checkpoint: Checkpoint = Checkpoint.new()
 		var code: int = _save_checkpoint(checkpoint, _frame)

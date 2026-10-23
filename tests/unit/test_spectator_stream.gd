@@ -23,6 +23,7 @@ class ReentrantGame:
 		stream_codes.append(stream.poll(1000))
 		stream_codes.append(stream.receive_packet(stream.encode_end(1), 1000))
 		stream_codes.append(stream.receive_packet(stream.encode_keepalive(), 1000))
+		stream_codes.append(stream.receive_packet(Stream.encode_offer(stream._identity, stream._digest, 2, 1, stream._key), 1000))
 		var key: PackedByteArray = PackedByteArray()
 		key.resize(32)
 		var digest: PackedByteArray = Stream.configuration_digest(Fixture.new()._config(), "seed-1", "rules-1")
@@ -32,7 +33,7 @@ class ReentrantGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
-			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "wide_shapes"]
+			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "wide_shapes", "offer_lifecycle"]
 	)
 
 
@@ -483,7 +484,7 @@ func _busy(context: RefCounted) -> void:
 	var game: ReentrantGame = ReentrantGame.new()
 	game.stream_ref = weakref(callbacks)
 	context.equal(Driver.new(callbacks.playback_session(), game).step(1, _empty()).code, CODE.OK, "guarded callback completes")
-	context.equal(game.stream_codes, PackedInt32Array([CODE.BUSY, CODE.BUSY, CODE.BUSY, CODE.BUSY]), "every stream mutation refuses callback reentry")
+	context.equal(game.stream_codes, PackedInt32Array([CODE.BUSY, CODE.BUSY, CODE.BUSY, CODE.BUSY, CODE.BUSY]), "every stream mutation refuses callback reentry")
 	context.equal(callbacks.poll(2), CODE.OK, "callback reentry consumes no clock")
 
 
@@ -579,3 +580,45 @@ func _wide_shapes(context: RefCounted) -> void:
 			var short: PackedByteArray = Stream.encode_header(Stream.ROW, 3, players, width, _identity(), _digest())
 			short.append_array(sample)
 			context.equal(stream.receive_packet(short, 4), CODE.PROTOCOL_FAILED, label + " short row is refused")
+
+
+# Value: protects=startup obeys elapsed expiry and callback ownership; fails_when=offers bypass poll;
+# why_new=existing timeout and busy cases deliver rows or keepalives; seam=none
+func _offer_lifecycle(context: RefCounted) -> void:
+	var offer: PackedByteArray = _publisher(context).encode_offer()
+	for agreed: bool in [false, true]:
+		for arrival: int in [99, 100, 101]:
+			var stream: RefCounted = Stream.new()
+			context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "fresh viewer")
+			if agreed:
+				context.equal(stream.receive_packet(offer, 0), CODE.OK, "initial agreement")
+			var expected: int = CODE.OK if arrival < 100 else CODE.PROTOCOL_FAILED
+			context.equal(stream.receive_packet(offer, arrival), expected, "offer respects strict deadline")
+			context.equal(stream.playback_session().status().reason, CODE.OK if arrival < 100 else CODE.PROTOCOL_FAILED, "expiry commits before agreement")
+			if arrival < 100:
+				context.equal(stream.poll(98), CODE.INVALID_TIME, "accepted offer consumes monotonic clock")
+				context.equal(stream.poll(198), CODE.OK, "accepted offer refreshes liveness")
+	var busy: RefCounted = _stream(context)
+	context.equal(busy.receive_packet(busy.encode_row(0, _row(0)), 0), CODE.OK, "buffer row")
+	var advance: Types.Result = busy.playback_session().begin_advance()
+	context.equal(advance.code, CODE.READY, "active request")
+	var request: Types.Request = advance.batch.next_request()
+	context.equal(busy.receive_packet(offer, 1000), CODE.BUSY, "offer cannot mutate active request")
+	context.equal(busy.receive_packet(_legacy_offer(), 1000), CODE.BUSY, "conflicting offer cannot terminate active request")
+	var legacy_row: PackedByteArray = busy.encode_row(0, _row(0))
+	legacy_row[4] = 1
+	legacy_row = Stream.authenticate(_unsigned(legacy_row), _key())
+	context.equal(busy.receive_packet(legacy_row, 1000), CODE.BUSY, "version refusal cannot terminate active request")
+	context.equal(busy.playback_session().status().reason, CODE.OK, "busy refusal preserves lifecycle")
+	context.equal(busy.playback_session().complete_request(request.batch_id, request.request_id, true).code, CODE.OK, "finish original request")
+	context.equal(busy.poll(1), CODE.OK, "busy offers consume no clock")
+	var stopped: RefCounted = _stream(context)
+	stopped.playback_session().terminate(CODE.CALLBACK_FAILED)
+	context.equal(stopped.receive_packet(offer, 1), CODE.TERMINATED, "offer cannot revive terminated viewer")
+	context.equal(stopped.playback_session().status().reason, CODE.CALLBACK_FAILED, "original terminal reason preserved")
+	var ended: RefCounted = _stream(context)
+	context.equal(ended.receive_packet(ended.encode_end(0), 0), CODE.OK, "clean end")
+	context.equal(ended.receive_packet(offer, 1), CODE.TERMINATED, "offer cannot reopen clean end")
+	var replaced: RefCounted = _stream(context)
+	context.equal(replaced.playback_session().configure(Fixture.new()._config()), CODE.OK, "replace exposed viewer")
+	context.equal(replaced.encode_accept().is_empty(), true, "old agreement cannot answer for replacement viewer")
