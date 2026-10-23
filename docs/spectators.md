@@ -3,10 +3,10 @@
 `FortressSpectatorSession` plays one trusted host's complete confirmed input rows.
 It uses the same ordered expert requests and `FortressDriver` game callbacks as
 player sessions. Spectators contribute no input, prediction or confirmation to
-the host. Rows currently carry input bytes only, and playback supplies `CONFIRMED` status
-for every player. A game whose simulation changes on `DISCONNECTED` status cannot use this
-byte-only stream to reproduce a match after graceful drop; status delivery is tracked in
-[#187](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/187). The playback API and optional byte envelope are transport-independent; live SignalFish
+the host. Complete rows carry input bytes and finalized `CONFIRMED` or `DISCONNECTED`
+status for every player. Playback preserves those statuses, including when a game
+changes behavior after graceful drop. The playback API and optional byte envelope
+are transport-independent; live SignalFish
 spectator routing and network handshake remain under [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47).
 
 ## Try the local example
@@ -89,14 +89,17 @@ the advance is refused with `HISTORY_UNAVAILABLE` and no game callback runs.
 ## Deliver confirmed rows
 
 The caller must authenticate the host, bind packets to the correct game lifetime,
-and agree configuration before calling `receive_host_frame(frame, inputs)`.
-The method takes one `Array[PackedByteArray]` in stable player order, copies it,
-and validates every player's width before changing the buffer.
+and agree configuration before calling `receive_host_frame(frame, inputs, statuses)`.
+The method takes one `Array[PackedByteArray]` and one `PackedByteArray` of statuses
+in stable player order. It copies the complete row and validates every input width
+and status before changing the buffer. Omit statuses, or pass an empty array,
+for the byte-only API's all-`CONFIRMED` default. Pass explicit statuses when
+streaming a dropped match; equal input bytes can still have different simulation behavior.
 
 | Result | Meaning |
 | --- | --- |
 | `OK` | Owned row accepted, or identical retained duplicate |
-| `INVALID_CONFIGURATION` | Row does not contain exactly the configured players |
+| `INVALID_CONFIGURATION` | Wrong player/status count or a non-final status |
 | `INPUT_WIDTH` | A player's input has the wrong byte width |
 | `INVALID_FRAME` | Negative, exhausted or overwritten old frame |
 | `INPUT_ALREADY_SUBMITTED` | Conflicting duplicate; original row remains unchanged |
@@ -115,7 +118,7 @@ A local `FortressSession` host can export a caller-owned row with
 `confirmed_inputs(frame)`. It returns null unless the frame was simulated, is
 confirmed under the host's current confirmation policy, and is outside pending
 correction. It also returns null during request processing or after a physical
-input tag was overwritten. Copy the returned per-player bytes into a complete
+input tag was overwritten. Copy both the returned per-player bytes and statuses into a complete
 row before delivering them. Export does not extend rollback history or wait for
 spectators; callers must keep their own bounded send cursor and handle missing
 history explicitly. The playable example shows this loop.
@@ -209,8 +212,8 @@ code = stream.poll(now_us)
 The identity contains a 16-byte session ID, eight-byte host ID and eight-byte
 connection lifetime. Identifiers fence delivery; the key authenticates the sender.
 The packet limit must fit the largest packet the envelope produces: the startup
-exchange is 88 bytes and a complete row is the header plus one sample per
-player.
+exchange is 88 bytes and a complete row is the header plus one sample and
+one status byte per player.
 The key is a shared secret that never travels in a packet. The digest binds the
 agreed match: the player count, the input width, the neutral input, the seed and the
 rules version. `Stream.configuration_digest(config, seed, rules_version)` derives it
@@ -230,12 +233,15 @@ cannot change the replacement viewer. A failed viewer configuration preserves
 the existing stream. Explicit stream configuration installs a fresh viewer;
 use a fresh initial game, driver and agreed connection identity with it.
 
-The 80-byte little-endian header contains `FRGS`, version 2, kind, player count,
+The 80-byte little-endian header contains `FRGS`, version 3, kind, player count,
 reserved zero byte, u32 input width, the identity, the 16-byte configuration digest,
 a u32 frame and the 16-byte keyed tag. The tag is an HMAC-SHA256 of the header and
 the body under the shared key, truncated to 16 bytes; it sits between the header and
 the body, so a row body keeps its fixed offset. `encode_row`
-appends exactly one complete row in stable player order. Obtain that row from the
+appends all player samples in stable player order, followed by one status byte
+per player in the same order. `CONFIRMED` is 1 and `DISCONNECTED` is 3;
+`NONE` (0), `PREDICTED` (2) and other values are refused. Omitted statuses default to all-confirmed.
+The tag authenticates both the samples and statuses. Obtain that row from the
 host's corrected `confirmed_inputs`; the encoder cannot prove it was confirmed.
 `encode_end(final_frame)` carries the exclusive final frame without a body.
 `encode_keepalive()` uses kind 3, a reserved zero frame, and no body. It refreshes
@@ -243,8 +249,10 @@ host liveness without adding inputs, advancing playback, or completing an END ga
 Send it before the deadline when no row can be delivered, including confirmation
 stalls, game pauses, or viewer backpressure. Poll the viewer independently.
 
-ROW (kind 1), END (kind 2) and keepalive (kind 3) share the version 2 envelope.
-Version 2 replaces the unauthenticated version 1 bytes. The envelope version and
+ROW (kind 1), END (kind 2) and keepalive (kind 3) share the version 3 envelope.
+Version 3 adds finalized row statuses to the authenticated version 2 envelope.
+Versions 1 and 2 remain frozen and are refused at startup; there is no automatic
+downgrade that could lose disconnected status. Update both host and viewer together. The envelope version and
 the optional kinds are negotiated before the first row, so a peer that speaks
 another envelope fails at startup instead of at the first packet. Keepalive
 delivery requires the same key and lifetime as input rows.
@@ -310,7 +318,7 @@ version is the version byte of the accepted packet.
 `agreement_state()` reports `PENDING` before the exchange, `AGREED` after it and
 `REFUSED` after it fails. A row, an END or a keepalive that arrives before the
 agreement is refused with `NOT_SYNCHRONIZED`, and the publisher publishes no row
-before it. The version 1 bytes stay frozen: a change of the envelope version is
+before it. Historical version 1 and 2 bytes stay frozen; a format change requires
 a new envelope version with its own golden.
 
 ## Observe playback lifecycle
@@ -371,7 +379,7 @@ views, and manual/driver request equality. The local game example compares every
 viewer state with independent original-input game history while the host rolls
 back. Pausing and history loss leave host progress unaffected.
 
-The version 2 envelope adds an independent golden for the whole packet, including
+The version 3 envelope has an independent golden for the whole packet, including
 the keyed tag, computed outside the engine. Negative controls refuse a row signed
 with another key, a changed body that keeps the old tag, a packet that carries
 another agreed configuration digest, and a foreign identity, and none of them
@@ -385,8 +393,8 @@ version 1 bytes and for a version 1 offer, the host records `UNSUPPORTED` for a
 version 1 answer, and the viewer terminates without a partial playback. An
 offer that names an unknown optional kind is refused the same way. An offer
 signed with another key is a protocol failure and agrees nothing. A retried
-offer repeats the agreement and a different offer terminates the viewer. The
-version 2 row golden and its negative controls keep passing unchanged.
+offer repeats the agreement and a different offer terminates the viewer. Frozen
+version 2 packets are refused; version 3 has its own complete-packet golden.
 
 An independent finite playback model checks 120 seeded byte-delivery schedules:
 queue capacities 2, 3 and 5, zero and maximum delay, duplicate and reordered rows,
@@ -400,3 +408,7 @@ This foundation does not close #47 or #131. Actual upstream spectator differenti
 checks, host protocol events and handshake, SignalFish spectator identity/routing, real relay
 delivery, and network lifecycle validation remain required. The existing player
 mesh roster must not be extended to admit spectators without those contracts.
+
+The [native SDK spectator relay qualification](reference/spectator-relay-qualification.md)
+records the newer dependency drill on both engine pins. It does not qualify an
+exported Fortress spectator or advance this repository's reviewed dependency pins.

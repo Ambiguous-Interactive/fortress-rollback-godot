@@ -714,6 +714,7 @@ func _confirmation_code() -> int:
 	if limit == Queue.FRAME_MAX:
 		# Every slot is frozen, so the frontier cannot move.
 		return Types.Code.OK
+	limit = mini(limit, _drops.confirmation_ceiling())
 	return _core.set_confirmation_limit(limit).code
 
 

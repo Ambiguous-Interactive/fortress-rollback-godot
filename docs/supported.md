@@ -61,9 +61,9 @@ SDK installed; a game that uses them supplies the SDK objects described in
 | Input delay increase during a match | Yes. A decrease is refused once the first sample is scheduled |
 | Measured input-delay suggestion | Yes, advisory only |
 | Deterministic recording and replay | Yes, versioned file format, checksum validation, backward and forward navigation |
-| Confirmed-input spectator playback | Yes over a local authenticated byte envelope |
+| Confirmed-input spectator playback | Yes over an authenticated v3 byte envelope, including finalized disconnected status |
 | Bounded diagnostics and desync artifacts | Yes, with downloadable evidence in the browser |
-| Graceful peer drop | Yes, within the [scoped drop limits](peer-lifecycle.md#the-coordinated-drop); unequal confirmation frontiers lack a history-preservation guarantee |
+| Graceful peer drop | Yes, within the [scoped drop limits](peer-lifecycle.md#the-coordinated-drop); unequal confirmation frontiers may end the match safely |
 
 ## Explicit exclusions
 

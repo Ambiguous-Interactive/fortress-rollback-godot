@@ -108,6 +108,16 @@ func pending() -> bool:
 	return false
 
 
+## Receipt gossip cannot expose another confirmed frame while its drop cut is held.
+func confirmation_ceiling() -> int:
+	var ceiling: int = 2147483647
+	for key: String in _barriers:
+		var active: Barrier = _barriers[key]
+		if active.state == PENDING:
+			ceiling = mini(ceiling, active.upper)
+	return ceiling
+
+
 ## The barrier of a departed peer, or null when it has none.
 func barrier(key: String) -> Barrier:
 	return _barriers.get(key, null)
@@ -129,11 +139,11 @@ func observed(host: Variant, index: int) -> bool:
 	_departed[key] = true
 	var slots: PackedInt32Array = host._slots_by_peer[index]
 	var upper: int = host._core.status().confirmed_frame
-	var lower: int = host._core.rollback_floor()
+	var lower: int = maxi(host._core.rollback_floor(), host._core.confirmed_freeze_floor())
 	if upper < lower:
 		# Every frame this survivor could freeze is already released, so the survivors
 		# cannot agree on a value and the match cannot continue safely.
-		host._publish_event({"kind": "peer_dropped", "peer": host._ids[index].duplicate(), "frame": upper})
+		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
 		host._core.terminate(Types.Code.PROTOCOL_FAILED)
 		return false
 	if _live_survivors(host) == 0:
@@ -274,6 +284,9 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		certified += 1
 	if certified < live:
 		# The all-survivor certificate is not complete yet.
+		return
+	if not _can_freeze(host, barrier.index, barrier.cut):
+		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
 	barrier.sent_us = now_us
@@ -427,6 +440,9 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 	if not barrier.certified:
 		# A commit without the local certificate is refused.
 		return
+	if not _can_freeze(host, index, cut):
+		_abort(host, barrier, Abort.MISSING_HISTORY)
+		return
 	barrier.state = COMMITTED
 	_freeze(host, index, cut, barrier.value, true)
 	_send(host, barrier, Phase.REPORT, Stage.COMMITTED)
@@ -495,6 +511,10 @@ func _frozen_value(host: Variant, barrier: Barrier, cut: int) -> PackedByteArray
 ## Freeze the departed peer's slots at the agreed frame and publish the agreed value.
 func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certified: bool) -> bool:
 	var key: String = host._ids[index].hex_encode()
+	if not _can_freeze(host, index, cut):
+		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
+		host._core.terminate(Types.Code.PROTOCOL_FAILED)
+		return false
 	var offset: int = 0
 	var width: int = host._config.input_width
 	for slot: int in host._slots_by_peer[index]:
@@ -510,7 +530,7 @@ func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certif
 			code = host._core.freeze_player(slot, cut)
 		if code != Types.Code.OK:
 			# Without an agreed value the survivors would freeze on different bytes.
-			host._publish_event({"kind": "peer_dropped", "peer": host._ids[index].duplicate(), "frame": cut})
+			host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
 			host._core.terminate(Types.Code.PROTOCOL_FAILED)
 			return false
 	_dropped[key] = {"frame": cut, "slots": host._slots_by_peer[index].duplicate()}
@@ -520,23 +540,21 @@ func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certif
 	return true
 
 
-## A barrier that cannot agree leaves the survivors on the frame they certified,
-## or on their own confirmed frontier when no frame was certified. A conflicting
-## history ends the match: the survivors would freeze different values.
+func _can_freeze(host: Variant, index: int, cut: int) -> bool:
+	for slot: int in host._slots_by_peer[index]:
+		if host._core.validate_player_freeze(slot, cut) != Types.Code.OK:
+			return false
+	return true
+
+
+## An incomplete agreement cannot authorize a freeze, even after a candidate was published.
 func _fail(host: Variant, barrier: Barrier, reason: String, notify: bool = true) -> void:
 	barrier.state = FAILED
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": reason})
-	if reason in ["conflicting_history", "participant_lost"]:
-		host._core.terminate(Types.Code.PROTOCOL_FAILED)
-		return
 	if notify:
 		# The other survivors stop waiting instead of timing out on their own.
-		_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.TIMEOUT)
-	if barrier.digest != 0 and not barrier.value.is_empty():
-		# The candidate was published, so every survivor freezes the certified value.
-		_freeze(host, barrier.index, barrier.cut, barrier.value, true)
-		return
-	_freeze(host, barrier.index, barrier.upper, PackedByteArray(), false)
+		_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.MISSING_HISTORY if reason in ["missing_history", "no_common_window"] else Abort.TIMEOUT)
+	host._core.terminate(Types.Code.PROTOCOL_FAILED)
 
 
 ## A conflicting history closes the operation and ends the match.

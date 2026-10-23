@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add finalized player statuses to spectator playback. Dropped matches retain `DISCONNECTED` in callbacks and confirmed exports. The authenticated envelope moves to v3; update host and viewer together. Byte-only callers keep all-confirmed defaults.
+
 - Report an aborted test case in the engine result. A case that dies inside a nested helper no longer looks green: on the Godot 4.7.2 pin the runner sees the script error and fails the case with the aborting file, line and message. The entry belongs to the repetition that died, and an error in a suite constructor fails the case that was being prepared. Godot 4.3 cannot observe a script error in process, so its engine result keeps the engine's own verdict and the Python launcher stays the gate there. The runner prints the capability of its engine, so a release never claims an engine result that only one pin provides.
 
 - Keep an online match alive when a rollback correction withholds a checksum. The mesh checksum scheduler treated a snapshot that a pending repair withheld as a lost history, so a normal prediction correction ended the match with `HISTORY_UNAVAILABLE` one advance before the repair could finish. The scheduler now waits for the repair and publishes the boundary after it. A snapshot that no repair will restore still ends the match, so a real loss is not hidden behind the wait.
@@ -140,6 +142,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix peer drops rewriting exposed confirmed history. Cuts below the protected frontier are refused, and failed agreements end the match instead of freezing uncertified local frontiers. Unequal-frontier recovery remains planned.
 
 - Fix disconnected player statuses in replay recordings. New version 5 files cover input bytes and statuses with each row digest; version 4 files still load with all-confirmed defaults.
 

@@ -40,9 +40,9 @@ func _commit_deadline(context: RefCounted) -> void:
 		context.equal(follower.state, Drop.COMMITTED if offset < 0 else Drop.FAILED, "deadline equality wins over buffered COMMIT, offset %d" % offset)
 		context.equal(mesh.unconfirmed, 0 if offset < 0 else 1, "expiry publishes exactly one unconfirmed outcome, offset %d" % offset)
 		context.equal(mesh.reasons, [] if offset < 0 else ["timeout"], "the expired operation keeps its timeout reason")
-		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING, "timeout preserves the documented Godot fallback")
+		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING if offset < 0 else Types.Lifecycle.TERMINATED, "an expired certificate fails closed")
 		mesh.now = follower.started_us + 250001
-		_release_original(context, mesh, mesh.held[0])
+		_release_original(context, mesh, mesh.held[0], offset >= 0)
 		var acknowledgements: int = 0
 		for packet: Dictionary in _drain(mesh):
 			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
@@ -50,7 +50,7 @@ func _commit_deadline(context: RefCounted) -> void:
 				if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.COMMITTED:
 					acknowledgements += 1
 		context.equal(acknowledgements, 1 if offset < 0 else 0, "only a committed operation re-ACKs after its deadline")
-		context.equal(mesh.drop_events.get(1, []).size(), 1, "late duplicates cannot repeat the freeze notification")
+		context.equal(mesh.drop_events.get(1, []).size(), 1 if offset < 0 else 0, "late duplicates cannot repeat or fabricate a freeze notification")
 		context.equal(mesh.unconfirmed, 0 if offset < 0 else 1, "late duplicates cannot repeat expiry")
 
 
@@ -256,9 +256,9 @@ func _wait_for_held(context: RefCounted, mesh: Dictionary) -> void:
 	context.equal(false, true, "the real session emits the packet selected for holding")
 
 
-func _release_original(context: RefCounted, mesh: Dictionary, packet: Dictionary) -> void:
+func _release_original(context: RefCounted, mesh: Dictionary, packet: Dictionary, terminated: bool = false) -> void:
 	var original: Array[Dictionary] = [packet]
-	super._deliver(context, mesh, original)
+	super._deliver(context, mesh, original, terminated)
 
 
 func _held_fixture(context: RefCounted, phase: int, stage: int, recipient: int, count: int = 3) -> Dictionary:

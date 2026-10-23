@@ -8,7 +8,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Negotiation = preload("res://addons/fortress_rollback/core/spectator_negotiation.gd")
 const Code = Types.Code
-const VERSION: int = 2
+const VERSION: int = 3
 const HEADER_BYTES: int = 80
 const DIGEST_BYTES: int = 16
 const TAG_BYTES: int = 16
@@ -52,7 +52,7 @@ func configure(
 ) -> int:
 	if config == null or identity.size() != 32 or key.size() != KEY_BYTES or digest.size() != DIGEST_BYTES or now_us < 0 or timeout_us < 1:
 		return Code.INVALID_CONFIGURATION
-	if config.validate() != Code.OK or not config.spectator or max(HEADER_BYTES + config.player_count * config.input_width, NEGOTIATION_BYTES) > max_packet_bytes:
+	if config.validate() != Code.OK or not config.spectator or max(HEADER_BYTES + config.player_count * (config.input_width + 1), NEGOTIATION_BYTES) > max_packet_bytes:
 		return Code.INVALID_CONFIGURATION
 	if _session != null and _session._mutation_code() == Code.BUSY:
 		return Code.BUSY
@@ -107,9 +107,10 @@ func agreement_reason() -> int:
 
 
 ## Encode only host-confirmed complete rows. Empty bytes mean invalid dimensions or frame.
-## The host must obtain its rows through confirmed_inputs(), after correction completes.
+## The host obtains bytes and statuses through confirmed_inputs(), after correction completes.
+## Omitted statuses retain the byte-only API's all-confirmed default.
 ## A row needs the agreed envelope version, so it cannot be encoded before the startup exchange.
-func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
+func encode_row(frame: int, inputs: Array[PackedByteArray], statuses: PackedByteArray = PackedByteArray()) -> PackedByteArray:
 	if not _negotiation.agreed() or _config == null or _session._config != _config:
 		return PackedByteArray()
 	if frame < 0 or frame >= Queue.FRAME_MAX or inputs.size() != _config.player_count:
@@ -117,9 +118,13 @@ func encode_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
 	for bytes: PackedByteArray in inputs:
 		if bytes.size() != _config.input_width:
 			return PackedByteArray()
+	var finalized: PackedByteArray = Spectator.finalized_statuses(statuses, _config.player_count)
+	if finalized.is_empty():
+		return PackedByteArray()
 	var packet: PackedByteArray = _header(ROW, frame)
 	for bytes: PackedByteArray in inputs:
 		packet.append_array(bytes)
+	packet.append_array(finalized)
 	return authenticate(packet, _key)
 
 
@@ -181,7 +186,7 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		# The startup exchange owns the envelope version, so no row is accepted before it.
 		var state: int = _session._mutation_code()
 		return state if state != Code.OK else Code.NOT_SYNCHRONIZED
-	var expected_size: int = HEADER_BYTES + (_config.player_count * _config.input_width if kind == ROW else 0)
+	var expected_size: int = HEADER_BYTES + (_config.player_count * (_config.input_width + 1) if kind == ROW else 0)
 	if (
 		packet.size() != expected_size
 		or packet.slice(0, 4) != "FRGS".to_ascii_buffer()
@@ -202,6 +207,9 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	var frame: int = packet.decode_u32(60)
 	if frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
 		return Code.INVALID_FRAME
+	var statuses: PackedByteArray = packet.slice(HEADER_BYTES + _config.player_count * _config.input_width) if kind == ROW else PackedByteArray()
+	if kind == ROW and Spectator.finalized_statuses(statuses, _config.player_count).is_empty():
+		return Code.INVALID_CONFIGURATION
 	var code: int = poll(now_us)
 	if code != Code.OK:
 		return code
@@ -223,7 +231,7 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		for player: int in range(_config.player_count):
 			var start: int = HEADER_BYTES + player * _config.input_width
 			row.append(packet.slice(start, start + _config.input_width))
-		code = _session.receive_host_frame(frame, row).code
+		code = _session.receive_host_frame(frame, row, statuses).code
 		if code == Code.INPUT_ALREADY_SUBMITTED:
 			return _fail()
 		if code != Code.OK:

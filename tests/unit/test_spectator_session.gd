@@ -238,8 +238,8 @@ func _storage_budget(context: RefCounted) -> void:
 	config.spectator = false
 	var core_bytes: int = config.required_storage_bytes()
 	config.spectator = true
-	var required: int = core_bytes + config.queue_capacity * (config.player_count * config.input_width + 8)
-	context.equal(config.required_storage_bytes(), required, "owned host rows and int64 tags are reserved")
+	var required: int = core_bytes + config.queue_capacity * (config.player_count * (config.input_width + 1) + 8)
+	context.equal(config.required_storage_bytes(), required, "owned host rows, statuses and int64 tags are reserved")
 	config.storage_budget_bytes = required - 1
 	context.equal(config.validate(), Types.Code.INVALID_CONFIGURATION, "one byte below reservation rejected")
 	context.equal(Spectator.new().configure(config), Types.Code.INVALID_CONFIGURATION, "rejected before ring allocation")

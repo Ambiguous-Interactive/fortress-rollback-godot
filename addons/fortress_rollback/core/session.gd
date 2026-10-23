@@ -37,6 +37,7 @@ var _originals: Dictionary = {}
 var _is_driver_callback: bool = false
 var _has_confirmation_limit: bool = false
 var _confirmation_limit: int = -1
+var _exposed_confirmed_high_water: int = -1
 var _trace: Trace = Trace.new()
 var _statistics: Types.Statistics = Types.Statistics.new()
 var _replay: Replay
@@ -84,6 +85,7 @@ func configure(config: Config) -> int:
 	_originals.clear()
 	_has_confirmation_limit = false
 	_confirmation_limit = -1
+	_exposed_confirmed_high_water = -1
 	_statistics = Types.Statistics.new()
 	_trace = Trace.new()
 	_trace.configure(_config)
@@ -222,11 +224,9 @@ func set_input_delay(player: int, delay: int) -> Types.Result:
 ## The slot repeats the value confirmed at that frame, stops holding back the confirmed
 ## frontier and reports a disconnected status. Confirmed history before the frame is unchanged.
 func freeze_player(player: int, frame: int) -> int:
-	var code: int = _mutation_code()
+	var code: int = validate_player_freeze(player, frame)
 	if code != Code.OK:
 		return code
-	if _config == null or player < 0 or player >= _queues.size() or player in _config.local_players:
-		return Code.INVALID_PLAYER
 	if _frozen_frames[player] != -1:
 		return Code.OK
 	var result: int = _queues[player].freeze_at(frame)
@@ -249,11 +249,9 @@ func frozen_frame(player: int) -> int:
 ## retained row, so a survivor that already released the row still freezes on the
 ## same bytes as the other survivors.
 func freeze_player_with_value(player: int, frame: int, bytes: PackedByteArray) -> int:
-	var code: int = _mutation_code()
+	var code: int = validate_player_freeze(player, frame)
 	if code != Code.OK:
 		return code
-	if _config == null or player < 0 or player >= _queues.size() or player in _config.local_players:
-		return Code.INVALID_PLAYER
 	if not bytes is PackedByteArray or bytes.size() != _config.input_width:
 		return Code.INPUT_WIDTH
 	if _frozen_frames[player] != -1:
@@ -265,6 +263,26 @@ func freeze_player_with_value(player: int, frame: int, bytes: PackedByteArray) -
 	if _replay != null:
 		_replay._freeze_player(player, frame, _queues[player].simulated_input(frame + 1).bytes)
 	return Code.OK
+
+
+## Validate a freeze before changing any member of a departed endpoint's slot set.
+## No cut may replace already exposed confirmed history; refusal leaves all queues intact.
+func validate_player_freeze(player: int, frame: int) -> int:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return code
+	if player < 0 or player >= _queues.size() or player in _config.local_players:
+		return Code.INVALID_PLAYER
+	if _frozen_frames[player] != -1:
+		return Code.OK
+	if frame < 0 or frame > Queue.FRAME_MAX or frame < confirmed_freeze_floor():
+		return Code.INVALID_FRAME
+	return Code.OK
+
+
+## The earliest cut that preserves current and previously exposed confirmation.
+func confirmed_freeze_floor() -> int:
+	return maxi(_confirmed(), _exposed_confirmed_high_water)
 
 
 ## The global rollback floor: frames below it are no longer retained by any queue.
@@ -307,12 +325,13 @@ func confirmed_inputs(frame: int) -> Types.FrameInputs:
 		return null
 	var bytes: Array[PackedByteArray] = []
 	var statuses: PackedInt32Array = PackedInt32Array()
-	for queue: Queue in _queues:
-		var actual: Queue.Result = queue.simulated_input(frame)
+	for player: int in range(_queues.size()):
+		var actual: Queue.Result = _queues[player].simulated_input(frame)
 		if actual.code != Queue.Code.OK:
 			return null
 		bytes.append(actual.bytes)
-		statuses.append(actual.status)
+		statuses.append(_input_status(player, frame, actual.status))
+	_exposed_confirmed_high_water = maxi(_exposed_confirmed_high_water, frame)
 	return Types.FrameInputs.new(bytes, statuses)
 
 
@@ -331,6 +350,7 @@ func confirmed_checksums(include_boundary: bool = false) -> Array[Dictionary]:
 	for saved: Dictionary in _history.retained_checksums():
 		if saved.frame <= ceiling:
 			result.append(saved)
+			_exposed_confirmed_high_water = maxi(_exposed_confirmed_high_water, saved.frame - 1)
 	return result
 
 
@@ -497,6 +517,7 @@ func status() -> Types.Status:
 	var result: Types.Status = Types.Status.new()
 	result.current_frame = _current
 	result.confirmed_frame = _confirmed()
+	_exposed_confirmed_high_water = maxi(_exposed_confirmed_high_water, result.confirmed_frame)
 	result.lifecycle = Lifecycle.RUNNING if _reason == Code.OK else Lifecycle.TERMINATED
 	result.reason = _reason
 	result.failure_frame = _failure_frame
@@ -537,7 +558,9 @@ func replay() -> Replay:
 		var incorrect: int = queue.first_incorrect_frame()
 		if incorrect >= 0:
 			frames = mini(frames, incorrect)
-	return _replay.owned_prefix(maxi(0, frames))
+	var prefix: Replay = _replay.owned_prefix(maxi(0, frames))
+	_exposed_confirmed_high_water = maxi(_exposed_confirmed_high_water, prefix.frame_count() - 1)
+	return prefix
 
 
 ## Stage simulated receipts before lockstep can discard them. Public export separately gates on
@@ -554,10 +577,10 @@ func _record_replay() -> void:
 		var row: PackedByteArray = PackedByteArray()
 		var neutral: PackedByteArray = PackedByteArray()
 		var statuses: PackedByteArray = PackedByteArray()
-		for queue: Queue in _queues:
-			var input: Queue.Result = queue.retained_simulated_input(frame)
+		for player: int in range(_queues.size()):
+			var input: Queue.Result = _queues[player].retained_simulated_input(frame)
 			row.append_array(input.bytes if input.code == Queue.Code.OK else PackedByteArray())
-			statuses.append(input.status)
+			statuses.append(_input_status(player, frame, input.status))
 			neutral.append_array(_config.neutral_input)
 		# Defensive: a missing input keeps frame alignment with a neutral, checksum-free row, as upstream does.
 		var skipped: bool = row.size() != neutral.size()
@@ -614,17 +637,22 @@ func _next_request(batch_id: int) -> Types.Request:
 	else:
 		var input_bytes: Array[PackedByteArray] = []
 		var input_statuses: PackedInt32Array = PackedInt32Array()
-		for queue: Queue in _queues:
-			var input: Queue.Result = queue.input(step.y)
+		for player: int in range(_queues.size()):
+			var input: Queue.Result = _queues[player].input(step.y)
 			if input.code != Queue.Code.OK:
 				_fatal(Code.HISTORY_UNAVAILABLE, step.y, step.x)
 				return null
 			input_bytes.append(input.bytes)
-			input_statuses.append(input.status)
+			input_statuses.append(_input_status(player, step.y, input.status))
 		_inputs = Types.FrameInputs.new(input_bytes, input_statuses)
 		request.inputs = _inputs
 	_active = request
 	return request
+
+
+## Specialized playback may supply finalized host statuses over the shared input-byte engine.
+func _input_status(_player: int, _frame: int, queue_status: int) -> int:
+	return queue_status
 
 
 func _consistent() -> bool:

@@ -39,7 +39,7 @@ func configure(host: Session, identity: PackedByteArray, key: PackedByteArray, d
 	var code: int = host._mutation_code()
 	if code != Code.OK:
 		return code
-	if max(Stream.HEADER_BYTES + host._config.player_count * host._config.input_width, Stream.NEGOTIATION_BYTES) > max_packet_bytes:
+	if max(Stream.HEADER_BYTES + host._config.player_count * (host._config.input_width + 1), Stream.NEGOTIATION_BYTES) > max_packet_bytes:
 		return Code.INVALID_CONFIGURATION
 	_host = host
 	_source_config = host._config
@@ -178,8 +178,15 @@ func prepare_packet() -> Types.InputResult:
 			result.code = Code.PREDICTION_STALL if status.pending_rollback_frame >= 0 else Code.HISTORY_UNAVAILABLE
 			return result
 		var packet: PackedByteArray = _header(Stream.ROW, _next_frame)
+		var statuses: PackedByteArray = PackedByteArray()
 		for player: int in range(_players):
-			packet.append_array(inputs.read(player).bytes)
+			var input: Types.InputResult = inputs.read(player)
+			if input.code != Code.OK or input.status not in [Session.Queue.Status.CONFIRMED, Session.Queue.Status.DISCONNECTED]:
+				result.code = Code.INVALID_CONFIGURATION
+				return result
+			packet.append_array(input.bytes)
+			statuses.append(input.status)
+		packet.append_array(statuses)
 		_packet = _signed(packet)
 	else:
 		result.code = Code.PREDICTION_STALL
