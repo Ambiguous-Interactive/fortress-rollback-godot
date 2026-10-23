@@ -18,6 +18,8 @@
 | Manual model packets omitted the new status trailer, bypassing their intended conflict and mutation gates. | technique | Full460-case suites fail the original fixtures; corrected v3 fixtures pass both pins without changed assertions. |
 | Teardown disconnections must not start new drop decisions after a terminal cause commits. | rule | `commit_deadline` detects duplicate timeout/missing-history outcomes after draining teardown events. |
 
+| Honest coordinator selection did not validate a follower's receipt-inclusive candidate boundary. | rule | `peer_drop_barrier.gd` candidate guard lacked its captured receipt maximum; a role-valid lower candidate could certify. |
+
 ## Actions Taken
 
 | Action | Canonical home | Verification |
@@ -27,6 +29,8 @@
 | Keep dependency drill results separate from exported Fortress acceptance and pin review. | [Qualification](../../docs/reference/spectator-relay-qualification.md) | Actual public SDK drill on both engine pins |
 
 | Expand format-change sweeps to spectator header builders and authenticated model fixtures. | [Networking transport](../skills/networking-transport/SKILL.md) | Full spectator model suite on both pins |
+
+| Validate agreement candidates against receiver-owned receipt evidence. | [Networking transport](../skills/networking-transport/SKILL.md) | Role-valid receipt-excluding candidate regression |
 
 ## Prune Ledger
 

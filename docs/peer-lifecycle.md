@@ -105,7 +105,9 @@ any of them freezes a slot. The survivor that owns the lowest surviving slot
 proposes the operation. Every survivor reports its protected confirmed frontier
 and a versioned per-player interval of retained actual inputs. The proposer raises
 the cut to cover reported confirmation and target receipts, and commits only when
-every survivor certifies complete retained history through that cut.
+every survivor certifies complete retained history through that cut. A receiver
+also refuses a candidate below its own captured target receipts, even when the
+coordinator identity and proposed frozen value match.
 A survivor only answers a proposal for a peer whose departure it observed
 itself, so one peer cannot drop a live peer. The match holds while the barrier
 runs: the survivors stop advancing, so the frames the cut needs stay retained.

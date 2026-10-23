@@ -360,7 +360,7 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		return
 	if digest != 0:
 		var cut: int = int(event.get("cut", barrier.cut))
-		if cut < barrier.upper or cut < barrier.lower or cut < host._core.confirmed_freeze_floor():
+		if cut < barrier.upper or cut < barrier.lower or cut < host._core.confirmed_freeze_floor() or cut < Inventory.highest(barrier.receipts):
 			_abort(host, barrier, Abort.MISSING_HISTORY)
 			return
 		barrier.cut = cut

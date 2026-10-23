@@ -12,6 +12,9 @@ const INVALID: Dictionary = {
 
 var _legacy_startup: bool = false
 var _startup_features: Array[int] = []
+var _undercut_candidate: bool = false
+var _candidate_count: int = 0
+var _ready_cuts: Array[int] = []
 
 
 func cases() -> PackedStringArray:
@@ -26,7 +29,8 @@ func cases() -> PackedStringArray:
 			"wrong_cardinality",
 			"wrong_target",
 			"unbounded_interval",
-			"changed_certificate"
+			"changed_certificate",
+			"candidate_below_receipts"
 		]
 	)
 
@@ -34,7 +38,12 @@ func cases() -> PackedStringArray:
 func run_case(name: String, context: RefCounted) -> void:
 	_legacy_startup = name == "legacy_startup_refused"
 	_startup_features.clear()
-	if name == "control_packet_budget":
+	_undercut_candidate = name == "candidate_below_receipts"
+	_candidate_count = 0
+	_ready_cuts.clear()
+	if name == "candidate_below_receipts":
+		_undercut(context)
+	elif name == "control_packet_budget":
 		_packet_budget(context)
 	elif name in ["startup_feature", "legacy_startup_refused"]:
 		var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
@@ -94,6 +103,19 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 	var delivered: Array[Dictionary] = []
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+		if _undercut_candidate and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			if decoded.message.phase == 1 and decoded.message.cut_digest != 0:
+				_candidate_count += 1
+				context.equal(decoded.message.cut, 8, "the real coordinator first selected every target receipt")
+				decoded.message.cut = 5
+				var value: PackedByteArray = _sample(2, 5)
+				decoded.message.cut_digest = mesh.peers[0]._drops._digest(value)
+				var altered: T.Result = Codec.encode(decoded.message, _limits(mesh.count))
+				context.equal(altered.code, T.Code.OK, "the undercut remains a valid coordinator packet with matching retained value")
+				delivered.append({"from": packet.from, "to": packet.to, "bytes": altered.bytes})
+				continue
+			if decoded.message.phase == 2 and decoded.message.stage == 2:
+				_ready_cuts.append(decoded.message.cut)
 		if decoded.code == T.Code.OK and decoded.message.kind in [T.Kind.SYNC_REQUEST, T.Kind.SYNC_REPLY]:
 			_startup_features.append(decoded.message.features)
 			if _legacy_startup:
@@ -142,3 +164,19 @@ func _packet_budget(context: RefCounted) -> void:
 			"full-roster inventory budget accepts exact bound and refuses one byte less"
 		)
 	context.equal(local.features, 0, "automatic negotiation never mutates the caller's profile")
+
+
+# Value: protects=each survivor certifies its own highest actual receipt; fails_when=valid coordinator undercuts declared receipt with matching value;
+# why_new=honest coordinator always selects the maximum so ordinary agreement hides missing follower validation; seam=none
+func _undercut(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
+	context.equal(_candidate_count > 0, true, "the test altered an actual final candidate from the role-valid coordinator")
+	context.equal(_ready_cuts.has(5), false, "a lower cut cannot produce an actual READY certificate")
+	var follower: RefCounted = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	context.equal(5 >= follower.upper, true, "the hostile cut still covers the protected exposed frontier")
+	context.equal(Inventory.highest(follower.receipts), 8, "the follower's own actual target receipts require a higher cut")
+	context.equal(follower.certified, false, "matching value bytes cannot authorize a cut below declared receipts")
+	context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.TERMINATED, "the invalid candidate fails closed")
