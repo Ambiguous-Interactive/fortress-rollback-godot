@@ -124,7 +124,7 @@ def validate_replay_download(value, expected_engine, round_record):
         raise ValueError('online replay download advanced a stopped match')
     raw = bytes.fromhex(value['hex'])
     version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
-    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (4, 2, 1, 0, 2, 8, 0)
+    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (5, 2, 1, 0, 2, 8, 0)
             or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
         raise ValueError('online replay configuration differs from the played match')
     cursor, texts = 24, []
@@ -154,11 +154,13 @@ def validate_replay_download(value, expected_engine, round_record):
     states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
     checksums = 0
     for frame in range(frames):
-        if cursor + 3 > len(raw) or raw[cursor:cursor + 2] != bytes(history[frame] for history in histories):
+        if cursor + 5 > len(raw) or raw[cursor:cursor + 2] != bytes(history[frame] for history in histories):
             raise ValueError('online replay differs from original submitted input')
-        row = raw[cursor:cursor + 2]
-        flag = raw[cursor + 2]
-        cursor += 3
+        row = raw[cursor:cursor + 4]
+        if row[2:] != bytes([1, 1]):
+            raise ValueError('online replay player statuses differ from the played match')
+        flag = raw[cursor + 4]
+        cursor += 5
         if flag not in (0, 1):
             raise ValueError('online replay contains skipped or malformed frames')
         if flag == 1:

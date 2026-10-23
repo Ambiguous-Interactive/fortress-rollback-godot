@@ -27,6 +27,10 @@ terminal exit. Restart the same verified binary/configuration on the same endpoi
 check the new live handle with bounded readiness. Socket/proxy outage evidence
 cannot substitute for process death or a fresh service lifetime.
 
+A replay format change must update independent browser-download verifiers and their
+packing fixtures as well as the core decoder, oracle and golden. Search magic bytes,
+version tuples and binary unpack calls; old synthetic fixtures can keep stale parsers green.
+
 ## Godot Peer Setup
 
 | Target | Peer | Notes |

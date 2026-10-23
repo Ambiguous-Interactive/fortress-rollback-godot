@@ -79,10 +79,10 @@ def replay_download(histories):
     states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
     texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8',
              '1701', 'fortress-online-integer-v1']
-    raw = b'FRRP' + struct.pack('<HBIIIHBB', 4, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
+    raw = b'FRRP' + struct.pack('<HBIIIHBB', 5, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
     raw += b''.join(bytes([len(text)]) + text.encode('ascii') for text in texts)
-    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1]) + bytes.fromhex(game_checksum(states[frame]))
-                    + hashlib.sha256(bytes([histories[0][frame], histories[1][frame]])).digest()[:16] for frame in range(frames))
+    raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1, 1, 1]) + bytes.fromhex(game_checksum(states[frame]))
+                    + hashlib.sha256(bytes([histories[0][frame], histories[1][frame], 1, 1])).digest()[:16] for frame in range(frames))
     return {'filename': 'fortress-online.frrp', 'hex': raw.hex(), 'disabled_peer': True,
             'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
             'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],
@@ -332,6 +332,20 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             changed = copy.deepcopy(original)
             mutate(changed)
             with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                validate_replay_download(changed)
+
+    def test_online_replay_statuses_are_independently_checked(self):
+        original = evidence()['rounds'][0]['replay_download']
+        raw = bytes.fromhex(original['hex'])
+        cursor = 24
+        for _ in range(5):
+            cursor += 1 + raw[cursor]
+        for status in (0, 2, 3, 255):
+            changed = copy.deepcopy(original)
+            malformed = bytearray(raw)
+            malformed[cursor + 2] = status
+            changed['hex'] = malformed.hex()
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, 'player statuses'):
                 validate_replay_download(changed)
 
     # Value: protects=bounded fault timing during slow downloads; fails_when=exports run live or advance stopped matches; why_new=CI reached289; seam=none

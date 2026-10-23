@@ -13,6 +13,7 @@ and replay integrity after a dropped slot. Trigger: production debugging and a f
 | Byte-only replay loses disconnect semantics. | `test_peer_drop.gd` exported row reported status 1 instead of 3 after drop. | Format 5 records statuses in each row digest; format 4 retains explicit all-confirmed defaults. |
 | Receipt-only staging is provisional, even when all samples are actual. | `test_replay_drop.gd` holds mesh confirmation behind receipt progress, freezes the tail, then compares independent status-sensitive canonical states. | Export only finalized prefixes; rewrite staged rows and remove stale checksum coverage. |
 | Equal predicted bytes can still require drop correction. | The predicted-tail control reported no pending rollback, wrong live state and replay DESYNC. | Both queue freeze APIs inspect requested simulation progress as well as actual receipt. |
+| Online download verification kept its old format tuple despite the core/golden upgrade. | Candidate browser jobs on both pins rejected version 5; updating only their synthetic packing fixtures reproduced four verifier errors locally. | Update the independent verifier and add status rejection cases; record the format-consumer sweep in the transport skill. |
 
 ## Curation and pruning
 
