@@ -120,6 +120,13 @@ is irreversible and freezes the departed slot at the certified frame, so the
 survivors keep one confirmed history and one frozen value instead of splitting
 at their own frontiers.
 
+The proposer retries COMMIT every 50 milliseconds while its original barrier
+deadline has not expired and a live survivor has not acknowledged. A survivor
+repeats its acknowledgement for a matching duplicate commit, including after
+its slot freeze. Acknowledgements must match the certified frame and value;
+once every live survivor acknowledges, commit retries stop. Neither duplicates
+nor acknowledgements freeze the slot again or repeat `peer_dropped`.
+
 The barrier refuses a stale operation, a prepare of another connected era, a
 duplicated certificate and a commit that arrives without the local
 certificate. A certificate that names another value ends the match with
@@ -129,7 +136,10 @@ survivors would otherwise freeze different values for the same frame.
 Every field that decides the agreement is derived locally. The target set, the
 connected eras and the coordinator are re-derived from the roster, so a peer
 that does not own the lowest surviving slot cannot propose and a message that
-names another target set is refused. The digest of the frozen value is a
+names another target set is refused. Every phase must match the exact operation,
+coordinator, coordinator era and target slots with their eras. Only the coordinator
+can send a prepare, backfill or commit. An invented future operation cannot
+replace the locally derived one. The digest of the frozen value is a
 consistency check between the survivors, not an integrity primitive.
 
 The barrier publishes `peer_drop_pending` when it starts and `peer_dropped`

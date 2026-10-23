@@ -442,6 +442,9 @@ the value they freeze on: every survivor answers with the frame through which
 it retains the departed slot's inputs, the proposer sends the frozen value to
 the survivors that already released it in bounded chunks, and every survivor
 certifies the frame and the digest of that value before the irreversible commit.
+A matching repeated commit is acknowledged after the slot freezes, and the
+proposer stops retries after every live survivor acknowledges. Every phase is
+fenced by the complete locally derived operation identity and sender role.
 A certificate that names another value ends the match with a recorded reason
 instead of freezing divergent values. The match holds while the barrier runs
 and a barrier that cannot agree falls back to the survivor's own frontier with
