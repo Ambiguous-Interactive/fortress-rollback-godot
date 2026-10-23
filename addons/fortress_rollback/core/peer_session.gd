@@ -784,12 +784,14 @@ func _collect_events(local_close: bool = false) -> void:
 				continue
 			if event.kind == "disconnected" and not local_close:
 				# The departed peer keeps its own event; the survivors either freeze it or stop.
-				_drop_peer(index)
+				if _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+					_drop_peer(index)
 				_publish_event(event)
 				continue
 			if event.kind == "drop_barrier":
 				# A survivor answers the coordinated drop of a departed peer.
-				_drops.received(self, index, event)
+				if _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+					_drops.received(self, index, event)
 				continue
 			if event.kind == "event_capacity_exceeded":
 				_core.terminate(Types.Code.PROTOCOL_FAILED)
@@ -846,6 +848,9 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 	if not _lifecycle.enabled:
 		return I.Code.OK
 	_drops.service(self, now_us)
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		_terminate_links()
+		return I.Code.TERMINATED
 	var current: int = _core.status().current_frame
 	if send_reports:
 		_frames_ahead = -2147483648

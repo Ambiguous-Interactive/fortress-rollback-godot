@@ -15,6 +15,9 @@
 | An unaudited dependency upgrade is unnecessary to prove the current SDK can decode spectator delivery. | fact | [Qualification](../../docs/reference/spectator-relay-qualification.md): identical public drill passes with reviewed and current SDK on both pins. |
 | Full unequal-frontier recovery requires missing historical rows, beyond agreement on one frozen value. | rule | [Drop contract](../../docs/peer-lifecycle.md#unequal-confirmation-frontiers); #188 retains receipt-raised cut and range backfill acceptance. |
 
+| Manual model packets omitted the new status trailer, bypassing their intended conflict and mutation gates. | technique | Full460-case suites fail the original fixtures; corrected v3 fixtures pass both pins without changed assertions. |
+| Teardown disconnections must not start new drop decisions after a terminal cause commits. | rule | `commit_deadline` detects duplicate timeout/missing-history outcomes after draining teardown events. |
+
 ## Actions Taken
 
 | Action | Canonical home | Verification |
@@ -22,6 +25,8 @@
 | Extend existing status/rollback guidance to cover the complete spectator bridge and a status-sensitive canonical gate. | [Rollback fundamentals](../skills/rollback-fundamentals/SKILL.md) | `make llm-index`, `make lint-llm`, `make test-llm` |
 | Replace stale byte-only spectator and local-frontier fallback claims. | `PLAN.md`, `docs/spectators.md`, `docs/peer-lifecycle.md` | Production tests and cold diff review |
 | Keep dependency drill results separate from exported Fortress acceptance and pin review. | [Qualification](../../docs/reference/spectator-relay-qualification.md) | Actual public SDK drill on both engine pins |
+
+| Expand format-change sweeps to spectator header builders and authenticated model fixtures. | [Networking transport](../skills/networking-transport/SKILL.md) | Full spectator model suite on both pins |
 
 ## Prune Ledger
 

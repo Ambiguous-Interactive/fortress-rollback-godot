@@ -179,6 +179,8 @@ func observed(host: Variant, index: int) -> bool:
 ## Drive the coordinated drops: propose, collect the survivor windows, certify and commit.
 func service(host: Variant, now_us: int) -> void:
 	for key: String in _barriers.keys():
+		if host._core.status().lifecycle == Types.Lifecycle.TERMINATED:
+			return
 		var barrier: Barrier = _barriers[key]
 		if barrier.state == COMMITTED:
 			if barrier.role == Role.PROPOSER and not _acknowledged_by_all(host, barrier):
