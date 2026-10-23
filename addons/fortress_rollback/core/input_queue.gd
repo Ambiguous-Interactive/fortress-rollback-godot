@@ -19,6 +19,7 @@ enum Code {
 	BEFORE_RETAINED,
 	PREDICTION_MISMATCH,
 	DELAY_DECREASE_UNSUPPORTED,
+	CONFLICTING_INPUT,
 }
 enum Status { NONE, CONFIRMED, PREDICTED, DISCONNECTED }
 
@@ -159,6 +160,44 @@ func _add_input(sample_frame: int, bytes: PackedByteArray, reclaim_floor: int) -
 		_append(_last_added + 1, _neutral, reclaim_floor)
 	_append(scheduled, bytes, reclaim_floor)
 	return Result.new(Code.OK, scheduled)
+
+
+## Validate an immutable retained overlap followed by a sequential missing suffix.
+## At most capacity rows are accepted; no queue or prediction field changes on refusal.
+func validate_missing_backfill(start: int, inputs: Array[PackedByteArray], reclaim_floor: int) -> int:
+	if _capacity == 0:
+		return Code.NOT_CONFIGURED
+	if not _valid_frame(start) or not _valid_frame(reclaim_floor) or inputs.size() - 1 > FRAME_MAX - start:
+		return Code.FRAME_RANGE
+	if inputs.size() > _capacity:
+		return Code.CAPACITY
+	if _frozen and not inputs.is_empty():
+		return Code.OUT_OF_ORDER
+	for bytes: PackedByteArray in inputs:
+		if bytes.size() != _neutral.size():
+			return Code.INPUT_WIDTH
+	var overlap: int = mini(inputs.size(), maxi(0, _last_added - start + 1))
+	for index: int in range(overlap):
+		var retained: Result = retained_confirmed_input(start + index)
+		if retained.code != Code.OK:
+			return retained.code
+		if retained.bytes != inputs[index]:
+			return Code.CONFLICTING_INPUT
+	if overlap < inputs.size() and start + overlap != _last_added + 1:
+		return Code.OUT_OF_ORDER
+	return _append_check(inputs.size() - overlap, reclaim_floor)
+
+
+## Install only the missing scheduled frames after checking the whole chunk.
+## Delay is already applied by the donor; appending preserves ordinary mismatch bookkeeping.
+func install_missing_backfill(start: int, inputs: Array[PackedByteArray], reclaim_floor: int) -> int:
+	var code: int = validate_missing_backfill(start, inputs, reclaim_floor)
+	if code != Code.OK:
+		return code
+	var overlap: int = mini(inputs.size(), maxi(0, _last_added - start + 1))
+	for index: int in range(overlap, inputs.size()):
+		_append(start + index, inputs[index], reclaim_floor)
+	return Code.OK
 
 
 ## Return actual input outside prediction episodes, or frozen repeat-latest bytes.

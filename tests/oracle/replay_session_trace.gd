@@ -74,23 +74,58 @@ func _initialize() -> void:
 		if replay.decode(value.replay.hex_decode()) != Replay.DecodeCode.OK or replay.frame_count() > 64 or replay.input_width() != 4:
 			_fail("invalid replay")
 			return
-		var game: Game = Game.new()
-		game.state[1] = int(value.seed)
-		game.state[2] = int(value.seed)
-		var player: Player = Player.new()
-		if player.configure(replay, game, 16 if value.validate else 0) != Types.Code.OK:
-			_fail("configure failed")
-			return
-		var code: int = Types.Code.OK
-		for attempt: int in range(replay.frame_count() + 1):
-			code = player.step()
-			if code != Types.Code.OK:
-				break
-		results.append({"name": value.name, "initial_frame": 0, "current_frame": player.current_frame(),
-			"complete": player.is_complete(), "code": code, "failure_frame": player.failure_frame(),
-			"records": game.records, "bytes": game.bytes().hex_encode()})
+		for expert: bool in [false, true]:
+			var result: Dictionary = _play(replay, int(value.seed), value.validate, expert)
+			if result.is_empty():
+				_fail("configure failed")
+				return
+			result.name = value.name + ("-expert" if expert else "")
+			results.append(result)
 	print("FORTRESS_REPLAY_RESULT " + JSON.stringify({"format": 1, "cases": results}))
 	quit(0)
+
+
+func _play(replay: Replay, seed: int, validate: bool, expert: bool) -> Dictionary:
+	var game: Game = Game.new()
+	game.state[1] = seed
+	game.state[2] = seed
+	var player: Player = Player.new()
+	var bound: int = 16 if validate else 0
+	var code: int = player.configure_expert(replay, bound) if expert else player.configure(replay, game, bound)
+	if code != Types.Code.OK:
+		return {}
+	for attempt: int in range(replay.frame_count() + 1):
+		code = _expert_step(player, game) if expert else player.step()
+		if code != Types.Code.OK:
+			break
+	return {"initial_frame": 0, "current_frame": player.current_frame(),
+		"complete": player.is_complete(), "code": code, "failure_frame": player.failure_frame(),
+		"records": game.records, "bytes": game.bytes().hex_encode()}
+
+
+func _expert_step(player: Player, game: Game) -> int:
+	var result: Types.Result = player.begin_advance()
+	if result.code != Types.Code.READY:
+		return result.code
+	while true:
+		var request: Types.Request = result.batch.next_request()
+		if request == null:
+			return Types.Code.OK
+		var checksum: PackedByteArray = PackedByteArray()
+		var ok: bool = false
+		match request.kind:
+			Types.Kind.SAVE:
+				var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+				ok = saved.ok
+				checksum = saved.checksum
+			Types.Kind.ADVANCE:
+				ok = game.simulate_frame(request.frame, request.inputs)
+			_:
+				return Types.Code.UNSUPPORTED
+		var completed: Types.Result = player.complete_request(request.batch_id, request.request_id, ok, checksum)
+		if completed.code != Types.Code.OK:
+			return completed.code
+	return Types.Code.OK
 
 
 func _fail(message: String) -> void:

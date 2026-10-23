@@ -86,29 +86,28 @@ func _unequal_frontiers(context: RefCounted, missing: bool, pending: bool = fals
 	_hold_a_inputs = true
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
 	for survivor: int in [0, 1]:
-		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED if missing else Types.Lifecycle.RUNNING, "only missing actual history fails closed")
-		context.equal(mesh.peers[survivor]._core.frozen_frame(2), -1 if missing else 8, "the cut includes the highest target receipt")
-	context.equal(mesh.cuts.is_empty(), missing, "complete retained actual history permits an irreversible drop")
-	context.equal(_state_at(mesh.games[0], exposed), state_before, "failed agreement preserves canonical confirmed state")
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "complete donor history keeps every survivor running")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(2), 8, "the cut includes the highest target receipt")
+	context.equal(mesh.cuts.is_empty(), false, "complete retained actual history permits an irreversible drop")
+	context.equal(_state_at(mesh.games[0], exposed), state_before, "agreement preserves exposed canonical confirmed state")
 	var after: Types.FrameInputs = mesh.peers[0]._core.confirmed_inputs(exposed)
-	context.equal(after != null, true, "failed agreement preserves finalized export")
+	context.equal(after != null, true, "agreement preserves finalized export")
 	if after != null:
-		context.equal(after.read(2).bytes, before.read(2).bytes, "failed agreement preserves confirmed bytes")
+		context.equal(after.read(2).bytes, before.read(2).bytes, "agreement preserves confirmed bytes")
 		context.equal(after.read(2).status, Queue.Status.CONFIRMED, "agreement preserves confirmed status")
-	if not missing:
-		if pending:
-			context.equal(mesh.peers[0].status().pending_rollback_frame, 6, "commit preserves the earlier actual-input correction")
-		_hold_a_inputs = false
-		_play(context, mesh, 6, true, [0, 1], 2)
-		var shared: int = mini(mesh.peers[0].status().confirmed_frame, mesh.peers[1].status().confirmed_frame) - 1
-		context.equal(shared > 8, true, "the continuing canonical history reaches past the raised cut")
-		context.equal(_state_at(mesh.games[0], shared), _state_at(mesh.games[1], shared), "survivors preserve one canonical confirmed history")
-		for frame: int in range(exposed + 1, 9):
-			var retained: Types.FrameInputs = mesh.peers[0]._core.confirmed_inputs(frame)
-			context.equal(retained != null, true, "actual rows below raised cut remain available")
-			if retained != null:
-				context.equal(retained.read(2).bytes, _sample(2, frame), "raised cut preserves every target input before freezing")
-				context.equal(retained.read(2).status, Queue.Status.CONFIRMED, "raised cut does not disconnect earlier receipt history")
+	if pending:
+		context.equal(mesh.peers[0].status().pending_rollback_frame, 6, "commit preserves the earlier actual-input correction")
+	_hold_a_inputs = false
+	_play(context, mesh, 6, true, [0, 1], 2)
+	var shared: int = mini(mesh.peers[0].status().confirmed_frame, mesh.peers[1].status().confirmed_frame) - 1
+	context.equal(shared > 8, true, "the continuing canonical history reaches past the raised cut")
+	context.equal(_state_at(mesh.games[0], shared), _state_at(mesh.games[1], shared), "survivors preserve one canonical confirmed history")
+	for frame: int in range(exposed + 1, 9):
+		var retained: Types.FrameInputs = mesh.peers[0]._core.confirmed_inputs(frame)
+		context.equal(retained != null, true, "actual rows below raised cut remain available")
+		if retained != null:
+			context.equal(retained.read(2).bytes, _sample(2, frame), "raised cut preserves every target input before freezing")
+			context.equal(retained.read(2).status, Queue.Status.CONFIRMED, "raised cut does not disconnect earlier receipt history")
 
 
 func _state_at(game: RefCounted, frame: int) -> String:

@@ -11,6 +11,7 @@ const INVALID: Dictionary = {
 }
 
 var _legacy_startup: bool = false
+var _legacy_features: int = 0
 var _startup_features: Array[int] = []
 var _undercut_candidate: bool = false
 var _candidate_count: int = 0
@@ -23,6 +24,7 @@ func cases() -> PackedStringArray:
 			"independent_inventory_golden",
 			"startup_feature",
 			"legacy_startup_refused",
+			"retained_only_startup_refused",
 			"control_packet_budget",
 			"unknown_version",
 			"empty_inventory",
@@ -36,7 +38,8 @@ func cases() -> PackedStringArray:
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	_legacy_startup = name == "legacy_startup_refused"
+	_legacy_startup = name in ["legacy_startup_refused", "retained_only_startup_refused"]
+	_legacy_features = T.FEATURE_RETAINED_DROP if name == "retained_only_startup_refused" else 0
 	_startup_features.clear()
 	_undercut_candidate = name == "candidate_below_receipts"
 	_candidate_count = 0
@@ -45,11 +48,11 @@ func run_case(name: String, context: RefCounted) -> void:
 		_undercut(context)
 	elif name == "control_packet_budget":
 		_packet_budget(context)
-	elif name in ["startup_feature", "legacy_startup_refused"]:
+	elif name in ["startup_feature", "legacy_startup_refused", "retained_only_startup_refused"]:
 		var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 		context.equal(_startup_features.is_empty(), false, "the actual startup emitted feature-bearing packets")
 		for features: int in _startup_features:
-			context.equal(features, T.FEATURE_RETAINED_DROP, "graceful peers negotiate retained-history semantics before play")
+			context.equal(features, T.FEATURE_HISTORY_DROP, "graceful peers negotiate retained-history semantics before play")
 		for peer: Peer in mesh.peers:
 			context.equal(
 				peer.status().lifecycle, Types.Lifecycle.TERMINATED if _legacy_startup else Types.Lifecycle.RUNNING, "legacy graceful semantics are refused before gameplay"
@@ -119,7 +122,7 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if decoded.code == T.Code.OK and decoded.message.kind in [T.Kind.SYNC_REQUEST, T.Kind.SYNC_REPLY]:
 			_startup_features.append(decoded.message.features)
 			if _legacy_startup:
-				decoded.message.features = 0
+				decoded.message.features = _legacy_features
 				var encoded: T.Result = Codec.encode(decoded.message, _limits(mesh.count))
 				context.equal(encoded.code, T.Code.OK, "encode a well-formed legacy feature offer")
 				delivered.append({"from": packet.from, "to": packet.to, "bytes": encoded.bytes})

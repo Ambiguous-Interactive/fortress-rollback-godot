@@ -197,6 +197,10 @@ exposed frontier; a correct proposer algorithm does not validate a broken propos
 Freeze the participant set when a local agreement opens. A lost participant before
 commit must abort that attempt, not silently reduce its certificate requirement.
 Test the same departure before and after commit; only the unfinished attempt aborts.
+A final candidate can overtake its donor plan or chunks. Keep incomplete history
+unable to certify while awaiting bounded retries; do not terminate merely for
+that reordering. Validate every target overlap and suffix capacity before any
+target installation, and retain exact donor bytes independently of send pressure.
 After draining publication space, re-poll before accepting buffered traffic;
 service every eligible endpoint despite another endpoint's recoverable refusal.
 Every composed façade must expose drains for all bounded publication queues,

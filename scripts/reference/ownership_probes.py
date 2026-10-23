@@ -97,10 +97,16 @@ EXPECTED['res://tests/unit/test_spectator_status.gd'] = {'rows', 'wire_status', 
 EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
     'canonical_parity', 'request_lifetime', 'save_failures', 'callback_guards', 'paused_termination', 'paused_termination_bad_result'}
 EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
-    'independent_inventory_golden', 'startup_feature', 'legacy_startup_refused', 'control_packet_budget',
+    'independent_inventory_golden', 'startup_feature', 'legacy_startup_refused', 'retained_only_startup_refused', 'control_packet_budget',
     'unknown_version', 'empty_inventory', 'wrong_cardinality', 'wrong_target', 'unbounded_interval', 'changed_certificate', 'candidate_below_receipts'}
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
     'retained_below_confirmation', 'certified_below_confirmation', 'unequal_exposed_frontiers', 'missing_actual_rows', 'pending_repair_raised_cut'}
+EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
+    'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
+EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
+EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
+    'remote_donor', 'loss_reorder', 'conflicting_duplicate', 'malformed_chunk', 'wrong_donor', 'lost_history_timeout',
+    'resource_limit', 'multiple_target_slots', 'no_donor', 'conflicting_overlap'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -143,6 +149,7 @@ FILES += ['tests/unit/test_input_queue.gd']
 FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd']
+FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -187,11 +194,15 @@ const SpectatorStatus = preload("res://tests/unit/test_spectator_status.gd")
 const PeerChecksumRepair = preload("res://tests/unit/test_peer_checksum_repair.gd")
 const DropInventory = preload("res://tests/unit/test_peer_drop_inventory.gd")
 const DropHistory = preload("res://tests/unit/test_peer_drop_history.gd")
+const HistoryBackfill = preload("res://tests/unit/test_history_backfill.gd")
+const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
+const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
-		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory]
+		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
+		HistoryBackfill, DriverParity, DropBackfill]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)

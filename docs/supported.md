@@ -63,7 +63,7 @@ SDK installed; a game that uses them supplies the SDK objects described in
 | Deterministic recording and replay | Yes, versioned file format, checksum validation, backward and forward navigation |
 | Confirmed-input spectator playback | Yes over an authenticated v3 byte envelope, including finalized disconnected status |
 | Bounded diagnostics and desync artifacts | Yes, with downloadable evidence in the browser |
-| Graceful peer drop | Yes, within the [scoped drop limits](peer-lifecycle.md#the-coordinated-drop); missing actual history ends the match safely |
+| Graceful peer drop | Yes, within the [scoped drop limits](peer-lifecycle.md#the-coordinated-drop); bounded donor transfer repairs missing actual rows when a survivor retains them |
 
 ## Explicit exclusions
 
@@ -76,7 +76,7 @@ work, so a reader can tell an unfinished feature from an unsupported one.
 | Live SignalFish spectator identity and routing | [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47) |
 | Redundant spectator hosts and failover | [#49](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/49) |
 | Hot join and session reactivation | [#50](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/50) |
-| Recovering missing actual input ranges during peer drop | [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48) |
+| Live qualification of missing-history peer-drop recovery | [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48) |
 | Transparent reconnect after a disconnect | [#38](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/38) |
 | Mixed Rust and Godot wire compatibility | [#30](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/30) |
 | ICE restoration, relay congestion and replan handling | [#75](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/75) |

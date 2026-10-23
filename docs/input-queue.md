@@ -133,7 +133,9 @@ behavior only. Do not infer selectable queue strategies from those exports.
 
 Frozen queues, agreed freeze frames, thaw/reset-to-frame, coordinated-drop
 backfill, retained-floor recovery and hot-join lifecycle require separate semantic
-entries and session evidence. First-tier active-peer loss terminates the session.
+entries and session evidence. The ordinary queue corpus below does not establish
+those modes. Bounded donor installation is covered by `test_history_backfill.gd`
+and the [coordinated-drop byte-session tests](peer-lifecycle.md#the-coordinated-drop).
 A standalone queue reclaim operation is not evidence that coordinated drop or
 hot join is implemented. Rust-specific Kani/ProofVec and allocator mechanisms
 need applicability decisions while preserving bounded storage obligations.

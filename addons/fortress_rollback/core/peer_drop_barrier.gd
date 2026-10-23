@@ -11,7 +11,7 @@ extends RefCounted
 ## The barrier follows the pinned source's prepare, retained-input inventory,
 ## all-survivor certificate and irreversible commit. The cut includes every
 ## exposed confirmed frontier and every departed-slot actual receipt. This tier
-## certifies only complete retained history; missing row transfer remains separate.
+## certifies only complete retained history; missing rows are transferred from one complete-history donor before certification.
 ##
 ## Every field that decides the agreement is derived locally. The wire carries
 ## the operation identity and the frozen value, but the target set, the eras and
@@ -19,7 +19,7 @@ extends RefCounted
 ## the certified value with a message of its own.
 
 enum Phase { PREPARE = 1, REPORT = 2, BACKFILL = 3, COMMIT = 4, ABORT = 5 }
-enum Stage { NONE = 0, INVENTORY = 1, READY = 2, COMMITTED = 3, NEEDS_VALUE = 4 }
+enum Stage { NONE = 0, INVENTORY = 1, READY = 2, COMMITTED = 3, NEEDS_VALUE = 4, HISTORY = 5 }
 enum Role { FOLLOWER = 0, PROPOSER = 1 }
 enum Abort { SUPERSEDED = 1, MISSING_HISTORY = 2, CONFLICTING_HISTORY = 3, PARTICIPANT_LOST = 4, TIMEOUT = 5, GENERATION_CHANGED = 6, RESOURCE_LIMIT = 7 }
 const PENDING: String = "pending"
@@ -33,6 +33,8 @@ const MAX_CHUNKS: int = 64
 const DIGEST_MASK: int = 0x3fffffffffffffff
 const FNV_OFFSET: int = 0x14650fb0739d0383
 const FNV_PRIME: int = 1099511628211
+const History = preload("res://addons/fortress_rollback/core/peer_drop_history.gd")
+const Transfer = preload("res://addons/fortress_rollback/core/peer_drop_transfer.gd")
 const Inventory = preload("res://addons/fortress_rollback/core/peer_drop_inventory.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
@@ -68,6 +70,10 @@ class Barrier:
 	var sent_us: int = -1
 	var sent_digest: int = 0
 	var started_us: int = 0
+	var chunk_budget: int = 0
+	var history: History = History.new()
+	var history_plan_us: int = -1
+	var ready_receipts: Dictionary = {}
 
 
 var _departed: Dictionary = {}
@@ -165,6 +171,7 @@ func observed(host: Variant, index: int) -> bool:
 	barrier.coordinator_generation = _era_of_slot(host, barrier.coordinator)
 	barrier.target_set_digest = _target_digest(barrier.slots, barrier.generations)
 	barrier.receipts = Inventory.capture(host._core, barrier.slots)
+	barrier.chunk_budget = Transfer.budget(host, barrier.slots.size())
 	barrier.available_through = _available_through(host, barrier)
 	_barriers[key] = barrier
 	host._publish_event({"kind": "peer_drop_pending", "peer": host._ids[index].duplicate(), "frame": upper})
@@ -197,6 +204,10 @@ func service(host: Variant, now_us: int) -> void:
 		if now_us - barrier.started_us >= host._lifecycle.drop_barrier_timeout_us:
 			_fail(host, barrier, "timeout")
 			continue
+		var transfer: int = Transfer.service(self, host, barrier, now_us)
+		if transfer != Types.Code.OK:
+			_abort(host, barrier, Abort.MISSING_HISTORY if transfer == Types.Code.HISTORY_UNAVAILABLE else Abort.RESOURCE_LIMIT)
+			continue
 		if barrier.role == Role.PROPOSER:
 			_drive_proposer(host, barrier, now_us)
 		else:
@@ -224,7 +235,8 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 			return
 		if is_gone(host._ids[index].hex_encode()):
 			return
-		if phase in [Phase.PREPARE, Phase.BACKFILL, Phase.COMMIT] and not host._slots_by_peer[index].has(barrier.coordinator):
+		var coordinator_only: bool = phase in [Phase.PREPARE, Phase.COMMIT] or (phase == Phase.BACKFILL and int(event.get("stage", 0)) != Stage.HISTORY)
+		if coordinator_only and not host._slots_by_peer[index].has(barrier.coordinator):
 			return
 	if is_dropped(key):
 		# Only the committed handshake remains live after freezing the slot.
@@ -238,7 +250,13 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		Phase.REPORT:
 			_receive_report(host, index, key, barrier, event)
 		Phase.BACKFILL:
-			_receive_backfill(host, key, barrier, event)
+			if int(event.get("stage", 0)) == Stage.HISTORY:
+				if barrier != null and barrier.state == PENDING:
+					var installed: int = Transfer.receive(host, barrier, index, event)
+					if installed != Types.Code.OK:
+						_abort(host, barrier, Abort.CONFLICTING_HISTORY if installed in [Types.Code.INPUT_ALREADY_SUBMITTED, Types.Code.PROTOCOL_FAILED] else Abort.MISSING_HISTORY)
+			else:
+				_receive_backfill(host, key, barrier, event)
 		Phase.COMMIT:
 			_receive_commit(host, peer_index, key, barrier, event)
 		Phase.ABORT:
@@ -264,14 +282,12 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		# No frame is retained by every survivor, so they cannot freeze the same value.
 		_fail(host, barrier, "no_common_window")
 		return
-	if not Inventory.covers(barrier.receipts, barrier.slots, barrier.lower, cut):
-		_abort(host, barrier, Abort.MISSING_HISTORY)
+	var selected: int = Transfer.select(self, host, barrier, cut)
+	if selected != Types.Code.OK:
+		_abort(host, barrier, Abort.MISSING_HISTORY if selected == Types.Code.HISTORY_UNAVAILABLE else Abort.RESOURCE_LIMIT)
 		return
-	for identity: String in barrier.answers:
-		var answer: Dictionary = barrier.answers[identity]
-		if not Inventory.covers(answer.receipts, barrier.slots, int(answer.bound), cut):
-			_abort(host, barrier, Abort.MISSING_HISTORY)
-			return
+	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, cut):
+		return
 	if barrier.digest == 0:
 		var value: PackedByteArray = _frozen_value(host, barrier, cut)
 		if value.is_empty():
@@ -320,7 +336,7 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 			_send(host, barrier, Phase.REPORT, Stage.READY)
 		return
 	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, barrier.cut):
-		_abort(host, barrier, Abort.MISSING_HISTORY)
+		# A final candidate can overtake the donor plan; incomplete history never certifies.
 		return
 	if barrier.value.is_empty():
 		barrier.value = _frozen_value(host, barrier, barrier.cut)
@@ -334,6 +350,7 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 		_abort(host, barrier, Abort.CONFLICTING_HISTORY)
 		return
 	barrier.digest = digest
+	barrier.ready_receipts = Inventory.capture(host._core, barrier.slots)
 	barrier.certified = true
 	barrier.sent_us = now_us
 	_send(host, barrier, Phase.REPORT, Stage.READY)
@@ -353,6 +370,12 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		# Only the survivor that owns the lowest surviving slot may propose.
 		return
 	if not _matches_identity(barrier, event):
+		return
+	if int(event.get("stage", 0)) == Stage.HISTORY:
+		if not Transfer.adopt(host, barrier, event):
+			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
+		else:
+			barrier.adopted = true
 		return
 	var digest: int = int(event.get("cut_digest", 0))
 	if barrier.certified:
@@ -382,13 +405,14 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		var reported_cut: int = int(event.get("cut", -1))
 		var reported_bound: int = int(event.get("bound", -1))
 		var receipts: Dictionary = Inventory.decode(event.get("bytes", PackedByteArray()), barrier.slots, host._config.queue_capacity)
-		if reported_cut < 0 or reported_bound < 0 or receipts.is_empty():
+		if reported_cut < 0 or reported_bound < 0 or receipts.is_empty() or int(event.get("chunk_count", 0)) < 1:
 			_abort(host, barrier, Abort.MISSING_HISTORY)
 			return
 		var answer: Dictionary = {
 			"cut": reported_cut,
 			"bound": reported_bound,
 			"available_through": int(event.get("available_through", -1)),
+			"chunk_budget": int(event.get("chunk_count", 0)) * 16,
 			"receipts": receipts,
 		}
 		if barrier.answers.has(identity) and barrier.answers[identity] != answer:
@@ -406,7 +430,13 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			return
 		var answer: Dictionary = barrier.answers[identity]
 		var receipts: Dictionary = Inventory.decode(event.get("bytes", PackedByteArray()), barrier.slots, host._config.queue_capacity)
-		if receipts != answer.receipts or int(event.get("bound", -1)) != int(answer.bound):
+		var changed: bool = receipts != answer.receipts
+		if changed and barrier.history.first >= 0:
+			changed = not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut)
+			for slot: int in barrier.slots:
+				if answer.receipts[slot].x >= 0 and (not receipts.has(slot) or receipts[slot].x != answer.receipts[slot].x or receipts[slot].y < answer.receipts[slot].y):
+					changed = true
+		if changed or int(event.get("bound", -1)) != int(answer.bound) or not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):
 			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
 			return
 		if not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):
@@ -656,9 +686,12 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 		"available_through": barrier.available_through,
 		"cut_digest": digest,
 		"chunk_index": 0,
-		"chunk_count": barrier.chunk_count,
+		"chunk_count": barrier.chunk_budget / 16 if phase == Phase.REPORT and stage == Stage.INVENTORY else barrier.chunk_count,
 		"data": _targets(barrier),
-		"bytes": Inventory.encode(barrier.receipts, barrier.slots) if phase == Phase.REPORT and stage in [Stage.INVENTORY, Stage.READY] else PackedByteArray(),
+		"bytes": (
+			Inventory.encode(barrier.ready_receipts if stage == Stage.READY else barrier.receipts, barrier.slots)
+			if phase == Phase.REPORT and stage in [Stage.INVENTORY, Stage.READY] else PackedByteArray()
+		),
 	}
 
 

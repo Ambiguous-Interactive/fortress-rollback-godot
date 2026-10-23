@@ -94,8 +94,9 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, reserved:u16, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
-The retained-history drop tier uses feature bit `1`, agreed before gameplay
-when player sessions enable `CONTINUE`. Other unknown local bits are refused.
+The retained-history drop tier uses feature bit `1`; bounded donor transfer adds
+bit `2`. Player sessions enabling `CONTINUE` now require both bits before gameplay.
+Upgrade all match participants together. Other unknown local bits are refused.
 Parsing a feature bit does not enable its behavior. `GOODBYE.reason` preserves
 all u8 values; policy maps known reasons and handles unknown reasons explicitly.
 
@@ -103,7 +104,8 @@ all u8 values; policy maps known reasons and handles unknown reasons explicitly.
 `1` for the prepare, `2` for a survivor's report, `3` for the backfill of the
 frozen value, `4` for the commit and `5` for the abort. Its stage is `1` for
 an inventory report, `2` for a certificate and `3` for the committed
-acknowledgement. The operation identity names the coordinator slot, the
+acknowledgement. Stage `5` selects historical transfer: PREPARE names the donor
+and plan; BACKFILL carries historical chunks. The operation identity names the coordinator slot, the
 coordinator's connected era, the operation sequence and the digest of the
 target set; an older identity never joins the agreement. The cut is the frame
 the sender proposes or accepts, the bound is the oldest frame the sender can
@@ -114,9 +116,20 @@ bytes carry one bounded chunk of the frozen value during BACKFILL.
 INVENTORY and READY reports instead carry an exact retained-history inventory:
 u8 version `1`, u8 target count, then ordered `(slot:u8, from:i32, through:i32)`
 rows. `(-1, -1)` means unavailable history. There are at most eight rows (74 bytes);
-an interval spans at most the agreed queue capacity plus one reclaimed frame. READY must repeat the
-accepted inventory exactly. Unknown, incomplete, conflicting or insufficient
-inventories cannot authorize COMMIT. The barrier is a Godot-scoped
+an interval spans at most the agreed queue capacity plus one reclaimed frame.
+INVENTORY's `chunk_count` advertises its safe historical payload budget in 16-byte
+units (1–64). READY retains the original interval's start and covers every original
+receipt plus the cut; a completed donor transfer may extend its end. Unknown,
+incomplete, conflicting or insufficient inventories cannot authorize COMMIT.
+
+A stage-5 PREPARE keeps the operation identity, uses `bound` as the first missing
+frame and `cut` as the last, and carries `(donor_slot:u8, chunk_bytes:u16)`.
+The selected donor must be a surviving roster member. Stage-5 BACKFILL repeats
+that range, names the donor in `available_through` and carries an indexed byte
+slice of frame-major, target-ordered inputs. Every chunk has the exact planned
+length and count. At most 64 chunks of at most 1024 bytes are retained; arbitrary
+byte boundaries support inputs wider than a chunk. This plan is immutable for
+the operation. Data arriving before its plan is ignored and recovered by retry. The barrier is a Godot-scoped
 tier: the pinned source keeps its coordinated drop in a different byte layout,
 so the eleven pinned kinds keep the golden fixtures and this kind has its own
 round-trip and rejection coverage.

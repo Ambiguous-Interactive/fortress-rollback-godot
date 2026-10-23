@@ -71,7 +71,7 @@ def encoded(case):
     return data
 
 
-def expected(case, rust):
+def expected(case, rust, expert=False):
     state = (0, case['seed'], case['seed'], 0)
     records, events = [], []
     failure = -1
@@ -87,7 +87,7 @@ def expected(case, rust):
         state = advance(state, row)
         records.append(dict(kind='advance', frame=frame, bytes=state_bytes(state).hex(),
                             inputs=[dict(value=value, status='confirmed') for value in row]))
-    result = dict(name=case['name'], initial_frame=-1 if rust else 0,
+    result = dict(name=case['name'] + ('-expert' if expert else ''), initial_frame=-1 if rust else 0,
                   current_frame=len(case['frames']) - 1 if rust else state[0],
                   complete=True if rust else failure < 0, records=records, bytes=state_bytes(state).hex())
     if rust:
@@ -115,14 +115,17 @@ def compare(actual, wanted, path='result'):
         raise ValueError(f'{path}: value mismatch: expected {wanted!r}, actual {actual!r}')
 
 
+def godot_expected(cases):
+    return dict(format=1, cases=[expected(case, False, expert) for case in cases for expert in (False, True)])
+
+
 def controls(observed, wanted):
-    controls = []
     inventory = {case['name']: index for index, case in enumerate(wanted['cases'])}
     plain = inventory['2p-1-plain']
     temporal = inventory['2p-7-plain']
     final_mismatch = inventory['2p-1-last-mismatch']
     sparse = inventory['2p-7-sparse']
-    for name, path, replacement in (
+    return reject_mutations(observed, wanted, (
         ('intermediate-state', ('cases', temporal, 'records', 0, 'bytes'), '00' * 16),
         ('confirmed-status', ('cases', plain, 'records', 0, 'inputs', 0, 'status'), 'predicted'),
         ('frame-offset', ('cases', plain, 'current_frame'), 1),
@@ -131,7 +134,30 @@ def controls(observed, wanted):
         ('invented-event', ('cases', plain, 'events'), [{'frame': 0, 'expected': '00' * 16, 'actual': '00' * 16}]),
         ('missing-sparse-save', ('cases', sparse, 'records'),
          [record for record in observed['cases'][sparse]['records'] if not (record['kind'] == 'save' and record['frame'] == 1)]),
-    ):
+    ))
+
+
+def expert_controls(observed, wanted):
+    """Reject expert-only faults while leaving every callback observation unchanged."""
+    compare(observed, wanted)
+    inventory = {case['name']: index for index, case in enumerate(wanted['cases'])}
+    validated = inventory['2p-7-all-expert']
+    mismatch = inventory['2p-1-first-mismatch-expert']
+    records = observed['cases'][validated]['records']
+    return reject_mutations(observed, wanted, (
+        ('expert-missing-save', ('cases', validated, 'records'), records[1:]),
+        ('expert-duplicate-advance', ('cases', validated, 'records'), records + [records[-1]]),
+        ('expert-frame-offset', ('cases', validated, 'records', 0, 'frame'), 1),
+        ('expert-intermediate-state', ('cases', validated, 'records', 1, 'bytes'), '00' * 16),
+        ('expert-input-status', ('cases', validated, 'records', 1, 'inputs', 0, 'status'), 'predicted'),
+        ('expert-advance-after-desync', ('cases', mismatch, 'records'),
+         observed['cases'][mismatch]['records'] + [records[1]]),
+    ))
+
+
+def reject_mutations(observed, wanted, mutations):
+    controls = []
+    for name, path, replacement in mutations:
         changed = copy.deepcopy(observed)
         target = changed
         for key in path[:-1]:
@@ -253,10 +279,11 @@ def main():
         if len(lines) != 1:
             raise ValueError('missing or duplicate Godot replay completion')
         godot = json.loads(lines[0])
-        compare(godot, dict(format=1, cases=[expected(case, False) for case in cases]))
+        compare(godot, godot_expected(cases))
         observations.append(dict(rust=rust, godot=godot))
     compare(observations[0], observations[1])
     negative = controls(observations[0]['rust'], wanted)
+    negative += expert_controls(observations[0]['godot'], godot_expected(cases))
     rejected = rejection_controls(binary, engine, cases, args.output)
     if fingerprints() != frozen or digest(engine) != engine_hash or digest(binary) != binary_hash:
         raise ValueError('source or tool changed during replay observation')
@@ -265,11 +292,11 @@ def main():
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         negative_controls=negative, standalone_rejections=rejected, observations=observations[0],
-        limitations=['ReplaySession public callbacks only; recording applicability is audited separately.',
+        limitations=['ReplaySession playback only; recording applicability is audited separately.',
                      'Native sequential replay; browser replay coverage is in ownership and online probes.',
-                     'Godot uses callback playback, checks only present checksums and stops before mismatching advances.',
-                     'No expert replay request interface, snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')
-    print(f'Replay: {len(cases)} pinned upstream and Godot cases passed twice; {len(negative)} negative controls rejected.')
+                     'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
+                     'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')
+    print(f'Replay: {len(cases)} pinned upstream cases and both Godot interfaces passed twice; {len(negative)} negative controls rejected.')
 
 
 if __name__ == '__main__':

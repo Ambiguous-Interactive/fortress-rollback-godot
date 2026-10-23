@@ -95,7 +95,7 @@ longer holds the confirmed frontier back. Confirmed history before that frame
 never changes; the frames after it are resimulated with the frozen value. A
 departure before the mesh confirmed any frame ends the match, because there is
 no agreed value to freeze. Every peer of a mesh must use the same policy.
-`CONTINUE` advertises the retained-history drop feature in the handshake, so
+`CONTINUE` advertises retained-history and donor-transfer features in the handshake, so
 a peer using the older drop tier is refused before gameplay.
 
 ### The coordinated drop
@@ -120,10 +120,18 @@ The survivors then certify the value they freeze on. Every survivor answers
 the proposal with its protected frontier and exact retained actual intervals.
 The proposer selects the receipt-raised frame, reads the departed slots' values
 at that frame and sends the final candidate. Every survivor checks its retained
-actual coverage and computes the digest of its own frozen value. The wire retains
-bounded frozen-value backfill chunks, but those chunks cannot replace missing
-historical rows or authorize a certificate without complete coverage.
-Every survivor then certifies the frame, the digest and its unchanged inventory. The
+actual coverage and computes the digest of its own frozen value. If rows are missing,
+the proposer selects the lowest-slot survivor retaining the entire missing interval
+for every target. That donor can differ from the proposer. It sends fixed-width,
+frame-major rows to every survivor before certification.
+
+The donor owns the exact journal through retries. A transfer contains at most 64
+chunks of at most 1024 bytes, reduced to fit every survivor's advertised packet
+budget. Each service call sends at most four chunks. Lost and reordered chunks
+are retried; changed duplicates, wrong donors and conflicting retained overlap
+end the match. All target overlaps and suffix capacities are validated before any
+target is installed. New actual rows use normal rollback correction.
+Every survivor then certifies the frame, the digest and its complete resulting inventory. The
 proposer commits only after every survivor certified the same pair. The commit
 is irreversible and freezes the departed slot at the certified frame, so the
 survivors keep one confirmed history and one frozen value instead of splitting
@@ -153,7 +161,8 @@ connected eras and the coordinator are re-derived from the roster, so a peer
 that does not own the lowest surviving slot cannot propose and a message that
 names another target set is refused. Every phase must match the exact operation,
 coordinator, coordinator era and target slots with their eras. Only the coordinator
-can send a prepare, backfill or commit. An invented future operation cannot
+can send a prepare, frozen-value backfill or commit. Historical chunks must come
+from the donor named by the immutable coordinator plan. An invented future operation cannot
 replace the locally derived one. The digest of the frozen value is a
 consistency check between the survivors, not an integrity primitive.
 
@@ -185,12 +194,12 @@ and their rollback floor separately, alongside exact retained actual intervals.
 The raised cut must cover every frontier and retain every needed row; otherwise
 the match ends instead of rewriting a survivor's confirmed history.
 
-This is a safety prerequisite, not complete unequal-frontier recovery.
-The pinned source raises the cut to cover every survivor's exposed confirmation
-and target-input receipts, then backfills missing actual input ranges before
-certification. The Godot tier can agree unequal frontiers when every survivor already retains
-the required actual rows. It still transfers only the frozen value, so range
-donors and bounded missing-history installation remain in
+The Godot tier backfills missing actual ranges when one survivor retains the
+whole required interval for every target. Missing donor history, capacity failure,
+conflicting overlap or expiry ends the match without a local-frontier fallback.
+The deterministic byte-transport tests cover this recovery; the existing live
+browser witness does not yet exercise missing-history transfer. Full pinned-source
+trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
 Until that work lands, `CONTINUE` terminates a match when the raised cut requires

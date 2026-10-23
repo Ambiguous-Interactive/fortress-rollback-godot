@@ -213,6 +213,14 @@ func receive_input(_player: int, _frame: int, _bytes: PackedByteArray) -> Types.
 	return Types.Result.new(Code.UNSUPPORTED)
 
 
+func validate_missing_backfill(_player: int, _start: int, _inputs: Array[PackedByteArray]) -> int:
+	return Code.UNSUPPORTED
+
+
+func install_missing_backfill(_player: int, _start: int, _inputs: Array[PackedByteArray]) -> int:
+	return Code.UNSUPPORTED
+
+
 func set_input_delay(_player: int, _delay: int) -> Types.Result:
 	return Types.Result.new(Code.UNSUPPORTED)
 

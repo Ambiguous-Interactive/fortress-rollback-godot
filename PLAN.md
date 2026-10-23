@@ -463,8 +463,9 @@ survivor that freezes the slot on its own frontier. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
 frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
 cover exposed frontiers and target receipts, and certifies complete retained actual
-intervals. Missing rows still fail closed; [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
-owns donor selection and full missing-history backfill.
+intervals. Bounded donor journals repair missing actual ranges before certification,
+including when the donor differs from the coordinator. [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
+retains pinned-source trace comparison and expanded live missing-history acceptance.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission
 journal and its own cut selection remain open in
