@@ -25,6 +25,7 @@ class Event:
 var _events: Array[RefCounted] = []
 var _has_host_prefix: bool = false
 var _host_rows: Array[PackedByteArray] = []
+var _host_statuses: Array[PackedByteArray] = []
 var _host_tags: PackedInt64Array = PackedInt64Array()
 var _host_frontier: int = -1
 var _host_finished: bool = false
@@ -41,6 +42,8 @@ func configure(config: Config) -> int:
 		return code
 	_host_rows.clear()
 	_host_rows.resize(config.queue_capacity)
+	_host_statuses.clear()
+	_host_statuses.resize(config.queue_capacity)
 	_host_tags.resize(config.queue_capacity)
 	_host_tags.fill(-1)
 	_host_frontier = -1
@@ -77,9 +80,10 @@ func playback_policy() -> PackedInt64Array:
 
 
 ## Accepts owned complete rows, including out-of-order arrivals within queue_capacity of the next frame.
+## Statuses are finalized per-player values; omission means every slot is CONFIRMED.
 ## Refusal leaves every row and the contiguous frontier unchanged; retry backpressure after playback.
 ## Identical retained duplicates are idempotent. Conflicting duplicates never replace accepted input.
-func receive_host_frame(frame: int, inputs: Array[PackedByteArray]) -> Types.Result:
+func receive_host_frame(frame: int, inputs: Array[PackedByteArray], statuses: PackedByteArray = PackedByteArray()) -> Types.Result:
 	var code: int = _mutation_code()
 	if code != Code.OK:
 		return Types.Result.new(code)
@@ -92,6 +96,9 @@ func receive_host_frame(frame: int, inputs: Array[PackedByteArray]) -> Types.Res
 	for bytes: PackedByteArray in inputs:
 		if bytes.size() != _config.input_width:
 			return Types.Result.new(Code.INPUT_WIDTH)
+	var finalized: PackedByteArray = finalized_statuses(statuses, _config.player_count)
+	if finalized.is_empty():
+		return Types.Result.new(Code.INVALID_CONFIGURATION)
 	if frame >= _current + _host_tags.size():
 		return Types.Result.new(Code.NETWORK_BACKPRESSURE)
 	var index: int = frame % _host_tags.size()
@@ -101,15 +108,44 @@ func receive_host_frame(frame: int, inputs: Array[PackedByteArray]) -> Types.Res
 	for bytes: PackedByteArray in inputs:
 		row.append_array(bytes)
 	if _host_tags[index] == frame:
-		return Types.Result.new(Code.OK if row == _host_rows[index] else Code.INPUT_ALREADY_SUBMITTED)
+		return Types.Result.new(Code.OK if row == _host_rows[index] and finalized == _host_statuses[index] else Code.INPUT_ALREADY_SUBMITTED)
 	_host_tags[index] = frame
 	_host_rows[index] = row
+	_host_statuses[index] = finalized
 	while _host_frontier + 1 < Queue.FRAME_MAX and _host_tags[(_host_frontier + 1) % _host_tags.size()] == _host_frontier + 1:
 		_host_frontier += 1
 	if not _has_host_prefix and _host_frontier >= 0:
 		_has_host_prefix = true
 		_events.append(Event.new(EventKind.SYNCHRONIZED, _current))
 	return Types.Result.new(Code.OK)
+
+
+## Omitted statuses preserve the byte-only API's all-confirmed behavior.
+## Supplied statuses must describe every player and contain only finalized values.
+static func finalized_statuses(statuses: PackedByteArray, players: int) -> PackedByteArray:
+	if players < Config.MIN_PLAYERS or players > Config.MAX_PLAYERS:
+		return PackedByteArray()
+	if statuses.is_empty():
+		var confirmed: PackedByteArray = PackedByteArray()
+		confirmed.resize(players)
+		confirmed.fill(Queue.Status.CONFIRMED)
+		return confirmed
+	if statuses.size() != players:
+		return PackedByteArray()
+	for status: int in statuses:
+		if status not in [Queue.Status.CONFIRMED, Queue.Status.DISCONNECTED]:
+			return PackedByteArray()
+	return statuses.duplicate()
+
+
+func _input_status(player: int, frame: int, _queue_status: int) -> int:
+	return _host_statuses[frame % _host_tags.size()][player]
+
+
+func confirmed_inputs(frame: int) -> Types.FrameInputs:
+	if _config == null or frame < 0 or _host_tags[frame % _host_tags.size()] != frame:
+		return null
+	return super.confirmed_inputs(frame)
 
 
 ## Highest complete contiguous host input, independent of playback delay.

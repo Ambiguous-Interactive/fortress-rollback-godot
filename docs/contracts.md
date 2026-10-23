@@ -181,6 +181,9 @@ statuses. A `DISCONNECTED` slot is a dropped peer under the optional
 `disconnect_behavior = CONTINUE` lifecycle policy: it repeats the value
 confirmed at the agreed frame and no longer holds the confirmed frontier back.
 Loss of an active peer otherwise terminates this first fixed-membership tier.
+Spectator host rows preserve finalized `CONFIRMED` and `DISCONNECTED` statuses
+through callback and expert playback. Byte-only delivery defaults to `CONFIRMED`;
+use explicit statuses for a status-sensitive game after a player drops.
 
 The library owns history slot bytes, exact used length, frame tag, generation
 and checksum. `FortressSnapshotWriter` offers checked writes and a cursor;

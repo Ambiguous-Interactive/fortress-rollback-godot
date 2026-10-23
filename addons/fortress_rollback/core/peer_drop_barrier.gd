@@ -8,13 +8,10 @@ extends RefCounted
 ## and the publication; this class owns the agreement state and the decisions
 ## it makes.
 ##
-## The barrier follows the pinned source's vocabulary: one operation identity, a
-## prepare, an inventory report, a backfill of the frozen value, an all-survivor
-## certificate and an irreversible commit. The Godot tier keeps its own rule for
-## choosing the frame: the survivor that owns the lowest surviving slot proposes
-## the cut and every survivor answers with the frame window it can still freeze.
-## The agreed frame is the input of the pinned certificate, so the survivors
-## freeze one frame and one value.
+## The barrier follows the pinned source's prepare, retained-input inventory,
+## all-survivor certificate and irreversible commit. The cut includes every
+## exposed confirmed frontier and every departed-slot actual receipt. This tier
+## certifies only complete retained history; missing row transfer remains separate.
 ##
 ## Every field that decides the agreement is derived locally. The wire carries
 ## the operation identity and the frozen value, but the target set, the eras and
@@ -36,6 +33,7 @@ const MAX_CHUNKS: int = 64
 const DIGEST_MASK: int = 0x3fffffffffffffff
 const FNV_OFFSET: int = 0x14650fb0739d0383
 const FNV_PRIME: int = 1099511628211
+const Inventory = preload("res://addons/fortress_rollback/core/peer_drop_inventory.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
@@ -58,6 +56,7 @@ class Barrier:
 	var digest: int = 0
 	var value: PackedByteArray = PackedByteArray()
 	var state: String = PENDING
+	var receipts: Dictionary = {}
 	var answers: Dictionary = {}
 	var certificates: Dictionary = {}
 	var acknowledged: Dictionary = {}
@@ -108,6 +107,16 @@ func pending() -> bool:
 	return false
 
 
+## Receipt gossip cannot expose another confirmed frame while its drop cut is held.
+func confirmation_ceiling() -> int:
+	var ceiling: int = 2147483647
+	for key: String in _barriers:
+		var active: Barrier = _barriers[key]
+		if active.state == PENDING:
+			ceiling = mini(ceiling, active.upper)
+	return ceiling
+
+
 ## The barrier of a departed peer, or null when it has none.
 func barrier(key: String) -> Barrier:
 	return _barriers.get(key, null)
@@ -133,7 +142,7 @@ func observed(host: Variant, index: int) -> bool:
 	if upper < lower:
 		# Every frame this survivor could freeze is already released, so the survivors
 		# cannot agree on a value and the match cannot continue safely.
-		host._publish_event({"kind": "peer_dropped", "peer": host._ids[index].duplicate(), "frame": upper})
+		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
 		host._core.terminate(Types.Code.PROTOCOL_FAILED)
 		return false
 	if _live_survivors(host) == 0:
@@ -155,6 +164,7 @@ func observed(host: Variant, index: int) -> bool:
 	barrier.coordinator = _lowest_slot(host, index)
 	barrier.coordinator_generation = _era_of_slot(host, barrier.coordinator)
 	barrier.target_set_digest = _target_digest(barrier.slots, barrier.generations)
+	barrier.receipts = Inventory.capture(host._core, barrier.slots)
 	barrier.available_through = _available_through(host, barrier)
 	_barriers[key] = barrier
 	host._publish_event({"kind": "peer_drop_pending", "peer": host._ids[index].duplicate(), "frame": upper})
@@ -169,6 +179,8 @@ func observed(host: Variant, index: int) -> bool:
 ## Drive the coordinated drops: propose, collect the survivor windows, certify and commit.
 func service(host: Variant, now_us: int) -> void:
 	for key: String in _barriers.keys():
+		if host._core.status().lifecycle == Types.Lifecycle.TERMINATED:
+			return
 		var barrier: Barrier = _barriers[key]
 		if barrier.state == COMMITTED:
 			if barrier.role == Role.PROPOSER and not _acknowledged_by_all(host, barrier):
@@ -240,18 +252,26 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		# The other survivors have not answered yet; the prepare is retried.
 		_retry(host, barrier, now_us, Phase.PREPARE)
 		return
-	var cut: int = barrier.upper
+	var cut: int = maxi(barrier.upper, Inventory.highest(barrier.receipts))
 	var bound: int = barrier.lower
 	for identity: String in barrier.answers:
 		if is_gone(identity):
 			# A survivor that left after its answer does not hold the agreement back.
 			continue
-		cut = mini(cut, int(barrier.answers[identity]["cut"]))
+		cut = maxi(cut, maxi(int(barrier.answers[identity]["cut"]), Inventory.highest(barrier.answers[identity]["receipts"])))
 		bound = maxi(bound, int(barrier.answers[identity]["bound"]))
 	if cut < bound:
 		# No frame is retained by every survivor, so they cannot freeze the same value.
 		_fail(host, barrier, "no_common_window")
 		return
+	if not Inventory.covers(barrier.receipts, barrier.slots, barrier.lower, cut):
+		_abort(host, barrier, Abort.MISSING_HISTORY)
+		return
+	for identity: String in barrier.answers:
+		var answer: Dictionary = barrier.answers[identity]
+		if not Inventory.covers(answer.receipts, barrier.slots, int(answer.bound), cut):
+			_abort(host, barrier, Abort.MISSING_HISTORY)
+			return
 	if barrier.digest == 0:
 		var value: PackedByteArray = _frozen_value(host, barrier, cut)
 		if value.is_empty():
@@ -275,6 +295,9 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 	if certified < live:
 		# The all-survivor certificate is not complete yet.
 		return
+	if not _can_freeze(host, barrier.index, barrier.cut):
+		_abort(host, barrier, Abort.MISSING_HISTORY)
+		return
 	barrier.state = COMMITTED
 	barrier.sent_us = now_us
 	_send(host, barrier, Phase.COMMIT)
@@ -295,6 +318,9 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 		if barrier.sent_us < 0 or now_us - barrier.sent_us >= RETRY_US:
 			barrier.sent_us = now_us
 			_send(host, barrier, Phase.REPORT, Stage.READY)
+		return
+	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, barrier.cut):
+		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	if barrier.value.is_empty():
 		barrier.value = _frozen_value(host, barrier, barrier.cut)
@@ -334,8 +360,8 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		return
 	if digest != 0:
 		var cut: int = int(event.get("cut", barrier.cut))
-		if cut > barrier.upper or cut < barrier.lower:
-			# The agreed frame is outside this survivor's window.
+		if cut < barrier.upper or cut < barrier.lower or cut < host._core.confirmed_freeze_floor() or cut < Inventory.highest(barrier.receipts):
+			_abort(host, barrier, Abort.MISSING_HISTORY)
 			return
 		barrier.cut = cut
 		barrier.digest = digest
@@ -355,14 +381,20 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 	if stage == Stage.INVENTORY:
 		var reported_cut: int = int(event.get("cut", -1))
 		var reported_bound: int = int(event.get("bound", -1))
-		if reported_cut < 0 or reported_bound < 0 or reported_bound > reported_cut:
-			# A survivor's window cannot be inverted or empty.
+		var receipts: Dictionary = Inventory.decode(event.get("bytes", PackedByteArray()), barrier.slots, host._config.queue_capacity)
+		if reported_cut < 0 or reported_bound < 0 or receipts.is_empty():
+			_abort(host, barrier, Abort.MISSING_HISTORY)
 			return
-		barrier.answers[identity] = {
+		var answer: Dictionary = {
 			"cut": reported_cut,
 			"bound": reported_bound,
 			"available_through": int(event.get("available_through", -1)),
+			"receipts": receipts,
 		}
+		if barrier.answers.has(identity) and barrier.answers[identity] != answer:
+			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
+			return
+		barrier.answers[identity] = answer
 		return
 	if stage == Stage.NEEDS_VALUE:
 		if barrier.digest != 0 and not barrier.value.is_empty():
@@ -370,6 +402,16 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			_send_backfill(host, barrier, identity)
 		return
 	if stage == Stage.READY:
+		if not barrier.answers.has(identity):
+			return
+		var answer: Dictionary = barrier.answers[identity]
+		var receipts: Dictionary = Inventory.decode(event.get("bytes", PackedByteArray()), barrier.slots, host._config.queue_capacity)
+		if receipts != answer.receipts or int(event.get("bound", -1)) != int(answer.bound):
+			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
+			return
+		if not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):
+			_abort(host, barrier, Abort.MISSING_HISTORY)
+			return
 		if barrier.certificates.has(identity):
 			# A duplicated certificate never counts twice.
 			return
@@ -426,6 +468,9 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 		return
 	if not barrier.certified:
 		# A commit without the local certificate is refused.
+		return
+	if not _can_freeze(host, index, cut):
+		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
 	_freeze(host, index, cut, barrier.value, true)
@@ -495,6 +540,10 @@ func _frozen_value(host: Variant, barrier: Barrier, cut: int) -> PackedByteArray
 ## Freeze the departed peer's slots at the agreed frame and publish the agreed value.
 func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certified: bool) -> bool:
 	var key: String = host._ids[index].hex_encode()
+	if not _can_freeze(host, index, cut):
+		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
+		host._core.terminate(Types.Code.PROTOCOL_FAILED)
+		return false
 	var offset: int = 0
 	var width: int = host._config.input_width
 	for slot: int in host._slots_by_peer[index]:
@@ -510,7 +559,7 @@ func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certif
 			code = host._core.freeze_player(slot, cut)
 		if code != Types.Code.OK:
 			# Without an agreed value the survivors would freeze on different bytes.
-			host._publish_event({"kind": "peer_dropped", "peer": host._ids[index].duplicate(), "frame": cut})
+			host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
 			host._core.terminate(Types.Code.PROTOCOL_FAILED)
 			return false
 	_dropped[key] = {"frame": cut, "slots": host._slots_by_peer[index].duplicate()}
@@ -520,23 +569,21 @@ func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certif
 	return true
 
 
-## A barrier that cannot agree leaves the survivors on the frame they certified,
-## or on their own confirmed frontier when no frame was certified. A conflicting
-## history ends the match: the survivors would freeze different values.
+func _can_freeze(host: Variant, index: int, cut: int) -> bool:
+	for slot: int in host._slots_by_peer[index]:
+		if host._core.validate_player_freeze(slot, cut) != Types.Code.OK:
+			return false
+	return true
+
+
+## An incomplete agreement cannot authorize a freeze, even after a candidate was published.
 func _fail(host: Variant, barrier: Barrier, reason: String, notify: bool = true) -> void:
 	barrier.state = FAILED
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": reason})
-	if reason in ["conflicting_history", "participant_lost"]:
-		host._core.terminate(Types.Code.PROTOCOL_FAILED)
-		return
 	if notify:
 		# The other survivors stop waiting instead of timing out on their own.
-		_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.TIMEOUT)
-	if barrier.digest != 0 and not barrier.value.is_empty():
-		# The candidate was published, so every survivor freezes the certified value.
-		_freeze(host, barrier.index, barrier.cut, barrier.value, true)
-		return
-	_freeze(host, barrier.index, barrier.upper, PackedByteArray(), false)
+		_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.MISSING_HISTORY if reason in ["missing_history", "no_common_window"] else Abort.TIMEOUT)
+	host._core.terminate(Types.Code.PROTOCOL_FAILED)
 
 
 ## A conflicting history closes the operation and ends the match.
@@ -611,7 +658,7 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 		"chunk_index": 0,
 		"chunk_count": barrier.chunk_count,
 		"data": _targets(barrier),
-		"bytes": PackedByteArray(),
+		"bytes": Inventory.encode(barrier.receipts, barrier.slots) if phase == Phase.REPORT and stage in [Stage.INVENTORY, Stage.READY] else PackedByteArray(),
 	}
 
 
@@ -699,7 +746,6 @@ func _retry(host: Variant, barrier: Barrier, now_us: int, phase: int) -> void:
 ## The inventory report of this survivor: its window and the frame through which
 ## it retains the departed slot's inputs.
 func _send_report(host: Variant, barrier: Barrier) -> void:
-	barrier.available_through = _available_through(host, barrier)
 	var payload: Dictionary = _payload(barrier, Phase.REPORT, Stage.INVENTORY, 0)
 	for index: int in range(host._ids.size()):
 		if index == barrier.index:

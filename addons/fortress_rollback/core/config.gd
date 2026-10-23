@@ -81,12 +81,12 @@ func validate() -> int:
 	return Types.Code.OK
 
 
-## Payload reservation includes snapshot staging/views, first-save comparison history and spectator host rows/tags.
+## Payload reservation includes snapshot staging/views, first-save comparison history and spectator host rows/statuses/tags.
 ## Runtime object metadata adds bounded overhead; this is not a heap-size guarantee.
 func required_storage_bytes() -> int:
 	return (
 		diagnostic_trace_storage_bytes()
-		+ (queue_capacity * (player_count * input_width + 8) if spectator else 0)
+		+ (queue_capacity * (player_count * (input_width + 1) + 8) if spectator else 0)
 		+ (history_slots + 2) * max_snapshot_bytes
 		+ history_slots * 40
 		+ history_slots * (max_snapshot_bytes + 16)

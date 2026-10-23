@@ -40,9 +40,9 @@ func _commit_deadline(context: RefCounted) -> void:
 		context.equal(follower.state, Drop.COMMITTED if offset < 0 else Drop.FAILED, "deadline equality wins over buffered COMMIT, offset %d" % offset)
 		context.equal(mesh.unconfirmed, 0 if offset < 0 else 1, "expiry publishes exactly one unconfirmed outcome, offset %d" % offset)
 		context.equal(mesh.reasons, [] if offset < 0 else ["timeout"], "the expired operation keeps its timeout reason")
-		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING, "timeout preserves the documented Godot fallback")
+		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING if offset < 0 else Types.Lifecycle.TERMINATED, "an expired certificate fails closed")
 		mesh.now = follower.started_us + 250001
-		_release_original(context, mesh, mesh.held[0])
+		_release_original(context, mesh, mesh.held[0], offset >= 0)
 		var acknowledgements: int = 0
 		for packet: Dictionary in _drain(mesh):
 			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
@@ -50,7 +50,7 @@ func _commit_deadline(context: RefCounted) -> void:
 				if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.COMMITTED:
 					acknowledgements += 1
 		context.equal(acknowledgements, 1 if offset < 0 else 0, "only a committed operation re-ACKs after its deadline")
-		context.equal(mesh.drop_events.get(1, []).size(), 1, "late duplicates cannot repeat the freeze notification")
+		context.equal(mesh.drop_events.get(1, []).size(), 1 if offset < 0 else 0, "late duplicates cannot repeat or fabricate a freeze notification")
 		context.equal(mesh.unconfirmed, 0 if offset < 0 else 1, "late duplicates cannot repeat expiry")
 
 
@@ -224,10 +224,10 @@ func _healthy_after_commit(context: RefCounted, mesh: Dictionary, commit: T.Mess
 		for player: int in [0, 1]:
 			context.equal(first[frame][player].bytes, _sample(player, frame).hex_encode(), "continuing inputs match the deterministic script")
 			context.equal(second[frame][player].bytes, first[frame][player].bytes, "survivors simulate identical continuing inputs")
-		context.equal(first[frame][2].bytes, _sample(2, commit.cut).hex_encode(), "the departed slot retains its certified frozen input")
+		context.equal(first[frame][2].bytes, _sample(2, mini(frame, commit.cut)).hex_encode(), "the departed slot preserves actual inputs through the raised cut")
 		context.equal(second[frame][2].bytes, first[frame][2].bytes, "survivors retain the same frozen input")
-		context.equal(first[frame][2].status, "disconnected", "the departed slot remains disconnected")
-		context.equal(second[frame][2].status, "disconnected", "the follower keeps the slot disconnected")
+		context.equal(first[frame][2].status, "disconnected" if frame > commit.cut else "confirmed", "disconnect starts strictly after the raised cut")
+		context.equal(second[frame][2].status, "disconnected" if frame > commit.cut else "confirmed", "the follower preserves actual history through the cut")
 	# Compare canonical state bytes after a shared confirmed frame, choosing the
 	# latest simulation of that frame so any rollback correction is included.
 	var states: Array[String] = []
@@ -256,9 +256,9 @@ func _wait_for_held(context: RefCounted, mesh: Dictionary) -> void:
 	context.equal(false, true, "the real session emits the packet selected for holding")
 
 
-func _release_original(context: RefCounted, mesh: Dictionary, packet: Dictionary) -> void:
+func _release_original(context: RefCounted, mesh: Dictionary, packet: Dictionary, terminated: bool = false) -> void:
 	var original: Array[Dictionary] = [packet]
-	super._deliver(context, mesh, original)
+	super._deliver(context, mesh, original, terminated)
 
 
 func _held_fixture(context: RefCounted, phase: int, stage: int, recipient: int, count: int = 3) -> Dictionary:

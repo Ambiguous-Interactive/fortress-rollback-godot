@@ -15,7 +15,17 @@ const Game = preload("res://tests/oracle/p2p_game.gd")
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["agreed_frame", "lagging_survivor", "held_match", "unconfirmed_fallback", "second_departure", "codec_round_trip", "conflicting_certificate", "stale_messages", "early_prepare"]
+		[
+			"agreed_frame",
+			"lagging_survivor",
+			"held_match",
+			"unconfirmed_fallback",
+			"second_departure",
+			"codec_round_trip",
+			"conflicting_certificate",
+			"stale_messages",
+			"early_prepare"
+		]
 	)
 
 
@@ -57,7 +67,9 @@ func _sample(player: int, frame: int) -> PackedByteArray:
 
 
 ## Peers with the lifecycle enabled, so a silent peer is detected by the timeout.
-func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3, timeouts: Array[int] = [], barrier_timeout_us: int = 250000) -> Dictionary:
+func _build(
+	context: RefCounted, behavior: int, window: int = 8, count: int = 3, timeouts: Array[int] = [], barrier_timeout_us: int = 250000, replay_frames: int = 64
+) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	for player: int in range(count):
@@ -73,7 +85,7 @@ func _build(context: RefCounted, behavior: int, window: int = 8, count: int = 3,
 		config.sync_test = false
 		config.max_snapshot_bytes = 4 * 8
 		config.storage_budget_bytes = 1048576
-		config.replay_max_frames = 64
+		config.replay_max_frames = replay_frames
 		var local: T.Message = T.Message.new()
 		local.kind = T.Kind.SYNC_REQUEST
 		local.sender_id = _id(player)
@@ -350,7 +362,7 @@ func _agreed_frame(context: RefCounted) -> void:
 		context.equal(rows_second[frame][2].status, "disconnected", "the other survivor reports a disconnected status")
 
 
-## A survivor that lags still agrees the frame the other survivor can freeze.
+## A lagging confirmation frontier still freezes only after all retained target receipts.
 func _lagging_survivor(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, true)
@@ -360,8 +372,10 @@ func _lagging_survivor(context: RefCounted) -> void:
 	mesh.peers[0].step(mesh.now, _inputs(mesh, 0))
 	_detect(context, mesh, [0, 1])
 	var cuts: Array[int] = _cuts(mesh, [0, 1])
-	context.equal(cuts[0] >= 0, true, "the first survivor publishes the drop")
-	context.equal(cuts[1], cuts[0], "the lagging survivor agrees the frame")
+	context.equal(cuts[0], 8, "the cut includes every retained target receipt")
+	context.equal(cuts[1], cuts[0], "the lagging survivor agrees the raised frame")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "complete history keeps the match running")
 
 
 ## The match holds while the survivors agree the frozen frame.
@@ -394,15 +408,18 @@ func _held_match(context: RefCounted) -> void:
 	context.equal(held > 0, true, "the match holds while the survivors agree")
 
 
-## A barrier that never completes leaves the survivors on their own frontier and says so.
+## A barrier without every certificate ends before freezing any departed slot.
 func _unconfirmed_fallback(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, true)
 	_leave(context, mesh, 2)
 	# The answers never arrive, so the barrier reaches its timeout.
-	_detect(context, mesh, [0, 1], 800000, false)
-	context.equal(mesh.cuts.size() > 0, true, "the survivors still keep the match running")
+	_detect(context, mesh, [0, 1], 800000, false, [], [], true)
+	context.equal(mesh.cuts.is_empty(), true, "an incomplete certificate cannot authorize any freeze")
 	context.equal(mesh.unconfirmed > 0, true, "the survivors report the missing agreement")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "timeout fails closed")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(2), -1, "timeout leaves the target unfrozen")
 
 
 ## A departure after the owner of the lowest slot left still agrees one frame.
@@ -421,6 +438,7 @@ func _second_departure(context: RefCounted) -> void:
 	context.equal(mesh.unconfirmed, 0, "both departures agree without a fallback")
 	for survivor: int in [2, 3]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives both departures")
+
 
 ## The barrier message keeps its operation identity, its stage and its frozen value on the wire.
 func _codec_round_trip(context: RefCounted) -> void:

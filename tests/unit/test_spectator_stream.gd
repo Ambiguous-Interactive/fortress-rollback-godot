@@ -127,16 +127,16 @@ func _legacy_row(frame: int) -> PackedByteArray:
 
 
 ## One version 1 startup offer: the same shape with an envelope version this side cannot speak.
-func _legacy_offer() -> PackedByteArray:
-	var packet: PackedByteArray = Stream.encode_header(Stream.OFFER, 0, 2, 1, _identity(), _digest(), 1)
-	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(1), Negotiation.CAP_ALL))
+func _legacy_offer(version: int = 1) -> PackedByteArray:
+	var packet: PackedByteArray = Stream.encode_header(Stream.OFFER, 0, 2, 1, _identity(), _digest(), version)
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(version), Negotiation.CAP_ALL))
 	return Stream.authenticate(packet, _key())
 
 
 ## One version 1 answer to the startup offer.
-func _legacy_accept() -> PackedByteArray:
-	var packet: PackedByteArray = Stream.encode_header(Stream.ACCEPT, 0, 2, 1, _identity(), _digest(), 1)
-	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(1), Negotiation.CAP_ALL))
+func _legacy_accept(version: int = 1) -> PackedByteArray:
+	var packet: PackedByteArray = Stream.encode_header(Stream.ACCEPT, 0, 2, 1, _identity(), _digest(), version)
+	packet.append_array(Negotiation.encode_capabilities(Negotiation.supported_versions(version), Negotiation.CAP_ALL))
 	return Stream.authenticate(packet, _key())
 
 
@@ -167,7 +167,7 @@ func _wire_golden(context: RefCounted) -> void:
 	var stream: RefCounted = _stream(context)
 	context.equal(
 		stream.encode_row(16909060, _row(0)).hex_encode(),
-		"465247530201020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b04030201731411334fcded23e53b538704c81eba0001",
+		"465247530301020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b040302015b1f1214e81754c82b0e314af242ac7c00010101",
 		"independent little-endian frame, dimensions, identity, configuration and tag golden"
 	)
 	context.equal(stream.encode_end(0).size(), 80, "empty stream has fixed header only")
@@ -494,7 +494,7 @@ func _keepalive(context: RefCounted) -> void:
 	var keepalive: PackedByteArray = stream.encode_keepalive()
 	context.equal(
 		keepalive.hex_encode(),
-		"465247530203020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b000000000f63910fb2758ff54f8fd57c2bc1a1eb",
+		"465247530303020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b00000000b2682cf93ac18d671c4dfca695dfb7a2",
 		"keepalive kind, reserved frame, configuration and tag independent golden"
 	)
 	context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 1), CODE.OK, "ordinary host packet control")
@@ -568,7 +568,7 @@ func _wide_shapes(context: RefCounted) -> void:
 					row.append(bytes)
 					expected = expected * 3 + bytes[0] + frame
 				var packet: PackedByteArray = stream.encode_row(frame, row)
-				context.equal(packet.size(), 80 + players * width, label + " row size")
+				context.equal(packet.size(), 80 + players * (width + 1), label + " row size")
 				context.equal(packet[6], players, label + " header roster")
 				context.equal(packet.decode_u32(8), width, label + " header width")
 				context.equal(stream.receive_packet(packet, frame), CODE.OK, label + " row accepted")

@@ -72,12 +72,13 @@ func _unsigned(packet: PackedByteArray) -> PackedByteArray:
 	return body
 
 
-## A row packet with a valid tag, built from the raw header and the row body.
+## A v3 row packet with a valid tag, built from the raw header, input bytes and finalized statuses.
 func _signed_row(frame: int, inputs: Array[PackedByteArray]) -> PackedByteArray:
 	var config: RefCounted = Fixture.new()._config()
 	var packet: PackedByteArray = Stream.encode_header(Stream.ROW, frame, config.player_count, config.input_width, _identity(), _digest())
 	for bytes: PackedByteArray in inputs:
 		packet.append_array(bytes)
+	packet.append_array(PackedByteArray([1, 1]))
 	return Stream.authenticate(packet, _key())
 
 

@@ -94,6 +94,8 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, reserved:u16, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
+The retained-history drop tier uses feature bit `1`, agreed before gameplay
+when player sessions enable `CONTINUE`. Other unknown local bits are refused.
 Parsing a feature bit does not enable its behavior. `GOODBYE.reason` preserves
 all u8 values; policy maps known reasons and handles unknown reasons explicitly.
 
@@ -108,7 +110,13 @@ the sender proposes or accepts, the bound is the oldest frame the sender can
 still freeze and `available_through` is the frame through which the sender
 still retains the departed slot's inputs. The target list names the departed
 peer's slots in increasing order, each with its connected era, and the value
-bytes carry one bounded chunk of the frozen value. The barrier is a Godot-scoped
+bytes carry one bounded chunk of the frozen value during BACKFILL.
+INVENTORY and READY reports instead carry an exact retained-history inventory:
+u8 version `1`, u8 target count, then ordered `(slot:u8, from:i32, through:i32)`
+rows. `(-1, -1)` means unavailable history. There are at most eight rows (74 bytes);
+an interval spans at most the agreed queue capacity plus one reclaimed frame. READY must repeat the
+accepted inventory exactly. Unknown, incomplete, conflicting or insufficient
+inventories cannot authorize COMMIT. The barrier is a Godot-scoped
 tier: the pinned source keeps its coordinated drop in a different byte layout,
 so the eleven pinned kinds keep the golden fixtures and this kind has its own
 round-trip and rejection coverage.

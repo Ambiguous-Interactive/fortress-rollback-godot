@@ -413,7 +413,7 @@ Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
 Every envelope packet carries a keyed tag over its header and body and the digest of the
 agreed match, so a viewer accepts only a host that holds the shared key and only a match
-it agreed. The envelope version moves from 1 to 2, and the version and the optional kinds
+it agreed. The envelope version is 3, and the version and the optional kinds
 are negotiated inside that authenticated boundary before the first row, so a peer that
 speaks another envelope fails at startup with one recorded reason.
 A viewer never simulates a host row it no longer retains, and a reconfigured viewer keeps
@@ -426,14 +426,16 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
-Spectator rows currently carry input bytes and supply confirmed status for every slot; games that depend on disconnected status need
-[#187](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/187) before they can spectate a gracefully dropped match faithfully.
+Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
+version 3 delivery, playback requests and confirmed exports. Byte-only callers default to
+all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 Live SignalFish spectator routing, handshake/events and upstream spectator
-differential/model acceptance remain open in #47. The upstream server has added
-spectator relay routing; qualifying the SDK and upgrading the reviewed pins remain
-part of #131 before the exported spectator witness can use it.
+differential/model acceptance remain open in #47. The upstream SDK and server now have a native spectator relay drill; its
+[qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
+SDK delivery from the remaining exported Fortress witness. Reviewing dependency drift,
+restoring candidate server CI and upgrading the reviewed pins remain part of #131.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
@@ -453,14 +455,16 @@ A survivor lost before commit aborts the local attempt with `participant_lost`
 and ends the match; committed decisions remain irreversible. A certificate
 that names another value ends the match with a recorded reason
 instead of freezing divergent values. The match holds while the barrier runs
-and a barrier that cannot agree falls back to the survivor's own frontier with
-a recorded reason. Three real peer sessions now run that barrier end to end:
+and a barrier that cannot agree ends the match with a recorded reason.
+A freeze refuses a cut below the protected confirmed frontier before changing history. Three real peer sessions now run that barrier end to end:
 one peer stops answering, the two survivors agree one frame, keep one
 confirmed history and keep playing, and a second departure leaves one
 survivor that freezes the slot on its own frontier. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
-frame and the pinned tier certifies the frozen value. The scoped min-cut tier does not preserve already exposed history across unequal survivor confirmation frontiers;
-[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188) owns the receipt-raised cut and full missing-history backfill.
+frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
+cover exposed frontiers and target receipts, and certifies complete retained actual
+intervals. Missing rows still fail closed; [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
+owns donor selection and full missing-history backfill.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission
 journal and its own cut selection remain open in

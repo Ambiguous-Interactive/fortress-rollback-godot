@@ -217,6 +217,22 @@ func retained_confirmed_input(frame: int) -> Result:
 	return confirmed_input(frame)
 
 
+## Exact contiguous logical actual interval, excluding stale physical tags and predictions.
+## Verification reads at most capacity plus the one reclaimed frame, without copying payloads.
+func retained_frame_range() -> PackedInt64Array:
+	if _capacity == 0 or _length == 0:
+		return PackedInt64Array()
+	var first: int = _tail_frame
+	if _reclaimed_frame != -1 and _reclaimed_frame + 1 == _tail_frame:
+		first = _reclaimed_frame
+	if _last_added < first or _last_added - first > _capacity:
+		return PackedInt64Array()
+	for frame: int in range(first, _last_added + 1):
+		if frame != _reclaimed_frame and _frames[frame % _capacity] != frame:
+			return PackedInt64Array()
+	return PackedInt64Array([first, _last_added])
+
+
 ## Discard before frame, clamped to the latest request, always retaining newest.
 ## The -1 sentinel is a no-op; physical tags survive until reused.
 func discard_confirmed_frames(frame: int) -> int:

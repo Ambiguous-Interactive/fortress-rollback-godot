@@ -156,6 +156,9 @@ publishing its checksum. Finalize late matching inputs without fabricating anoth
 A peer drop changes simulation status even when frozen bytes equal prior predictions; repair
 every simulated frame after the cut. Keep receipt-only replay rows private until mesh confirmation,
 and rewrite their bytes, statuses and checksum coverage when the agreed drop replaces them.
+Carry finalized statuses through spectator publication, authentication, retention and every playback API;
+equal bytes do not imply equal simulation behavior. Use a status-sensitive game and independently
+calculated states to catch a byte-only bridge, and keep historical wire versions frozen.
 
 Specialized session modes must audit inherited public mutators. A confirmed-only spectator
 cannot accept player freezing or player-mesh confirmation limits: playback may succeed while exports lose

@@ -27,9 +27,10 @@ terminal exit. Restart the same verified binary/configuration on the same endpoi
 check the new live handle with bounded readiness. Socket/proxy outage evidence
 cannot substitute for process death or a fresh service lifetime.
 
-A replay format change must update independent browser-download verifiers and their
-packing fixtures as well as the core decoder, oracle and golden. Search magic bytes,
-version tuples and binary unpack calls; old synthetic fixtures can keep stale parsers green.
+A replay or spectator format change must update independent consumers and raw packet/
+model fixtures as well as the core decoder, oracle and golden. Search magic bytes,
+header builders, authentication helpers, version tuples and binary unpack calls;
+run the whole consumer suites, since old synthetic fixtures can hide stale formats.
 
 ## Godot Peer Setup
 
@@ -191,6 +192,8 @@ Keep committed operation control separate from the target's gameplay lifetime:
 freezing a slot must not discard duplicate commits or their acknowledgements.
 Test actual retry packets, lost acknowledgements and quiescence before timeout;
 match the full operation identity and certified value before counting completion.
+Validate a proposed cut against each receiver's captured receipt inventory, not only its
+exposed frontier; a correct proposer algorithm does not validate a broken proposer's candidate.
 Freeze the participant set when a local agreement opens. A lost participant before
 commit must abort that attempt, not silently reduce its certificate requirement.
 Test the same departure before and after commit; only the unfinished attempt aborts.
