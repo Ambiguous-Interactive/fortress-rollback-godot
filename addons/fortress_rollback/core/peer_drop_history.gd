@@ -18,6 +18,7 @@ var chunks: Dictionary = {}
 var journal: Array[PackedByteArray] = []
 var cursors: Dictionary = {}
 var retry_us: int = -1
+var plan_turn: bool = true
 
 
 func configure(start: int, through: int, source: int, width: int, slots: int, budget: int) -> bool:

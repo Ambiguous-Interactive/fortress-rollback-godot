@@ -129,7 +129,9 @@ that range, names the donor in `available_through` and carries an indexed byte
 slice of frame-major, target-ordered inputs. Every chunk has the exact planned
 length and count. At most 64 chunks of at most 1024 bytes are retained; arbitrary
 byte boundaries support inputs wider than a chunk. This plan is immutable for
-the operation. Data arriving before its plan is ignored and recovered by retry. The barrier is a Godot-scoped
+the operation. Its `cut_digest` also announces the final candidate once available;
+a separate candidate packet cannot take the donor's publication slot. Data arriving
+before its plan is ignored and recovered by retry. The barrier is a Godot-scoped
 tier: the pinned source keeps its coordinated drop in a different byte layout,
 so the eleven pinned kinds keep the golden fixtures and this kind has its own
 round-trip and rejection coverage.

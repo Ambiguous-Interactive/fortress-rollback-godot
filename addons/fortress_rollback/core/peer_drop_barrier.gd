@@ -73,6 +73,7 @@ class Barrier:
 	var chunk_budget: int = 0
 	var history: History = History.new()
 	var history_plan_us: int = -1
+	var history_plan_digest: int = -1
 	var ready_receipts: Dictionary = {}
 
 
@@ -297,7 +298,8 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		barrier.value = value
 		barrier.digest = _digest(value)
 		barrier.cut = cut
-	_retry(host, barrier, now_us, Phase.PREPARE)
+	if barrier.history.first < 0:
+		_retry(host, barrier, now_us, Phase.PREPARE)
 	var certified: int = 0
 	for identity: String in barrier.certificates:
 		if is_gone(identity):
@@ -332,8 +334,11 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 	if barrier.certified:
 		# The certificate is retried until the proposer commits it.
 		if barrier.sent_us < 0 or now_us - barrier.sent_us >= RETRY_US:
-			barrier.sent_us = now_us
-			_send(host, barrier, Phase.REPORT, Stage.READY)
+			if _send(host, barrier, Phase.REPORT, Stage.READY):
+				barrier.sent_us = now_us
+				barrier.history.plan_turn = false
+			else:
+				barrier.sent_us = -1
 		return
 	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, barrier.cut):
 		# A final candidate can overtake the donor plan; incomplete history never certifies.
@@ -352,8 +357,11 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 	barrier.digest = digest
 	barrier.ready_receipts = Inventory.capture(host._core, barrier.slots)
 	barrier.certified = true
-	barrier.sent_us = now_us
-	_send(host, barrier, Phase.REPORT, Stage.READY)
+	if _send(host, barrier, Phase.REPORT, Stage.READY):
+		barrier.sent_us = now_us
+		barrier.history.plan_turn = false
+	else:
+		barrier.sent_us = -1
 
 
 ## The proposer opened the operation and named the frame it proposes.
@@ -374,9 +382,8 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 	if int(event.get("stage", 0)) == Stage.HISTORY:
 		if not Transfer.adopt(host, barrier, event):
 			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
-		else:
-			barrier.adopted = true
-		return
+			return
+		barrier.adopted = true
 	var digest: int = int(event.get("cut_digest", 0))
 	if barrier.certified:
 		# A certified survivor keeps the frame and the value it certified.

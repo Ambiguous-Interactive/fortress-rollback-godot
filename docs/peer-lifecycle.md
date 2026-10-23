@@ -131,6 +131,12 @@ budget. Each service call sends at most four chunks. Lost and reordered chunks
 are retried; changed duplicates, wrong donors and conflicting retained overlap
 end the match. All target overlaps and suffix capacities are validated before any
 target is installed. New actual rows use normal rollback correction.
+Plan retries and donor rounds take separate publication turns. A refused plan
+retains its turn; a completed follower-donor round yields to a due certificate.
+The plan also announces the final candidate, preserving progress with an accepted
+one-packet output queue even when service calls match the 50-millisecond retry
+interval. Applications still need a deadline sufficient for their transfer and
+service cadence.
 Every survivor then certifies the frame, the digest and its complete resulting inventory. The
 proposer commits only after every survivor certified the same pair. The commit
 is irreversible and freezes the departed slot at the certified frame, so the

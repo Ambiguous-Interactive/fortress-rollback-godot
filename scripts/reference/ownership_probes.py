@@ -107,6 +107,8 @@ EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'del
 EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
     'remote_donor', 'loss_reorder', 'conflicting_duplicate', 'malformed_chunk', 'wrong_donor', 'lost_history_timeout',
     'resource_limit', 'multiple_target_slots', 'no_donor', 'conflicting_overlap'}
+EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
+    'fast_capacity_control', 'slow_complete_control', 'slow_minimum_capacity', 'slow_remote_donor', 'slow_lost_plan'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -150,6 +152,7 @@ FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
+FILES += ['tests/unit/test_peer_drop_capacity.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -195,6 +198,7 @@ const PeerChecksumRepair = preload("res://tests/unit/test_peer_checksum_repair.g
 const DropInventory = preload("res://tests/unit/test_peer_drop_inventory.gd")
 const DropHistory = preload("res://tests/unit/test_peer_drop_history.gd")
 const HistoryBackfill = preload("res://tests/unit/test_history_backfill.gd")
+const DropCapacity = preload("res://tests/unit/test_peer_drop_capacity.gd")
 const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 func _ready() -> void:
@@ -202,7 +206,7 @@ func _ready() -> void:
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
-		HistoryBackfill, DriverParity, DropBackfill]
+		HistoryBackfill, DriverParity, DropBackfill, DropCapacity]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)

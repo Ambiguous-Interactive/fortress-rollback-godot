@@ -66,20 +66,36 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 	var history: History = barrier.history
 	if history.first < 0:
 		return Types.Code.OK
-	if barrier.role == owner.Role.PROPOSER and (barrier.history_plan_us < 0 or now_us - barrier.history_plan_us >= History.RETRY_US):
-		barrier.history_plan_us = now_us
+	var local_donor: bool = host._config.local_players.has(history.donor)
+	var proposer: bool = barrier.role == owner.Role.PROPOSER
+	if local_donor and not history.prepare(host._core, barrier.slots, host._config.input_width):
+		return Types.Code.HISTORY_UNAVAILABLE
+	var plan_due: bool = barrier.history_plan_us < 0 or now_us - barrier.history_plan_us >= History.RETRY_US or barrier.history_plan_digest != barrier.digest
+	if proposer and plan_due and (not local_donor or history.plan_turn):
 		var plan: Dictionary = owner._payload(barrier, owner.Phase.PREPARE, owner.Stage.HISTORY, 0)
 		plan.cut = history.cut
 		plan.bound = history.first
 		plan.bytes = PackedByteArray([history.donor, 0, 0])
 		plan.bytes.encode_u16(1, history.chunk_bytes)
+		var accepted: bool = true
 		for index: int in host._ids.size():
 			if barrier.participants.has(host._ids[index].hex_encode()):
-				host._endpoint(index).send_drop_barrier(plan, host._now)
-	if not host._config.local_players.has(history.donor):
+				if host._endpoint(index).send_drop_barrier(plan, host._now) != I.Code.OK:
+					accepted = false
+		if accepted:
+			barrier.history_plan_us = now_us
+			barrier.history_plan_digest = barrier.digest
+		if local_donor:
+			if accepted:
+				history.plan_turn = false
+			return Types.Code.OK
+	if not local_donor or (proposer and history.plan_turn):
 		return Types.Code.OK
-	if not history.prepare(host._core, barrier.slots, host._config.input_width):
-		return Types.Code.HISTORY_UNAVAILABLE
+	if not proposer and history.plan_turn:
+		# A complete donor round yields to a due certificate until it is accepted.
+		if barrier.digest != 0 and (not barrier.certified or barrier.sent_us < 0 or now_us - barrier.sent_us >= History.RETRY_US):
+			return Types.Code.OK
+		history.plan_turn = false
 	if history.retry_us >= 0 and now_us - history.retry_us < History.RETRY_US:
 		return Types.Code.OK
 	var work: int = 0
@@ -105,6 +121,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 	if complete:
 		history.retry_us = now_us
 		history.cursors.clear()
+		history.plan_turn = true
 	return Types.Code.OK
 
 

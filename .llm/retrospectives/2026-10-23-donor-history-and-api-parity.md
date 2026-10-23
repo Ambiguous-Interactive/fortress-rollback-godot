@@ -13,6 +13,7 @@ New capability, source investigation and debugging triggered this retrospective.
 | A candidate can precede its history plan. Treat missing data as pending, with expiry still enforced. | `peer_drop_barrier.gd` follower coverage gate; missing-row regression failed before the wait replaced immediate abort. | Added the ordering invariant to the networking skill. |
 | A parity check must observe every claimed output, including empty events. | Fresh review found missing event comparison in `test_driver_external_parity.gd`; each step and recovery now drains and compares events. | Fixed the acceptance probe; retained existing testing guidance instead of duplicating it. |
 | Missing rows need complete range installation before a certificate, rather than frozen-value substitution. | Original-main missing-row probe terminates; donor journal repairs it and preserves canonical continuation. | Replaced stale range-transfer exclusions in lifecycle, protocol, supported-feature and plan documentation. |
+| Retried plans and donor data can starve each other at capacity one. | Fast and complete-history controls pass, but 50 ms donor service emitted 36 plans and one chunk before timeout; a lost-plan and remote-donor control isolated two more publication paths. | Preserve refused publication turns, yield donor rounds to certificates, and piggyback the final candidate. Add the minimum-capacity/cadence cross to the networking skill. |
 
 ## Verification
 
