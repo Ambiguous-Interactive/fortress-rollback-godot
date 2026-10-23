@@ -16,6 +16,7 @@ import time
 import zipfile
 
 from browser.webrtc_import import freeze_after_import
+from browser.webrtc_drop import validate_drop_browser
 from browser.webrtc_runner import run_browser
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
@@ -33,7 +34,7 @@ import host_capacity  # noqa: E402
 
 HOST_LEASE_NAME = 'webrtc-witness'
 HOST_WAIT_SECONDS = 900.0
-LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close')
+LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt')
 
 
 def validate_engine(engine, expected):
@@ -384,7 +385,8 @@ def main():
     owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
-                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events', 'mixed-close', 'mixed-close-events')]
+                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
+                       'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -402,6 +404,8 @@ def main():
                'host': ROOT / 'scripts/reference/signalfish_webrtc_probe.gd', 'setup': ROOT / 'scripts/reference/browser/webrtc_setup.gd',
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
+               'drop': ROOT / 'scripts/reference/browser/webrtc_drop.gd',
+               'drop_validator': ROOT / 'scripts/reference/browser/webrtc_drop.py',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
                'browser_matrix': ROOT / 'scripts/reference/browser/webrtc_matrix.py',
                'receipt_arguments': ROOT / 'scripts/reference/receipt_arguments.py',
@@ -551,7 +555,7 @@ def main():
                     shutil.copytree(sources['addon'], project / 'addons/fortress_rollback')
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
                     for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
-                                          ('mixed', 'webrtc_mixed.gd'), ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
+                                          ('mixed', 'webrtc_mixed.gd'), ('drop', 'webrtc_drop.gd'), ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
                         shutil.copyfile(sources[key], project / filename)
                     (project / 'project.godot').write_text(
                         'config_version=5\n[application]\nconfig/name="WebRTC witness"\nrun/main_scene="res://main.tscn"\n'
@@ -565,7 +569,7 @@ def main():
                     export.mkdir()
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
-                                'mixed': project / 'webrtc_mixed.gd',
+                                'mixed': project / 'webrtc_mixed.gd', 'drop': project / 'webrtc_drop.gd',
                                 'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
                     frozen = inventory(executed)
@@ -589,12 +593,17 @@ def main():
                             result = validate_disabled_control(code, output)
                             validate_identity(result, pair, pins)
                         else:
-                            output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log', rooms=1 if label in ('corrupt', 'default') else 3)
+                            output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log',
+                                                 rooms=1 if label in ('corrupt', 'default', 'peer-drop', 'peer-drop-corrupt') else 3)
                             validate_identity(json.loads(output), pair, pins)
-                            result = (validate_restore_control(json.loads(output), label) if label in ('corrupt', 'default')
-                                      else validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
-                                                            default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close'))
-                        records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled') else None,
+                            if label.startswith('peer-drop'):
+                                result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt')
+                            elif label in ('corrupt', 'default'):
+                                result = validate_restore_control(json.loads(output), label)
+                            else:
+                                result = validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
+                                                          default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close')
+                        records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt') else None,
                                         'command': browser_command, 'result': result})
                         print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)
                     if inventory(executed) != frozen or inventory({'export': export}) != export_before:
@@ -609,8 +618,11 @@ def main():
               'server_source_inventory': server_before, 'executed': executed_records,
               'server_config': config, 'server_events': server_events, 'records': records,
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
-              'limits': 'Real release Web exports in two independent selected pinned browser processes; local host ICE, 2/4/8 peers, '
-                        '40 submitted frames per peer and 38 corrected original-input canonical prefixes per peer. '
+              'limits': 'Real release Web exports in two independent selected pinned browser processes over local host ICE. '
+                        'Ordinary labels use 2/4/8 peers, 40 submitted frames and 38 corrected canonical prefixes per peer. '
+                        'Peer-drop labels use three peers: one stops protocol service after seven inputs, while two certify a frozen sample '
+                        'over real WebRTC and continue to 40 inputs with 38 independent canonical prefix checks. SDK membership and ICE remain alive. '
+                        'Post-drop simulation corruption must fail the canonical gate. No physical departure, relay-drop or complete pinned barrier parity claim. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
                         'synthetic single-link send pressure, with default and selected work budgets and correlated overlapping input bytes. '

@@ -7,7 +7,8 @@ const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchd
 const { placeFirefox } = require('./webrtc_display.cjs');
 const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false };
 
-function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose = false }) {
+function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
+  disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false }) {
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
   window.fortressLocal = index;
@@ -18,6 +19,8 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressMixedDefault = mixedDefault;
   window.fortressDisableFallback = disableFallback;
   window.fortressPhysicalClose = physicalClose;
+  window.fortressPeerDrop = peerDrop;
+  window.fortressDropCorrupt = dropCorrupt;
   window.fortressRtc = { channels: [], sent: 0, received: 0, dropped: 0, reordered: 0, pending: 0, active: 0 };
   const evidence = window.fortressRtc;
   evidence.binarySent = 0;
@@ -149,6 +152,13 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   };
 }
 
+function isDropCanonicalFailure(witness) {
+  const failure = witness?.failure;
+  return witness?.passed === false && failure?.stage === 'peer_drop_gameplay' && Array.isArray(failure.errors)
+    && failure.errors.length === 1 && typeof failure.errors[0] === 'string'
+    && /^peer_drop_canonical_(?:[89]|[12][0-9]|3[0-7])$/.test(failure.errors[0]);
+}
+
 async function captureFailure(pages, players) {
   return Promise.all(pages.slice(0, 8).map(async (page, index) => {
     let timer;
@@ -197,6 +207,8 @@ async function main() {
   const faults = process.argv[4] === 'faults';
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
+  const peerDrop = ['peer-drop', 'peer-drop-corrupt'].includes(process.argv[4]);
+  const dropCorrupt = process.argv[4] === 'peer-drop-corrupt';
   const physicalClose = process.argv[4] === 'mixed-close';
   const mixed = ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close'].includes(process.argv[4]);
   const mixedDefault = process.argv[4] === 'mixed-default';
@@ -240,7 +252,7 @@ async function main() {
     } : { headless: false, timeout: 30000, executablePath: process.env.FORTRESS_FIREFOX_EXECUTABLE,
       firefoxUserPrefs: FIREFOX_PREFS,
     }));
-    for (const count of ((corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {
+    for (const count of (peerDrop ? [3] : (corrupt || defaultFactory || disableFallback) ? [2] : [2, 4, 8])) {
       const contexts = [];
       const pages = [];
       const displays = [];
@@ -261,7 +273,7 @@ async function main() {
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
-            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose });
+            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -270,6 +282,10 @@ async function main() {
         if (!defaultFactory) {
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressHandshakeReady === 'true'
             || document.body.dataset.fortressGameplayDone === 'true' || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 120000 })));
+          if (peerDrop) {
+            const uuid = await pages[2].evaluate(() => document.body.dataset.fortressUuid);
+            await Promise.all(pages.map(page => page.evaluate(value => { window.fortressDepartingUuid = value; }, uuid)));
+          }
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressFirstStepReady = true; })));
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressFrame === '0' || document.body.dataset.fortressGameplayDone === 'true'
             || document.body.dataset.fortressWebrtc !== undefined, null, { timeout: 10000 })));
@@ -277,6 +293,10 @@ async function main() {
         } else await waitDefaultSetup(pages);
         }, 120000, 'setup');
         {
+          if (peerDrop) {
+            await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+            await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+          }
           await waitGameplay(pages);
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
           await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressTeardownArmed === 'true',
@@ -304,8 +324,10 @@ async function main() {
             connections: window.fortressResources.connections.filter(connection => connection.connectionState === 'closed').length } },
         }))));
         if (errors.length) throw new Error(JSON.stringify({ errors, peers }));
-        for (const peer of peers) {
-          if (!corrupt && !defaultFactory && peer.result.passed !== true) throw new Error(JSON.stringify(peers));
+        for (const [index, peer] of peers.entries()) {
+          if (dropCorrupt && index < 2 && !isDropCanonicalFailure(peer.result))
+            throw new Error(JSON.stringify({ control: 'wrong_drop_canonical_boundary', peers }));
+          if (!corrupt && !defaultFactory && !dropCorrupt && peer.result.passed !== true) throw new Error(JSON.stringify(peers));
           if (corrupt && (peer.result.passed !== false || peer.result.failure.stage !== 'gameplay'
             || peer.result.failure.errors.length !== 1 || !/^canonical_prefix_frame_[1-9][0-9]*$/.test(peer.result.failure.errors[0])))
             throw new Error(JSON.stringify({ control: 'wrong_failure_boundary', peers }));
@@ -328,7 +350,7 @@ async function main() {
     console.log(JSON.stringify({ passed: true, browser: browserPair.join('/'),
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
-      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, records, errors }));
+      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, records, errors }));
   } catch (error) {
     console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
       version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
@@ -340,5 +362,5 @@ async function main() {
   }
 }
 
-module.exports = { instrument };
+module.exports = { instrument, isDropCanonicalFailure };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

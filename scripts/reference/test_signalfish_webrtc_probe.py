@@ -436,7 +436,7 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         arguments = [keyword.value for keyword in calls[0].keywords if keyword.arg == 'rooms']
         self.assertEqual(len(arguments), 1, 'actual launcher must supply the room budget')
         expression = compile(ast.Expression(arguments[0]), 'actual_launcher_budget', 'eval')
-        for label, expected in [('clean', 1500), ('faults', 1500), ('corrupt', 540), ('default', 540)]:
+        for label, expected in [('clean', 1500), ('faults', 1500), ('corrupt', 540), ('default', 540), ('peer-drop', 540), ('peer-drop-corrupt', 540)]:
             rooms = eval(expression, {'label': label})
             with self.subTest(label=label), patch.object(webrtc_runner, 'capture', return_value=(0, 'ok')) as capture:
                 self.assertEqual(webrtc_runner.run_browser(['node', label], {}, Path('owned.log'), rooms), 'ok')

@@ -153,7 +153,12 @@ func run(host: Node, count: int) -> bool:
 		var handshake: H.Options = H.Options.new()
 		handshake.roundtrips = 1
 		var lifecycle: L.Options = L.Options.new()
-		lifecycle.enabled = false
+		lifecycle.enabled = host.drop_enabled
+		if host.drop_enabled:
+			lifecycle.disconnect_behavior = L.Disconnect.CONTINUE
+			lifecycle.disconnect_notify_us = 2000000
+			lifecycle.disconnect_timeout_us = 5000000
+			lifecycle.drop_barrier_timeout_us = 4000000
 		var configured: int = host.memberships[index].configure_peer(peer, config, game, handshake, I.Options.new(), lifecycle)
 		if configured != I.Code.OK:
 			host.errors.append("configure_peer_%d" % configured)

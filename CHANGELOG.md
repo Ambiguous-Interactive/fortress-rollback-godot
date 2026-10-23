@@ -141,6 +141,8 @@
 
 ### Fixed
 
+- Fix unfinished peer-drop barriers silently omitting a lost survivor. The match now ends with `participant_lost`; an already committed drop remains valid.
+
 - Fix peer-drop commit retries after a lost acknowledgement. Survivors acknowledge matching duplicate commits without repeating the drop. Refuse control messages from another operation, era or coordinator.
 
 - Fix spectator startup offers bypassing host expiry and active callback guards. Retries cannot revive an ended viewer or answer for a replaced viewer.

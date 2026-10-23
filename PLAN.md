@@ -445,7 +445,9 @@ certifies the frame and the digest of that value before the irreversible commit.
 A matching repeated commit is acknowledged after the slot freezes, and the
 proposer stops retries after every live survivor acknowledges. Every phase is
 fenced by the complete locally derived operation identity and sender role.
-A certificate that names another value ends the match with a recorded reason
+A survivor lost before commit aborts the local attempt with `participant_lost`
+and ends the match; committed decisions remain irreversible. A certificate
+that names another value ends the match with a recorded reason
 instead of freezing divergent values. The match holds while the barrier runs
 and a barrier that cannot agree falls back to the survivor's own frontier with
 a recorded reason. Three real peer sessions now run that barrier end to end:
@@ -454,10 +456,14 @@ confirmed history and keep playing, and a second departure leaves one
 survivor that freezes the slot on its own frontier. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
 frame and the pinned tier certifies the frozen value. The pinned source's
-participant list, its retransmission journal and its own cut selection remain
-open in
-[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
-and its exported live witness in
+wire participant list, its coordinator-local sequence, its retransmission
+journal and its own cut selection remain open in
+[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
+Native six-player sessions cover multiple local handles per endpoint. Exported
+Chromium covers a three-page WebRTC barrier after injected endpoint silence
+on both pins, with independent confirmed-history checks and a corruption
+control. Physical departure, relay delivery and the remaining live fault
+cases stay in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 Hot join uses reserved/dropped slots with fixed player cardinality,
 bounded session-bound snapshot transfer and agreed activation frames.

@@ -109,7 +109,7 @@ func _build(context: RefCounted, behavior: int) -> Dictionary:
 		tokens.append(peer_tokens)
 	for index: int in range(peers.size()):
 		context.equal(peers[index].begin(0, tokens[index]), I.Code.OK, "begin mesh")
-	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "departed": -1}
+	var mesh: Dictionary = {"peers": peers, "games": games, "now": 0, "departed": PackedInt32Array()}
 	for _round: int in range(12):
 		_deliver(context, mesh, _drain(mesh))
 	return mesh
@@ -133,7 +133,7 @@ func _drain(mesh: Dictionary) -> Array[Dictionary]:
 ## A departed peer stops answering, so its packets never reach the survivors.
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary]) -> void:
 	for packet: Dictionary in packets:
-		if int(packet["from"]) == int(mesh["departed"]):
+		if mesh.departed.has(int(packet.from)) or mesh.departed.has(int(packet.to)):
 			continue
 		context.equal(mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now), I.Code.OK, "deliver encoded packet")
 
@@ -159,18 +159,18 @@ func _service(context: RefCounted, mesh: Dictionary, rounds: int, active: Packed
 
 
 ## The peers that stay in the match.
-func _others(departed: int) -> PackedInt32Array:
+func _others(mesh: Dictionary) -> PackedInt32Array:
 	var result: PackedInt32Array = PackedInt32Array()
 	for index: int in range(PLAYERS):
-		if index != departed:
+		if not mesh.departed.has(index):
 			result.append(index)
 	return result
 
 
 ## One peer stops answering. The survivors notice the silence and agree the frozen frame.
 func _depart(context: RefCounted, mesh: Dictionary, departed: int) -> PackedInt32Array:
-	mesh["departed"] = departed
-	var survivors: PackedInt32Array = _others(departed)
+	mesh.departed.append(departed)
+	var survivors: PackedInt32Array = _others(mesh)
 	# The silence lasts longer than the disconnect timeout, and the survivors keep their own link alive.
 	_service(context, mesh, SILENCE_ROUNDS, survivors)
 	return survivors
@@ -283,12 +283,12 @@ func _second_departure(context: RefCounted) -> void:
 	var dropped: Dictionary = _drops(mesh)
 	context.equal(dropped.size(), 2, "both survivors publish the first drop")
 	_service(context, mesh, 2, PackedInt32Array([0, 1]))
-	_depart(context, mesh, 1)
+	var last: PackedInt32Array = _depart(context, mesh, 1)
+	context.equal(last, PackedInt32Array([0]), "the first departed peer never rejoins the survivor schedule")
 	_service(context, mesh, 4, PackedInt32Array([0]))
 	var second: Dictionary = _drops(mesh)
 	context.equal(second.has(0), true, "the last survivor publishes the second drop")
 	if second.has(0):
 		# The last survivor has nobody to agree with, so it freezes on its own frontier.
-		context.equal(int(second[0]["frame"]), mesh.peers[0].status().confirmed_frame,
-			"the last survivor freezes on its own frontier")
+		context.equal(int(second[0]["frame"]), mesh.peers[0].status().confirmed_frame, "the last survivor freezes on its own frontier")
 	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.RUNNING, "the last survivor keeps running")
