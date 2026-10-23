@@ -183,6 +183,10 @@ Retained caller batches never suppress elapsed-time protocol polling. Adjudicate
 expiry before servicing buffered receives or SDK lifetime callbacks. Keep due
 timeout diagnostics independent of unsent retry state under token or packet pressure.
 Cross pressure with full diagnostic banks and an overdue later roster link.
+Keep committed operation control separate from the target's gameplay lifetime:
+freezing a slot must not discard duplicate commits or their acknowledgements.
+Test actual retry packets, lost acknowledgements and quiescence before timeout;
+match the full operation identity and certified value before counting completion.
 After draining publication space, re-poll before accepting buffered traffic;
 service every eligible endpoint despite another endpoint's recoverable refusal.
 Every composed façade must expose drains for all bounded publication queues,

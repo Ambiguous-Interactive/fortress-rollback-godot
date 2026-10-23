@@ -141,6 +141,8 @@
 
 ### Fixed
 
+- Fix peer-drop commit retries after a lost acknowledgement. Survivors acknowledge matching duplicate commits without repeating the drop. Refuse control messages from another operation, era or coordinator.
+
 - Fix spectator startup offers bypassing host expiry and active callback guards. Retries cannot revive an ended viewer or answer for a replaced viewer.
 - Fix spectator player-freeze calls replacing confirmed host inputs. Both freeze methods now return `UNSUPPORTED` for spectators.
 - Fix replay Pause, Step and seek destinations accepting corrupted input rows until playback resumed.

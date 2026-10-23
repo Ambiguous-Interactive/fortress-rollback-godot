@@ -74,7 +74,6 @@ var _departed: Dictionary = {}
 var _dropped: Dictionary = {}
 var _barriers: Dictionary = {}
 var _prepares: Dictionary = {}
-var _operations: Dictionary = {}
 
 
 ## Forget every departure and barrier; a fresh session starts empty.
@@ -83,7 +82,6 @@ func reset() -> void:
 	_dropped.clear()
 	_barriers.clear()
 	_prepares.clear()
-	_operations.clear()
 
 
 ## A dropped peer left the match and its slot is frozen at an agreed frame.
@@ -155,7 +153,6 @@ func observed(host: Variant, index: int) -> bool:
 	barrier.target_set_digest = _target_digest(barrier.slots, barrier.generations)
 	barrier.available_through = _available_through(host, barrier)
 	_barriers[key] = barrier
-	_operations[key] = _identity(barrier)
 	host._publish_event({"kind": "peer_drop_pending", "peer": host._ids[index].duplicate(), "frame": upper})
 	if _prepares.has(key):
 		# The proposer reached this survivor before it observed the departure itself.
@@ -194,10 +191,20 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 	if peer_index == -1:
 		return
 	var key: String = host._ids[peer_index].hex_encode()
-	if is_dropped(key):
-		return
 	var barrier: Barrier = _barriers.get(key, null)
-	match int(event.get("phase", 0)):
+	var phase: int = int(event.get("phase", 0))
+	if barrier != null:
+		if is_gone(host._ids[index].hex_encode()) or not _matches_identity(barrier, event):
+			return
+		if phase in [Phase.PREPARE, Phase.BACKFILL, Phase.COMMIT] and not host._slots_by_peer[index].has(barrier.coordinator):
+			return
+	if is_dropped(key):
+		# Only the committed handshake remains live after freezing the slot.
+		if barrier == null or barrier.state != COMMITTED:
+			return
+		if phase != Phase.COMMIT and not (phase == Phase.REPORT and int(event.get("stage", 0)) == Stage.COMMITTED):
+			return
+	match phase:
 		Phase.PREPARE:
 			_receive_prepare(host, index, key, barrier, event)
 		Phase.REPORT:
@@ -253,6 +260,7 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		# The all-survivor certificate is not complete yet.
 		return
 	barrier.state = COMMITTED
+	barrier.sent_us = now_us
 	_send(host, barrier, Phase.COMMIT)
 	_freeze(host, barrier.index, barrier.cut, barrier.value, true)
 
@@ -302,13 +310,7 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 	if not _owns_lowest(host, index, barrier.index):
 		# Only the survivor that owns the lowest surviving slot may propose.
 		return
-	if not _accept_operation(key, barrier, event):
-		return
-	if _read_generations(event.get("slots", PackedByteArray())) != barrier.generations:
-		# The prepare belongs to another era of the departed peer.
-		return
-	if int(event.get("target_set_digest", 0)) != barrier.target_set_digest:
-		# The target set is derived locally, so a foreign digest is refused.
+	if not _matches_identity(barrier, event):
 		return
 	var digest: int = int(event.get("cut_digest", 0))
 	if barrier.certified:
@@ -321,12 +323,8 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 			return
 		barrier.cut = cut
 		barrier.digest = digest
-	barrier.operation = int(event.get("operation", barrier.operation))
-	barrier.coordinator = int(event.get("coordinator", barrier.coordinator))
-	barrier.coordinator_generation = int(event.get("coordinator_generation", barrier.coordinator_generation))
 	barrier.adopted = true
 	barrier.sent_us = -1
-	_operations[key] = _identity(barrier)
 
 
 ## A survivor reported its window, its certificate or its need for the value.
@@ -362,7 +360,8 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		barrier.certificates[identity] = {"cut": int(event.get("cut", -1)), "digest": int(event.get("cut_digest", 0))}
 		return
 	if stage == Stage.COMMITTED:
-		barrier.acknowledged[identity] = true
+		if barrier.state == COMMITTED and int(event.get("cut", -1)) == barrier.cut and int(event.get("cut_digest", 0)) == barrier.digest:
+			barrier.acknowledged[identity] = true
 
 
 ## The frozen value arrived in a bounded chunk.
@@ -399,6 +398,10 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 		return
 	if int(event.get("operation", -1)) != barrier.operation:
 		return
+	var cut: int = int(event.get("cut", -1))
+	var digest: int = int(event.get("cut_digest", 0))
+	if cut != barrier.cut or digest != barrier.digest:
+		return
 	if barrier.state == COMMITTED:
 		# The acknowledgement is repeated, so a lost one does not stall the proposer.
 		_send(host, barrier, Phase.REPORT, Stage.COMMITTED)
@@ -407,11 +410,6 @@ func _receive_commit(host: Variant, index: int, key: String, barrier: Barrier, e
 		return
 	if not barrier.certified:
 		# A commit without the local certificate is refused.
-		return
-	var cut: int = int(event.get("cut", -1))
-	var digest: int = int(event.get("cut_digest", 0))
-	if cut != barrier.cut or digest != barrier.digest:
-		# The commit names another frame or another value.
 		return
 	barrier.state = COMMITTED
 	_freeze(host, index, cut, barrier.value, true)
@@ -427,35 +425,15 @@ func _receive_abort(host: Variant, key: String, barrier: Barrier, event: Diction
 	_fail(host, barrier, _abort_reason(int(event.get("reason", Abort.TIMEOUT))), false)
 
 
-## The operation identity of a barrier, in the pinned comparison order.
-func _identity(barrier: Barrier) -> Dictionary:
-	return {
-		"target_set_digest": barrier.target_set_digest,
-		"coordinator": barrier.coordinator,
-		"coordinator_generation": barrier.coordinator_generation,
-		"sequence": barrier.operation,
-	}
-
-
-## A message of an older operation never joins the agreement.
-func _accept_operation(key: String, barrier: Barrier, event: Dictionary) -> bool:
-	var candidate: Dictionary = {
-		"target_set_digest": int(event.get("target_set_digest", 0)),
-		"coordinator": int(event.get("coordinator", 0)),
-		"coordinator_generation": int(event.get("coordinator_generation", 0)),
-		"sequence": int(event.get("operation", 0)),
-	}
-	return not _operations.has(key) or _compare(candidate, _operations[key]) >= 0
-
-
-## The pinned comparison order of two operation identities.
-func _compare(left: Dictionary, right: Dictionary) -> int:
-	for field: String in ["target_set_digest", "coordinator", "coordinator_generation", "sequence"]:
-		if int(left[field]) < int(right[field]):
-			return -1
-		if int(left[field]) > int(right[field]):
-			return 1
-	return 0
+## This tier derives one operation locally from the target's frozen roster and eras.
+func _matches_identity(barrier: Barrier, event: Dictionary) -> bool:
+	return (
+		int(event.get("operation", -1)) == barrier.operation
+		and int(event.get("coordinator", -1)) == barrier.coordinator
+		and int(event.get("coordinator_generation", -1)) == barrier.coordinator_generation
+		and int(event.get("target_set_digest", -1)) == barrier.target_set_digest
+		and event.get("slots", PackedByteArray()) == _targets(barrier)
+	)
 
 
 ## The operation sequence of a departure. The pinned source derives it from the
@@ -647,16 +625,6 @@ func _generations(host: Variant, index: int) -> PackedInt32Array:
 	var result: PackedInt32Array = PackedInt32Array()
 	for slot: int in host._slots_by_peer[index]:
 		result.append(era)
-	return result
-
-
-## The eras named by a received target list.
-func _read_generations(data: PackedByteArray) -> PackedInt32Array:
-	var result: PackedInt32Array = PackedInt32Array()
-	var index: int = 0
-	while index + 2 < data.size():
-		result.append(data[index + 1] | (data[index + 2] << 8))
-		index += 3
 	return result
 
 
