@@ -154,8 +154,10 @@ exposed frame advances, and refresh any retained current boundary after correcti
 publishing its checksum. Finalize late matching inputs without fabricating another sample.
 
 Specialized session modes must audit inherited public mutators. A confirmed-only spectator
-cannot accept player-mesh confirmation limits: playback may succeed while exports lose
-their confirmed rows. Test public confirmation and row export alongside game state.
+cannot accept player freezing or player-mesh confirmation limits: playback may succeed while exports lose
+their confirmed rows. Test public confirmation and row export alongside game state, using changing host inputs.
+Paused replay validation must check the selected input digest before publishing snapshot or
+checksum coverage, including input-only playback and boundaries without state checksums.
 
 ## Code Samples
 

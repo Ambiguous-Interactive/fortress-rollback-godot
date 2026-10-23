@@ -345,8 +345,9 @@ checksum. Reconfiguration clears the cache. Checkpoints stay in memory and do no
 change the portable replay file format.
 
 Call `validate_current_frame()` after reaching a paused navigation target or canceling a seek.
-It checks that boundary through the same bounded save callback as `step()`, without consuming input.
-Callback, snapshot and checksum failures stop playback and retain `failure_frame()` and checksum evidence.
+It checks the selected input row digest, then checks that state boundary through the same bounded save callback as `step()`.
+Neither check consumes input. At replay completion, there is no remaining input row to check.
+Input digest, callback, snapshot and checksum failures stop playback and retain `failure_frame()` and comparison evidence.
 Input-only playback and boundaries without recorded checksums need no save unless checkpoint caching requires one.
 
 For downloaded online example recordings, use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.

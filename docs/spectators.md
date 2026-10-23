@@ -103,7 +103,7 @@ and validates every player's width before changing the buffer.
 
 Rows may arrive out of order within the current bounded window. No partial row
 or prediction is simulated. Rejected rows leave the accepted history unchanged.
-Local input submission, per-player `receive_input`, input-delay changes and
+Local input submission, per-player `receive_input`, input-delay changes, player freezing and
 player-mesh `set_confirmation_limit` calls return `UNSUPPORTED`; use complete host rows.
 Viewer confirmation follows the host rows consumed by playback. Player confirmation
 gates cannot withhold those rows from `confirmed_inputs` or change viewer confirmation.
@@ -265,11 +265,15 @@ A missing tail expires when the host stops delivering accepted packets. Keepaliv
 prove host liveness; they do not repair missing history. The caller must terminate
 a known unrecoverable gap. The caller owns transport closure.
 
-This envelope is separate from the player wire protocol. It supplies neither
-handshake negotiation, retransmission nor SignalFish spectator admission. Player
+This envelope is separate from the player wire protocol. It supplies envelope negotiation
+but no retransmission, initial-state transfer or SignalFish spectator admission. Player
 rosters and player confirmation remain unchanged.
 
 ## Negotiate the envelope before the first row
+
+Startup offers and their retries obey the same monotonic clock, strict host deadline,
+active-request guard and terminal lifetime as row delivery. An offer arriving at the
+deadline expires the viewer before agreement; a retry cannot reopen a clean end.
 
 The host offers the envelope version and the optional kinds it can publish with
 one `OFFER` packet (kind 4). The viewer answers with one `ACCEPT` packet (kind 5).

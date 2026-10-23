@@ -154,7 +154,7 @@ static func encode_offer(identity: PackedByteArray, digest: PackedByteArray, pla
 
 ## The authenticated answer to one accepted offer. Empty bytes mean no agreement yet.
 func encode_accept() -> PackedByteArray:
-	if not _negotiation.agreed() or _config == null:
+	if not _negotiation.agreed() or _config == null or _session._config != _config:
 		return PackedByteArray()
 	var packet: PackedByteArray = encode_header(ACCEPT, 0, _config.player_count, _config.input_width, _identity, _digest, _negotiation.version())
 	if packet.is_empty():
@@ -197,9 +197,7 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		return Code.PROTOCOL_FAILED
 	# The version is read after the tag, so only an authenticated peer can refuse the envelope.
 	var version: int = packet[4]
-	if version != _negotiation.version():
-		if version >= 1 and version <= Negotiation.MAX_VERSION:
-			return _refuse(Code.UNSUPPORTED)
+	if version < 1 or version > Negotiation.MAX_VERSION:
 		return Code.PROTOCOL_FAILED
 	var frame: int = packet.decode_u32(60)
 	if frame > Queue.FRAME_MAX or (kind == ROW and frame == Queue.FRAME_MAX) or (kind == KEEPALIVE and frame != 0):
@@ -209,6 +207,8 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 		return code
 	if _is_finished:
 		return Code.TERMINATED
+	if version != _negotiation.version():
+		return _refuse(Code.UNSUPPORTED)
 	code = _session._mutation_code()
 	if code != Code.OK:
 		return code
@@ -257,8 +257,13 @@ func _receive_offer(packet: PackedByteArray, now_us: int) -> int:
 	var offered_versions: int = capabilities[0]
 	var offered_kinds: int = capabilities[1]
 	var preferred: int = packet[4]
-	if preferred < 1 or (offered_versions & (1 << preferred)) == 0:
+	if preferred < 1 or preferred > Negotiation.MAX_VERSION or (offered_versions & (1 << preferred)) == 0:
 		return Code.PROTOCOL_FAILED
+	var code: int = poll(now_us)
+	if code != Code.OK:
+		return code
+	if _is_finished:
+		return Code.TERMINATED
 	if _negotiation.agreed():
 		# A retried offer repeats the same agreement and refreshes the host liveness.
 		if packet != _offer:

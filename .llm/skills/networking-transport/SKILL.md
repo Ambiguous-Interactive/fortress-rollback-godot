@@ -105,6 +105,9 @@ The pinned engine's legacy maxPacketLifetime spelling is ignored by browsers
 that expect maxPacketLifeTime. Use the production connection factory correction
 and verify the resulting lifetime; do not claim a zero-retransmit policy.
 
+Authenticated startup retries share the payload path’s clock, callback and terminal-lifetime
+gates. Test initial offers and retries at deadline equality and during active requests;
+a negotiated version mismatch cannot terminate through an active callback.
 Authenticated host liveness and confirmed-input progress are separate observations.
 A spectator keepalive may refresh elapsed host expiry without advancing a row,
 repairing a gap or affecting player confirmation. Keep deadline equality and

@@ -12,11 +12,13 @@ const Scene = preload("res://examples/online/replay.tscn")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["coverage", "counting", "unchecked_seek"])
+	return PackedStringArray(["coverage", "counting", "unchecked_seek", "paused_input_integrity"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "unchecked_seek":
+	if name == "paused_input_integrity":
+		_paused_input_integrity(context)
+	elif name == "unchecked_seek":
 		_unchecked_seek(context)
 	elif name == "counting":
 		_counting(context)
@@ -120,3 +122,62 @@ func _unchecked_seek(context: RefCounted) -> void:
 	context.equal(viewer.message.contains("could not be verified"), true, "seek completion discloses absent verification")
 	context.equal(viewer.checked_checksum_count(), 0, "seek completion never counts cache snapshots as recorded comparisons")
 	context.state(viewer.current_frame(), viewer.game.canonical_bytes())
+
+
+# Value: protects=paused replay inspections reject the selected row's corrupt bytes before reporting success;
+# fails_when=only resumed playback checks the row digest; why_new=paused tests corrupt state checksums only; seam=none
+func _paused_input_integrity(context: RefCounted) -> void:
+	for boundary: int in [0, 8, 11]:
+		for fault: String in ["none", "input", "digest"]:
+			for snapshots: bool in [false, true]:
+				var replay: Replay = Fixture.recording(12)
+				if fault == "input":
+					replay._inputs[boundary * 2] ^= 1
+				elif fault == "digest":
+					replay._digests[boundary * Replay.DIGEST_BYTES] ^= 1
+				var player: Player = Player.new()
+				var game: Simulation = Simulation.new()
+				player.configure(replay, game, Simulation.SNAPSHOT_BYTES if snapshots else 0)
+				for frame: int in boundary:
+					context.equal(player.step(), Types.Code.OK, "healthy input prefix reaches selected boundary")
+				var before: PackedByteArray = game.canonical_bytes()
+				var checked: int = player.checked_checksum_count()
+				var expected: int = Types.Code.OK if fault == "none" else Types.Code.DESYNC
+				context.equal(player.validate_current_frame(), expected, "paused validation checks the selected input row")
+				context.equal(player.current_frame(), boundary, "input validation does not advance the selected frame")
+				context.bytes_equal(game.canonical_bytes(), before, boundary, "input validation does not simulate corrupt bytes")
+				if fault != "none":
+					context.equal(player.failure_frame(), boundary, "input corruption identifies its owning frame")
+					context.bytes_equal(player.failure_expected_checksum(), replay.input_digest(boundary), boundary, "recorded input digest evidence")
+					context.bytes_equal(player.failure_actual_checksum(), replay.computed_input_digest(boundary), boundary, "computed input digest evidence")
+					context.equal(player.checked_checksum_count(), checked, "corrupt input cannot publish successful state coverage")
+					context.equal(player.step(), Types.Code.DESYNC, "paused input failure remains terminal")
+				else:
+					context.equal(player.step(), Types.Code.OK, "healthy paused input remains usable")
+				context.state(boundary, before)
+	for action: String in ["seek", "step", "pause", "cancel"]:
+		var replay: Replay = Fixture.recording(130)
+		replay._flags.fill(0)
+		var boundary: int = 120 if action == "cancel" else 8
+		replay._digests[boundary * Replay.DIGEST_BYTES] ^= 1
+		var viewer: Viewer = Viewer.new()
+		viewer.open_bytes(replay.to_bytes())
+		if action in ["seek", "cancel"]:
+			viewer.seek(130 if action == "cancel" else boundary)
+			viewer.tick()
+			if action == "cancel":
+				viewer.cancel_seek()
+		elif action == "step":
+			for frame: int in boundary:
+				viewer.step()
+		else:
+			viewer.toggle_play()
+			for tick: int in boundary:
+				viewer.tick()
+			viewer.toggle_play()
+		context.equal(viewer.current_frame(), boundary, "inspection stops before the corrupt selected input")
+		context.equal(viewer.can_step(), false, action + " immediately refuses the corrupt selected input")
+		context.equal(viewer.message.contains("stopped at frame %d" % boundary), true, action + " reports input corruption while paused")
+		context.equal(viewer.message.contains(replay.input_digest(boundary).hex_encode()), true, "viewer exposes input digest evidence")
+		context.equal(viewer.checked_checksum_count(), 0, "checksum-absent input corruption never invents state coverage")
+		context.state(boundary, viewer.game.canonical_bytes())

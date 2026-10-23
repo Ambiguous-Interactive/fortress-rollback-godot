@@ -64,7 +64,7 @@ EXPECTED.update({
 EXPECTED.update({
     'res://tests/unit/test_spectator_session.gd': {'configuration', 'confirmed_playback', 'buffering', 'delay_and_loss',
         'expert_parity', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes',
-        'retained_row', 'delay_bounds'},
+        'retained_row', 'delay_bounds', 'mesh_mutators'},
     'res://tests/unit/test_driver_callback_results.gd': {'valid', 'malformed', 'termination', 'peer_failure'},
 })
 EXPECTED.update({
@@ -73,7 +73,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
-        'policy_preserved', 'wide_shapes'},
+        'policy_preserved', 'wide_shapes', 'offer_lifecycle'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
@@ -86,7 +86,7 @@ EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {'final_history', 'staged
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
-EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek'}
+EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity'}
 EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'stepped_boundaries', 'paused_boundaries'})
 EXPECTED['res://tests/unit/test_spectator_model.gd'] = {
