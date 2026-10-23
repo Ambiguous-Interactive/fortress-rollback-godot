@@ -1,7 +1,7 @@
 // Value: constructor tracking charges orphan connections that never create a data channel.
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { instrument } = require('./webrtc.cjs');
+const { instrument, isDropCanonicalFailure, resourcesClosed } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
@@ -326,4 +326,43 @@ test('online initialization registers once and initializes native RTC, sockets a
   const source = fs.readFileSync(path.join(__dirname, 'online.cjs'), 'utf8');
   assert.equal((source.match(/await page\.addInitScript\(/g) || []).length, 1, 'the production registration boundary must stay singular');
   assert.equal((source.match(/await registerOnlineInit\(page,/g) || []).length, 1, 'each production page must use the controlled initializer');
+});
+
+// Value: a drop control cannot pass from an impossible or unrelated failure boundary.
+test('drop corruption fails only at an actually compared active post-drop frame', () => {
+  for (const frame of [8, 9, 10, 29, 30, 37]) {
+    assert.equal(isDropCanonicalFailure({ passed: false, failure: {
+      stage: 'peer_drop_gameplay', errors: [`peer_drop_canonical_${frame}`],
+    } }), true);
+  }
+  for (const frame of ['1', '7', '38', '1000000', '08', '8junk']) {
+    assert.equal(isDropCanonicalFailure({ passed: false, failure: {
+      stage: 'peer_drop_gameplay', errors: [`peer_drop_canonical_${frame}`],
+    } }), false);
+  }
+  for (const value of [null, {}, { passed: false, failure: { stage: 'peer_drop_gameplay', errors: ['peer_drop_unconfirmed'] } }])
+    assert.equal(isDropCanonicalFailure(value), false);
+});
+
+// Value: actual browser teardown waits for signaling closure before contexts can hide leaked sockets.
+test('drop teardown includes every tracked signaling socket', () => {
+  const context = vm.createContext({ window: { fortressResources: {
+    channels: [{ readyState: 'closed' }], connections: [{ connectionState: 'closed' }],
+  }, fortressSockets: [{ socket: { readyState: 3 } }] }, WebSocket: { CLOSED: 3 } });
+  const closed = requireSockets => vm.runInContext(`(${resourcesClosed.toString()})(${requireSockets})`, context);
+  assert.equal(closed(true), true);
+  for (const state of [0, 1, 2]) {
+    context.window.fortressSockets.push({ socket: { readyState: state } });
+    assert.equal(closed(true), false, 'an orphan or closing socket must keep the wait active');
+    assert.equal(closed(false), true, 'ordinary transport modes retain their established gate');
+    context.window.fortressSockets.pop();
+  }
+  context.window.fortressSockets = [];
+  assert.equal(closed(true), false, 'an absent socket inventory cannot prove drop teardown');
+  context.window.fortressSockets = [{ socket: { readyState: 3 } }];
+  context.window.fortressResources.channels[0].readyState = 'open';
+  assert.equal(closed(true), false);
+  context.window.fortressResources.channels[0].readyState = 'closed';
+  context.window.fortressResources.connections[0].connectionState = 'connected';
+  assert.equal(closed(true), false);
 });

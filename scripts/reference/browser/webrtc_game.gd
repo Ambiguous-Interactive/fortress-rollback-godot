@@ -5,6 +5,7 @@ var values: PackedInt64Array = PackedInt64Array()
 var history: Dictionary = {}
 var loads: int = 0
 var corrupt_restore: bool = false
+var corrupt_continuation: bool = false
 func _init(count: int, corrupt: bool = false) -> void:
 	values.resize(count)
 	corrupt_restore = corrupt
@@ -37,6 +38,7 @@ func simulate_frame(_frame: int, inputs: RefCounted) -> bool:
 		if input.bytes.size() != 1:
 			return false
 		values[slot] = (values[slot] * 33 + input.bytes[0]) & 0xffffffff
+	if corrupt_continuation: values[0] ^= 1
 	frame += 1
 	history[frame] = bytes()
 	return true

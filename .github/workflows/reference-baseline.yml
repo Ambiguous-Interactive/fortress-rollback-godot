@@ -272,7 +272,9 @@ jobs:
       - name: Verify real browser WebRTC on the pinned engine
         if: matrix.part == 'direct' || matrix.part == 'mixed'
         run: |
-          if [[ "${{ matrix.part }}" == direct ]]; then labels=(clean faults corrupt default mixed-disabled); else labels=(mixed mixed-default mixed-close); fi
+          if [[ "${{ matrix.part }}" == direct ]]; then
+            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt)
+          else labels=(mixed mixed-default mixed-close); fi
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \

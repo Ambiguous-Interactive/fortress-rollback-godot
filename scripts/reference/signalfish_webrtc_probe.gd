@@ -16,6 +16,7 @@ const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Setup = preload("res://webrtc_setup.gd")
 const Game = preload("res://webrtc_game.gd")
 const Mixed = preload("res://webrtc_mixed.gd")
+const DropWitness = preload("res://webrtc_drop.gd")
 const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "room_join_failed", "authentication_error", "connection_failed",
 	"reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
@@ -49,10 +50,13 @@ var membership_frozen: bool = false
 var tearing_down: bool = false
 var mixed_enabled: bool = false
 var mixed: Mixed = Mixed.new()
+var drop_enabled: bool = false
+var drop_witness: DropWitness = DropWitness.new()
 # The last service round moved bytes, sent bytes or still holds queued work.
 var _service_had_work: bool = false
 
 func _ready() -> void:
+	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
 	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
 	endpoint = JavaScriptBridge.eval("window.fortressEndpoint")
 	player_count = int(JavaScriptBridge.eval("window.fortressPlayers"))
@@ -66,11 +70,11 @@ func _run() -> void:
 	var ok: bool = await Setup.new().run(self, player_count)
 	if ok: ok = await _play(player_count)
 	ok = ok and _healthy(true)
-	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || false")
+	var control: bool = JavaScriptBridge.eval("window.fortressCorrupt || window.fortressDefaultFactory || window.fortressDropCorrupt || false")
 	if ok or control:
 		JavaScriptBridge.eval("document.body.dataset.fortressGameplayDone = 'true'")
 		if ok:
-			ok = await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressTeardownArmed || false"), true)
+			ok = await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressTeardownArmed || false"), not (drop_enabled and local_index == 2))
 			ok = ok and _healthy(true)
 		elif not await _wait_cleanup("window.fortressTeardownArmed || false"):
 			errors.append("teardown_barrier")
@@ -94,6 +98,7 @@ func _wait_cleanup(expression: String) -> bool:
 	return false
 
 func _play(count: int) -> bool:
+	if drop_enabled: return await drop_witness.run(self, count)
 	stage = "handshake"
 	if not await _wait(func() -> bool:
 		for peer: Peer in peers:
@@ -268,6 +273,7 @@ func _service() -> bool:
 				errors.append("peer_poll_%d" % polled)
 				return false
 			for event: Dictionary in peers[index].drain_events():
+				if drop_enabled: drop_witness.observed(event)
 				_service_had_work = true
 				if event.kind == "sync_timeout":
 					errors.append("peer_sync_timeout")
@@ -296,7 +302,9 @@ func _service() -> bool:
 			sent_packets += result.sent
 			received_packets += result.received
 			if not transports[index].idle(): _service_had_work = true
-		if not peers[index].drain_events().is_empty(): _service_had_work = true
+		for event: Dictionary in peers[index].drain_events():
+			_service_had_work = true
+			if drop_enabled: drop_witness.observed(event)
 		if not peers[index].drain_transitions().is_empty(): _service_had_work = true
 	if transport_us >= next_progress_us:
 		Setup.publish_progress(self)

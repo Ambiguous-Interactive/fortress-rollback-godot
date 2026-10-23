@@ -61,6 +61,7 @@ class Barrier:
 	var answers: Dictionary = {}
 	var certificates: Dictionary = {}
 	var acknowledged: Dictionary = {}
+	var participants: PackedStringArray = PackedStringArray()
 	var chunks: Dictionary = {}
 	var chunk_count: int = 0
 	var certified: bool = false
@@ -140,6 +141,9 @@ func observed(host: Variant, index: int) -> bool:
 		return _freeze(host, index, upper, PackedByteArray(), false)
 	var barrier: Barrier = Barrier.new()
 	barrier.index = index
+	for identity: PackedByteArray in host._ids:
+		if not is_gone(identity.hex_encode()):
+			barrier.participants.append(identity.hex_encode())
 	barrier.slots = slots
 	barrier.generations = _generations(host, index)
 	barrier.operation = _sequence(barrier.generations)
@@ -175,6 +179,9 @@ func service(host: Variant, now_us: int) -> void:
 			continue
 		if barrier.state != PENDING:
 			continue
+		if _participant_lost(barrier):
+			_abort(host, barrier, Abort.PARTICIPANT_LOST)
+			return
 		if now_us - barrier.started_us >= host._lifecycle.drop_barrier_timeout_us:
 			_fail(host, barrier, "timeout")
 			continue
@@ -194,7 +201,12 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 	var barrier: Barrier = _barriers.get(key, null)
 	var phase: int = int(event.get("phase", 0))
 	if barrier != null:
-		if is_gone(host._ids[index].hex_encode()) or not _matches_identity(barrier, event):
+		if not _matches_identity(barrier, event):
+			return
+		if barrier.state == PENDING and _participant_lost(barrier):
+			_abort(host, barrier, Abort.PARTICIPANT_LOST)
+			return
+		if is_gone(host._ids[index].hex_encode()):
 			return
 		if phase in [Phase.PREPARE, Phase.BACKFILL, Phase.COMMIT] and not host._slots_by_peer[index].has(barrier.coordinator):
 			return
@@ -436,13 +448,21 @@ func _matches_identity(barrier: Barrier, event: Dictionary) -> bool:
 	)
 
 
-## The operation sequence of a departure. The pinned source derives it from the
-## target's era, so every survivor computes the same sequence.
+## This fixed-roster tier derives a shared sequence from target eras. The pinned
+## coordinator-local monotonic sequence remains a separate parity requirement.
 func _sequence(generations: PackedInt32Array) -> int:
 	var highest: int = 0
 	for era: int in generations:
 		highest = maxi(highest, era)
 	return highest + 1
+
+
+## A pending certificate keeps its original remote participants until commit.
+func _participant_lost(barrier: Barrier) -> bool:
+	for identity: String in barrier.participants:
+		if is_gone(identity):
+			return true
+	return false
 
 
 ## The number of survivors that answered and still take part in the match.
@@ -502,7 +522,7 @@ func _freeze(host: Variant, index: int, cut: int, value: PackedByteArray, certif
 func _fail(host: Variant, barrier: Barrier, reason: String, notify: bool = true) -> void:
 	barrier.state = FAILED
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": reason})
-	if reason == "conflicting_history":
+	if reason in ["conflicting_history", "participant_lost"]:
 		host._core.terminate(Types.Code.PROTOCOL_FAILED)
 		return
 	if notify:

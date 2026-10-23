@@ -129,7 +129,13 @@ nor acknowledgements freeze the slot again or repeat `peer_dropped`.
 
 The barrier refuses a stale operation, a prepare of another connected era, a
 duplicated certificate and a commit that arrives without the local
-certificate. A certificate that names another value ends the match with
+certificate. The survivor set is fixed when a local barrier opens. If a member
+of that set disappears before commit, the barrier reports
+`peer_drop_unconfirmed` with `participant_lost` and ends the match. It cannot
+reduce the certificate requirement by omitting that survivor. A departure
+after commit does not undo the decision.
+
+A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the
 survivors would otherwise freeze different values for the same frame.
 
@@ -146,7 +152,8 @@ The barrier publishes `peer_drop_pending` when it starts and `peer_dropped`
 with the agreed frame when it commits. A barrier that cannot agree - no common
 frame window, a timeout, or a commit outside the survivor's window - publishes
 `peer_drop_unconfirmed` and falls back to the survivor's own confirmed
-frontier, which is the graceful drop of the pinned source. That fallback keeps
+frontier. This fallback is specific to the Godot tier; the pinned coordinated
+barrier fails closed when its attempt fails. The Godot fallback keeps
 the match running but leaves the survivors on their own frontiers, so the mesh
 checksum comparison can still report a disagreement as a desync.
 
@@ -156,8 +163,9 @@ certificate and its irreversible commit, but it keeps its own byte layout and
 its own rule for choosing the frame: the pinned source lets every participant
 derive the cut from the inventory reports, while the Godot tier's proposer
 owns the selection and sends the final candidate. The pinned source's
-all-survivor certificate over a participant list, its retransmission journal
-and its live witness stay open. See
+all-survivor certificate over a wire participant list, its coordinator-local
+operation sequence and its retransmission journal remain open. The Godot tier
+derives its sequence from target eras. See
 [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
 
@@ -166,9 +174,19 @@ sessions on the deterministic test transport play, one peer stops answering,
 and the two survivors notice the silence, agree one frame, publish the drop
 and keep one confirmed history; a second departure leaves one survivor that
 freezes the slot on its own frontier and keeps the match running. That
-session-level witness covers the barrier and the match around it. The
-exported Chromium witness of the same departure - a real SignalFish room
-where a browser peer leaves mid-match - stays open in
+session-level witness covers the barrier and the match around it. Native
+six-player sessions also cover two local handles per endpoint, with interleaved
+and reversed ownership, against independently reconstructed confirmed history.
+
+The exported Chromium `peer-drop` witness runs three pages in a real SignalFish
+room on both pinned engines. One page stops servicing its rollback endpoint
+after seven samples while keeping its SDK connection. The survivors exchange
+barrier controls over actual WebRTC, agree the frozen sample and continue
+through 40 samples with confirmed canonical-history checks. The
+`peer-drop-corrupt` control must fail that continuation check. This is injected
+endpoint silence, not physical room departure. Live relay, rollback-time
+departure, lost barrier answers, foreign proposals and a second browser
+departure remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 
 ## Downloadable observations
