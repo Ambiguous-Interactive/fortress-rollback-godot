@@ -391,7 +391,9 @@ Callback and expert replay playback share ordered save/advance requests in the s
 Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
-Every recorded frame carries a digest of its own input row, because the state
+Version 5 replay rows preserve confirmed/disconnected player status alongside input bytes; version 4 reads with all-confirmed defaults.
+Receipt-only recording rows remain private until mesh confirmation, and coordinated drop repairs that staged tail before export.
+Every recorded frame carries a digest of its own input row and, in version 5, its player statuses, because the state
 checksum of the following frame only covers a row when that following frame
 carries a checksum. Those digests are a Godot-side integrity extension; the pinned
 upstream session owns the input history.
@@ -424,6 +426,8 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
+Spectator rows currently carry input bytes and supply confirmed status for every slot; games that depend on disconnected status need
+[#187](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/187) before they can spectate a gracefully dropped match faithfully.
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 Live SignalFish spectator routing, handshake/events and upstream spectator
@@ -455,7 +459,9 @@ one peer stops answering, the two survivors agree one frame, keep one
 confirmed history and keep playing, and a second departure leaves one
 survivor that freezes the slot on its own frontier. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
-frame and the pinned tier certifies the frozen value. The pinned source's
+frame and the pinned tier certifies the frozen value. The scoped min-cut tier does not preserve already exposed history across unequal survivor confirmation frontiers;
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188) owns the receipt-raised cut and full missing-history backfill.
+The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission
 journal and its own cut selection remain open in
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).

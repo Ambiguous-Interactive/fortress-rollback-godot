@@ -5,7 +5,7 @@ const SCENARIOS: Dictionary = {"clean_ack_quiescence": false, "lost_first_ack_re
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(SCENARIOS.keys() + ["malformed_committed_ack", "malformed_duplicate_commit", "early_committed_ack", "wrong_sender_commit"])
+	return PackedStringArray(SCENARIOS.keys() + ["malformed_committed_ack", "malformed_duplicate_commit", "early_committed_ack", "wrong_sender_commit", "commit_deadline"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -18,9 +18,40 @@ func run_case(name: String, context: RefCounted) -> void:
 			_early_committed_ack(context)
 		"wrong_sender_commit":
 			_wrong_sender_commit(context)
+		"commit_deadline":
+			_commit_deadline(context)
 		_:
 			_commit_ack(context, bool(SCENARIOS[name]))
 	context.finish()
+
+
+# Value: protects=barrier expiry precedes buffered COMMIT; fails_when=receive commits at its deadline; why_new=poll-only timeout coverage; seam=none
+func _commit_deadline(context: RefCounted) -> void:
+	for offset: int in [-1, 0, 1]:
+		var mesh: Dictionary = _held_fixture(context, Drop.Phase.COMMIT, Drop.Stage.NONE, 1)
+		if mesh.held.is_empty():
+			return
+		var follower: Drop.Barrier = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+		context.equal(follower.state, Drop.PENDING, "hold the real COMMIT before follower dispatch")
+		context.equal(follower.certified, true, "the follower certified the held COMMIT")
+		mesh.now = follower.started_us + 250000 + offset
+		_release_original(context, mesh, mesh.held[0])
+		_drain(mesh)
+		context.equal(follower.state, Drop.COMMITTED if offset < 0 else Drop.FAILED, "deadline equality wins over buffered COMMIT, offset %d" % offset)
+		context.equal(mesh.unconfirmed, 0 if offset < 0 else 1, "expiry publishes exactly one unconfirmed outcome, offset %d" % offset)
+		context.equal(mesh.reasons, [] if offset < 0 else ["timeout"], "the expired operation keeps its timeout reason")
+		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING, "timeout preserves the documented Godot fallback")
+		mesh.now = follower.started_us + 250001
+		_release_original(context, mesh, mesh.held[0])
+		var acknowledgements: int = 0
+		for packet: Dictionary in _drain(mesh):
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.COMMITTED:
+					acknowledgements += 1
+		context.equal(acknowledgements, 1 if offset < 0 else 0, "only a committed operation re-ACKs after its deadline")
+		context.equal(mesh.drop_events.get(1, []).size(), 1, "late duplicates cannot repeat the freeze notification")
+		context.equal(mesh.unconfirmed, 0 if offset < 0 else 1, "late duplicates cannot repeat expiry")
 
 
 # Value: protects=committed ACK stops retries and lost ACK is repeated; fails_when=dropped target bypasses dispatch; why_new=barrier tests omit ACK completion; seam=none

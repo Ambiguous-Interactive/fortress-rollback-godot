@@ -355,14 +355,14 @@ The [replay applicability probe](oracle-replay.md) checks sequential playback ag
 
 ### Replay file format
 
-Version 4 is little-endian with fixed-width fields. `decode` checks every count and length against
+Version 5 is little-endian with fixed-width fields. `decode` checks every count and length against
 the bytes present before it allocates. It returns `MALFORMED` for truncated, corrupt or trailing bytes.
-It returns `UNSUPPORTED_VERSION` for any other version, and `TOO_LARGE` above the caller's `max_bytes`.
+It returns `UNSUPPORTED_VERSION` for versions other than 4 and 5, and `TOO_LARGE` above the caller's `max_bytes`.
 
 | Field | Bytes | Accessor |
 | --- | --- | --- |
 | Magic `FRRP` | 4 | |
-| Format version, 4 | u16 | |
+| Format version, 5 | u16 | |
 | Players (2–8) | u8 | `player_count()` |
 | Input width (1–65536) | u32 | `input_width()` |
 | Frames | u32 | `frame_count()` |
@@ -372,31 +372,36 @@ It returns `UNSUPPORTED_VERSION` for any other version, and `TOO_LARGE` above th
 | Sync-test (0 or 1) | u8 | `sync_test()` |
 | Neutral input | width | `neutral_input()` |
 | Five texts: u8 length (0–128), then printable ASCII | varies | `engine_version()`, `addon_version()`, `upstream_revision()`, `game_seed()`, `game_version()` |
-| Per frame: every player's input, a flag, then a 16-byte checksum when the flag is 1 | varies | `inputs()`, `checksum()`, `is_skipped_frame()` |
-| Per frame: the first 16 bytes of that frame's input row SHA-256 | 16 | `input_digest()`, `computed_input_digest()` |
+| Per frame: every player's input, one status byte per player, a flag, then a 16-byte checksum when the flag is 1 | varies | `inputs()`, `checksum()`, `is_skipped_frame()` |
+| Per frame: the first 16 bytes of that frame's input bytes and status bytes SHA-256 | 16 | `input_digest()`, `computed_input_digest()` |
 
 The flag is 0 for no checksum, 1 for a checksum and 2 for a skipped frame, which must hold neutral input.
-The skipped count must equal the number of flag-2 frames. Every recorded input is confirmed.
+The skipped count must equal the number of flag-2 frames. Status is 1 for confirmed or 3 for disconnected.
+Skipped rows use status 1. Version 4 files remain readable with status 1 for every player; they cannot represent disconnected gameplay.
+Decoded version 4 files keep their original format and byte-only digests when saved again.
 Metadata describes the recording; `decode` does not compare it with the running build.
 
 Each frame's checksum covers the state before that frame's input, so the state checksum of the
 following frame covers an input row whenever that following frame carries a checksum. A recording
 whose last frames carry no checksum therefore leaves the rows in front of them uncovered. Every
-frame carries the digest of its own input row: the player compares the recorded digest with the
+frame carries the digest of its own input bytes and player statuses: the player compares the recorded digest with the
 row it applies and stops with `DESYNC` at the frame that owns the row when they disagree. The
 digests are a Godot-side integrity extension; the pinned upstream session owns the input history itself.
-The digest costs 16 bytes per frame, so the byte budget of a recording includes them and the
+The digest costs 16 bytes per frame, and version 5 adds one status byte per player per frame, so the byte budget of a recording includes them and the
 largest recording a configuration can hold is smaller than before.
 
 Released format versions never change. A new version either reads older files with explicit
 defaults or rejects them with `UNSUPPORTED_VERSION`; this guide states which. Version 1 never
 shipped in a release and has no engine, addon, seed or configuration fields. Inventing them would
-give a migrated file a false origin, so versions 2, 3 and 4 reject version 1 files. Version 2 recorded
+give a migrated file a false origin, so versions 2 through 5 reject version 1 files. Version 2 recorded
 the frames without any input digest, and version 3 anchored only the final input row; both leave rows
 in front of a checksum-less frame uncovered, so those files are refused with `UNSUPPORTED_VERSION`
 rather than replayed without full coverage. Record them again.
 The [golden fixture](../tests/fixtures/replay/golden.json) comes from an independent
 [Python generator](../scripts/reference/replay_golden.py); `make test-reference` checks that they match.
+
+Recording stages receipt-only rows privately until mesh confirmation. `session.replay()` exports only finalized, simulated history outside pending correction.
+A coordinated drop repairs staged rows after the agreed cut; checksums for changed states are omitted rather than copied from the old history.
 
 ## Change input delay during a match
 
@@ -478,5 +483,19 @@ Differences in this port:
 | `ReplaySession` with validation | `FortressReplayPlayer`; a checksum mismatch stops playback with `DESYNC` instead of queuing an event |
 
 The manual request API remains available: see the [session guide](session.md#expert-request-consumption).
-Rust and Godot peers cannot join the same session, and replay files are not interchangeable. Spectators,
-dropping peers mid-game and joining mid-game are not available yet; the [plan](../PLAN.md) tracks them.
+Rust and Godot peers cannot join the same session, and replay files are not interchangeable.
+See [supported features](supported.md) for the current feature and platform boundaries:
+
+- [Confirmed-input spectator playback](spectators.md) is available through the local authenticated byte envelope.
+  Live SignalFish spectator admission and routing remain open in
+  [#131](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/131) and
+  [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47).
+- [Graceful coordinated peer drop](peer-lifecycle.md#the-coordinated-drop) is available with the opt-in
+  `disconnect_behavior = CONTINUE` policy. The exported Chromium witness covers endpoint silence over WebRTC.
+  Read the [unequal confirmation frontier limit](peer-lifecycle.md#unequal-confirmation-frontiers) before relying on confirmed-history preservation.
+  Physical departure and remaining live fault cases are open in
+  [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
+  Full upstream wire participant certificates, operation sequencing and the retransmission journal remain open in
+  [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
+- Hot join and session reactivation remain unavailable until
+  [#50](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/50) passes its acceptance gates.

@@ -56,17 +56,18 @@ def corpus():
 
 def encoded(case):
     """Independent FRRP packing; Rust consumes the original rows, Godot the actual file bytes."""
-    data = b'FRRP' + struct.pack('<HBIIIHBB', 4, case['players'], 4, len(case['frames']), 0, 0, 8, 0)
+    data = b'FRRP' + struct.pack('<HBIIIHBB', 5, case['players'], 4, len(case['frames']), 0, 0, 8, 0)
     data += b'\0' * 4
     for text in ('oracle', '0.1.0', 'fortress-rollback ' + REVISION, str(case['seed']), 'replay-parity-v1'):
         data += bytes([len(text)]) + text.encode('ascii')
     for row, checksum in zip(case['frames'], case['checksums']):
         packed = struct.pack('<' + 'I' * case['players'], *row)
-        data += packed + bytes([checksum is not None])
+        statuses = bytes([1] * case['players'])
+        data += packed + statuses + bytes([checksum is not None])
         if checksum is not None:
             data += bytes.fromhex(checksum)
         # Every frame carries the digest of its own input row.
-        data += hashlib.sha256(packed).digest()[:16]
+        data += hashlib.sha256(packed + statuses).digest()[:16]
     return data
 
 

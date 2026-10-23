@@ -85,7 +85,7 @@ jobs:
   ownership:
     name: Native and Chromium snapshot ownership
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -132,9 +132,25 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22.23.3"
-      - name: Install Java for scoped handshake model checking
+      - name: Select Java 17 for scoped model checking
         if: matrix.part == 'oracles'
-        run: sudo apt-get update && sudo apt-get install -y openjdk-17-jre-headless
+        run: |
+          if [[ -n "${JAVA_HOME_17_X64:-}" && -x "$JAVA_HOME_17_X64/bin/java" ]]; then
+            export JAVA_HOME="$JAVA_HOME_17_X64"
+          else
+            sudo apt-get update
+            sudo apt-get install -y openjdk-17-jre-headless
+            export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
+          fi
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          java_major="$(java -XshowSettings:properties -version 2>&1 | awk '$1 == "java.specification.version" {print $3}')"
+          if [[ "$java_major" != 17 ]]; then
+            echo "Scoped model checking requires Java 17; found $java_major" >&2
+            exit 1
+          fi
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
       - name: Restore verified reference downloads and crates
         uses: actions/cache@v5
         with:

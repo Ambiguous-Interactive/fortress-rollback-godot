@@ -206,6 +206,10 @@ func received(host: Variant, index: int, event: Dictionary) -> void:
 		if barrier.state == PENDING and _participant_lost(barrier):
 			_abort(host, barrier, Abort.PARTICIPANT_LOST)
 			return
+		if barrier.state == PENDING and host._now - barrier.started_us >= host._lifecycle.drop_barrier_timeout_us:
+			# Expiry wins over a buffered phase, including an otherwise valid commit.
+			_fail(host, barrier, "timeout")
+			return
 		if is_gone(host._ids[index].hex_encode()):
 			return
 		if phase in [Phase.PREPARE, Phase.BACKFILL, Phase.COMMIT] and not host._slots_by_peer[index].has(barrier.coordinator):

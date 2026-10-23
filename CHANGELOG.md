@@ -141,6 +141,12 @@
 
 ### Fixed
 
+- Fix disconnected player statuses in replay recordings. New version 5 files cover input bytes and statuses with each row digest; version 4 files still load with all-confirmed defaults.
+
+- Fix replay exports exposing unconfirmed or unrepaired tails. Coordinated drops repair staged rows, including predicted disconnect semantics.
+
+- Fix expired peer-drop barriers accepting buffered commits. A pending barrier expires at its exact deadline; an already committed drop remains acknowledged.
+
 - Fix unfinished peer-drop barriers silently omitting a lost survivor. The match now ends with `participant_lost`; an already committed drop remains valid.
 
 - Fix peer-drop commit retries after a lost acknowledgement. Survivors acknowledge matching duplicate commits without repeating the drop. Refuse control messages from another operation, era or coordinator.

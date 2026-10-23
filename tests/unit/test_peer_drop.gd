@@ -241,6 +241,8 @@ func _exported_row(context: RefCounted) -> void:
 			continue
 		exported += 1
 		context.equal(inputs.read(0).bytes.hex_encode(), rows[frame][0].bytes, "the exported row is the row the simulation used")
+		if frame > cut:
+			context.equal(inputs.read(0).status, Queue.Status.DISCONNECTED, "recording preserves dropped player status")
 	context.equal(exported > cut, true, "the exported rows reach past the agreed frame")
 	context.equal(replay.is_skipped_frame(cut), false, "the frozen row is not skipped")
 

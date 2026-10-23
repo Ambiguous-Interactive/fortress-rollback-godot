@@ -3,7 +3,10 @@
 `FortressSpectatorSession` plays one trusted host's complete confirmed input rows.
 It uses the same ordered expert requests and `FortressDriver` game callbacks as
 player sessions. Spectators contribute no input, prediction or confirmation to
-the host. The playback API and optional byte envelope are transport-independent; live SignalFish
+the host. Rows currently carry input bytes only, and playback supplies `CONFIRMED` status
+for every player. A game whose simulation changes on `DISCONNECTED` status cannot use this
+byte-only stream to reproduce a match after graceful drop; status delivery is tracked in
+[#187](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/187). The playback API and optional byte envelope are transport-independent; live SignalFish
 spectator routing and network handshake remain under [#47](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/47).
 
 ## Try the local example

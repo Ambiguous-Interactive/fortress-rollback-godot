@@ -54,6 +54,11 @@ Try the [delayed spectator example](./docs/spectators.md) to watch a corrected h
 stream while the host keeps playing. Press P to pause and catch up the viewer.
 Delivery runs in process; live spectator networking remains planned.
 
+For matches that continue after peer loss, enable the
+[graceful coordinated drop policy](./docs/peer-lifecycle.md#the-coordinated-drop).
+The guide separates supported behavior from the remaining physical-departure and upstream-parity gates.
+Hot join and session reactivation remain unavailable; see [supported features](./docs/supported.md#explicit-exclusions).
+
 For an addon-only install, [build and verify a candidate archive](./docs/package.md).
 
 The [supported features](./docs/supported.md) page states the supported Godot

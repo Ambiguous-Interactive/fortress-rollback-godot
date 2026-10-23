@@ -40,7 +40,7 @@ updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
 Python generates original inputs and independently computes every canonical
 state boundary. Rust consumes the original rows; Godot decodes independently
-packed version-4 FRRP files. Actual save/advance callbacks, player statuses,
+packed version-5 FRRP files. Actual save/advance callbacks, player statuses,
 events, completion and failure frames must match their full expected traces.
 Comparisons validate exact fields and numeric types before comparing values.
 Both engines run in two fresh processes with identical results.

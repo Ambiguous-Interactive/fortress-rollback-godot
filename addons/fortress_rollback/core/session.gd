@@ -40,6 +40,7 @@ var _confirmation_limit: int = -1
 var _trace: Trace = Trace.new()
 var _statistics: Types.Statistics = Types.Statistics.new()
 var _replay: Replay
+var _replay_repair_frame: int = -1
 
 
 ## Creates owned validated configuration and fresh history; never replaces an open batch.
@@ -87,6 +88,7 @@ func configure(config: Config) -> int:
 	_trace = Trace.new()
 	_trace.configure(_config)
 	_replay = null
+	_replay_repair_frame = -1
 	if _config.replay_max_frames > 0:
 		_replay = Replay.new()
 		_replay._start(_config)
@@ -231,6 +233,8 @@ func freeze_player(player: int, frame: int) -> int:
 	if result != Queue.Code.OK:
 		return Code.INPUT_FAILED
 	_frozen_frames[player] = frame
+	if _replay != null:
+		_replay._freeze_player(player, frame, _queues[player].simulated_input(frame + 1).bytes)
 	return Code.OK
 
 
@@ -258,6 +262,8 @@ func freeze_player_with_value(player: int, frame: int, bytes: PackedByteArray) -
 	if result != Queue.Code.OK:
 		return Code.INPUT_FAILED
 	_frozen_frames[player] = frame
+	if _replay != null:
+		_replay._freeze_player(player, frame, _queues[player].simulated_input(frame + 1).bytes)
 	return Code.OK
 
 
@@ -400,6 +406,9 @@ func _begin_advance(allow_advance: bool) -> Types.Result:
 			if _received[player] >= rollback and _queues[player].retained_confirmed_input(rollback).code != Queue.Code.OK:
 				return _fatal(Code.HISTORY_UNAVAILABLE, rollback, Kind.LOAD)
 		_plan.append(Vector2i(Kind.LOAD, rollback))
+		# Prediction markers reset before callbacks, but the replay tail stays
+		# provisional until the complete repair batch succeeds.
+		_replay_repair_frame = rollback if _replay_repair_frame == -1 else mini(_replay_repair_frame, rollback)
 		for queue: Queue in _queues:
 			queue.reset_prediction()
 		for frame: int in range(rollback, _current):
@@ -473,6 +482,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		var advanced: bool = _target > _current
 		_current = _target
 		_batch = null
+		_replay_repair_frame = -1
 		if advanced:
 			for player: int in _config.local_players:
 				_samples[player] = PackedByteArray()
@@ -518,12 +528,20 @@ func diagnostic_trace() -> Dictionary:
 
 ## Caller-owned copy of confirmed frames finalized by completed advances or recovery; null unless replay_max_frames > 0.
 func replay() -> Replay:
-	return _replay.owned_copy() if _replay != null else null
+	if _replay == null:
+		return null
+	var frames: int = mini(_current, _confirmed() + 1)
+	if _replay_repair_frame >= 0:
+		frames = mini(frames, _replay_repair_frame)
+	for queue: Queue in _queues:
+		var incorrect: int = queue.first_incorrect_frame()
+		if incorrect >= 0:
+			frames = mini(frames, incorrect)
+	return _replay.owned_prefix(maxi(0, frames))
 
 
-## Runs after each completed batch, which leaves no repair pending. Records frames whose actual inputs
-## every player has received and that are already simulated. The mesh confirmation limit can trail
-## receipts in lockstep; receipts never trail the discard floor, so no frame is lost.
+## Stage simulated receipts before lockstep can discard them. Public export separately gates on
+## mesh confirmation and pending repair; a later drop can rewrite this private provisional tail.
 func _record_replay() -> void:
 	if _replay == null:
 		return
@@ -535,13 +553,15 @@ func _record_replay() -> void:
 	for frame: int in range(_replay.frame_count(), last + 1):
 		var row: PackedByteArray = PackedByteArray()
 		var neutral: PackedByteArray = PackedByteArray()
+		var statuses: PackedByteArray = PackedByteArray()
 		for queue: Queue in _queues:
 			var input: Queue.Result = queue.retained_simulated_input(frame)
 			row.append_array(input.bytes if input.code == Queue.Code.OK else PackedByteArray())
+			statuses.append(input.status)
 			neutral.append_array(_config.neutral_input)
 		# Defensive: a missing input keeps frame alignment with a neutral, checksum-free row, as upstream does.
 		var skipped: bool = row.size() != neutral.size()
-		_replay._append(neutral if skipped else row, PackedByteArray() if skipped else saved.get(frame, PackedByteArray()), skipped)
+		_replay._append(neutral if skipped else row, PackedByteArray() if skipped else saved.get(frame, PackedByteArray()), skipped, statuses)
 
 
 func _freeze_diagnostic_trace(frame: int, peer_index: int, local: PackedByteArray, remote: PackedByteArray) -> void:

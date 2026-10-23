@@ -106,6 +106,9 @@ A survivor only answers a proposal for a peer whose departure it observed
 itself, so one peer cannot drop a live peer. The match holds while the barrier
 runs: the survivors stop advancing, so the frames the cut needs stay retained.
 `drop_barrier_timeout_us` bounds that hold.
+Deadline equality expires a pending attempt before processing buffered barrier
+messages, including a valid COMMIT. A commit accepted before the deadline stays
+irreversible and can still be acknowledged again after the deadline.
 
 The survivors then certify the value they freeze on. Every survivor answers
 the proposal with its own window and with the frame through which it still
@@ -168,6 +171,22 @@ operation sequence and its retransmission journal remain open. The Godot tier
 derives its sequence from target eras. See
 [source observations](oracle-p2p.md) for the comparison boundary and
 [the example](peer-example.md) for visible faults.
+
+#### Unequal confirmation frontiers
+
+Do not rely on `CONTINUE` to preserve previously exposed confirmed history when
+survivors enter the barrier with different confirmed frontiers. The Godot tier
+chooses the minimum reported confirmed frame within the retained windows. That
+cut can fall below another survivor's already exposed confirmation and replace
+its later confirmed inputs with the frozen value.
+
+The pinned source instead raises the cut to cover every survivor's exposed
+confirmation and target-input receipts. It backfills missing input ranges before
+certification. The Godot tier backfills only the frozen value, so changing the
+cut alone cannot establish that guarantee. The complete repair is tracked in
+[#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
+[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
+The scoped tests below do not establish this history-preservation guarantee.
 
 The agreement runs in real sessions, not only in unit tests. Three peer
 sessions on the deterministic test transport play, one peer stops answering,
