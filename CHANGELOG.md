@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add bounded donor recovery during graceful peer drop. Survivors transfer missing actual inputs before certification and preserve confirmed history. Upgrade all match participants together for the new handshake feature.
+- Add bounded donor recovery during graceful peer drop. Survivors transfer missing actual inputs before certification and preserve confirmed history. **Breaking:** upgrade all match participants together for the new handshake feature.
 
 - Add finalized player statuses to spectator playback. Dropped matches retain `DISCONNECTED` in callbacks and confirmed exports. The authenticated envelope moves to v3; update host and viewer together. Byte-only callers keep all-confirmed defaults.
 
