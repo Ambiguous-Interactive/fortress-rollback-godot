@@ -122,6 +122,8 @@ Authenticated host liveness and confirmed-input progress are separate observatio
 A spectator keepalive may refresh elapsed host expiry without advancing a row,
 repairing a gap or affecting player confirmation. Keep deadline equality and
 foreign-packet inertness unchanged, and agree support for optional packet kinds.
+Priority liveness traffic must yield to queued row work. Test repeated keepalives with a one-packet budget;
+a one-shot bypass can pass while repeated priority insertion indefinitely resets the receive cursor.
 A confirmed-row publisher owns each refused packet until exact transport acceptance;
 re-reading the host ring on retry can lose already prepared history. Fence the
 host configuration lifetime before returning retained bytes, keep liveness independent

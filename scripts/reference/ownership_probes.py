@@ -100,6 +100,7 @@ EXPECTED['res://tests/unit/test_replay_drop.gd'] = {
 EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
     'canonical_parity', 'request_lifetime', 'save_failures', 'callback_guards', 'paused_termination', 'paused_termination_bad_result'}
 EXPECTED['res://tests/unit/test_replay_validation.gd'] = {'paused_parity', 'paused_integrity', 'paused_lifetime'}
+EXPECTED['res://tests/unit/test_replay_expert_navigation.gd'] = {'navigation_parity', 'restore_integrity', 'restore_lifetime'}
 EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
     'independent_inventory_golden', 'startup_feature', 'legacy_startup_refused', 'retained_only_startup_refused', 'control_packet_budget',
     'unknown_version', 'empty_inventory', 'wrong_cardinality', 'wrong_target', 'unbounded_interval', 'changed_certificate', 'candidate_below_receipts',
@@ -118,13 +119,14 @@ EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
     'refused_prepare_retries_after_drain', 'refused_inventory_retries_after_drain',
     'refused_commit_retries_after_drain', 'partial_prepare_retries_only_refused_link'}
 EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_history', 'retained_history_control', 'journal_after_ring_wrap'}
+EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'complete_history_plan_control'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].add('full_length_recording')
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
-    'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery'}
+    'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery', 'heartbeat_fairness'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -166,10 +168,12 @@ FILES += ['tests/unit/test_frame_inputs.gd']
 FILES += ['tests/unit/test_input_queue.gd']
 FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd', 'tests/unit/test_replay_drop.gd']
 FILES += ['tests/unit/test_replay_validation.gd']
+FILES += ['tests/unit/test_replay_expert_navigation.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
+FILES += ['tests/unit/test_peer_drop_history_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
@@ -217,6 +221,7 @@ const FrameInputs = preload("res://tests/unit/test_frame_inputs.gd")
 const InputQueue = preload("res://tests/unit/test_input_queue.gd")
 const ReplayExpert = preload("res://tests/unit/test_replay_expert.gd")
 const ReplayValidation = preload("res://tests/unit/test_replay_validation.gd")
+const ReplayNavigation = preload("res://tests/unit/test_replay_expert_navigation.gd")
 const ReplayDrop = preload("res://tests/unit/test_replay_drop.gd")
 const SpectatorStatus = preload("res://tests/unit/test_spectator_status.gd")
 const PeerChecksumRepair = preload("res://tests/unit/test_peer_checksum_repair.gd")
@@ -226,6 +231,7 @@ const HistoryBackfill = preload("res://tests/unit/test_history_backfill.gd")
 const DropCapacity = preload("res://tests/unit/test_peer_drop_capacity.gd")
 const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
+const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pressure.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -235,7 +241,8 @@ func _ready() -> void:
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
-		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DriverInputPolicy, DriverTermination, SpectatorRelay, ReplayValidation]
+		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
+		DriverInputPolicy, DriverTermination, SpectatorRelay, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)

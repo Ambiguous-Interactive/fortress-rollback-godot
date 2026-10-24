@@ -38,6 +38,7 @@ var _options: Options
 var _received: Array[PackedByteArray] = []
 var _received_bytes: int = 0
 var _receive_cursor: int = 0
+var _can_prioritize_keepalive: bool = true
 var _failure: int = Code.OK
 var _last_receive: int = Code.OK
 var _rejected: int = 0
@@ -161,6 +162,8 @@ func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 					break
 			else:
 				result.received += 1
+				if received_kind != Stream.KEEPALIVE or _received.is_empty():
+					_can_prioritize_keepalive = true
 				if received_kind == Stream.OFFER:
 					_accept = _stream.encode_accept()
 	if blocked and result.peer_code == SessionTypes.Code.OK:
@@ -211,6 +214,7 @@ func detach() -> void:
 	_received.clear()
 	_received_bytes = 0
 	_receive_cursor = 0
+	_can_prioritize_keepalive = true
 	_accept = PackedByteArray()
 	_failure = Code.OK
 	_last_receive = Code.OK
@@ -244,9 +248,11 @@ func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> voi
 		_reject(_failure)
 		_stop_owned_viewer()
 		return
-	if bytes[5] == Stream.KEEPALIVE:
+	# Repeated heartbeats must yield to queued history after one liveness bypass.
+	if bytes[5] == Stream.KEEPALIVE and _can_prioritize_keepalive:
 		_received.push_front(bytes.duplicate())
 		_receive_cursor = 0
+		_can_prioritize_keepalive = false
 	else:
 		_received.append(bytes.duplicate())
 	_received_bytes += bytes.size()
@@ -297,6 +303,7 @@ func _clear_received() -> void:
 	_received.clear()
 	_received_bytes = 0
 	_receive_cursor = 0
+	_can_prioritize_keepalive = true
 	_accept = PackedByteArray()
 
 

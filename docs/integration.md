@@ -340,14 +340,15 @@ An incomplete batch returns `BUSY` from advancement, configuration and callback 
 Call `terminate()` to abandon it and expire its views, then configure a new playback lifetime.
 Batch identities remain monotonic across configuration, so a retained old batch cannot consume a new request.
 Expert configuration does not own a game; `step()`, `restore_before()` and `validate_current_frame()` return `UNSUPPORTED`.
-Applications using expert playback own callback dispatch and any navigation or checkpoint restoration.
+Applications using expert playback own callback dispatch, including checkpoint LOAD and SAVE requests.
 Call `begin_validate_current_frame()` to check a paused expert boundary without consuming its input.
 `READY` supplies a single `SAVE` request to dispatch and acknowledge; successful completion ends the batch without `ADVANCE`.
 `OK` means validation needed no snapshot request. Input digests, checksum evidence, bounded writers and failure handling match callback validation.
 
 For repeated navigation, pass optional `checkpoint_interval` and `checkpoint_capacity` to
-`configure`. Both default to zero. Enable both together with a positive snapshot size,
-a capacity of 2–1024, and a game implementing `load_state`. Reserved snapshot bytes
+`configure`, or use `configure_expert(replay, max_snapshot_bytes, config, checkpoint_interval, checkpoint_capacity)`.
+Both default to zero. Enable both together with a positive snapshot size,
+a capacity of 2–1024, and callback games implementing `load_state`. Expert clients dispatch the load themselves. Reserved snapshot bytes
 (`capacity * max_snapshot_bytes`) must not exceed 16 MiB. The initial checkpoint is
 retained; the oldest later checkpoint is evicted when the cache fills.
 
@@ -358,6 +359,13 @@ A cache miss returns `HISTORY_UNAVAILABLE`; a failed player cannot skip its fail
 using checkpoints. Restore validates full snapshot consumption, canonical bytes and
 checksum. Reconfiguration clears the cache. Checkpoints stay in memory and do not
 change the portable replay file format.
+
+Expert clients call `begin_restore_before(target)` and dispatch the returned `LOAD` then `SAVE` requests.
+The load reader must be consumed completely. The save must reproduce the cached checksum and exact snapshot bytes.
+The selected frame commits only after both acknowledgements succeed; navigation emits no `ADVANCE` request.
+`READY` opens that batch, while `OK` means the current state already serves the forward target.
+Continue with `begin_advance()` in a bounded loop to reach the exact target. Open restoration batches hold the same
+`BUSY`, request identity, view expiration and termination contracts as advancement. Expert checkpoint budgets match callback playback.
 
 Call `validate_current_frame()` after reaching a paused navigation target or canceling a seek.
 It checks the selected input row digest, then checks that state boundary through the same bounded save callback as `step()`.

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add bounded expert replay checkpoint navigation through `begin_restore_before()`, with ordered load and save validation before selecting the restored frame.
+
 - Add `FortressReplayPlayer.begin_validate_current_frame()` so expert clients can validate paused inputs and state without advancing playback.
 
 - Add an optional authenticated spectator startup control callback. Refused acceptance packets retain exact bytes for retry; host agreement still requires actual delivery.
@@ -156,6 +158,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix repeated spectator keepalives starving queued confirmed rows when receive work is limited to one packet per poll.
+
+- Fix pressured peer-drop history plans immediately repeating to survivors that already accepted them, preserving output capacity for missing input rows.
 
 - Fix reordered spectator rows blocking recovery behind a full playback ring. Bounded polling retains refused packets while accepting earlier missing rows.
 

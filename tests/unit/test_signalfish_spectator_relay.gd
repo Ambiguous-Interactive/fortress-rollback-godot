@@ -69,7 +69,8 @@ func cases() -> PackedStringArray:
 			"control_expiry",
 			"control_busy",
 			"control_row_pressure",
-			"reordered_recovery"
+			"reordered_recovery",
+			"heartbeat_fairness"
 		]
 	)
 
@@ -500,4 +501,37 @@ func _reordered_recovery(context: RefCounted) -> void:
 			context.equal(fixture.game.value, expected, "reordered relay preserves independent canonical game state")
 		context.equal(fixture.relay.status().received_packets, 0, "all retained packets release only after actual acceptance")
 		context.equal(fixture.relay.status().received_bytes, 0, "successful recovery releases every retained byte")
+		fixture.relay.detach()
+
+
+# Value: protects=row service under continuous host liveness; fails_when=each heartbeat resets the receive cursor; why_new=blocked liveness is one-shot; seam=SDK signals
+func _heartbeat_fairness(context: RefCounted) -> void:
+	for layout: Array in [[false, 0], [true, 0], [true, 1], [true, 2]]:
+		var repeated: bool = layout[0]
+		var blocked: int = layout[1]
+		var fixture: Dictionary = _fixture(context, true, 1, 8)
+		for frame: int in range(5, 5 + blocked):
+			_emit(fixture, fixture.stream.encode_row(frame, Fixture.new()._row(frame)))
+		_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+		var turns: int = blocked + 2
+		for now_us: int in range(1, turns + 1):
+			if repeated or now_us == 1:
+				_emit(fixture, fixture.stream.encode_keepalive())
+			var result: Relay.Types.Result = fixture.relay.poll(now_us)
+			context.equal(result.received <= 1, true, "each turn stays within its one-packet budget")
+		context.equal(fixture.stream.playback_session().host_frontier(), 0, "continued heartbeats cannot starve the original confirmed row")
+		var pending_heartbeats: int = turns - 1 if repeated else 0
+		context.equal(
+			fixture.relay.status().received_bytes,
+			blocked * (Stream.HEADER_BYTES + 4) + pending_heartbeats * Stream.HEADER_BYTES,
+			"only exact refused rows and unprocessed heartbeats remain charged"
+		)
+		if fixture.stream.playback_session().host_frontier() == 0:
+			context.equal(fixture.driver.step(0, _empty()).code, Types.Code.OK, "viewer plays its original row despite ongoing heartbeats")
+			var expected: int = 0
+			for player: int in 2:
+				expected = expected * 3 + Fixture.new()._row(0)[player][0]
+			context.equal(fixture.game.value, expected, "fair service preserves independent original state")
+		context.equal(fixture.relay.poll(turns + 100).peer_code, Types.Code.PROTOCOL_FAILED, "deadline equality beats queued heartbeat and future rows")
+		context.equal(fixture.relay.status().received_bytes, 0, "expiry releases every pending original packet")
 		fixture.relay.detach()

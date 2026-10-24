@@ -19,6 +19,7 @@ var journal: Array[PackedByteArray] = []
 var cursors: Dictionary = {}
 var retry_us: int = -1
 var plan_turn: bool = true
+var plan_sent_to: Dictionary = {}
 
 
 func configure(start: int, through: int, source: int, width: int, slots: int, budget: int) -> bool:

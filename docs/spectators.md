@@ -431,8 +431,9 @@ identity before retaining bytes. It owns copies, bounds packets, bytes and work,
 and polls elapsed host expiry before processing its queue. Playback pressure
 retains the exact refused row and scans other queued packets within its work budget,
 so a future row cannot block the earlier rows needed to free playback capacity.
-An accepted keepalive takes priority over rows,
-so a paused or full viewer can still observe host liveness without input progress.
+One new keepalive can overtake queued rows so a paused or full viewer still observes
+host liveness. Further keepalives join the bounded scan until an ordinary packet
+succeeds; continuous heartbeats cannot keep an eligible original row waiting forever.
 Capacity overflow ends playback explicitly and releases retained packets.
 Connection loss, room replacement, identity changes and stream replacement retire
 that delivery lifetime. Retained callbacks from a detached bridge cannot deliver
