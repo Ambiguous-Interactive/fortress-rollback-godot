@@ -18,6 +18,8 @@ New transport integration and external SDK inspection trigger this review.
 
 | Shared-host execution discarded slow-case isolation, and owner-name equality could mistake another process for the lock owner. | [Regression](../../scripts/tests/test_host_capacity.py) and native identity-suite watchdog evidence. | Kept one worker with case isolation, used acquisition success for ownership, and extended [test infrastructure guidance](../skills/testing/references/infrastructure.md). |
 
+| A passive page-readiness barrier can expire healthy peers even when its own deadline is bounded. | PR193 feedback and [physical witness](../../scripts/reference/browser/webrtc_drop.gd). | Move readiness before quiescence; bound only RTC closure below the real peer timeout. Added the rule to [browser integration guidance](../skills/testing/references/browser-integration.md). |
+
 ## Prune and verification
 
 No existing fact was contradicted or duplicated. Kept the established inventory

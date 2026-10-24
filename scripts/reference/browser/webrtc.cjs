@@ -7,26 +7,47 @@ const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchd
 const { placeFirefox } = require('./webrtc_display.cjs');
 const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false };
 
-async function closeDepartingRtc(pages) {
-  await pages[2].evaluate(() => { window.fortressDropGo = true; });
-  await pages[2].waitForFunction(() => document.body.dataset.fortressGameplayDone === 'true', null, { timeout: 10000 });
-  const held = await Promise.all(pages.slice(0, 2).map(page => page.evaluate(() => ({
-    frame: Number(document.body.dataset.fortressFrame), released: window.fortressDropGo === true,
-  }))));
-  if (held.some(value => value.frame !== 6 || value.released)) throw new Error('peer-drop survivors advanced before physical departure');
-  await pages[2].evaluate(frames => {
-    const resources = window.fortressResources;
-    window.fortressRtc.departure = { frame: Number(document.body.dataset.fortressFrame), survivor_frames: frames,
-      connections_created: resources.connections.length, channels_created: resources.channels.length };
-    for (const connection of resources.connections) connection.close();
-  }, held.map(value => value.frame));
-  await pages[2].waitForFunction(() => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
-    && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), null, { timeout: 10000 });
-  await pages[2].evaluate(() => {
-    const resources = window.fortressResources;
-    window.fortressRtc.departure.connections_closed = resources.connections.filter(connection => connection.connectionState === 'closed').length;
-    window.fortressRtc.departure.channels_closed = resources.channels.filter(channel => channel.readyState === 'closed').length;
-  });
+async function closeDepartingRtc(pages, now = () => performance.now()) {
+  await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+  const deadline = now() + 3000;
+  let active = true;
+  const remaining = () => {
+    if (!active || now() >= deadline) throw new Error('physical departure phase deadline');
+    return Math.ceil(deadline - now());
+  };
+  try {
+    await boundedRoom(async () => {
+      await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropArm = true; })));
+      remaining();
+      await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropPaused === 'true', null, { timeout: remaining() })));
+      remaining();
+      const held = await Promise.all(pages.map(page => page.evaluate(() => ({
+        frame: Number(document.body.dataset.fortressFrame), released: window.fortressDropGo === true,
+        paused: document.body.dataset.fortressDropPaused === 'true',
+      }))));
+      remaining();
+      if (held.some(value => value.frame !== 6 || value.released || !value.paused))
+        throw new Error('peer-drop endpoint advanced before physical departure');
+      await pages[2].evaluate(frames => {
+        const resources = window.fortressResources;
+        window.fortressRtc.departure = { frame: Number(document.body.dataset.fortressFrame), survivor_frames: frames,
+          connections_created: resources.connections.length, channels_created: resources.channels.length };
+        for (const connection of resources.connections) connection.close();
+      }, held.slice(0, 2).map(value => value.frame));
+      remaining();
+      await pages[2].waitForFunction(() => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
+        && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), null, { timeout: remaining() });
+      remaining();
+      await pages[2].evaluate(() => {
+        const resources = window.fortressResources;
+        window.fortressRtc.departure.connections_closed = resources.connections.filter(connection => connection.connectionState === 'closed').length;
+        window.fortressRtc.departure.channels_closed = resources.channels.filter(channel => channel.readyState === 'closed').length;
+      });
+      remaining();
+      await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+      remaining();
+    }, 3000, 'physical departure');
+  } finally { active = false; }
 }
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
@@ -327,9 +348,11 @@ async function main() {
         }, 120000, 'setup');
         {
           if (peerDrop) {
-            await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
             if (dropClose) await closeDepartingRtc(pages);
-            await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+            else {
+              await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+              await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+            }
           }
           await waitGameplay(pages);
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));

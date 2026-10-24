@@ -72,7 +72,7 @@ class ClockProbe:
 			diagnostic_snapshots.append(_wait_snapshot(peer, attempt))
 		super._wait_diagnostic(attempt)
 
-	func _passive_wait_turn() -> void:
+	func _wait_turn() -> void:
 		ticks_us += passive_step_us
 
 	func _ticks_usec() -> int:
@@ -177,13 +177,20 @@ func _initialize() -> void:
 # Value: protects=physical departure wait; fails_when=phase wait expires before RTC closure; why_new=fast rooms mask delayed siblings; seam=injected clock
 func _passive_departure_wait(probe: ClockProbe) -> bool:
 	var started: int = probe.ticks_us
+	probe.passive_step_us = 1000000
+	if not _check(await probe._wait(func() -> bool: return probe.ticks_us - started >= 6000000, true),
+		"slow sibling readiness keeps protocol service active beyond the peer timeout"): return false
+	if not _check(probe.service_calls == 7, "every readiness turn services the still-live endpoints"): return false
+	probe.service_calls = 0
+	probe.ticks_us = started
+	probe.passive_step_us = 500000
 	var release: Callable = func() -> bool: return probe.ticks_us - started >= 2500000
 	if not _check(not await probe._wait_passive(release, 2000000), "a two-second phase deadline refuses the delayed release"): return false
 	probe.ticks_us = started
 	if not _check(await probe._wait_passive(release, probe.PHYSICAL_DEPARTURE_WAIT_US), "physical departure tolerates a delayed gate beyond two seconds"): return false
 	if not _check(probe.ticks_us - started == 2500000 and probe.service_calls == 0, "passive departure waits without servicing protocol"): return false
 	probe.ticks_us = started
-	probe.passive_step_us = 15000000
+	probe.passive_step_us = 1000000
 	var at_deadline: Callable = func() -> bool: return probe.ticks_us - started >= probe.PHYSICAL_DEPARTURE_WAIT_US
 	if not _check(not await probe._wait_passive(at_deadline, probe.PHYSICAL_DEPARTURE_WAIT_US), "deadline equality refuses a late physical release"): return false
 	if not _check(probe.ticks_us - started == probe.PHYSICAL_DEPARTURE_WAIT_US and probe.service_calls == 0,
@@ -195,6 +202,7 @@ func _passive_departure_wait(probe: ClockProbe) -> bool:
 	if not _check(not await probe._wait_passive(late_query, probe.PHYSICAL_DEPARTURE_WAIT_US), "query completion cannot accept a release at the deadline"): return false
 	probe.ticks_us = started
 	probe.passive_step_us = 500000
+	if not _check(probe.PHYSICAL_DEPARTURE_WAIT_US < 5000000, "passive phase stays below the unchanged peer timeout"): return false
 	return true
 
 func _check(condition: bool, message: String) -> bool:

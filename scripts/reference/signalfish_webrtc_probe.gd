@@ -22,8 +22,8 @@ const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "r
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
 ## Bounded service rounds per rendered turn. The batch stops early once every route is idle.
 const SERVICE_ROUNDS: int = 8
-# Covers the launcher’s 30s sibling gate, two 10s close gates and release overhead.
-const PHYSICAL_DEPARTURE_WAIT_US: int = 60000000
+# The controller closes and releases within 3s, below the 5s peer timeout.
+const PHYSICAL_DEPARTURE_WAIT_US: int = 4000000
 var clients: Array[SDK] = []
 var infos: Dictionary = {}
 var lobby_ready: Dictionary = {}
@@ -106,10 +106,10 @@ func _wait_passive(condition: Callable, timeout_us: int) -> bool:
 		var ready: bool = condition.call()
 		if _ticks_usec() - started_us >= timeout_us: return false
 		if ready: return true
-		await _passive_wait_turn()
+		await _wait_turn()
 	return false
 
-func _passive_wait_turn() -> void:
+func _wait_turn() -> void:
 	await get_tree().create_timer(0.002).timeout
 
 func _play(count: int) -> bool:
@@ -202,7 +202,7 @@ func _wait(condition: Callable, use_transport: bool = false) -> bool:
 		if not errors.is_empty(): return false
 		if condition.call(): return true
 		_service_wait_diagnostics(attempt, diagnostics)
-		await get_tree().create_timer(0.002).timeout
+		await _wait_turn()
 	for peer: Peer in peers:
 		print("TIMEOUT_STATUS ", peer.status().current_frame, " ", peer.status().confirmed_frame, " ", peer.status().pending_rollback_frame)
 	errors.append("wait_timeout_" + stage)

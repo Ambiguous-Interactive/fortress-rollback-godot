@@ -45,7 +45,11 @@ func run(host: Node, count: int) -> bool:
 		await host.get_tree().create_timer(0.002).timeout
 	JavaScriptBridge.eval("document.body.dataset.fortressDropReady = 'true'")
 	if JavaScriptBridge.eval("window.fortressDropClose || false"):
+		host.stage = "peer_drop_readiness"
+		if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropArm || false"), true):
+			return false
 		host.stage = "peer_drop_physical_departure"
+		JavaScriptBridge.eval("document.body.dataset.fortressDropPaused = 'true'")
 		if not await host._wait_passive(
 			func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), host.PHYSICAL_DEPARTURE_WAIT_US
 		):

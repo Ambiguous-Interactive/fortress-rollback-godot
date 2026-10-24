@@ -367,43 +367,71 @@ test('drop teardown includes every tracked signaling socket', () => {
   assert.equal(closed(true), false);
 });
 
-// Value: real RTC closure must finish while survivors remain at their original pre-drop boundary.
-test('physical peer departure waits for stopped service and every RTC close before recording evidence', async () => {
-  for (const mutation of ['none', 'advanced', 'released', 'not-stopped', 'channel-open']) {
+// Value: readiness remains live; all endpoints acknowledge a short pause before RTC closure and release.
+test('physical departure separates slow readiness from the bounded quiet close phase', async () => {
+  for (const mutation of ['none', 'slow-readiness', 'slow-boundaries', 'advanced', 'released', 'not-paused', 'channel-open', 'late-pause', 'late-close']) {
+    let ticks = 0;
+    const events = [];
     const contexts = Array.from({ length: 3 }, (_, index) => vm.createContext({
       window: { fortressDropGo: mutation === 'released' && index === 0, fortressRtc: {},
         fortressResources: { connections: [], channels: [] } },
-      document: { body: { dataset: { fortressFrame: mutation === 'advanced' && index === 0 ? '7' : '6',
-        fortressGameplayDone: mutation === 'not-stopped' ? 'false' : 'true' } } },
+      document: { body: { dataset: { fortressFrame: mutation === 'advanced' && index === 0 ? '7' : '6', fortressDropReady: 'true' } } },
     }));
     const departing = contexts[2].window;
     const channels = Array.from({ length: 6 }, () => ({ readyState: 'open' }));
     departing.fortressResources.channels = channels;
     departing.fortressResources.connections = Array.from({ length: 4 }, () => ({ connectionState: 'connected', close() {
+      assert.equal(events.filter(event => event.startsWith('paused')).length, 3, 'every endpoint must stop service before close');
+      events.push('close');
       this.connectionState = 'closed';
       if (mutation !== 'channel-open') for (const channel of channels) channel.readyState = 'closed';
     } }));
-    let waits = 0;
-    const pages = contexts.map(context => ({
+    const pages = contexts.map((context, index) => ({
       async evaluate(operation, argument) {
         context.argument = argument;
-        return vm.runInContext(`(${operation.toString()})(argument)`, context);
+        const result = vm.runInContext(`(${operation.toString()})(argument)`, context);
+        if (context.window.fortressDropArm) {
+          assert.equal(events.filter(event => event.startsWith('ready')).length, 3, 'slow readiness completes before service is stopped');
+        }
+        if (context.window.fortressDropGo) {
+          assert.ok(channels.every(channel => channel.readyState === 'closed'), 'release must follow actual RTC closure');
+          events.push(`released${index}`);
+        }
+        return result;
       },
-      async waitForFunction(operation) {
-        waits++;
-        if (!vm.runInContext(`(${operation.toString()})()`, context)) throw new Error('not ready');
+      async waitForFunction(operation, argument, options) {
+        const source = operation.toString();
+        if (source.includes('fortressDropReady')) {
+          assert.equal(options.timeout, 30000);
+          assert.ok(contexts.every(value => !value.window.fortressDropArm), 'readiness waits keep endpoints unarmed');
+          if (mutation === 'slow-readiness' && index === 2) ticks += 6000;
+          events.push(`ready${index}`);
+        } else {
+          assert.ok(options.timeout > 0 && options.timeout <= 3000, 'quiet waits share the short controller deadline');
+          if (source.includes('fortressDropPaused')) {
+            assert.ok(contexts.every(value => value.window.fortressDropArm), 'all endpoints are armed before pause acknowledgement');
+            if (mutation === 'late-pause' && index === 2) ticks += 3000;
+            if (mutation === 'slow-boundaries' && index === 2) ticks += 1000;
+            context.document.body.dataset.fortressDropPaused = mutation === 'not-paused' && index === 2 ? 'false' : 'true';
+            events.push(`paused${index}`);
+          } else {
+            if (mutation === 'late-close') ticks += 3000;
+            if (mutation === 'slow-boundaries') ticks += 1000;
+          }
+        }
+        if (!vm.runInContext(`(${source})()`, context)) throw new Error('not ready');
       },
     }));
-    if (mutation === 'none') {
-      await closeDepartingRtc(pages);
-      assert.equal(waits, 2);
+    if (['none', 'slow-readiness', 'slow-boundaries'].includes(mutation)) {
+      await closeDepartingRtc(pages, () => ticks);
       assert.deepEqual(JSON.parse(JSON.stringify(departing.fortressRtc.departure)), {
         frame: 6, survivor_frames: [6, 6], connections_created: 4, channels_created: 6, connections_closed: 4, channels_closed: 6,
       });
-      assert.ok(contexts.slice(0, 2).every(context => context.window.fortressDropGo === false));
+      assert.ok(contexts.every(context => context.window.fortressDropGo === true));
+      assert.equal(events.filter(event => event.startsWith('released')).length, 3);
     } else {
-      await assert.rejects(closeDepartingRtc(pages));
-      assert.equal(departing.fortressRtc.departure?.channels_closed, undefined);
+      await assert.rejects(closeDepartingRtc(pages, () => ticks));
+      assert.equal(events.filter(event => event.startsWith('released')).length, 0);
     }
   }
 });
