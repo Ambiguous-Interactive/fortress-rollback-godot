@@ -161,6 +161,9 @@ after commit does not undo the decision.
 A certificate that names another value ends the match with
 `peer_drop_unconfirmed` and the reason `conflicting_history`, because the
 survivors would otherwise freeze different values for the same frame.
+A follower also compares a coordinator's frozen-value backfill with its own
+retained actual cut row before issuing a certificate. An early backfill and a
+matching proposed digest cannot override that local history.
 
 Every field that decides the agreement is derived locally. The target set, the
 connected eras and the coordinator are re-derived from the roster, so a peer

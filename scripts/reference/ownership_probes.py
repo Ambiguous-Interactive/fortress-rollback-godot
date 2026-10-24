@@ -10,7 +10,7 @@ import sys
 import time
 import zipfile
 
-from fetch import CACHE, ROOT, digest, fetch, load_manifest
+from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from local_ownership import claim
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -104,7 +104,8 @@ EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
     'unknown_version', 'empty_inventory', 'wrong_cardinality', 'wrong_target', 'unbounded_interval', 'changed_certificate', 'candidate_below_receipts',
     'unchanged_short_certificate', 'extended_short_certificate'}
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
-    'retained_below_confirmation', 'certified_below_confirmation', 'unequal_exposed_frontiers', 'missing_actual_rows', 'pending_repair_raised_cut'}
+    'retained_below_confirmation', 'certified_below_confirmation', 'unequal_exposed_frontiers', 'missing_actual_rows', 'pending_repair_raised_cut',
+    'matching_frozen_backfill', 'conflicting_frozen_backfill'}
 EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
     'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
 EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
@@ -117,6 +118,10 @@ EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_his
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].add('full_length_recording')
+EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
+    'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
+    'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
+    'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -163,6 +168,10 @@ FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_externa
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
+FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
+          'addons/fortress_rollback/transport/signalfish_relay.gd', 'addons/fortress_rollback/transport/signalfish_relay_envelope.gd',
+          'addons/fortress_rollback/transport/signalfish_relay_types.gd', 'addons/fortress_rollback/transport/signalfish_spectator_relay.gd',
+          'tests/unit/test_signalfish_membership.gd', 'tests/unit/test_signalfish_relay.gd', 'tests/unit/test_signalfish_spectator_relay.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -215,12 +224,13 @@ const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
+const SpectatorRelay = preload("res://tests/unit/test_signalfish_spectator_relay.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
-		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DriverInputPolicy, DriverTermination]
+		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DriverInputPolicy, DriverTermination, SpectatorRelay]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)
@@ -456,8 +466,7 @@ def run_probes(args, results):
         archive = fetch(data['artifacts'][name], name, args.offline)
         editor_dir = CACHE / 'ownership-editors' / version
         editor_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(archive) as package:
-            package.extractall(editor_dir)
+        prepare_zip(archive, editor_dir, executable_members=(name[:-4],))
         editor = editor_dir / name[:-4]
         editor.chmod(0o755)
         actual = run([str(editor), '--version'], environment, results / f'ownership-{version}-version.log').strip()
@@ -567,11 +576,7 @@ def run_probes(args, results):
                 browser_zip = fetch(data['artifacts'][browser_name], browser_name, args.offline)
                 browser_dir = CACHE / 'verified-browser' / arch
                 browser_dir.mkdir(parents=True, exist_ok=True)
-                with zipfile.ZipFile(browser_zip) as package:
-                    package.extractall(browser_dir)
-                    for member in package.infolist():
-                        if not member.is_dir():
-                            (browser_dir / member.filename).chmod((member.external_attr >> 16) & 0o777 or 0o644)
+                prepare_zip(browser_zip, browser_dir)
                 environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(browser_dir / 'chrome-linux/chrome')
                 environment['FORTRESS_PLAYWRIGHT_PACKAGE'] = str(CACHE / 'browser/node_modules/@playwright/test')
                 registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'

@@ -106,6 +106,89 @@ class ReferenceContracts(unittest.TestCase):
                     self.assertFalse(source.is_symlink())
                     self.assertFalse((tree / 'injected.rs').exists())
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux executable-in-use regression')
+    def test_engine_preparation_preserves_live_process_and_repairs_corruption(self):
+        # Value: protects=shared editor preparation; fails_when=extract truncates executing inode; why_new=only source caches tested; seam=launcher I/O.
+        class Prepared(Exception):
+            pass
+
+        for corrupt in (False, True):
+            with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as folder:
+                cache = Path(folder)
+                arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}[godot_runner.platform.machine()]
+                name = f'Godot_v4.3-stable_linux.{arch}'
+                editor = cache / 'editors/4.3' / name
+                editor.parent.mkdir(parents=True)
+                payload = Path(shutil.which('sleep')).read_bytes()
+                expected = payload + b'verified-extension' if corrupt else payload
+                editor.write_bytes(payload)
+                editor.chmod(0o755)
+                archive = cache / 'editor.zip'
+                with zipfile.ZipFile(archive, 'w') as package:
+                    package.writestr(name, expected)
+                manifest = load_manifest()
+                pin = {'algorithm': 'sha256', 'digest': hashlib.sha256(archive.read_bytes()).hexdigest()}
+                manifest['artifacts'][name + '.zip'] = pin
+                inode = editor.stat().st_ino
+                process = subprocess.Popen([str(editor), '1'])
+                try:
+                    self.assertIsNone(process.poll())
+                    with patch.object(godot_runner, 'CACHE', cache), patch.object(godot_runner, 'load_manifest', return_value=manifest), \
+                            patch.object(godot_runner, 'fetch', return_value=archive), patch.object(godot_runner, 'run', side_effect=Prepared), \
+                            patch.object(sys, 'argv', ['smoke', '--offline', '--version', '4.3']):
+                        with self.assertRaises(Prepared):
+                            godot_runner.main()
+                    self.assertEqual(editor.read_bytes(), expected)
+                    self.assertEqual(editor.stat().st_ino == inode, not corrupt)
+                    self.assertEqual(process.wait(timeout=5), 0)
+                    self.assertEqual(subprocess.run([str(editor), '0'], timeout=5).returncode, 0)
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                        process.wait(timeout=5)
+
+    def test_zip_preparation_checks_members_modes_and_concurrent_publication(self):
+        # Value: protects=immutable shared tool cache; fails_when=trust uses timestamps or writes live inodes; why_new=source cache is a separate path; seam=none.
+        from concurrent.futures import ThreadPoolExecutor
+        from fetch import prepare_zip
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            archive, installation = root / 'tools.zip', root / 'installed'
+            member = zipfile.ZipInfo('nested/tool')
+            member.external_attr = 0o100755 << 16
+            with zipfile.ZipFile(archive, 'w') as package:
+                package.writestr(member, b'verified')
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                list(workers.map(lambda _: prepare_zip(archive, installation), range(2)))
+            tool = installation / member.filename
+            self.assertEqual(tool.read_bytes(), b'verified')
+            self.assertEqual(tool.stat().st_mode & 0o777, 0o755)
+            original = tool.stat()
+            prepare_zip(archive, installation)
+            self.assertEqual((tool.stat().st_ino, tool.stat().st_mtime_ns), (original.st_ino, original.st_mtime_ns))
+            for altered_mode in (0o644, 0o4755, 0o2755, 0o1755):
+                tool.chmod(altered_mode)
+                prepare_zip(archive, installation)
+                self.assertEqual(tool.stat().st_mode & 0o7777, 0o755)
+            tool.write_bytes(b'corrupt!')
+            tool.chmod(0o644)
+            prepare_zip(archive, installation)
+            self.assertEqual(tool.read_bytes(), b'verified')
+            self.assertEqual(tool.stat().st_mode & 0o777, 0o755)
+            tool.unlink()
+            tool.symlink_to(archive)
+            with self.assertRaisesRegex(ValueError, 'symlinked'):
+                prepare_zip(archive, installation)
+            tool.unlink()
+            self.assertEqual(list(tool.parent.iterdir()), [])
+            for name in ('../escape', '/absolute'):
+                with self.subTest(name=name):
+                    with zipfile.ZipFile(archive, 'w') as package:
+                        package.writestr(name, b'hostile')
+                    with self.assertRaisesRegex(ValueError, 'unsafe'):
+                        prepare_zip(archive, installation)
+
     def test_runner_rejects_empty_failed_or_ignored_selection(self):
         for output in ('running 0 tests', 'test regression ... FAILED', 'test regression ... ignored', 'test partial ... ok',
                        'running 2 tests\ntest partial ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured;'):

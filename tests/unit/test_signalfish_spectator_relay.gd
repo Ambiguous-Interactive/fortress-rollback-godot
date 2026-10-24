@@ -51,7 +51,25 @@ class Info:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["startup", "playback", "refusal", "queue_pressure", "expiry", "lifetimes", "configuration", "busy", "blocked_liveness", "retained_callbacks", "busy_deadline"]
+		[
+			"startup",
+			"playback",
+			"refusal",
+			"queue_pressure",
+			"expiry",
+			"lifetimes",
+			"configuration",
+			"busy",
+			"blocked_liveness",
+			"retained_callbacks",
+			"busy_deadline",
+			"control_retry",
+			"control_invalid",
+			"control_lifetime",
+			"control_expiry",
+			"control_busy",
+			"control_row_pressure"
+		]
 	)
 
 
@@ -304,3 +322,134 @@ func _busy_deadline(context: RefCounted) -> void:
 		context.equal(completion.code, Types.Code.OK if now_us == 100 else Types.Code.TERMINATED, "expired request cannot commit its frame")
 		context.equal(fixture.stream.playback_session().status().current_frame, 1 if now_us == 100 else 0, "strict deadline guards committed playback")
 		fixture.relay.detach()
+
+
+# Value: protects=owned ACCEPT retries; fails_when=refusal loses bytes or invents host receipt; why_new=first control handoff; seam=caller transport
+func _control_retry(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context, false)
+	_emit(fixture, fixture.publisher.encode_offer())
+	context.equal(fixture.relay.poll(1).code, Relay.Code.OK, "control sender is optional")
+	context.equal(fixture.relay.status().accept_pending, true, "offer stages bounded authenticated acceptance")
+	var expected: PackedByteArray = fixture.stream.encode_accept()
+	for refusal: int in [ERR_BUSY, ERR_OUT_OF_MEMORY]:
+		var sender: Callable = func(packet: PackedByteArray) -> int:
+			context.equal(packet, expected, "every refusal retries exact acceptance")
+			context.equal(fixture.relay.poll(2).code, Relay.Code.WRONG_STATE, "control callback cannot reenter service")
+			packet.fill(0)
+			return refusal
+		context.equal(fixture.relay.poll(2, sender).code, Relay.Code.BACKPRESSURE, "recoverable control pressure")
+		context.equal(fixture.publisher.prepare_packet().code, Types.Code.NOT_SYNCHRONIZED, "refused control cannot authorize publication")
+	var delivered: Array[PackedByteArray] = []
+	var accept: Callable = func(packet: PackedByteArray) -> int:
+		delivered.append(packet)
+		return OK
+	context.equal(fixture.relay.poll(3, accept).code, Relay.Code.OK, "separate control transport accepts")
+	context.equal(delivered[0], expected, "callback mutation cannot change owned retry")
+	context.equal(fixture.relay.status().accept_pending, false, "accepted control releases retained bytes")
+	context.equal(fixture.publisher.prepare_packet().code, Types.Code.NOT_SYNCHRONIZED, "transport acceptance alone is not host receipt")
+	context.equal(fixture.relay.poll(4, accept).code, Relay.Code.OK, "accepted control is not resent without another offer")
+	context.equal(delivered.size(), 1, "one send per pending offer")
+	context.equal(fixture.publisher.receive_accept(delivered[0]), Types.Code.OK, "actual authenticated host receipt completes agreement")
+	_emit(fixture, fixture.publisher.encode_offer())
+	context.equal(fixture.relay.poll(5, accept).code, Relay.Code.OK, "lost-delivery recovery can repeat an offer")
+	context.equal(delivered.size(), 2, "repeated offer resends one acceptance")
+	context.equal(delivered[1], expected, "offer retry has identical agreement bytes")
+	fixture.relay.detach()
+
+
+func _control_invalid(context: RefCounted) -> void:
+	for output: Variant in [true, 0.0, "0", null, FAILED]:
+		var fixture: Dictionary = _fixture(context, false)
+		_emit(fixture, fixture.publisher.encode_offer())
+		var sender: Callable = func(_packet: PackedByteArray) -> Variant: return output
+		context.equal(fixture.relay.poll(1, sender).code, Relay.Code.SDK_FAILURE, "malformed or fatal control return fails closed")
+		context.equal(fixture.relay.status().code, Relay.Code.SDK_FAILURE, "control failure remains latched")
+		context.equal(fixture.relay.status().accept_pending, false, "fatal control failure releases acceptance")
+		context.equal(fixture.driver.step(0, _empty()).code, Types.Code.TERMINATED, "control failure cannot leave playback live")
+		fixture.relay.detach()
+
+
+func _control_lifetime(context: RefCounted) -> void:
+	for event: String in ["detach", "room", "stream", "replace"]:
+		var fixture: Dictionary = _fixture(context, false)
+		_emit(fixture, fixture.publisher.encode_offer())
+		var sender: Callable = func(_packet: PackedByteArray) -> Variant:
+			match event:
+				"detach":
+					fixture.relay.detach()
+				"room":
+					fixture.client.room = "replacement"
+				"stream", "replace":
+					if event == "replace":
+						fixture.relay.detach()
+					var helper: RefCounted = StreamFixture.new()
+					context.equal(
+						fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 1, 100, 128),
+						Types.Code.OK,
+						"callback installs a new stream lifetime"
+					)
+					if event == "replace":
+						var options: Relay.Options = Relay.Options.new()
+						options.max_packet_bytes = 128
+						context.equal(
+							fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options),
+							Relay.Code.OK,
+							"callback installs new bridge lifetime"
+						)
+			return true
+		context.equal(fixture.relay.poll(1, sender).code, Relay.Code.WRONG_STATE, "lifetime invalidation wins over malformed output")
+		if event in ["stream", "replace"]:
+			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "old control cannot terminate new viewer")
+		if event == "replace":
+			context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "new bridge remains usable after callback replacement")
+		fixture.relay.detach()
+
+
+func _control_expiry(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context, false)
+	_emit(fixture, fixture.publisher.encode_offer())
+	fixture.relay.poll(1)
+	var calls: Array[int] = [0]
+	var sender: Callable = func(_packet: PackedByteArray) -> int:
+		calls[0] += 1
+		return ERR_BUSY
+	context.equal(fixture.relay.poll(100, sender).code, Relay.Code.BACKPRESSURE, "control can retry just before host deadline")
+	context.equal(fixture.relay.poll(101, sender).code, Relay.Code.PEER_FAILURE, "deadline equality beats pending acceptance")
+	context.equal(calls[0], 1, "expired acceptance never reaches control callback")
+	context.equal(fixture.relay.status().accept_pending, false, "expiry releases acceptance")
+	fixture.relay.detach()
+
+
+func _control_busy(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context, false)
+	_emit(fixture, fixture.publisher.encode_offer())
+	fixture.relay.poll(1)
+	_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+	fixture.relay.poll(2)
+	var batch: Types.Result = fixture.stream.playback_session().begin_advance()
+	context.equal(batch.code, Types.Code.READY, "outstanding expert request holds callback guard")
+	var calls: Array[int] = [0]
+	var sender: Callable = func(_packet: PackedByteArray) -> int:
+		calls[0] += 1
+		return OK
+	context.equal(fixture.relay.poll(3, sender).code, Relay.Code.BACKPRESSURE, "active playback defers control callback")
+	context.equal(calls[0], 0, "control sender is not entered through active game callback")
+	context.equal(fixture.relay.status().accept_pending, true, "active callback retains acceptance")
+	fixture.relay.detach()
+
+
+func _control_row_pressure(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context, false)
+	_emit(fixture, fixture.publisher.encode_offer())
+	fixture.relay.poll(1)
+	_emit(fixture, fixture.stream.encode_row(5, Fixture.new()._row(5)))
+	var calls: Array[int] = [0]
+	var sender: Callable = func(packet: PackedByteArray) -> int:
+		calls[0] += 1
+		context.equal(fixture.publisher.receive_accept(packet), Types.Code.OK, "row pressure cannot suppress authenticated control agreement")
+		return OK
+	context.equal(fixture.relay.poll(2, sender).code, Relay.Code.BACKPRESSURE, "original row pressure remains visible")
+	context.equal(calls[0], 1, "independent control path makes progress behind refused gameplay")
+	context.equal(fixture.relay.status().received_packets, 1, "control acceptance leaves refused row owned")
+	context.equal(fixture.relay.status().accept_pending, false, "control transport acceptance releases only control packet")
+	fixture.relay.detach()

@@ -20,7 +20,7 @@ from browser.webrtc_drop import validate_drop_browser
 from browser.webrtc_runner import run_browser
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
-from fetch import CACHE, ROOT, digest, fetch, load_manifest
+from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from godot_smoke import run
 from engine_path import resolve_engine
 from receipt_arguments import ReceiptParser
@@ -458,11 +458,7 @@ def main():
     browser_archive = fetch(pins['artifacts'][browser_name], browser_name, args.offline)
     browser_root = CACHE / 'webrtc-browser' / arch
     browser_root.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(browser_archive) as package:
-        package.extractall(browser_root)
-        for member in package.infolist():
-            if not member.is_dir():
-                (browser_root / member.filename).chmod((member.external_attr >> 16) & 0o777 or 0o644)
+    prepare_zip(browser_archive, browser_root)
     sources['browser_installation'] = browser_root
     sources['browser_archive'] = browser_archive
     sources['browser_executable'] = browser_root / 'chrome-linux/chrome'
@@ -483,7 +479,7 @@ def main():
         editor_dir.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive) as package:
             expected_engine = hashlib.sha256(package.read(name[:-4])).hexdigest()
-            package.extractall(editor_dir)
+        prepare_zip(archive, editor_dir, executable_members=(name[:-4],))
         engine = resolve_engine(args.godot) if args.godot else editor_dir / name[:-4]
         validate_engine(engine, expected_engine)
         if not args.godot:

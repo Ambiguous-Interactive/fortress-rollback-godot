@@ -8,18 +8,64 @@ const Basic = preload("res://tests/unit/test_peer_drop.gd")
 
 var _hold_a_inputs: bool = false
 var _drop_target_after: int = -1
+var _backfill_active: bool = false
+var _backfill_conflict: bool = false
+var _backfill_injected: int = 0
+var _backfill_certificates: int = 0
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["retained_below_confirmation", "certified_below_confirmation", "unequal_exposed_frontiers", "missing_actual_rows", "pending_repair_raised_cut"])
+	return PackedStringArray(
+		[
+			"retained_below_confirmation",
+			"certified_below_confirmation",
+			"unequal_exposed_frontiers",
+			"missing_actual_rows",
+			"pending_repair_raised_cut",
+			"matching_frozen_backfill",
+			"conflicting_frozen_backfill",
+		]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name in ["unequal_exposed_frontiers", "missing_actual_rows", "pending_repair_raised_cut"]:
+	_backfill_active = false
+	if name in ["matching_frozen_backfill", "conflicting_frozen_backfill"]:
+		_frozen_backfill(context, name == "conflicting_frozen_backfill")
+	elif name in ["unequal_exposed_frontiers", "missing_actual_rows", "pending_repair_raised_cut"]:
 		_unequal_frontiers(context, name == "missing_actual_rows", name == "pending_repair_raised_cut")
 	else:
 		_rejected_freeze(context, name.begins_with("certified"))
 	context.finish()
+
+
+# Value: protects=certificates match retained cut bytes; fails_when=coordinator backfill replaces the local value before certification;
+# why_new=ordinary corrupt certificates exercise only the proposer's comparison; seam=none
+func _frozen_backfill(context: RefCounted, conflict: bool) -> void:
+	_hold_a_inputs = false
+	_drop_target_after = -1
+	_backfill_active = true
+	_backfill_conflict = conflict
+	_backfill_injected = 0
+	_backfill_certificates = 0
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
+	context.equal(_backfill_injected, 1, "inject one role-valid frozen-value backfill before the final candidate")
+	context.equal(_backfill_certificates > 0, not conflict, "only a value matching the retained cut may receive a READY certificate")
+	var follower: RefCounted = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	context.equal(follower.certified, not conflict, "retained actual bytes remain the follower's certification authority")
+	context.equal(mesh.peers[1]._core.retained_input(2, 8), _sample(2, 8), "backfill cannot change the retained original cut input")
+	context.equal(mesh.peers[1]._core.frozen_frame(2), -1 if conflict else 8, "a conflicting backfill cannot freeze the departed slot")
+	if conflict:
+		context.equal(mesh.reasons.has("conflicting_history"), true, "conflicting frozen backfill fails with its specific cause")
+	else:
+		context.equal(mesh.cuts.size(), 2, "an identical early backfill preserves normal all-survivor agreement")
+		_play(context, mesh, 6, true, [0, 1], 2)
+		var shared: int = mini(mesh.peers[0].status().confirmed_frame, mesh.peers[1].status().confirmed_frame) - 1
+		context.equal(shared > 8, true, "the matching control continues beyond the agreed cut")
+		context.equal(_state_at(mesh.games[0], shared), _state_at(mesh.games[1], shared), "the matching control preserves canonical survivor state")
 
 
 func _rejected_freeze(context: RefCounted, certified: bool) -> void:
@@ -122,6 +168,29 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 	var accepted: Array[Dictionary] = []
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+		if _backfill_active and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			if decoded.message.phase == 2 and decoded.message.stage == 2:
+				_backfill_certificates += 1
+			if _backfill_injected == 0 and packet.from == 0 and packet.to == 1 and decoded.message.phase == 1 and decoded.message.cut_digest != 0:
+				var value: PackedByteArray = _sample(2, decoded.message.cut)
+				context.equal(mesh.peers[1]._core.retained_input(2, decoded.message.cut), value, "the follower independently retains the original cut value before backfill")
+				if _backfill_conflict:
+					value[0] ^= 1
+				var backfill: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+				backfill.message.phase = 3
+				backfill.message.stage = 0
+				backfill.message.chunk_index = 0
+				backfill.message.chunk_count = 1
+				backfill.message.bytes = value
+				var encoded: T.Result = Codec.encode(backfill.message, _limits(mesh.count))
+				context.equal(encoded.code, T.Code.OK, "the coordinator's backfill is a valid bounded packet")
+				accepted.append({"from": 0, "to": 1, "bytes": encoded.bytes})
+				decoded.message.cut_digest = mesh.peers[0]._drops._digest(value)
+				encoded = Codec.encode(decoded.message, _limits(mesh.count))
+				context.equal(encoded.code, T.Code.OK, "the final candidate names the injected value's actual digest")
+				accepted.append({"from": 0, "to": 1, "bytes": encoded.bytes})
+				_backfill_injected += 1
+				continue
 		if _drop_target_after >= 0 and packet.from == 2 and packet.to == 1 and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT:
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > _drop_target_after:
 				continue

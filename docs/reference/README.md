@@ -54,7 +54,7 @@ verifies that the upstream oracle and in-band detector reject that fault.
 For an actual web export and Chromium run, install the locked Playwright package
 in the cache. Node 22.23.3 was used for the recorded baseline. `npm ci` verifies
 all package tarball integrity from the checked-in lockfile. Chromium downloads
-are separately verified against the SHA256 manifest and extracted freshly;
+are separately verified against the SHA256 manifest and their installed members;
 the Playwright browser registry must also match its pinned digest.
 
 ```sh
@@ -83,6 +83,14 @@ against source caches before a Rust run. Byte-identical trees retain timestamps;
 changed trees are replaced. Changes made to cached upstream sources are
 intentionally discarded; cache trees are not working checkouts. Do not run
 source-consuming commands concurrently with source re-extraction.
+
+Godot editor and Chromium preparation compare every archive member's bytes and
+permissions. Unchanged files keep their inode and timestamps. Changed files are
+written beside the destination, verified, then atomically replaced. An already
+running executable keeps its original inode until it exits; preparation never
+truncates it. Concurrent preparations of the same immutable pin need no cache
+lock or per-run engine copies. Launcher project, export and receipt ownership
+still requires serialization. Firefox's fresh installation remains serialized.
 
 `--offline` requires all selected artifacts to exist and match their digests.
 A missing or corrupt cache fails; it is never silently repaired or replaced by

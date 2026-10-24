@@ -42,12 +42,12 @@ var _last_receive: int = Code.OK
 var _rejected: int = 0
 var _traffic: int = 0
 var _busy: bool = false
+var _accept: PackedByteArray = PackedByteArray()
 
 
 ## Attach after the SDK installs a spectator baseline, using an already configured stream.
 ## This receive-only bridge never seats a viewer or sends through the read-only SDK role.
-## OFFER delivery uses the stream's normal negotiation; its encode_accept() remains caller-owned.
-## A separate authenticated control path must deliver that acceptance to the host publisher.
+## poll() can hand acceptance to a caller-supplied separate authenticated control path.
 func configure(client: Object, sdk_config: Object, protocol_info: Object, stream: Stream, host_uuid: String, options: Options = null) -> int:
 	if _client != null:
 		return Code.WRONG_STATE
@@ -115,7 +115,9 @@ func configure(client: Object, sdk_config: Object, protocol_info: Object, stream
 
 ## Poll elapsed expiry before any buffered packet, even while playback is paused or blocked.
 ## BUSY and row pressure preserve the exact FIFO head for the next poll.
-func poll(now_us: int) -> Types.Result:
+## send_accept(packet) returns an Error from a separate authenticated control transport.
+## OK means transport acceptance, not host receipt. ERR_BUSY/ERR_OUT_OF_MEMORY retry exact bytes.
+func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 	var result: Types.Result = Types.Result.new(_gate())
 	if result.code != Code.OK:
 		_stop_owned_viewer()
@@ -130,6 +132,7 @@ func poll(now_us: int) -> Types.Result:
 		_stop_owned_viewer()
 		return result
 	_busy = true
+	var revision: int = _revision
 	result.activity = _traffic
 	_traffic = 0
 	result.peer_code = _stream.poll(now_us)
@@ -138,6 +141,7 @@ func poll(now_us: int) -> Types.Result:
 			result.code = _gate()
 			if result.code != Code.OK:
 				break
+			var received_kind: int = _received[0][5]
 			result.peer_code = _stream.receive_packet(_received[0], now_us)
 			if result.peer_code in [SessionTypes.Code.BUSY, SessionTypes.Code.NETWORK_BACKPRESSURE]:
 				break
@@ -149,18 +153,34 @@ func poll(now_us: int) -> Types.Result:
 					break
 			else:
 				result.received += 1
+				if received_kind == Stream.OFFER:
+					_accept = _stream.encode_accept()
 	if result.code == Code.OK and result.peer_code != SessionTypes.Code.OK:
 		result.code = Code.BACKPRESSURE if result.peer_code in [SessionTypes.Code.BUSY, SessionTypes.Code.NETWORK_BACKPRESSURE] else Code.PEER_FAILURE
+	if result.code in [Code.OK, Code.BACKPRESSURE] and not _accept.is_empty() and send_accept.is_valid() and _session._mutation_code() == SessionTypes.Code.OK:
+		var control_code: int = _send_accept(send_accept)
+		if control_code != Code.OK:
+			result.code = control_code
 	_busy = false
+	if _revision != revision:
+		result.code = Code.WRONG_STATE
+		return result
 	if result.code not in [Code.OK, Code.BACKPRESSURE, Code.PEER_FAILURE]:
 		_stop_owned_viewer()
-	if _session.status().lifecycle == SessionTypes.Lifecycle.TERMINATED:
+	if _session != null and _session.status().lifecycle == SessionTypes.Lifecycle.TERMINATED:
 		_clear_received()
 	return result
 
 
 func status() -> Dictionary:
-	return {"code": _gate(), "received_packets": _received.size(), "received_bytes": _received_bytes, "rejected": _rejected, "last_receive_code": _last_receive}
+	return {
+		"code": _gate(),
+		"received_packets": _received.size(),
+		"received_bytes": _received_bytes,
+		"accept_pending": not _accept.is_empty(),
+		"rejected": _rejected,
+		"last_receive_code": _last_receive
+	}
 
 
 ## Detaching retires this playback lifetime; configure a fresh stream for a new room.
@@ -180,6 +200,7 @@ func detach() -> void:
 	_source_config = null
 	_received.clear()
 	_received_bytes = 0
+	_accept = PackedByteArray()
 	_failure = Code.OK
 	_last_receive = Code.OK
 	_rejected = 0
@@ -263,6 +284,32 @@ func _stop_owned_viewer() -> void:
 func _clear_received() -> void:
 	_received.clear()
 	_received_bytes = 0
+	_accept = PackedByteArray()
+
+
+func _send_accept(sender: Callable) -> int:
+	var revision: int = _revision
+	# Variant is application transport output, validated before any coercion.
+	var sent: Variant = sender.call(_accept.duplicate())
+	if _revision != revision:
+		return Code.WRONG_STATE
+	var gate: int = _gate()
+	if gate != Code.OK:
+		return gate
+	var state: int = _session._mutation_code()
+	if state not in [SessionTypes.Code.OK, SessionTypes.Code.BUSY]:
+		_failure = Code.PEER_FAILURE
+		return _failure
+	if not sent is int:
+		_failure = Code.SDK_FAILURE
+		return _failure
+	if sent in [ERR_BUSY, ERR_OUT_OF_MEMORY]:
+		return Code.BACKPRESSURE
+	if sent != OK:
+		_failure = Code.SDK_FAILURE
+		return _failure
+	_accept = PackedByteArray()
+	return Code.BACKPRESSURE if state == SessionTypes.Code.BUSY else Code.OK
 
 
 func _reject(code: int) -> void:
