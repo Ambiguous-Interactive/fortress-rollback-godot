@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add driver access to retained local samples and input-delay controls. Standalone clients can retry stalls without resampling; networked clients must still change delay through the peer session.
+
 - Add bounded SignalFish spectator ingress with authenticated host filtering and strict lifetime expiry. This receive-only bridge requires separate startup acceptance; live Fortress relay support remains unqualified.
 
 - Add `FortressDriver.confirmed_inputs(frame)` and `replay()` for finalized inputs and owned match recordings without retaining the expert session.

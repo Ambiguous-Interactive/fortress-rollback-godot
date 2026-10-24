@@ -414,10 +414,18 @@ Input delay trades responsiveness for fewer rollbacks. Set the starting value wi
 A player on a worse connection can raise it mid-match:
 
 ```gdscript
-var code: int = session.set_input_delay(player, session.input_delay(player) + 1)  # or peer.set_input_delay
+var code: int = session.set_input_delay(player, session.input_delay(player) + 1).code
 ```
 
-Call it between steps or while stalled, never from a game callback. Each added frame repeats the
+Standalone driver integrations can use `driver.input_delay(player)` and `driver.set_input_delay(player, delay)`.
+Networked integrations must use `peer.set_input_delay(player, delay)` so the peer publishes the additional inputs.
+Driver delay changes return `BUSY` inside callbacks and completion handlers.
+
+After a stalled step, `driver.scheduled_local_input(player)` returns an owned retained sample, or `MISSING_LOCAL_INPUT` when none is staged.
+Its `frame` includes input delay; it is not the next `LocalInput.sample_frame`. Retry with an empty input list when all local samples are already staged.
+Successful advancement releases those samples. Keep sampling a new local input only when the retained sample is absent.
+
+Change delay between steps or while stalled, never from a game callback. Each added frame repeats the
 player's latest input, so a held button stays held for those frames. Peers receive the added frames
 as ordinary input and stay in agreement. Replays record them like any other input.
 

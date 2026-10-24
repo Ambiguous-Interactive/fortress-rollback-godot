@@ -289,7 +289,7 @@ jobs:
         if: matrix.part == 'direct' || matrix.part == 'mixed'
         run: |
           if [[ "${{ matrix.part }}" == direct ]]; then
-            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close)
+            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer)
           else labels=(mixed mixed-default mixed-close); fi
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \

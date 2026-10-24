@@ -51,7 +51,7 @@ async function closeDepartingRtc(pages, now = () => performance.now()) {
 }
 
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
-  disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false }) {
+  disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false, dropAnswer = false }) {
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
   window.fortressLocal = index;
@@ -67,6 +67,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressDropClose = dropClose;
   window.fortressRtc = { channels: [], sent: 0, received: 0, dropped: 0, reordered: 0, pending: 0, active: 0 };
   const evidence = window.fortressRtc;
+  evidence.answerLoss = { dropped: 0, retries: 0, packet: null };
   evidence.binarySent = 0;
   evidence.maximumRelayBuffered = 0;
   evidence.captureError = false;
@@ -177,6 +178,21 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
       const frame = Number(document.body?.dataset.fortressFrame ?? -1);
       if (mixed && frame >= 4 && frame < 16) record.mixedSent++;
       if (mixed && frame >= 20) record.restoredSent++;
+      if (dropAnswer && channel.id === 3) {
+        const view = bytes instanceof ArrayBuffer ? new Uint8Array(bytes)
+          : ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : null;
+        // FRGP v2 DROP_BARRIER, REPORT phase, INVENTORY stage.
+        if (view && view.length >= 100 && view.length <= 1024 && view[0] === 70 && view[1] === 82
+          && view[2] === 71 && view[3] === 80 && view[4] === 2 && view[5] === 0 && view[6] === 12
+          && view[44] === 2 && view[45] === 1) {
+          const hex = Array.from(view, byte => byte.toString(16).padStart(2, '0')).join('');
+          if (evidence.answerLoss.dropped === 0) {
+            evidence.answerLoss = { dropped: 1, retries: 0, packet: hex };
+            return;
+          }
+          if (evidence.answerLoss.packet === hex) evidence.answerLoss.retries++;
+        }
+      }
       if (!window.fortressFaultActive || !faults) {
         send(bytes);
         if (mixed) record.maximumBuffered = Math.max(record.maximumBuffered, buffered.call(channel));
@@ -260,9 +276,10 @@ async function main() {
   const faults = process.argv[4] === 'faults';
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
-  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close'].includes(process.argv[4]);
+  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer'].includes(process.argv[4]);
   const dropCorrupt = process.argv[4] === 'peer-drop-corrupt';
   const dropClose = process.argv[4] === 'peer-drop-close';
+  const dropAnswer = process.argv[4] === 'peer-drop-answer';
   const physicalClose = process.argv[4] === 'mixed-close';
   const mixed = ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop-close'].includes(process.argv[4]);
   const mixedDefault = process.argv[4] === 'mixed-default';
@@ -327,7 +344,7 @@ async function main() {
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
-            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose });
+            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, dropAnswer });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -409,7 +426,7 @@ async function main() {
     console.log(JSON.stringify({ passed: true, browser: browserPair.join('/'),
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
-      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, records, errors }));
+      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, dropAnswer, records, errors }));
   } catch (error) {
     console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
       version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,

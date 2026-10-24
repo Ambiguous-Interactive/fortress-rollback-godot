@@ -208,8 +208,10 @@ browser witness does not yet exercise missing-history transfer. Full pinned-sour
 trace comparison and the expanded live fault matrix remain in
 [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188), under
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48).
-Until that work lands, `CONTINUE` terminates a match when the raised cut requires
-actual history a survivor does not retain.
+`CONTINUE` terminates a match when no eligible donor retains the required actual history.
+Asymmetric delivery tests preserve and recover the full original suffix before the survivors continue.
+A captured donor journal also survives physical source-ring reuse; a fresh journal refuses the same evicted range.
+These checks do not establish the remaining pinned-source comparison or live missing-history transfer.
 
 The agreement runs in real sessions, not only in unit tests. Three peer
 sessions on the deterministic test transport play, one peer stops answering,
@@ -232,8 +234,10 @@ survivors enter agreement. Their surviving link continues actual direct packet
 delivery; unavailable links select bounded relay fallback and send binary bytes.
 The stopped endpoint does not consume relay bytes, so this does not establish
 relay-delivered barrier agreement. Signaling membership remains frozen.
+The `peer-drop-answer` case drops the follower's first actual inventory report at the RTC send boundary.
+An exact-byte report retry precedes certified agreement and canonical continuation on both engine pins.
 Room departure, process death, relay-delivered agreement, rollback-time
-departure, lost barrier answers, foreign proposals and a second browser
+departure, foreign proposals and a second browser
 departure remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 

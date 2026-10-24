@@ -34,7 +34,8 @@ import host_capacity  # noqa: E402
 
 HOST_LEASE_NAME = 'webrtc-witness'
 HOST_WAIT_SECONDS = 900.0
-LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close')
+LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
+          'peer-drop-answer')
 
 
 def validate_engine(engine, expected):
@@ -386,7 +387,8 @@ def main():
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
                        'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
-                       'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events', 'peer-drop-close', 'peer-drop-close-events')]
+                       'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
+                       'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -595,10 +597,10 @@ def main():
                             validate_identity(result, pair, pins)
                         else:
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log',
-                                                 rooms=1 if label in ('corrupt', 'default', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close') else 3)
+                                                 rooms=1 if label in ('corrupt', 'default', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer') else 3)
                             validate_identity(json.loads(output), pair, pins)
                             if label.startswith('peer-drop'):
-                                result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close')
+                                result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close', label == 'peer-drop-answer')
                             elif label in ('corrupt', 'default'):
                                 result = validate_restore_control(json.loads(output), label)
                             else:
@@ -625,6 +627,7 @@ def main():
                         'over real WebRTC and continue to 40 inputs with 38 independent canonical prefix checks. Ordinary drop labels retain ICE. '
                         'The peer-drop-close label stops one endpoint and closes every constructed RTC connection and channel before survivors agree, '
                         'then unavailable routes use the bounded relay fallback. Signaling membership remains frozen. '
+                        'The peer-drop-answer label loses the first inventory answer at the real channel send boundary and requires an exact-byte retry. '
                         'Post-drop simulation corruption must fail the canonical gate. No room departure, process death or complete pinned barrier parity claim. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '

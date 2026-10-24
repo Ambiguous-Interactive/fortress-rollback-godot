@@ -49,12 +49,15 @@ order; it has no rollback algorithm. `driver.status()` and `driver.statistics()`
 the session state and counters, so a client that only holds the driver still learns the
 current frame, the confirmed frame, the lifecycle and the exact cause of a stop. Peer
 results carry the same cause from the shared core session.
+`driver.scheduled_local_input(player)` returns an owned sample retained by a stalled step.
+The driver also exposes local `input_delay` and `set_input_delay` for standalone sessions;
+networked callers use the peer session's setter to publish added inputs.
 Connect `driver.step_completed(code, frame_before, frame_after)` to update
 presentation after an outer step finishes. The signal runs synchronously after
 all game callbacks and event collection, including repair-only stalls and
 explicit callback failures. Request views have expired. `BUSY` and unconfigured
 calls emit no completion signal; they did not own a step. Recursive `step` and
-`configure` calls on this driver return `BUSY` until all signal handlers return.
+`configure` and `set_input_delay` calls on this driver return `BUSY` until all signal handlers return.
 Use the scalar notification for presentation and the returned `StepResult` for
 the owned event list. Peer callers use `peer.step_completed` or reconcile after
 `peer.step` returns; both observe finished peer control processing. Peer signals

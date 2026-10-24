@@ -32,6 +32,10 @@ differently; never weaken the Python integer schema to compensate. The productio
 session oracle's canonical scenario conversion protects this boundary.
 
 Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
+Distinguish a fabricated missing-history inventory from physical eviction. Advance real queues,
+verify the old frame tag is overwritten, and require the retained journal's exact original bytes.
+If a global floor prevents the proposed eviction, preserve that control and report the bound;
+changing its inventory cannot establish that the physical fault occurred.
 Declare expected diagnostics independently; learning them from the validator makes rejection circular.
 For idempotent input delivery, state equality can hide duplicate work. Also assert
 exact queue occupancy, due-frame timing and once-per-frame sampling with a resampling mutant.
