@@ -33,7 +33,7 @@ class ReentrantGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
-			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "wide_shapes", "offer_lifecycle"]
+			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle"]
 	)
 
 
@@ -540,6 +540,50 @@ func _policy_preserved(context: RefCounted) -> void:
 	narrow.queue_capacity = 2
 	context.equal(stream.configure(narrow, _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "narrower viewer")
 	context.equal(stream.playback_session().playback_policy(), PackedInt64Array([0, 1, 1]), "a policy that no longer fits falls back to the defaults")
+
+
+# Value: protects=restart stops retained old drivers; fails_when=replacement abandons a live viewer;
+# why_new=lifetime cases only check delivery through the stream; seam=none
+func _replaced_viewer(context: RefCounted) -> void:
+	for replace: bool in [false, true]:
+		var stream: RefCounted = _stream(context)
+		var viewer: RefCounted = stream.playback_session()
+		var game: RefCounted = GameFixture.Game.new()
+		var driver: RefCounted = Driver.new(viewer, game)
+		context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 0), CODE.OK, "buffer original lifetime row")
+		var config: RefCounted = Fixture.new()._config()
+		if not replace:
+			config.queue_capacity = 0
+		var identity: PackedByteArray = _identity()
+		identity[31] ^= 1
+		context.equal(stream.configure(config, identity, _key(), _digest(), 1, 100, 128), CODE.OK if replace else CODE.INVALID_CONFIGURATION, "replace or reject viewer")
+		context.equal(driver.step(1, _empty()).code, CODE.TERMINATED if replace else CODE.OK, "retained driver obeys successful replacement")
+		context.equal(game.trace.size(), 0 if replace else 1, "old callback cannot play buffered rows after restart")
+		if replace:
+			context.equal(viewer.receive_host_frame(1, _row(1)).code, CODE.TERMINATED, "retained old receiver is closed")
+			context.equal(viewer.recommended_steps(), 0, "old advice loop stops")
+			context.equal(viewer.status().reason, CODE.TERMINATED, "replacement publishes clean terminal cause")
+			_negotiate(context, stream, identity, 1)
+			context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 1), CODE.OK, "fresh lifetime receives original frame zero")
+			var fresh_game: RefCounted = GameFixture.Game.new()
+			context.equal(Driver.new(stream.playback_session(), fresh_game).step(1, _empty()).code, CODE.OK, "fresh viewer remains playable")
+			context.equal(fresh_game.trace.size(), 1, "fresh callback runs once")
+	var detached: RefCounted = _stream(context)
+	var independent: RefCounted = detached.playback_session()
+	context.equal(independent.configure(Fixture.new()._config()), CODE.OK, "caller replaces exposed viewer independently")
+	context.equal(independent.receive_host_frame(0, _row(0)).code, CODE.OK, "independent viewer buffers its own row")
+	context.equal(detached.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 1, 100, 128), CODE.OK, "stream replaces its detached viewer")
+	context.equal(Driver.new(independent, GameFixture.Game.new()).step(1, _empty()).code, CODE.OK, "stale stream cannot terminate independent viewer lifetime")
+	for prior_reason: int in [CODE.OK, CODE.PROTOCOL_FAILED]:
+		var ending: RefCounted = _stream(context)
+		var previous: RefCounted = ending.playback_session()
+		context.equal(ending.receive_packet(ending.encode_row(0, _row(0)), 0), CODE.OK, "retain clean delayed tail")
+		context.equal(ending.receive_packet(ending.encode_end(1), 0), CODE.OK, "host input ends before playback")
+		if prior_reason != CODE.OK:
+			previous.terminate(prior_reason)
+		context.equal(ending.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 1, 100, 128), CODE.OK, "replace ended stream")
+		context.equal(previous.status().reason, CODE.TERMINATED if prior_reason == CODE.OK else prior_reason, "replacement stops clean tail and preserves committed failures")
+		context.equal(previous.recommended_steps(), 0, "replaced clean tail has no playback advice")
 
 
 # Value: protects=the byte envelope carries every supported roster and sample width; fails_when=the header or the

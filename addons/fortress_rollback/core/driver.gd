@@ -137,6 +137,18 @@ func statistics() -> Types.Statistics:
 	return _session.statistics() if _session != null else Types.Statistics.new()
 
 
+## Owned finalized inputs for a simulated confirmed frame; null while unavailable or under correction.
+## Rows stay live across later driver calls, unlike callback input views. Read before queue history wraps.
+func confirmed_inputs(frame: int) -> Types.FrameInputs:
+	return _session.confirmed_inputs(frame) if _session != null else null
+
+
+## Owned confirmed recording prefix; null before configuration or when replay recording is disabled.
+## Pending corrections hide the provisional tail until ordered recovery callbacks complete.
+func replay() -> RefCounted:
+	return _session.replay() if _session != null else null
+
+
 func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) -> StepResult:
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:

@@ -24,6 +24,18 @@ class ReentrantGame:
 			codes.append(session_ref.get_ref().begin_recovery().code)
 
 
+class HistoryGame:
+	extends Fixture.Game
+	var owner_ref: WeakRef
+	var callback_rows: Array[RefCounted] = []
+	var callback_replay_frames: PackedInt64Array = PackedInt64Array()
+
+	func _reenter() -> void:
+		if owner_ref != null:
+			callback_rows.append(owner_ref.get_ref().confirmed_inputs(0))
+			callback_replay_frames.append(owner_ref.get_ref().replay().frame_count())
+
+
 
 
 func _key() -> PackedByteArray:
@@ -39,7 +51,7 @@ func _digest(config: Variant = null) -> PackedByteArray:
 	return Stream.configuration_digest(agreed, "seed-1", "rules-1")
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["final_history", "staged_sample", "failures", "guards", "expert_parity", "matching_tail", "boundary_checksum"])
+	return PackedStringArray(["final_history", "staged_sample", "failures", "guards", "expert_parity", "matching_tail", "boundary_checksum", "client_history"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -259,3 +271,50 @@ func _boundary_checksum(context: RefCounted) -> void:
 			context.equal(saved.checksum != old_checksum, true, "stale predicted boundary is replaced")
 	context.equal(found, true, "corrected current boundary remains available")
 	context.equal(session.status().current_frame, 4, "checksum capture adds no simulation tick")
+
+
+# Value: protects=driver-only owned history; fails_when=expert access is required or provisional data leaks; why_new=existing exports call session; seam=none
+func _client_history(context: RefCounted) -> void:
+	var empty: RefCounted = Driver.new()
+	var available: bool = empty.has_method("confirmed_inputs") and empty.has_method("replay")
+	context.equal(available, true, "small client exposes confirmed history without expert session")
+	if not available:
+		return
+	context.equal(empty.confirmed_inputs(0), null, "unconfigured driver has no confirmed row")
+	context.equal(empty.replay(), null, "unconfigured driver has no recording")
+	context.equal(Driver.new(Fixture.new()._session(), Fixture.Game.new()).replay(), null, "disabled recording stays disabled")
+	var session: RefCounted = _session(context)
+	var game: HistoryGame = HistoryGame.new()
+	var driver: RefCounted = _predict(context, session, game)
+	context.equal(driver.confirmed_inputs(-1), null, "negative frame is unavailable")
+	context.equal(driver.confirmed_inputs(0), null, "uncorrected confirmed input is unavailable")
+	context.equal(driver.replay().frame_count(), 0, "uncorrected recording stays private")
+	game.owner_ref = weakref(driver)
+	context.equal(driver.recover(3).code, Types.Code.OK, "driver finalizes corrected history")
+	context.equal(game.callback_rows.size(), 7, "all ordered repair callbacks observed history")
+	for row: RefCounted in game.callback_rows:
+		context.equal(row, null, "active callback cannot expose input rows")
+	for frames: int in game.callback_replay_frames:
+		context.equal(frames, 0, "active repair hides provisional replay tail")
+	game.owner_ref = null
+	var retained: RefCounted = driver.confirmed_inputs(0)
+	context.equal(retained.read(0).bytes, PackedByteArray([2]), "final local sample is visible")
+	context.equal(retained.read(1).bytes, PackedByteArray([5]), "final corrected remote sample is visible")
+	var bytes: PackedByteArray = retained.read(1).bytes
+	bytes[0] = 99
+	context.equal(driver.confirmed_inputs(0).read(1).bytes, PackedByteArray([5]), "input result mutation cannot rewrite history")
+	context.equal(driver.confirmed_inputs(3), null, "unsimulated boundary is unavailable")
+	var replay: RefCounted = driver.replay()
+	context.equal(replay.frame_count(), 3, "driver exports exact confirmed replay")
+	var original: PackedByteArray = replay.to_bytes()
+	var shorter: RefCounted = replay.owned_prefix(1)
+	context.equal(replay.decode(shorter.to_bytes()), 0, "caller can replace its recording copy")
+	context.equal(driver.replay().to_bytes(), original, "replacing exported replay leaves recording untouched")
+	context.equal(driver.recover(4).code, Types.Code.OK, "another driver call completes")
+	context.equal(retained.read(1).bytes, PackedByteArray([5]), "owned row remains live after future calls")
+	for frame: int in range(3, 13):
+		context.equal(session.receive_input(1, frame, PackedByteArray([frame % 5 + 5])).code, Types.Code.OK, "later actual rows arrive")
+		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([frame % 5 + 2]))]
+		context.equal(driver.step(frame + 2, samples).code, Types.Code.OK, "later frames wrap bounded input history")
+	context.equal(driver.confirmed_inputs(0), null, "released queue history is unavailable through driver")
+	context.equal(retained.read(1).bytes, PackedByteArray([5]), "owned row survives physical history wrap")

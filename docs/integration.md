@@ -155,13 +155,16 @@ Peer sessions call `FortressPeerSession.step` with the same arguments and add tw
 The driver also reports the session without a session reference. `driver.status()` returns the
 current and confirmed frame, the lifecycle, the terminal `reason` and the `failure_frame`.
 `driver.statistics()` returns the rollback, resimulation, advance and stall counters.
+`driver.confirmed_inputs(frame)` returns owned finalized inputs for confirmed, simulated frames
+outside pending correction. It returns null when unavailable, including during callbacks.
+Read rows before the bounded input history wraps; returned rows survive later driver calls.
 Every step result carries the same terminal `reason` and `failure_frame`, so a client that
 only holds the driver still learns why a session stopped.
 
 To stop recording at the current simulated frame, stop submitting new samples,
 continue delivering outstanding remote inputs, and call `driver.recover(now_us)`.
 Once all simulated inputs are confirmed and `pending_rollback_frame == -1`,
-`session.replay()` includes the corrected final tail without a fabricated final tick.
+`driver.replay()` includes the corrected final tail without a fabricated final tick.
 A successful recovery can still leave unconfirmed predictions when remote input is missing;
 check confirmation as well as the return code before declaring the game finished.
 For byte-network games, `peer.recover(now_us)` provides the same operation while polling
@@ -254,10 +257,12 @@ config.replay_max_frames = 216000
 config.diagnostic_seed = str(match_seed)  # stored in the replay; printable ASCII, at most 128 bytes
 config.diagnostic_version = "my-game 1.4.0"
 # ... play ...
-var bytes: PackedByteArray = session.replay().to_bytes()  # or peer.replay()
+var bytes: PackedByteArray = driver.replay().to_bytes()  # or session.replay() / peer.replay()
 ```
 
-`session.replay()` returns a copy holding every frame whose inputs are confirmed and already simulated.
+`driver.replay()` and `session.replay()` return a copy holding every frame whose inputs are confirmed and already simulated.
+The driver returns null before configuration or when recording is disabled. Changing an exported
+copy cannot change the session's recording.
 Predicted input is never recorded. Each frame also keeps the state checksum when the session still had it.
 `skipped_frames()` counts frames recorded as neutral input because their real input was unavailable.
 It stays zero in normal play; treat a nonzero count as an incomplete replay.

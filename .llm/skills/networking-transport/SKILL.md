@@ -125,6 +125,9 @@ owes liveness while final rows or END are refused; stop heartbeats only after EN
 When a stream exposes its playback session, fence both packet delivery and elapsed
 expiry against successful session replacement. Equal configuration values do not
 preserve a connection lifetime; rejected configuration must preserve the valid stream.
+Successful stream replacement must also retire its prior owned playback session: a retained
+driver can otherwise consume buffered rows without calling the stream. Preserve independently
+reconfigured sessions by checking ownership identity before termination.
 
 ## Serialization Rules
 
