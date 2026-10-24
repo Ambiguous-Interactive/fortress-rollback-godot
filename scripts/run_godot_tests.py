@@ -509,20 +509,14 @@ def main(argv: list[str] | None = None) -> int:
     suites = sorted(args.suite) or discover(args.category)
     durations = load_durations(args.durations)
     # Take the development host for this run. Another owner means a browser witness needs a
-    # responsive host, so this run stays serial: it does not split slow suites into one
-    # process per case, and it runs one process at a time.
-    host_capacity.acquire(LEASE_NAME)
+    # responsive host, so this run executes one process at a time while retaining
+    # per-case isolation for known slow suites.
+    shared_host = not host_capacity.acquire(LEASE_NAME)
     lease_holder = host_capacity.holder()
-    shared_host = lease_holder != LEASE_NAME
     if shared_host:
         print(json.dumps({"host_capacity_lease": lease_holder, "jobs": 1}), file=sys.stderr)
         args.jobs = 1
-    if shared_host:
-        # One process per suite, one suite at a time. Every suite keeps its own watchdog, so a
-        # slow suite cannot time out the whole run, and no suite is split into one process per case.
-        keys = [(suite, None) for suite in suites]
-        shards = [command + ["--suite", suite] for suite in suites]
-    elif args.jobs > 1:
+    if shared_host or args.jobs > 1:
         slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
         cases = split_cases(command, slow, args.timeout) if slow else {}
         # Shards stay in suite order, then inventory order, so merged records match one process.

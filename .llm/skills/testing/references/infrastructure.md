@@ -28,6 +28,9 @@ need bounded readiness polling rather than one successful configuration read.
 
 Run the full CI entry point with its declared per-process watchdog. Size the
 full-suite budget from completed runs without relaxing focused hang controls.
+Shared-host runs keep one worker and known slow-case isolation; serialization must
+not merge individually bounded cases into an over-budget process. Determine lease
+ownership from successful lock acquisition, never from matching owner names.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent

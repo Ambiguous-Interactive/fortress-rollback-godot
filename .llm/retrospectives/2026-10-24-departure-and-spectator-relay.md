@@ -16,6 +16,8 @@ New transport integration and external SDK inspection trigger this review.
 
 | Outstanding expert requests can hide host expiry when stream mutation checks return BUSY first. | Cold review and `busy_deadline` in [adapter tests](../../tests/unit/test_signalfish_spectator_relay.gd). | Added a read-only deadline observation to the stream; the adapter retires expired ownership before buffered delivery or batch commitment. |
 
+| Shared-host execution discarded slow-case isolation, and owner-name equality could mistake another process for the lock owner. | [Regression](../../scripts/tests/test_host_capacity.py) and native identity-suite watchdog evidence. | Kept one worker with case isolation, used acquisition success for ownership, and extended [test infrastructure guidance](../skills/testing/references/infrastructure.md). |
+
 ## Prune and verification
 
 No existing fact was contradicted or duplicated. Kept the established inventory
