@@ -14,7 +14,7 @@ window.fortressReplayImport = {
     input.onchange = () => {
       const file = input.files[0];
       if (!file) { this.dispose(); return; }
-      if (file.size > 1048576) { this.dispose(); callback('', 'Replay exceeds the 1 MiB limit.'); return; }
+      if (file.size > %d) { this.dispose(); callback('', %s); return; }
       const reader = new FileReader(); this.reader = reader;
       reader.onerror = () => { this.dispose(); callback('', 'Could not read the replay file.'); };
       reader.onload = () => {
@@ -89,7 +89,7 @@ func _ready() -> void:
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
 	if OS.has_feature("web"):
-		JavaScriptBridge.eval(WEB_IMPORT, true)
+		JavaScriptBridge.eval(WEB_IMPORT % [Viewer.MAX_BYTES, JSON.stringify(Viewer.FILE_SIZE_MESSAGE)], true)
 		_web_import = JavaScriptBridge.get_interface("fortressReplayImport")
 		_web_callback = JavaScriptBridge.create_callback(_web_file)
 	else:
@@ -122,7 +122,7 @@ func _native_file(path: String) -> void:
 	if file == null:
 		viewer.message = "Could not open the replay file."
 	elif file.get_length() > Viewer.MAX_BYTES:
-		viewer.message = "Replay exceeds the 1 MiB limit."
+		viewer.message = Viewer.FILE_SIZE_MESSAGE
 	else:
 		viewer.open_bytes(file.get_buffer(file.get_length()))
 	_refresh()

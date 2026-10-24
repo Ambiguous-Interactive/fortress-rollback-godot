@@ -115,6 +115,8 @@ EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
     'fast_capacity_control', 'slow_complete_control', 'slow_minimum_capacity', 'slow_remote_donor', 'slow_lost_plan'}
 EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_history', 'retained_history_control', 'journal_after_ring_wrap'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
+EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].add('full_length_recording')
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -160,6 +162,7 @@ FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_h
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
+FILES += ['tests/unit/test_driver_termination.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -210,13 +213,14 @@ const DropCapacity = preload("res://tests/unit/test_peer_drop_capacity.gd")
 const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
+const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
-		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DriverInputPolicy]
+		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DriverInputPolicy, DriverTermination]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)

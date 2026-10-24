@@ -180,7 +180,14 @@ a different sample for the same frame is rejected with `INPUT_ALREADY_SUBMITTED`
 For a local driver, you can connect `driver.step_completed(code, frame_before, frame_after)`
 to update presentation after all callbacks finish. It also runs after a repair-only stall,
 when the frame number stays the same but the corrected game state has changed.
-Keep this handler for presentation: recursive calls to this driver return `BUSY`.
+Keep this handler for presentation: recursive advancement and configuration calls return `BUSY`.
+
+`driver.terminate(reason = Types.Code.TERMINATED)` stops the session without retaining the expert API.
+Cancellation remains available inside game callbacks and completion handlers; it expires active views and preserves the first terminal cause.
+Before configuration it does nothing. A completion handler can cancel future work after a successful step;
+that step keeps its successful code and committed frame, while the returned terminal metadata reflects cancellation.
+Restart with a fresh configured session and game.
+
 Peer callers can use `peer.step_completed` with the same scalar arguments.
 It runs after peer control processing too. Mutating peer calls return `BUSY`
 until handlers return; drain peer packets, events and transitions after `peer.step` returns.
