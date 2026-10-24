@@ -435,3 +435,45 @@ test('physical departure separates slow readiness from the bounded quiet close p
     }
   }
 });
+
+// Value: a lost inventory answer must retry exact owned bytes through the real channel send wrapper.
+test('peer-drop answer loss drops one inventory report and passes its exact retry', () => {
+  const sent = [];
+  class Connection {
+    addEventListener() {}
+    createDataChannel(label, options) {
+      return { label, ...options, addEventListener() {}, send(bytes) { sent.push(new Uint8Array(bytes).slice()); } };
+    }
+  }
+  global.WebSocket = class { send() {} };
+  global.RTCPeerConnection = Connection;
+  global.window = { RTCPeerConnection: Connection };
+  global.document = { body: { dataset: { fortressFrame: '7' } } };
+  try {
+    instrument({ endpoint: 'wss://localhost', count: 3, index: 1, peerDrop: true, dropAnswer: true });
+    const channel = new window.RTCPeerConnection().createDataChannel('unreliable', { id: 3 });
+    const packet = new Uint8Array(104);
+    packet.set([70, 82, 71, 80, 2, 0, 12, 0]);
+    packet[40] = 60;
+    packet[44] = 2;
+    packet[45] = 1;
+    const ready = packet.slice(); ready[45] = 2;
+    channel.send(ready);
+    channel.send(packet);
+    assert.equal(sent.length, 1, 'the inventory report must be lost at the physical send boundary');
+    const changed = packet.slice(); changed[52] = 1;
+    channel.send(changed);
+    assert.equal(window.fortressRtc.answerLoss.retries, 0, 'another operation cannot count as retry evidence');
+    channel.send(packet.buffer);
+    packet[55] = 9;
+    assert.equal(sent.length, 3);
+    assert.equal(window.fortressRtc.answerLoss.dropped, 1);
+    assert.equal(window.fortressRtc.answerLoss.retries, 1);
+    assert.equal(window.fortressRtc.answerLoss.packet, Buffer.from(sent[2]).toString('hex'));
+  } finally {
+    delete global.WebSocket;
+    delete global.window;
+    delete global.RTCPeerConnection;
+    delete global.document;
+  }
+});

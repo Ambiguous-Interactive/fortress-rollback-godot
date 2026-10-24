@@ -2,9 +2,10 @@
 import re
 import hashlib
 
-def validate_drop_browser(result, corrupt=False, physical_close=False):
+def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
-            or result.get('dropCorrupt') is not corrupt or result.get('dropClose', False) is not physical_close or result.get('errors') != []
+            or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
+            or result.get('dropClose', False) is not physical_close or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
@@ -100,6 +101,30 @@ def validate_drop_browser(result, corrupt=False, physical_close=False):
                 or type(row.get('certificates')) is not int or row['certificates'] != row['role']):
             raise ValueError('peer-drop all-survivor certificate missing')
         survivors.append(row)
+    if lost_answer:
+        lost = []
+        for index, peer in enumerate(records[0]['peers']):
+            loss = peer.get('rtc', {}).get('answerLoss', {})
+            if (type(loss.get('dropped')) is not int or loss['dropped'] not in (0, 1)
+                    or type(loss.get('retries')) is not int or loss['retries'] < 0):
+                raise ValueError('peer-drop lost answer evidence missing')
+            if loss['dropped'] == 0:
+                if loss.get('packet', 'missing') is not None or loss['retries'] != 0:
+                    raise ValueError('peer-drop lost answer evidence inconsistent')
+                continue
+            packet = loss.get('packet')
+            row = peer['result']['records'][0]
+            if (index == 2 or row.get('role') != 0 or loss['retries'] < 1 or not isinstance(packet, str)
+                    or not re.fullmatch(r'[0-9a-f]{200,2048}', packet) or len(packet) % 2):
+                raise ValueError('peer-drop lost answer did not retry on the follower')
+            data = bytes.fromhex(packet)
+            sender = hashlib.sha256(row['uuid'].encode('ascii')).digest()[:8]
+            if (data[:8] != b'FRGP\x02\x00\x0c\x00' or data[24:32] != sender
+                    or int.from_bytes(data[40:44], 'little') != len(data) - 44 or data[44:46] != b'\x02\x01'):
+                raise ValueError('peer-drop lost answer packet is not the follower inventory')
+            lost.append(loss)
+        if len(lost) != 1:
+            raise ValueError('peer-drop lost answer must affect exactly one follower')
     if not corrupt:
         all_rows = [peer['result']['records'][0] for peer in records[0]['peers']]
         uuids = [row.get('uuid') for row in all_rows]

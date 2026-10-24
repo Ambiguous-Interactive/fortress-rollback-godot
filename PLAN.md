@@ -478,6 +478,8 @@ Native six-player sessions cover multiple local handles per endpoint. Exported
 Chromium covers a three-page WebRTC barrier after injected endpoint silence
 on both pins, with independent confirmed-history checks and a corruption
 control. A second case closes every RTC connection on the departed endpoint before agreement, then requires actual late direct delivery between survivors.
+The lost-answer case drops one real follower inventory report and requires an exact retry before certified continuation.
+Natural unequal-delivery tests preserve the needed suffix, and captured donor journals survive physical source-ring reuse.
 Room/process departure, relay-delivered agreement and the remaining live fault
 cases stay in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).

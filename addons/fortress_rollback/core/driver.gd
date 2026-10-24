@@ -137,6 +137,29 @@ func statistics() -> Types.Statistics:
 	return _session.statistics() if _session != null else Types.Statistics.new()
 
 
+## Owned local sample retained through a stalled step; MISSING_LOCAL_INPUT when a new sample is needed.
+## The result frame includes the local input delay, matching the expert session's scheduled frame.
+func scheduled_local_input(player: int) -> Types.InputResult:
+	if _session == null:
+		var result: Types.InputResult = Types.InputResult.new()
+		result.code = Types.Code.NOT_CONFIGURED
+		return result
+	return _session.scheduled_local_input(player)
+
+
+## Local delay now in effect, or -1 before configuration or for a nonlocal slot.
+func input_delay(player: int) -> int:
+	return _session.input_delay(player) if _session != null else -1
+
+
+## Change local delay between driver calls, including while stalled. See the session's delay limits.
+## Call the peer session's setter instead when it owns network publication.
+func set_input_delay(player: int, delay: int) -> Types.Result:
+	if _is_stepping:
+		return Types.Result.new(Types.Code.BUSY)
+	return _session.set_input_delay(player, delay) if _session != null else Types.Result.new(Types.Code.NOT_CONFIGURED)
+
+
 ## Owned finalized inputs for a simulated confirmed frame; null while unavailable or under correction.
 ## Rows stay live across later driver calls, unlike callback input views. Read before queue history wraps.
 func confirmed_inputs(frame: int) -> Types.FrameInputs:

@@ -149,3 +149,32 @@ class PeerDropEvidence(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class LostAnswerEvidence(unittest.TestCase):
+    def test_lost_answer_requires_one_follower_drop_and_exact_retry(self):
+        original = evidence()
+        original['dropAnswer'] = True
+        packet = bytearray(104)
+        packet[:8] = b'FRGP\x02\x00\x0c\x00'
+        packet[24:32] = hashlib.sha256(original['records'][0]['peers'][1]['result']['records'][0]['uuid'].encode('ascii')).digest()[:8]
+        packet[40] = 60
+        packet[44:46] = b'\x02\x01'
+        for index, peer in enumerate(original['records'][0]['peers']):
+            peer['rtc']['answerLoss'] = {'dropped': int(index == 1), 'retries': int(index == 1),
+                                         'packet': packet.hex() if index == 1 else None}
+        self.assertIs(validate_drop_browser(original, lost_answer=True), original)
+        for field, replacement in [('dropped', 0), ('dropped', True), ('retries', 0), ('retries', True),
+                                   ('packet', None), ('packet', '00' * 104), ('packet', packet[:45].hex())]:
+            value = copy.deepcopy(original)
+            value['records'][0]['peers'][1]['rtc']['answerLoss'][field] = replacement
+            with self.subTest(field=field, replacement=replacement), self.assertRaisesRegex(ValueError, 'lost answer'):
+                validate_drop_browser(value, lost_answer=True)
+        for replacement in (False, 1, None):
+            value = copy.deepcopy(original)
+            value['dropAnswer'] = replacement
+            with self.subTest(flag=replacement), self.assertRaisesRegex(ValueError, 'incomplete'):
+                validate_drop_browser(value, lost_answer=True)
+        value = copy.deepcopy(original)
+        value['records'][0]['peers'][0]['rtc']['answerLoss'] = value['records'][0]['peers'][1]['rtc']['answerLoss']
+        with self.assertRaisesRegex(ValueError, 'lost answer'):
+            validate_drop_browser(value, lost_answer=True)
