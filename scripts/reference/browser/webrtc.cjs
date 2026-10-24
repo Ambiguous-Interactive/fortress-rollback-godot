@@ -7,8 +7,51 @@ const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchd
 const { placeFirefox } = require('./webrtc_display.cjs');
 const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false };
 
+async function closeDepartingRtc(pages, now = () => performance.now()) {
+  await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+  const deadline = now() + 3000;
+  let active = true;
+  const remaining = () => {
+    if (!active || now() >= deadline) throw new Error('physical departure phase deadline');
+    return Math.ceil(deadline - now());
+  };
+  try {
+    await boundedRoom(async () => {
+      await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropArm = true; })));
+      remaining();
+      await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropPaused === 'true', null, { timeout: remaining() })));
+      remaining();
+      const held = await Promise.all(pages.map(page => page.evaluate(() => ({
+        frame: Number(document.body.dataset.fortressFrame), released: window.fortressDropGo === true,
+        paused: document.body.dataset.fortressDropPaused === 'true',
+      }))));
+      remaining();
+      if (held.some(value => value.frame !== 6 || value.released || !value.paused))
+        throw new Error('peer-drop endpoint advanced before physical departure');
+      await pages[2].evaluate(frames => {
+        const resources = window.fortressResources;
+        window.fortressRtc.departure = { frame: Number(document.body.dataset.fortressFrame), survivor_frames: frames,
+          connections_created: resources.connections.length, channels_created: resources.channels.length };
+        for (const connection of resources.connections) connection.close();
+      }, held.slice(0, 2).map(value => value.frame));
+      remaining();
+      await pages[2].waitForFunction(() => window.fortressResources.channels.every(channel => channel.readyState === 'closed')
+        && window.fortressResources.connections.every(connection => connection.connectionState === 'closed'), null, { timeout: remaining() });
+      remaining();
+      await pages[2].evaluate(() => {
+        const resources = window.fortressResources;
+        window.fortressRtc.departure.connections_closed = resources.connections.filter(connection => connection.connectionState === 'closed').length;
+        window.fortressRtc.departure.channels_closed = resources.channels.filter(channel => channel.readyState === 'closed').length;
+      });
+      remaining();
+      await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+      remaining();
+    }, 3000, 'physical departure');
+  } finally { active = false; }
+}
+
 function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, mixed, mixedDefault,
-  disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false }) {
+  disableFallback, physicalClose = false, peerDrop = false, dropCorrupt = false, dropClose = false }) {
   window.fortressEndpoint = endpoint;
   window.fortressPlayers = count;
   window.fortressLocal = index;
@@ -21,6 +64,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
   window.fortressPhysicalClose = physicalClose;
   window.fortressPeerDrop = peerDrop;
   window.fortressDropCorrupt = dropCorrupt;
+  window.fortressDropClose = dropClose;
   window.fortressRtc = { channels: [], sent: 0, received: 0, dropped: 0, reordered: 0, pending: 0, active: 0 };
   const evidence = window.fortressRtc;
   evidence.binarySent = 0;
@@ -82,12 +126,13 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     record.physicalCloseFrame = null;
     record.mixedSent = 0;
     record.restoredSent = 0;
+    record.postDropReceived = 0;
     record.earlySent = [];
     record.earlyReceived = [];
     record.maximumBuffered = 0;
     const buffered = mixed ? Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'bufferedAmount').get : null;
     const unreliableIndex = evidence.channels.filter(value => value.id === 3).length;
-    record.blockedLink = Boolean(mixed && !physicalClose && index === 0 && channel.id === 3 && unreliableIndex === 0);
+    record.blockedLink = Boolean(mixed && !peerDrop && !physicalClose && index === 0 && channel.id === 3 && unreliableIndex === 0);
     // Inject send pressure on one live channel; all bytes still use real sockets.
     if (record.blockedLink) {
       Object.defineProperty(channel, 'bufferedAmount', { get() {
@@ -104,6 +149,7 @@ function instrument({ endpoint, count, index, faults, corrupt, defaultFactory, m
     evidence.channels.push(record);
     channel.addEventListener('message', event => {
       record.received++; evidence.received++;
+      if (peerDrop && Number(document.body?.dataset.fortressFrame ?? -1) >= 8) record.postDropReceived++;
       if (channel.id === 3) remember(record.earlyReceived, event.data);
     });
     if (physicalClose) {
@@ -214,10 +260,11 @@ async function main() {
   const faults = process.argv[4] === 'faults';
   const corrupt = process.argv[4] === 'corrupt';
   const defaultFactory = process.argv[4] === 'default';
-  const peerDrop = ['peer-drop', 'peer-drop-corrupt'].includes(process.argv[4]);
+  const peerDrop = ['peer-drop', 'peer-drop-corrupt', 'peer-drop-close'].includes(process.argv[4]);
   const dropCorrupt = process.argv[4] === 'peer-drop-corrupt';
+  const dropClose = process.argv[4] === 'peer-drop-close';
   const physicalClose = process.argv[4] === 'mixed-close';
-  const mixed = ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close'].includes(process.argv[4]);
+  const mixed = ['mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop-close'].includes(process.argv[4]);
   const mixedDefault = process.argv[4] === 'mixed-default';
   const disableFallback = process.argv[4] === 'mixed-disabled';
   const errors = [];
@@ -280,7 +327,7 @@ async function main() {
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
-            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt });
+            faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose });
           await page.goto(`https://127.0.0.1:${server.address().port}/index.html`);
         }
         await pages[0].waitForFunction(() => document.body.dataset.fortressRoom !== undefined, null, { timeout: 60000 });
@@ -301,8 +348,11 @@ async function main() {
         }, 120000, 'setup');
         {
           if (peerDrop) {
-            await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
-            await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+            if (dropClose) await closeDepartingRtc(pages);
+            else {
+              await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));
+              await Promise.all(pages.map(page => page.evaluate(() => { window.fortressDropGo = true; })));
+            }
           }
           await waitGameplay(pages);
           await Promise.all(pages.map(page => page.evaluate(() => { window.fortressTeardownArmed = true; })));
@@ -359,7 +409,7 @@ async function main() {
     console.log(JSON.stringify({ passed: true, browser: browserPair.join('/'),
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })),
       version: browsers[0].version(), browser_instances: 2, firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
-      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, records, errors }));
+      faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, records, errors }));
   } catch (error) {
     console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
       version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
@@ -371,5 +421,5 @@ async function main() {
   }
 }
 
-module.exports = { instrument, isDropCanonicalFailure, resourcesClosed };
+module.exports = { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

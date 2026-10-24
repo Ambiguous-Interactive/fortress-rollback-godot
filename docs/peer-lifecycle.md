@@ -226,7 +226,13 @@ after seven samples while keeping its SDK connection. The survivors exchange
 barrier controls over actual WebRTC, agree the frozen sample and continue
 through 40 samples with confirmed canonical-history checks. The
 `peer-drop-corrupt` control must fail that continuation check. This is injected
-endpoint silence, not physical room departure. Live relay, rollback-time
+endpoint silence. The `peer-drop-close` case additionally closes every
+constructed RTC connection and all six channels on the stopped endpoint before
+survivors enter agreement. Their surviving link continues actual direct packet
+delivery; unavailable links select bounded relay fallback and send binary bytes.
+The stopped endpoint does not consume relay bytes, so this does not establish
+relay-delivered barrier agreement. Signaling membership remains frozen.
+Room departure, process death, relay-delivered agreement, rollback-time
 departure, lost barrier answers, foreign proposals and a second browser
 departure remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).

@@ -55,6 +55,7 @@ class ClockProbe:
 	extends "res://host.gd"
 	var ticks_us: int = 10000000
 	var service_calls: int = 0
+	var passive_step_us: int = 500000
 	var failed_service_call: int = -1
 	var force_service_work: bool = false
 	var diagnostic_snapshots: Array[Dictionary] = []
@@ -71,12 +72,16 @@ class ClockProbe:
 			diagnostic_snapshots.append(_wait_snapshot(peer, attempt))
 		super._wait_diagnostic(attempt)
 
+	func _wait_turn() -> void:
+		ticks_us += passive_step_us
+
 	func _ticks_usec() -> int:
 		return ticks_us
 
 func _initialize() -> void:
 	var probe: ClockProbe = ClockProbe.new()
 	probe.service_calls = 0
+	if not await _passive_departure_wait(probe): return
 	if not _check(await probe._wait(func() -> bool: return true, true), "actual wait services an immediately ready condition"): return
 	if not _check(probe.service_calls == 1, "an idle wait stops after one service"): return
 	probe.service_calls = 0
@@ -168,6 +173,37 @@ func _initialize() -> void:
 	probe.free()
 	print("WEBRTC_CLOCK_TEST passed")
 	quit(0)
+
+# Value: protects=physical departure wait; fails_when=phase wait expires before RTC closure; why_new=fast rooms mask delayed siblings; seam=injected clock
+func _passive_departure_wait(probe: ClockProbe) -> bool:
+	var started: int = probe.ticks_us
+	probe.passive_step_us = 1000000
+	if not _check(await probe._wait(func() -> bool: return probe.ticks_us - started >= 6000000, true),
+		"slow sibling readiness keeps protocol service active beyond the peer timeout"): return false
+	if not _check(probe.service_calls == 7, "every readiness turn services the still-live endpoints"): return false
+	probe.service_calls = 0
+	probe.ticks_us = started
+	probe.passive_step_us = 500000
+	var release: Callable = func() -> bool: return probe.ticks_us - started >= 2500000
+	if not _check(not await probe._wait_passive(release, 2000000), "a two-second phase deadline refuses the delayed release"): return false
+	probe.ticks_us = started
+	if not _check(await probe._wait_passive(release, probe.PHYSICAL_DEPARTURE_WAIT_US), "physical departure tolerates a delayed gate beyond two seconds"): return false
+	if not _check(probe.ticks_us - started == 2500000 and probe.service_calls == 0, "passive departure waits without servicing protocol"): return false
+	probe.ticks_us = started
+	probe.passive_step_us = 1000000
+	var at_deadline: Callable = func() -> bool: return probe.ticks_us - started >= probe.PHYSICAL_DEPARTURE_WAIT_US
+	if not _check(not await probe._wait_passive(at_deadline, probe.PHYSICAL_DEPARTURE_WAIT_US), "deadline equality refuses a late physical release"): return false
+	if not _check(probe.ticks_us - started == probe.PHYSICAL_DEPARTURE_WAIT_US and probe.service_calls == 0,
+		"an absent release ends at the bounded phase deadline without protocol service"): return false
+	probe.ticks_us = started
+	var late_query: Callable = func() -> bool:
+		probe.ticks_us = started + probe.PHYSICAL_DEPARTURE_WAIT_US
+		return true
+	if not _check(not await probe._wait_passive(late_query, probe.PHYSICAL_DEPARTURE_WAIT_US), "query completion cannot accept a release at the deadline"): return false
+	probe.ticks_us = started
+	probe.passive_step_us = 500000
+	if not _check(probe.PHYSICAL_DEPARTURE_WAIT_US < 5000000, "passive phase stays below the unchanged peer timeout"): return false
+	return true
 
 func _check(condition: bool, message: String) -> bool:
 	if condition: return true

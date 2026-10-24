@@ -392,6 +392,7 @@ Expert integrations dispatch and acknowledge bounded views themselves; callback 
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Version 5 replay rows preserve confirmed/disconnected player status alongside input bytes; version 4 reads with all-confirmed defaults.
+Native and exported Chromium compare every corrected dropped-player replay boundary through callback and expert playback on both engine pins.
 Receipt-only recording rows remain private until mesh confirmation, and coordinated drop repairs that staged tail before export.
 Every recorded frame carries a digest of its own input row and, in version 5, its player statuses, because the state
 checksum of the following frame only covers a row when that following frame
@@ -433,8 +434,9 @@ version 3 delivery, playback requests and confirmed exports. Byte-only callers d
 all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
-Live SignalFish spectator routing, handshake/events and upstream spectator
-differential/model acceptance remain open in #47. The upstream SDK and server now have a native spectator relay drill; its
+The receive-only SignalFish spectator adapter bounds authenticated host ingress, SDK lifetimes and elapsed expiry without seating viewers.
+Spectator relay cannot return startup acceptance; its authenticated control path, real exported routing and upstream spectator
+differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
 [qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
 SDK delivery from the remaining exported Fortress witness. Reviewing dependency drift,
 restoring candidate server CI and upgrading the reviewed pins remain part of #131.
@@ -475,7 +477,8 @@ journal and its own cut selection remain open in
 Native six-player sessions cover multiple local handles per endpoint. Exported
 Chromium covers a three-page WebRTC barrier after injected endpoint silence
 on both pins, with independent confirmed-history checks and a corruption
-control. Physical departure, relay delivery and the remaining live fault
+control. A second case closes every RTC connection on the departed endpoint before agreement, then requires actual late direct delivery between survivors.
+Room/process departure, relay-delivered agreement and the remaining live fault
 cases stay in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 Hot join uses reserved/dropped slots with fixed player cardinality,

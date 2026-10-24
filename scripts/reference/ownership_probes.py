@@ -95,6 +95,8 @@ EXPECTED['res://tests/unit/test_spectator_model.gd'] = {
 EXPECTED['res://tests/unit/test_frame_inputs.gd'] = {'copy', 'validation', 'driver_parity'}
 EXPECTED['res://tests/unit/test_input_queue.gd'] = {'delay', 'prediction', 'ring', 'validation', 'ownership', 'reclaim', 'reclaim_delay'}
 EXPECTED['res://tests/unit/test_spectator_status.gd'] = {'rows', 'wire_status', 'host_drop'}
+EXPECTED['res://tests/unit/test_replay_drop.gd'] = {
+    'retained_freeze', 'certified_freeze', 'predicted_retained_freeze', 'predicted_certified_freeze', 'failed_recovery_fence'}
 EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
     'canonical_parity', 'request_lifetime', 'save_failures', 'callback_guards', 'paused_termination', 'paused_termination_bad_result'}
 EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
@@ -150,7 +152,7 @@ FILES += ['tests/unit/test_peer_checksum_repair.gd']
 FILES += ['tests/unit/test_spectator_model.gd']
 FILES += ['tests/unit/test_frame_inputs.gd']
 FILES += ['tests/unit/test_input_queue.gd']
-FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd']
+FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd', 'tests/unit/test_replay_drop.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
@@ -195,6 +197,7 @@ const SpectatorModel = preload("res://tests/unit/test_spectator_model.gd")
 const FrameInputs = preload("res://tests/unit/test_frame_inputs.gd")
 const InputQueue = preload("res://tests/unit/test_input_queue.gd")
 const ReplayExpert = preload("res://tests/unit/test_replay_expert.gd")
+const ReplayDrop = preload("res://tests/unit/test_replay_drop.gd")
 const SpectatorStatus = preload("res://tests/unit/test_spectator_status.gd")
 const PeerChecksumRepair = preload("res://tests/unit/test_peer_checksum_repair.gd")
 const DropInventory = preload("res://tests/unit/test_peer_drop_inventory.gd")
@@ -207,7 +210,7 @@ func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
-		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
+		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
 		HistoryBackfill, DriverParity, DropBackfill, DropCapacity]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)

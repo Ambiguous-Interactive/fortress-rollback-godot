@@ -14,6 +14,9 @@ ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 """
 
 import ast
+import copy
+import fcntl
+import json
 import os
 import subprocess
 import sys
@@ -21,10 +24,13 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import host_capacity
+import run_godot_tests
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 
@@ -62,6 +68,55 @@ class HostCapacityTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertTrue(ready.exists(), "the other owner did not take the host")
         return process
+
+    # Value: a shared host serializes execution without merging known slow cases into one watchdog.
+    def test_shared_host_keeps_slow_cases_isolated_with_one_worker(self):
+        suite = "res://tests/unit/slow.gd"
+        names = ["first", "second"]
+        directory = Path(self.directory.name)
+        durations, results = directory / "durations.json", directory / "results.json"
+        durations.write_text(json.dumps({suite: 40}), encoding="utf-8")
+        run_command = subprocess.run
+        executor = run_godot_tests.ThreadPoolExecutor
+        observed = []
+
+        def command(command, **options):
+            if "--list-cases" in command:
+                self.assertIn(suite, command)
+                return SimpleNamespace(returncode=0, stdout=run_godot_tests.CASES_PREFIX + json.dumps({suite: names}))
+            if "--version" in command:
+                return SimpleNamespace(returncode=0, stdout=b"test-engine", stderr=b"")
+            return run_command(command, **options)
+
+        def timed(command, timeout):
+            observed.append((command, timeout))
+            if "--case" not in command:
+                return {"failure": "watchdog_expired"}, 40
+            case = command[command.index("--case") + 1]
+            state = {"assertions": 1, "failures": [], "states": [{"frame": 0, "bytes": "01"}]}
+            record = {"suite": suite, "case": case, "category": "unit", "seed": "1701", "runs": [state, copy.deepcopy(state)]}
+            return {"result": {"format": 1, "complete": True, "passed": True, "count": 1, "errors": [], "records": [record]}}, 20
+
+        for owner_name in ("browser-witness", run_godot_tests.LEASE_NAME):
+            observed.clear()
+            host_capacity.LEASE_FILE.write_text(json.dumps({"name": owner_name}), encoding="utf-8")
+            with host_capacity.LEASE_FILE.open("a+") as owner:
+                fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.object(run_godot_tests, "resolve_engine", return_value=Path(sys.executable)), \
+                        patch.object(run_godot_tests.subprocess, "run", side_effect=command), \
+                        patch.object(run_godot_tests, "timed", side_effect=timed), \
+                        patch.object(run_godot_tests, "ThreadPoolExecutor", wraps=executor) as pool:
+                    status = run_godot_tests.main(["--godot", sys.executable, "--suite", suite, "--jobs", "8", "--timeout", "30",
+                                                  "--durations", str(durations), "--results", str(results)])
+                pool.assert_called_once_with(max_workers=1)
+                self.assertEqual(host_capacity.holder(), owner_name)
+            self.assertEqual(status, 0)
+            self.assertEqual(len(observed), 4)
+            self.assertTrue(all(timeout == 30 for command, timeout in observed))
+            report = json.loads(results.read_text(encoding="utf-8"))
+            self.assertTrue(report["passed"])
+            for repetition in report["runs"]:
+                self.assertEqual([record["case"] for record in repetition["result"]["records"]], names)
 
     def test_free_host_keeps_the_requested_worker_count(self):
         self.assertIsNone(host_capacity.holder())

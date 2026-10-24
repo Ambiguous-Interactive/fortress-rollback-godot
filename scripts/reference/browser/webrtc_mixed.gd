@@ -99,7 +99,7 @@ func service(host: Node) -> bool:
 	if not pending.is_empty():
 		var code: int = fallback.enqueue_batch(pending)
 		if code == Relay.Code.OK:
-			if host.local_index == 0 and overlap == null and host.peers[0].status().current_frame == 3:
+			if not host.drop_enabled and host.local_index == 0 and overlap == null and host.peers[0].status().current_frame == 3:
 				_capture_overlap(host)
 			pending = []
 		elif code != Relay.Code.BACKPRESSURE:

@@ -48,9 +48,7 @@ var _offer: PackedByteArray = PackedByteArray()
 ## Reconfiguration creates a fresh viewer and a fresh envelope agreement.
 ## Successful replacement terminates the prior viewer while its lifetime still belongs to this stream.
 ## The caller's playback policy survives reconfiguration when it still fits the new ring.
-func configure(
-	config: Config, identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, now_us: int, timeout_us: int, max_packet_bytes: int
-) -> int:
+func configure(config: Config, identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, now_us: int, timeout_us: int, max_packet_bytes: int) -> int:
 	if config == null or identity.size() != 32 or key.size() != KEY_BYTES or digest.size() != DIGEST_BYTES or now_us < 0 or timeout_us < 1:
 		return Code.INVALID_CONFIGURATION
 	if config.validate() != Code.OK or not config.spectator or max(HEADER_BYTES + config.player_count * (config.input_width + 1), NEGOTIATION_BYTES) > max_packet_bytes:
@@ -295,6 +293,13 @@ func _receive_offer(packet: PackedByteArray, now_us: int) -> int:
 	return Code.OK
 
 
+## Observe elapsed host expiry without mutating playback, including during an active request.
+## A transport owner may retire its session when this is true; poll() keeps its BUSY contract.
+## Invalid or retrograde clocks are false and remain subject to poll() validation.
+func host_deadline_elapsed(now_us: int) -> bool:
+	return _session != null and not _is_finished and now_us >= _last_time and now_us - _last_received >= _timeout_us
+
+
 ## Inject monotonic microseconds. Expiry wins over a newly arrived packet at the deadline.
 ## Poll independently of playback, including while a host gap or transport refusal persists.
 func poll(now_us: int) -> int:
@@ -405,9 +410,7 @@ static func header_matches(packet: PackedByteArray, kind: int, identity: PackedB
 
 
 ## Shared fixed-width writer for configured stream and host publisher implementations.
-static func encode_header(
-	kind: int, frame: int, players: int, width: int, identity: PackedByteArray, digest: PackedByteArray, version: int = VERSION
-) -> PackedByteArray:
+static func encode_header(kind: int, frame: int, players: int, width: int, identity: PackedByteArray, digest: PackedByteArray, version: int = VERSION) -> PackedByteArray:
 	if identity.size() != 32 or digest.size() != DIGEST_BYTES:
 		return PackedByteArray()
 	if kind not in [ROW, END, KEEPALIVE, OFFER, ACCEPT]:
