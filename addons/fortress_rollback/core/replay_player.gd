@@ -39,6 +39,7 @@ var _batch_id: int = 0
 var _request_id: int = 0
 var _active: Types.Request
 var _active_kind: int = -1
+var _validation_only: bool = false
 var _writer: Writer
 var _reader: Reader
 var _inputs: Types.FrameInputs
@@ -91,7 +92,7 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 
 ## Expert playback uses the same ordered requests as callback step(), without owning a game.
 ## A positive snapshot bound validates recorded checksums; zero plays inputs only.
-## Navigation and callback step are unsupported in this mode. Reconfiguration cannot abandon a batch.
+## Callback navigation and step are unsupported in this mode. Reconfiguration cannot abandon a batch.
 ## A supplied config refuses a recording that does not match the running game.
 func configure_expert(replay: Replay, max_snapshot_bytes: int = 0, config: RefCounted = null) -> int:
 	if _is_stepping or _batch != null:
@@ -155,11 +156,36 @@ func begin_advance() -> Types.Result:
 	var digest_code: int = _verify_input_digest()
 	if digest_code != Types.Code.OK:
 		return Types.Result.new(digest_code)
+	return _begin_batch(Types.Kind.SAVE if _needs_save() else Types.Kind.ADVANCE, false)
+
+
+## Validate the selected input digest without consuming input. READY supplies one ordered SAVE
+## when a recorded checksum or checkpoint needs validation; otherwise OK completes without a batch.
+## Callback and expert clients share checksum, bounded writer and failure-latching contracts.
+func begin_validate_current_frame() -> Types.Result:
+	if _is_stepping or _batch != null:
+		return Types.Result.new(Types.Code.BUSY)
+	if _replay == null:
+		return Types.Result.new(Types.Code.NOT_CONFIGURED)
+	if _reason != Types.Code.OK:
+		return Types.Result.new(_reason)
+	if _frame < _replay.frame_count():
+		var digest_code: int = _verify_input_digest()
+		if digest_code != Types.Code.OK:
+			return Types.Result.new(digest_code)
+	if _needs_save():
+		return _begin_batch(Types.Kind.SAVE, true)
+	_validated_through_frame = maxi(_validated_through_frame, _frame)
+	return Types.Result.new(Types.Code.OK)
+
+
+func _begin_batch(kind: int, validation_only: bool) -> Types.Result:
 	if _batch_id == 9223372036854775807:
 		return Types.Result.new(_fail(Types.Code.FRAME_EXHAUSTED))
 	_batch_id += 1
 	_request_id = 0
-	_active_kind = Types.Kind.SAVE if _needs_save() else Types.Kind.ADVANCE
+	_active_kind = kind
+	_validation_only = validation_only
 	_batch = Types.Batch.new(self, _batch_id)
 	return Types.Result.new(Types.Code.READY, _batch)
 
@@ -202,7 +228,9 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 	_expire_request()
 	if code != Types.Code.OK:
 		return Types.Result.new(_fail(code))
-	if _active_kind == Types.Kind.SAVE:
+	if _validation_only:
+		_batch = null
+	elif _active_kind == Types.Kind.SAVE:
 		_active_kind = Types.Kind.ADVANCE
 		_request_id += 1
 	else:

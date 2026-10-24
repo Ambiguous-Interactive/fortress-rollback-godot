@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `FortressReplayPlayer.begin_validate_current_frame()` so expert clients can validate paused inputs and state without advancing playback.
+
 - Add an optional authenticated spectator startup control callback. Refused acceptance packets retain exact bytes for retry; host agreement still requires actual delivery.
 
 - Add `FortressDriver.terminate()` so driver-only clients can stop a session, including from game callbacks.
@@ -154,6 +156,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix reordered spectator rows blocking recovery behind a full playback ring. Bounded polling retains refused packets while accepting earlier missing rows.
+
+- Fix refused peer-drop controls waiting another retry interval after output pressure clears. Repolling can publish the original phase immediately.
 
 - Fix graceful-drop followers certifying a supplied frozen value that conflicts with their retained actual input. Conflicting history now ends agreement before the slot freezes.
 
