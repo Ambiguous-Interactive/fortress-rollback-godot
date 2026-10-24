@@ -6,6 +6,8 @@ Tool probes must check process exit status before accepting version text or a
 completion marker. Test both empty failures and plausible output followed by
 nonzero exit. A completed result stream must account for every selected test,
 including expected-panic cases; reject partial output even if listed tests pass.
+Executable Python test modules keep `unittest.main()` after every test class.
+Verify a newly added class by direct selection as well as discovery; import-only runs can hide an early entry point.
 
 Decode structured UTF-8 child-process output with explicit `encoding="utf-8"`
 and strict errors. A successful JSON parse after locale decoding can still

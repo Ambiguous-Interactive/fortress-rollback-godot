@@ -147,9 +147,6 @@ class PeerDropEvidence(unittest.TestCase):
             validate_drop_browser(value, True)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 class LostAnswerEvidence(unittest.TestCase):
     def test_lost_answer_requires_one_follower_drop_and_exact_retry(self):
         original = evidence()
@@ -178,3 +175,7 @@ class LostAnswerEvidence(unittest.TestCase):
         value['records'][0]['peers'][0]['rtc']['answerLoss'] = value['records'][0]['peers'][1]['rtc']['answerLoss']
         with self.assertRaisesRegex(ValueError, 'lost answer'):
             validate_drop_browser(value, lost_answer=True)
+
+
+if __name__ == '__main__':
+    unittest.main()
