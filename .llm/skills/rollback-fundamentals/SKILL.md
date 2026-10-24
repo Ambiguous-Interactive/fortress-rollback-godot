@@ -124,6 +124,7 @@ polling, advancement or request completion inside that callback. Status and
 termination remain available; the driver acknowledges only after releasing the
 guard. Test valid request identities as well as terminate-then-reconfigure.
 Apply callback termination checks to paused validation and checkpoint restoration too.
+Cancellation retains the exposed playback frame as its first-cause diagnostic; a failed checkpoint restore identifies the attempted cached frame.
 Track their active bounded readers/writers so termination expires them. Recheck the
 latched terminal reason before accepting callback returns, invoking another callback,
 committing a restored frame or publishing validation coverage.

@@ -273,6 +273,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 func terminate() -> void:
 	_expire_request()
 	if _reason == Types.Code.OK:
+		_restoring = null
 		_fail(Types.Code.TERMINATED)
 
 

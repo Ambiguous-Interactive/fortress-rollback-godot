@@ -172,7 +172,7 @@ func _restore_lifetime(context: RefCounted) -> void:
 	context.equal(writer.status(), Writer.Code.EXPIRED_VIEW, "termination expires navigation writer")
 	context.equal(result.batch.next_request(), null, "terminated restore has no requests")
 	context.equal(player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.TERMINATED, "termination remains first cause")
-	context.equal(player.failure_frame(), 6, "termination identifies attempted checkpoint")
+	context.equal(player.failure_frame(), 12, "termination retains the exposed playback boundary")
 	context.equal(player.configure_expert(replay, Simulation.SNAPSHOT_BYTES, null, 3, 3), Types.Code.OK, "explicit restart clears cache")
 	context.equal(player.begin_restore_before(0).code, Types.Code.HISTORY_UNAVAILABLE, "old lifetime cannot lend cached state")
 	context.equal(result.batch.next_request(), null, "old batch cannot borrow restarted requests")
