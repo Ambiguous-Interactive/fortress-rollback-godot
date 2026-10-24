@@ -59,6 +59,8 @@ Concurrent processes for one Godot project share `user://`. Give writable test
 fixtures process-owned paths and check open, write and removal results before
 asserting application behavior. Reproduce interference with a second process;
 a missing-file test can observe a peer's recreated or truncated file instead.
+`OS.get_process_id()` is unavailable on Web; use it only in native branches.
+Web fixtures use the page's isolated filesystem and keep equivalent assertion counts.
 
 ## Faster local iteration
 

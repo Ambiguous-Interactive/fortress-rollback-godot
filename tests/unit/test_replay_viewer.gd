@@ -40,7 +40,8 @@ func _full_length_recording(context: RefCounted) -> void:
 	replay._text[0] = "x".repeat(Replay.MAX_TEXT_BYTES)
 	var bytes: PackedByteArray = replay.to_bytes()
 	context.equal(bytes.size() > 1048576, true, "full checksummed recording exceeds the former 1 MiB cap")
-	var path: String = "user://test-full-length-replay-%d.frrp" % OS.get_process_id()
+	var process: int = 0 if OS.has_feature("web") else OS.get_process_id()
+	var path: String = "user://test-full-length-replay-%d.frrp" % process
 	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
 	context.equal(file != null, true, "open process-owned replay import fixture")
 	if file == null:
