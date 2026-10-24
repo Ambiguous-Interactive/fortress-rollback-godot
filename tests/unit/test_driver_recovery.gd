@@ -161,7 +161,9 @@ func _failures(context: RefCounted) -> void:
 		var game: RefCounted = Fixture.Game.new()
 		var driver: RefCounted = _predict(context, session, game)
 		game.fail_kind = kind
-		context.equal(driver.recover(3).code, Types.Code.CALLBACK_FAILED, "recovery callback failure stops")
+		var failed: RefCounted = driver.recover(3)
+		context.equal(failed.code, Types.Code.CALLBACK_FAILED, "recovery callback failure stops")
+		context.equal(failed.get("failure_kind"), kind, "recovery identifies the failed ordered callback")
 		context.equal(session.status().lifecycle, Types.Lifecycle.TERMINATED, "failed recovery is terminal")
 		context.equal(driver.recover(4).code, Types.Code.TERMINATED, "failed recovery cannot resume")
 		context.equal(session.replay().frame_count(), 0, "failed repair publishes no recording")

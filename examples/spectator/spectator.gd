@@ -39,6 +39,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		demo.is_paused = not demo.is_paused
 	elif event.keycode == KEY_N:
 		demo.step_viewer()
+	elif event.keycode == KEY_L:
+		demo.lose_host_connection()
 	elif event.keycode == KEY_E:
 		demo.finish_host()
 	elif event.keycode == KEY_R:
@@ -48,7 +50,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _process(_delta: float) -> void:
 	var size: Vector2 = get_viewport_rect().size
-	var fit: float = minf(size.x / 760.0, size.y / 560.0)
+	var content_height: float = _board_top() + 150.0 + 125.0 + 24.0
+	var fit: float = minf(size.x / 760.0, size.y / maxf(560.0, content_height))
 	scale = Vector2(fit, fit)
 	queue_redraw()
 
@@ -62,9 +65,11 @@ func _update_label() -> void:
 		state = "DRAINING FINAL TAIL" if demo.is_host_finished else "CONFIRMING FINAL INPUTS"
 	if demo.viewer.status().lifecycle == Types.Lifecycle.TERMINATED:
 		state = "COMPLETE | R: start again" if demo.viewer_code == Types.Code.TERMINATED else "STOPPED: code %d | R: start again" % demo.viewer_code
+	if demo.is_host_connection_lost:
+		state = "HOST CONNECTION LOST | R: start again"
 	_label.text = (
 		"Delayed spectator | %s\n" % state
-		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host | R: restart\n"
+		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host\nL: lose host link | R: restart\n"
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
 		+ "Viewer holds 12 confirmed frames and catches up at most 4 per tick.\n"
 		+ "A long pause can exceed retained history; the host keeps playing.\n"
@@ -72,12 +77,16 @@ func _update_label() -> void:
 	)
 
 
+func _board_top() -> float:
+	return _label.position.y + _label.get_minimum_size().y + 16.0
+
+
 func _draw() -> void:
 	if demo.game == null:
 		return
 	var games: Array[Game] = [demo.host.loop.game, demo.game]
 	for panel: int in range(2):
-		var top: float = 250.0 + panel * 150
+		var top: float = _board_top() + 30.0 + panel * 150
 		draw_rect(Rect2(24, top - 30, 712, 125), Color(0.08, 0.10, 0.15))
 		draw_string(ThemeDB.fallback_font, Vector2(36, top), "HOST" if panel == 0 else "VIEWER", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
 		for player: int in range(2):

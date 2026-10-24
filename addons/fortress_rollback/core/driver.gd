@@ -42,6 +42,8 @@ class StepResult:
 	var reason: int = Types.Code.OK
 	## Frame the session failed at; -1 while the session runs.
 	var failure_frame: int = -1
+	## Failed ordered callback (Types.Kind), or -1 when no callback failed.
+	var failure_kind: int = -1
 	var events: Array[RefCounted] = []
 
 	func _init(result_code: int, before: int, after: int) -> void:
@@ -182,9 +184,9 @@ func terminate(reason: int = Types.Code.TERMINATED) -> void:
 func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) -> StepResult:
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
-		return StepResult.new(Types.Code.BUSY, before, before)
+		return _result(Types.Code.BUSY, before)
 	if _session == null or _game == null:
-		return StepResult.new(Types.Code.NOT_CONFIGURED, before, before)
+		return _result(Types.Code.NOT_CONFIGURED, before)
 	_is_stepping = true
 	var code: int = _session.poll(now_us).code
 	if code != Types.Code.OK:
@@ -257,19 +259,26 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 	return _finish(code, before)
 
 
-func _finish(code: int, before: int) -> StepResult:
+func _result(code: int, before: int) -> StepResult:
 	var status: Types.Status = _session.status() if _session != null else Types.Status.new()
 	var result: StepResult = StepResult.new(code, before, status.current_frame)
 	# A stopped session keeps its own cause, so a client can tell a desync from a plain stop.
 	result.reason = status.reason
 	result.failure_frame = status.failure_frame
+	result.failure_kind = status.failure_kind
+	return result
+
+
+func _finish(code: int, before: int) -> StepResult:
+	var result: StepResult = _result(code, before)
 	# An externally opened expert batch owns its events until completion.
 	if code != Types.Code.BUSY:
 		result.events = _session.drain_events()
 		step_completed.emit(result.code, result.frame_before, result.frame_after)
 		# A handler may cancel future work after this operation already completed.
-		status = _session.status()
+		var status: Types.Status = _session.status()
 		result.reason = status.reason
 		result.failure_frame = status.failure_frame
+		result.failure_kind = status.failure_kind
 	_is_stepping = false
 	return result

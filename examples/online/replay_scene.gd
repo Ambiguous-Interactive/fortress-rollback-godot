@@ -38,6 +38,8 @@ var _status: Label
 var _play: Button
 var _step_button: Button
 var _back_button: Button
+var _previous_checkpoint: Button
+var _next_checkpoint: Button
 var _restart_button: Button
 var _speed: OptionButton
 var _target: SpinBox
@@ -85,6 +87,10 @@ func _ready() -> void:
 	navigation.add_child(_target)
 	_seek_button = _button(navigation, "Go", _seek)
 	_cancel_button = _button(navigation, "Cancel seek", _cancel_seek)
+	var checkpoints: HBoxContainer = HBoxContainer.new()
+	panel.add_child(checkpoints)
+	_previous_checkpoint = _button(checkpoints, "Previous checkpoint", _jump_checkpoint.bind(false))
+	_next_checkpoint = _button(checkpoints, "Next checkpoint", _jump_checkpoint.bind(true))
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -169,6 +175,11 @@ func _cancel_seek() -> void:
 	_refresh()
 
 
+func _jump_checkpoint(forward: bool) -> void:
+	viewer.seek_checkpoint(forward)
+	_refresh()
+
+
 func _restart() -> void:
 	viewer.restart()
 	_refresh()
@@ -202,11 +213,13 @@ func _refresh() -> void:
 	_target.editable = viewer.frame_count() > 0
 	_seek_button.disabled = viewer.frame_count() == 0
 	_cancel_button.disabled = not viewer.is_seeking()
+	_previous_checkpoint.disabled = viewer.checkpoint_target(false) < 0
+	_next_checkpoint.disabled = viewer.checkpoint_target(true) < 0
 	queue_redraw()
 
 
 func _draw() -> void:
-	var origin: Vector2 = Vector2(24, 190)
+	var origin: Vector2 = Vector2(24, 225)
 	var available: Vector2 = get_viewport_rect().size - origin - Vector2(16, 16)
 	var fit: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
 	draw_set_transform(origin, 0.0, Vector2.ONE * fit)

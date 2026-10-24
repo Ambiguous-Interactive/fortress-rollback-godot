@@ -85,7 +85,7 @@ EXPECTED.update({
 EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
     'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum', 'client_history'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
-EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control'})
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
 EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity'}
 EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')

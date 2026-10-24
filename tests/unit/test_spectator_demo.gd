@@ -19,7 +19,9 @@ func cases() -> PackedStringArray:
 			"paused_final_tail",
 			"single_frame",
 			"single_frame_end",
-			"single_frame_control"
+			"single_frame_control",
+			"host_loss",
+			"host_loss_control"
 		]
 	)
 
@@ -33,7 +35,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		_lost_history(context)
 	elif name == "paused_final_tail":
 		_paused_final_tail(context)
-	elif name in ["single_frame", "single_frame_end", "single_frame_control"]:
+	elif name in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control"]:
 		call("_" + name, context)
 	elif name == "clean_host_end":
 		_clean_host_end(context)
@@ -266,4 +268,87 @@ func _single_frame_control(context: RefCounted) -> void:
 	key.keycode = KEY_P
 	scene._unhandled_key_input(key)
 	context.equal(scene.demo.is_paused, false, "P resumes playback after inspection")
+	scene.free()
+
+
+# Value: protects=known host loss stops buffered viewing while host remains playable;
+# fails_when=disconnect drains stale input or blocks restart; why_new=demo covers clean end only; seam=none
+func _host_loss(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.has_method("lose_host_connection"), true, "example exposes unexpected host loss")
+	if not demo.has_method("lose_host_connection"):
+		return
+	context.equal(demo.call("lose_host_connection"), Types.Code.NOT_CONFIGURED, "no host connection before startup")
+	for pause: bool in [false, true]:
+		context.equal(demo.start(), Types.Code.OK, "start host-loss scenario")
+		for tick: int in range(40):
+			context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "play before host loss")
+		demo.is_paused = pause
+		for tick: int in range(10):
+			context.equal(demo.tick(Game.LEFT), Types.Code.OK, "retain host rows before loss")
+		context.equal(demo.viewer.host_frontier() >= demo.game.frame, true, "loss occurs with buffered confirmed input")
+		var frame: int = demo.game.frame
+		var canonical: PackedByteArray = demo.game.canonical_bytes()
+		var host_frame: int = demo.host.loop.game.frame
+		demo.viewer.drain_events()
+		context.equal(demo.call("lose_host_connection"), Types.Code.PROTOCOL_FAILED, "known loss terminates playback immediately")
+		context.equal(demo.viewer.status().lifecycle, Types.Lifecycle.TERMINATED, "host loss is terminal")
+		context.equal(demo.viewer.status().reason, Types.Code.PROTOCOL_FAILED, "loss cause remains visible")
+		context.equal(demo.viewer_code, Types.Code.PROTOCOL_FAILED, "demo retains loss cause")
+		context.equal(demo.call("lose_host_connection"), Types.Code.PROTOCOL_FAILED, "repeated loss retains first cause")
+		var events: Array[RefCounted] = demo.viewer.drain_events()
+		context.equal(events.size(), 1, "host loss publishes one terminal event")
+		if events.size() == 1:
+			context.equal(events[0].kind, Demo.Spectator.EventKind.TERMINATED, "host loss lifecycle event")
+			context.equal(events[0].frame, frame, "loss identifies stopped viewer boundary")
+			context.equal(events[0].reason, Types.Code.PROTOCOL_FAILED, "event carries loss reason")
+		context.equal(demo.step_viewer(), Types.Code.PROTOCOL_FAILED, "inspection cannot consume buffered rows after loss")
+		demo.is_paused = false
+		for tick: int in range(15):
+			context.equal(demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "host continues without its viewer")
+		context.equal(demo.host.loop.game.frame, host_frame + 15, "viewer loss never stalls the host")
+		context.equal(demo.game.frame, frame, "no buffered row advances after loss")
+		context.bytes_equal(demo.game.canonical_bytes(), canonical, frame, "host loss preserves last displayed state")
+		context.equal(demo.viewer.drain_events().is_empty(), true, "later service does not duplicate termination")
+		context.equal(demo.start(), Types.Code.OK, "restart after unexpected loss")
+		context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "fresh host and viewer are usable")
+		context.equal(demo.viewer.status().reason, Types.Code.OK, "restart clears prior failure")
+	context.equal(demo.start(), Types.Code.OK, "empty clean ending control")
+	context.equal(demo.finish_host(), Types.Code.OK, "request clean ending")
+	context.equal(demo.tick(0), Types.Code.OK, "complete empty host")
+	context.equal(demo.viewer_code, Types.Code.TERMINATED, "control completes cleanly")
+	context.equal(demo.call("lose_host_connection"), Types.Code.TERMINATED, "later disconnect preserves clean first cause")
+	context.equal(demo.viewer_code, Types.Code.TERMINATED, "clean completion remains visible")
+	context.equal(demo.start(), Types.Code.OK, "external terminal control")
+	demo.viewer.terminate(Types.Code.HISTORY_UNAVAILABLE)
+	context.equal(demo.call("lose_host_connection"), Types.Code.HISTORY_UNAVAILABLE, "external first cause takes precedence")
+	context.equal(demo.viewer_code, Types.Code.HISTORY_UNAVAILABLE, "synchronize displayed external cause")
+	context.equal(demo.is_host_connection_lost, false, "later disconnect does not relabel an earlier failure")
+
+
+# Value: protects=playable host-loss and restart controls; fails_when=L is unbound or held repeats;
+# why_new=API tests bypass keyboard dispatch; seam=none
+func _host_loss_control(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	for tick: int in range(40):
+		scene.demo.tick(Game.RIGHT)
+	var key: InputEventKey = InputEventKey.new()
+	key.keycode = KEY_L
+	key.pressed = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "release does not disconnect")
+	key.pressed = true
+	key.echo = true
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "held key does not disconnect")
+	key.echo = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.status().reason, Types.Code.PROTOCOL_FAILED, "L reports host connection loss")
+	context.equal(scene._label.text.contains("HOST CONNECTION LOST"), true, "loss has a readable explanation")
+	context.equal(scene._label.text.contains("L: lose host link"), true, "help exposes loss control")
+	key.keycode = KEY_R
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "R starts a fresh viewer")
+	context.equal(scene.demo.viewer_code, Types.Code.OK, "restart clears displayed failure")
 	scene.free()

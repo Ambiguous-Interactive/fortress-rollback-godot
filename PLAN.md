@@ -382,10 +382,13 @@ known-allocation positive control; flat memory alone is insufficient.
 
 ## Advanced parity boundaries
 
+Driver and peer step/recovery results expose the first failed callback kind alongside terminal reason and frame.
+
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
 Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
+Viewer checkpoint controls use the owned inventory of retained validated boundaries and cannot bypass playback failure.
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
 in-memory snapshots without changing the portable file format. Viewer speed controls change
 only the bounded number of recorded frames serviced; each simulation step stays fixed.
