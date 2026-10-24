@@ -40,6 +40,7 @@ var _request_id: int = 0
 var _active: Types.Request
 var _active_kind: int = -1
 var _validation_only: bool = false
+var _restoring: Checkpoint
 var _writer: Writer
 var _reader: Reader
 var _inputs: Types.FrameInputs
@@ -75,6 +76,7 @@ func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, ch
 
 
 func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoint_interval: int, checkpoint_capacity: int) -> void:
+	_restoring = null
 	_checkpoint_interval = checkpoint_interval
 	_checkpoint_capacity = checkpoint_capacity
 	_checkpoints.clear()
@@ -92,9 +94,10 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 
 ## Expert playback uses the same ordered requests as callback step(), without owning a game.
 ## A positive snapshot bound validates recorded checksums; zero plays inputs only.
-## Callback navigation and step are unsupported in this mode. Reconfiguration cannot abandon a batch.
+## Callback navigation and step are unsupported in this mode. Use begin_restore_before for manual navigation.
+## Optional checkpoints use the same interval, capacity and 16 MiB budget as callback playback.
 ## A supplied config refuses a recording that does not match the running game.
-func configure_expert(replay: Replay, max_snapshot_bytes: int = 0, config: RefCounted = null) -> int:
+func configure_expert(replay: Replay, max_snapshot_bytes: int = 0, config: RefCounted = null, checkpoint_interval: int = 0, checkpoint_capacity: int = 0) -> int:
 	if _is_stepping or _batch != null:
 		return Types.Code.BUSY
 	if replay == null or max_snapshot_bytes < 0 or max_snapshot_bytes > 16777216:
@@ -103,7 +106,13 @@ func configure_expert(replay: Replay, max_snapshot_bytes: int = 0, config: RefCo
 		return Types.Code.INVALID_CONFIGURATION
 	if config != null and not replay.matches_config(config):
 		return Types.Code.INCOMPATIBLE_RECORDING
-	_reset(replay, null, max_snapshot_bytes, 0, 0)
+	if checkpoint_interval < 0 or checkpoint_capacity < 0 or checkpoint_capacity > 1024:
+		return Types.Code.INVALID_CONFIGURATION
+	if (checkpoint_interval == 0) != (checkpoint_capacity == 0):
+		return Types.Code.INVALID_CONFIGURATION
+	if checkpoint_capacity > 0 and (max_snapshot_bytes == 0 or checkpoint_capacity < 2 or checkpoint_capacity * max_snapshot_bytes > 16777216):
+		return Types.Code.INVALID_CONFIGURATION
+	_reset(replay, null, max_snapshot_bytes, checkpoint_interval, checkpoint_capacity)
 	return Types.Code.OK
 
 
@@ -196,12 +205,15 @@ func _next_request(batch_id: int) -> Types.Request:
 	if _active == null:
 		_active = Types.Request.new()
 		_active.kind = _active_kind
-		_active.frame = _frame
+		_active.frame = _restoring.frame if _restoring != null else _frame
 		_active.batch_id = _batch_id
 		_active.request_id = _request_id
 		if _active_kind == Types.Kind.SAVE:
 			_writer = Writer.new(_max_snapshot_bytes)
 			_active.writer = _writer
+		elif _active_kind == Types.Kind.LOAD:
+			_reader = Reader.new(_restoring.bytes, true)
+			_active.reader = _reader
 		else:
 			_inputs = _replay.inputs(_frame)
 			_active.inputs = _inputs
@@ -222,13 +234,29 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		code = Types.Code.OK
 		if _active_kind == Types.Kind.SAVE:
 			var checkpoint: Checkpoint = Checkpoint.new()
-			code = _read_checkpoint(checkpoint, _writer, checksum, _frame)
+			code = _read_checkpoint(checkpoint, _writer, checksum, _restoring.frame if _restoring != null else _frame)
 			if code == Types.Code.OK:
-				code = _accept_checkpoint(checkpoint)
+				if _restoring != null:
+					if checkpoint.checksum != _restoring.checksum:
+						code = _checksum_mismatch(_restoring.checksum, checkpoint.checksum)
+					elif checkpoint.bytes != _restoring.bytes:
+						code = Types.Code.DESYNC
+				else:
+					code = _accept_checkpoint(checkpoint)
+		elif _active_kind == Types.Kind.LOAD and not _reader.is_complete():
+			code = Types.Code.SNAPSHOT_FAILED
 	_expire_request()
 	if code != Types.Code.OK:
 		return Types.Result.new(_fail(code))
-	if _validation_only:
+	if _restoring != null:
+		if _active_kind == Types.Kind.LOAD:
+			_active_kind = Types.Kind.SAVE
+			_request_id += 1
+		else:
+			_frame = _restoring.frame
+			_restoring = null
+			_batch = null
+	elif _validation_only:
 		_batch = null
 	elif _active_kind == Types.Kind.SAVE:
 		_active_kind = Types.Kind.ADVANCE
@@ -263,7 +291,8 @@ func _expire_request() -> void:
 
 func _fail(code: int) -> int:
 	_reason = code
-	_failure_frame = _frame
+	_failure_frame = _restoring.frame if _restoring != null else _frame
+	_restoring = null
 	_batch = null
 	return code
 
@@ -319,46 +348,55 @@ func restore_before(target: int) -> int:
 		return Types.Code.UNSUPPORTED
 	if _reason != Types.Code.OK:
 		return _reason
+	var result: Types.Result = begin_restore_before(target)
+	if result.code != Types.Code.READY:
+		return result.code
+	while true:
+		var request: Types.Request = result.batch.next_request()
+		if request == null:
+			return Types.Code.OK
+		var batch_id: int = request.batch_id
+		var request_id: int = request.request_id
+		var checksum: PackedByteArray = PackedByteArray()
+		var ok: bool = false
+		_is_stepping = true
+		if _active_kind == Types.Kind.LOAD:
+			var loaded: Variant = _game.load_state(request.frame, _reader)
+			ok = loaded is bool and loaded
+		else:
+			var saved: Variant = _game.save_state(request.frame, _writer)
+			if saved is Driver.SaveResult:
+				ok = saved.ok
+				checksum = saved.checksum
+		_is_stepping = false
+		var code: int = complete_request(batch_id, request_id, ok, checksum).code
+		if code != Types.Code.OK:
+			return code
+	return Types.Code.OK
+
+
+## Restore the nearest retained checkpoint at or before target through ordered LOAD then SAVE.
+## Commit the selected frame only after exact state bytes and checksum match the cached boundary.
+## OK without a batch leaves a forward target's current state unchanged; HISTORY_UNAVAILABLE means no eligible checkpoint.
+func begin_restore_before(target: int) -> Types.Result:
+	if _is_stepping or _batch != null:
+		return Types.Result.new(Types.Code.BUSY)
+	if _replay == null:
+		return Types.Result.new(Types.Code.NOT_CONFIGURED)
+	if target < 0 or target > _replay.frame_count():
+		return Types.Result.new(Types.Code.INVALID_FRAME)
+	if _reason != Types.Code.OK:
+		return Types.Result.new(_reason)
 	var selected: Checkpoint
 	for checkpoint: Checkpoint in _checkpoints:
 		if checkpoint.frame <= target:
 			selected = checkpoint
 	if selected == null:
-		return Types.Code.HISTORY_UNAVAILABLE
+		return Types.Result.new(Types.Code.HISTORY_UNAVAILABLE)
 	if target >= _frame and selected.frame <= _frame:
-		return Types.Code.OK
-	_is_stepping = true
-	var reader: Reader = Reader.new(selected.bytes, true)
-	_reader = reader
-	var loaded: Variant = _game.load_state(selected.frame, reader)
-	var complete: bool = reader.is_complete()
-	reader._expire()
-	_reader = null
-	if _reason != Types.Code.OK:
-		_is_stepping = false
-		return _reason
-	var code: int = Types.Code.OK
-	if not (loaded is bool) or not loaded:
-		code = Types.Code.CALLBACK_FAILED
-	elif not complete:
-		code = Types.Code.SNAPSHOT_FAILED
-	else:
-		var restored: Checkpoint = Checkpoint.new()
-		code = _save_checkpoint(restored, selected.frame)
-		if code == Types.Code.OK:
-			if restored.checksum != selected.checksum:
-				code = _checksum_mismatch(selected.checksum, restored.checksum)
-			elif restored.bytes != selected.bytes:
-				code = Types.Code.DESYNC
-	_is_stepping = false
-	if _reason != Types.Code.OK:
-		return _reason
-	if code != Types.Code.OK:
-		_reason = code
-		_failure_frame = selected.frame
-	else:
-		_frame = selected.frame
-	return code
+		return Types.Result.new(Types.Code.OK)
+	_restoring = selected
+	return _begin_batch(Types.Kind.LOAD, false)
 
 
 ## Validate a paused state boundary and its input digest without consuming the input. Uses the same

@@ -80,8 +80,13 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		var accepted: bool = true
 		for index: int in host._ids.size():
 			if barrier.participants.has(host._ids[index].hex_encode()):
+				var previous: Dictionary = history.plan_sent_to.get(index, {})
+				if not previous.is_empty() and previous.digest == barrier.digest and now_us - int(previous.at) < History.RETRY_US:
+					continue
 				if host._endpoint(index).send_drop_barrier(plan, host._now) != I.Code.OK:
 					accepted = false
+				else:
+					history.plan_sent_to[index] = {"digest": barrier.digest, "at": now_us}
 		if accepted:
 			barrier.history_plan_us = now_us
 			barrier.history_plan_digest = barrier.digest
