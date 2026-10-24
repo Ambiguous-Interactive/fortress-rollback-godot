@@ -16,7 +16,7 @@ import ownership_probes as probes
 
 def result():
     records = []
-    for suite, names in probes.EXPECTED.items():
+    for suite, names in sorted(probes.EXPECTED.items()):
         for name in sorted(names):
             records.append({'suite': suite, 'case': name, 'category': 'determinism', 'seed': '1701',
                             'runs': [{'assertions': 1, 'failures': [], 'states': []} for _ in range(2)]})
@@ -36,6 +36,133 @@ def native_value(negative):
     for repetition in record['runs']:
         repetition['failures'] = copy.deepcopy(failures)
     return value
+
+
+def batch_value(command):
+    """Mock the exact suite selected by a native child, including its exit code."""
+    suites = [command[index + 1] for index, item in enumerate(command) if item == '--suite']
+    value = native_value('-negative' in command[3])
+    value['records'] = [row for row in value['records'] if row['suite'] in suites]
+    value['count'] = len(value['records'])
+    value['passed'] = not any(run['failures'] for row in value['records'] for run in row['runs'])
+    return int(not value['passed']), value
+
+
+class OwnershipBatchTests(unittest.TestCase):
+    # Value: protects=complete ordered native/Web equality; fails_when=batch loses or substitutes records; why_new=whole-run tests cannot exercise aggregation; seam=none
+    def batches(self, negative=False):
+        value = native_value(negative)
+        return [(suite, {**value, 'records': [row for row in value['records'] if row['suite'] == suite],
+                         'count': len(probes.EXPECTED[suite]),
+                         'passed': not (negative and suite.endswith('/test_buffer_ownership.gd'))})
+                for suite in sorted(probes.EXPECTED)]
+
+    def test_complete_batches_preserve_browser_record_order_and_repetitions(self):
+        for negative in (False, True):
+            with self.subTest(negative=negative):
+                value = probes.aggregate_native(self.batches(negative), negative)
+                expected = native_value(negative)
+                expected['records'].sort(key=lambda row: row['suite'])
+                self.assertEqual(value, expected)
+                self.assertEqual(value['count'], probes.EXPECTED_COUNT)
+
+    def test_aggregation_rejects_missing_duplicate_or_wrong_suite_batches(self):
+        for mutation in ('missing_batch', 'duplicate_batch', 'wrong_suite', 'missing_record', 'duplicate_record', 'count',
+                         'incomplete', 'errors', 'repeat', 'unrelated_failure', 'verdict', 'schema'):
+            with self.subTest(mutation=mutation):
+                batches = self.batches()
+                suite, value = batches[0]
+                if mutation == 'missing_batch':
+                    batches.pop()
+                elif mutation == 'duplicate_batch':
+                    batches.append(copy.deepcopy(batches[0]))
+                elif mutation == 'wrong_suite':
+                    value['records'][0]['suite'] = batches[1][0]
+                elif mutation == 'missing_record':
+                    value['records'].pop()
+                elif mutation == 'duplicate_record':
+                    value['records'][-1] = copy.deepcopy(value['records'][0])
+                elif mutation == 'count':
+                    value['count'] += 1
+                elif mutation == 'incomplete':
+                    value['complete'] = False
+                elif mutation == 'errors':
+                    value['errors'] = [{'kind': 'repeat_divergence'}]
+                elif mutation == 'repeat':
+                    value['records'][0]['runs'][1]['states'] = [{'frame': 0, 'bytes': '09'}]
+                elif mutation == 'unrelated_failure':
+                    for run in value['records'][0]['runs']:
+                        run['failures'] = [{'kind': 'unexpected'}]
+                elif mutation == 'verdict':
+                    value['passed'] = False
+                else:
+                    value['records'][0]['runs'][0]['assertions'] = True
+                with self.assertRaises(ValueError):
+                    probes.aggregate_native(batches, False)
+
+    def test_negative_batch_requires_only_the_exact_alias_failures(self):
+        for mutation in ('absent', 'unexpected', 'other_suite'):
+            with self.subTest(mutation=mutation):
+                batches = self.batches(True)
+                owner = next(value for suite, value in batches if suite.endswith('/test_buffer_ownership.gd'))
+                row = next(row for row in owner['records'] if row['case'] == 'owned_input')
+                if mutation == 'absent':
+                    for run in row['runs']:
+                        run['failures'] = []
+                elif mutation == 'unexpected':
+                    for run in row['runs']:
+                        run['failures'][0]['label'] = 'unrelated failure'
+                else:
+                    for run in batches[-1][1]['records'][0]['runs']:
+                        run['failures'] = [{'kind': 'unexpected'}]
+                    batches[-1][1]['passed'] = False
+                with self.assertRaises(ValueError):
+                    probes.aggregate_native(batches, True)
+
+
+class OwnershipExactSchemaTests(unittest.TestCase):
+    # Value: protects=lossless batch metadata; fails_when=unknown evidence is dropped by aggregation; why_new=required-key tests omit extra fields; seam=none
+    def test_unknown_result_record_and_repetition_fields_are_rejected(self):
+        for target in ('result', 'record', 'run'):
+            with self.subTest(target=target):
+                batches = OwnershipBatchTests().batches()
+                value = batches[0][1]
+                destination = {'result': value, 'record': value['records'][0], 'run': value['records'][0]['runs'][0]}[target]
+                destination['foreign_field'] = {'abort': 'unrecognized error'}
+                with self.assertRaises(ValueError):
+                    probes.aggregate_native(batches, False)
+
+    # Value: protects=exact nested numeric types; fails_when=bool/float aliases equal integers; why_new=only assertion-count types were checked; seam=none
+    def test_negative_failure_numeric_aliases_are_rejected(self):
+        for field in ('frame', 'byte'):
+            for alias in (False, 0.0):
+                with self.subTest(field=field, alias=repr(alias)):
+                    value = native_value(True)
+                    row = next(row for row in value['records'] if row['case'] == 'owned_input')
+                    for run in row['runs']:
+                        run['failures'][0][field] = alias
+                    with self.assertRaises(ValueError):
+                        probes.validate(value, True)
+
+    def test_states_require_exact_frame_bytes_schema(self):
+        for state in ({'frame': False, 'bytes': '0100'}, {'frame': 0.0, 'bytes': '0100'},
+                      {'frame': 0, 'bytes': False}, {'frame': 0}, {'frame': 0, 'bytes': '0100', 'foreign': True}):
+            with self.subTest(state=state):
+                value = result()
+                for run in value['records'][0]['runs']:
+                    run['states'] = [copy.deepcopy(state)]
+                with self.assertRaises(ValueError):
+                    probes.validate(value, False)
+
+    def test_json_comparison_distinguishes_nested_numeric_types(self):
+        control = {'records': [{'states': [{'frame': 0, 'bytes': '0100'}], 'failures': [{'byte': 0}]}]}
+        self.assertTrue(probes.same_json(control, copy.deepcopy(control)))
+        for field in ('states', 'failures'):
+            for alias in (False, 0.0):
+                with self.subTest(field=field, alias=repr(alias)):
+                    changed = copy.deepcopy(control)
+                    changed['records'][0][field][0]['frame' if field == 'states' else 'byte'] = alias
+                    self.assertFalse(probes.same_json(control, changed))
 
 
 NATIVE_PROGRESS = {'completed': 12, 'unit': 'tick',
@@ -129,15 +256,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                         changed.append(True)
 
                 def capture(command, environment, log, timeout):
-                    value = result()
-                    negative = '-negative' in command[3]
-                    if negative:
-                        value['passed'] = False
-                        record = next(row for row in value['records'] if row['case'] == 'owned_input')
-                        for repetition in record['runs']:
-                            repetition['failures'] = [
-                                {'label': label, 'kind': 'bytes', 'frame': 0, 'byte': 0, 'expected': '0100', 'actual': '0909'}
-                                for label in ('copied submission survives caller mutation', 'callback copy cannot edit history')]
+                    code, value = batch_value(command)
                     if mutation not in ('staged_copy', 'relocated_copy') and not changed:
                         filename = {'source': probes.FILES[0], 'manifest': 'docs/reference/pins.json',
                                     'imported_helper': 'scripts/reference/fetch.py'}[mutation]
@@ -145,7 +264,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                         target.write_bytes(target.read_bytes() + b'changed after capture')
                         changed.append(True)
                     log.write_text('preserved owned diagnostics', encoding='utf-8')
-                    return int(negative), probes.PREFIX + json.dumps(value)
+                    return code, probes.PREFIX + json.dumps(value)
 
                 def run(command, environment, log, timeout=180):
                     return '4.3.stable.fixture' if '--version' in command else ''
@@ -157,6 +276,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                       mock.patch.object(probes, 'fetch', return_value=archive), mock.patch.object(probes, 'run', side_effect=run),
                       mock.patch.object(probes, 'capture', side_effect=capture),
                       mock.patch.object(probes.shutil, 'copyfile', side_effect=copy_file),
+                      mock.patch.object(probes.host_capacity, 'acquire_when_free', return_value=True),
                       mock.patch.object(probes.platform, 'machine', return_value='x86_64'),
                       mock.patch.object(probes.platform, 'system', return_value='Linux'),
                       mock.patch('sys.argv', ['ownership_probes.py', '--offline'])):
@@ -165,7 +285,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 self.assertTrue(changed, 'fault must reach the staging/execution boundary')
                 self.assertFalse(receipt.exists(), 'failed attempt must remove stale success')
                 if mutation not in ('staged_copy', 'relocated_copy'):
-                    self.assertTrue(list(output.glob('ownership-*-native.log')), 'execution logs survive rejection')
+                    self.assertTrue(list(output.glob('ownership-*-native-*.log')), 'execution logs survive rejection')
 
     def test_interrupted_run_publishes_and_retains_case_progress(self):
         # A rejected run must name the case that was executing and the time the
@@ -277,7 +397,7 @@ class OwnershipRejectionTests(unittest.TestCase):
     # carry: the case that was executing, the errors the engine or the browser
     # reported, and the state the rejection found.
 
-    def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError):
+    def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -301,26 +421,67 @@ class OwnershipRejectionTests(unittest.TestCase):
         results = cache / 'results'
         results.mkdir(parents=True)
 
+        browser_calls = []
+
         def run(command, environment, log, timeout=180):
             if '--version' in command:
                 return f'{Path(command[0]).parent.name}.stable.fixture'
             if str(command[1]).endswith('ownership.cjs'):
+                browser_calls.append((command, log, timeout))
                 negative = '-negative' in str(command[2])
                 if browser_log is None:
-                    return json.dumps({'browser': 'Chromium', 'version': 'fixture',
-                                       'result': native_value(negative), 'errors': []})
+                    value = native_value(negative)
+                    suites = json.loads(command[3])
+                    value['records'] = [row for row in value['records'] if row['suite'] in suites]
+                    value['count'] = len(value['records'])
+                    value['passed'] = not any(run['failures'] for row in value['records'] for run in row['runs'])
+                    browser = {'browser': 'Chromium', 'version': 'fixture', 'result': value, 'errors': []}
+                    if len(browser_calls) == 1:
+                        if browser_fault == 'unknown':
+                            browser['foreign_field'] = {'abort': 'unrecognized error'}
+                        elif browser_fault == 'missing_errors':
+                            browser.pop('errors')
+                        elif browser_fault == 'missing_version':
+                            browser.pop('version')
+                        elif browser_fault == 'false_errors':
+                            browser['errors'] = False
+                        elif browser_fault == 'null_errors':
+                            browser['errors'] = None
+                        elif browser_fault == 'empty_version':
+                            browser['version'] = ''
+                        elif browser_fault == 'numeric_version':
+                            browser['version'] = 123
+                        elif browser_fault == 'wrong_browser':
+                            browser['browser'] = 'foreign browser'
+                    elif len(browser_calls) == 2 and browser_fault == 'changed_version':
+                        browser['version'] = 'changed fixture'
+                    return json.dumps(browser)
                 log.write_text(browser_log, encoding='utf-8')
                 raise RuntimeError('Godot/browser command failed')
             return ''
 
+        capture_calls = []
+
         def capture(command, environment, log, timeout):
-            negative = '-negative' in command[3]
-            output = probes.PREFIX + json.dumps(native_value(negative)) + '\n'
+            capture_calls.append((command, log, timeout))
+            code, value = batch_value(command)
+            output = probes.PREFIX + json.dumps(value) + '\n'
             output += probes.PROGRESS_PREFIX + json.dumps(NATIVE_PROGRESS) + '\n'
+            if len(capture_calls) == 2 and native_fault:
+                if native_fault == 'wrong_exit':
+                    code = 1
+                elif native_fault == 'missing_marker':
+                    output = probes.PROGRESS_PREFIX + json.dumps(NATIVE_PROGRESS) + '\n'
+                elif native_fault == 'duplicate_marker':
+                    output += probes.PREFIX + json.dumps(value) + '\n'
+                elif native_fault == 'script_error':
+                    output += 'SCRIPT ERROR: injected abort\n'
+                elif native_fault == 'engine_error':
+                    output += 'ERROR: injected leak\n'
             log.write_text(output, encoding='utf-8')
-            if native_timeout:
-                raise subprocess.TimeoutExpired(command, timeout, output=output)
-            return int(negative), output
+            if native_timeout or (len(capture_calls) == 2 and native_fault == 'timeout'):
+                raise subprocess.TimeoutExpired(command, timeout, output=output.encode('utf-8'))
+            return code, output
 
         data = {'godot': {'minimum': '4.3', 'current_stable': '4.7.2'},
                 'artifacts': {'Godot_v4.3-stable_linux.x86_64.zip': {},
@@ -334,6 +495,7 @@ class OwnershipRejectionTests(unittest.TestCase):
                 mock.patch.object(probes, 'fetch', return_value=archive), \
                 mock.patch.object(probes, 'run', side_effect=run), \
                 mock.patch.object(probes, 'capture', side_effect=capture), \
+                mock.patch.object(probes.host_capacity, 'acquire_when_free', return_value=True), \
                 mock.patch.object(probes.platform, 'machine', return_value='x86_64'), \
                 mock.patch.object(probes.platform, 'system', return_value='Linux'), \
                 mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web']):
@@ -343,6 +505,20 @@ class OwnershipRejectionTests(unittest.TestCase):
                 # The rejected run still fails: the diagnosis is kept, not swallowed.
                 with self.assertRaises(expected):
                     probes.main()
+        if expected is None:
+            selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
+                          for command, log, timeout in capture_calls]
+            self.assertEqual(selections, [[suite] for suite in sorted(probes.EXPECTED)] * 4,
+                             'each round runs every suite once, each under its own watchdog')
+            self.assertTrue(all(timeout == 180 for command, log, timeout in capture_calls))
+            logs = [log for command, log, timeout in capture_calls]
+            self.assertEqual(len(logs), len(set(logs)), 'each native batch keeps its own log')
+            groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
+            suites = sorted(probes.EXPECTED)
+            self.assertEqual(groups, [suites[offset:offset + 4] for offset in range(0, len(suites), 4)] * 4)
+            self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
+            browser_logs = [log for command, log, timeout in browser_calls]
+            self.assertEqual(len(browser_logs), len(set(browser_logs)), 'each browser batch keeps its own log')
         return results
 
     def rounds(self, results):
@@ -390,6 +566,35 @@ class OwnershipRejectionTests(unittest.TestCase):
         self.assertEqual(entry['native_progress']['elapsed'], 18)
         self.assertFalse(entry['alive'], 'the native child was killed by the deadline')
         self.assertFalse((results / 'ownership.json').exists(), 'a rejected run publishes no receipt')
+
+    # Value: protects=every browser batch's metadata; fails_when=an earlier malformed result is overwritten; why_new=single browser runs cannot erase prior metadata; seam=none
+    def test_browser_metadata_is_checked_before_aggregation(self):
+        for mutation in ('unknown', 'missing_errors', 'missing_version', 'false_errors', 'null_errors',
+                         'empty_version', 'numeric_version', 'wrong_browser', 'changed_version'):
+            with self.subTest(mutation=mutation):
+                results = self.scenario(browser_fault=mutation, expected=ValueError)
+                self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
+                self.assertFalse((results / 'ownership.json').exists())
+
+    # Value: protects=per-child exit and completion checks; fails_when=negative verdict leaks to healthy suites; why_new=aggregation has no process status; seam=none
+    def test_later_native_batch_rejects_wrong_exit_incomplete_output_and_engine_errors(self):
+        for mutation in ('wrong_exit', 'missing_marker', 'duplicate_marker', 'script_error', 'engine_error'):
+            with self.subTest(mutation=mutation):
+                results = self.scenario(native_fault=mutation, expected=ValueError)
+                self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
+                self.assertFalse((results / 'ownership.json').exists())
+                self.assertEqual(len(list(results.glob('ownership-*-native-*.log'))), 2)
+
+    # Value: protects=partial batch evidence; fails_when=later timeout hides completed batch or last case; why_new=first-child timeout cannot catch overwrites; seam=none
+    def test_later_native_timeout_keeps_each_log_and_last_case(self):
+        results = self.scenario(native_fault='timeout', expected=subprocess.TimeoutExpired)
+        entry = self.rounds(results)[0]
+        self.assertEqual(entry['outcome'], 'progressing')
+        self.assertEqual(entry['native_progress']['case'], 'parity')
+        self.assertFalse((results / 'ownership.json').exists())
+        logs = list(results.glob('ownership-*-native-*.log'))
+        self.assertEqual(len(logs), 2)
+        self.assertTrue(all(probes.PROGRESS_PREFIX in log.read_text(encoding='utf-8') for log in logs))
 
     def test_the_retained_observation_is_bounded(self):
         noisy = json.dumps({**BROWSER_DETAIL, 'errors': [f'engine error {index}' for index in range(50)]})

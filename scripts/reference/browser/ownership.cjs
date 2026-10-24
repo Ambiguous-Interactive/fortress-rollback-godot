@@ -1,11 +1,20 @@
-// Execute the same ownership suite in a real release Web export.
-const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+// Execute a bounded ownership suite batch in a real release Web export.
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 
 (async () => {
+  if (process.argv.length !== 4 || !process.argv[2]) throw new Error('expected export root and JSON suite batch');
+  let suites;
+  try { suites = JSON.parse(process.argv[3]); } catch { throw new Error('suite batch must be a JSON array'); }
+  if (!Array.isArray(suites) || suites.length < 1 || suites.length > 4 ||
+      suites.some(suite => typeof suite !== 'string' || !/^res:\/\/tests\/(unit|determinism)\/test_[a-z0-9_]+\.gd$/.test(suite)) ||
+      new Set(suites).size !== suites.length) {
+    throw new Error('suite batch must contain 1..4 unique canonical res://tests suite paths');
+  }
   const root = path.resolve(process.argv[2]);
+  if (!fs.statSync(root).isDirectory()) throw new Error('export root must be an existing directory');
+  const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const errors = [];
   const server = http.createServer((request, response) => {
     const relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -27,9 +36,11 @@ const path = require('node:path');
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
-    await page.goto(`http://127.0.0.1:${server.address().port}/index.html`);
+    const url = new URL(`http://127.0.0.1:${server.address().port}/index.html`);
+    for (const suite of suites) url.searchParams.append('suite', suite);
+    await page.goto(url.toString());
     try {
-      // The full inventory can exceed two minutes on bounded CI runners.
+      // Each batch keeps the existing page budget on bounded CI runners.
       await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
     } catch (error) {
       // The watchdog rejected the run before the inventory could be
@@ -37,7 +48,7 @@ const path = require('node:path');
       // can be told apart from a run that was merely too slow. The
       // inventory is printed first: reading the page can fail when the
       // renderer is gone, and that failure must not hide this one.
-      const detail = { stage: 'ownership-result', errors };
+      const detail = { stage: 'ownership-result', suites, errors };
       console.error(JSON.stringify(detail));
       try {
         detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);

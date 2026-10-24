@@ -14,6 +14,8 @@ Trigger: new verification capabilities and a review finding in an acceptance gat
 | Model checking the upstream spec does not observe the product. | The prior `spectator_launch.py` accepted an unused engine argument and reported that Godot was not projected. | Feed actual initial and post-states through pinned Init/Next, with skipped-input and callback-order controls. |
 | Numeric equality does not validate trace types. | `test_spectator_runtime.py` rejects boolean callback values, malformed rings and duplicate capacity workloads. | Apply the existing strict-schema procedure; add no duplicate rule. |
 | Final game bytes can conceal reordered original rows. | Swapping rows 10/11 in the peer reference game changes an intermediate prefix but preserves the final state. | Require independent corrected callback prefixes, following the existing temporal-mutation rule. |
+| A larger inventory exceeded a shared child deadline. | PR #202 ownership job 121015333085 timed out running all 338 cases in one native process. | Split native suites and Web groups while retaining every case, repetition, watchdog and full-result comparison. |
+| Aggregation can erase differing metadata before comparison. | Ownership regression controls inject unknown fields, numeric aliases and inconsistent browser metadata. | Reject unknown schemas and compare every batch with exact numeric types before aggregation. |
 
 The replay acceptance regression fails against the original validator and passes
 after repair. New runtime gates retain precise limits in the replay and spectator
@@ -25,7 +27,9 @@ Both changes receive fresh adversarial review and source-bound pinned-engine run
 Searched testing references, knowledge and review guidance before writing.
 Extended the existing oracle-validation home instead of creating another skill.
 The strict numeric schema and initial/post-state projection procedures already
-exist there and remain correct. Older retrospective records include an archive;
+exist there and remain correct. The infrastructure reference already requires
+isolating bounded cases when execution is serialized; retain that rule instead
+of raising timeouts or adding another copy. Older retrospective records include an archive;
 their incident evidence is not superseded by this session, so none was deleted.
 No production defect was established by the runtime audits; no speculative fix
 or new unsupported feature was added.

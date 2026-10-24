@@ -55,7 +55,14 @@ repetitions. The original serialization/decoding code was then restored. Raw
 evidence is `.cache/reference/results/r2-nested-retention-red.log`.
 
 The success receipt is `.cache/reference/results/ownership.json`; raw logs are
-`ownership-<engine>-<negative|positive>-<native|browser>.log` beside it. Receipts
+`ownership-<engine>-<negative|positive>-native-<suite>.log` and
+`ownership-<engine>-<negative|positive>-browser-<batch>.log` beside it.
+Native suites run in separate processes with a 180-second watchdog; Web pages
+run groups of at most four suites with the same 180-second page watchdog.
+Each browser launcher retains its 240-second process budget. Every case still
+runs twice in-process. Complete batch inventories and exact metadata/types are
+checked before the full native/Web results are compared; missing or duplicate
+batches cannot qualify. Receipts
 include the pin-manifest hash and executable source hashes. A fresh run removes
 its previous receipt first, so an interrupted or failed attempt cannot preserve
 an old success. The historical baseline before these probes was

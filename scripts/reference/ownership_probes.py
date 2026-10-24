@@ -247,7 +247,30 @@ func _ready() -> void:
 		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
-\tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
+\t# The launcher sends a bounded set of suites in URL parameters.
+\t# JSON decoding is a dynamic boundary; reject unknown or repeated paths.
+\tvar requested: Variant = JSON.parse_string(str(JavaScriptBridge.eval("JSON.stringify(new URLSearchParams(location.search).getAll('suite'))")))
+\tvar selected: Array[Script] = []
+\tvar seen: Dictionary = {}
+\tvar valid: bool = requested is Array and not requested.is_empty()
+\tif requested is Array:
+\t\tfor resource: Variant in requested:
+\t\t\tif not resource is String or seen.has(resource):
+\t\t\t\tvalid = false
+\t\t\t\tcontinue
+\t\t\tseen[resource] = true
+\t\t\tvar found: bool = false
+\t\t\tfor candidate: Script in scripts:
+\t\t\t\tif candidate.resource_path == resource:
+\t\t\t\t\tfound = true
+\t\t\tvalid = valid and found
+\tfor candidate: Script in scripts:
+\t\tif seen.has(candidate.resource_path):
+\t\t\tselected.append(candidate)
+\tif not valid:
+\t\tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(JSON.stringify({"complete": false})))
+\t\treturn
+\tvar result: Dictionary = Scenarios.new().execute(selected, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
 \n\n## A rejected run must name the case that was executing and the time the last
@@ -266,17 +289,44 @@ func _clock() -> int:
 '''
 
 
-def validate(result, negative):
+def same_json(first, second):
+    """Compare every JSON value without Python's bool/int/float aliases."""
+    if type(first) is not type(second):
+        return False
+    if isinstance(first, dict):
+        return first.keys() == second.keys() and all(same_json(first[key], second[key]) for key in first)
+    if isinstance(first, list):
+        return len(first) == len(second) and all(same_json(left, right) for left, right in zip(first, second))
+    return first == second
+
+
+def validate_browser(browser, identity):
+    """Do not discard an earlier batch's errors or browser identity."""
+    if not isinstance(browser, dict) or set(browser) != {'browser', 'version', 'result', 'errors'}:
+        raise ValueError('incorrect browser result fields')
+    if browser['browser'] != 'Chromium' or type(browser['version']) is not str or not browser['version']:
+        raise ValueError('incorrect browser identity')
+    if type(browser['errors']) is not list or browser['errors']:
+        raise ValueError('browser reported errors')
+    observed = (browser['browser'], browser['version'])
+    if identity is not None and observed != identity:
+        raise ValueError('browser identity changed between batches')
+    return observed
+
+
+def validate(result, negative, expected=None):
+    expected = EXPECTED if expected is None else expected
+    expected_count = sum(len(cases) for cases in expected.values())
     required = {'format', 'complete', 'count', 'errors', 'passed', 'records'}
-    if not isinstance(result, dict) or not required.issubset(result):
-        raise ValueError('missing result fields')
+    if not isinstance(result, dict) or set(result) != required:
+        raise ValueError('incorrect result fields')
     if type(result['format']) is not int or type(result['count']) is not int or type(result['passed']) is not bool:
         raise ValueError('incorrect result scalar types')
     if not isinstance(result['errors'], list) or not isinstance(result['records'], list):
         raise ValueError('incorrect result collection types')
     for record in result['records']:
         fields = {'suite', 'case', 'category', 'seed', 'runs'}
-        if not isinstance(record, dict) or not fields.issubset(record):
+        if not isinstance(record, dict) or set(record) != fields:
             raise ValueError('missing record fields')
         if any(not isinstance(record[key], str) for key in ('suite', 'case', 'category', 'seed')):
             raise ValueError('incorrect record scalar types')
@@ -284,7 +334,7 @@ def validate(result, negative):
             raise ValueError('incorrect repetition collection type')
         for repetition in record['runs']:
             fields = {'assertions', 'states', 'failures'}
-            if not isinstance(repetition, dict) or not fields.issubset(repetition):
+            if not isinstance(repetition, dict) or set(repetition) != fields:
                 raise ValueError('missing repetition fields')
             if type(repetition['assertions']) is not int or repetition['assertions'] < 1:
                 raise ValueError('incorrect assertion count')
@@ -292,19 +342,22 @@ def validate(result, negative):
                 raise ValueError('incorrect repetition collection types')
             if any(not isinstance(item, dict) for key in ('states', 'failures') for item in repetition[key]):
                 raise ValueError('incorrect diagnostic/state record types')
-    if result.get('format') != 1 or result.get('complete') is not True or result.get('count') != EXPECTED_COUNT:
+            for state in repetition['states']:
+                if set(state) != {'frame', 'bytes'} or type(state['frame']) is not int or type(state['bytes']) is not str:
+                    raise ValueError('incorrect state record schema')
+    if result.get('format') != 1 or result.get('complete') is not True or result.get('count') != expected_count:
         raise ValueError('missing/incomplete ownership result')
     observed = {(record['suite'], record['case']) for record in result['records']}
-    expected = {(suite, case) for suite, cases in EXPECTED.items() for case in cases}
+    expected = {(suite, case) for suite, cases in expected.items() for case in cases}
     if result.get('errors') or observed != expected:
         raise ValueError('wrong inventory or repeat divergence')
-    if len(result['records']) != EXPECTED_COUNT or result['passed'] != (not negative):
+    if len(result['records']) != expected_count or result['passed'] != (not negative):
         raise ValueError('unexpected ownership verdict')
     failures = []
     for record in result['records']:
         if record['seed'] != '1701' or record['category'] != 'determinism' or len(record['runs']) != 2:
             raise ValueError('incorrect seed, category or repetition accounting')
-        if record['runs'][0] != record['runs'][1]:
+        if not same_json(record['runs'][0], record['runs'][1]):
             raise ValueError('repeat divergence')
         for repetition in record['runs']:
             if repetition['assertions'] < 1:
@@ -318,11 +371,30 @@ def validate(result, negative):
             {'kind': 'bytes', 'label': label, 'frame': 0, 'byte': 0, 'expected': '0100', 'actual': '0909'}
             for label in expected_labels for _ in range(2)
         ]
-        if sorted(failures, key=lambda f: f.get('label', '')) != sorted(expected_failures, key=lambda f: f['label']):
+        if not same_json(sorted(failures, key=lambda f: f.get('label', '')), sorted(expected_failures, key=lambda f: f['label'])):
             raise ValueError('negative control failed for unexpected reason')
     elif failures:
         raise ValueError('ownership assertions failed')
     return result
+
+
+def negative_suite(suite, negative):
+    """Only the mutated ownership suite is expected to fail in a negative round."""
+    return negative and suite == 'res://tests/determinism/test_buffer_ownership.gd'
+
+
+def aggregate_native(batches, negative):
+    """Require every complete batch, retaining the browser's suite/case order."""
+    batches = [([suites] if isinstance(suites, str) else suites, result) for suites, result in batches]
+    if [suite for suites, result in batches for suite in suites] != sorted(EXPECTED):
+        raise ValueError('missing, duplicate or unordered suite batches')
+    records = []
+    for suites, result in batches:
+        expected = {suite: EXPECTED[suite] for suite in suites}
+        validate(result, any(negative_suite(suite, negative) for suite in suites), expected)
+        records.extend(result['records'])
+    return validate({'format': 1, 'complete': True, 'count': len(records), 'passed': not negative,
+                     'errors': [], 'records': records}, negative)
 
 
 def last_progress(output):
@@ -539,38 +611,44 @@ def run_probes(args, results):
                 '[node name="Ownership" type="Node"]\nscript = ExtResource("1")\n')
             base = [str(editor), '--headless', '--path', str(project)]
             run(base + ['--editor', '--quit'], environment, results / f'ownership-{label}-import.log')
-            # A failed negative test is expected, so inspect the exit code separately.
-            native_log = results / f'ownership-{label}-native.log'
-            try:
-                code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
-                                       + [argument for suite in EXPECTED for argument in ('--suite', suite)],
-                                       environment, native_log, timeout=180)
-            except subprocess.TimeoutExpired as error:
-                # The native deadline rejected the run. Its progress record
-                # names the case that was executing when the deadline fired.
-                output = captured_text(error.output) + captured_text(error.stderr)
+            # Each suite retains both in-process repetitions and its own 180s
+            # watchdog. A growing inventory must not merge bounded suites into
+            # one process that exceeds their shared deadline.
+            batches = []
+            for suite in sorted(EXPECTED):
+                native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
+                try:
+                    code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
+                                           + ['--suite', suite],
+                                           environment, native_log, timeout=180)
+                except subprocess.TimeoutExpired as error:
+                    # The native deadline rejected the run. Its progress record
+                    # names the case that was executing when the deadline fired.
+                    output = captured_text(error.output) + captured_text(error.stderr)
+                    progress = bounded_progress(last_progress(output), 'native')
+                    reject(started, rejected_state(progress), native_progress=progress, alive=False,
+                           errors=failure_lines(output))
+                    raise
+                except Exception:
+                    # The engine never ran: the tool failed before it produced output.
+                    reject(started, 'failed', alive=False,
+                           errors=failure_lines(native_log.read_text(encoding='utf-8', errors='replace')
+                                                if native_log.exists() else ''))
+                    raise
                 progress = bounded_progress(last_progress(output), 'native')
-                reject(started, rejected_state(progress), native_progress=progress, alive=False,
-                       errors=failure_lines(output))
-                raise
-            except Exception:
-                # The engine never ran: the tool failed before it produced output.
-                reject(started, 'failed', alive=False,
-                       errors=failure_lines(native_log.read_text(encoding='utf-8', errors='replace')
-                                            if native_log.exists() else ''))
-                raise
-            progress = bounded_progress(last_progress(output), 'native')
-            update(native_progress=progress)
-            try:
-                if code != (1 if negative else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
-                    raise ValueError('native command failed outside the intended control')
-                markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
-                if len(markers) != 1:
-                    raise ValueError('missing/duplicate native report')
-                native = validate(json.loads(markers[0]), negative)
-            except Exception:
-                reject(started, 'failed', alive=False, errors=failure_lines(output))
-                raise
+                update(native_progress=progress)
+                try:
+                    if code != (1 if negative_suite(suite, negative) else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
+                        raise ValueError('native command failed outside the intended control')
+                    markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
+                    if len(markers) != 1:
+                        raise ValueError('missing/duplicate native report')
+                    batch = validate(json.loads(markers[0]), negative_suite(suite, negative), {suite: EXPECTED[suite]})
+                    batches.append((suite, batch))
+                except Exception:
+                    reject(started, 'failed', alive=False, errors=failure_lines(output))
+                    raise
+            native = aggregate_native(batches, negative)
             record = {'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
@@ -597,27 +675,37 @@ def run_probes(args, results):
                 registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'
                 if digest(registry) != data['browser']['browser_registry_sha256']:
                     raise ValueError('browser registry differs from pin')
-                browser_log = results / f'ownership-{label}-browser.log'
-                try:
-                    output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export)], environment, browser_log, timeout=240)
-                    browser = json.loads(output)
-                    validate(browser['result'], negative)
-                    if browser['result'] != native:
-                        raise ValueError('native/web ownership divergence')
-                except Exception:
-                    # The browser watchdog rejected the run. Its inventory of
-                    # page and engine errors, and the progress the page
-                    # published, are in the log and not in the raised error,
-                    # so they are read back before the failure is raised again.
-                    text = browser_log.read_text(encoding='utf-8', errors='replace') if browser_log.exists() else ''
-                    detail = watchdog_detail(text)
-                    if detail is None:
-                        reject(started, 'failed', alive=False, errors=bounded_errors(text.splitlines()[-4:]))
+                browser_batches = []
+                browser_identity = None
+                ordered_suites = sorted(EXPECTED)
+                for batch_index, offset in enumerate(range(0, len(ordered_suites), 4)):
+                    suites = ordered_suites[offset:offset + 4]
+                    browser_log = results / f'ownership-{label}-browser-{batch_index:02d}.log'
+                    try:
+                        output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export), json.dumps(suites)], environment, browser_log, timeout=240)
+                        browser = json.loads(output)
+                        browser_identity = validate_browser(browser, browser_identity)
+                        validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
+                                 {suite: EXPECTED[suite] for suite in suites})
+                        browser_batches.append((suites, browser['result']))
+                    except Exception:
+                        # The browser watchdog rejected the run. Its inventory of
+                        # page and engine errors, and the progress the page
+                        # published, are in the log and not in the raised error,
+                        # so they are read back before the failure is raised again.
+                        text = browser_log.read_text(encoding='utf-8', errors='replace') if browser_log.exists() else ''
+                        detail = watchdog_detail(text)
+                        if detail is None:
+                            reject(started, 'failed', alive=False, errors=bounded_errors(text.splitlines()[-4:]))
+                            raise
+                        browser_progress = bounded_progress(detail.get('progress'), 'browser')
+                        reject(started, rejected_state(browser_progress), browser_progress=browser_progress,
+                               alive=detail_alive(detail), errors=detail_errors(detail))
                         raise
-                    browser_progress = bounded_progress(detail.get('progress'), 'browser')
-                    reject(started, rejected_state(browser_progress), browser_progress=browser_progress,
-                           alive=detail_alive(detail), errors=detail_errors(detail))
-                    raise
+                browser['result'] = aggregate_native(browser_batches, negative)
+                if not same_json(browser['result'], native):
+                    reject(started, 'failed', alive=False, errors=['native/web ownership divergence'])
+                    raise ValueError('native/web ownership divergence')
                 record.update(browser=browser, browser_artifact=browser_name, template_artifact=template_name)
             records.append(record)
             finish(started)
