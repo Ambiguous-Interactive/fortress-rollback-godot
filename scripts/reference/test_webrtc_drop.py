@@ -78,6 +78,56 @@ class PeerDropEvidence(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_drop_browser(value)
 
+    def test_physical_departure_requires_closed_connections_before_continuation(self):
+        original = evidence()
+        original['dropClose'] = True
+        departure = {'frame': 6, 'survivor_frames': [6, 6], 'connections_created': 2, 'connections_closed': 2,
+                     'channels_created': 6, 'channels_closed': 6}
+        original['records'][0]['peers'][2]['rtc']['departure'] = departure
+        for peer in original['records'][0]['peers'][:2]:
+            peer['rtc']['channels'][2].update(restoredSent=10, postDropReceived=10)
+            peer['rtc']['binarySent'] = 3
+            peer['rtc']['maximumRelayBuffered'] = 1024
+            peer['result']['records'][0]['mixed'] = {'switched': True, 'relay_peers': 1, 'caller_pending': 0,
+                                                   'maximum_pending': 2, 'maximum_relay_pending': 0, 'maximum_relay_received': 0,
+                                                   'route_budget': 8, 'send_budget': 32, 'receive_budget': 32}
+        self.assertIs(validate_drop_browser(original, physical_close=True), original)
+        for field in departure:
+            for replacement in (None, True, 1.0, -1):
+                value = copy.deepcopy(original)
+                value['records'][0]['peers'][2]['rtc']['departure'][field] = replacement
+                with self.subTest(field=field, replacement=replacement), self.assertRaisesRegex(ValueError, 'physical departure'):
+                    validate_drop_browser(value, physical_close=True)
+        for field, replacement in [('switched', False), ('relay_peers', 0), ('relay_peers', True), ('caller_pending', 1)]:
+            value = copy.deepcopy(original)
+            value['records'][0]['peers'][0]['result']['records'][0]['mixed'][field] = replacement
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'bounded fallback'):
+                validate_drop_browser(value, physical_close=True)
+        for field in ('restoredSent', 'postDropReceived'):
+            for replacement in (0, True, 1.0):
+                value = copy.deepcopy(original)
+                value['records'][0]['peers'][0]['rtc']['channels'][2][field] = replacement
+                with self.assertRaisesRegex(ValueError, 'surviving direct link'):
+                    validate_drop_browser(value, physical_close=True)
+        for field in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received', 'route_budget', 'send_budget', 'receive_budget'):
+            for replacement in (True, -1, 129):
+                value = copy.deepcopy(original)
+                value['records'][0]['peers'][0]['result']['records'][0]['mixed'][field] = replacement
+                with self.subTest(field=field, replacement=replacement), self.assertRaises(ValueError):
+                    validate_drop_browser(value, physical_close=True)
+        for replacement in (True, -1, 262145):
+            value = copy.deepcopy(original)
+            value['records'][0]['peers'][0]['rtc']['maximumRelayBuffered'] = replacement
+            with self.assertRaisesRegex(ValueError, 'socket exceeded'):
+                validate_drop_browser(value, physical_close=True)
+        for replacement in (0, True, 1.0):
+            value = copy.deepcopy(original)
+            value['records'][0]['peers'][0]['rtc']['binarySent'] = replacement
+            with self.assertRaisesRegex(ValueError, 'bounded fallback'):
+                validate_drop_browser(value, physical_close=True)
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            validate_drop_browser(original)
+
     def test_corruption_must_fail_post_drop_canonical_comparison(self):
         original = evidence(True)
         self.assertIs(validate_drop_browser(original, True), original)

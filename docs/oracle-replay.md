@@ -79,3 +79,17 @@ snapshot seek acceleration or network-fault replay.
 Native/browser gameplay replay evidence remains in the
 [ownership experiment](experiments/buffer-ownership.md) and
 [online example](online-example.md#record-and-download-a-replay).
+
+## Dropped-player recordings on native and Web
+
+The ownership witness also runs `test_replay_drop.gd` on both pinned native
+engines and their exported Chromium builds. It records changing inputs, freezes
+a departed slot below a receipt-staged tail, repairs predicted or actual rows,
+then serializes and decodes the finalized version-5 recording. Callback and
+expert playback must match every original status-sensitive canonical boundary;
+the complete native and browser records must be identical. A failed repair
+must keep its uncorrected tail private.
+
+These cases qualify Godot playback of finalized disconnected statuses. They do
+not establish upstream status-sensitive recording parity or the remaining
+Firefox, WebKit and cross-platform release gates in #45.

@@ -91,6 +91,7 @@ func _staged_drop(context: RefCounted, certified: bool, predicted: bool, failed_
 	context.equal(recording.frame_count(), FRAMES, "recovery publishes the complete retained tail")
 	context.equal(recording.skipped_frames(), 0, "staged history survives without neutral substitution")
 	var expected: StatusGame = StatusGame.new()
+	var prefixes: Array[PackedByteArray] = []
 	for frame: int in range(FRAMES):
 		var disconnected: bool = frame > CUT
 		var remote: PackedByteArray = frozen_value if disconnected else _remote(frame)
@@ -99,6 +100,7 @@ func _staged_drop(context: RefCounted, certified: bool, predicted: bool, failed_
 		context.equal(inputs.read(1).bytes, remote, "the replay tail repeats the certified value")
 		context.equal(inputs.read(1).status, statuses[1], "the replay carries disconnect semantics")
 		context.equal(expected.simulate_frame(frame, Types.FrameInputs.new([PackedByteArray([Game.RIGHT]), remote], statuses)), true, "advance independent frozen history")
+		prefixes.append(expected.canonical_bytes())
 	context.bytes_equal(game.canonical_bytes(), expected.canonical_bytes(), FRAMES, "live recovery matches independent status-sensitive history")
 	context.equal(before.frame_count(), CUT + 1, "the earlier exported prefix remains caller owned")
 	var decoded: Replay = Replay.new()
@@ -106,12 +108,13 @@ func _staged_drop(context: RefCounted, certified: bool, predicted: bool, failed_
 	var playback: StatusGame = StatusGame.new()
 	var player: Player = Player.new()
 	context.equal(player.configure(decoded, playback, Game.SNAPSHOT_BYTES), Types.Code.OK, "configure checksum-validated playback")
-	var code: int = Types.Code.OK
-	while code == Types.Code.OK:
-		code = player.step()
-	context.equal(code, Types.Code.FRAME_EXHAUSTED, "no stale pre-drop checksum survives playback")
+	for frame: int in range(FRAMES):
+		context.equal(player.step(), Types.Code.OK, "play each corrected recorded frame")
+		context.bytes_equal(playback.canonical_bytes(), prefixes[frame], frame + 1, "callback replay matches each original status-sensitive prefix")
+		context.state(frame + 1, playback.canonical_bytes())
+	context.equal(player.step(), Types.Code.FRAME_EXHAUSTED, "no stale pre-drop checksum survives playback")
 	context.bytes_equal(playback.canonical_bytes(), expected.canonical_bytes(), FRAMES, "replay matches independent status-sensitive history")
-	_expert_playback(context, decoded, expected)
+	_expert_playback(context, decoded, expected, prefixes)
 	context.state(FRAMES, playback.canonical_bytes())
 
 
@@ -135,7 +138,7 @@ func _failed_recovery(context: RefCounted, session: Session, config: Config) -> 
 	context.equal(session.replay().frame_count(), CUT + 2, "the prior repair fence cannot cap a fresh lifetime")
 
 
-func _expert_playback(context: RefCounted, recording: Replay, expected: StatusGame) -> void:
+func _expert_playback(context: RefCounted, recording: Replay, expected: StatusGame, prefixes: Array[PackedByteArray]) -> void:
 	var player: Player = Player.new()
 	var game: StatusGame = StatusGame.new()
 	context.equal(player.configure_expert(recording, Game.SNAPSHOT_BYTES), Types.Code.OK, "configure expert replay with checksum validation")
@@ -160,5 +163,7 @@ func _expert_playback(context: RefCounted, recording: Replay, expected: StatusGa
 			context.equal(completed.code, Types.Code.OK, "expert applies the recorded statuses and validates checksums")
 			if completed.code != Types.Code.OK:
 				return
+		context.bytes_equal(game.canonical_bytes(), prefixes[frame], frame + 1, "expert replay matches each original status-sensitive prefix")
+		context.state(frame + 1, game.canonical_bytes())
 	context.equal(player.begin_advance().code, Types.Code.FRAME_EXHAUSTED, "expert finishes exactly at the recorded tail")
 	context.bytes_equal(game.canonical_bytes(), expected.canonical_bytes(), FRAMES, "expert matches independent status-sensitive history")

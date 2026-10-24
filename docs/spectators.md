@@ -414,3 +414,44 @@ mesh roster must not be extended to admit spectators without those contracts.
 The [native SDK spectator relay qualification](reference/spectator-relay-qualification.md)
 records the newer dependency drill on both engine pins. It does not qualify an
 exported Fortress spectator or advance this repository's reviewed dependency pins.
+
+## SignalFish viewer ingress
+
+`FortressSignalFishSpectatorRelay` is a receive-only bridge from the SDK's
+`game_data_binary_received` signal to an existing `FortressSpectatorStream`.
+Attach it after a spectator baseline, with the agreed host UUID and bounded
+receive options. It requires v3 `spectator_relay`, raw `message_pack`, and a
+currently connected SDK spectator role. No player membership is created or changed.
+
+The bridge checks SDK sender attribution and the stream's authenticated match
+identity before retaining bytes. It owns copies, bounds packets, bytes and work,
+and polls elapsed host expiry before processing its queue. Playback pressure
+retains the exact refused row. An accepted keepalive takes priority over rows,
+so a paused or full viewer can still observe host liveness without input progress.
+Capacity overflow ends playback explicitly and releases retained packets.
+Connection loss, room replacement, identity changes and stream replacement retire
+that delivery lifetime. Retained callbacks from a detached bridge cannot deliver
+into a later configuration. Call `poll(now_us)` even while playback is paused;
+`detach()` also terminates the owned viewer.
+
+```gdscript
+const SpectatorRelay = preload("res://addons/fortress_rollback/transport/signalfish_spectator_relay.gd")
+
+var relay: RefCounted = SpectatorRelay.new()
+var limits: RefCounted = SpectatorRelay.Options.new()
+limits.max_packet_bytes = 1024
+var code: int = relay.configure(client, sdk_config, protocol_info, stream, agreed_host_uuid, limits)
+```
+
+This boundary has deterministic public-interface doubles, including
+canonical playback, strict deadline equality, bounded pressure and stale lifetimes.
+It does not yet have a real SDK/server or exported-browser Fortress witness.
+
+Spectator relay is read-only. The qualified SDK refuses spectator
+`send_game_data_binary` calls. Receiving an authenticated OFFER makes
+`stream.encode_accept()` available to the caller; this adapter never sends it
+or assumes host acceptance. A separate authenticated control path must deliver
+those bytes to `publisher.receive_accept()` before the publisher emits rows.
+That control path, initial-state agreement, host publication over SignalFish,
+real relay acceptance and source/model comparison remain in #131 and #47.
+The native dependency qualification does not establish those missing boundaries.

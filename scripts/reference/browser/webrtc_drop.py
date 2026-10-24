@@ -2,9 +2,9 @@
 import re
 import hashlib
 
-def validate_drop_browser(result, corrupt=False):
+def validate_drop_browser(result, corrupt=False, physical_close=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
-            or result.get('dropCorrupt') is not corrupt or result.get('errors') != []
+            or result.get('dropCorrupt') is not corrupt or result.get('dropClose', False) is not physical_close or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
@@ -52,7 +52,36 @@ def validate_drop_browser(result, corrupt=False):
         if (row.get('departed') is not (index == 2) or type(row.get('frames_submitted')) is not int
                 or row['frames_submitted'] != (7 if index == 2 else 40)):
             raise ValueError('peer-drop departure or continued input missing')
-        if index == 2: continue
+        if index == 2:
+            if physical_close:
+                departure = rtc.get('departure', {})
+                for field, expected in [('frame', 6), ('channels_created', 6), ('channels_closed', 6)]:
+                    if type(departure.get(field)) is not int or departure[field] != expected:
+                        raise ValueError('peer-drop physical departure incomplete')
+                if (departure.get('survivor_frames') != [6, 6] or any(type(frame) is not int for frame in departure['survivor_frames'])
+                        or type(departure.get('connections_created')) is not int or departure['connections_created'] < 2
+                        or type(departure.get('connections_closed')) is not int
+                        or departure['connections_closed'] != departure['connections_created']):
+                    raise ValueError('peer-drop physical departure incomplete')
+            continue
+        if physical_close:
+            mixed = row.get('mixed', {})
+            continuing = [channel for channel in channels if channel.get('id') == 3 and type(channel.get('restoredSent')) is int
+                          and channel['restoredSent'] > 0 and type(channel.get('postDropReceived')) is int and channel['postDropReceived'] > 0]
+            if len(continuing) != 1:
+                raise ValueError('peer-drop surviving direct link did not continue physical delivery')
+            if (type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 1
+                    or mixed.get('switched') is not True or type(mixed.get('relay_peers')) is not int or mixed['relay_peers'] != 1
+                    or type(mixed.get('caller_pending')) is not int or mixed['caller_pending'] != 0):
+                raise ValueError('peer-drop physical outage did not use bounded fallback')
+            for field in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received'):
+                if type(mixed.get(field)) is not int or not 0 <= mixed[field] <= 128:
+                    raise ValueError('peer-drop fallback queue exceeded its bound')
+            for field, expected in [('route_budget', 8), ('send_budget', 32), ('receive_budget', 32)]:
+                if type(mixed.get(field)) is not int or mixed[field] != expected:
+                    raise ValueError('peer-drop fallback work budget changed')
+            if type(rtc.get('maximumRelayBuffered')) is not int or not 0 <= rtc['maximumRelayBuffered'] <= 262144:
+                raise ValueError('peer-drop relay socket exceeded its bound')
         for field, expected in [('players', 3), ('state', 'committed'), ('drop_events', 1), ('canonical_comparisons', 38), ('active_comparisons', 30)]:
             if row.get(field) != expected or (type(expected) is int and type(row.get(field)) is not int):
                 raise ValueError('peer-drop agreement or canonical history incomplete')

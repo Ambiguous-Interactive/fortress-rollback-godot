@@ -1,7 +1,7 @@
 // Value: constructor tracking charges orphan connections that never create a data channel.
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { instrument, isDropCanonicalFailure, resourcesClosed } = require('./webrtc.cjs');
+const { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc } = require('./webrtc.cjs');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
@@ -365,4 +365,45 @@ test('drop teardown includes every tracked signaling socket', () => {
   context.window.fortressResources.channels[0].readyState = 'closed';
   context.window.fortressResources.connections[0].connectionState = 'connected';
   assert.equal(closed(true), false);
+});
+
+// Value: real RTC closure must finish while survivors remain at their original pre-drop boundary.
+test('physical peer departure waits for stopped service and every RTC close before recording evidence', async () => {
+  for (const mutation of ['none', 'advanced', 'released', 'not-stopped', 'channel-open']) {
+    const contexts = Array.from({ length: 3 }, (_, index) => vm.createContext({
+      window: { fortressDropGo: mutation === 'released' && index === 0, fortressRtc: {},
+        fortressResources: { connections: [], channels: [] } },
+      document: { body: { dataset: { fortressFrame: mutation === 'advanced' && index === 0 ? '7' : '6',
+        fortressGameplayDone: mutation === 'not-stopped' ? 'false' : 'true' } } },
+    }));
+    const departing = contexts[2].window;
+    const channels = Array.from({ length: 6 }, () => ({ readyState: 'open' }));
+    departing.fortressResources.channels = channels;
+    departing.fortressResources.connections = Array.from({ length: 4 }, () => ({ connectionState: 'connected', close() {
+      this.connectionState = 'closed';
+      if (mutation !== 'channel-open') for (const channel of channels) channel.readyState = 'closed';
+    } }));
+    let waits = 0;
+    const pages = contexts.map(context => ({
+      async evaluate(operation, argument) {
+        context.argument = argument;
+        return vm.runInContext(`(${operation.toString()})(argument)`, context);
+      },
+      async waitForFunction(operation) {
+        waits++;
+        if (!vm.runInContext(`(${operation.toString()})()`, context)) throw new Error('not ready');
+      },
+    }));
+    if (mutation === 'none') {
+      await closeDepartingRtc(pages);
+      assert.equal(waits, 2);
+      assert.deepEqual(JSON.parse(JSON.stringify(departing.fortressRtc.departure)), {
+        frame: 6, survivor_frames: [6, 6], connections_created: 4, channels_created: 6, connections_closed: 4, channels_closed: 6,
+      });
+      assert.ok(contexts.slice(0, 2).every(context => context.window.fortressDropGo === false));
+    } else {
+      await assert.rejects(closeDepartingRtc(pages));
+      assert.equal(departing.fortressRtc.departure?.channels_closed, undefined);
+    }
+  }
 });

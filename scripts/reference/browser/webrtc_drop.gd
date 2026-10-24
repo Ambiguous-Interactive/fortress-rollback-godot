@@ -44,7 +44,10 @@ func run(host: Node, count: int) -> bool:
 			return false
 		await host.get_tree().create_timer(0.002).timeout
 	JavaScriptBridge.eval("document.body.dataset.fortressDropReady = 'true'")
-	if not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), true):
+	if JavaScriptBridge.eval("window.fortressDropClose || false"):
+		if not await host._wait_cleanup("window.fortressDropGo || false"):
+			return false
+	elif not await host._wait(func() -> bool: return JavaScriptBridge.eval("window.fortressDropGo || false"), true):
 		return false
 	if host.local_index == 2:
 		host.records.append(
@@ -150,7 +153,8 @@ func run(host: Node, count: int) -> bool:
 			"canonical_comparisons": 38,
 			"active_comparisons": comparisons,
 			"rollback_loads": host.games[0].loads,
-			"direct": host._transport_totals()
+			"direct": host._transport_totals(),
+			"mixed": host.mixed.report() if host.mixed_enabled else {}
 		}
 	)
 	return true
