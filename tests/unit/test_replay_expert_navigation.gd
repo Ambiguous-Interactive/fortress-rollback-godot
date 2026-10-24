@@ -69,6 +69,10 @@ func _navigation_parity(context: RefCounted) -> void:
 		context.equal(callback.configure(replay, control, Simulation.SNAPSHOT_BYTES, 3, 3), Types.Code.OK, "callback cache configures")
 		for frame: int in 12:
 			context.equal(callback.step(), Types.Code.OK, "callback canonical control")
+		context.equal(expert.checkpoint_frames(), PackedInt64Array([0, 6, 9]), "expert inventory lists actual retained validated checkpoints")
+		var inventory: PackedInt64Array = expert.checkpoint_frames()
+		inventory.clear()
+		context.equal(expert.checkpoint_frames(), callback.checkpoint_frames(), "callback and manual modes expose identical owned inventories")
 		var checked: int = expert.checked_checksum_count()
 		for pair: Array in [[8, 6], [11, 9], [0, 0], [5, 0]]:
 			if pair[0] == 5:

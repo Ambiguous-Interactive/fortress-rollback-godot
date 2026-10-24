@@ -206,6 +206,25 @@ func seek(frame: int) -> bool:
 	return true
 
 
+## The nearest retained checkpoint strictly before or after the displayed boundary, or -1.
+## A failed recording must restart before its checkpoints can be used again.
+func checkpoint_target(forward: bool) -> int:
+	if is_seeking() or _player.failure_frame() >= 0:
+		return -1
+	var target: int = -1
+	for frame: int in _player.checkpoint_frames():
+		if forward and frame > current_frame():
+			return frame
+		if not forward and frame < current_frame():
+			target = frame
+	return target
+
+
+func seek_checkpoint(forward: bool) -> bool:
+	var target: int = checkpoint_target(forward)
+	return target >= 0 and seek(target)
+
+
 func is_seeking() -> bool:
 	return _seek_target >= 0
 

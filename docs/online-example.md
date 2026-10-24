@@ -173,6 +173,8 @@ Pause, stepping, seeking and speed changes clear any partial
 slow-motion frame; restart and new imports keep your selected speed.
 Press **Back one frame** to inspect the preceding state, including after completion or a checksum failure.
 It pauses playback and uses the same bounded navigation as **Go**; **Cancel seek** can interrupt a long restore.
+Use **Previous checkpoint** and **Next checkpoint** to jump between retained, validated five-second boundaries.
+These controls become available as playback builds its cache. They finish paused and cannot skip a playback failure.
 Enter a frame number and press **Go** to navigate forward or backward. Navigation
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**

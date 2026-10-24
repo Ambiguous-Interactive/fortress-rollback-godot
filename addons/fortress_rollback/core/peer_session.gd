@@ -756,12 +756,13 @@ func _check_failure() -> void:
 		_remember_diagnostic()
 
 
-## Step result with the core session's terminal cause and failure frame attached.
+## Step result with the core session's terminal cause and failed callback metadata attached.
 func _result(code: int, before: int, after: int) -> Driver.StepResult:
 	var result: Driver.StepResult = Driver.StepResult.new(code, before, after)
 	var status: Types.Status = _core.status() if _core != null else Types.Status.new()
 	result.reason = status.reason
 	result.failure_frame = status.failure_frame
+	result.failure_kind = status.failure_kind
 	return result
 
 

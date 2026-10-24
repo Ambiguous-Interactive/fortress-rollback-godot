@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add failed callback kinds to driver and peer step/recovery results, preserving the first failure through later calls.
+
+- Add retained replay checkpoint listings and Previous/Next checkpoint viewer controls for paused inspection.
+
+- Add an L control to demonstrate spectator host-link loss, stop buffered viewing immediately, and restart with R while the host keeps playing.
+
 - Add bounded expert replay checkpoint navigation through `begin_restore_before()`, with ordered load and save validation before selecting the restored frame.
 
 - Add `FortressReplayPlayer.begin_validate_current_frame()` so expert clients can validate paused inputs and state without advancing playback.

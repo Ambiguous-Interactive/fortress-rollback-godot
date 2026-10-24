@@ -24,7 +24,12 @@ respects the viewing delay; it waits when confirmed inputs are unavailable.
 The host continues playing during inspection. E stops the host at its current
 frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
-After the last frame, press N once more to report completion. R starts a fresh game.
+After the last frame, press N once more to report completion.
+Press L to simulate a known loss of the viewer's host connection. Buffered viewer
+frames stop immediately, including while paused, and the last displayed state remains.
+The host keeps playing. R starts a fresh game after completion or connection loss.
+This control reports known loss directly to the spectator session; it does not
+close a real network connection or simulate elapsed host timeout.
 
 A long viewer pause can exhaust retained host history. The viewer then stops
 with `HISTORY_UNAVAILABLE`; the host keeps playing. The example encodes and receives spectator byte packets

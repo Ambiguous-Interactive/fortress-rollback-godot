@@ -23,6 +23,7 @@ var viewer_code: int = Types.Code.OK
 var next_host_frame: int = 0
 var is_finishing: bool = false
 var is_host_finished: bool = false
+var is_host_connection_lost: bool = false
 var _tick_count: int = 0
 
 
@@ -70,6 +71,7 @@ func start() -> int:
 	next_host_frame = 0
 	is_finishing = false
 	is_host_finished = false
+	is_host_connection_lost = false
 	_tick_count = 0
 	return Types.Code.OK
 
@@ -98,6 +100,20 @@ func step_viewer() -> int:
 		return viewer_code
 	var samples: Array[Driver.LocalInput] = []
 	viewer_code = driver.step(_tick_count * Host.TICK_US, samples).code
+	return viewer_code
+
+
+## Report a known unexpected loss of the viewer's host link, without stopping the player session.
+## Buffered rows stop immediately; restart creates a fresh host and viewer from their initial state.
+func lose_host_connection() -> int:
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	if viewer.status().lifecycle == Types.Lifecycle.TERMINATED:
+		viewer_code = viewer.status().reason
+		return viewer_code
+	is_host_connection_lost = true
+	viewer.terminate(Types.Code.PROTOCOL_FAILED)
+	viewer_code = Types.Code.PROTOCOL_FAILED
 	return viewer_code
 
 

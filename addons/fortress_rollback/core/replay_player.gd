@@ -335,6 +335,16 @@ func _retain_checkpoint(checkpoint: Checkpoint) -> void:
 	_checkpoints.sort_custom(func(first: Checkpoint, second: Checkpoint) -> bool: return first.frame < second.frame)
 
 
+## Owned ascending frame numbers of retained, successfully validated checkpoints.
+## Empty before the first cache save or when checkpoint caching is disabled. Evicted entries are absent.
+## Failure stops restoration even while its diagnostic inventory remains available; configure clears it.
+func checkpoint_frames() -> PackedInt64Array:
+	var frames: PackedInt64Array = PackedInt64Array()
+	for checkpoint: Checkpoint in _checkpoints:
+		frames.append(checkpoint.frame)
+	return frames
+
+
 ## Restore the nearest cached boundary at or before target, then call step to reach it.
 ## Only checkpoints validated by this player are eligible. Cache bytes are bounded by configure.
 ## A target ahead of the current state never moves backward. Failures stop playback.

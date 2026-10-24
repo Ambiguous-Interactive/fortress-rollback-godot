@@ -158,8 +158,10 @@ current and confirmed frame, the lifecycle, the terminal `reason` and the `failu
 `driver.confirmed_inputs(frame)` returns owned finalized inputs for confirmed, simulated frames
 outside pending correction. It returns null when unavailable, including during callbacks.
 Read rows before the bounded input history wraps; returned rows survive later driver calls.
-Every step result carries the same terminal `reason` and `failure_frame`, so a client that
-only holds the driver still learns why a session stopped.
+Every step and recovery result carries the same terminal `reason`, `failure_frame` and `failure_kind`,
+including peer sessions. `failure_kind` identifies the failed `Types.Kind.SAVE`, `LOAD` or `ADVANCE`
+callback; it is -1 when termination did not identify a callback. These values preserve the first
+failure through later rejected calls, so a client can identify the callback that stopped its game.
 
 To stop recording at the current simulated frame, stop submitting new samples,
 continue delivering outstanding remote inputs, and call `driver.recover(now_us)`.
@@ -351,6 +353,10 @@ Both default to zero. Enable both together with a positive snapshot size,
 a capacity of 2–1024, and callback games implementing `load_state`. Expert clients dispatch the load themselves. Reserved snapshot bytes
 (`capacity * max_snapshot_bytes`) must not exceed 16 MiB. The initial checkpoint is
 retained; the oldest later checkpoint is evicted when the cache fills.
+
+`checkpoint_frames()` returns an owned ascending list of retained, successfully validated boundaries.
+Use it to offer navigation targets in callback or expert clients. It excludes evicted entries and is empty before the first cache save.
+The inventory remains readable after failure, but restoration stays blocked until reconfiguration clears both failure and cache.
 
 `restore_before(target)` restores the nearest retained boundary at or before the target.
 Continue calling `step()` in a caller-bounded loop to reach the exact target. Forward

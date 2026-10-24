@@ -80,12 +80,20 @@ func _local(context: RefCounted, malformed: bool, terminating: bool) -> void:
 			game.fail_kind = kind if malformed else -1
 			game.terminate_session = session if terminating else null
 			var notices: Array[int] = []
-			driver.step_completed.connect(func(code: int, _before: int, _after: int) -> void: notices.append(code))
+			var recursive: Array[RefCounted] = []
+			var owner: WeakRef = weakref(driver)
+			driver.step_completed.connect(func(code: int, _before: int, _after: int) -> void:
+				notices.append(code)
+				recursive.append(owner.get_ref().recover(frame))
+			)
 			var count_before: int = game.callbacks
 			var result: Driver.StepResult = driver.step(frame, fixture._samples(frame))
 			var expected: int = Types.Code.TERMINATED if terminating else (Types.Code.CALLBACK_FAILED if malformed else Types.Code.OK)
 			context.equal(result.code, expected, "dynamic callback outcome")
+			context.equal(result.get("failure_kind"), kind if malformed and not terminating else -1, "step identifies the failed callback")
 			context.equal(notices, [expected], "one final notification")
+			context.equal(recursive[0].code, Types.Code.BUSY, "completion handlers remain guarded")
+			context.equal(recursive[0].get("failure_kind"), result.get("failure_kind"), "guarded result retains terminal callback identity")
 			if malformed:
 				context.equal(result.frame_after, frame, "failed frontier is unpublished")
 				context.equal(game.callbacks - count_before, 2 if kind == Types.Kind.ADVANCE else 1, "later callbacks skipped")
@@ -97,7 +105,10 @@ func _local(context: RefCounted, malformed: bool, terminating: bool) -> void:
 				if not terminating:
 					context.equal(session.status().failure_kind, kind, "failure identifies malformed callback")
 				var count: int = game.callbacks
-				context.equal(driver.step(frame, fixture._samples(frame)).code, Types.Code.TERMINATED, "failure cannot retry")
+				var retry: Driver.StepResult = driver.step(frame, fixture._samples(frame))
+				context.equal(retry.code, Types.Code.TERMINATED, "failure cannot retry")
+				context.equal(retry.get("failure_kind"), kind if not terminating else -1, "retry preserves the first callback failure")
+				context.equal(driver.recover(frame).get("failure_kind"), kind if not terminating else -1, "recovery preserves the first callback failure")
 				context.equal(game.callbacks, count, "no callbacks after failure")
 				var replacement: Config = Config.new()
 				replacement.max_snapshot_bytes = 8
@@ -118,9 +129,11 @@ func _peer_failure(context: RefCounted) -> void:
 	mesh.peers[0].step_completed.connect(func(code: int, _before: int, _after: int) -> void: notices.append(code))
 	var result: Driver.StepResult = mesh.peers[0].step(1, fixture._inputs(mesh, 0))
 	context.equal(result.code, Types.Code.CALLBACK_FAILED, "peer reports malformed callback")
+	context.equal(result.get("failure_kind"), Types.Kind.ADVANCE, "peer identifies the failed callback")
 	context.equal(result.frame_after, 0, "peer does not publish failed advance")
 	context.equal(mesh.peers[0].network_status().state, "terminated", "peer halts")
 	context.equal(notices, [Types.Code.CALLBACK_FAILED], "peer emits final failure")
+	context.equal(mesh.peers[0].recover(2).get("failure_kind"), Types.Kind.ADVANCE, "peer recovery retains callback identity")
 	context.equal(game.retained_view.size().code, Types.Code.EXPIRED_VIEW, "callback input expires")
 	for packet: Dictionary in fixture._drain(mesh):
 		var delivered: int = mesh.peers[packet.to].receive(packet.bytes, fixture._id(packet.from), 1)
