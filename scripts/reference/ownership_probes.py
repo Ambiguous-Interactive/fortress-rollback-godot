@@ -98,7 +98,8 @@ EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
     'canonical_parity', 'request_lifetime', 'save_failures', 'callback_guards', 'paused_termination', 'paused_termination_bad_result'}
 EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
     'independent_inventory_golden', 'startup_feature', 'legacy_startup_refused', 'retained_only_startup_refused', 'control_packet_budget',
-    'unknown_version', 'empty_inventory', 'wrong_cardinality', 'wrong_target', 'unbounded_interval', 'changed_certificate', 'candidate_below_receipts'}
+    'unknown_version', 'empty_inventory', 'wrong_cardinality', 'wrong_target', 'unbounded_interval', 'changed_certificate', 'candidate_below_receipts',
+    'unchanged_short_certificate', 'extended_short_certificate'}
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
     'retained_below_confirmation', 'certified_below_confirmation', 'unequal_exposed_frontiers', 'missing_actual_rows', 'pending_repair_raised_cut'}
 EXPECTED['res://tests/unit/test_history_backfill.gd'] = {

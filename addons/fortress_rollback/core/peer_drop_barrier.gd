@@ -437,13 +437,13 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			return
 		var answer: Dictionary = barrier.answers[identity]
 		var receipts: Dictionary = Inventory.decode(event.get("bytes", PackedByteArray()), barrier.slots, host._config.queue_capacity)
-		var changed: bool = receipts != answer.receipts
-		if changed and barrier.history.first >= 0:
-			changed = not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut)
+		var conflicting: bool = receipts != answer.receipts
+		if conflicting and barrier.history.first >= 0:
+			conflicting = receipts.size() != answer.receipts.size()
 			for slot: int in barrier.slots:
 				if answer.receipts[slot].x >= 0 and (not receipts.has(slot) or receipts[slot].x != answer.receipts[slot].x or receipts[slot].y < answer.receipts[slot].y):
-					changed = true
-		if changed or int(event.get("bound", -1)) != int(answer.bound) or not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):
+					conflicting = true
+		if conflicting or int(event.get("bound", -1)) != int(answer.bound):
 			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
 			return
 		if not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):

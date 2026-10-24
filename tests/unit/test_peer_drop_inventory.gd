@@ -16,6 +16,8 @@ var _startup_features: Array[int] = []
 var _undercut_candidate: bool = false
 var _candidate_count: int = 0
 var _ready_cuts: Array[int] = []
+var _short_certificate_active: bool = false
+var _short_ready_count: int = 0
 
 
 func cases() -> PackedStringArray:
@@ -32,6 +34,8 @@ func cases() -> PackedStringArray:
 			"wrong_target",
 			"unbounded_interval",
 			"changed_certificate",
+			"unchanged_short_certificate",
+			"extended_short_certificate",
 			"candidate_below_receipts"
 		]
 	)
@@ -44,7 +48,11 @@ func run_case(name: String, context: RefCounted) -> void:
 	_undercut_candidate = name == "candidate_below_receipts"
 	_candidate_count = 0
 	_ready_cuts.clear()
-	if name == "candidate_below_receipts":
+	_short_certificate_active = name in ["unchanged_short_certificate", "extended_short_certificate"]
+	_short_ready_count = 0
+	if _short_certificate_active:
+		_short_certificate(context, name == "extended_short_certificate")
+	elif name == "candidate_below_receipts":
 		_undercut(context)
 	elif name == "control_packet_budget":
 		_packet_budget(context)
@@ -102,10 +110,38 @@ func _invalid(context: RefCounted, name: String) -> void:
 		context.equal(mesh.peers[survivor]._core.frozen_frame(2), -1, "partial rejection leaves every slot unfrozen")
 
 
+# Value: protects=missing and conflicting drop history remain distinct; fails_when=an unchanged or monotonic short certificate reports conflict;
+# why_new=malformed inventory tests do not cover valid but incomplete READY intervals; seam=none
+func _short_certificate(context: RefCounted, extended: bool) -> void:
+	var inventory: PackedByteArray = PackedByteArray([1, 1, 2, 0, 0, 0, 0, 7, 0, 0, 0])
+	var ready: PackedByteArray = inventory.duplicate()
+	if extended:
+		inventory.encode_s32(7, 6)
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	var alterations: Array[Dictionary] = [
+		{"phase": 2, "stage": 1, "fields": {"bytes": inventory}, "replace": true},
+		{"phase": 2, "stage": 2, "fields": {"bytes": ready}, "replace": true},
+	]
+	_detect(context, mesh, [0, 1], 800000, true, alterations, [], true)
+	context.equal(_short_ready_count > 0, true, "a real READY message reached the incomplete-history classification")
+	context.equal(mesh.cuts.is_empty(), true, "an incomplete certificate cannot authorize any cut")
+	context.equal(mesh.reasons.is_empty(), false, "the refused certificate publishes its failure reason")
+	for reason: String in mesh.reasons:
+		context.equal(reason, "missing_history", "an unchanged or monotonic short inventory is missing history, not a conflict")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "incomplete certification fails closed")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(2), -1, "incomplete certification leaves the departed slot unfrozen")
+
+
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
 	var delivered: Array[Dictionary] = []
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+		if _short_certificate_active and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			if decoded.message.phase == 2 and decoded.message.stage == 2:
+				_short_ready_count += 1
 		if _undercut_candidate and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == 1 and decoded.message.cut_digest != 0:
 				_candidate_count += 1
