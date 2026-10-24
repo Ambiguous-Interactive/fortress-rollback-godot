@@ -51,10 +51,16 @@ A clean import can succeed after an entire optional subsystem was omitted. Delet
 a required subsystem and add an unknown development script as negative controls;
 both must fail before constructing a successful candidate.
 
+Pair file producers with every import path at the maximum advertised output size.
+Include per-row checksums, statuses and maximum metadata; short fixtures can hide a smaller consumer cap.
+Share the byte limit between native and browser pickers and test rejection one byte above it before reading.
+
 Concurrent processes for one Godot project share `user://`. Give writable test
 fixtures process-owned paths and check open, write and removal results before
 asserting application behavior. Reproduce interference with a second process;
 a missing-file test can observe a peer's recreated or truncated file instead.
+`OS.get_process_id()` is unavailable on Web; use it only in native branches.
+Web fixtures use the page's isolated filesystem and keep equivalent assertion counts.
 
 ## Faster local iteration
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `FortressDriver.terminate()` so driver-only clients can stop a session, including from game callbacks.
+
 - Add driver access to retained local samples and input-delay controls. Standalone clients can retry stalls without resampling; networked clients must still change delay through the peer session.
 
 - Add bounded SignalFish spectator ingress with authenticated host filtering and strict lifetime expiry. This receive-only bridge requires separate startup acceptance; live Fortress relay support remains unqualified.
@@ -150,6 +152,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix full ten-minute online replays being refused by the viewer's file-size limit.
+
+- Fix malformed spectator startup versions creating an unusable agreement. Corrected valid answers remain accepted after malformed input.
 
 - Fix spectator restart leaving old drivers able to play buffered inputs. Successful stream replacement now terminates its prior owned viewer.
 

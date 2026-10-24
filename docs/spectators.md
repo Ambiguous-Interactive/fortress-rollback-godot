@@ -150,12 +150,15 @@ version and the optional kinds the host can publish. The viewer answers it with
 its own accept packet; `receive_accept()` validates that answer and records the
 agreement. The answer is authenticated with the shared key, so a peer cannot
 choose a weaker envelope without it. An answer that names another envelope
-version or an optional kind outside the offer is refused with `UNSUPPORTED`, and
+version within the capability-mask range or an optional kind outside the offer is refused with `UNSUPPORTED`, and
 the host publishes no row afterwards. `agreement_state()`, `agreement_version()`,
 `agreement_kinds()` and `agreement_reason()` report the agreement and its one
 recorded refusal reason. Before the agreement, `prepare_packet()` returns
 `NOT_SYNCHRONIZED` and `encode_keepalive()` returns empty bytes: an unagreed
 host publishes nothing.
+
+Version zero and versions above 31 are malformed and return `PROTOCOL_FAILED`.
+They leave the agreement pending so a corrected authenticated answer can still complete startup.
 
 `prepare_packet()` returns `PREDICTION_STALL` when no corrected confirmed row is
 available. On `OK`, the caller owns the returned bytes. Refusal needs no acknowledgement;

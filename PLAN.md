@@ -421,6 +421,7 @@ A viewer never simulates a host row it no longer retains, and a reconfigured vie
 the caller's playback policy when it still fits the new ring.
 Successful stream replacement retires the prior owned playback lifetime, including retained drivers.
 The small driver exposes owned finalized inputs and replay exports through the expert session's gates.
+Driver-only clients can cancel through the same terminal lifecycle, including inside callbacks; cancellation expires active views.
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
 or forward frame. The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.

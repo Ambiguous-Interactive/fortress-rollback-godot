@@ -121,7 +121,7 @@ func receive_accept(packet: PackedByteArray) -> int:
 	var accepted_versions: int = capabilities[0]
 	var accepted_kinds: int = capabilities[1]
 	var chosen: int = packet[4]
-	if chosen < 1 or (accepted_versions & (1 << chosen)) == 0:
+	if chosen < 1 or chosen > Negotiation.MAX_VERSION or (accepted_versions & (1 << chosen)) == 0:
 		return Code.PROTOCOL_FAILED
 	if (_offered_versions & (1 << chosen)) == 0:
 		return _refuse(Code.UNSUPPORTED)

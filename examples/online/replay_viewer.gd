@@ -5,8 +5,10 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
-const MAX_BYTES: int = 1048576
 const MAX_FRAMES: int = 36000
+# Include every v5 checksum and the largest supported metadata header.
+const MAX_BYTES: int = Replay.FIXED_BYTES + 1 + Replay.TEXT_FIELDS * (1 + Replay.MAX_TEXT_BYTES) + MAX_FRAMES * (5 + Replay.CHECKSUM_BYTES + Replay.DIGEST_BYTES)
+const FILE_SIZE_MESSAGE: String = "Replay exceeds the viewer's file-size limit."
 const SEEK_FRAMES_PER_TICK: int = 120
 const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checksums matched."
 const GAME_VERSION: String = "fortress-online-integer-v1"

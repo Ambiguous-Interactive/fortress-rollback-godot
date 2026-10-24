@@ -186,8 +186,9 @@ Checksum failures show both the expected and actual values as hexadecimal string
 **Back to online** returns to room setup.
 
 The viewer accepts complete recordings of this online integer game with seed 1701,
-two players and one-byte inputs, up to 36,000 frames and 1 MiB. Other games, unknown
-game/addon/upstream versions, missing-input rows and invalid button bytes are rejected.
+two players and one-byte inputs, up to 36,000 frames. The file-size limit includes
+every checksum and the maximum metadata header for that full ten-minute recording.
+Other games, unknown game/addon/upstream versions, missing-input rows and invalid button bytes are rejected.
 A failed import keeps the previous recording. Engine versions may differ; available
 recorded checksums still must match. Checksums are not an authenticity guarantee.
 For other games, use `FortressReplay.decode()` and `FortressReplayPlayer` with your

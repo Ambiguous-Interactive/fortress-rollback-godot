@@ -11,11 +11,13 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation", "navigation_boundaries"])
+	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation", "navigation_boundaries", "full_length_recording"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"full_length_recording":
+			_full_length_recording(context)
 		"navigation_boundaries":
 			_navigation_boundaries(context)
 		"navigation":
@@ -29,6 +31,45 @@ func run_case(name: String, context: RefCounted) -> void:
 		"stops_at_divergence":
 			_stops_at_divergence(context)
 	context.finish()
+
+
+# Value: protects=ten-minute online downloads reopen through the native viewer; fails_when=the file cap is below valid output size;
+# why_new=existing imports contain at most 300 frames; seam=none
+func _full_length_recording(context: RefCounted) -> void:
+	var replay: Replay = recording(Viewer.MAX_FRAMES)
+	replay._text[0] = "x".repeat(Replay.MAX_TEXT_BYTES)
+	var bytes: PackedByteArray = replay.to_bytes()
+	context.equal(bytes.size() > 1048576, true, "full checksummed recording exceeds the former 1 MiB cap")
+	var process: int = 0 if OS.has_feature("web") else OS.get_process_id()
+	var path: String = "user://test-full-length-replay-%d.frrp" % process
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	context.equal(file != null, true, "open process-owned replay import fixture")
+	if file == null:
+		return
+	file.store_buffer(bytes)
+	context.equal(file.get_error(), OK, "write complete replay import fixture")
+	file.close()
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	node._native_file(path)
+	context.equal(node.viewer.frame_count(), Viewer.MAX_FRAMES, "native file chooser accepts all ten recorded minutes")
+	context.equal(node.viewer.recorded_checksum_count(), Viewer.MAX_FRAMES, "full-length import preserves every recorded checksum")
+	node.viewer.step()
+	context.equal(node.viewer.current_frame(), 1, "full-length recording starts normal validated playback")
+	bytes.resize(Viewer.MAX_BYTES + 1)
+	file = FileAccess.open(path, FileAccess.WRITE)
+	context.equal(file != null, true, "open oversized replay import fixture")
+	if file != null:
+		file.store_buffer(bytes)
+		context.equal(file.get_error(), OK, "write oversized replay import fixture")
+		file.close()
+		node._native_file(path)
+		context.equal(node.viewer.message, Viewer.FILE_SIZE_MESSAGE, "native file chooser rejects one byte beyond the bound")
+		context.equal(node.viewer.current_frame(), 1, "refused oversized import preserves existing playback")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+	context.equal(DirAccess.remove_absolute(ProjectSettings.globalize_path(path)), OK, "remove process-owned replay fixture")
 
 
 static func recording(frames: int = 24) -> Replay:

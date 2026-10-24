@@ -172,6 +172,13 @@ func replay() -> RefCounted:
 	return _session.replay() if _session != null else null
 
 
+## Stop the owned session and expire active views, including during callbacks or completion handlers.
+## Keeps the session's first terminal cause. Before configuration this is a no-op.
+func terminate(reason: int = Types.Code.TERMINATED) -> void:
+	if _session != null:
+		_session.terminate(reason)
+
+
 func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) -> StepResult:
 	var before: int = _session.status().current_frame if _session != null else 0
 	if _is_stepping:
@@ -260,5 +267,9 @@ func _finish(code: int, before: int) -> StepResult:
 	if code != Types.Code.BUSY:
 		result.events = _session.drain_events()
 		step_completed.emit(result.code, result.frame_before, result.frame_after)
+		# A handler may cancel future work after this operation already completed.
+		status = _session.status()
+		result.reason = status.reason
+		result.failure_frame = status.failure_frame
 	_is_stepping = false
 	return result

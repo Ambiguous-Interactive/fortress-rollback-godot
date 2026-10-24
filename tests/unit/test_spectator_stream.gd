@@ -248,6 +248,7 @@ func _negotiation(context: RefCounted) -> void:
 	context.equal(host.receive_accept(_legacy_accept()), CODE.UNSUPPORTED, "the host refuses another envelope version")
 	context.equal(host.agreement_reason(), CODE.UNSUPPORTED, "one recorded host refusal reason")
 	context.equal(host.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "a refused host publishes no row")
+	_invalid_accept_versions(context, accept)
 
 	# An answer that drops the kind that closes the stream is refused.
 	var partial: PackedByteArray = Stream.encode_header(Stream.ACCEPT, 0, 2, 1, _identity(), _digest(), Stream.VERSION)
@@ -295,6 +296,23 @@ func _negotiation(context: RefCounted) -> void:
 	context.equal(agreed_host.receive_accept(agreed_viewer.encode_accept()), CODE.OK, "a retried answer repeats the agreement")
 	context.equal(agreed_host.receive_accept(_legacy_accept()), CODE.PROTOCOL_FAILED, "a different answer cannot move an agreed host")
 	context.equal(agreed_host.agreement_version(), Stream.VERSION, "the agreed host keeps its envelope version")
+
+
+# Value: protects=bounded authenticated startup versions; fails_when=oversized shifts alias supported versions;
+# why_new=legacy controls use valid mask indices; seam=none
+func _invalid_accept_versions(context: RefCounted, valid: PackedByteArray) -> void:
+	for version: int in [0, 32, 63, 64, 67, 127, 131, 195, 255]:
+		var publisher: RefCounted = _publisher(context)
+		var packet: PackedByteArray = valid.duplicate()
+		packet[4] = version
+		packet = Stream.authenticate(_unsigned(packet), _key())
+		context.equal(publisher.receive_accept(packet), CODE.PROTOCOL_FAILED, "invalid version %d is malformed" % version)
+		context.equal(publisher.agreement_state(), Negotiation.AgreementState.PENDING, "malformed version cannot agree")
+		context.equal(publisher.agreement_version(), 0, "malformed version cannot publish a version")
+		context.equal(publisher.prepare_packet().code, CODE.NOT_SYNCHRONIZED, "malformed version cannot publish rows")
+		context.equal(publisher.encode_keepalive().is_empty(), true, "malformed version cannot publish liveness")
+		context.equal(publisher.receive_accept(valid), CODE.OK, "valid corrected answer remains usable")
+		context.equal(publisher.agreement_version(), Stream.VERSION, "corrected answer selects actual supported version")
 
 
 func _byte_delivery(context: RefCounted) -> void:
