@@ -341,6 +341,9 @@ Call `terminate()` to abandon it and expire its views, then configure a new play
 Batch identities remain monotonic across configuration, so a retained old batch cannot consume a new request.
 Expert configuration does not own a game; `step()`, `restore_before()` and `validate_current_frame()` return `UNSUPPORTED`.
 Applications using expert playback own callback dispatch and any navigation or checkpoint restoration.
+Call `begin_validate_current_frame()` to check a paused expert boundary without consuming its input.
+`READY` supplies a single `SAVE` request to dispatch and acknowledge; successful completion ends the batch without `ADVANCE`.
+`OK` means validation needed no snapshot request. Input digests, checksum evidence, bounded writers and failure handling match callback validation.
 
 For repeated navigation, pass optional `checkpoint_interval` and `checkpoint_capacity` to
 `configure`. Both default to zero. Enable both together with a positive snapshot size,

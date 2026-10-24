@@ -137,6 +137,9 @@ The plan also announces the final candidate, preserving progress with an accepte
 one-packet output queue even when service calls match the 50-millisecond retry
 interval. Applications still need a deadline sufficient for their transfer and
 service cadence.
+Refused prepare, inventory and commit controls remain eligible for immediate retry
+after output drains. Each survivor's accepted send keeps its own retry interval,
+so pressure on another link does not repeat that survivor's control early.
 Every survivor then certifies the frame, the digest and its complete resulting inventory. The
 proposer commits only after every survivor certified the same pair. The commit
 is irreversible and freezes the departed slot at the certified frame, so the

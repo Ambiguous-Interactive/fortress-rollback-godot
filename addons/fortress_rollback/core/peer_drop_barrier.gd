@@ -69,6 +69,7 @@ class Barrier:
 	var adopted: bool = false
 	var sent_us: int = -1
 	var sent_digest: int = 0
+	var sent_to: Dictionary = {}
 	var started_us: int = 0
 	var chunk_budget: int = 0
 	var history: History = History.new()
@@ -317,8 +318,7 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
-	barrier.sent_us = now_us
-	_send(host, barrier, Phase.COMMIT)
+	barrier.sent_us = now_us if _send(host, barrier, Phase.COMMIT) else -1
 	_freeze(host, barrier.index, barrier.cut, barrier.value, true)
 
 
@@ -656,7 +656,7 @@ func _abort_reason(reason: int) -> String:
 
 
 ## Send one barrier phase to every survivor that still takes part in the match.
-func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE, reason: int = 0) -> bool:
+func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE, reason: int = 0, retry: bool = false) -> bool:
 	var payload: Dictionary = _payload(barrier, phase, stage, reason)
 	var sent: bool = true
 	for index: int in range(host._ids.size()):
@@ -665,10 +665,16 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 		var key: String = host._ids[index].hex_encode()
 		if is_gone(key):
 			continue
+		var previous: Dictionary = barrier.sent_to.get(index, {})
+		if retry and not previous.is_empty() and previous.phase == phase and previous.stage == stage \
+			and previous.digest == payload.cut_digest and host._now - int(previous.at) < RETRY_US:
+			continue
 		var code: int = host._endpoint(index).send_drop_barrier(payload, host._now)
 		if code != I.Code.OK:
 			# A refused barrier message never reaches the survivor.
 			sent = false
+		else:
+			barrier.sent_to[index] = {"phase": phase, "stage": stage, "digest": payload.cut_digest, "at": host._now}
 	return sent
 
 
@@ -779,25 +785,9 @@ func _retry(host: Variant, barrier: Barrier, now_us: int, phase: int) -> void:
 	var changed: bool = phase == Phase.PREPARE and barrier.sent_digest != barrier.digest
 	if not changed and barrier.sent_us >= 0 and now_us - barrier.sent_us < RETRY_US:
 		return
-	barrier.sent_us = now_us
-	barrier.sent_digest = barrier.digest
-	if phase == Phase.REPORT:
-		_send_report(host, barrier)
-		return
-	_send(host, barrier, phase)
-
-
-## The inventory report of this survivor: its window and the frame through which
-## it retains the departed slot's inputs.
-func _send_report(host: Variant, barrier: Barrier) -> void:
-	var payload: Dictionary = _payload(barrier, Phase.REPORT, Stage.INVENTORY, 0)
-	for index: int in range(host._ids.size()):
-		if index == barrier.index:
-			continue
-		var key: String = host._ids[index].hex_encode()
-		if is_gone(key):
-			continue
-		host._endpoint(index).send_drop_barrier(payload, host._now)
+	if _send(host, barrier, phase, Stage.INVENTORY if phase == Phase.REPORT else Stage.NONE, 0, true):
+		barrier.sent_us = now_us
+		barrier.sent_digest = barrier.digest
 
 
 ## The frame through which this survivor retains the departed slot's inputs.

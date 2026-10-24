@@ -37,6 +37,7 @@ var _host: String
 var _options: Options
 var _received: Array[PackedByteArray] = []
 var _received_bytes: int = 0
+var _receive_cursor: int = 0
 var _failure: int = Code.OK
 var _last_receive: int = Code.OK
 var _rejected: int = 0
@@ -114,7 +115,7 @@ func configure(client: Object, sdk_config: Object, protocol_info: Object, stream
 
 
 ## Poll elapsed expiry before any buffered packet, even while playback is paused or blocked.
-## BUSY and row pressure preserve the exact FIFO head for the next poll.
+## BUSY and row pressure retain exact packets; bounded rotation lets reordered gap rows recover.
 ## send_accept(packet) returns an Error from a separate authenticated control transport.
 ## OK means transport acceptance, not host receipt. ERR_BUSY/ERR_OUT_OF_MEMORY retry exact bytes.
 func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
@@ -136,17 +137,24 @@ func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 	result.activity = _traffic
 	_traffic = 0
 	result.peer_code = _stream.poll(now_us)
+	var blocked: bool = false
 	if result.peer_code == SessionTypes.Code.OK:
 		for _index: int in mini(_options.max_receives_per_poll, _received.size()):
 			result.code = _gate()
 			if result.code != Code.OK:
 				break
-			var received_kind: int = _received[0][5]
-			result.peer_code = _stream.receive_packet(_received[0], now_us)
-			if result.peer_code in [SessionTypes.Code.BUSY, SessionTypes.Code.NETWORK_BACKPRESSURE]:
+			var received_kind: int = _received[_receive_cursor][5]
+			result.peer_code = _stream.receive_packet(_received[_receive_cursor], now_us)
+			if result.peer_code == SessionTypes.Code.BUSY:
 				break
-			_received_bytes -= _received[0].size()
-			_received.pop_front()
+			if result.peer_code == SessionTypes.Code.NETWORK_BACKPRESSURE:
+				blocked = true
+				_receive_cursor = (_receive_cursor + 1) % _received.size()
+				continue
+			_received_bytes -= _received[_receive_cursor].size()
+			_received.remove_at(_receive_cursor)
+			if _receive_cursor >= _received.size():
+				_receive_cursor = 0
 			if result.peer_code != SessionTypes.Code.OK:
 				_rejected += 1
 				if _session.status().lifecycle == SessionTypes.Lifecycle.TERMINATED:
@@ -155,6 +163,8 @@ func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 				result.received += 1
 				if received_kind == Stream.OFFER:
 					_accept = _stream.encode_accept()
+	if blocked and result.peer_code == SessionTypes.Code.OK:
+		result.peer_code = SessionTypes.Code.NETWORK_BACKPRESSURE
 	if result.code == Code.OK and result.peer_code != SessionTypes.Code.OK:
 		result.code = Code.BACKPRESSURE if result.peer_code in [SessionTypes.Code.BUSY, SessionTypes.Code.NETWORK_BACKPRESSURE] else Code.PEER_FAILURE
 	if result.code in [Code.OK, Code.BACKPRESSURE] and not _accept.is_empty() and send_accept.is_valid() and _session._mutation_code() == SessionTypes.Code.OK:
@@ -200,6 +210,7 @@ func detach() -> void:
 	_source_config = null
 	_received.clear()
 	_received_bytes = 0
+	_receive_cursor = 0
 	_accept = PackedByteArray()
 	_failure = Code.OK
 	_last_receive = Code.OK
@@ -235,6 +246,7 @@ func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> voi
 		return
 	if bytes[5] == Stream.KEEPALIVE:
 		_received.push_front(bytes.duplicate())
+		_receive_cursor = 0
 	else:
 		_received.append(bytes.duplicate())
 	_received_bytes += bytes.size()
@@ -284,6 +296,7 @@ func _stop_owned_viewer() -> void:
 func _clear_received() -> void:
 	_received.clear()
 	_received_bytes = 0
+	_receive_cursor = 0
 	_accept = PackedByteArray()
 
 

@@ -68,7 +68,8 @@ func cases() -> PackedStringArray:
 			"control_lifetime",
 			"control_expiry",
 			"control_busy",
-			"control_row_pressure"
+			"control_row_pressure",
+			"reordered_recovery"
 		]
 	)
 
@@ -78,7 +79,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _fixture(context: RefCounted, negotiate: bool = true) -> Dictionary:
+func _fixture(context: RefCounted, negotiate: bool = true, receives: int = 1, packets: int = 2) -> Dictionary:
 	var helper: RefCounted = StreamFixture.new()
 	var stream: Stream = Stream.new()
 	context.equal(stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "viewer configured")
@@ -88,9 +89,9 @@ func _fixture(context: RefCounted, negotiate: bool = true) -> Dictionary:
 	var relay: Relay = Relay.new()
 	var options: Relay.Options = Relay.Options.new()
 	options.max_packet_bytes = 128
-	options.max_received_packets = 2
-	options.max_received_bytes = 256
-	options.max_receives_per_poll = 1
+	options.max_received_packets = packets
+	options.max_received_bytes = 128 * packets
+	options.max_receives_per_poll = receives
 	context.equal(relay.configure(client, config, info, stream, HOST, options), Relay.Code.OK, "read-only SDK ingress configured")
 	var publisher: RefCounted = helper._publisher(context)
 	if negotiate:
@@ -453,3 +454,50 @@ func _control_row_pressure(context: RefCounted) -> void:
 	context.equal(fixture.relay.status().received_packets, 1, "control acceptance leaves refused row owned")
 	context.equal(fixture.relay.status().accept_pending, false, "control transport acceptance releases only control packet")
 	fixture.relay.detach()
+
+
+# Value: protects=reordered gap recovery under ring pressure; fails_when=refused future row blocks missing history; why_new=liveness bypass tests only heartbeats; seam=SDK signals
+func _reordered_recovery(context: RefCounted) -> void:
+	for layout: Array in [[false, 1, 1], [true, 1, 1], [true, 2, 1], [true, 1, 2]]:
+		var future_first: bool = layout[0]
+		var receives: int = layout[1]
+		var future_count: int = layout[2]
+		var fixture: Dictionary = _fixture(context, true, receives, future_count + 1)
+		if future_first:
+			for frame: int in range(5, 5 + future_count):
+				_emit(fixture, fixture.stream.encode_row(frame, Fixture.new()._row(frame)))
+			context.equal(fixture.relay.poll(1).code, Relay.Code.BACKPRESSURE, "future rows wait at ring capacity")
+		_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+		if not future_first:
+			_emit(fixture, fixture.stream.encode_row(5, Fixture.new()._row(5)))
+		var received: int = 0
+		for now_us: int in [2, 3]:
+			var result: Relay.Types.Result = fixture.relay.poll(now_us)
+			context.equal(result.received <= receives, true, "service work stays inside configured packet budget")
+			received += result.received
+		context.equal(received, 1, "eligible earlier row passes retained future rows within bounded service")
+		context.equal(fixture.relay.status().received_bytes, (Stream.HEADER_BYTES + 4) * future_count, "only exact refused future packets remain charged")
+		context.equal(fixture.stream.playback_session().host_frontier(), 0, "reordered arrival recovers the original contiguous prefix")
+		if fixture.stream.playback_session().host_frontier() < 0:
+			fixture.relay.detach()
+			continue
+		context.equal(fixture.driver.step(0, _empty()).code, Types.Code.OK, "earlier row advances playback and frees capacity")
+		var expected: int = 0
+		for player: int in 2:
+			expected = expected * 3 + Fixture.new()._row(0)[player][0]
+		context.equal(fixture.game.value, expected, "first original row matches independent state")
+		var now_us: int = 4
+		for frame: int in range(1, 5 + future_count):
+			if frame < 5:
+				_emit(fixture, fixture.stream.encode_row(frame, Fixture.new()._row(frame)))
+			for _turn: int in range(future_count + 1):
+				var result: Relay.Types.Result = fixture.relay.poll(now_us)
+				context.equal(result.received <= receives, true, "recovery retains bounded work across polls")
+				now_us += 1
+			context.equal(fixture.driver.step(frame, _empty()).code, Types.Code.OK, "viewer plays complete original history")
+			for player: int in 2:
+				expected = expected * 3 + Fixture.new()._row(frame)[player][0] + frame
+			context.equal(fixture.game.value, expected, "reordered relay preserves independent canonical game state")
+		context.equal(fixture.relay.status().received_packets, 0, "all retained packets release only after actual acceptance")
+		context.equal(fixture.relay.status().received_bytes, 0, "successful recovery releases every retained byte")
+		fixture.relay.detach()

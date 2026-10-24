@@ -32,6 +32,11 @@ model fixtures as well as the core decoder, oracle and golden. Search magic byte
 header builders, authentication helpers, version tuples and binary unpack calls;
 run the whole consumer suites, since old synthetic fixtures can hide stale formats.
 
+For authenticated spectator rows, a refused future frame must not block earlier gap rows
+needed to free playback capacity. Retain exact refused bytes and bound scanning across
+polls; test one-packet work budgets and multiple blocked rows against original game history.
+Keep protocol FIFO requirements separate from this application-level reordering buffer.
+
 ## Godot Peer Setup
 
 | Target | Peer | Notes |
