@@ -73,7 +73,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
-        'policy_preserved', 'wide_shapes', 'offer_lifecycle'},
+        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
@@ -82,7 +82,8 @@ EXPECTED.update({
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
     'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step'},
 })
-EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum'}
+EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
+    'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum', 'client_history'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}

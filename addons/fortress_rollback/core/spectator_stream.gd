@@ -46,6 +46,7 @@ var _offer: PackedByteArray = PackedByteArray()
 ## Identity is session (16 bytes), host (8 bytes), then connection lifetime (8 bytes).
 ## The key authenticates the host, the digest binds the agreed match configuration.
 ## Reconfiguration creates a fresh viewer and a fresh envelope agreement.
+## Successful replacement terminates the prior viewer while its lifetime still belongs to this stream.
 ## The caller's playback policy survives reconfiguration when it still fits the new ring.
 func configure(
 	config: Config, identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, now_us: int, timeout_us: int, max_packet_bytes: int
@@ -63,6 +64,8 @@ func configure(
 	var code: int = session.configure(config)
 	if code != Code.OK:
 		return code
+	if _session != null and _session._config == _config:
+		_session.terminate()
 	_session = session
 	_config = session._config
 	_identity = identity.duplicate()

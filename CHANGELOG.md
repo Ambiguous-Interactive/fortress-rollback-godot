@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `FortressDriver.confirmed_inputs(frame)` and `replay()` for finalized inputs and owned match recordings without retaining the expert session.
+
 - Add bounded donor recovery during graceful peer drop. Survivors transfer missing actual inputs before certification and preserve confirmed history. **Breaking:** upgrade all match participants together for the new handshake feature.
 
 - Add finalized player statuses to spectator playback. Dropped matches retain `DISCONNECTED` in callbacks and confirmed exports. The authenticated envelope moves to v3; update host and viewer together. Byte-only callers keep all-confirmed defaults.
@@ -144,6 +146,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator restart leaving old drivers able to play buffered inputs. Successful stream replacement now terminates its prior owned viewer.
 
 - Fix peer drops rewriting exposed confirmed history. Survivors certify retained actual history before agreeing a raised cut. Missing history ends the match safely. The handshake requires the new drop feature; update every peer together.
 

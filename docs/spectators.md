@@ -224,6 +224,8 @@ configuration it cannot describe, and the stream then refuses to configure. Use 
 lifetime, and derive a fresh digest for a new match.
 
 Reconfigure through `stream.configure` when starting another viewer lifetime.
+Successful replacement terminates the old viewer, so retained drivers cannot play its buffered rows.
+Rejected or BUSY configuration preserves the existing viewer.
 The new viewer keeps your playback policy when it still fits the new ring; a policy that
 no longer fits falls back to the session defaults.
 If you configure the returned playback session directly, the existing stream loses
