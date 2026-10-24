@@ -111,6 +111,7 @@ EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
 EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
     'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
 EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
+EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls'}
 EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
     'remote_donor', 'loss_reorder', 'conflicting_duplicate', 'malformed_chunk', 'wrong_donor', 'lost_history_timeout',
     'resource_limit', 'multiple_target_slots', 'no_donor', 'conflicting_overlap'}
@@ -176,6 +177,7 @@ FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_ev
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
+FILES += ['tests/unit/test_driver_peer_parity.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
           'addons/fortress_rollback/transport/signalfish_relay.gd', 'addons/fortress_rollback/transport/signalfish_relay_envelope.gd',
           'addons/fortress_rollback/transport/signalfish_relay_types.gd', 'addons/fortress_rollback/transport/signalfish_spectator_relay.gd',
@@ -235,13 +237,14 @@ const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pre
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
+const DriverPeerParity = preload("res://tests/unit/test_driver_peer_parity.gd")
 const SpectatorRelay = preload("res://tests/unit/test_signalfish_spectator_relay.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
-		HistoryBackfill, DriverParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
+		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \tvar result: Dictionary = Scenarios.new().execute(scripts, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)

@@ -69,7 +69,7 @@ handshake-probes:
 
 ## Pinned upstream SpectatorSession model and its unsafe-mutant control
 spectator-model:
-	$(PY) scripts/oracle/spectator_launch.py
+	$(PY) scripts/oracle/spectator_launch.py --godot $(GODOT)
 
 ## Actual pinned upstream replay and production Godot playback
 replay-probes:

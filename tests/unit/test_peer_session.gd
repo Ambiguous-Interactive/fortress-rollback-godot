@@ -71,7 +71,8 @@ func _id(value: int, width: int = 8) -> PackedByteArray:
 
 
 func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = false, pending: int = 128, start: bool = true,
-	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60, trace_frames: int = 0, game_override: RefCounted = null) -> Dictionary:
+	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60, trace_frames: int = 0, game_override: RefCounted = null,
+	queue_capacity: int = 128) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
 		lifecycle_options = L.Options.new()
@@ -92,6 +93,7 @@ func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = fa
 		config.input_width = 4
 		config.neutral_input = PackedByteArray([0, 0, 0, 0])
 		config.input_delay = delay
+		config.queue_capacity = queue_capacity
 		config.max_prediction_frames = window
 		config.history_slots = window + 1
 		config.check_distance = 0
@@ -110,6 +112,7 @@ func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = fa
 		local.config.player_count = count
 		local.config.input_width = 4
 		local.config.input_delay = delay
+		local.config.queue_capacity = queue_capacity
 		local.config.max_prediction = window
 		local.config.desync_interval = checksum_interval
 		local.config.neutral_input = config.neutral_input.duplicate()

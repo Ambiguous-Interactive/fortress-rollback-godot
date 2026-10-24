@@ -109,7 +109,7 @@ def ensure_jar(path):
 
 def _run(jar, spec, config, output, label, expect_ok):
     command = ['java', '-XX:+UseParallelGC', '-jar', str(jar), '-config', str(config),
-               '-workers', 'auto', '-deadlock', str(spec)]
+               '-workers', 'auto', '-deadlock', '-metadir', str((output / (label + '-states')).resolve()), str(spec)]
     result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=300)
     log = result.stdout + result.stderr
     (output / f'{label}.log').write_text(log)

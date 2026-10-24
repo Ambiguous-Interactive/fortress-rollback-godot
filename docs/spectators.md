@@ -483,3 +483,24 @@ The adapter never sends through the SDK spectator role or assumes host agreement
 An actual control service, initial-state agreement, host publication over SignalFish,
 real relay acceptance and source/model comparison remain in #131 and #47.
 The native dependency qualification does not establish those missing boundaries.
+
+## Check playback against the pinned spectator model
+
+`make spectator-model` records actual production
+viewer rings, input tags, host frontiers and completed playback boundaries twice.
+It replays those observations through `SpectatorSession.Init` and `Next` from the
+pinned upstream TLA+ model. TLC must accept every observed transition and safety
+invariant. A modified observation that advances over missing input must deadlock,
+proving the checker rejects an invalid transition. Callback transcripts are also
+compared with the original ordered input log; ring snapshots alone do not prove
+which bytes the game received. CI runs this gate on both engine pins.
+
+This projection covers two-player confirmed playback with changing binary input
+for one slot, neutral input for the other, capacities two and three, repeated ring
+wraps, full-ring catch-up and idle waits. Playback has no stream delay and catch-up
+speed one. The port exposes the next frame; the model stores the last played
+frame, so the projection subtracts one. Model synchronization uses two synthetic
+precondition steps. It does not establish runtime handshake, event, timeout,
+disconnected-status, multi-frame catch-up or live SignalFish parity. Those wider
+requirements remain in #47 and #131. Omit `--godot` from the direct
+`scripts/oracle/spectator_launch.py` invocation to run only the upstream model.

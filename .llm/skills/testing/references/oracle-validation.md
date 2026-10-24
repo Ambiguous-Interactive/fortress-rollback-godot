@@ -45,6 +45,9 @@ clamp in an isolated control to prove the model rejects it.
 Select mutated records by semantic kind. Require scenario-specific nonzero
 observations and an expected control inventory before publishing success. A
 shortened corpus that never reaches its named event must fail those gates.
+For sparse or optional validation, independently require the exact validation
+request schedule. Workload names and advance counts can stay green when validation
+is disabled or every frame is checked; neither executes sparse validation.
 For snapshot-omission controls, derive localization from the first serialized
 consumer of the missing field. A mutant that omits a field from every snapshot
 can hide its immediate difference until a later scheduled event exposes it.
