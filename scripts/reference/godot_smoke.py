@@ -7,7 +7,7 @@ import platform
 import shutil
 import zipfile
 
-from fetch import CACHE, ROOT, digest, fetch, load_manifest
+from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from receipt_arguments import ReceiptParser
 from run import begin_results, capture
 
@@ -42,8 +42,7 @@ def main():
         archive = fetch(data['artifacts'][name], name, args.offline)
         directory = CACHE / 'editors' / version
         directory.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(archive) as package:
-            package.extractall(directory)
+        prepare_zip(archive, directory, executable_members=(name[:-4],))
         editor = directory / name[:-4]
         editor.chmod(0o755)
         environment = os.environ.copy()
@@ -101,11 +100,7 @@ def main():
             browser_zip = fetch(data['artifacts'][browser_name], browser_name, args.offline)
             browser_dir = CACHE / 'verified-browser' / arch
             browser_dir.mkdir(parents=True, exist_ok=True)
-            with zipfile.ZipFile(browser_zip) as package:
-                package.extractall(browser_dir)
-                for member in package.infolist():
-                    if not member.is_dir():
-                        (browser_dir / member.filename).chmod((member.external_attr >> 16) & 0o777 or 0o644)
+            prepare_zip(browser_zip, browser_dir)
             environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(browser_dir / 'chrome-linux/chrome')
             registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'
             if digest(registry) != data['browser']['browser_registry_sha256']:

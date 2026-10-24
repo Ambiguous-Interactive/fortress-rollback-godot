@@ -9,6 +9,7 @@ import shutil
 import tarfile
 import tempfile
 import urllib.request
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / '.cache/reference'
@@ -67,6 +68,51 @@ def verify(path, pin):
     actual = digest(path, pin['algorithm'])
     if actual != pin['digest']:
         raise ValueError(f'digest mismatch: {path}: expected {pin["digest"]}, got {actual}')
+
+
+def prepare_zip(archive, destination, executable_members=()):
+    """Publish verified archive members without truncating executable inodes.
+
+    Callers first verify the immutable archive with fetch(). Equal members retain
+    their inode and timestamps; changed members are replaced atomically. Concurrent
+    preparers of the same pin can publish identical bytes without a shared lock.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as package:
+        members = package.infolist()
+        names = [member.filename for member in members]
+        if len(set(names)) != len(names):
+            raise ValueError('duplicate ZIP member')
+        for member in members:
+            relative = Path(member.filename)
+            if relative.is_absolute() or '..' in relative.parts or not relative.parts:
+                raise ValueError('unsafe ZIP member')
+            path = destination / relative
+            if any(parent.is_symlink() for parent in (path, *path.parents)):
+                raise ValueError('symlinked ZIP destination')
+            if member.is_dir():
+                path.mkdir(parents=True, exist_ok=True)
+                continue
+            mode = 0o755 if member.filename in executable_members else (member.external_attr >> 16) & 0o777 or 0o644
+            with package.open(member) as source:
+                expected = hashlib.file_digest(source, 'sha256').hexdigest()
+            if path.is_file() and digest(path) == expected:
+                if path.stat().st_mode & 0o7777 != mode:
+                    path.chmod(mode)
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as output:
+                temporary = Path(output.name)
+                try:
+                    with package.open(member) as source:
+                        shutil.copyfileobj(source, output)
+                    output.close()
+                    if digest(temporary) != expected:
+                        raise ValueError('ZIP member changed during preparation')
+                    temporary.chmod(mode)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
 
 
 def same_tree(expected, actual):

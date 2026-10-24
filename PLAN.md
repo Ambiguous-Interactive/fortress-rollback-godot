@@ -436,7 +436,8 @@ all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 The receive-only SignalFish spectator adapter bounds authenticated host ingress, SDK lifetimes and elapsed expiry without seating viewers.
-Spectator relay cannot return startup acceptance; its authenticated control path, real exported routing and upstream spectator
+Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
+Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
 differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
 [qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
 SDK delivery from the remaining exported Fortress witness. Reviewing dependency drift,
@@ -468,7 +469,8 @@ survivor that freezes the slot on its own frontier. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
 frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
 cover exposed frontiers and target receipts, and certifies complete retained actual
-intervals. Bounded donor journals repair missing actual ranges before certification,
+intervals. Followers independently compare supplied frozen values with their retained cut inputs before certification.
+Bounded donor journals repair missing actual ranges before certification,
 including when the donor differs from the coordinator. [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
 retains pinned-source trace comparison and expanded live missing-history acceptance.
 The pinned source's

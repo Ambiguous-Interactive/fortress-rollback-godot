@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add an optional authenticated spectator startup control callback. Refused acceptance packets retain exact bytes for retry; host agreement still requires actual delivery.
+
 - Add `FortressDriver.terminate()` so driver-only clients can stop a session, including from game callbacks.
 
 - Add driver access to retained local samples and input-delay controls. Standalone clients can retry stalls without resampling; networked clients must still change delay through the peer session.
@@ -152,6 +154,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix graceful-drop followers certifying a supplied frozen value that conflicts with their retained actual input. Conflicting history now ends agreement before the slot freezes.
 
 - Fix full ten-minute online replays being refused by the viewer's file-size limit.
 

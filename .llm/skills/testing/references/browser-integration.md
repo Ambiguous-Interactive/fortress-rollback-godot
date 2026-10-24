@@ -71,8 +71,10 @@ absolute room/launcher/job ceiling. Packet counts, stage names and clocks do not
 prove progress. Fresh execution must still satisfy every acceptance gate.
 Capture bounded physical channel counters before destroying a failed room; keep
 the original rejection and bound each diagnostic independently of gameplay.
-Serialize probes that reinstall a shared browser or editor cache. Unique output
-paths do not isolate executable extraction; overlapping launches can hit ETXTBSY.
+Prepare shared ZIP tools through verified member comparison and atomic replacement;
+never truncate an executable inode held by another process. Exercise preparation
+with an actual live executable and a corrupt-cache control. Keep launcher-owned
+projects/results and Firefox fresh-tree installation serialized independently.
 Apply each page observation at its completion time before waiting for sibling
 pages. Check that peer's existing deadline first, then rearm the earliest live
 deadline. Exercise asymmetric timely completions and exact expired boundaries;

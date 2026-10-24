@@ -451,10 +451,27 @@ canonical playback, strict deadline equality, bounded pressure and stale lifetim
 It does not yet have a real SDK/server or exported-browser Fortress witness.
 
 Spectator relay is read-only. The qualified SDK refuses spectator
-`send_game_data_binary` calls. Receiving an authenticated OFFER makes
-`stream.encode_accept()` available to the caller; this adapter never sends it
-or assumes host acceptance. A separate authenticated control path must deliver
-those bytes to `publisher.receive_accept()` before the publisher emits rows.
-That control path, initial-state agreement, host publication over SignalFish,
+`send_game_data_binary` calls. Receiving an authenticated OFFER stages one
+acceptance packet. Pass an optional sender to `relay.poll(now_us, send_accept)`
+to hand it to a separate authenticated control transport. The callback takes
+an owned `PackedByteArray` and returns an `Error`: `OK` releases the retained
+packet; `ERR_BUSY` and `ERR_OUT_OF_MEMORY` preserve its exact bytes for retry.
+Other errors or malformed returns terminate the owned viewer with `SDK_FAILURE`.
+`status().accept_pending` reports the one fixed-size negotiation packet retained
+separately from the bounded incoming queue. Without a sender, callers can still
+use `stream.encode_accept()` and arrange delivery themselves.
+
+The adapter invokes the sender at most once per poll, after checking host expiry.
+It defers callbacks during active playback requests. A refused gameplay row does
+not block control delivery. Room loss, stream replacement, and detachment fence
+the callback result; replacing the bridge inside a callback preserves the new
+viewer. The sender is supplied for each poll and is not retained by the adapter.
+
+Transport acceptance does not prove host receipt. The separate control path must
+deliver the authenticated bytes to `publisher.receive_accept()` before that
+publisher emits rows. If an accepted packet is lost afterward, retransmit the
+host's OFFER: each repeated valid OFFER stages the same acceptance again.
+The adapter never sends through the SDK spectator role or assumes host agreement.
+An actual control service, initial-state agreement, host publication over SignalFish,
 real relay acceptance and source/model comparison remain in #131 and #47.
 The native dependency qualification does not establish those missing boundaries.

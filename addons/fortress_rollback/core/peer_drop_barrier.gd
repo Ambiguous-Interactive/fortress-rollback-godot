@@ -343,8 +343,12 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, barrier.cut):
 		# A final candidate can overtake the donor plan; incomplete history never certifies.
 		return
-	if barrier.value.is_empty():
-		barrier.value = _frozen_value(host, barrier, barrier.cut)
+	var retained_value: PackedByteArray = _frozen_value(host, barrier, barrier.cut)
+	if not retained_value.is_empty():
+		if not barrier.value.is_empty() and barrier.value != retained_value:
+			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
+			return
+		barrier.value = retained_value
 	if barrier.value.is_empty():
 		# The row was released, so the proposer sends the certified value.
 		_send(host, barrier, Phase.REPORT, Stage.NEEDS_VALUE)
