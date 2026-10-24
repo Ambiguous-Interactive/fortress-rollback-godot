@@ -200,15 +200,17 @@ func _original(context: RefCounted, count: int, delay: int, target: int) -> Arra
 
 
 func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: bool = false, skip_load: bool = false) -> void:
-	var target: int = 40
+	var queue_capacity: int = 10 if count == 8 else 16
+	var target: int = 24 if count == 8 else 40
+	context.equal(target > 2 * queue_capacity, true, "workload crosses at least two full input-ring wraps")
 	var original: Array[PackedByteArray] = _original(context, count, delay, target)
 	var checks: Array[int] = [0]
 	var fixture: RefCounted = Fixture.new()
 	var lifecycle: Lifecycle.Options = Lifecycle.Options.new()
 	lifecycle.keepalive_interval_us = 20000
 	lifecycle.disconnect_notify_us = 100000
-	var driven: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, 16)
-	var expert: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, 16)
+	var driven: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, queue_capacity)
+	var expert: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, queue_capacity)
 	for index: int in range(expert.peers.size()):
 		# Only the request consumer differs; handshake, endpoints and game callbacks remain production code.
 		var consumer: ExpertConsumer = ExpertConsumer.new(expert.peers[index]._core, expert.games[index])

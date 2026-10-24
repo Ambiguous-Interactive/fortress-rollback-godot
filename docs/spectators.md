@@ -486,21 +486,37 @@ The native dependency qualification does not establish those missing boundaries.
 
 ## Check playback against the pinned spectator model
 
-`make spectator-model` records actual production
-viewer rings, input tags, host frontiers and completed playback boundaries twice.
-It replays those observations through `SpectatorSession.Init` and `Next` from the
-pinned upstream TLA+ model. TLC must accept every observed transition and safety
-invariant. A modified observation that advances over missing input must deadlock,
-proving the checker rejects an invalid transition. Callback transcripts are also
-compared with the original ordered input log; ring snapshots alone do not prove
-which bytes the game received. CI runs this gate on both engine pins.
+`make spectator-model` records actual production viewer rings, input tags, host
+frontiers, backlog, catch-up classification, public pacing advice and completed
+playback boundaries twice. Callback transcripts must match the original input log.
+CI runs the gate on both engine pins.
 
-This projection covers two-player confirmed playback with changing binary input
-for one slot, neutral input for the other, capacities two and three, repeated ring
-wraps, full-ring catch-up and idle waits. Playback has no stream delay and catch-up
-speed one. The port exposes the next frame; the model stores the last played
-frame, so the projection subtracts one. Model synchronization uses two synthetic
-precondition steps. It does not establish runtime handshake, event, timeout,
-disconnected-status, multi-frame catch-up or live SignalFish parity. Those wider
-requirements remain in #47 and #131. Omit `--godot` from the direct
-`scripts/oracle/spectator_launch.py` invocation to run only the upstream model.
+The original cases fill capacities two and three before the first playback call,
+with catch-up speed two. They remain explicit model divergences: after receiving
+row zero, Godot has backlog one; the pinned model's `ReceiveInput` action forces
+`framesBehind = 0` while `currentFrame = NULL_FRAME`. Once the original ring fills,
+Godot reports backlog two or three, catch-up mode and advice two. The gate asserts
+those actual values and requires TLC to reject the faithful trace at exactly the
+first received row. It never substitutes the model's idle state for live backlog.
+The pinned Rust implementation's `frames_behind_host` and `advance_frame` distance
+calculations agree with Godot by source inspection; no executed Rust spectator
+comparison is claimed.
+
+Separate cases play frame zero before filling a complete ring. Explicit synthetic
+model synchronization and first-input preconditions establish the starting point;
+comparison of actual observations begins after that first completed frame. TLC
+must then accept every observed transition through pinned `SpectatorSession.Next`
+and its safety invariants, including actual full-ring catch-up and repeated wrap.
+An illegal advance over missing input mutates the first actual post-startup
+observation after frame zero. It must deadlock at cursor five, after all synthetic
+preconditions; a safety violation or earlier bootstrap rejection does not qualify.
+Actual startup observations remain in `observed.json` alongside the original
+preplay cases; the conformant suffix does not establish startup pacing parity.
+
+The conformant suffix uses two-player binary input for one slot, neutral input
+for the other, no stream delay and catch-up speed one. The port exposes the next
+frame; the model stores the last played frame, so the projection subtracts one.
+Runtime handshake, events, timeout, disconnected statuses, multi-frame catch-up,
+the pinned model's startup gap and live SignalFish acceptance remain in #47,
+[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) and #131. Omit `--godot` from the direct `scripts/oracle/spectator_launch.py` invocation
+to run only the upstream model.

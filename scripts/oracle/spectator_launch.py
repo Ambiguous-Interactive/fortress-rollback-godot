@@ -45,8 +45,9 @@ def main():
         from engine_path import resolve_engine
         from spectator_runtime import check as check_runtime
         runtime = check_runtime(resolve_engine(args.godot), args.output / 'runtime', args.tlc_jar.resolve(), ROOT)
-        if any(trace[kind]['model_sha256'] != formal['spec_sha256']
-               for trace in runtime['traces'] for kind in ('positive', 'illegal_advance')):
+        if any(outcome['model_sha256'] != formal['spec_sha256']
+               for trace in runtime['traces'] for kind, outcome in trace.items()
+               if kind in ('positive', 'illegal_advance', 'preplay_divergence')):
             raise ValueError('pinned spectator model changed during runtime projection')
     ensure_jar(args.tlc_jar)
     result = {'format': 1, 'complete': True, 'passed': True,

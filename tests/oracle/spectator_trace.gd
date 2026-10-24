@@ -29,7 +29,10 @@ class Game:
 
 func _initialize() -> void:
 	var traces: Array[Dictionary] = []
-	for capacity: int in [2, 3]:
+	for case_id: int in range(4):
+		var capacity: int = 2 + case_id % 2
+		var preplay: bool = case_id < 2
+		var speed: int = 2 if preplay else 1
 		var config: Config = Config.new()
 		config.spectator = true
 		config.local_players = PackedInt32Array()
@@ -41,7 +44,7 @@ func _initialize() -> void:
 		config.max_snapshot_bytes = 8
 		config.storage_budget_bytes = config.required_storage_bytes()
 		var viewer: Spectator = Spectator.new()
-		if viewer.configure(config) != Types.Code.OK or viewer.set_playback(0, 1, 1) != Types.Code.OK:
+		if viewer.configure(config) != Types.Code.OK or viewer.set_playback(0, 1, speed) != Types.Code.OK:
 			quit(2)
 			return
 		var game: Game = Game.new()
@@ -54,9 +57,10 @@ func _initialize() -> void:
 				quit(2)
 				return
 			observations.append(_observe(viewer))
-			# Fill one complete ring before playback, then drain it one real request at a time.
-			if frame % capacity == capacity - 1:
-				for _step: int in range(capacity):
+			# Preserve preplay backlog; the second case starts before filling a complete ring.
+			if (preplay and frame % capacity == capacity - 1) or (not preplay and frame % capacity == 0) or frame == 11:
+				var pending: int = viewer.host_frontier() - viewer.status().current_frame + 1
+				for _step: int in range(pending):
 					if driver.step(frame, empty).code != Types.Code.OK:
 						quit(2)
 						return
@@ -65,7 +69,7 @@ func _initialize() -> void:
 					quit(2)
 					return
 				observations.append(_observe(viewer))
-		traces.append({"capacity": capacity, "observations": observations, "transcript": game.transcript})
+		traces.append({"capacity": capacity, "preplay": preplay, "speed": speed, "observations": observations, "transcript": game.transcript})
 	print("FORTRESS_SPECTATOR_TRACE " + JSON.stringify(traces))
 	quit(0)
 
@@ -77,4 +81,8 @@ func _observe(viewer: Spectator) -> Dictionary:
 		if viewer._host_tags[index] >= 0:
 			row = [viewer._host_rows[index][0], viewer._host_rows[index][1]]
 		buffer.append(row)
-	return {"current": viewer.status().current_frame - 1, "received": viewer.host_frontier(), "tags": Array(viewer._host_tags), "inputs": buffer}
+	var backlog: int = viewer.host_frontier() - viewer.status().current_frame + 1
+	return {
+		"current": viewer.status().current_frame - 1, "received": viewer.host_frontier(), "tags": Array(viewer._host_tags), "inputs": buffer,
+		"backlog": backlog, "advice": viewer.recommended_steps(), "catchup": backlog > viewer.playback_policy()[1]
+	}

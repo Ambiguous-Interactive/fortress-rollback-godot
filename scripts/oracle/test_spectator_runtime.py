@@ -8,9 +8,9 @@ import spectator_runtime as runtime
 class SpectatorRuntimeTests(unittest.TestCase):
     @staticmethod
     def trace():
-        return {'capacity': 2, 'observations': [
-            {'current': -1, 'received': -1, 'tags': [-1, -1], 'inputs': [[0, 0], [0, 0]]},
-            {'current': 11, 'received': 11, 'tags': [10, 11], 'inputs': [[0, 0], [1, 0]]}],
+        return {'capacity': 2, 'preplay': True, 'speed': 2, 'observations': [
+            {'current': -1, 'received': -1, 'tags': [-1, -1], 'inputs': [[0, 0], [0, 0]], 'backlog': 0, 'advice': 0, 'catchup': False},
+            {'current': 11, 'received': 11, 'tags': [10, 11], 'inputs': [[0, 0], [1, 0]], 'backlog': 0, 'advice': 0, 'catchup': False}],
             'transcript': [[frame, frame % 2, 0] for frame in range(12)]}
 
     # Value: protects=real pinned Next checks; fails_when=projection replaces the model with its own transitions;
@@ -54,10 +54,81 @@ class SpectatorRuntimeTests(unittest.TestCase):
         second['capacity'] = 3
         second['observations'][0].update(tags=[-1, -1, -1], inputs=[[0, 0], [0, 0], [0, 0]])
         second['observations'][-1].update(tags=[9, 10, 11], inputs=[[1, 0], [0, 0], [1, 0]])
-        runtime.validate_bundle([first, second])
-        for value in ([first, first], [second, first], [], [first], [first, None]):
+        started = []
+        for trace in (first, second):
+            other = deepcopy(trace)
+            other.update(preplay=False, speed=1)
+            received = deepcopy(other['observations'][0])
+            received.update(received=0, tags=[0] + [-1] * (other['capacity'] - 1), backlog=1, advice=1)
+            played = deepcopy(received)
+            played.update(current=0, backlog=0, advice=0)
+            other['observations'][1:1] = [received, played]
+            started.append(other)
+        runtime.validate_bundle([first, second, *started])
+        for value in ([first, first, *started], [second, first, *started], [], [first], [first, None]):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'inventory'):
                 runtime.validate_bundle(value)
+
+    # Value: protects=real preplay catchup remains visible; fails_when=NULL sentinel normalization hides live backlog;
+    # why_new=the original projection synthesized the pinned model's zero backlog; seam=none
+    def test_preplay_backlog_is_not_normalized(self):
+        observation = {'current': -1, 'received': 1, 'tags': [0, 1], 'inputs': [[0, 0], [1, 0]],
+                       'backlog': 2, 'advice': 2, 'catchup': True}
+        projected = runtime.state(observation, 2)
+        self.assertIn('framesBehind |-> 2, inCatchupMode |-> TRUE', projected)
+
+    # Value: protects=the full preplay divergence cannot be relabeled as conformant startup;
+    # fails_when=bootstrap silently consumes actual active catchup; why_new=the original projection hid that mode; seam=none
+    def test_conformant_bootstrap_cannot_hide_original_prefill(self):
+        trace = self.trace()
+        trace.update(preplay=False, speed=1)
+        received = deepcopy(trace['observations'][0])
+        received.update(received=0, tags=[0, -1], backlog=1, advice=1)
+        filled = deepcopy(received)
+        filled.update(received=1, tags=[0, 1], inputs=[[0, 0], [1, 0]], backlog=2, catchup=True)
+        played = deepcopy(filled)
+        played.update(current=0, backlog=1, advice=1, catchup=False)
+        trace['observations'][1:1] = [received, filled, played]
+        with self.assertRaisesRegex(ValueError, 'first frame before ring fill'):
+            runtime.module(trace)
+
+    # Value: protects=negative control reaches actual suffix; fails_when=only synthetic startup transitions are attacked;
+    # why_new=the original mutation left every actual Next relation unchecked; seam=none
+    def test_illegal_advance_targets_actual_poststartup_observation(self):
+        trace = self.trace()
+        trace.update(preplay=False, speed=1)
+        received = deepcopy(trace['observations'][0])
+        received.update(received=0, tags=[0, -1], backlog=1, advice=1)
+        played = deepcopy(received)
+        played.update(current=0, backlog=0, advice=0)
+        trace['observations'][1:1] = [received, played, deepcopy(played)]
+        mutant, target, cursor = runtime.illegal_advance(trace)
+        self.assertEqual(target, 3)
+        self.assertEqual(cursor, 5)
+        self.assertEqual(mutant['observations'][:target], trace['observations'][:target])
+        self.assertEqual(mutant['observations'][target + 1:], trace['observations'][target + 1:])
+        self.assertGreater(mutant['observations'][target]['current'], mutant['observations'][target]['received'])
+        self.assertNotEqual(runtime.module(mutant), runtime.module(trace))
+
+    # Value: protects=all retained startup observations are strictly typed before bootstrap;
+    # fails_when=Python numeric equality hides malformed raw startup tokens; why_new=synthetic states replaced initial observations; seam=none
+    def test_started_prefix_numeric_aliases_rejected(self):
+        trace = self.trace()
+        trace.update(preplay=False, speed=1)
+        received = deepcopy(trace['observations'][0])
+        received.update(received=0, tags=[0, -1], backlog=1, advice=1)
+        played = deepcopy(received)
+        played.update(current=0, backlog=0, advice=0)
+        trace['observations'][1:1] = [received, played]
+        runtime.module(trace)
+        for index, field, value in [
+                (0, 'current', -1.0), (0, 'received', -1.0), (0, 'tags', [-1.0, -1]),
+                (0, 'inputs', [[False, 0], [0, 0]]), (0, 'catchup', 0),
+                (1, 'current', -1.0), (1, 'backlog', 1.0), (1, 'advice', True), (1, 'catchup', 0)]:
+            mutant = deepcopy(trace)
+            mutant['observations'][index][field] = value
+            with self.subTest(index=index, field=field, value=value), self.assertRaises(ValueError):
+                runtime.module(mutant)
 
     # Value: protects=original callback bytes and order; fails_when=frame totals hide swapped actual rows;
     # why_new=ring snapshots alone do not observe simulation callback inputs; seam=none

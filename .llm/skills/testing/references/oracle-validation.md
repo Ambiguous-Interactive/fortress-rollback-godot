@@ -16,7 +16,10 @@ objects separately through every standalone executable. Require field presence
 when explicit null is part of the observed contract; parser defaults can alias
 them before shared validation runs. Constrain omitted setup records to their
 exact allowed position. Formal projection must account for the observed initial
-state and every supported post-state, not just action names and final success.
+state and every supported post-state, including actual backlog and pacing advice.
+Do not substitute a model's sentinel rules for runtime policy observations.
+Label synthetic bootstrap separately, retain startup counterexamples, and require
+transition-control rejection inside the actual observed suffix, not only its setup.
 
 Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying

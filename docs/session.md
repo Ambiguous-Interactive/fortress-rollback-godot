@@ -51,7 +51,10 @@ current frame, the confirmed frame, the lifecycle and the exact cause of a stop.
 results carry the same cause from the shared core session.
 
 The native driver/expert comparison includes actual encoded P2P sessions with
-2 and 8 endpoints, plus 6 player slots shared across 3 endpoints. Both consumers
+2 and 8 endpoints, plus 6 player slots shared across 3 endpoints. The eight-peer
+case runs 24 frames through the minimum accepted 10-row queues; the other cases
+run 40 frames through 16-row queues. Each crosses two complete input-ring wraps.
+Both consumers
 run the same production protocol and game callbacks. The test compares every
 published packet, ordered request, snapshot, event and canonical game boundary
 through changing inputs, packet loss, delayed/reordered/duplicate delivery,

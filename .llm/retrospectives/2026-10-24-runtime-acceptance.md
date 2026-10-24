@@ -16,6 +16,8 @@ Trigger: new verification capabilities and a review finding in an acceptance gat
 | Final game bytes can conceal reordered original rows. | Swapping rows 10/11 in the peer reference game changes an intermediate prefix but preserves the final state. | Require independent corrected callback prefixes, following the existing temporal-mutation rule. |
 | A larger inventory exceeded a shared child deadline. | PR #202 ownership job 121015333085 timed out running all 338 cases in one native process. | Split native suites and Web groups while retaining every case, repetition, watchdog and full-result comparison. |
 | Aggregation can erase differing metadata before comparison. | Ownership regression controls inject unknown fields, numeric aliases and inconsistent browser metadata. | Reject unknown schemas and compare every batch with exact numeric types before aggregation. |
+| Model sentinel rules can overwrite real runtime policy. | PR #202 comment 4368914238 identifies startup backlog forced to zero; the actual pre-playback trace retains backlog and advice. | Preserve the startup model counterexample in #203 and label synthetic bootstrap separately. |
+| A mutation can reject setup while bypassing actual playback. | A review mutant disabled Model!Next after synthetic bootstrap and still passed the original control. | Require the illegal-transition control to fail inside the actual observed suffix at its independently specified cursor. |
 
 The replay acceptance regression fails against the original validator and passes
 after repair. New runtime gates retain precise limits in the replay and spectator

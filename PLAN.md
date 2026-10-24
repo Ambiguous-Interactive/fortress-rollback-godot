@@ -441,10 +441,11 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
-Production spectator ring and playback traces now run through the pinned TLA+ model's initial
-state and transition relation. The scoped projection covers two slots, binary inputs, capacities
-two/three, ring reuse and one-step catch-up without viewing delay; synthetic synchronization
-preconditions do not qualify the runtime handshake. Broader source/model acceptance remains in #47.
+Production spectator ring and playback traces expose a pinned TLA+ startup backlog gap in
+[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203). The gate preserves
+the actual pre-playback counterexample. Separate post-start traces check two slots, binary inputs,
+capacities two/three, ring reuse and one-step catch-up without viewing delay against the model.
+Synthetic bootstrap is labeled separately; full startup/source-model acceptance remains in #47 and #203.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
 version 3 delivery, playback requests and confirmed exports. Byte-only callers default to
 all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.
