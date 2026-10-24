@@ -22,6 +22,8 @@ const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "r
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
 ## Bounded service rounds per rendered turn. The batch stops early once every route is idle.
 const SERVICE_ROUNDS: int = 8
+# Covers the launcher’s 30s sibling gate, two 10s close gates and release overhead.
+const PHYSICAL_DEPARTURE_WAIT_US: int = 60000000
 var clients: Array[SDK] = []
 var infos: Dictionary = {}
 var lobby_ready: Dictionary = {}
@@ -97,6 +99,18 @@ func _wait_cleanup(expression: String) -> bool:
 		if JavaScriptBridge.eval(expression): return true
 		await get_tree().create_timer(0.002).timeout
 	return false
+
+func _wait_passive(condition: Callable, timeout_us: int) -> bool:
+	var started_us: int = _ticks_usec()
+	while _ticks_usec() - started_us < timeout_us:
+		var ready: bool = condition.call()
+		if _ticks_usec() - started_us >= timeout_us: return false
+		if ready: return true
+		await _passive_wait_turn()
+	return false
+
+func _passive_wait_turn() -> void:
+	await get_tree().create_timer(0.002).timeout
 
 func _play(count: int) -> bool:
 	if drop_enabled: return await drop_witness.run(self, count)

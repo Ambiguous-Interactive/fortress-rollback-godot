@@ -18,6 +18,8 @@ class Client:
 	signal game_data_binary_received(from_uuid: String, encoding: int, bytes: PackedByteArray)
 	signal spectator_left(room_id: String, room_code: String, reason: int, spectators: Array)
 	signal spectator_joined(info: RefCounted)
+	signal new_spectator_joined(spectator: RefCounted, spectators: Array, reason: int)
+	signal spectator_disconnected(spectator_id: String, reason: int, spectators: Array)
 	signal disconnected(code: int, reason: String)
 	var room: String = "room-one"
 	var state: int = Relay.SPECTATING
@@ -159,13 +161,22 @@ func _expiry(context: RefCounted) -> void:
 
 
 func _lifetimes(context: RefCounted) -> void:
-	for event: String in ["left", "replace_room", "replace_stream", "replace_session", "old_callback", "closed", "identity", "budget"]:
+	var roster: Dictionary = _fixture(context)
+	_emit(roster, roster.stream.encode_row(0, Fixture.new()._row(0)))
+	roster.client.new_spectator_joined.emit(RefCounted.new(), [], 0)
+	roster.client.spectator_disconnected.emit(FOREIGN, 0, [])
+	context.equal(roster.relay.poll(1).received, 1, "other viewers' roster signals preserve queued host delivery")
+	context.equal(roster.driver.step(0, _empty()).code, Types.Code.OK, "other viewers cannot terminate playback")
+	roster.relay.detach()
+	for event: String in ["left", "baseline", "replace_room", "replace_stream", "replace_session", "old_callback", "closed", "identity", "budget"]:
 		var fixture: Dictionary = _fixture(context)
 		var row: PackedByteArray = fixture.stream.encode_row(0, Fixture.new()._row(0))
 		_emit(fixture, row)
 		match event:
 			"left":
 				fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+			"baseline":
+				fixture.client.spectator_joined.emit(RefCounted.new())
 			"closed":
 				fixture.client.connection = 4
 			"identity":
