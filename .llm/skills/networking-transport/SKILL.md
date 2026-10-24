@@ -197,6 +197,15 @@ exposed frontier; a correct proposer algorithm does not validate a broken propos
 Freeze the participant set when a local agreement opens. A lost participant before
 commit must abort that attempt, not silently reduce its certificate requirement.
 Test the same departure before and after commit; only the unfinished attempt aborts.
+A final candidate can overtake its donor plan or chunks. Keep incomplete history
+unable to certify while awaiting bounded retries; do not terminate merely for
+that reordering. Validate every target overlap and suffix capacity before any
+target installation, and retain exact donor bytes independently of send pressure.
+Cross the smallest accepted publication queue with polling at retry equality.
+Control retries must yield to retained data and vice versa; consume a publication
+turn or retry timestamp only after acceptance. A faster-polling control isolates starvation.
+Keep conflicting immutable overlaps separate from incomplete coverage. A truthful
+shorter certificate is missing history, not conflicting history.
 After draining publication space, re-poll before accepting buffered traffic;
 service every eligible endpoint despite another endpoint's recoverable refusal.
 Every composed façade must expose drains for all bounded publication queues,

@@ -120,7 +120,7 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 		T.Kind.DROP_BARRIER:
 			if message.phase < 1 or message.phase > 5:
 				return -1
-			if message.stage < 0 or message.stage > 4:
+			if message.stage < 0 or message.stage > 5:
 				return -1
 			if message.reason < 0 or message.reason > 255:
 				return -1

@@ -102,6 +102,15 @@ neutral frames. Subsequent records are strictly sequential and immutable.
 Explicit neutral prefixes remain supported. A rejected gap preserves history.
 `received_frames()` returns an owned per-slot actual scheduled receipt vector.
 
+`validate_missing_backfill(player, start, inputs)` checks an actual remote-input
+range without mutation. `install_missing_backfill` applies that same range
+atomically: retained overlaps must match exactly, and only a sequential missing
+suffix is appended. Both calls require frames at or above `rollback_floor()` and
+at most `queue_capacity` fixed-width rows. Refusal preserves receipts, history
+and prediction bookkeeping. They observe batch/callback guards and reject local,
+frozen or spectator slots. These expert APIs do not authenticate a donor; the
+coordinated peer-drop barrier supplies that identity and its certificate gate.
+
 A fixed-membership transport can enable `set_confirmation_limit(-1)` before
 actual receipts expose a higher confirmation and before simulation, then publish
 its monotonically increasing mesh confirmation fold. Initial activation must

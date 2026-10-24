@@ -110,7 +110,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 		if encoded.code != T.Code.OK:
 			return I.Code.INVALID_ARGUMENT
 		agreed_local = Codec.decode(encoded.bytes, limits).message
-		agreed_local.features = T.FEATURE_RETAINED_DROP
+		agreed_local.features = T.FEATURE_HISTORY_DROP
 	var core_config: Config = config.owned_copy()
 	core_config.capture_confirmed_snapshots = controls.enabled and config.checksums_enabled and profile.desync_interval > 0
 	var core: Session = Session.new()

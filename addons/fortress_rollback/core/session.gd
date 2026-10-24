@@ -173,6 +173,45 @@ func receive_input(player: int, frame: int, bytes: PackedByteArray) -> Types.Res
 	return Types.Result.new(Code.OK)
 
 
+## Check a remote donor's retained overlap and missing suffix without changing history.
+## Frames must be at or above the global rollback floor and contain at most queue_capacity rows.
+func validate_missing_backfill(player: int, start: int, inputs: Array[PackedByteArray]) -> int:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return code
+	if player < 0 or player >= _queues.size() or player in _config.local_players:
+		return Code.INVALID_PLAYER
+	if _frozen_frames[player] != -1:
+		return Code.UNSUPPORTED
+	if start < _floor():
+		return Code.INVALID_FRAME
+	match _queues[player].validate_missing_backfill(start, inputs, _floor()):
+		Queue.Code.OK:
+			return Code.OK
+		Queue.Code.FRAME_RANGE, Queue.Code.OUT_OF_ORDER:
+			return Code.INVALID_FRAME
+		Queue.Code.INPUT_WIDTH:
+			return Code.INPUT_WIDTH
+		Queue.Code.BEFORE_RETAINED, Queue.Code.NO_CONFIRMED_INPUT:
+			return Code.HISTORY_UNAVAILABLE
+		Queue.Code.CONFLICTING_INPUT:
+			return Code.INPUT_ALREADY_SUBMITTED
+	return Code.INPUT_FAILED
+
+
+## Atomically install one validated donor chunk; retained identical retries are idempotent.
+## New actual rows use the normal prediction correction path and advance the receipt frontier.
+func install_missing_backfill(player: int, start: int, inputs: Array[PackedByteArray]) -> int:
+	var code: int = validate_missing_backfill(player, start, inputs)
+	if code != Code.OK:
+		return code
+	if _queues[player].install_missing_backfill(start, inputs, _floor()) != Queue.Code.OK:
+		return Code.INPUT_FAILED
+	if not inputs.is_empty():
+		_received[player] = maxi(_received[player], start + inputs.size() - 1)
+	return Code.OK
+
+
 ## Owned current submitted sample, available until its successful advance completes.
 func scheduled_local_input(player: int) -> Types.InputResult:
 	var result: Types.InputResult = Types.InputResult.new()

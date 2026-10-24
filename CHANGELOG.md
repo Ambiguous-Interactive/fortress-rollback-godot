@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add bounded donor recovery during graceful peer drop. Survivors transfer missing actual inputs before certification and preserve confirmed history. **Breaking:** upgrade all match participants together for the new handshake feature.
+
 - Add finalized player statuses to spectator playback. Dropped matches retain `DISCONNECTED` in callbacks and confirmed exports. The authenticated envelope moves to v3; update host and viewer together. Byte-only callers keep all-confirmed defaults.
 
 - Report an aborted test case in the engine result. A case that dies inside a nested helper no longer looks green: on the Godot 4.7.2 pin the runner sees the script error and fails the case with the aborting file, line and message. The entry belongs to the repetition that died, and an error in a suite constructor fails the case that was being prepared. Godot 4.3 cannot observe a script error in process, so its engine result keeps the engine's own verdict and the Python launcher stays the gate there. The runner prints the capability of its engine, so a release never claims an engine result that only one pin provides.
