@@ -9,12 +9,67 @@ const LAYOUTS: Dictionary = {
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(LAYOUTS.keys())
+	return PackedStringArray(["interleaved_slots", "reversed_slot_ownership", "last_survivor_multi_slot", "last_survivor_missing_slot"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	_multi_slot(context, LAYOUTS[name])
+	if name.begins_with("last_survivor_"):
+		_last_survivor(context, name == "last_survivor_missing_slot")
+	else:
+		_multi_slot(context, LAYOUTS[name])
 	context.finish()
+
+
+# Value: protects=the second departure preserves every endpoint-owned slot; fails_when=the final survivor truncates accepted samples;
+# why_new=one-member certificates bypass multi-survivor agreement; seam=none
+func _last_survivor(context: RefCounted, missing_slot: bool) -> void:
+	for owners: Array in LAYOUTS.values():
+		var mesh: Dictionary = _build_layout(context, owners)
+		_play(context, mesh, 6, true)
+		_leave(context, mesh, 2)
+		_detect(context, mesh, [0, 1])
+		var first_cut: int = mesh.cuts.get(0, -1)
+		if missing_slot:
+			var advanced: bool = false
+			for slot: int in owners.size():
+				if owners[slot] == 1 and not advanced:
+					context.equal(mesh.peers[0]._core.receive_input(slot, 6, _sample(slot, 6)).code, Types.Code.OK, "one target slot accepts an extra actual row through the core API")
+					advanced = true
+			_detect(context, mesh, [0], 600000, true, [], [], true)
+			for slot: int in owners.size():
+				if owners[slot] == 1:
+					context.equal(mesh.peers[0]._core.frozen_frame(slot), -1, "incomplete grouped history cannot partially freeze any target")
+					context.equal(mesh.peers[0]._core.retained_input(slot, 5), _sample(slot, 5), "refusal preserves every original target prefix")
+			context.equal(mesh.reasons, ["missing_history"], "unequal receipts without a complete cut fail with one precise reason")
+			context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.TERMINATED, "the sole survivor cannot invent a missing grouped slot row")
+			continue
+		_leave(context, mesh, 1)
+		var expected_cut: int = -1
+		for slot: int in owners.size():
+			if owners[slot] == 1:
+				expected_cut = maxi(expected_cut, mesh.peers[0]._core.received_frames()[slot])
+		context.equal(expected_cut, 8, "both newly departed handles deliver changing actual inputs through frame eight")
+		context.equal(expected_cut > mesh.peers[0].status().confirmed_frame, true, "the accepted multi-handle suffix is not yet exposed")
+		_detect(context, mesh, [0])
+		for slot: int in owners.size():
+			if owners[slot] == 1:
+				context.equal(mesh.peers[0]._core.frozen_frame(slot), expected_cut, "each handle freezes after the final original sample")
+		context.equal(mesh.drop_events.get(0, []), [first_cut, expected_cut], "each departed endpoint produces exactly one notification")
+		context.equal(mesh.unconfirmed, 0, "complete local multi-handle history keeps the final survivor running")
+		_play(context, mesh, 12, true, [0], 1)
+		var reference: RefCounted = Reference.new(owners.size(), 2)
+		var states: Dictionary = {}
+		for request: Dictionary in mesh.games[0].requests:
+			if request.kind == "advance":
+				states[request.frame] = request.state_bytes
+		for frame: int in range(mesh.peers[0].status().confirmed_frame):
+			var row: Array[Dictionary] = []
+			for slot: int in owners.size():
+				var cut: int = first_cut if owners[slot] == 2 else expected_cut
+				var frozen: bool = owners[slot] != 0 and frame > cut
+				row.append({"player": slot, "bytes": _sample(slot, cut if frozen else frame).hex_encode(), "status": "disconnected" if frozen else "confirmed"})
+			context.equal(reference.advance(row), "", "the original six-player input history advances independently")
+			context.equal(states.get(frame, ""), reference.bytes().hex_encode(), "the final survivor preserves the complete original multi-handle history")
 
 
 # Value: protects=all handles of one departed endpoint freeze consistently; fails_when=one-slot ownership is assumed; why_new=drop fixtures use one handle; seam=none

@@ -100,6 +100,10 @@ a peer using the older drop tier is refused before gameplay.
 
 ### The coordinated drop
 
+The last survivor also raises the cut through every retained actual input from the departed endpoint.
+All of that endpoint's player slots must retain complete history through the same cut before any slot freezes.
+Missing grouped history ends the match with `missing_history`; received original inputs are never replaced by an earlier frozen value.
+
 With more than one survivor left, the survivors agree the frozen frame before
 any of them freezes a slot. The survivor that owns the lowest surviving slot
 proposes the operation. Every survivor reports its protected confirmed frontier

@@ -204,7 +204,6 @@ func _frozen_value(context: RefCounted) -> void:
 	_leave(context, mesh, 0, 1)
 	var cut: int = _detect(context, mesh, 1)
 	context.equal(cut >= 0, true, "the survivor records the agreed frame")
-	var frame_at_drop: int = survivor.status().current_frame
 	_play(context, mesh, 4, true)
 	var rows_after: Dictionary = _rows(game)
 	# A confirmed input is immutable, so the confirmed history before the drop never changes.
@@ -217,9 +216,8 @@ func _frozen_value(context: RefCounted) -> void:
 	var departed: String = rows_after[cut][0].bytes
 	for frame: int in range(cut + 1, rows_after.size()):
 		context.equal(rows_after[frame][0].bytes, departed, "the departed slot repeats one frozen value")
-	# Frames simulated after the drop report the disconnected status.
-	for frame: int in range(frame_at_drop + 1, rows_after.size()):
-		context.equal(rows_after[frame][0].status, "disconnected", "the departed slot reports a disconnected status")
+	for frame: int in range(rows_after.size()):
+		context.equal(rows_after[frame][0].status, "disconnected" if frame > cut else "confirmed", "the departed slot disconnects strictly after its last accepted input")
 
 
 ## The exported confirmed rows are the rows the simulation consumed.
