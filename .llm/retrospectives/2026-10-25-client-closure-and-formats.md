@@ -19,8 +19,9 @@ reproduced clean-tail failure and expanded source acceptance.
 Focused tests pass on Godot 4.3 and 4.7.2. Fresh adversarial reviews of
 all three scopes found no actionable defects. Replay process controls reject
 valid v5 bytes substituted into a v4 workload. Full native and native/Chromium
-verification, final CI and delivery evidence are recorded in the session log
-and the linked issue updates; focused evidence does not establish release parity.
+verification, final CI and delivery remain pending at this review. Their final
+results belong in the session log and linked issue updates; focused evidence
+does not establish release parity.
 
 ## Prune ledger
 
