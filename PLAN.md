@@ -383,8 +383,14 @@ known-allocation positive control; flat memory alone is insufficient.
 ## Advanced parity boundaries
 
 Driver and peer step/recovery results expose the first failed callback kind alongside terminal reason and frame.
+Encoded P2P acceptance compares the driver with a manual ordered-request consumer under delayed,
+lost and duplicated traffic, including multiple local slots and queue reuse. Independent original
+input history remains the state oracle; this local comparison does not qualify browser transport.
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
+Pinned replay comparison covers every supported player count from two through eight, sparse checksums
+and an interior mismatch after unchecked frames through both playback interfaces. The pinned upstream
+replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
 Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
@@ -435,6 +441,11 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
+Production spectator ring and playback traces expose a pinned TLA+ startup backlog gap in
+[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203). The gate preserves
+the actual pre-playback counterexample. Separate post-start traces check two slots, binary inputs,
+capacities two/three, ring reuse and one-step catch-up without viewing delay against the model.
+Synthetic bootstrap is labeled separately; full startup/source-model acceptance remains in #47 and #203.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
 version 3 delivery, playback requests and confirmed exports. Byte-only callers default to
 all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.

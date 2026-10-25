@@ -603,9 +603,15 @@ def validate_diagnostic_viewer(value, trace, histories):
         raise ValueError('diagnostic viewer control inventory missing')
     rows = trace['frames']
     final_frame = rows[-1]['frame'] + bool(rows[-1]['inputs'])
-    if final_frame > min(map(len, histories)):
-        raise ValueError('diagnostic viewer final boundary exceeds original inputs')
-    states = expected_states([history + [0] for history in histories], final_frame + 1)
+    if rows[0]['frame'] > min(map(len, histories)):
+        raise ValueError('diagnostic viewer initial boundary exceeds original inputs')
+    # The captured window can end with speculative inputs after the remote sender stopped.
+    # Check its original prefix independently, then reproduce the inputs actually applied by this peer.
+    applied = [history[:final_frame + 1] + [0] * max(0, final_frame + 1 - len(history)) for history in histories]
+    for row in rows:
+        for sample in row['inputs']:
+            applied[sample['player']][row['frame']] = int(sample['bytes'], 16)
+    states = expected_states(applied, final_frame + 1)
     for label, row in value.items():
         if (not isinstance(row, dict) or row.keys() != {'status', 'state', 'message'} or not isinstance(row['status'], dict)
                 or not isinstance(row['message'], str) or not isinstance(row['state'], str) or not re.fullmatch(r'[0-9a-f]{272}', row['state'])):

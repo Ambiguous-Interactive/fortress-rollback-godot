@@ -14,7 +14,7 @@ from browser import webrtc_runner
 from online_example_probe import (StepTimings, browser_step_durations, expected_states, run_online,
                                   validate_result as observe_result,
                                   validate_replay_download as observe_replay, validate_viewer, validate_diagnostic_playback, validate_diagnostic_viewer)
-from online_diagnostics import game_checksum
+from online_diagnostics import game_checksum, validate_trace_history
 from test_online_diagnostics import diagnostic_download, trace_evidence
 from online_install import ROOT, create_project, install_sdk, server_config
 from signalfish_probe import inventory
@@ -289,6 +289,32 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                 validate_diagnostic_viewer(changed, trace, histories)
         with self.assertRaises(ValueError):
             validate_diagnostic_viewer(None, trace, histories)
+
+    def test_diagnostic_viewer_reproduces_applied_prediction_beyond_original_inputs(self):
+        # Value: protects=speculative diagnostic playback; fails_when=sender history bounds predictions; why_new=existing traces are confirmed; seam=none
+        source = evidence()
+        histories = [peer['inputs'] for peer in source['rounds'][0]['peers']]
+        trace = source['rounds'][0]['diagnostics'][0]['report']['trace']
+        validate_diagnostic_viewer(source['diagnostic_viewer'], trace, histories)
+        applied = copy.deepcopy(histories)
+        applied[1][105:110] = [2] * 5
+        trace = trace_evidence(expected_states(applied, 110), applied)
+        for row in trace['frames'][105:]:
+            row['inputs'][1]['status'] = 2
+        viewer = diagnostic_viewer_evidence(trace, applied)
+        for original in ([histories[0], histories[1][:105]], histories):
+            validate_diagnostic_viewer(viewer, trace, original)
+        report = copy.deepcopy(source['rounds'][0]['diagnostics'][0]['report'])
+        report['trace'] = trace
+        states = expected_states(histories, 110)
+        with self.assertRaisesRegex(ValueError, 'differs from original confirmed history'):
+            validate_trace_history(report, states, histories)
+        report['confirmed_frame'] = 105
+        validate_trace_history(report, states, histories)
+        changed = copy.deepcopy(viewer)
+        changed['completed']['state'] = source['diagnostic_viewer']['completed']['state']
+        with self.assertRaisesRegex(ValueError, 'controls differ'):
+            validate_diagnostic_viewer(changed, trace, histories)
 
     def test_viewer_receipt_requires_controls_and_original_gameplay(self):
         original = evidence()

@@ -49,6 +49,23 @@ order; it has no rollback algorithm. `driver.status()` and `driver.statistics()`
 the session state and counters, so a client that only holds the driver still learns the
 current frame, the confirmed frame, the lifecycle and the exact cause of a stop. Peer
 results carry the same cause from the shared core session.
+
+The native driver/expert comparison includes actual encoded P2P sessions with
+2 and 8 endpoints, plus 6 player slots shared across 3 endpoints. The eight-peer
+case runs 24 frames through the minimum accepted 10-row queues; the other cases
+run 40 frames through 16-row queues. Each crosses two complete input-ring wraps.
+Both consumers
+run the same production protocol and game callbacks. The test compares every
+published packet, ordered request, snapshot, event and canonical game boundary
+through changing inputs, packet loss, delayed/reordered/duplicate delivery,
+prediction stalls, input delay, queue wrap and final recovery. Corrected confirmed
+callback prefixes and the final state match an independent simulation of the
+original inputs. A committed negative control permutes the same rows in both
+meshes: their final states still match, but intermediate canonical prefixes fail.
+This substitutes
+the request consumer at an internal test boundary; it does not expose a separate
+public expert peer API or establish browser/release support.
+
 `driver.scheduled_local_input(player)` returns an owned sample retained by a stalled step.
 The driver also exposes local `input_delay` and `set_input_delay` for standalone sessions;
 networked callers use the peer session's setter to publish added inputs.

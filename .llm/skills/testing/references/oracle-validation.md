@@ -16,12 +16,18 @@ objects separately through every standalone executable. Require field presence
 when explicit null is part of the observed contract; parser defaults can alias
 them before shared validation runs. Constrain omitted setup records to their
 exact allowed position. Formal projection must account for the observed initial
-state and every supported post-state, not just action names and final success.
+state and every supported post-state, including actual backlog and pacing advice.
+Do not substitute a model's sentinel rules for runtime policy observations.
+Label synthetic bootstrap separately, retain startup counterexamples, and require
+transition-control rejection inside the actual observed suffix, not only its setup.
 
 Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying
 an oracle's own requests can preserve the same mistake. Keep a temporal mutation
 that retains the final state while violating an intermediate frame.
+Diagnostic windows may include predicted inputs beyond received originals. Check
+their confirmed prefix against originals, then reproduce captured applied inputs
+for speculative playback; retain both confirmed-mismatch and viewer-state controls.
 
 Validate original numeric tokens when parsing erases integer versus float syntax.
 
@@ -45,6 +51,9 @@ clamp in an isolated control to prove the model rejects it.
 Select mutated records by semantic kind. Require scenario-specific nonzero
 observations and an expected control inventory before publishing success. A
 shortened corpus that never reaches its named event must fail those gates.
+For sparse or optional validation, independently require the exact validation
+request schedule. Workload names and advance counts can stay green when validation
+is disabled or every frame is checked; neither executes sparse validation.
 For snapshot-omission controls, derive localization from the first serialized
 consumer of the missing field. A mutant that omits a field from every snapshot
 can hide its immediate difference until a later scheduled event exposes it.

@@ -29,6 +29,8 @@ Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. Th
 the shard results in sorted suite order, so the record is the same as one process running every
 suite; `--jobs 1` keeps that single process. With `--filter`, suites with no matching case are
 dropped, and the whole selection must still match at least one case.
+Use the default worker setting for full-suite verification. Explicit `--jobs 1`
+is useful for diagnosis, but puts the whole selection under one process budget.
 
 Each run without `--filter` saves per-suite times to ignored `.cache/tests/durations.json`. The next
 run starts the slowest suites first, with both repetitions of a suite started together. A suite

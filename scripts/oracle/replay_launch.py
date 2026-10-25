@@ -32,25 +32,27 @@ def advance(state, row):
 
 
 def corpus():
+    workloads = [(players, count, mode) for players in (2, 8) for count in (0, 1, 7)
+                 for mode in ('plain', 'all', 'sparse', 'first-mismatch', 'last-mismatch')
+                 if count != 0 or mode == 'plain']
+    workloads += [(players, 64, mode) for players in range(2, 9)
+                  for mode in ('plain', 'sparse', 'middle-mismatch')]
     cases = []
-    for players in (2, 8):
-        for count in (0, 1, 7):
-            for mode in ('plain', 'all', 'sparse', 'first-mismatch', 'last-mismatch'):
-                if count == 0 and mode != 'plain':
-                    continue
-                seed = 0xffffffff
-                state = (0, seed, seed, 0)
-                rows, checksums = [], []
-                for frame in range(count):
-                    row = [(seed + frame * 1234567 + slot * 0x1020304) & 0xffffffff for slot in range(players)]
-                    saved = bytearray(state_bytes(state))
-                    if (mode == 'first-mismatch' and frame == 0) or (mode == 'last-mismatch' and frame == count - 1):
-                        saved[15] ^= 0x80
-                    checksums.append(None if mode == 'sparse' and frame % 2 else saved.hex())
-                    rows.append(row)
-                    state = advance(state, row)
-                cases.append(dict(name=f'{players}p-{count}-{mode}', players=players, seed=seed,
-                                  validate=mode != 'plain', frames=rows, checksums=checksums))
+    for players, count, mode in workloads:
+        seed = 0xffffffff
+        state = (0, seed, seed, 0)
+        rows, checksums = [], []
+        mismatch = {'first-mismatch': 0, 'last-mismatch': count - 1, 'middle-mismatch': count // 2}.get(mode, -1)
+        for frame in range(count):
+            row = [(seed + frame * 1234567 + slot * 0x1020304) & 0xffffffff for slot in range(players)]
+            saved = bytearray(state_bytes(state))
+            if frame == mismatch:
+                saved[15] ^= 0x80
+            checksums.append(None if mode in ('sparse', 'middle-mismatch') and frame % 2 else saved.hex())
+            rows.append(row)
+            state = advance(state, row)
+        cases.append(dict(name=f'{players}p-{count}-{mode}', players=players, seed=seed,
+                          validate=mode != 'plain', frames=rows, checksums=checksums))
     return cases
 
 
@@ -119,12 +121,52 @@ def godot_expected(cases):
     return dict(format=1, cases=[expected(case, False, expert) for case in cases for expert in (False, True)])
 
 
+def acceptance_evidence(observed):
+    """Require the observed full-roster workloads, independently of the generated corpus."""
+    evidence = []
+    for players in range(2, 9):
+        for mode in ('plain', 'sparse', 'middle-mismatch'):
+            name = f'{players}p-64-{mode}'
+            for runtime in ('rust', 'godot'):
+                for suffix in ('', '-expert') if runtime == 'godot' else ('',):
+                    matches = [case for case in observed[runtime]['cases'] if case['name'] == name + suffix]
+                    if len(matches) != 1:
+                        raise ValueError(f'{runtime}:{name + suffix}: missing or duplicate acceptance workload')
+                    case = matches[0]
+                    failed = runtime == 'godot' and mode == 'middle-mismatch'
+                    count = 32 if failed else 64
+                    advances = [record for record in case['records'] if record['kind'] == 'advance']
+                    if ([record['frame'] for record in advances] != list(range(count)) or
+                            any(type(record['frame']) is not int or len(record['inputs']) != players for record in advances)):
+                        raise ValueError(f'{runtime}:{name + suffix}: incomplete player/frame workload')
+                    save_frames = [] if mode == 'plain' else list(range(64) if runtime == 'rust' else range(0, count + int(failed), 2))
+                    saves = [record for record in case['records'] if record['kind'] == 'save']
+                    schedule = []
+                    for frame in range(count + int(failed)):
+                        if frame in save_frames:
+                            schedule.append(('save', frame))
+                        if frame < count:
+                            schedule.append(('advance', frame))
+                    if ([record['frame'] for record in saves] != save_frames or
+                            any(type(record['frame']) is not int for record in saves) or
+                            [(record['kind'], record['frame']) for record in case['records']] != schedule):
+                        raise ValueError(f'{runtime}:{name + suffix}: incorrect save frame inventory or request order')
+                    if runtime == 'godot' and case['failure_frame'] != (32 if failed else -1):
+                        raise ValueError(f'{runtime}:{name + suffix}: missing interior stop')
+                    if runtime == 'rust' and [event['frame'] for event in case['events']] != ([32] if mode == 'middle-mismatch' else []):
+                        raise ValueError(f'{runtime}:{name + suffix}: missing interior event')
+            evidence.append(name)
+    return evidence
+
+
 def controls(observed, wanted):
     inventory = {case['name']: index for index, case in enumerate(wanted['cases'])}
     plain = inventory['2p-1-plain']
     temporal = inventory['2p-7-plain']
     final_mismatch = inventory['2p-1-last-mismatch']
     sparse = inventory['2p-7-sparse']
+    middle = inventory['5p-64-middle-mismatch']
+    full_roster = inventory['5p-64-plain']
     return reject_mutations(observed, wanted, (
         ('intermediate-state', ('cases', temporal, 'records', 0, 'bytes'), '00' * 16),
         ('confirmed-status', ('cases', plain, 'records', 0, 'inputs', 0, 'status'), 'predicted'),
@@ -132,19 +174,26 @@ def controls(observed, wanted):
         ('bool-alias', ('format',), True),
         ('missing-final-desync', ('cases', final_mismatch, 'events'), []),
         ('invented-event', ('cases', plain, 'events'), [{'frame': 0, 'expected': '00' * 16, 'actual': '00' * 16}]),
+        ('missing-interior-desync', ('cases', middle, 'events'), []),
+        ('missing-middle-player', ('cases', full_roster, 'records', 32, 'inputs'),
+         observed['cases'][full_roster]['records'][32]['inputs'][:2] + observed['cases'][full_roster]['records'][32]['inputs'][3:]),
         ('missing-sparse-save', ('cases', sparse, 'records'),
          [record for record in observed['cases'][sparse]['records'] if not (record['kind'] == 'save' and record['frame'] == 1)]),
     ))
 
 
 def expert_controls(observed, wanted):
-    """Reject expert-only faults while leaving every callback observation unchanged."""
+    """Reject interface-specific faults at independently named trace boundaries."""
     compare(observed, wanted)
     inventory = {case['name']: index for index, case in enumerate(wanted['cases'])}
     validated = inventory['2p-7-all-expert']
     mismatch = inventory['2p-1-first-mismatch-expert']
     records = observed['cases'][validated]['records']
+    interior = inventory['5p-64-middle-mismatch-expert']
+    callback_interior = inventory['5p-64-middle-mismatch']
     return reject_mutations(observed, wanted, (
+        ('expert-interior-failure-frame', ('cases', interior, 'failure_frame'), 33),
+        ('callback-interior-failure-frame', ('cases', callback_interior, 'failure_frame'), 33),
         ('expert-missing-save', ('cases', validated, 'records'), records[1:]),
         ('expert-duplicate-advance', ('cases', validated, 'records'), records + [records[-1]]),
         ('expert-frame-offset', ('cases', validated, 'records', 0, 'frame'), 1),
@@ -282,6 +331,7 @@ def main():
         compare(godot, godot_expected(cases))
         observations.append(dict(rust=rust, godot=godot))
     compare(observations[0], observations[1])
+    acceptance = acceptance_evidence(observations[0])
     negative = controls(observations[0]['rust'], wanted)
     negative += expert_controls(observations[0]['godot'], godot_expected(cases))
     rejected = rejection_controls(binary, engine, cases, args.output)
@@ -291,7 +341,7 @@ def main():
         engine_sha256=engine_hash, engine_path=str(engine), binary_sha256=binary_hash, upstream_revision=manifest['sources']['fortress']['revision'],
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
-        negative_controls=negative, standalone_rejections=rejected, observations=observations[0],
+        acceptance_workloads=acceptance, negative_controls=negative, standalone_rejections=rejected, observations=observations[0],
         limitations=['ReplaySession playback only; recording applicability is audited separately.',
                      'Native sequential replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
