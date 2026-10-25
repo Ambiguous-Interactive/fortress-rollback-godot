@@ -197,6 +197,8 @@ Pausing at a seek destination validates that state through the same bounded snap
 The display shows the current frame and stops at the first failed recorded checksum.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
+Completion identifies whether the final state matched a recorded checksum. Historical recordings explicitly report
+that their final state has no recorded checksum, even when every earlier checksum matched.
 A recording with no checksums plays its inputs but explicitly reports that playback could not be verified.
 Checksum failures show both the expected and actual values as hexadecimal strings, including failures at a seek target.
 After a failure, press **Download failure** to retain `fortress-replay-failure.json`.

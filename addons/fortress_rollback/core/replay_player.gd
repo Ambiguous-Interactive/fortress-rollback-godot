@@ -504,6 +504,13 @@ func checked_checksum_count() -> int:
 	return _checked_checksum_count
 
 
+## Whether the currently displayed final boundary matched its recorded checksum.
+## False for historical/input-only playback, before final validation, after restoring earlier state,
+## during an open request or callback, after failure or termination, and in a new playback lifetime.
+func is_final_state_validated() -> bool:
+	return _reason == Types.Code.OK and _batch == null and not _is_stepping and _terminal_validated and _replay != null and _frame == _replay.frame_count()
+
+
 ## Recorded frames whose confirmed input was no longer retained when the file was written.
 ## Their input was replaced with the neutral sample, so the recording is not a faithful copy.
 func skipped_frames() -> int:

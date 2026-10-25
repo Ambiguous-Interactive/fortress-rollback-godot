@@ -361,6 +361,9 @@ Pass `0` to play inputs without checking. The file stores inputs, not game rules
 `checked_checksum_count()` reports distinct recorded state boundaries whose checksums actually matched.
 Input-only playback reports zero; repeated validation and checkpoint navigation never count a boundary twice.
 Successful configuration starts a fresh count; rejected configuration preserves it.
+`is_final_state_validated()` separately reports whether the displayed final boundary matched its recorded checksum.
+It is false for historical/input-only playback, during callbacks or open requests, after restoring an earlier boundary,
+and after failure, termination or successful reconfiguration. A checksum count alone cannot establish final-state validation.
 `player.skipped_frames()` reports the recorded frames whose input was substituted, so a
 recording with holes never looks like a faithful copy.
 

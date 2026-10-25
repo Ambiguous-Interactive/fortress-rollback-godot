@@ -73,6 +73,7 @@ func _empty_terminal(context: RefCounted) -> void:
 			context.equal(failure.failure.actual, Simulation.checksum(initial.canonical_bytes()).hex_encode(), "failure keeps actual initial checksum")
 		else:
 			context.equal(node.viewer.message.contains("Replay complete"), true, "matching initial validation completes")
+			context.equal(node.viewer.message.contains("including the final state"), true, "zero-input completion identifies verified initial/final boundary")
 			node._restart_button.pressed.emit()
 			context.equal(node.viewer.checked_checksum_count(), 0, "restart clears previous validation coverage")
 			node._step_button.pressed.emit()
