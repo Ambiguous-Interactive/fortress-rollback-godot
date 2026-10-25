@@ -131,6 +131,8 @@ of row pressure, and report an overwritten next row explicitly. A stopped produc
 owes liveness while final rows or END are refused; stop heartbeats only after END acceptance.
 Exercise one-send poll budgets: refused payloads and smaller liveness packets need fair
 turns across polls, including when only the heartbeat fits the socket capacity.
+Preserve retryable session stalls at transport facade boundaries, including finish-host
+confirmation or repair waits. A specific peer code does not excuse a terminal outer code.
 Input closure is separate from playback termination. After END, test late identical controls
 and retained row retries through the relay while the final tail is paused. Preserve authenticated
 conflict checks and forbid new rows; ordinary retries must not become peer failures.

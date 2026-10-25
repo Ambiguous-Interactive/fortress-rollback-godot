@@ -49,7 +49,7 @@ class Client:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["startup", "canonical_playback", "pressure", "lifetimes", "configuration", "reentry",
-		"history_loss", "player_coexistence", "active_requests", "fair_liveness"])
+		"history_loss", "player_coexistence", "active_requests", "fair_liveness", "finish_retry"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -57,10 +57,15 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _fixture(context: RefCounted, negotiate: bool = true, sends: int = 2) -> Dictionary:
+func _fixture(context: RefCounted, negotiate: bool = true, sends: int = 2, predicting: bool = false) -> Dictionary:
 	var helper: RefCounted = Helper.new()
 	var host: RefCounted = Session.new()
-	context.equal(host.configure(helper._config()), S.Code.OK, "configured unchanged player host")
+	var host_config: RefCounted = helper._config()
+	if predicting:
+		host_config.local_players = PackedInt32Array([0])
+		host_config.max_prediction_frames = 2
+		host_config.history_slots = 3
+	context.equal(host.configure(host_config), S.Code.OK, "configured unchanged player host")
 	var client: Client = Client.new()
 	var config: RefCounted = Viewer.RelayFixture.SDKConfig.new()
 	var info: RefCounted = Viewer.Info.new()
@@ -337,3 +342,41 @@ func _fair_liveness(context: RefCounted) -> void:
 				if kind == Stream.END:
 					context.equal(fixture.relay.poll(100).sent, 0, "accepted END stops further liveness")
 				_stop(fixture)
+
+
+# Value: protects=retryable clean host finish; fails_when=unconfirmed or uncorrected tails report peer failure; why_new=clean-end test starts fully confirmed; seam=none
+func _finish_retry(context: RefCounted) -> void:
+	for pending_repair: bool in [false, true]:
+		var fixture: Dictionary = _fixture(context, true, 2, pending_repair)
+		var frames: int = 2 if pending_repair else 1
+		if pending_repair:
+			context.equal(fixture.host.receive_input(1, 0, Fixture.new()._row(0)[1]).code, S.Code.OK, "real initial remote input")
+			for frame: int in range(frames):
+				var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, Fixture.new()._row(frame)[0])]
+				context.equal(fixture.driver.step(frame, samples).code, S.Code.OK, "host advances actual then predicted remote input")
+			context.equal(fixture.host.receive_input(1, 1, Fixture.new()._row(1)[1]).code, S.Code.OK, "differing late input confirms history")
+			context.equal(fixture.host.status().pending_rollback_frame, 1, "actual late input requires real correction")
+		else:
+			context.equal(fixture.host.set_confirmation_limit(-1).code, S.Code.OK, "hold genuine mesh confirmation")
+			fixture.helper._step(context, fixture.driver, 0)
+		var refused: RefCounted = fixture.relay.finish_host()
+		context.equal(refused.code, HostRelay.Code.BACKPRESSURE, "unfinished confirmation or repair keeps clean finish retryable")
+		context.equal(refused.peer_code, S.Code.PREDICTION_STALL, "specific unfinished-tail cause preserved")
+		context.equal(fixture.relay.status().code, HostRelay.Code.OK, "recoverable finish leaves publication live")
+		if pending_repair:
+			context.equal(fixture.driver.recover(2).code, S.Code.OK, "repair confirms original exposed prefix without advancing")
+		else:
+			context.equal(fixture.host.set_confirmation_limit(0).code, S.Code.OK, "release genuine mesh confirmation")
+		context.equal(fixture.relay.finish_host().code, HostRelay.Code.OK, "same host clean finish succeeds after recovery")
+		for now_us: int in [3, 4]:
+			fixture.relay.poll(now_us)
+			_deliver(fixture)
+			context.equal(fixture.viewer.relay.poll(now_us + 1).code, HostRelay.Code.OK, "original corrected rows precede exact END")
+		var expected: int = 0
+		for frame: int in range(frames):
+			context.equal(fixture.viewer.driver.step(frame, Viewer.new()._empty()).code, S.Code.OK, "viewer plays complete original prefix")
+			for player: int in range(2):
+				expected = expected * 3 + Fixture.new()._row(frame)[player][0] + frame
+		context.equal(fixture.viewer.game.value, expected, "independent final state includes corrected original input")
+		context.equal(fixture.viewer.driver.step(frames, Viewer.new()._empty()).code, S.Code.TERMINATED, "clean END follows exact recovered prefix")
+		_stop(fixture)

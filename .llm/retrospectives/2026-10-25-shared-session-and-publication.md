@@ -15,6 +15,7 @@ reproduced callback defect trigger this retrospective.
 | A mutation guard cannot double as read eligibility once notifications use it. | Independent review reproduces empty `confirmed_checksums(true)` during notification and one completed checksum immediately afterward. | Preserve completed checksum exports with explicit read eligibility and regression coverage. |
 | Optional SDK observations can invalidate the owner before a send. | The host suite's getter-detach control requires zero subsequent SDK sends. | Capture revision before the getter and recheck lifetime before publishing. |
 | Same-poll fallback is not independent liveness at the minimum send budget. | Independent review finds one-send polls retrying refused rows forever; refused END also skips the heartbeat branch. | Require fair bounded turns across polls and test both refused ROW and END. |
+| A facade can turn a recoverable completion wait into a terminal-looking error. | Automated review identifies `finish_host()` mapping `PREDICTION_STALL` to `PEER_FAILURE`. | Preserve the retryable outer result and test settlement followed by clean END. |
 | Historical replay checksums omit the terminal state. | FRRP rows checksum state before each input; completed validation has no terminal SAVE. | Keep historical semantics and track the complete versioned repair in issue #205. |
 
 Regression evidence is machine-local in

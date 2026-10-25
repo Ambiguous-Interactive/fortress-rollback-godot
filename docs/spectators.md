@@ -519,7 +519,9 @@ transport acceptance; missing overwritten history reports `HISTORY_UNAVAILABLE`
 in `peer_code`. Due keepalives take turns with refused ROW or END packets, including with one
 send attempt per poll. A refused heartbeat yields the next attempt to the payload.
 Stop advancing the host, call `finish_host()`, then continue polling to publish the
-remaining confirmed prefix and END. SDK acceptance does not prove remote delivery.
+remaining confirmed prefix and END. An unconfirmed tail or pending correction returns
+`BACKPRESSURE` with `peer_code=PREDICTION_STALL`; confirm or repair, then retry
+`finish_host()` on the same publication. SDK acceptance does not prove remote delivery.
 
 The SDK broadcasts these bytes to other players as well as spectators. The player
 relay adapter rejects FRGS envelopes before changing its protocol clocks or player

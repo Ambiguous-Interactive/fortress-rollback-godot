@@ -301,6 +301,6 @@ static func _valid_options(options: Options) -> bool:
 
 
 static func _peer_result(code: int) -> Types.Result:
-	var result: Types.Result = Types.Result.new(Code.OK if code == S.Code.OK else (Code.BACKPRESSURE if code == S.Code.BUSY else Code.PEER_FAILURE))
+	var result: Types.Result = Types.Result.new(Code.OK if code == S.Code.OK else (Code.BACKPRESSURE if code in [S.Code.BUSY, S.Code.PREDICTION_STALL] else Code.PEER_FAILURE))
 	result.peer_code = code
 	return result
