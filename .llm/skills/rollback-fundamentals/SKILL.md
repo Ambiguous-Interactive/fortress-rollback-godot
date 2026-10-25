@@ -145,7 +145,9 @@ delivery tests cannot establish it.
 
 Session wrappers must preserve shared-engine terminal checks before returning
 recoverable input or delay stalls. Exercise exhausted frame and request counters
-through each wrapper while its input is unavailable.
+through each wrapper while its input is unavailable. Run terminal preflight before
+wrapper-owned sample staging, endpoint polling or publication; a later driver guard
+cannot undo those effects. Nonterminal BUSY must preserve transport state.
 When callers service only a recommended number of steps, include pending lifecycle
 completion after payload drains. Test clean end through that public service loop
 with empty input, a delayed tail and a gap; direct advancement can conceal starvation.

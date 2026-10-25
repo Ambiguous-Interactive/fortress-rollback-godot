@@ -55,6 +55,11 @@ inputs. `PREDICTION_STALL` preserves the current frame but can still repair old
 predictions and save that boundary. Save/load callbacks must therefore tolerate
 repeated frames. Changing an already submitted sample is rejected.
 
+Once the shared engine's frame or request counter is exhausted, `step` and
+`recover` return `FRAME_EXHAUSTED` and terminate before accepting or publishing
+another local sample. Missing input cannot conceal this terminal outcome.
+When lifecycle controls are enabled, drain and deliver the final goodbye packets.
+
 `step_completed(code, frame_before, frame_after)` emits synchronously after all
 game callbacks and peer controls finish. It reports configured stalls, not-ready
 attempts and errors too. Unconfigured and BUSY calls emit nothing. Read the final

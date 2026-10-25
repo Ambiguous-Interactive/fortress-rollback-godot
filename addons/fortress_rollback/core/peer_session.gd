@@ -238,6 +238,12 @@ func _recover(now_us: Variant) -> Driver.StepResult:
 		return _result(_step_code(gate), before, before)
 	if not _running():
 		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
+	var limit: int = _core._check_advance_limits()
+	if limit != Types.Code.OK:
+		if limit == Types.Code.FRAME_EXHAUSTED:
+			_now = now_us
+			_terminate_links()
+		return _result(limit, before, before)
 	var polled: int = _poll(now_us, [], [], true)
 	if polled != I.Code.OK:
 		return _result(_step_failure(polled), before, before)
@@ -263,6 +269,12 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 		return _result(_step_code(gate), before, before)
 	if not _running():
 		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
+	var limit: int = _core._check_advance_limits()
+	if limit != Types.Code.OK:
+		if limit == Types.Code.FRAME_EXHAUSTED:
+			_now = now_us
+			_terminate_links()
+		return _result(limit, before, before)
 	var code: int = _samples_code(local_inputs, before)
 	if code != Types.Code.OK:
 		return _result(code, before, before)

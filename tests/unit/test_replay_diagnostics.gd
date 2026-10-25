@@ -13,12 +13,16 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["playback_evidence", "restore_evidence", "viewer_evidence", "boundary_validation", "stepped_boundaries", "paused_boundaries", "failure_download"])
+	return PackedStringArray(
+		["playback_evidence", "restore_evidence", "viewer_evidence", "boundary_validation", "stepped_boundaries", "paused_boundaries", "failure_download", "comparison_domains"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	var player: Player = Player.new()
 	match name:
+		"comparison_domains":
+			_comparison_domains(context)
 		"failure_download":
 			_failure_download(context)
 		"playback_evidence":
@@ -314,6 +318,10 @@ func _failure_download(context: RefCounted) -> void:
 		context.equal(report.replay_bytes, source.size(), "report records imported file size")
 		context.equal(report.failure.frame, 8, "report identifies the failed boundary")
 		context.equal(report.failure.code, Types.Code.DESYNC, "report preserves the real failure code")
+		context.equal(report.failure.comparison, "state_checksum" if fault == "checksum" else "input_digest", "report names the hash domain")
+		context.equal(
+			node.viewer.message.contains("state checksum mismatch" if fault == "checksum" else "input digest mismatch"), true, "visible evidence names the failed comparison"
+		)
 		context.equal(
 			report.failure.expected, replay.checksum(8).hex_encode() if fault == "checksum" else replay.input_digest(8).hex_encode(), "report preserves expected comparison hash"
 		)
@@ -341,3 +349,55 @@ func _failure_download(context: RefCounted) -> void:
 		context.state(8, before)
 		node._exit_tree()
 		node.free()
+
+
+# Value: protects=replay diagnosis distinguishes changed input from game divergence; fails_when=all DESYNC hashes look alike;
+# why_new=existing evidence checks compare hash bytes without identifying their domain; seam=none
+func _comparison_domains(context: RefCounted) -> void:
+	var probe: Player = Player.new()
+	context.equal(probe.has_method("failure_comparison"), true, "replay evidence identifies the failed comparison")
+	if not probe.has_method("failure_comparison"):
+		return
+	for expert: bool in [false, true]:
+		for paused: bool in [false, true]:
+			for fault: String in ["none", "input_digest", "state_checksum"]:
+				var replay: Replay = Fixture.recording(2)
+				if fault == "input_digest":
+					replay._digests[0] ^= 1
+				elif fault == "state_checksum":
+					replay._checksums[0] ^= 1
+				var player: Player = Player.new()
+				var game: Simulation = Simulation.new()
+				if expert:
+					player.configure_expert(replay, Simulation.SNAPSHOT_BYTES)
+					var result: Types.Result = player.begin_validate_current_frame() if paused else player.begin_advance()
+					if result.code == Types.Code.READY:
+						var request: Types.Request = result.batch.next_request()
+						var saved: RefCounted = game.save_state(0, request.writer)
+						player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum)
+				else:
+					player.configure(replay, game, Simulation.SNAPSHOT_BYTES)
+					if paused:
+						player.validate_current_frame()
+					else:
+						player.step()
+				context.equal(player.call("failure_comparison"), "" if fault == "none" else fault, "comparison identity survives every playback entry point")
+				player.terminate()
+				context.equal(player.call("failure_comparison"), "" if fault == "none" else fault, "termination preserves the first comparison")
+				context.equal(player.configure(null, game), Types.Code.INVALID_CONFIGURATION, "invalid configure preserves diagnosis")
+				context.equal(player.call("failure_comparison"), "" if fault == "none" else fault, "refused configure preserves comparison")
+				context.equal(player.configure(Fixture.recording(1), game), Types.Code.OK, "new playback clears diagnosis")
+				context.equal(player.call("failure_comparison"), "", "successful configure clears comparison")
+	for fault: String in ["none", "wrong state", "checksum collision", "false", "underflow", "large checksum"]:
+		var player: Player = Player.new()
+		var game: Checkpoints.FaultGame = Checkpoints.FaultGame.new()
+		var replay: Replay = Fixture.recording(12)
+		player.configure(replay, game, Simulation.SNAPSHOT_BYTES, 3, 3)
+		for frame: int in 12:
+			player.step()
+		game.fault = fault
+		game.cached_checksum = replay.checksum(6)
+		player.restore_before(8)
+		var expected: String = "checkpoint_checksum" if fault == "wrong state" else ("checkpoint_bytes" if fault == "checksum collision" else "")
+		context.equal(player.call("failure_comparison"), expected, "restore comparison is distinct from callback or snapshot failure")
+		context.state(game.game.frame, game.game.canonical_bytes())

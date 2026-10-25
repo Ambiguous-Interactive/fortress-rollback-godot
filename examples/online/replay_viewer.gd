@@ -260,6 +260,15 @@ func _complete_message() -> String:
 
 func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: PackedByteArray) -> String:
 	var text: String = "Replay stopped at frame %d (code %d)." % [frame, code]
+	var comparison: String = _player.failure_comparison()
+	if not comparison.is_empty():
+		var labels: Dictionary = {
+			"input_digest": "Recorded input digest mismatch.",
+			"state_checksum": "Recorded state checksum mismatch.",
+			"checkpoint_checksum": "Restored checkpoint checksum mismatch.",
+			"checkpoint_bytes": "Restored checkpoint bytes mismatch.",
+		}
+		text += " " + labels[comparison]
 	if not expected.is_empty():
 		text += "\nExpected: %s\nActual: %s" % [expected.hex_encode(), actual.hex_encode()]
 	return text
@@ -280,6 +289,7 @@ func failure_report_bytes() -> PackedByteArray:
 		{
 			"frame": _player.failure_frame(),
 			"code": _player.failure_code(),
+			"comparison": _player.failure_comparison(),
 			"expected": _player.failure_expected_checksum().hex_encode(),
 			"actual": _player.failure_actual_checksum().hex_encode(),
 		},

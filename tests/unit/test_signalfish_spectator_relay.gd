@@ -25,8 +25,13 @@ class Client:
 	var state: int = Relay.SPECTATING
 	var connection: int = Relay.CONNECTED
 	var player: String = ""
+	var on_room: Callable
 
 	func get_room_id() -> String:
+		if on_room.is_valid():
+			var callback: Callable = on_room
+			on_room = Callable()
+			callback.call()
 		return room
 
 	func get_connection_state() -> int:
@@ -42,11 +47,39 @@ class Client:
 class Info:
 	extends RelayFixture.Info
 	var capabilities: Array[String] = ["spectator_relay"]
+	var on_info: Callable
 
 	func to_dict() -> Dictionary:
+		if on_info.is_valid():
+			var callback: Callable = on_info
+			on_info = Callable()
+			callback.call()
 		var data: Dictionary = super.to_dict()
 		data.capabilities = capabilities.duplicate()
 		return data
+
+
+class CallbackConfig:
+	extends RefCounted
+	var client: RefCounted
+	var reads: int = 0
+	var attack: bool = false
+
+	# Variant represents fields supplied by the optional SDK configuration object.
+	func _get(field: StringName) -> Variant:
+		match field:
+			"game_data_format":
+				return "message_pack"
+			"decode_msgpack_payloads":
+				return false
+			"max_inbound_frame_bytes", "max_buffered_bytes":
+				return 100000
+			"max_inbound_packets_per_poll":
+				reads += 1
+				if attack and reads == 2:
+					client.player = FOREIGN
+				return 128
+		return null
 
 
 func cases() -> PackedStringArray:
@@ -71,7 +104,9 @@ func cases() -> PackedStringArray:
 			"control_row_pressure",
 			"reordered_recovery",
 			"heartbeat_fairness",
-			"clean_tail_retries"
+			"clean_tail_retries",
+			"getter_lifetime",
+			"configure_lifetime"
 		]
 	)
 
@@ -556,4 +591,188 @@ func _clean_tail_retries(context: RefCounted) -> void:
 		context.equal(fixture.driver.step(0, _empty()).code, Types.Code.OK, "final original row remains playable")
 		context.equal(fixture.game.value, 1, "canonical final original state")
 		context.equal(fixture.driver.step(1, _empty()).code, Types.Code.TERMINATED, "clean completion follows final callback")
+		fixture.relay.detach()
+
+
+# Value: protects=SDK getter lifetime ownership; fails_when=detach during a getter dereferences cleared state; why_new=control callbacks run after the gate; seam=SDK API
+func _getter_lifetime(context: RefCounted) -> void:
+	for entry: String in ["poll", "ingress", "status"]:
+		for action: String in [
+			"control", "reentry", "detach", "replace", "signal", "ingress", "signal_ingress", "terminate_ingress", "overflow_signal", "player_change", "config_change"
+		]:
+			var fixture: Dictionary = _fixture(context)
+			var previous: RefCounted = fixture.stream.playback_session()
+			var packet: PackedByteArray = fixture.stream.encode_row(0, Fixture.new()._row(0))
+			fixture.client.on_room = func() -> void:
+				if action == "reentry":
+					context.equal(fixture.relay.status().code, Relay.Code.WRONG_STATE, "SDK getter cannot recursively inspect its own gate")
+					context.equal(fixture.relay.poll(1).code, Relay.Code.WRONG_STATE, "SDK getter cannot recursively poll its own gate")
+				elif action == "ingress":
+					_emit(fixture, packet)
+				elif action == "player_change":
+					fixture.client.player = FOREIGN
+				elif action == "config_change":
+					fixture.config.decode_msgpack_payloads = true
+				elif action == "signal":
+					fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+				elif action == "overflow_signal":
+					for index: int in 3:
+						_emit(fixture, packet)
+					fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+				elif action in ["signal_ingress", "terminate_ingress"]:
+					if action == "signal_ingress":
+						fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+					else:
+						previous.terminate(Types.Code.PROTOCOL_FAILED)
+					_emit(fixture, packet)
+				elif action in ["detach", "replace"]:
+					fixture.relay.detach()
+					if action == "replace":
+						var helper: RefCounted = StreamFixture.new()
+						context.equal(
+							fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 1, 100, 128),
+							Types.Code.OK,
+							"SDK getter replaces stream"
+						)
+						var options: Relay.Options = Relay.Options.new()
+						options.max_packet_bytes = 128
+						context.equal(
+							fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options), Relay.Code.OK, "SDK getter installs fresh bridge"
+						)
+			if entry == "poll":
+				var result: Relay.Types.Result = fixture.relay.poll(1)
+				var expected: int = Relay.Code.OK if action in ["control", "reentry", "ingress"] else Relay.Code.WRONG_STATE
+				context.equal(result.code, Relay.Code.RECEIVE_OVERFLOW if action == "overflow_signal" else expected, "getter lifetime result")
+			elif entry == "ingress":
+				_emit(fixture, packet)
+				context.equal(
+					fixture.relay.status().received_packets,
+					(2 if action == "ingress" else 1) if action in ["control", "reentry", "ingress"] else 0,
+					"old ingress cannot enqueue into replacement"
+				)
+			else:
+				fixture.relay.status()
+			if (
+				action in ["detach", "replace", "signal", "signal_ingress", "terminate_ingress", "overflow_signal"]
+				or (action in ["player_change", "config_change"] and entry != "status")
+			):
+				context.equal(previous.status().lifecycle, Types.Lifecycle.TERMINATED, "getter detach retires original viewer")
+			else:
+				context.equal(previous.status().lifecycle, Types.Lifecycle.RUNNING, "rejected recursion leaves original playback live")
+			if action == "signal":
+				context.equal(fixture.relay.status().code, Relay.Code.WRONG_STATE, "getter cannot erase a latched lifetime failure")
+			if action == "player_change":
+				context.equal(fixture.relay.status().code, Relay.Code.WRONG_STATE, "gate refuses an identity changed by a later getter")
+			if action in ["signal_ingress", "terminate_ingress"]:
+				var stopped: Dictionary = fixture.relay.status()
+				context.equal(stopped.received_packets, 0, "nested traffic cannot refill terminated viewer")
+				context.equal(stopped.received_bytes, 0, "nested terminal traffic retains no bytes")
+				context.equal(stopped.last_receive_code, Relay.Code.WRONG_STATE, "nested terminal traffic records lifetime rejection")
+			if action == "overflow_signal":
+				context.equal(fixture.relay.status().code, Relay.Code.RECEIVE_OVERFLOW, "later SDK signal preserves first terminal cause")
+			if action == "replace":
+				context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "old gate cannot terminate replacement viewer")
+				context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "replacement gate remains usable")
+			fixture.client.on_room = Callable()
+			fixture.relay.detach()
+
+
+# Value: protects=atomic SDK viewer configuration; fails_when=getter detachment partially installs stale state; why_new=runtime getters follow installation; seam=SDK API
+func _configure_lifetime(context: RefCounted) -> void:
+	_joint_observation(context)
+	for boundary: String in ["room", "protocol"]:
+		for action: String in [
+			"control", "reentry", "detach", "replace", "player_change", "state_change", "connection_change", "options_change", "config_change", "signal", "joined_signal"
+		]:
+			var fixture: Dictionary = _fixture(context, false)
+			fixture.relay.detach()
+
+			var helper: RefCounted = StreamFixture.new()
+			context.equal(
+				fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "fresh setup lifetime"
+			)
+			var options: Relay.Options = Relay.Options.new()
+			options.max_packet_bytes = 128
+			var callback: Callable = func() -> void:
+				if action == "player_change":
+					fixture.client.player = FOREIGN
+				elif action == "state_change":
+					fixture.client.state = -1
+				elif action == "connection_change":
+					fixture.client.connection = -1
+				elif action == "options_change":
+					options.max_received_packets = 0
+				elif action == "config_change":
+					fixture.config.decode_msgpack_payloads = true
+				elif action == "signal":
+					fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+				elif action == "joined_signal":
+					fixture.client.spectator_joined.emit(RefCounted.new())
+				if action in ["detach", "replace"]:
+					fixture.relay.detach()
+				if action in ["reentry", "replace"]:
+					context.equal(
+						fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options),
+						Relay.Code.WRONG_STATE,
+						"recursive configuration cannot install another lifetime"
+					)
+			if boundary == "room":
+				fixture.client.on_room = callback
+			else:
+				fixture.info.on_info = callback
+			var code: int = fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options)
+			var accepted: bool = action in ["control", "reentry", "options_change"] or (boundary == "protocol" and action == "player_change")
+			var expected: int = Relay.Code.OK if accepted else Relay.Code.WRONG_STATE
+			if boundary == "protocol" and action == "config_change":
+				expected = Relay.Code.INCOMPATIBLE_MODE
+			context.equal(code, expected, "only uninterrupted configuration commits")
+			context.equal(
+				fixture.client.get_signal_connection_list("game_data_binary_received").size(), 1 if code == Relay.Code.OK else 0, "rejected setup installs no SDK callbacks"
+			)
+			for signal_name: String in Relay.LIFETIME_SIGNALS:
+				if fixture.client.has_signal(signal_name):
+					context.equal(fixture.client.get_signal_connection_list(signal_name).size(), 1 if code == Relay.Code.OK else 0, "setup releases temporary lifetime listener")
+			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "partial setup cannot acquire or terminate fresh playback")
+			if action == "options_change":
+				context.equal(fixture.relay._options.max_received_packets, 128, "setup freezes caller options before callbacks")
+			if code != Relay.Code.OK:
+				fixture.client.connection = Relay.CONNECTED
+				fixture.client.state = Relay.SPECTATING
+				fixture.config.decode_msgpack_payloads = false
+				context.equal(
+					fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options),
+					Relay.Code.OK,
+					"rejected setup releases configuration guard"
+				)
+			fixture.relay.detach()
+
+
+# Value: protects=joint SDK configuration and identity consistency; fails_when=final config getter changes captured identity;
+# why_new=ordinary getter fixtures mutate within one object only; seam=SDK property API
+func _joint_observation(context: RefCounted) -> void:
+	for entry: String in ["setup", "ingress"]:
+		var fixture: Dictionary = _fixture(context, false)
+		fixture.relay.detach()
+		var helper: RefCounted = StreamFixture.new()
+		context.equal(
+			fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "joint-observation fresh stream"
+		)
+		var config: CallbackConfig = CallbackConfig.new()
+		config.client = fixture.client
+		config.attack = entry == "setup"
+		var options: Relay.Options = Relay.Options.new()
+		options.max_packet_bytes = 128
+		var code: int = fixture.relay.configure(fixture.client, config, fixture.info, fixture.stream, HOST, options)
+		context.equal(code, Relay.Code.WRONG_STATE if entry == "setup" else Relay.Code.OK, "configuration requires consistent joint observations")
+		if entry == "setup":
+			context.equal(fixture.client.get_signal_connection_list("game_data_binary_received").size(), 0, "joint-observation rejection installs no callbacks")
+			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "joint-observation rejection does not acquire viewer")
+		else:
+			config.reads = 0
+			config.attack = true
+			_emit(fixture, fixture.publisher.encode_offer())
+			context.equal(fixture.relay.status().received_packets, 0, "changed identity cannot accept authenticated offer")
+			context.equal(fixture.relay.status().received_bytes, 0, "changed identity retains no offer bytes")
+			context.equal(fixture.relay.status().last_receive_code, Relay.Code.WRONG_STATE, "joint-observation mismatch rejects ingress")
+			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.TERMINATED, "joint-observation mismatch retires attached viewer")
 		fixture.relay.detach()

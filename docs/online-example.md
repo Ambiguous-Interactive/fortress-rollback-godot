@@ -188,7 +188,8 @@ Checksum failures show both the expected and actual values as hexadecimal string
 After a failure, press **Download failure** to retain `fortress-replay-failure.json`.
 Browsers download the file; native runs save it under `user://`, replacing the previous report, and show its full path or an error.
 The report includes the original replay file's SHA-256, recording and playback engine versions,
-failure frame/code, comparison hashes, checksum counts and the observed game state.
+failure frame/code, comparison kind and hashes, checksum counts and the observed game state.
+The message and report distinguish input integrity failures from state or restored-checkpoint mismatches.
 Keep the original `.frrp` with it: the report excludes the input history and cannot replay the match by itself.
 The observed state is diagnostic evidence, not a claim that the failed boundary passed validation.
 Reports are bounded to 16 KiB. Restart clears failure export; a rejected import retains the previous failure.
