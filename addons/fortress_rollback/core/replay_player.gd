@@ -28,6 +28,7 @@ var _game: RefCounted
 var _max_snapshot_bytes: int = 0
 var _frame: int = 0
 var _checked_checksum_count: int = 0
+var _terminal_validated: bool = false
 var _validated_through_frame: int = -1
 var _reason: int = Types.Code.OK
 var _failure_frame: int = -1
@@ -87,6 +88,7 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 	_max_snapshot_bytes = max_snapshot_bytes
 	_frame = 0
 	_checked_checksum_count = 0
+	_terminal_validated = false
 	_validated_through_frame = -1
 	_reason = Types.Code.OK
 	_failure_frame = -1
@@ -165,6 +167,8 @@ func begin_advance() -> Types.Result:
 	if _reason != Types.Code.OK:
 		return Types.Result.new(_reason)
 	if _frame >= _replay.frame_count():
+		if _needs_terminal_validation():
+			return _begin_batch(Types.Kind.SAVE, true)
 		return Types.Result.new(Types.Code.FRAME_EXHAUSTED)
 	var digest_code: int = _verify_input_digest()
 	if digest_code != Types.Code.OK:
@@ -258,6 +262,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			_active_kind = Types.Kind.SAVE
 			_request_id += 1
 		else:
+			_terminal_validated = false
 			_frame = _restoring.frame
 			_restoring = null
 			_batch = null
@@ -268,6 +273,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		_request_id += 1
 	else:
 		_validated_through_frame = maxi(_validated_through_frame, _frame)
+		_terminal_validated = false
 		_frame += 1
 		_batch = null
 	return Types.Result.new(Types.Code.OK)
@@ -486,6 +492,8 @@ func _accept_checkpoint(checkpoint: Checkpoint) -> int:
 		_checked_checksum_count += 1
 	if _is_cache_boundary():
 		_retain_checkpoint(checkpoint)
+	if _frame == _replay.frame_count() and not expected.is_empty():
+		_terminal_validated = true
 	_validated_through_frame = maxi(_validated_through_frame, _frame)
 	return Types.Code.OK
 
@@ -507,8 +515,12 @@ func current_frame() -> int:
 	return _frame
 
 
+func _needs_terminal_validation() -> bool:
+	return _max_snapshot_bytes > 0 and not _replay.checksum(_replay.frame_count()).is_empty() and not _terminal_validated
+
+
 func is_complete() -> bool:
-	return _replay != null and _reason == Types.Code.OK and _frame >= _replay.frame_count()
+	return _replay != null and _reason == Types.Code.OK and _frame >= _replay.frame_count() and not _needs_terminal_validation()
 
 
 func failure_frame() -> int:

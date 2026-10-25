@@ -282,6 +282,45 @@ Predicted input is never recorded. Each frame also keeps the state checksum when
 `skipped_frames()` counts frames recorded as neutral input because their real input was unavailable.
 It stays zero in normal play; treat a nonzero count as an incomplete replay.
 
+### Capture the final replay state
+
+Ordinary exports use FRRP v5. Their checksums cover boundaries before recorded inputs;
+they have no checksum for the state after the last input. Input digests protect the stored inputs,
+but cannot detect a game that computes a different state only while applying the last input.
+
+When the whole simulated prefix is finalized, call `driver.capture_replay_boundary()` before exporting.
+It requests one bounded `save_state` callback, preserves staged local samples and advances no input.
+After `OK`, `driver.replay()` includes the terminal checksum at `replay.checksum(replay.frame_count())`
+and writes FRRP v6. Expert integrations use `session.begin_capture_replay_boundary()` and acknowledge
+its single SAVE through the ordinary request API. These capture operations do not poll transport or advance time.
+
+```gdscript
+var captured := driver.capture_replay_boundary()
+if captured.code == FortressSessionTypes.Code.OK:
+    var verified_file: PackedByteArray = driver.replay().to_bytes()
+```
+
+Capture returns `PREDICTION_STALL` while any simulated input is unconfirmed or its correction is pending.
+Deliver the missing inputs, update mesh confirmation where applicable, and complete recovery before retrying.
+An empty recording can capture its initial state. At a recording cap, capture before the live game advances
+past the cap. Later capture returns `HISTORY_UNAVAILABLE`; it cannot substitute the newer live state for
+the capped prefix. A previously captured capped prefix keeps its original checksum. Substituted input rows
+also return `HISTORY_UNAVAILABLE`. Disabled recording or checksums return `UNSUPPORTED`.
+Failed, overflowing or canceled saves publish no new terminal evidence and keep the normal first-failure diagnostics.
+
+Appending inputs or rewriting a recorded tail removes its previous terminal checksum. Capture again after
+finalization to verify the new endpoint. A shorter owned prefix drops terminal evidence rather than moving
+it to another frame. Ordinary v4/v5 files remain readable and preserve their exact layout when saved;
+loading an old file cannot invent evidence about its final state.
+
+With a positive snapshot bound, terminal-file playback needs one final SAVE after the last ADVANCE.
+`is_complete()` remains false until that checksum matches. A normal `while not player.is_complete()` loop
+performs it through `step()`; paused clients can call `validate_current_frame()` instead. Expert playback
+gets the same terminal SAVE from `begin_advance()` or `begin_validate_current_frame()`.
+A mismatch reports boundary N and the expected/actual checksums without simulating input N.
+Input-only playback still completes without state verification. Distinct checksum counts include the final boundary
+only after comparison, and navigation rechecks it without counting it twice.
+
 To watch it, start from the same initial game state and step a `FortressReplayPlayer` once per physics frame:
 
 ```gdscript
@@ -301,9 +340,9 @@ game version differ from the recording. `configure_expert` takes the same config
 `step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
 With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
 `DESYNC` stops playback at `failure_frame()` when validation fails; the comparison details below identify what differed.
-The final recorded frame also carries a digest of its input row, because the state checksum of the
-following frame - which covers every other row - does not exist for it. A corrupted last input
-stops playback with `DESYNC` at that frame, before the game callback runs.
+Every recorded input has its own digest. Historical v4/v5 files have no state checksum after
+the last input; optional v6 terminal evidence compares that final state separately. A corrupted
+last input stops playback with `DESYNC` before its game callback runs.
 `failure_code()` returns the latched failure code, or OK while playback remains healthy.
 `failure_kind()` identifies the `SessionTypes.Kind.SAVE`, `LOAD` or `ADVANCE` request that failed,
 including snapshot and comparison errors. It returns -1 for healthy playback, an input digest
@@ -346,7 +385,8 @@ if result.code == FortressSessionTypes.Code.READY:
 			break
 ```
 
-Each batch emits `SAVE(F)` when validation needs a recorded checksum, then `ADVANCE(F)`.
+Each input batch emits `SAVE(F)` when validation needs a recorded checksum, then `ADVANCE(F)`.
+A v6 terminal batch emits only `SAVE(N)`, with no input or frame advancement.
 A zero snapshot bound emits only advances. Inputs are slot-ordered and confirmed.
 Callback `step()` dispatches these same requests internally, including checkpoint saves when enabled.
 Acknowledgement expires the bounded writer or input view. Wrong identities return `STALE_REQUEST`
@@ -390,6 +430,7 @@ Continue with `begin_advance()` in a bounded loop to reach the exact target. Ope
 Call `validate_current_frame()` after reaching a paused navigation target or canceling a seek.
 It checks the selected input row digest, then checks that state boundary through the same bounded save callback as `step()`.
 Neither check consumes input. At replay completion, there is no remaining input row to check.
+Version 6 can still require the final state SAVE; historical versions have no final checksum to compare.
 Input digest, callback, snapshot and checksum failures stop playback and retain `failure_frame()` and comparison evidence.
 Input-only playback and boundaries without recorded checksums need no save unless checkpoint caching requires one.
 
@@ -400,12 +441,12 @@ The [replay applicability probe](oracle-replay.md) checks sequential playback ag
 
 Version 5 is little-endian with fixed-width fields. `decode` checks every count and length against
 the bytes present before it allocates. It returns `MALFORMED` for truncated, corrupt or trailing bytes.
-It returns `UNSUPPORTED_VERSION` for versions other than 4 and 5, and `TOO_LARGE` above the caller's `max_bytes`.
+It returns `UNSUPPORTED_VERSION` for versions other than 4, 5 and 6, and `TOO_LARGE` above the caller's `max_bytes`.
 
 | Field | Bytes | Accessor |
 | --- | --- | --- |
 | Magic `FRRP` | 4 | |
-| Format version, 5 | u16 | |
+| Format version, 5 or 6 | u16 | |
 | Players (2–8) | u8 | `player_count()` |
 | Input width (1–65536) | u32 | `input_width()` |
 | Frames | u32 | `frame_count()` |
@@ -422,6 +463,9 @@ The flag is 0 for no checksum, 1 for a checksum and 2 for a skipped frame, which
 The skipped count must equal the number of flag-2 frames. Status is 1 for confirmed or 3 for disconnected.
 Skipped rows use status 1. Version 4 files remain readable with status 1 for every player; they cannot represent disconnected gameplay.
 Decoded version 4 files keep their original format and byte-only digests when saved again.
+Version 6 uses the version 5 header and rows, followed by exactly one 16-byte checksum for boundary `frame_count()`.
+It forbids skipped rows. Missing or extra suffix bytes are malformed; its size budget includes the terminal checksum.
+Version 5 files have no suffix. New captures opt into version 6; existing exports and historical goldens remain version 5.
 Metadata describes the recording; `decode` does not compare it with the running build.
 
 Each frame's checksum covers the state before that frame's input, so the state checksum of the

@@ -555,32 +555,43 @@ frontiers, backlog, catch-up classification, public pacing advice and completed
 playback boundaries twice. Callback transcripts must match the original input log.
 CI runs the gate on both engine pins.
 
-The original cases fill capacities two and three before the first playback call,
-with catch-up speed two. They remain explicit model divergences: after receiving
-row zero, Godot has backlog one; the pinned model's `ReceiveInput` action forces
-`framesBehind = 0` while `currentFrame = NULL_FRAME`. Once the original ring fills,
-Godot reports backlog two or three, catch-up mode and advice two. The gate asserts
-those actual values and requires TLC to reject the faithful trace at exactly the
-first received row. It never substitutes the model's idle state for live backlog.
-The pinned Rust implementation's `frames_behind_host` and `advance_frame` distance
-calculations agree with Godot by source inspection; no executed Rust spectator
-comparison is claimed.
+The gate executes the actual pinned Rust host and spectator sessions through a
+fake socket and their real synchronization messages. Eight workloads cross ring
+capacities two and three, catch-up speeds one and two, and either fill the ring
+before playback or play frame zero first. Each workload compares every delivery
+boundary, backlog, service cycle and exact twelve-row callback transcript with
+Godot, twice. Rust's public backlog and current-frame getters supply observations;
+its actual returned ADVANCE request count proves the selected catch-up decision.
+Rust has no public pacing-advice getter, so its advice field is derived from the
+observed backlog and configured policy, then checked against the request count.
 
-Separate cases play frame zero before filling a complete ring. Explicit synthetic
-model synchronization and first-input preconditions establish the starting point;
-comparison of actual observations begins after that first completed frame. TLC
-must then accept every observed transition through pinned `SpectatorSession.Next`
-and its safety invariants, including actual full-ring catch-up and repeated wrap.
-An illegal advance over missing input mutates the first actual post-startup
-observation after frame zero. It must deadlock at cursor five, after all synthetic
-preconditions; a safety violation or earlier bootstrap rejection does not qualify.
-Actual startup observations remain in `observed.json` alongside the original
-preplay cases; the conformant suffix does not establish startup pacing parity.
+The original pinned model remains unchanged. Its `ReceiveInput` action forces
+`framesBehind = 0` while `currentFrame = NULL_FRAME`; actual Rust and Godot both
+report backlog one after the first row. The original preplay traces must still
+deadlock at exactly cursor three. Separate speed-one post-start traces continue
+to check the original model after explicitly labeled synthetic setup; an illegal
+advance over missing input must deadlock inside actual playback at cursor five.
 
-The conformant suffix uses two-player binary input for one slot, neutral input
-for the other, no stream delay and catch-up speed one. The port exposes the next
-frame; the model stores the last played frame, so the projection subtracts one.
-Runtime handshake, events, timeout, disconnected statuses, multi-frame catch-up,
-the pinned model's startup gap and live SignalFish acceptance remain in #47,
-[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) and #131. Omit `--godot` from the direct `scripts/oracle/spectator_launch.py` invocation
-to run only the upstream model.
+A derived runtime-aligned model removes only the two reviewed NULL-current-frame
+exceptions in `ComputeFramesBehind` and `ReceiveInput`. Exact source anchors fail
+closed on pin drift. TLC checks every original initial/post-state through this
+relation, including preplay full rings and repeated ring reuse. Synchronization
+setup remains synthetic and explicitly labeled. The model uses catch-up speed one
+for the port's individual request boundaries; the independent executed Rust/Godot
+comparison checks complete service cycles at speeds one and two. This separates
+request refinement from the source API's multi-request call boundary.
+
+The aligned trace control hides only the first received row's startup backlog;
+TLC must reject it at cursor three. Differential controls hide that same backlog
+or shorten the first catch-up batch, requiring the corresponding field diagnostic.
+Raw original observations, generated models, TLC logs, source/tool identities,
+Rust binary hashes and all control results remain in the receipt directory.
+
+This scope uses two-player binary input for one active slot, neutral input for
+the other, no stream delay, and in-order host delivery. The port exposes the next
+frame; Rust and the model expose the last played frame, so projection subtracts
+one. Handshake/event/timeout parity, disconnected statuses, arbitrary delivery
+and live SignalFish acceptance remain in #47 and #131. This fixes the scoped
+startup relation in [#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203)
+without changing reviewed pins or production playback. Omit `--godot` from the
+direct `scripts/oracle/spectator_launch.py` invocation to run only the upstream model.

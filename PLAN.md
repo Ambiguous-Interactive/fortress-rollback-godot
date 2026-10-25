@@ -97,6 +97,8 @@ Request-scoped inputs support owned reads or checked copies into exact-width gam
 Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
 Peer clients can read owned staged local samples to retry stalled steps without resampling.
 Replay failure evidence identifies the first failed game request and comparison domain.
+Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
+Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
 Godot physics and arbitrary scene state are not made deterministic by rollback.
 

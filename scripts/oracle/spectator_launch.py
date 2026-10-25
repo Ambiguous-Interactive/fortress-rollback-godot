@@ -36,7 +36,9 @@ def main():
     files = [*(ROOT / 'scripts/oracle').glob('*.py'), ROOT / 'tests/oracle/spectator_trace.gd',
              *(ROOT / 'addons/fortress_rollback/core').glob('*.gd'),
              *(ROOT / 'scripts/reference').glob('*.py'), ROOT / 'docs/reference/pins.json',
-             ROOT / 'scripts/oracle/tools/tla2tools-94d0c507.jar']
+             ROOT / 'scripts/oracle/tools/tla2tools-94d0c507.jar',
+             *(ROOT / 'scripts/oracle/rust').rglob('*.rs'),
+             ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock']
     source_hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
     ensure_jar(args.tlc_jar)
     formal = check(args.output, args.tlc_jar.resolve())
@@ -57,7 +59,7 @@ def main():
               'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True, encoding='utf-8')),
               'platform': platform.platform(), 'formal': formal, 'runtime': runtime, 'source_sha256': source_hashes,
               'limitations': [
-                  'Godot projection covers no delay, one-step catch-up and binary input for one active slot only.' if runtime else
+                  'Godot projection covers no delay and binary input for one active slot; Rust compares catch-up speeds one and two.' if runtime else
                   'Upstream SpectatorSession model only; no Godot observation requested.',
                   'Synthetic sync preconditions do not establish runtime handshake, events, expiry or status parity.',
                   'No live SignalFish spectator routing is established (see #131).']}

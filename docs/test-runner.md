@@ -53,10 +53,16 @@ engine's stdout and stderr into one stream and keeps that stream in `stdout`,
 because the order of the progress records and the script errors is the evidence
 that names the case that was executing; `stderr` stays empty.
 
-CI uses `--timeout 180` for the complete unit category; `make test-godot` uses 120 seconds.
-Use the CI command above for the full verification budget. Ordinary focused suites retain
-the default budget. The slower integration category uses the budget below.
-Deliberate watchdog controls keep their short limits.
+CI and `make test-godot` use `--timeout 180` for the complete unit category.
+This bounds each engine subprocess, including both in-process case repetitions.
+The previous 120-second local budget expired on the eight-peer driver parity case
+under a full minimum-engine wave; the same case passed alone at 120 seconds,
+and the complete wave passed at CI's 180-second budget. These are separate attempts;
+the successful controls do not erase the original watchdog failure.
+`make test-changed` retains 120 seconds and ordinary focused suites retain the
+30-second launcher default. Known slow suites still split into individual cases.
+The slower integration category uses the budget below. Deliberate watchdog controls
+keep their short limits.
 
 Every engine runs in its own process group. A run that exceeds its timeout kills that whole
 group, so the engine and every process it started stop together and no process outlives the

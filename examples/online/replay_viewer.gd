@@ -6,8 +6,10 @@ const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const MAX_FRAMES: int = 36000
-# Include every v5 checksum and the largest supported metadata header.
-const MAX_BYTES: int = Replay.FIXED_BYTES + 1 + Replay.TEXT_FIELDS * (1 + Replay.MAX_TEXT_BYTES) + MAX_FRAMES * (5 + Replay.CHECKSUM_BYTES + Replay.DIGEST_BYTES)
+# Include every row and terminal checksum and the largest supported metadata header.
+const MAX_BYTES: int = (
+	Replay.CHECKSUM_BYTES + Replay.FIXED_BYTES + 1 + Replay.TEXT_FIELDS * (1 + Replay.MAX_TEXT_BYTES) + MAX_FRAMES * (5 + Replay.CHECKSUM_BYTES + Replay.DIGEST_BYTES)
+)
 const FILE_SIZE_MESSAGE: String = "Replay exceeds the viewer's file-size limit."
 const SEEK_FRAMES_PER_TICK: int = 120
 const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checksums matched."
@@ -44,7 +46,7 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	_recording_bytes = bytes.size()
 	_recording = recording
 	_recorded_checksum_count = 0
-	for frame: int in recording.frame_count():
+	for frame: int in range(recording.frame_count() + 1):
 		if not recording.checksum(frame).is_empty():
 			_recorded_checksum_count += 1
 	restart()

@@ -37,6 +37,8 @@ def corpus():
                  if count != 0 or mode == 'plain']
     workloads += [(players, 64, mode) for players in range(2, 9)
                   for mode in ('plain', 'sparse', 'middle-mismatch')]
+    workloads += [(players, count, 'terminal-mismatch') for players in (2, 8) for count in (0, 1, 7)]
+    workloads += [(players, count, 'terminal-all') for players in (2, 8) for count in (0, 1, 7)]
     cases = []
     for players, count, mode in workloads:
         seed = 0xffffffff
@@ -70,6 +72,14 @@ def encoded(case, version=5):
             data += bytes.fromhex(checksum)
         # Every frame carries the digest of its own input row.
         data += hashlib.sha256(packed + statuses).digest()[:16]
+    if version == 6:
+        state = (0, case['seed'], case['seed'], 0)
+        for row in case['frames']:
+            state = advance(state, row)
+        terminal = bytearray(state_bytes(state))
+        if case['name'].endswith('-terminal-mismatch'):
+            terminal[15] ^= 0x80
+        data += terminal
     return data
 
 
@@ -89,7 +99,11 @@ def expected(case, rust, expert=False, version=5):
         state = advance(state, row)
         records.append(dict(kind='advance', frame=frame, bytes=state_bytes(state).hex(),
                             inputs=[dict(value=value, status='confirmed') for value in row]))
-    result = dict(name=case['name'] + ('-v4' if version == 4 else '') + ('-expert' if expert else ''), initial_frame=-1 if rust else 0,
+    if not rust and version == 6 and case['validate'] and failure < 0:
+        records.append(dict(kind='save', frame=len(case['frames']), bytes=state_bytes(state).hex(), inputs=[]))
+        if case['name'].endswith('-terminal-mismatch'):
+            failure = len(case['frames'])
+    result = dict(name=case['name'] + (f'-v{version}' if version != 5 else '') + ('-expert' if expert else ''), initial_frame=-1 if rust else 0,
                   current_frame=len(case['frames']) - 1 if rust else state[0],
                   complete=True if rust else failure < 0, records=records, bytes=state_bytes(state).hex())
     if rust:
@@ -118,7 +132,7 @@ def compare(actual, wanted, path='result'):
 
 
 def godot_expected(cases):
-    return dict(format=1, cases=[expected(case, False, expert, version) for case in cases for version in (5, 4) for expert in (False, True)])
+    return dict(format=1, cases=[expected(case, False, expert, version) for case in cases for version in (5, 4, 6) for expert in (False, True)])
 
 
 def acceptance_evidence(observed):
@@ -128,12 +142,12 @@ def acceptance_evidence(observed):
         for mode in ('plain', 'sparse', 'middle-mismatch'):
             name = f'{players}p-64-{mode}'
             for runtime in ('rust', 'godot'):
-                for suffix in ('', '-expert', '-v4', '-v4-expert') if runtime == 'godot' else ('',):
+                for suffix in ('', '-expert', '-v4', '-v4-expert', '-v6', '-v6-expert') if runtime == 'godot' else ('',):
                     matches = [case for case in observed[runtime]['cases'] if case['name'] == name + suffix]
                     if len(matches) != 1:
                         raise ValueError(f'{runtime}:{name + suffix}: missing or duplicate acceptance workload')
                     case = matches[0]
-                    if runtime == 'godot' and (type(case.get('format_version')) is not int or case['format_version'] != (4 if '-v4' in suffix else 5)):
+                    if runtime == 'godot' and (type(case.get('format_version')) is not int or case['format_version'] != (4 if '-v4' in suffix else (6 if '-v6' in suffix else 5))):
                         raise ValueError(f'{runtime}:{name + suffix}: incorrect replay format version')
                     failed = runtime == 'godot' and mode == 'middle-mismatch'
                     count = 32 if failed else 64
@@ -142,6 +156,8 @@ def acceptance_evidence(observed):
                             any(type(record['frame']) is not int or len(record['inputs']) != players for record in advances)):
                         raise ValueError(f'{runtime}:{name + suffix}: incomplete player/frame workload')
                     save_frames = [] if mode == 'plain' else list(range(64) if runtime == 'rust' else range(0, count + int(failed), 2))
+                    if '-v6' in suffix and mode != 'plain' and not failed:
+                        save_frames.append(count)
                     saves = [record for record in case['records'] if record['kind'] == 'save']
                     schedule = []
                     for frame in range(count + int(failed)):
@@ -149,6 +165,8 @@ def acceptance_evidence(observed):
                             schedule.append(('save', frame))
                         if frame < count:
                             schedule.append(('advance', frame))
+                    if '-v6' in suffix and mode != 'plain' and not failed:
+                        schedule.append(('save', count))
                     if ([record['frame'] for record in saves] != save_frames or
                             any(type(record['frame']) is not int for record in saves) or
                             [(record['kind'], record['frame']) for record in case['records']] != schedule):
@@ -158,6 +176,34 @@ def acceptance_evidence(observed):
                     if runtime == 'rust' and [event['frame'] for event in case['events']] != ([32] if mode == 'middle-mismatch' else []):
                         raise ValueError(f'{runtime}:{name + suffix}: missing interior event')
             evidence.append(name)
+    return evidence
+
+
+def terminal_acceptance_evidence(observed):
+    """Require paired historical absence and terminal comparisons, independent of generated expectations."""
+    evidence = []
+    inventory = {case['name']: case for case in observed['godot']['cases']}
+    if len(inventory) != len(observed['godot']['cases']):
+        raise ValueError('duplicate replay terminal workload')
+    for players in (2, 8):
+        for count in (0, 1, 7):
+            for mode in ('terminal-all', 'terminal-mismatch'):
+                name = f'{players}p-{count}-{mode}'
+                for expert in ('', '-expert'):
+                    historical = inventory.get(name + expert)
+                    terminal = inventory.get(name + '-v6' + expert)
+                    if historical is None or terminal is None:
+                        raise ValueError('missing replay terminal workload')
+                    failed = mode == 'terminal-mismatch'
+                    if (historical['code'] != 16 or historical['failure_frame'] != -1 or not historical['complete']
+                            or terminal['code'] != (18 if failed else 16) or terminal['failure_frame'] != (count if failed else -1)
+                            or terminal['complete'] != (not failed) or terminal['current_frame'] != count
+                            or terminal['format_version'] != 6 or terminal['bytes'] != historical['bytes']):
+                        raise ValueError('incorrect terminal comparison outcome')
+                    final = dict(kind='save', frame=count, bytes=historical['bytes'], inputs=[])
+                    if terminal['records'] != historical['records'] + [final]:
+                        raise ValueError('missing or reordered terminal SAVE')
+                evidence.append(name)
     return evidence
 
 
@@ -264,7 +310,7 @@ def rejection_controls(binary, engine, cases, output):
     substituted = output / 'substituted-v4.json'
     case = cases[0]
     substituted.write_text(json.dumps([dict(name=case['name'], seed=case['seed'], validate=case['validate'],
-                                           replay=encoded(case).hex(), replay_v4=encoded(case).hex())]))
+                                           replay=encoded(case).hex(), replay_v4=encoded(case).hex(), replay_v6=encoded(case, 6).hex())]))
     controls.append(('godot-substituted-v4', command + ['--', '--bundle', str(substituted.resolve())], None, 'invalid replay version'))
     for name, invocation, input_text, diagnostic in controls:
         log = output / f'{name}.log'
@@ -321,7 +367,8 @@ def main():
     cases = corpus()
     scenario = json.dumps(cases, indent=2) + '\n'
     (args.output / 'cases.json').write_text(scenario)
-    bundle = [dict(name=case['name'], seed=case['seed'], validate=case['validate'], replay=encoded(case).hex(), replay_v4=encoded(case, 4).hex()) for case in cases]
+    bundle = [dict(name=case['name'], seed=case['seed'], validate=case['validate'], replay=encoded(case).hex(),
+                   replay_v4=encoded(case, 4).hex(), replay_v6=encoded(case, 6).hex()) for case in cases]
     fixture = args.output / 'files.json'
     fixture.write_text(json.dumps(bundle, indent=2) + '\n')
     observations = []
@@ -345,6 +392,7 @@ def main():
         observations.append(dict(rust=rust, godot=godot))
     compare(observations[0], observations[1])
     acceptance = acceptance_evidence(observations[0])
+    terminal_acceptance = terminal_acceptance_evidence(observations[0])
     negative = controls(observations[0]['rust'], wanted)
     negative += expert_controls(observations[0]['godot'], godot_expected(cases))
     rejected = rejection_controls(binary, engine, cases, args.output)
@@ -354,12 +402,13 @@ def main():
         engine_sha256=engine_hash, engine_path=str(engine), binary_sha256=binary_hash, upstream_revision=manifest['sources']['fortress']['revision'],
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
-        acceptance_workloads=acceptance, negative_controls=negative, standalone_rejections=rejected, observations=observations[0],
+        acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
+        standalone_rejections=rejected, observations=observations[0],
         limitations=['ReplaySession playback only; recording applicability is audited separately.',
-                     'Native sequential version-4/version-5 replay; browser replay coverage is in ownership and online probes.',
+                     'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')
-    print(f'Replay: {len(cases)} pinned upstream cases and both portable versions/interfaces passed twice; {len(negative)} negative controls rejected.')
+    print(f'Replay: {len(cases)} pinned upstream cases and three portable versions and both interfaces passed twice; {len(negative)} negative controls rejected.')
 
 
 if __name__ == '__main__':

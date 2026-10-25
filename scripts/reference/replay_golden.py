@@ -65,6 +65,19 @@ def v5():
     return header(5) + NEUTRAL + b''.join(text(FIELDS[name]) for name in NAMES) + body
 
 
+def v6():
+    """Version five rows plus an exact terminal checksum; skipped rows are forbidden."""
+    data = bytearray(v5())
+    struct.pack_into('<H', data, 4, 6)
+    struct.pack_into('<I', data, 15, 0)
+    cursor = 23 + len(NEUTRAL) + sum(1 + len(FIELDS[name]) for name in NAMES)
+    for row, flag, checksum in FRAMES:
+        if flag == 2:
+            data[cursor + len(row) + 2] = 0
+        cursor += len(row) + 2 + 1 + len(checksum) + 16
+    return bytes(data) + CHECKSUM_A
+
+
 def v4():
     """The legacy byte-only layout: every frame carries the digest of its own input row."""
     body = b''.join(row + struct.pack('<B', flag) + checksum + digest(row) for row, flag, checksum in FRAMES)
@@ -103,6 +116,8 @@ def fixture():
             'v2 is the released layout without the final input digest, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
             'v3 is the released layout that anchors only the final input row, kept only to prove explicit UNSUPPORTED_VERSION rejection.',
         ],
+        'v6': chunks(v6()),
+        'terminal_checksum': CHECKSUM_A.hex(),
         'v5': chunks(v5()),
         'statuses': [[1, 1], [1, 3], [1, 1], [3, 3]],
         'v4': chunks(v4()),
