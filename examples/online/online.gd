@@ -233,10 +233,12 @@ func _finish_replay() -> void:
 	_update_status()
 
 
-## Owned confirmed-input recording; disabled or empty recordings produce no file.
+## Owned recording; an empty input prefix is available only with captured final-state evidence.
 func replay_bytes() -> PackedByteArray:
 	var recording: Replay = controller.game_match.peer.replay()
-	return recording.to_bytes() if recording != null and recording.frame_count() > 0 else PackedByteArray()
+	if recording == null or (recording.frame_count() == 0 and recording.checksum(0).is_empty()):
+		return PackedByteArray()
+	return recording.to_bytes()
 
 
 func _export_replay() -> void:

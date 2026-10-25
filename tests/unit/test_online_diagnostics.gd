@@ -8,7 +8,7 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["consent", "capture", "replay", "replay_stall", "replay_finish"])
+	return PackedStringArray(["consent", "capture", "replay", "replay_stall", "replay_finish", "replay_finish_empty"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -42,8 +42,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			node._update_status()
 			context.equal(toggle.disabled, false, "fresh room permits a new choice")
 		node.free()
-	elif name in ["replay", "replay_stall", "replay_finish"]:
-		_replay(context, name == "replay_stall", name == "replay_finish")
+	elif name in ["replay", "replay_stall", "replay_finish", "replay_finish_empty"]:
+		_replay(context, name == "replay_stall", name == "replay_finish", name == "replay_finish_empty")
 	else:
 		for enabled: bool in [false, true]:
 			var client: Fixture.Client = Fixture.Client.new()
@@ -78,7 +78,7 @@ func run_case(name: String, context: RefCounted) -> void:
 
 
 # Value: protects=confirmed recording without diagnostic consent; fails_when=recording is empty, predicted, or lost on failure; seam=real two-peer game.
-func _replay(context: RefCounted, stalled_start: bool = false, finishing: bool = false) -> void:
+func _replay(context: RefCounted, stalled_start: bool = false, finishing: bool = false, empty_finish: bool = false) -> void:
 	var helper: RefCounted = Fixture.new()
 	var fixtures: Array[Dictionary] = []
 	for uuid: String in [Fixture.U, Fixture.V]:
@@ -108,6 +108,9 @@ func _replay(context: RefCounted, stalled_start: bool = false, finishing: bool =
 		var info: Fixture.RelayFixture.Info = Fixture.RelayFixture.Info.new()
 		context.equal(game.start_transport(client, mesh, config, info, 0), OK, "start recorded match")
 		fixtures.append({"driver": game, "client": client, "mesh": mesh, "transport": transport, "config": config, "info": info})
+	if empty_finish:
+		_empty_finish(context, fixtures, helper)
+		return
 	if stalled_start:
 		_stalled_start(context, fixtures, helper)
 		return
@@ -189,3 +192,51 @@ func _stalled_start(context: RefCounted, fixtures: Array[Dictionary], helper: Re
 		fixture.driver.detach()
 		fixture.mesh.free()
 		fixture.client.free()
+
+
+# Value: protects=frame-zero final evidence downloads; fails_when=empty v6 is treated as absent v5; seam=actual two-peer finish and UI bytes.
+func _empty_finish(context: RefCounted, fixtures: Array[Dictionary], helper: RefCounted) -> void:
+	for round: int in 20:
+		for fixture: Dictionary in fixtures:
+			fixture.driver._service(round)
+		helper._deliver(fixtures)
+	var node: Node2D = Scene.new()
+	Engine.get_main_loop().root.add_child(node)
+	if not node.is_node_ready():
+		node._ready()
+	for fixture: Dictionary in fixtures:
+		node.controller.game_match = fixture.driver
+		node.controller.state = "playing"
+		node._update_status()
+		context.equal(fixture.driver.peer.network_status().state, "running", "empty finish starts after synchronization")
+		context.equal(fixture.driver.peer.status().current_frame, 0, "empty finish has no gameplay inputs")
+		context.equal(node.finish_replay_button.disabled, false, "frame-zero finish remains available")
+		context.equal(node.replay_bytes().is_empty(), true, "ordinary empty v5 does not create a download")
+		context.equal(node.replay_button.disabled, true, "empty v5 has no available recording")
+		node._finish_replay()
+	for round: int in 20:
+		for fixture: Dictionary in fixtures:
+			fixture.driver.tick(100 + round, Fixture.Simulation.RIGHT)
+		helper._deliver(fixtures)
+	for fixture: Dictionary in fixtures:
+		node.controller.game_match = fixture.driver
+		context.equal(fixture.driver.replay_captured, true, "empty replay captures its real initial boundary")
+		context.equal(fixture.driver.has_recorded_replay, true, "captured empty replay is available")
+		node._update_status()
+		context.equal(node.replay_button.disabled, false, "captured empty replay enables Download")
+		var bytes: PackedByteArray = node.replay_bytes()
+		var recording: Replay = Replay.new()
+		context.equal(recording.decode(bytes), Replay.DecodeCode.OK, "empty final-checksummed download decodes")
+		if not bytes.is_empty():
+			context.equal(bytes.decode_u16(4), 6, "empty final-checksummed download uses v6")
+			context.equal(recording.frame_count(), 0, "download retains the empty input prefix")
+			context.equal(recording.checksum(0), Fixture.Simulation.checksum(fixture.driver.game.canonical_bytes()), "download binds actual boundary zero")
+		fixture.driver.failure = "Connection lost after final capture."
+		context.equal(node.replay_bytes(), bytes, "failure retains empty final evidence")
+		node._leave()
+		context.equal(node.replay_bytes(), bytes, "Leave retains empty final evidence")
+		node._update_status()
+		context.equal(node.replay_button.disabled, false, "ended empty recording remains downloadable")
+		fixture.mesh.free()
+		fixture.client.free()
+	node.free()

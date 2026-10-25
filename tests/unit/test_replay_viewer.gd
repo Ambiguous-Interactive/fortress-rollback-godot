@@ -11,11 +11,15 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation", "navigation_boundaries", "full_length_recording"])
+	return PackedStringArray(
+		["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation", "navigation_boundaries", "full_length_recording", "empty_terminal"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"empty_terminal":
+			_empty_terminal(context)
 		"full_length_recording":
 			_full_length_recording(context)
 		"navigation_boundaries":
@@ -31,6 +35,50 @@ func run_case(name: String, context: RefCounted) -> void:
 		"stops_at_divergence":
 			_stops_at_divergence(context)
 	context.finish()
+
+
+# Value: protects=initial-state-only downloads reopen and validate; fails_when=zero rows imply no file;
+# why_new=viewer fixtures previously required positive frame counts; seam=none
+func _empty_terminal(context: RefCounted) -> void:
+	var initial: Simulation = Simulation.new()
+	for changed: bool in [false, true]:
+		var replay: Replay = recording(0)
+		var node: Node2D = Scene.instantiate()
+		node._ready()
+		context.equal(node.viewer.open_bytes(replay.to_bytes()), false, "ordinary empty history remains unavailable")
+		replay._format_version = Replay.TERMINAL_VERSION
+		replay._terminal_checksum = Simulation.checksum(initial.canonical_bytes())
+		if changed:
+			replay._terminal_checksum[0] ^= 1
+		var opened: bool = node.viewer.open_bytes(replay.to_bytes())
+		context.equal(opened, true, "terminal checksum makes the initial state a complete recording")
+		if not opened:
+			node._exit_tree()
+			node.free()
+			continue
+		node._refresh()
+		context.equal(node._step_button.disabled, false, "initial checksum can be checked without an input")
+		context.equal(node._restart_button.disabled, false, "a valid zero-input recording can restart")
+		context.equal(node.viewer.recorded_checksum_count(), 1, "initial boundary has one recorded checksum")
+		context.equal(node.viewer.checked_checksum_count(), 0, "opening alone claims no validation")
+		node._step_button.pressed.emit()
+		context.equal(node.viewer.current_frame(), 0, "validation adds no simulated frame")
+		context.equal(node.viewer.has_failure(), changed, "initial mismatch fails rather than reporting completion")
+		context.equal(node.viewer.checked_checksum_count(), 0 if changed else 1, "only a matching initial checksum is counted")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), initial.canonical_bytes(), 0, "empty replay keeps the initial state")
+		if changed:
+			var failure: Dictionary = JSON.parse_string(node.viewer.failure_report_bytes().get_string_from_utf8())
+			context.equal(failure.failure.frame, 0, "initial mismatch identifies boundary zero")
+			context.equal(failure.failure.expected, replay.checksum(0).hex_encode(), "failure keeps expected initial checksum")
+			context.equal(failure.failure.actual, Simulation.checksum(initial.canonical_bytes()).hex_encode(), "failure keeps actual initial checksum")
+		else:
+			context.equal(node.viewer.message.contains("Replay complete"), true, "matching initial validation completes")
+			node._restart_button.pressed.emit()
+			context.equal(node.viewer.checked_checksum_count(), 0, "restart clears previous validation coverage")
+			node._step_button.pressed.emit()
+			context.equal(node.viewer.checked_checksum_count(), 1, "restarted initial validation succeeds")
+		node._exit_tree()
+		node.free()
 
 
 # Value: protects=ten-minute online downloads reopen through the native viewer; fails_when=the file cap is below valid output size;

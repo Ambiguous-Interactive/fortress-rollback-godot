@@ -168,6 +168,7 @@ The other player can continue sending while your final inputs settle; finishing 
 not an agreement to end both players at the same frame.
 
 A successful capture exports FRRP v6 and checks the state after the last recorded input.
+Finishing before the first input can export the captured initial state with zero input frames.
 Waiting for confirmation or drop repair does not certify a predicted boundary. If the
 connection fails first, download the available v5 history without final-state evidence.
 After the recording cap falls behind live gameplay, a new capture is unavailable; the

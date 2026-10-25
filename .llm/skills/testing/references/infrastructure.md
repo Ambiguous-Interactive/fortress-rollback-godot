@@ -58,6 +58,8 @@ both must fail before constructing a successful candidate.
 Pair file producers with every import path at the maximum advertised output size.
 Include per-row checksums, statuses and maximum metadata; short fixtures can hide a smaller consumer cap.
 Share the byte limit between native and browser pickers and test rejection one byte above it before reading.
+Check the minimum valid output too: zero input rows can still carry a valid initial-state checksum.
+Keep download eligibility, exported bytes and visible instructions consistent at that boundary.
 
 Concurrent processes for one Godot project share `user://`. Give writable test
 fixtures process-owned paths and check open, write and removal results before

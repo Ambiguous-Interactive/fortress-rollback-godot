@@ -196,7 +196,7 @@ func _finish_replay_boundary(now_us: int) -> void:
 	if recovered.code == Types.Code.OK:
 		replay_capture_code = peer.capture_replay_boundary().code
 		replay_captured = replay_capture_code == Types.Code.OK
-		has_recorded_replay = has_recorded_replay or (peer.replay() != null and peer.replay().frame_count() > 0)
+		has_recorded_replay = has_recorded_replay or replay_captured or (peer.replay() != null and peer.replay().frame_count() > 0)
 	if peer.status().lifecycle == Types.Lifecycle.TERMINATED:
 		failure = "Final replay state could not be captured (%d). Download the available replay before leaving." % peer.status().reason
 	if failure.is_empty():

@@ -15,16 +15,18 @@
 | Shared lock files need stable inodes and protected directories. | The first adversarial review reproduced replacement under a writable pre-existing directory; cleanup controls exercise a live owner. | Validate opened directory ownership/mode; preserve the inode through idle cleanup too. |
 | An exit timeout does not bound a readiness read. | New silent and partial-line subprocess controls exercise the startup watchdog. | Bound readiness with selectors and reap stalled children. |
 | A wrapper's notification can clear another facade's guard. | `test_peer_replay_capture.gd` reproduced `[BUSY, READY]` inside a second driver's notification; the repaired result is `[BUSY, BUSY]`. | Apply shared mutation preflight before peer capture and notification. |
+| A valid empty replay can still be hidden by its download UI. | PR #214 feedback identifies frame-zero capture succeeding while the download gate requires positive input rows. | Test minimum valid files through eligibility, bytes and status together. |
 
 ## Curation and verification
 
 Updated the existing [infrastructure evidence](../skills/testing/references/infrastructure.md)
 with cross-root acquisition, stable-inode cleanup, directory validation and startup watchdog rules.
+Minimum valid file output now accompanies the existing maximum-size producer/consumer rule.
 The [rollback skill](../skills/rollback-fundamentals/SKILL.md) already requires shared notification
 guards; its existing rule remains authoritative without a duplicate.
 
 The host, root and prune controls pass 49 tests. Both engine pins pass the four new
-peer capture cases and five online diagnostics cases twice. The independent online
+peer capture cases, six online diagnostics cases and eight viewer cases twice. The independent online
 checker passes 31 controls. Full runtime, browser and delivery receipts remain in
 the machine-local session log and the linked issues.
 

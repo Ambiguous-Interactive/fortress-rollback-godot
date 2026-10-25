@@ -127,7 +127,7 @@ EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_his
 EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'complete_history_plan_control'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
-EXPECTED['res://tests/unit/test_replay_viewer.gd'].add('full_length_recording')
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
