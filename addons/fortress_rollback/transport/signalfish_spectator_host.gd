@@ -12,6 +12,7 @@ const Membership = preload("res://addons/fortress_rollback/transport/signalfish_
 const Code = Types.Code
 const FINALIZED: int = 5
 
+
 class Options:
 	extends RefCounted
 	var max_packet_bytes: int = 65479
@@ -19,6 +20,7 @@ class Options:
 	var max_socket_buffered_bytes: int = 262144
 	var offer_retry_us: int = 1000000
 	var keepalive_interval_us: int = 1000000
+
 
 var _client: WeakRef
 var _sdk_config: WeakRef
@@ -41,8 +43,17 @@ var _pulse_next: bool = false
 
 
 ## Publish one pre-admitted viewer's stream from frame zero, without changing player membership.
-func configure(client: Object, sdk_config: Object, protocol_info: Object, host: Session, viewer_uuid: String,
-		identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, options: Options = null) -> int:
+func configure(
+	client: Object,
+	sdk_config: Object,
+	protocol_info: Object,
+	host: Session,
+	viewer_uuid: String,
+	identity: PackedByteArray,
+	key: PackedByteArray,
+	digest: PackedByteArray,
+	options: Options = null
+) -> int:
 	if _client != null or _busy or _checking:
 		return Code.WRONG_STATE
 	_busy = true
@@ -51,8 +62,17 @@ func configure(client: Object, sdk_config: Object, protocol_info: Object, host: 
 	return code
 
 
-func _configure(client: Object, sdk_config: Object, protocol_info: Object, host: Session, viewer_uuid: String,
-		identity: PackedByteArray, key: PackedByteArray, digest: PackedByteArray, options: Options) -> int:
+func _configure(
+	client: Object,
+	sdk_config: Object,
+	protocol_info: Object,
+	host: Session,
+	viewer_uuid: String,
+	identity: PackedByteArray,
+	key: PackedByteArray,
+	digest: PackedByteArray,
+	options: Options
+) -> int:
 	var revision: int = _revision
 	var controls: Options = Options.new() if options == null else options
 	if client == null or sdk_config == null or protocol_info == null or host == null or not Membership.valid_uuid(viewer_uuid) or not _valid_options(controls):
@@ -203,8 +223,7 @@ func finish_host() -> Types.Result:
 
 
 func status() -> Dictionary:
-	return {"code": _gate(), "next_frame": _publisher.next_frame() if _publisher != null else 0,
-		"agreed_version": _publisher.agreement_version() if _publisher != null else 0}
+	return {"code": _gate(), "next_frame": _publisher.next_frame() if _publisher != null else 0, "agreed_version": _publisher.agreement_version() if _publisher != null else 0}
 
 
 ## Detach publication only; player gameplay and confirmation remain owned by the caller.
@@ -277,11 +296,20 @@ func _gate() -> int:
 		failure = Code.WRONG_STATE
 	elif not ViewerRelay._raw_mode(config):
 		failure = Code.INCOMPATIBLE_MODE
-	elif (not config.get("max_outbound_frame_bytes") is int or config.get("max_outbound_frame_bytes") < _options.max_packet_bytes
-		or not config.get("max_buffered_bytes") is int or config.get("max_buffered_bytes") < _options.max_packet_bytes):
+	elif (
+		not config.get("max_outbound_frame_bytes") is int
+		or config.get("max_outbound_frame_bytes") < _options.max_packet_bytes
+		or not config.get("max_buffered_bytes") is int
+		or config.get("max_buffered_bytes") < _options.max_packet_bytes
+	):
 		failure = Code.TOO_LARGE
-	elif (client.call("get_connection_state") != ViewerRelay.CONNECTED or client.call("get_session_state") != FINALIZED
-		or client.call("get_room_id") != _room or client.call("get_player_id") != _player or host._config != _source_config):
+	elif (
+		client.call("get_connection_state") != ViewerRelay.CONNECTED
+		or client.call("get_session_state") != FINALIZED
+		or client.call("get_room_id") != _room
+		or client.call("get_player_id") != _player
+		or host._config != _source_config
+	):
 		failure = Code.WRONG_STATE
 	elif host._mutation_code() not in [S.Code.OK, S.Code.BUSY]:
 		failure = Code.PEER_FAILURE
@@ -293,11 +321,18 @@ func _gate() -> int:
 
 
 static func _valid_options(options: Options) -> bool:
-	return (options.max_packet_bytes >= Stream.NEGOTIATION_BYTES and options.max_packet_bytes <= 65479
-		and options.max_sends_per_poll >= 1 and options.max_sends_per_poll <= 4096
-		and options.max_socket_buffered_bytes >= options.max_packet_bytes and options.max_socket_buffered_bytes <= 16777216
-		and options.offer_retry_us >= 1 and options.offer_retry_us <= 60000000
-		and options.keepalive_interval_us >= 1 and options.keepalive_interval_us <= 60000000)
+	return (
+		options.max_packet_bytes >= Stream.NEGOTIATION_BYTES
+		and options.max_packet_bytes <= 65479
+		and options.max_sends_per_poll >= 1
+		and options.max_sends_per_poll <= 4096
+		and options.max_socket_buffered_bytes >= options.max_packet_bytes
+		and options.max_socket_buffered_bytes <= 16777216
+		and options.offer_retry_us >= 1
+		and options.offer_retry_us <= 60000000
+		and options.keepalive_interval_us >= 1
+		and options.keepalive_interval_us <= 60000000
+	)
 
 
 static func _peer_result(code: int) -> Types.Result:

@@ -115,11 +115,12 @@ func _completion_handler(context: RefCounted) -> void:
 	var owner: WeakRef = weakref(driver)
 	var notices: Array[int] = []
 	var codes: Array[int] = []
-	driver.step_completed.connect(func(code: int, _before: int, _after: int) -> void:
-		notices.append(code)
-		var target: RefCounted = owner.get_ref()
-		target.terminate()
-		codes.append(target.set_input_delay(0, 1).code)
+	driver.step_completed.connect(
+		func(code: int, _before: int, _after: int) -> void:
+			notices.append(code)
+			var target: RefCounted = owner.get_ref()
+			target.terminate()
+			codes.append(target.set_input_delay(0, 1).code)
 	)
 	var completed: RefCounted = driver.step(0, Fixture.new()._samples(0))
 	context.equal(completed.code, Types.Code.OK, "cancellation after completion keeps successful step outcome")
@@ -141,21 +142,20 @@ func _shared_session_handlers(context: RefCounted) -> void:
 		var alternate_ref: WeakRef = weakref(alternate)
 		var codes: Array[int] = []
 		var frames: Array[int] = []
-		driver.step_completed.connect(func(_code: int, _before: int, after: int) -> void:
-			if attempt == "second_driver":
-				codes.append(alternate_ref.get_ref().step(1, Fixture.new()._samples(1)).code)
-			else:
-				if attempt == "terminate_configure":
-					session.terminate(Types.Code.DESYNC)
-				var config: RefCounted = Config.new()
-				config.max_snapshot_bytes = 8
-				config.storage_budget_bytes = config.required_storage_bytes()
-				codes.append(session.configure(config))
-			frames.append(after)
+		driver.step_completed.connect(
+			func(_code: int, _before: int, after: int) -> void:
+				if attempt == "second_driver":
+					codes.append(alternate_ref.get_ref().step(1, Fixture.new()._samples(1)).code)
+				else:
+					if attempt == "terminate_configure":
+						session.terminate(Types.Code.DESYNC)
+					var config: RefCounted = Config.new()
+					config.max_snapshot_bytes = 8
+					config.storage_budget_bytes = config.required_storage_bytes()
+					codes.append(session.configure(config))
+				frames.append(after)
 		)
-		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
-			frames.append(session.status().current_frame)
-		)
+		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void: frames.append(session.status().current_frame))
 		var completed: RefCounted = driver.step(0, Fixture.new()._samples(0))
 		context.equal(codes, [Types.Code.BUSY], "shared session rejects completion-handler mutation: " + attempt)
 		context.equal(frames, [1, 1], "later handler sees the same committed game frame: " + attempt)
@@ -169,27 +169,28 @@ func _shared_session_handlers(context: RefCounted) -> void:
 func _expert_handler_mutations(context: RefCounted) -> void:
 	var session: RefCounted = Fixture.new()._session()
 	var driver: RefCounted = Driver.new(session, Fixture.Game.new())
-	driver.step_completed.connect(func(_code: int, _before: int, after: int) -> void:
-		context.equal(session.status().current_frame, after, "status stays available during notification")
-		context.equal(session.statistics().advanced_frames, after, "counters stay available during notification")
-		context.equal(session.confirmed_inputs(after - 1) != null, true, "completed input export stays available during notification")
-		for stopped: bool in [false, true]:
-			if stopped:
-				session.terminate(Types.Code.DESYNC)
-			var codes: Array[int] = [
-				session.poll(1).code,
-				session.submit_local_input(0, 1, PackedByteArray([1])).code,
-				session.receive_input(1, 1, PackedByteArray([1])).code,
-				session.begin_advance().code,
-				session.begin_recovery().code,
-				session.complete_request(1, 0, true).code,
-				session.set_input_delay(0, 1).code,
-				session.set_confirmation_limit(0).code,
-				session.freeze_player(1, 0),
-				session.freeze_player_with_value(1, 0, PackedByteArray([1])),
-			]
-			for code: int in codes:
-				context.equal(code, Types.Code.BUSY, "expert mutation remains guarded through notification and cancellation")
+	driver.step_completed.connect(
+		func(_code: int, _before: int, after: int) -> void:
+			context.equal(session.status().current_frame, after, "status stays available during notification")
+			context.equal(session.statistics().advanced_frames, after, "counters stay available during notification")
+			context.equal(session.confirmed_inputs(after - 1) != null, true, "completed input export stays available during notification")
+			for stopped: bool in [false, true]:
+				if stopped:
+					session.terminate(Types.Code.DESYNC)
+				var codes: Array[int] = [
+					session.poll(1).code,
+					session.submit_local_input(0, 1, PackedByteArray([1])).code,
+					session.receive_input(1, 1, PackedByteArray([1])).code,
+					session.begin_advance().code,
+					session.begin_recovery().code,
+					session.complete_request(1, 0, true).code,
+					session.set_input_delay(0, 1).code,
+					session.set_confirmation_limit(0).code,
+					session.freeze_player(1, 0),
+					session.freeze_player_with_value(1, 0, PackedByteArray([1])),
+				]
+				for code: int in codes:
+					context.equal(code, Types.Code.BUSY, "expert mutation remains guarded through notification and cancellation")
 	)
 	var completed: RefCounted = driver.step(0, Fixture.new()._samples(0))
 	context.equal(completed.reason, Types.Code.DESYNC, "expert cancellation keeps first terminal cause")
@@ -206,11 +207,12 @@ func _shared_driver_configuration(context: RefCounted) -> void:
 		var alternate_ref: WeakRef = weakref(alternate)
 		var target: RefCounted = independent if source_is_shared else session
 		var codes: Array[int] = []
-		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
-			codes.append(alternate_ref.get_ref().configure(target, game))
-			if not source_is_shared:
-				var unattached: RefCounted = Driver.new()
-				context.equal(unattached.configure(session, game), Types.Code.BUSY, "new facade cannot attach during notification")
+		driver.step_completed.connect(
+			func(_code: int, _before: int, _after: int) -> void:
+				codes.append(alternate_ref.get_ref().configure(target, game))
+				if not source_is_shared:
+					var unattached: RefCounted = Driver.new()
+					context.equal(unattached.configure(session, game), Types.Code.BUSY, "new facade cannot attach during notification")
 		)
 		context.equal(driver.step(0, Fixture.new()._samples(0)).code, Types.Code.OK, "configuration guard control advances")
 		context.equal(codes, [Types.Code.BUSY], "source and target session notification guards protect facade configuration")
@@ -222,9 +224,7 @@ func _notification_checksums(context: RefCounted) -> void:
 	var session: RefCounted = Fixture.new()._session()
 	var driver: RefCounted = Driver.new(session, Fixture.Game.new())
 	var published: Array[Dictionary] = []
-	driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
-		published.assign(session.confirmed_checksums(true))
-	)
+	driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void: published.assign(session.confirmed_checksums(true)))
 	context.equal(driver.step(0, Fixture.new()._samples(0)).code, Types.Code.OK, "checksum notification control advances")
 	context.equal(published.size(), 1, "completed checksum remains readable during notification")
 	context.equal(published, session.confirmed_checksums(true), "notification checksum export equals post-notification export")

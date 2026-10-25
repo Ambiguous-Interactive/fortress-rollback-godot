@@ -48,8 +48,21 @@ class Client:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["startup", "canonical_playback", "pressure", "lifetimes", "configuration", "reentry",
-		"history_loss", "player_coexistence", "active_requests", "fair_liveness", "finish_retry"])
+	return PackedStringArray(
+		[
+			"startup",
+			"canonical_playback",
+			"pressure",
+			"lifetimes",
+			"configuration",
+			"reentry",
+			"history_loss",
+			"player_coexistence",
+			"active_requests",
+			"fair_liveness",
+			"finish_retry"
+		]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -76,15 +89,25 @@ func _fixture(context: RefCounted, negotiate: bool = true, sends: int = 2, predi
 	options.offer_retry_us = 10
 	options.keepalive_interval_us = 10
 	var relay: HostRelay = HostRelay.new()
-	context.equal(relay.configure(client, config, info, host, VIEWER, helper._identity(), helper._key(), helper._digest(), options), HostRelay.Code.OK, "host publication configured")
+	context.equal(
+		relay.configure(client, config, info, host, VIEWER, helper._identity(), helper._key(), helper._digest(), options), HostRelay.Code.OK, "host publication configured"
+	)
 	var viewer: Dictionary = Viewer.new()._fixture(context, false, 2, 8)
-	var fixture: Dictionary = {"host": host, "client": client, "config": config, "info": info, "options": options, "relay": relay, "viewer": viewer,
-		"driver": Driver.new(host, GameFixture.Game.new()), "helper": helper}
+	var fixture: Dictionary = {
+		"host": host,
+		"client": client,
+		"config": config,
+		"info": info,
+		"options": options,
+		"relay": relay,
+		"viewer": viewer,
+		"driver": Driver.new(host, GameFixture.Game.new()),
+		"helper": helper
+	}
 	if negotiate:
 		context.equal(relay.poll(0).sent, 1, "SDK sends original offer")
 		_deliver(fixture)
-		var accept: Callable = func(packet: PackedByteArray) -> int:
-			return OK if relay.receive_accept(VIEWER, packet).code == HostRelay.Code.OK else FAILED
+		var accept: Callable = func(packet: PackedByteArray) -> int: return OK if relay.receive_accept(VIEWER, packet).code == HostRelay.Code.OK else FAILED
 		context.equal(viewer.relay.poll(1, accept).code, HostRelay.Code.OK, "separate authenticated acceptance reaches original publisher")
 	return fixture
 
@@ -171,8 +194,7 @@ func _pressure(context: RefCounted) -> void:
 	fixture.client.outcome = ERR_OUT_OF_MEMORY
 	context.equal(fixture.relay.poll(12).code, HostRelay.Code.BACKPRESSURE, "recoverable allocation pressure retains exact row")
 	context.equal(fixture.client.attempted[-1][5], Stream.KEEPALIVE, "blocked rows leave independent liveness opportunity")
-	fixture.client.on_send = func(packet: PackedByteArray) -> void:
-		fixture.client.outcome = OK if packet[5] == Stream.KEEPALIVE else ERR_BUSY
+	fixture.client.on_send = func(packet: PackedByteArray) -> void: fixture.client.outcome = OK if packet[5] == Stream.KEEPALIVE else ERR_BUSY
 	var live: RefCounted = fixture.relay.poll(12)
 	context.equal(live.code, HostRelay.Code.BACKPRESSURE, "row refusal remains visible alongside heartbeat success")
 	context.equal(live.sent, 1, "independent heartbeat reaches SDK despite row refusal")
@@ -186,12 +208,18 @@ func _lifetimes(context: RefCounted) -> void:
 		var fixture: Dictionary = _fixture(context)
 		fixture.helper._step(context, fixture.driver, 0)
 		match change:
-			"room": fixture.client.room = "replacement"
-			"player": fixture.client.player = VIEWER
-			"disconnect": fixture.client.connection = 0
-			"source": fixture.host.configure(fixture.helper._config())
-			"signal": fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
-			"raw": fixture.config.decode_msgpack_payloads = true
+			"room":
+				fixture.client.room = "replacement"
+			"player":
+				fixture.client.player = VIEWER
+			"disconnect":
+				fixture.client.connection = 0
+			"source":
+				fixture.host.configure(fixture.helper._config())
+			"signal":
+				fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+			"raw":
+				fixture.config.decode_msgpack_payloads = true
 		context.equal(fixture.relay.poll(1).code != HostRelay.Code.OK, true, "replacement fences publication: " + change)
 		context.equal(fixture.client.sent.is_empty(), true, "no bytes leave invalid lifetime")
 		context.equal(fixture.host.status().lifecycle, S.Lifecycle.RUNNING, "publication failure does not terminate player gameplay")
@@ -205,13 +233,26 @@ func _configuration(context: RefCounted) -> void:
 		var identity: PackedByteArray = fixture.helper._identity()
 		var viewer: String = VIEWER
 		match field:
-			"role": fixture.client.state = HostRelay.ViewerRelay.SPECTATING
-			"capability": fixture.info.capabilities.clear()
-			"size": fixture.config.max_outbound_frame_bytes = 1
-			"identity": identity.resize(1)
-			"viewer": viewer = HOST
-		context.equal(fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.host, viewer,
-			identity, fixture.helper._key(), fixture.helper._digest(), fixture.options) != HostRelay.Code.OK, true, "invalid host configuration refused: " + field)
+			"role":
+				fixture.client.state = HostRelay.ViewerRelay.SPECTATING
+			"capability":
+				fixture.info.capabilities.clear()
+			"size":
+				fixture.config.max_outbound_frame_bytes = 1
+			"identity":
+				identity.resize(1)
+			"viewer":
+				viewer = HOST
+		context.equal(
+			(
+				fixture.relay.configure(
+					fixture.client, fixture.config, fixture.info, fixture.host, viewer, identity, fixture.helper._key(), fixture.helper._digest(), fixture.options
+				)
+				!= HostRelay.Code.OK
+			),
+			true,
+			"invalid host configuration refused: " + field
+		)
 		context.equal(fixture.relay.poll(0).sent, 0, "rejected configuration sends nothing")
 		_stop(fixture)
 
@@ -225,9 +266,12 @@ func _reentry(context: RefCounted) -> void:
 				"reenter":
 					context.equal(fixture.relay.poll(1).code, HostRelay.Code.INVALID_ARGUMENT, "SDK callback cannot reenter publication")
 					context.equal(fixture.relay.finish_host().code, HostRelay.Code.WRONG_STATE, "callback cannot freeze publication")
-				"detach": fixture.relay.detach()
-				"room": fixture.client.room = "replacement"
-				"malformed": fixture.client.outcome = true
+				"detach":
+					fixture.relay.detach()
+				"room":
+					fixture.client.room = "replacement"
+				"malformed":
+					fixture.client.outcome = true
 			packet.fill(0)
 		if action == "getter":
 			fixture.client.on_buffered = func() -> void: fixture.relay.detach()
@@ -235,9 +279,11 @@ func _reentry(context: RefCounted) -> void:
 		var result: RefCounted = fixture.relay.poll(1)
 		if action == "getter":
 			context.equal(fixture.client.attempted.size(), attempts, "buffer getter invalidation prevents stale SDK send")
-		context.equal(result.code,
+		context.equal(
+			result.code,
 			HostRelay.Code.OK if action == "reenter" else (HostRelay.Code.SDK_FAILURE if action == "malformed" else HostRelay.Code.WRONG_STATE),
-			"recheck SDK callback result and lifetime")
+			"recheck SDK callback result and lifetime"
+		)
 		context.equal(fixture.host.status().lifecycle, S.Lifecycle.RUNNING, "callback invalidation leaves player host running")
 		if action == "reenter":
 			context.equal(fixture.relay.status().next_frame, 1, "callback mutation cannot change retained acknowledgement")
