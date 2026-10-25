@@ -86,7 +86,8 @@ func _build(
 	checksum_interval: int = 60,
 	trace_frames: int = 0,
 	game_override: RefCounted = null,
-	queue_capacity: int = 128
+	queue_capacity: int = 128,
+	replay_frames: int = 0
 ) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
@@ -114,6 +115,7 @@ func _build(
 		config.check_distance = 0
 		config.sync_test = false
 		config.max_snapshot_bytes = 4 * (count + 3)
+		config.replay_max_frames = replay_frames
 		config.storage_budget_bytes = 1048576
 		config.diagnostic_trace_frames = trace_frames
 		config.diagnostic_seed = "2"

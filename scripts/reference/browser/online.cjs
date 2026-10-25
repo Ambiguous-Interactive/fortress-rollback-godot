@@ -397,6 +397,13 @@ async function main() {
       }
       if (suspension) rounds[round].suspension = suspension;
       if (round === 0 && !corrupt) {
+        const captureBefore = await pages[1].evaluate(() => ({ frame: window.fortressOnline.frame,
+          restores: window.fortressOnline.restores }));
+        await command(pages[1], 'finish_replay');
+        await wait(pages[1], () => window.fortressOnline.replay_captured);
+        rounds[round].replay_capture = await pages[1].evaluate(before => ({ before,
+          frame: window.fortressOnline.frame, code: window.fortressOnline.replay_capture_code,
+          captured: window.fortressOnline.replay_captured }), captureBefore);
         await command(pages[0], 'leave');
         await wait(pages[1], () => window.fortressOnline.state === 'failed');
         const before = await pages[1].evaluate(() => ({ state: window.fortressOnline.state,

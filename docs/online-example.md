@@ -161,6 +161,20 @@ the next room, which replaces the old match. At the recording limit,
 gameplay continues while the recorded prefix stops growing; later exports contain that
 same prefix.
 
+For a final-state checksum, press **Finish replay** before leaving. This stops your local
+simulation, keeps transport delivery active, and applies pending corrections without another
+input frame. Once the status says the final state was captured, download the replay and leave.
+The other player can continue sending while your final inputs settle; finishing is local,
+not an agreement to end both players at the same frame.
+
+A successful capture exports FRRP v6 and checks the state after the last recorded input.
+Finishing before the first input can export the captured initial state with zero input frames.
+Waiting for confirmation or drop repair does not certify a predicted boundary. If the
+connection fails first, download the available v5 history without final-state evidence.
+After the recording cap falls behind live gameplay, a new capture is unavailable; the
+recorded prefix still downloads with its historical checksum coverage. There is no
+automatic extra SAVE on ordinary ticks or downloads.
+
 After leaving the room, press **Watch replay**, then **Open replay** and choose your
 `fortress-online.frrp` file. Native builds use a file dialog; browsers use a local
 file chooser without uploading the file or using browser storage. Playback needs

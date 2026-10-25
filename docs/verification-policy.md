@@ -97,9 +97,22 @@ witness leases only after its cheap argument checks. The
 operating system ends the lock with its owner, so the host of a process that
 is gone never blocks the next probe.
 
-The lock lives under the machine-local cache. A CI runner has its own machine,
-so its jobs never share the host: the gate jobs keep their parallelism and
-their gates.
+All checkouts and scratch copies for one host account use the same local lock
+at `/tmp/fortress-rollback-host-capacity-<uid>/host.lock`. The path ignores
+checkout roots, `HOME`, `TMPDIR` and XDG cache settings. The local filesystem
+also avoids checkout mounts whose file-lock support differs from the host.
+Tests can isolate leases with `FORTRESS_HOST_CAPACITY_DIR`, a nonempty absolute
+directory inherited by their subprocesses. Invalid or inaccessible locations
+fail without falling back to another namespace. The actual lease directory
+must belong to the effective user and deny group/world writes. Existing unsafe
+directories are refused without changing their permissions. Keep that override identical
+across cooperating processes; omit it for ordinary development.
+
+Pruning and scratch replacement preserve the lock inode and its ancestors,
+even when idle. Removing an idle lock could race with a new owner and create
+two independently locked inodes. Process exit releases ownership; metadata is
+only a name, never proof of a live owner. A CI runner has its own machine, so
+its jobs keep their parallelism and their gates.
 
 ## Seeds and repeatability
 

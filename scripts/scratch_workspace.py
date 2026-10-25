@@ -23,6 +23,8 @@ import shutil
 import sys
 from pathlib import Path
 
+import host_capacity
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRATCH = ROOT / '.cache' / 'scratch'
 
@@ -58,6 +60,8 @@ def copy_workspace(destination: Path, source: Path = ROOT, excludes: tuple[str, 
         relative = destination.relative_to(source)
         if not relative.parts or relative.parts[0] not in tops:
             raise ValueError(f'scratch destination {destination} must live under an excluded path of {source}')
+    if host_capacity.protects_path(destination):
+        raise ValueError("scratch destination contains the host capacity lock")
     if destination.is_dir():
         shutil.rmtree(destination)
     shutil.copytree(source, destination, symlinks=True,
@@ -83,6 +87,8 @@ def list_scratch() -> list[Path]:
 def remove(prefix: str) -> bool:
     """Delete one scratch copy; report whether it existed."""
     destination = SCRATCH / prefix
+    if host_capacity.protects_path(destination):
+        raise ValueError("scratch destination contains the host capacity lock")
     if not destination.is_dir():
         return False
     shutil.rmtree(destination)

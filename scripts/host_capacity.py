@@ -17,17 +17,29 @@ The host is one exclusive file lock, so exactly one process owns it. The
 operating system releases the lock when its owner ends, so a lease of a
 process that is gone never holds the host and a stale file never blocks it.
 
-The lock lives under the machine-local cache, never in a tracked path.
+The lock lives on the local machine outside every checkout and scratch tree.
 """
 
+import errno
 import fcntl
 import json
 import os
+import stat
 import time
 from pathlib import Path
+from typing import TextIO
 
-ROOT = Path(__file__).resolve().parents[1]
-LEASE_DIR = ROOT / ".cache" / "host-capacity"
+
+def _lease_directory() -> Path:
+    configured = os.environ.get("FORTRESS_HOST_CAPACITY_DIR")
+    if configured is None:
+        return Path("/tmp") / f"fortress-rollback-host-capacity-{os.getuid()}"
+    if not configured.strip() or not Path(configured).is_absolute():
+        raise ValueError("FORTRESS_HOST_CAPACITY_DIR must be a nonempty absolute directory")
+    return Path(configured).resolve()
+
+
+LEASE_DIR = _lease_directory()
 LEASE_FILE = LEASE_DIR / "host.lock"
 # The owner of this process, its lock handle and its name.
 _state = {"handle": None, "name": None}
@@ -38,6 +50,21 @@ def _ours() -> bool:
     return _state["handle"] is not None
 
 
+def _open_lock(create: bool) -> TextIO:
+    if create:
+        LEASE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    directory = os.open(LEASE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(directory)
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise PermissionError("host capacity directory must be owned by this user and deny group/world writes")
+        flags = os.O_RDWR | os.O_CREAT if create else os.O_RDONLY
+        descriptor = os.open(LEASE_FILE.name, flags | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+    finally:
+        os.close(directory)
+    return os.fdopen(descriptor, "r+" if create else "r", encoding="utf-8")
+
+
 def acquire(name: str) -> bool:
     """Take the host for one named owner. False when another owner holds it.
 
@@ -46,17 +73,22 @@ def acquire(name: str) -> bool:
     """
     if _ours():
         return True
-    LEASE_DIR.mkdir(parents=True, exist_ok=True)
-    handle = open(LEASE_FILE, "a+", encoding="utf-8")
+    handle = _open_lock(True)
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as error:
         handle.close()
+        if error.errno not in (errno.EACCES, errno.EAGAIN):
+            raise
         return False
-    handle.seek(0)
-    handle.truncate()
-    handle.write(json.dumps({"name": name, "pid": os.getpid()}, sort_keys=True))
-    handle.flush()
+    try:
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps({"name": name, "pid": os.getpid()}, sort_keys=True))
+        handle.flush()
+    except Exception:
+        handle.close()
+        raise
     _state["handle"] = handle
     _state["name"] = name
     return True
@@ -80,15 +112,16 @@ def holder() -> str | None:
     """The name of the owner that holds the host, or None when it is free."""
     if _ours():
         return str(_state["name"])
-    if not LEASE_FILE.exists():
-        return None
     try:
-        handle = open(LEASE_FILE, "r", encoding="utf-8")
-    except OSError:
+        handle = _open_lock(False)
+    except FileNotFoundError:
         return None
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as error:
+        if error.errno not in (errno.EACCES, errno.EAGAIN):
+            handle.close()
+            raise
         # Another owner holds the lock. Its record names the owner.
         try:
             handle.seek(0)
@@ -137,3 +170,10 @@ def worker_count(requested: int) -> int:
     if requested < 1:
         raise ValueError("requested worker count must be positive")
     return requested if _ours() or holder() is None else 1
+
+
+def protects_path(path: Path) -> bool:
+    """Keep the lock inode and its ancestors, even while the host is idle."""
+    candidate = path.resolve()
+    directory = LEASE_DIR.resolve()
+    return candidate == directory or candidate in directory.parents or candidate == LEASE_FILE.resolve()

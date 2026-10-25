@@ -33,6 +33,10 @@ full-suite budget from completed runs without relaxing focused hang controls.
 Shared-host runs keep one worker and known slow-case isolation; serialization must
 not merge individually bounded cases into an over-budget process. Determine lease
 ownership from successful lock acquisition, never from matching owner names.
+Host-wide locks must coordinate independent checkout roots by default. Exercise real
+cross-root contenders and keep the lock inode through pruning, even when idle;
+unlinking an idle lock can race with acquisition. Validate shared directory ownership
+and permissions before opening its lock. Bound child readiness reads as well as exit waits.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent
@@ -54,6 +58,8 @@ both must fail before constructing a successful candidate.
 Pair file producers with every import path at the maximum advertised output size.
 Include per-row checksums, statuses and maximum metadata; short fixtures can hide a smaller consumer cap.
 Share the byte limit between native and browser pickers and test rejection one byte above it before reading.
+Check the minimum valid output too: zero input rows can still carry a valid initial-state checksum.
+Keep download eligibility, exported bytes and visible instructions consistent at that boundary.
 
 Concurrent processes for one Godot project share `user://`. Give writable test
 fixtures process-owned paths and check open, write and removal results before

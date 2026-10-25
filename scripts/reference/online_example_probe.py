@@ -124,9 +124,15 @@ def validate_replay_download(value, expected_engine, round_record):
         raise ValueError('online replay download advanced a stopped match')
     raw = bytes.fromhex(value['hex'])
     version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
-    if (raw[:4] != b'FRRP' or version not in (5, 6) or (players, width, skipped, delay, prediction, sync) != (2, 1, 0, 2, 8, 0)
+    if (raw[:4] != b'FRRP' or version != 6 or (players, width, skipped, delay, prediction, sync) != (2, 1, 0, 2, 8, 0)
             or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
         raise ValueError('online replay configuration differs from the played match')
+    capture = round_record.get('replay_capture')
+    if (not isinstance(capture, dict) or capture.get('captured') is not True or type(capture.get('code')) is not int or capture['code'] != 0
+            or type(capture.get('frame')) is not int or capture['frame'] != frames or frames != before['frame']
+            or not isinstance(capture.get('before'), dict) or type(capture['before'].get('frame')) is not int
+            or not 100 <= capture['before']['frame'] <= frames):
+        raise ValueError('online replay lacks explicit finalized-boundary capture')
     cursor, texts = 24, []
     for _ in range(5):
         size = raw[cursor] if cursor < len(raw) else 129

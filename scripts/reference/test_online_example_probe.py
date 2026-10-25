@@ -79,10 +79,11 @@ def replay_download(histories):
     states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
     texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8',
              '1701', 'fortress-online-integer-v1']
-    raw = b'FRRP' + struct.pack('<HBIIIHBB', 5, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
+    raw = b'FRRP' + struct.pack('<HBIIIHBB', 6, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
     raw += b''.join(bytes([len(text)]) + text.encode('ascii') for text in texts)
     raw += b''.join(bytes([histories[0][frame], histories[1][frame], 1, 1, 1]) + bytes.fromhex(game_checksum(states[frame]))
                     + hashlib.sha256(bytes([histories[0][frame], histories[1][frame], 1, 1])).digest()[:16] for frame in range(frames))
+    raw += bytes.fromhex(game_checksum(states[frames]))
     return {'filename': 'fortress-online.frrp', 'hex': raw.hex(), 'disabled_peer': True,
             'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
             'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],
@@ -164,6 +165,7 @@ def evidence():
             record['failure_resources'] = copy.deepcopy(record['teardown'])
             record['frozen_frames'] = [{'before': 110, 'after': 110, 'state': 'failed'} for _ in range(2)]
     rounds[0]['replay_download'] = replay_download(histories)
+    rounds[0]['replay_capture'] = {'before': {'frame': 110, 'restores': 1}, 'frame': 110, 'code': 0, 'captured': True}
     initial = {'frame': 0, 'frames': 110, 'playing': False, 'message': 'Ready.', 'state': states[0]}
     viewer = {key: dict(initial) for key in ('initial', 'stepped', 'paused', 'restarted', 'rejected', 'completed', 'forward', 'backward')}
     viewer['forward'].update(frame=12, state=states[12])
@@ -364,8 +366,6 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
     def test_online_replay_terminal_boundary(self):
         original = evidence()['rounds'][0]['replay_download']
         raw = bytearray.fromhex(original['hex'])
-        struct.pack_into('<H', raw, 4, 6)
-        raw += bytes.fromhex(game_checksum(original['playback']['canonical']))
         original['hex'] = raw.hex()
         self.assertEqual(validate_replay_download(original), 110)
         for suffix in (raw[:-1], raw + bytes(1), raw[:-1] + bytes([raw[-1] ^ 1])):
@@ -373,6 +373,20 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             changed['hex'] = suffix.hex()
             with self.subTest(suffix=suffix[-16:].hex()), self.assertRaises(ValueError):
                 validate_replay_download(changed)
+
+    def test_online_requires_actual_final_capture(self):
+        original = evidence()
+        validate_result(original)
+        for mutate in (lambda v: v['rounds'][0].pop('replay_capture'),
+                       lambda v: v['rounds'][0]['replay_capture'].update(code=False),
+                       lambda v: v['rounds'][0]['replay_capture'].update(captured=False),
+                       lambda v: v['rounds'][0]['replay_capture'].update(frame=109),
+                       lambda v: v['rounds'][0]['replay_download'].update(
+                           hex=v['rounds'][0]['replay_download']['hex'][:8] + '0500' + v['rounds'][0]['replay_download']['hex'][12:-32])):
+            changed = copy.deepcopy(original)
+            mutate(changed)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                validate_result(changed)
 
     def test_online_replay_statuses_are_independently_checked(self):
         original = evidence()['rounds'][0]['replay_download']

@@ -408,7 +408,10 @@ Expert integrations dispatch and acknowledge bounded views themselves; callback 
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Version 5 replay rows preserve confirmed/disconnected player status alongside input bytes; version 4 reads with all-confirmed defaults.
-Historical files checksum pre-input boundaries only; terminal state evidence requires the versioned recording/playback work in [#205](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/205).
+Historical v4/v5 files checksum pre-input boundaries only. Explicit driver and peer capture
+add a final-state checksum in v6 after the recorded prefix is finalized and repaired.
+The online Finish replay action stops local sampling while confirmation settles; an unavailable
+capture preserves historical coverage. Full replay acceptance remains in [#45](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/45).
 Native and exported Chromium compare every corrected dropped-player replay boundary through callback and expert playback on both engine pins.
 Receipt-only recording rows remain private until mesh confirmation, and coordinated drop repairs that staged tail before export.
 Every recorded frame carries a digest of its own input row and, in version 5, its player statuses, because the state

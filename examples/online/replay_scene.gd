@@ -219,7 +219,7 @@ func _refresh() -> void:
 	_play.disabled = viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
 	_back_button.disabled = viewer.is_seeking() or viewer.current_frame() == 0
-	_restart_button.disabled = viewer.frame_count() == 0
+	_restart_button.disabled = viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0
 	_target.max_value = viewer.frame_count()
 	_target.editable = viewer.frame_count() > 0
 	_seek_button.disabled = viewer.frame_count() == 0

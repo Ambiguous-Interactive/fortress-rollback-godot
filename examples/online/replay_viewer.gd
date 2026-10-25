@@ -65,7 +65,9 @@ func _open_failure_message(code: int) -> String:
 
 
 func _compatible(recording: Replay) -> bool:
-	if recording.player_count() != 2 or recording.input_width() != 1 or recording.frame_count() < 1 or recording.frame_count() > MAX_FRAMES:
+	if recording.player_count() != 2 or recording.input_width() != 1 or recording.frame_count() > MAX_FRAMES:
+		return false
+	if recording.frame_count() == 0 and recording.checksum(0).is_empty():
 		return false
 	if recording.game_version() != GAME_VERSION or recording.addon_version() != Replay.ADDON_VERSION or recording.upstream_revision() != Replay.UPSTREAM_REVISION:
 		return false
