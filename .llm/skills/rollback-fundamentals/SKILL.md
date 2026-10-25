@@ -126,6 +126,7 @@ guard. Test valid request identities as well as terminate-then-reconfigure.
 Completion notifications need a guard on the shared session too. A facade-local flag
 cannot stop a second driver or the expert API from changing state between handlers.
 Test both access paths and cancellation; keep completed read-only exports available.
+Destructive event drains share that guard so one completion handler cannot consume cancellation before later handlers observe it.
 Apply callback termination checks to paused validation and checkpoint restoration too.
 Cancellation retains the exposed playback frame as its first-cause diagnostic; a failed checkpoint restore identifies the attempted cached frame.
 Track their active bounded readers/writers so termination expires them. Recheck the
@@ -162,6 +163,8 @@ publishing its checksum. Finalize late matching inputs without fabricating anoth
 A peer drop changes simulation status even when frozen bytes equal prior predictions; repair
 every simulated frame after the cut. Keep receipt-only replay rows private until mesh confirmation,
 and rewrite their bytes, statuses and checksum coverage when the agreed drop replaces them.
+The final survivor still applies the receipt-raised cut and complete per-slot retained-history checks before freezing any target.
+Removing network agreement does not remove original-history protection.
 Carry finalized statuses through spectator publication, authentication, retention and every playback API;
 equal bytes do not imply equal simulation behavior. Use a status-sensitive game and independently
 calculated states to catch a byte-only bridge, and keep historical wire versions frozen.

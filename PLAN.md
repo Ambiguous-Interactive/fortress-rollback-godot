@@ -401,7 +401,8 @@ Expert replay clients can validate that same paused boundary through a save-only
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
 Viewer checkpoint controls use the owned inventory of retained validated boundaries and cannot bypass playback failure.
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
-in-memory snapshots without changing the portable file format. Viewer speed controls change
+in-memory snapshots without changing the portable file format. Viewer completion distinguishes a verified final state from historical files without terminal checksums.
+Viewer speed controls change
 only the bounded number of recorded frames serviced; each simulation step stays fixed.
 Callback and expert replay playback share ordered save/advance requests in the same player.
 Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
@@ -497,7 +498,7 @@ and a barrier that cannot agree ends the match with a recorded reason.
 A freeze refuses a cut below the protected confirmed frontier before changing history. Three real peer sessions now run that barrier end to end:
 one peer stops answering, the two survivors agree one frame, keep one
 confirmed history and keep playing, and a second departure leaves one
-survivor that freezes the slot on its own frontier. The pinned prepare,
+survivor that preserves every retained original target input before freezing its slots at the receipt-raised cut. The pinned prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
 frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
 cover exposed frontiers and target receipts, and certifies complete retained actual

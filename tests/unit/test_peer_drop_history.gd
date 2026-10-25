@@ -24,19 +24,56 @@ func cases() -> PackedStringArray:
 			"pending_repair_raised_cut",
 			"matching_frozen_backfill",
 			"conflicting_frozen_backfill",
+			"last_survivor_receipts",
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	_backfill_active = false
-	if name in ["matching_frozen_backfill", "conflicting_frozen_backfill"]:
+	if name == "last_survivor_receipts":
+		_last_survivor_receipts(context)
+	elif name in ["matching_frozen_backfill", "conflicting_frozen_backfill"]:
 		_frozen_backfill(context, name == "conflicting_frozen_backfill")
 	elif name in ["unequal_exposed_frontiers", "missing_actual_rows", "pending_repair_raised_cut"]:
 		_unequal_frontiers(context, name == "missing_actual_rows", name == "pending_repair_raised_cut")
 	else:
 		_rejected_freeze(context, name.begins_with("certified"))
 	context.finish()
+
+
+# Value: protects=the final survivor preserves accepted target history; fails_when=the shortcut freezes below actual receipts;
+# why_new=multi-survivor inventory agreement bypasses the sole-survivor shortcut; seam=none
+func _last_survivor_receipts(context: RefCounted) -> void:
+	for trailing_samples: int in [0, 3]:
+		var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 2)
+		_play(context, mesh, 6, true)
+		if trailing_samples > 0:
+			_leave(context, mesh, 1)
+		var exposed: int = mesh.peers[0].status().confirmed_frame
+		var cut: int = mesh.peers[0]._core.received_frames()[1]
+		context.equal(cut, 5 + trailing_samples, "real target packets retain their full changing-input suffix")
+		context.equal(cut > exposed, trailing_samples > 0, "only the extra target samples extend beyond exposed confirmation")
+		_detect(context, mesh, [0])
+		context.equal(mesh.peers[0]._core.frozen_frame(1), cut, "the last survivor freezes after every retained target receipt")
+		context.equal(mesh.cuts.get(0, -1), cut, "the departure event names the receipt-raised cut")
+		context.equal(mesh.unconfirmed, 0, "complete local history needs no missing-history fallback")
+		_play(context, mesh, 12, true, [0], 1)
+		var through: int = mesh.peers[0].status().confirmed_frame - 1
+		context.equal(through > cut, true, "the last survivor confirms continuing play past the retained suffix")
+		var expected: RefCounted = Game.new(2)
+		for frame: int in range(through + 1):
+			var row: Array[Dictionary] = []
+			for player: int in range(2):
+				var actual_frame: int = mini(frame, cut) if player == 1 else frame
+				row.append({"player": player, "bytes": _sample(player, actual_frame).hex_encode(), "status": "disconnected" if player == 1 and frame > cut else "confirmed"})
+			context.equal(expected.game.advance(row).is_empty(), true, "independently apply original samples and the last actual frozen value")
+			context.equal(_state_at(mesh.games[0], frame), expected.game.bytes().hex_encode(), "every continuing canonical state preserves the accepted original prefix")
+			var recorded: Types.FrameInputs = mesh.peers[0].replay().inputs(frame)
+			context.equal(recorded != null, true, "the corrected confirmed prefix remains replayable")
+			if recorded != null:
+				context.equal(recorded.read(1).bytes, _sample(1, mini(frame, cut)), "replay retains target actual bytes through the final receipt")
+				context.equal(recorded.read(1).status, Queue.Status.DISCONNECTED if frame > cut else Queue.Status.CONFIRMED, "replay disconnect begins strictly after the last actual receipt")
 
 
 # Value: protects=certificates match retained cut bytes; fails_when=coordinator backfill replaces the local value before certification;

@@ -360,8 +360,9 @@ Returned events belong to the caller and cannot change viewer state.
 
 Ordinary driver calls drain these events into `Driver.StepResult.events`. Consume
 that result when using the driver; expert callers drain the viewer after completing
-the request batch. Draining during an active batch or game callback returns an
-empty array and preserves pending events, including termination during a callback.
+the request batch. Draining during an active batch, game callback or completion
+handler returns an empty array and preserves pending events. Cancellation from a
+completion handler remains queued until every handler returns.
 Expiry, conflicting history and callback failures publish their exact committed
 terminal cause. Repeated termination cannot replace it or publish another event.
 

@@ -147,14 +147,17 @@ func observed(host: Variant, index: int) -> bool:
 	var slots: PackedInt32Array = host._slots_by_peer[index]
 	var upper: int = host._core.status().confirmed_frame
 	var lower: int = host._core.rollback_floor()
-	if upper < lower:
-		# Every frame this survivor could freeze is already released, so the survivors
-		# cannot agree on a value and the match cannot continue safely.
+	var receipts: Dictionary = Inventory.capture(host._core, slots)
+	var last_survivor: bool = _live_survivors(host) == 0
+	if last_survivor:
+		upper = maxi(upper, Inventory.highest(receipts))
+	if upper < lower or (last_survivor and not Inventory.covers(receipts, slots, lower, upper)):
+		# An incomplete retained interval cannot authorize a grouped freeze.
 		host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(), "reason": "missing_history"})
 		host._core.terminate(Types.Code.PROTOCOL_FAILED)
 		return false
-	if _live_survivors(host) == 0:
-		# The last survivor freezes the slot itself; there is nobody left to agree with.
+	if last_survivor:
+		# A one-member certificate still preserves every accepted target input.
 		return _freeze(host, index, upper, PackedByteArray(), false)
 	var barrier: Barrier = Barrier.new()
 	barrier.index = index
@@ -172,7 +175,7 @@ func observed(host: Variant, index: int) -> bool:
 	barrier.coordinator = _lowest_slot(host, index)
 	barrier.coordinator_generation = _era_of_slot(host, barrier.coordinator)
 	barrier.target_set_digest = _target_digest(barrier.slots, barrier.generations)
-	barrier.receipts = Inventory.capture(host._core, barrier.slots)
+	barrier.receipts = receipts
 	barrier.chunk_budget = Transfer.budget(host, barrier.slots.size())
 	barrier.available_through = _available_through(host, barrier)
 	_barriers[key] = barrier

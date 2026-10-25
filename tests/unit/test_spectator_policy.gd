@@ -164,6 +164,7 @@ func _failure_events(context: RefCounted) -> void:
 
 # Value: protects=empty end and guarded drains; fails_when=END completes early or callback steals events; why_new=expert failures skip driver guards; seam=none
 func _empty_end_and_reentry(context: RefCounted) -> void:
+	_notification_events(context)
 	var viewer: RefCounted = Spectator.new()
 	viewer.configure(Fixture.new()._config())
 	viewer.finish_host()
@@ -191,3 +192,32 @@ func _empty_end_and_reentry(context: RefCounted) -> void:
 	if failed.events.size() == 3:
 		context.equal(failed.events[2].reason, Types.Code.PROTOCOL_FAILED, "committed cause wins over callback acknowledgement")
 	context.equal(viewer.drain_events().size(), 0, "callback terminal drains once")
+
+
+# Value: protects=terminal event ownership through completion handlers; fails_when=notification drains steal cancellation;
+# why_new=callback drains run before completion notifications; seam=none
+func _notification_events(context: RefCounted) -> void:
+	for cancel: bool in [false, true]:
+		var viewer: RefCounted = Spectator.new()
+		context.equal(viewer.configure(Fixture.new()._config()), Types.Code.OK, "notification viewer configured")
+		context.equal(viewer.receive_host_frame(0, Fixture.new()._row(0)).code, Types.Code.OK, "notification row available")
+		var driver: RefCounted = Driver.new(viewer, GameFixture.Game.new())
+		var drain_counts: Array[int] = []
+		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
+			if cancel:
+				viewer.terminate(Types.Code.PROTOCOL_FAILED)
+			drain_counts.append(viewer.drain_events().size())
+		)
+		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void: drain_counts.append(viewer.drain_events().size()))
+		var empty: Array[Driver.LocalInput] = []
+		var completed: Driver.StepResult = driver.step(0, empty)
+		context.equal(completed.code, Types.Code.OK, "notification follows completed host row")
+		context.equal(completed.events.size(), 2, "driver owns startup and synchronization")
+		context.equal(drain_counts, [0, 0], "completion handlers cannot drain newly committed terminal events")
+		var events: Array[RefCounted] = viewer.drain_events()
+		context.equal(events.size(), 1 if cancel else 0, "terminal notification remains available after every handler")
+		if events.size() == 1:
+			context.equal(events[0].kind, Spectator.EventKind.TERMINATED, "cancellation publishes terminal event")
+			context.equal(events[0].reason, Types.Code.PROTOCOL_FAILED, "cancellation cause remains exact")
+			context.equal(events[0].frame, 1, "terminal event identifies completed boundary")
+		context.equal(viewer.drain_events().size(), 0, "terminal event drains exactly once after notification")

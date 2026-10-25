@@ -242,9 +242,9 @@ func set_confirmation_limit(_frame: int) -> Types.Result:
 
 ## At most four owned events per configured lifetime. Driver results drain these after completed calls.
 ## SYNCHRONIZED means a contiguous input prefix, not a transport handshake; HOST_FINISHED releases the tail.
-## TERMINATED reports actual playback completion or failure. Active batches and callbacks preserve the queue.
+## TERMINATED reports actual playback completion or failure. Active batches, callbacks and completion handlers preserve the queue.
 func drain_events() -> Array[RefCounted]:
-	if _batch != null or _is_driver_callback:
+	if _batch != null or _has_driver_guard():
 		return []
 	var events: Array[RefCounted] = _events
 	_events = []

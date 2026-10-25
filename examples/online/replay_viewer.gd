@@ -12,7 +12,7 @@ const MAX_BYTES: int = (
 )
 const FILE_SIZE_MESSAGE: String = "Replay exceeds the viewer's file-size limit."
 const SEEK_FRAMES_PER_TICK: int = 120
-const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checksums matched."
+const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checksums matched. The final state has no recorded checksum."
 const MAX_FAILURE_REPORT_BYTES: int = 16384
 const GAME_VERSION: String = "fortress-online-integer-v1"
 
@@ -259,6 +259,8 @@ func _finish_seek() -> void:
 func _complete_message() -> String:
 	if _recorded_checksum_count == 0:
 		return "Replay complete. This recording has no checksums; playback could not be verified."
+	if _player.is_final_state_validated():
+		return "Replay complete. All recorded checksums matched, including the final state."
 	return COMPLETE_MESSAGE
 
 
