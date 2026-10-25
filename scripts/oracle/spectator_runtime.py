@@ -1,6 +1,7 @@
 """Replay actual Godot spectator observations through the pinned TLA Next relation.
 
-Only the no-delay, one-step catch-up, binary-input subset after frame zero is projected.
+Only the no-delay, binary-input subset with one active slot is projected.
+The anchored runtime variant checks single-frame request boundaries from startup.
 Original preplay backlog traces are retained as explicit pinned-model divergences. The port's
 next-frame boundary maps to the model's last-played frame. Synthetic sync steps
 supply the model's handshake precondition; they do not establish runtime sync parity.
@@ -53,11 +54,13 @@ def state(observation, capacity, phase='Running', sync=1, model_precondition=Fal
             ', inCatchupMode |-> ' + ('TRUE' if behind > 1 else 'FALSE') + ']')
 
 
-def module(trace):
-    if not isinstance(trace, dict) or set(trace) != {'capacity', 'preplay', 'speed', 'observations', 'transcript'} or trace['capacity'] not in (2, 3):
+def module(trace, aligned=False):
+    fields = {'capacity', 'preplay', 'speed', 'observations', 'transcript'}
+    if (not isinstance(trace, dict) or set(trace) not in (fields, fields | {'cycles', 'service_observations'})
+            or trace['capacity'] not in (2, 3)):
         raise ValueError('invalid runtime spectator trace')
     capacity = trace['capacity']
-    if type(trace['preplay']) is not bool or type(trace['speed']) is not int or trace['speed'] != (2 if trace['preplay'] else 1):
+    if type(trace['preplay']) is not bool or type(trace['speed']) is not int or trace['speed'] not in (1, 2):
         raise ValueError('invalid runtime spectator playback policy')
     transcript = trace['transcript']
     if (type(capacity) is not int or not isinstance(transcript, list) or len(transcript) != 12
@@ -81,7 +84,7 @@ def module(trace):
         expected_advice = min(backlog, trace['speed'] if backlog > 1 else 1)
         if item['advice'] != expected_advice:
             raise ValueError('runtime spectator pacing differs from observed backlog/policy')
-    if trace['preplay']:
+    if aligned or trace['preplay']:
         states += [state(item, capacity) for item in observations]
     else:
         first_play = next((index for index, item in enumerate(observations) if item['current'] == 0), None)
@@ -95,7 +98,8 @@ def module(trace):
     bindings = ',\n    '.join(f'{name} <- observed[cursor].{name}' for name in VARIABLES)
     text = ('---- MODULE SpectatorRuntime ----\nEXTENDS Integers, Sequences, TLC\nVARIABLE cursor\nobserved == <<\n' +
             ',\n'.join(states) + '\n>>\nModel == INSTANCE SpectatorSession WITH\n' +
-            f'    NUM_PLAYERS <- 2, BUFFER_SIZE <- {capacity}, MAX_FRAMES_BEHIND <- 1, CATCHUP_SPEED <- {trace['speed']}, MAX_FRAME <- 11, NULL_FRAME <- -1,\n    ' +
+            f'    NUM_PLAYERS <- 2, BUFFER_SIZE <- {capacity}, MAX_FRAMES_BEHIND <- 1, CATCHUP_SPEED <- {1 if aligned else trace['speed']},\n' +
+            '    MAX_FRAME <- 11, NULL_FRAME <- -1,\n    ' +
             bindings + '\nInit == /\\ cursor = 1\n        /\\ Model!Init\n' +
             'Next == \\/ /\\ cursor < Len(observed)\n           /\\ cursor\' = cursor + 1\n           /\\ Model!Next\n' +
             '        \\/ /\\ cursor = Len(observed)\n           /\\ UNCHANGED cursor\n' +
@@ -105,22 +109,33 @@ def module(trace):
 
 
 def validate_bundle(value):
-    if (not isinstance(value, list) or len(value) != 4
+    if (not isinstance(value, list) or len(value) != 8
             or any(not isinstance(trace, dict) for trace in value)
-            or [(trace.get('preplay'), trace.get('capacity')) for trace in value] != [(True, 2), (True, 3), (False, 2), (False, 3)]):
+            or [(trace.get('preplay'), trace.get('capacity'), trace.get('speed')) for trace in value]
+            != [(preplay, capacity, speed) for preplay in (True, False) for capacity in (2, 3) for speed in (1, 2)]):
         raise ValueError('runtime spectator capacity inventory differs')
     for trace in value:
         module(trace)
     return value
 
 
-def run_trace(trace, output, jar, label, expect_ok=True, deadlock_cursor=None):
+def run_trace(trace, output, jar, label, expect_ok=True, deadlock_cursor=None, aligned=False, hide_startup=False):
     directory = output / label
     directory.mkdir(parents=True, exist_ok=True)
     source = directory / 'SpectatorSession.tla'
-    source.write_bytes((UPSTREAM / SPEC).read_bytes())
+    model = (UPSTREAM / SPEC).read_text()
+    if aligned:
+        from spectator_startup import repair_model
+        model = repair_model(model)
+    source.write_text(model)
     generated = directory / 'SpectatorRuntime.tla'
-    generated.write_text(module(trace))
+    projected = module(trace, aligned)
+    if hide_startup:
+        anchor = 'framesBehind |-> 1, inCatchupMode |-> FALSE'
+        if anchor not in projected:
+            raise ValueError('missing startup backlog control anchor')
+        projected = projected.replace(anchor, 'framesBehind |-> 0, inCatchupMode |-> FALSE', 1)
+    generated.write_text(projected)
     config = directory / 'SpectatorRuntime.cfg'
     config.write_text('INIT Init\nNEXT Next\nINVARIANT Safety\n')
     command = ['java', '-XX:+UseParallelGC', '-jar', str(jar), '-config', str(config.resolve()), '-workers', '1',
@@ -175,32 +190,38 @@ def check(engine, output, jar, root):
     if traces[0] != traces[1]:
         raise ValueError('runtime spectator traces do not repeat')
     (output / 'observed.json').write_text(json.dumps(traces[0], indent=2) + '\n')
+    from spectator_startup import check_rust
+    rust = check_rust(traces[0], output)
     evidence = []
     for trace in traces[0]:
-        label = ('preplay-' if trace['preplay'] else 'started-') + str(trace['capacity'])
+        label = ('preplay-' if trace['preplay'] else 'started-') + str(trace['capacity']) + '-speed-' + str(trace['speed'])
+        positive = run_trace(trace, output, jar, label + '-aligned', aligned=True)
+        item = {'capacity': trace['capacity'], 'speed': trace['speed'], 'aligned': positive}
         if trace['preplay']:
-            rejected = run_trace(trace, output, jar, label, False, 3)
+            rejected = run_trace(trace, output, jar, label + '-pinned', False, 3)
             full = [item for item in trace['observations'] if item['current'] == -1 and item['backlog'] == trace['capacity']]
-            if len(full) != 1 or full[0]['advice'] != 2 or not full[0]['catchup']:
+            if len(full) != 1 or full[0]['advice'] != trace['speed'] or not full[0]['catchup']:
                 raise ValueError('missing original preplay full-ring catchup witness')
             first = trace['observations'][1]
             if (first['current'], first['received'], first['backlog'], first['advice'], first['catchup']) != (-1, 0, 1, 1, False):
                 raise ValueError('unexpected first preplay model divergence')
             rejected['difference'] = {'field': 'framesBehind', 'observed': 1, 'model': 0, 'currentFrame': -1, 'lastRecvFrame': 0, 'deadlock_cursor': 3}
-            evidence.append({'capacity': trace['capacity'], 'preplay_divergence': rejected, 'full_ring': full[0]})
-            continue
-        if not any(item['current'] >= 0 and item['backlog'] == trace['capacity'] and item['catchup'] for item in trace['observations']):
-            raise ValueError('missing poststartup full-ring catchup witness')
-        positive = run_trace(trace, output, jar, label)
-        mutant, target, deadlock_cursor = illegal_advance(trace)
-        negative = run_trace(mutant, output, jar, label + '-illegal-advance', False, deadlock_cursor)
-        negative.update(observation_index=target, deadlock_cursor=deadlock_cursor)
-        evidence.append({'capacity': trace['capacity'], 'positive': positive, 'illegal_advance': negative})
+            item.update(preplay_divergence=rejected, full_ring=full[0], hidden_startup=run_trace(
+                trace, output, jar, label + '-hidden-startup', False, 3, aligned=True, hide_startup=True))
+        elif trace['speed'] == 1:
+            if not any(state['current'] >= 0 and state['backlog'] == trace['capacity'] and state['catchup'] for state in trace['observations']):
+                raise ValueError('missing poststartup full-ring catchup witness')
+            item['positive'] = run_trace(trace, output, jar, label + '-pinned')
+            mutant, target, deadlock_cursor = illegal_advance(trace)
+            negative = run_trace(mutant, output, jar, label + '-illegal-advance', False, deadlock_cursor)
+            negative.update(observation_index=target, deadlock_cursor=deadlock_cursor)
+            item['illegal_advance'] = negative
+        evidence.append(item)
     if digest(Path(engine)) != engine_hash:
         raise ValueError('spectator engine changed during observation')
-    return {'complete': True, 'traces': evidence, 'repetitions': 2, 'engine_version': version,
+    return {'complete': True, 'traces': evidence, 'rust': rust, 'repetitions': 2, 'engine_version': version,
             'engine_sha256': engine_hash, 'observations_sha256': digest(output / 'observed.json'),
             'pinned_runtime_sha256': digest(UPSTREAM / 'src/sessions/p2p_spectator_session.rs'),
             'limitations': ['Preplay backlog diverges from the pinned model at its NULL frame sentinel; see issue #203.',
-                            'Conformant traces use explicit model-only startup preconditions; comparison starts after actual frame zero.',
-                            'Pinned Rust startup pacing matches Godot by source inspection; no Rust spectator execution is claimed.']}
+                            'The runtime-aligned model changes two NULL-frame backlog predicates and checks one-request microsteps.',
+                            'Rust/Godot service-cycle comparison covers only in-order no-delay two-player binary input; handshake events are not compared.']}

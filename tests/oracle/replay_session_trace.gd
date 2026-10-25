@@ -58,17 +58,23 @@ func _initialize() -> void:
 		return
 	var results: Array[Dictionary] = []
 	for value: Variant in parser.data:  # JSON input is checked before constructing production objects.
-		if not value is Dictionary or value.size() != 5:
+		if not value is Dictionary or value.size() != 6:
 			_fail("invalid case")
 			return
-		if not value.get("name") is String or not value.get("validate") is bool or not value.get("replay") is String or not value.get("replay_v4") is String:
+		if (
+			not value.get("name") is String
+			or not value.get("validate") is bool
+			or not value.get("replay") is String
+			or not value.get("replay_v4") is String
+			or not value.get("replay_v6") is String
+		):
 			_fail("invalid case fields")
 			return
 		if not value.get("seed") is float or value.seed != floor(value.seed) or value.seed < 0 or value.seed > 0xffffffff:
 			_fail("invalid seed")
 			return
-		for version: int in [5, 4]:
-			var text: String = value.replay if version == 5 else value.replay_v4
+		for version: int in [5, 4, 6]:
+			var text: String = value.replay if version == 5 else (value.replay_v4 if version == 4 else value.replay_v6)
 			if text.length() % 2 != 0 or text.length() > 1048576 or text != text.hex_decode().hex_encode():
 				_fail("invalid replay hex")
 				return
@@ -84,7 +90,7 @@ func _initialize() -> void:
 				if result.is_empty():
 					_fail("configure failed")
 					return
-				result.name = value.name + ("-v4" if version == 4 else "") + ("-expert" if expert else "")
+				result.name = value.name + ("-v%d" % version if version != 5 else "") + ("-expert" if expert else "")
 				results.append(result)
 	print("FORTRESS_REPLAY_RESULT " + JSON.stringify({"format": 1, "cases": results}))
 	quit(0)
@@ -99,13 +105,20 @@ func _play(replay: Replay, seed: int, validate: bool, expert: bool) -> Dictionar
 	var code: int = player.configure_expert(replay, bound) if expert else player.configure(replay, game, bound)
 	if code != Types.Code.OK:
 		return {}
-	for attempt: int in range(replay.frame_count() + 1):
+	for attempt: int in range(replay.frame_count() + (2 if replay._format_version == 6 else 1)):
 		code = _expert_step(player, game) if expert else player.step()
 		if code != Types.Code.OK:
 			break
-	return {"initial_frame": 0, "current_frame": player.current_frame(),
-		"complete": player.is_complete(), "format_version": replay._format_version, "code": code, "failure_frame": player.failure_frame(),
-		"records": game.records, "bytes": game.bytes().hex_encode()}
+	return {
+		"initial_frame": 0,
+		"current_frame": player.current_frame(),
+		"complete": player.is_complete(),
+		"format_version": replay._format_version,
+		"code": code,
+		"failure_frame": player.failure_frame(),
+		"records": game.records,
+		"bytes": game.bytes().hex_encode()
+	}
 
 
 func _expert_step(player: Player, game: Game) -> int:

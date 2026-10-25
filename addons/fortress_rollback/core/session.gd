@@ -43,6 +43,7 @@ var _trace: Trace = Trace.new()
 var _statistics: Types.Statistics = Types.Statistics.new()
 var _replay: Replay
 var _replay_repair_frame: int = -1
+var _capturing_replay_boundary: bool = false
 
 
 ## Creates owned validated configuration and fresh history; never replaces an open batch.
@@ -92,6 +93,7 @@ func configure(config: Config) -> int:
 	_trace.configure(_config)
 	_replay = null
 	_replay_repair_frame = -1
+	_capturing_replay_boundary = false
 	if _config.replay_max_frames > 0:
 		_replay = Replay.new()
 		_replay._start(_config)
@@ -418,6 +420,37 @@ func set_confirmation_limit(frame: int) -> Types.Result:
 	return Types.Result.new(Code.OK)
 
 
+## Capture the finalized recording's final boundary through one bounded SAVE, without input or advancement.
+## PREDICTION_STALL requires confirmation/recovery first. HISTORY_UNAVAILABLE means the recording cap
+## precedes the live state; capture at the cap before advancing beyond it. Disabled checksums are unsupported.
+## Completion promotes this exact prefix to FRRP v6; failure never publishes a terminal checksum.
+func begin_capture_replay_boundary() -> Types.Result:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return Types.Result.new(code)
+	if _replay == null or not _config.checksums_enabled:
+		return Types.Result.new(Code.UNSUPPORTED)
+	if _current > _config.replay_max_frames:
+		return Types.Result.new(Code.HISTORY_UNAVAILABLE)
+	var prefix: Replay = replay()
+	if prefix.frame_count() != _current:
+		return Types.Result.new(Code.PREDICTION_STALL)
+	if not Replay.valid_shape(prefix.player_count(), prefix.input_width(), prefix.frame_count(), Replay.TERMINAL_VERSION):
+		return Types.Result.new(Code.INVALID_CONFIGURATION)
+	if prefix.skipped_frames() > 0:
+		return Types.Result.new(Code.HISTORY_UNAVAILABLE)
+	if _batch_id == 9223372036854775807:
+		return _fatal(Code.FRAME_EXHAUSTED)
+	_plan.assign([Vector2i(Kind.SAVE, _current)])
+	_target = _current
+	_outcome = Code.OK
+	_capturing_replay_boundary = true
+	_batch_id += 1
+	_index = 0
+	_batch = Types.Batch.new(self, _batch_id)
+	return Types.Result.new(Code.READY, _batch)
+
+
 func begin_advance() -> Types.Result:
 	return _begin_advance(true)
 
@@ -465,6 +498,7 @@ func _begin_advance(allow_advance: bool) -> Types.Result:
 		for queue: Queue in _queues:
 			queue.reset_prediction()
 		rollback = -1
+	_capturing_replay_boundary = false
 	_plan.clear()
 	if rollback != -1:
 		if _current - rollback > _config.max_prediction_frames or _history.inspect(rollback).code != History.Code.OK:
@@ -554,6 +588,10 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			for player: int in _config.local_players:
 				_samples[player] = PackedByteArray()
 		_record_replay()
+		if _capturing_replay_boundary:
+			_replay._terminal_checksum = _history.inspect(_current).checksum
+			_replay._format_version = Replay.TERMINAL_VERSION
+			_capturing_replay_boundary = false
 		for queue: Queue in _queues:
 			queue.discard_confirmed_frames(_floor())
 		return Types.Result.new(_outcome)

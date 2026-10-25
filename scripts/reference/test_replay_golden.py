@@ -16,6 +16,8 @@ class ReplayGoldenTests(unittest.TestCase):
         text = sum(1 + len(replay_golden.FIELDS[name]) for name in
                    ['engine_version', 'addon_version', 'upstream_revision', 'game_seed', 'game_version'])
         # Every frame carries its own input digest, and the file carries no trailing anchor.
+        self.assertEqual(len(replay_golden.v6()), len(replay_golden.v5()) + 16)
+        self.assertEqual(replay_golden.v6()[-16:], replay_golden.CHECKSUM_A)
         self.assertEqual(len(replay_golden.v5()), 23 + 2 + text + 4 * 7 + 2 * 16 + 4 * 16)
         self.assertEqual(len(replay_golden.v4()), 23 + 2 + text + 4 * 5 + 2 * 16 + 4 * 16)
         self.assertEqual(replay_golden.v4()[23 + 2 + text + 4], 1)

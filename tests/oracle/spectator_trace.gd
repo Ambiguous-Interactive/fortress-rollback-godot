@@ -29,10 +29,10 @@ class Game:
 
 func _initialize() -> void:
 	var traces: Array[Dictionary] = []
-	for case_id: int in range(4):
-		var capacity: int = 2 + case_id % 2
-		var preplay: bool = case_id < 2
-		var speed: int = 2 if preplay else 1
+	for case_id: int in range(8):
+		var capacity: int = 2 + (case_id / 2) % 2
+		var preplay: bool = case_id < 4
+		var speed: int = 1 + case_id % 2
 		var config: Config = Config.new()
 		config.spectator = true
 		config.local_players = PackedInt32Array()
@@ -50,6 +50,8 @@ func _initialize() -> void:
 		var game: Game = Game.new()
 		var driver: Driver = Driver.new(viewer, game)
 		var observations: Array[Dictionary] = [_observe(viewer)]
+		var service_observations: Array[Dictionary] = [_policy(viewer)]
+		var cycles: Array[Dictionary] = []
 		var empty: Array[Driver.LocalInput] = []
 		for frame: int in range(12):
 			var row: Array[PackedByteArray] = [PackedByteArray([frame % 2]), PackedByteArray([0])]
@@ -57,19 +59,25 @@ func _initialize() -> void:
 				quit(2)
 				return
 			observations.append(_observe(viewer))
+			service_observations.append(_policy(viewer))
 			# Preserve preplay backlog; the second case starts before filling a complete ring.
 			if (preplay and frame % capacity == capacity - 1) or (not preplay and frame % capacity == 0) or frame == 11:
-				var pending: int = viewer.host_frontier() - viewer.status().current_frame + 1
-				for _step: int in range(pending):
-					if driver.step(frame, empty).code != Types.Code.OK:
-						quit(2)
-						return
-					observations.append(_observe(viewer))
+				while viewer.host_frontier() >= viewer.status().current_frame:
+					var before: Dictionary = _policy(viewer)
+					var advice: int = viewer.recommended_steps()
+					for _step: int in range(advice):
+						if driver.step(frame, empty).code != Types.Code.OK:
+							quit(2)
+							return
+						observations.append(_observe(viewer))
+					cycles.append({"before": before, "steps": advice, "after": _policy(viewer)})
+				service_observations.append(_policy(viewer))
 				if driver.step(frame, empty).code != Types.Code.PREDICTION_STALL:
 					quit(2)
 					return
 				observations.append(_observe(viewer))
-		traces.append({"capacity": capacity, "preplay": preplay, "speed": speed, "observations": observations, "transcript": game.transcript})
+		traces.append({"capacity": capacity, "preplay": preplay, "speed": speed, "observations": observations, "transcript": game.transcript,
+			"service_observations": service_observations, "cycles": cycles})
 	print("FORTRESS_SPECTATOR_TRACE " + JSON.stringify(traces))
 	quit(0)
 
@@ -86,3 +94,8 @@ func _observe(viewer: Spectator) -> Dictionary:
 		"current": viewer.status().current_frame - 1, "received": viewer.host_frontier(), "tags": Array(viewer._host_tags), "inputs": buffer,
 		"backlog": backlog, "advice": viewer.recommended_steps(), "catchup": backlog > viewer.playback_policy()[1]
 	}
+
+
+func _policy(viewer: Spectator) -> Dictionary:
+	var observed: Dictionary = _observe(viewer)
+	return {"current": observed.current, "backlog": observed.backlog, "advice": observed.advice, "catchup": observed.catchup}

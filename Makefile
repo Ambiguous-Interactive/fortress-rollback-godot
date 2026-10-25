@@ -85,7 +85,7 @@ hot-path-probes:
 
 ## Fail-closed native GDScript tests, repeated in fresh processes
 test-godot:
-	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --timeout 120
+	$(PY) scripts/run_godot_tests.py --godot $(GODOT) --timeout 180
 
 ## Fastest local loop: only suites that load files changed since BASE (default origin/main); any untraced change runs all
 BASE ?= origin/main

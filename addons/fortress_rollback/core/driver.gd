@@ -128,6 +128,18 @@ func recover(now_us: int) -> StepResult:
 	return _step(now_us, empty, false)
 
 
+## Save the finalized replay boundary without a new sample or simulation frame. Read replay() after OK.
+## Uses ordinary ordered callbacks, failure diagnostics, view expiry and completion notification guards.
+func capture_replay_boundary() -> StepResult:
+	var before: int = _session.status().current_frame if _session != null else 0
+	if _is_stepping:
+		return _result(Types.Code.BUSY, before)
+	if _session == null or _game == null:
+		return _result(Types.Code.NOT_CONFIGURED, before)
+	_is_stepping = true
+	return _consume_requests(_session.begin_capture_replay_boundary(), before)
+
+
 ## Owned session status: current and confirmed frames, lifecycle, terminal reason and failure frame.
 ## A client that only holds the driver still learns why a session stopped.
 func status() -> Types.Status:
@@ -228,6 +240,11 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 			if code != Types.Code.OK:
 				return _finish(code, before)
 	var advance: Types.Result = _session.begin_advance() if allow_advance else _session.begin_recovery()
+	return _consume_requests(advance, before)
+
+
+func _consume_requests(advance: Types.Result, before: int) -> StepResult:
+	var code: int = advance.code
 	if advance.code != Types.Code.READY:
 		return _finish(advance.code, before)
 	while true:

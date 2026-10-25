@@ -360,6 +360,20 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             with self.subTest(mutate=mutate), self.assertRaises(ValueError):
                 validate_replay_download(changed)
 
+    # Value: protects=independent terminal-file evidence; fails_when=the final checksum or exact suffix is unchecked; seam=none
+    def test_online_replay_terminal_boundary(self):
+        original = evidence()['rounds'][0]['replay_download']
+        raw = bytearray.fromhex(original['hex'])
+        struct.pack_into('<H', raw, 4, 6)
+        raw += bytes.fromhex(game_checksum(original['playback']['canonical']))
+        original['hex'] = raw.hex()
+        self.assertEqual(validate_replay_download(original), 110)
+        for suffix in (raw[:-1], raw + bytes(1), raw[:-1] + bytes([raw[-1] ^ 1])):
+            changed = copy.deepcopy(original)
+            changed['hex'] = suffix.hex()
+            with self.subTest(suffix=suffix[-16:].hex()), self.assertRaises(ValueError):
+                validate_replay_download(changed)
+
     def test_online_replay_statuses_are_independently_checked(self):
         original = evidence()['rounds'][0]['replay_download']
         raw = bytes.fromhex(original['hex'])

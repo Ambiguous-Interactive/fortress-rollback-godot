@@ -169,6 +169,12 @@ calculated states to catch a byte-only bridge, and keep historical wire versions
 Specialized session modes must audit inherited public mutators. A confirmed-only spectator
 cannot accept player freezing or player-mesh confirmation limits: playback may succeed while exports lose
 their confirmed rows. Test public confirmation and row export alongside game state, using changing host inputs.
+N pre-input state checksums cannot verify the state after input N-1. Keep input integrity,
+pre-input coverage and final-state evidence distinct. Capture terminal checksums through a bounded
+application SAVE of exactly the finalized exported prefix. Pending corrections and a capped prefix
+behind the live state must not inherit a predicted or newer checksum. Preserve historical absence;
+exercise a game that differs only on the last input and a matching control.
+
 Paused replay validation must check the selected input digest before publishing snapshot or
 checksum coverage, including input-only playback and boundaries without state checksums.
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add explicit final replay checksum capture and FRRP v6 playback. Capture after confirmation and recovery to detect differences caused by the last input; existing v4/v5 files remain readable.
+
 - Add owned retained-input reads to peer sessions so clients can retry stalled steps without resampling local input.
 
 - Add replay callback failure kinds to the player, viewer and failure downloads, identifying failed SAVE, LOAD and ADVANCE callbacks.

@@ -124,7 +124,7 @@ def validate_replay_download(value, expected_engine, round_record):
         raise ValueError('online replay download advanced a stopped match')
     raw = bytes.fromhex(value['hex'])
     version, players, width, frames, skipped, delay, prediction, sync = struct.unpack_from('<HBIIIHBB', raw, 4)
-    if (raw[:4] != b'FRRP' or (version, players, width, skipped, delay, prediction, sync) != (5, 2, 1, 0, 2, 8, 0)
+    if (raw[:4] != b'FRRP' or version not in (5, 6) or (players, width, skipped, delay, prediction, sync) != (2, 1, 0, 2, 8, 0)
             or not 100 <= frames <= min(before['frame'], 256) or raw[23:24] != b'\0'):
         raise ValueError('online replay configuration differs from the played match')
     cursor, texts = 24, []
@@ -171,6 +171,11 @@ def validate_replay_download(value, expected_engine, round_record):
         if raw[cursor:cursor + 16] != hashlib.sha256(row).digest()[:16]:
             raise ValueError('online replay input digest differs from the original row')
         cursor += 16
+    if version == 6:
+        if raw[cursor:cursor + 16].hex() != game_checksum(states[frames]):
+            raise ValueError('online replay terminal checksum differs from canonical final state')
+        cursor += 16
+        checksums += 1
     if cursor != len(raw) or checksums == 0:
         raise ValueError('online replay missing checksum evidence or has trailing bytes')
     playback = value.get('playback')

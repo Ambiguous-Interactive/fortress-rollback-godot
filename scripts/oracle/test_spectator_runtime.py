@@ -64,8 +64,14 @@ class SpectatorRuntimeTests(unittest.TestCase):
             played.update(current=0, backlog=0, advice=0)
             other['observations'][1:1] = [received, played]
             started.append(other)
-        runtime.validate_bundle([first, second, *started])
-        for value in ([first, first, *started], [second, first, *started], [], [first], [first, None]):
+        bundle = []
+        for trace in [first, second, *started]:
+            for speed in (1, 2):
+                item = deepcopy(trace)
+                item['speed'] = speed
+                bundle.append(item)
+        runtime.validate_bundle(bundle)
+        for value in ([bundle[0], bundle[0], *bundle[2:]], [bundle[1], bundle[0], *bundle[2:]], [], bundle[:-1], [*bundle[:-1], None]):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'inventory'):
                 runtime.validate_bundle(value)
 
@@ -140,6 +146,46 @@ class SpectatorRuntimeTests(unittest.TestCase):
         runtime.module(trace)
         with self.assertRaisesRegex(ValueError, 'callbacks differ'):
             runtime.module(mutated)
+
+    # Value: protects=actual startup states remain in aligned projection; fails_when=synthetic bootstrap masks backlog;
+    # why_new=poststartup projection intentionally replaces startup for the immutable original model; seam=none
+    def test_aligned_projection_keeps_initial_received_state(self):
+        trace = self.trace()
+        trace.update(preplay=False, speed=2)
+        received = deepcopy(trace['observations'][0])
+        received.update(received=0, tags=[0, -1], backlog=1, advice=1)
+        trace['observations'].insert(1, received)
+        projected = runtime.module(trace, aligned=True)
+        self.assertIn('framesBehind |-> 1, inCatchupMode |-> FALSE', projected)
+        self.assertNotIn('Synthetic model startup', projected)
+        self.assertIn('CATCHUP_SPEED <- 1', projected)
+
+    # Value: protects=anchored model changes only reviewed startup predicates; fails_when=pin drift broadens repair;
+    # why_new=the immutable pinned-model gate cannot cover a derived runtime relation; seam=none
+    def test_runtime_model_repair_is_narrow_and_anchor_checked(self):
+        from spectator_startup import repair_model, ANCHORS
+        original = '\n'.join(ANCHORS)
+        repaired = repair_model(original)
+        self.assertEqual(repaired, "IF lastRecvFrame = NULL_FRAME\nIF lastRecvFrame' = NULL_FRAME")
+        for invalid in (original + '\n' + ANCHORS[0], original.replace(ANCHORS[0], 'FALSE')):
+            with self.assertRaisesRegex(ValueError, 'reviewed anchor'):
+                repair_model(invalid)
+
+    # Value: protects=first startup/catchup differential boundaries; fails_when=observer accepts lost backlog or short first batch;
+    # why_new=full callback totals cannot distinguish service pacing; seam=none
+    def test_executed_startup_controls_and_strict_types(self):
+        from spectator_startup import negative_controls
+        from replay_launch import compare
+        observed = {'format': 1, 'traces': [
+            {'observations': [{'backlog': 0}, {'backlog': 1}]},
+            {'cycles': [{'steps': 2}]}]}
+        self.assertEqual([item['name'] for item in negative_controls(observed, deepcopy(observed))],
+                         ['hidden-startup', 'first-catchup'])
+        for value in (True, 1.0):
+            mutant = deepcopy(observed)
+            mutant['traces'][0]['observations'][1]['backlog'] = value
+            with self.assertRaisesRegex(ValueError, 'backlog: type mismatch'):
+                compare(mutant, observed)
 
 
 if __name__ == '__main__':

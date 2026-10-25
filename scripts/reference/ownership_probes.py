@@ -99,6 +99,9 @@ EXPECTED['res://tests/unit/test_replay_drop.gd'] = {
     'retained_freeze', 'certified_freeze', 'predicted_retained_freeze', 'predicted_certified_freeze', 'failed_recovery_fence'}
 EXPECTED['res://tests/unit/test_replay_expert.gd'] = {
     'canonical_parity', 'request_lifetime', 'save_failures', 'callback_guards', 'paused_termination', 'paused_termination_bad_result'}
+EXPECTED['res://tests/unit/test_replay_terminal.gd'] = {
+    'capture_final_boundary', 'terminal_validation', 'expert_terminal', 'capture_refusals', 'terminal_golden', 'capture_lifetime', 'recording_cap'}
+EXPECTED['res://tests/unit/test_replay_terminal_recovery.gd'] = {'corrected_terminal', 'retained_drop_terminal', 'certified_drop_terminal'}
 EXPECTED['res://tests/unit/test_replay_validation.gd'] = {'paused_parity', 'paused_integrity', 'paused_lifetime'}
 EXPECTED['res://tests/unit/test_replay_expert_navigation.gd'] = {'navigation_parity', 'restore_integrity', 'restore_lifetime'}
 EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
@@ -175,7 +178,7 @@ FILES += ['tests/unit/test_spectator_model.gd']
 FILES += ['tests/unit/test_frame_inputs.gd']
 FILES += ['tests/unit/test_input_queue.gd']
 FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd', 'tests/unit/test_replay_drop.gd']
-FILES += ['tests/unit/test_replay_validation.gd']
+FILES += ['tests/unit/test_replay_validation.gd', 'tests/unit/test_replay_terminal.gd', 'tests/unit/test_replay_terminal_recovery.gd']
 FILES += ['tests/unit/test_replay_expert_navigation.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd']
@@ -230,6 +233,8 @@ const SpectatorModel = preload("res://tests/unit/test_spectator_model.gd")
 const FrameInputs = preload("res://tests/unit/test_frame_inputs.gd")
 const InputQueue = preload("res://tests/unit/test_input_queue.gd")
 const ReplayExpert = preload("res://tests/unit/test_replay_expert.gd")
+const ReplayTerminalRecovery = preload("res://tests/unit/test_replay_terminal_recovery.gd")
+const ReplayTerminal = preload("res://tests/unit/test_replay_terminal.gd")
 const ReplayValidation = preload("res://tests/unit/test_replay_validation.gd")
 const ReplayNavigation = preload("res://tests/unit/test_replay_expert_navigation.gd")
 const ReplayDrop = preload("res://tests/unit/test_replay_drop.gd")
@@ -251,7 +256,8 @@ const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.g
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
-\t\tReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes, ReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
+\t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
+\t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
 		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]

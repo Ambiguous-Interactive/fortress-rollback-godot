@@ -4,7 +4,8 @@ extends RefCounted
 # gdlint: disable=max-returns
 
 ## Confirmed inputs for frames 0..frame_count() - 1, with optional 16-byte state checksums.
-## Frame F's checksum covers the state before input F. Sessions record; FortressReplayPlayer plays back.
+## Frame F's checksum covers the state before input F; optional v6 terminal evidence covers boundary frame_count().
+## Sessions record; FortressReplayPlayer plays back.
 ## Every frame carries a 16-byte digest of its own input row, so every recorded row is covered
 ## and player statuses independently of the state checksums.
 ## Load a file with FortressReplay.new().decode(bytes). The layout is in docs/integration.md.
@@ -15,6 +16,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const MAGIC: String = "FRRP"
 const FORMAT_VERSION: int = 5
+const TERMINAL_VERSION: int = 6
 const ADDON_VERSION: String = "0.1.0"
 const UPSTREAM_REVISION: String = "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"
 const FIXED_BYTES: int = 23
@@ -27,6 +29,7 @@ const MAX_BYTES: int = 268435456
 const FLAG_CHECKSUM: int = 1
 const FLAG_SKIPPED: int = 2
 
+var _terminal_checksum: PackedByteArray = PackedByteArray()
 var _format_version: int = FORMAT_VERSION
 var _statuses: PackedByteArray = PackedByteArray()
 var _players: int = 0
@@ -49,7 +52,10 @@ static func valid_shape(players: int, width: int, frames: int, version: int = FO
 	if players < 2 or players > 8 or width < 1 or width > 65536 or frames < 0 or frames > MAX_FRAMES:
 		return false
 	var row: int = players * (width + (1 if version >= 5 else 0))
-	return FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (row + 1 + CHECKSUM_BYTES + DIGEST_BYTES) <= MAX_BYTES
+	return (
+		(CHECKSUM_BYTES if version == TERMINAL_VERSION else 0) + FIXED_BYTES + width + TEXT_FIELDS * (1 + MAX_TEXT_BYTES) + frames * (row + 1 + CHECKSUM_BYTES + DIGEST_BYTES)
+		<= MAX_BYTES
+	)
 
 
 ## The digest of one recorded input row: the first 16 bytes of its SHA-256.
@@ -77,6 +83,7 @@ static func _printable(bytes: PackedByteArray) -> bool:
 ## Replaces this replay only when the result is OK; any other DecodeCode leaves it unchanged.
 ## Nothing is allocated before the declared frame count is checked against the bytes actually present.
 ## Version 4 reads with CONFIRMED statuses and retains its original byte-only digests.
+## Version 6 adds exactly one final-boundary checksum to v5 rows and forbids substituted inputs.
 ## Version 1, version 2 and version 3 files are UNSUPPORTED_VERSION: version 1 lacks the metadata
 ## that version 2 requires, version 2 lacks the input digest that version 3 records, and version 3
 ## anchors only the final input row instead of every row.
@@ -86,7 +93,7 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 	if bytes.size() < 6 or bytes.slice(0, 4) != MAGIC.to_ascii_buffer():
 		return DecodeCode.MALFORMED
 	var version: int = bytes.decode_u16(4)
-	if version not in [4, FORMAT_VERSION]:
+	if version not in [4, FORMAT_VERSION, TERMINAL_VERSION]:
 		return DecodeCode.UNSUPPORTED_VERSION
 	if bytes.size() < FIXED_BYTES:
 		return DecodeCode.MALFORMED
@@ -147,8 +154,15 @@ func decode(bytes: PackedByteArray, max_bytes: int = MAX_BYTES) -> int:
 			checksums.resize(checksums.size() + CHECKSUM_BYTES)
 		digests.append_array(bytes.slice(end, end + DIGEST_BYTES))
 		cursor = end + DIGEST_BYTES
+	var terminal: PackedByteArray = PackedByteArray()
+	if version == TERMINAL_VERSION:
+		if bytes.size() - cursor != CHECKSUM_BYTES or skipped > 0:
+			return DecodeCode.MALFORMED
+		terminal = bytes.slice(cursor)
+		cursor += CHECKSUM_BYTES
 	if cursor != bytes.size() or skipped_seen != skipped:
 		return DecodeCode.MALFORMED
+	_terminal_checksum = terminal
 	_format_version = version
 	_statuses = statuses
 	_players = players
@@ -258,8 +272,10 @@ func inputs(frame: int) -> Types.FrameInputs:
 	return Types.FrameInputs.new(bytes, statuses)
 
 
-## Empty when the recording session had no retained checksum for this frame.
+## Empty when no state checksum was recorded at this boundary. Version 6 also permits frame_count().
 func checksum(frame: int) -> PackedByteArray:
+	if frame == _frames:
+		return _terminal_checksum.duplicate()
 	if frame < 0 or frame >= _frames or _flags[frame] != FLAG_CHECKSUM:
 		return PackedByteArray()
 	return _checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES)
@@ -309,12 +325,15 @@ func to_bytes() -> PackedByteArray:
 		if _flags[frame] == FLAG_CHECKSUM:
 			bytes.append_array(_checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES))
 		bytes.append_array(_digests.slice(frame * DIGEST_BYTES, (frame + 1) * DIGEST_BYTES))
+	if _format_version == TERMINAL_VERSION:
+		bytes.append_array(_terminal_checksum)
 	return bytes
 
 
 func owned_copy() -> RefCounted:
 	var copy: RefCounted = get_script().new()
 	copy._format_version = _format_version
+	copy._terminal_checksum = _terminal_checksum.duplicate()
 	copy._statuses = _statuses.duplicate()
 	copy._players = _players
 	copy._width = _width
@@ -342,12 +361,18 @@ func owned_prefix(frames: int) -> RefCounted:
 	copy._flags.resize(copy._frames)
 	copy._digests.resize(copy._frames * DIGEST_BYTES)
 	copy._skipped = copy._flags.count(FLAG_SKIPPED)
+	if copy._frames != _frames:
+		copy._terminal_checksum.clear()
+		copy._format_version = FORMAT_VERSION if _format_version == TERMINAL_VERSION else _format_version
 	return copy
 
 
 ## A coordinated drop may replace receipt-only rows beyond the mesh-confirmed cut.
 ## Preserve other players' retained bytes, including rows the live queue already released.
 func _freeze_player(player: int, cut: int, value: PackedByteArray) -> void:
+	if _frames > cut + 1:
+		_terminal_checksum.clear()
+		_format_version = FORMAT_VERSION
 	for frame: int in range(cut + 1, _frames):
 		if _flags[frame] == FLAG_SKIPPED:
 			continue
@@ -377,6 +402,8 @@ func _start(config: RefCounted) -> void:
 
 
 func _append(row: PackedByteArray, saved_checksum: PackedByteArray, skipped: bool, statuses: PackedByteArray = PackedByteArray()) -> void:
+	_terminal_checksum.clear()
+	_format_version = FORMAT_VERSION
 	_inputs.append_array(row)
 	for player: int in range(_players):
 		_statuses.append(statuses[player] if not statuses.is_empty() and not skipped else Queue.Status.CONFIRMED)

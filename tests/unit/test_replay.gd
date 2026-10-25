@@ -276,7 +276,7 @@ func _rejects_malformed_files(context: RefCounted) -> void:
 		{"label": "version 0", "patch": [4, 2, 0], "code": UNSUPPORTED},
 		{"label": "released v2", "patch": [4, 2, 2], "code": UNSUPPORTED},
 		{"label": "released v3", "patch": [4, 2, 3], "code": UNSUPPORTED},
-		{"label": "future version", "patch": [4, 2, 6], "code": UNSUPPORTED},
+		{"label": "future version", "patch": [4, 2, 7], "code": UNSUPPORTED},
 		{"label": "largest version", "patch": [4, 2, 0xffff], "code": UNSUPPORTED},
 		{"label": "one player", "patch": [6, 1, 1], "code": MALFORMED},
 		{"label": "nine players", "patch": [6, 1, 9], "code": MALFORMED},

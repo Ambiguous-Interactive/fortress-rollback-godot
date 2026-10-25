@@ -1213,15 +1213,15 @@
     },
     "fortress:specs/tla/SpectatorSession.cfg": {
       "applicability": "unknown",
-      "port_test_ids": [],
-      "rationale": "Source-family discovery only; semantic contracts and runtime-specific obligations remain unaudited.",
+      "port_test_ids": ["scripts/oracle/spectator_runtime.py::check", "scripts/oracle/test_spectator_runtime.py"],
+      "rationale": "Scoped startup relation audited in #203: actual pinned Rust/Godot delivery, backlog and catch-up cycles agree for capacities 2/3 and speeds 1/2. Original NULL-frame model counterexample retained; two anchored predicates repaired only in a derived model. Whole-family semantic audit remains pending; see docs/spectators.md.",
       "review": null,
       "status": "pending"
     },
     "fortress:specs/tla/SpectatorSession.tla": {
       "applicability": "unknown",
-      "port_test_ids": [],
-      "rationale": "Source-family discovery only; semantic contracts and runtime-specific obligations remain unaudited.",
+      "port_test_ids": ["scripts/oracle/spectator_runtime.py::check", "scripts/oracle/test_spectator_runtime.py"],
+      "rationale": "Scoped startup relation audited in #203: actual pinned Rust/Godot delivery, backlog and catch-up cycles agree for capacities 2/3 and speeds 1/2. Original NULL-frame model counterexample retained; two anchored predicates repaired only in a derived model. Whole-family semantic audit remains pending; see docs/spectators.md.",
       "review": null,
       "status": "pending"
     },
@@ -1606,8 +1606,8 @@
     },
     "fortress:src/sessions/p2p_spectator_session.rs": {
       "applicability": "unknown",
-      "port_test_ids": [],
-      "rationale": "Source-family discovery only; semantic contracts and runtime-specific obligations remain unaudited.",
+      "port_test_ids": ["scripts/oracle/spectator_runtime.py::check", "scripts/oracle/test_spectator_runtime.py"],
+      "rationale": "Scoped startup relation audited in #203: actual pinned Rust/Godot delivery, backlog and catch-up cycles agree for capacities 2/3 and speeds 1/2. Original NULL-frame model counterexample retained; two anchored predicates repaired only in a derived model. Whole-family semantic audit remains pending; see docs/spectators.md.",
       "review": null,
       "status": "pending"
     },

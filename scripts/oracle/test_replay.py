@@ -120,6 +120,27 @@ class ReplayAcceptanceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'incorrect replay format version'):
             replay.acceptance_evidence(observed)
 
+    # Value: protects=final-only comparison cannot be omitted; fails_when=historical completion substitutes for final SAVE; seam=none
+    def test_terminal_acceptance_rejects_weakened_observations(self):
+        original = self.observed()
+        self.assertEqual(len(replay.terminal_acceptance_evidence(original)), 12)
+        for fault in ('missing-save', 'wrong-outcome', 'wrong-boundary', 'missing-workload', 'duplicate'):
+            changed = copy.deepcopy(original)
+            cases = changed['godot']['cases']
+            terminal = next(case for case in cases if case['name'] == '8p-7-terminal-mismatch-v6-expert')
+            if fault == 'missing-save':
+                terminal['records'].pop()
+            elif fault == 'wrong-outcome':
+                terminal.update(code=16, failure_frame=-1, complete=True)
+            elif fault == 'wrong-boundary':
+                terminal['records'][-1]['frame'] -= 1
+            elif fault == 'missing-workload':
+                cases.remove(terminal)
+            else:
+                cases.append(copy.deepcopy(terminal))
+            with self.subTest(fault=fault), self.assertRaises(ValueError):
+                replay.terminal_acceptance_evidence(changed)
+
     @staticmethod
     def observed(cases=None):
         cases = replay.corpus() if cases is None else cases

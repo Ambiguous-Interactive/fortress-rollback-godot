@@ -20,9 +20,10 @@ This is gameplay replay applicability, separate from network fault-trace replay.
 | Validated playback | Save request before every advance, even without a recorded checksum | Save callback only when a recorded checksum exists |
 | Checksum domain | `u128` | 16 owned bytes; probe maps Rust `u128` to little-endian bytes |
 | Mismatch | `ReplayDesync` event; continues advancing | `DESYNC`; stops before the mismatching advance |
-| Final mismatch | Event drain after completion resolves pending validation | Checked before the final advance |
-| Completion | True after the final advance; another advance errors | True after the final callback; another step returns `FRAME_EXHAUSTED` |
-| Empty replay | Complete immediately; advance errors | Complete immediately; step returns `FRAME_EXHAUSTED` |
+| Last pre-input mismatch | Event drain after completion resolves pending validation | Checked before the final advance |
+| Post-input terminal state | No recorded checksum for boundary N | Optional v6 checksum requires a final SAVE at N, without another ADVANCE |
+| Completion | True after the final advance; another advance errors | v4/v5 complete after the last ADVANCE; validated v6 completes after its terminal SAVE |
+| Empty replay | Complete immediately; advance errors | v4/v5 complete immediately; validated v6 checks initial boundary 0 first |
 
 Godot callback playback dispatches the same ordered requests exposed by
 `FortressReplayPlayer.configure_expert`, `begin_advance` and `complete_request`.
@@ -35,7 +36,7 @@ requests, events or frame observations.
 
 ## Evidence boundaries
 
-The 43 scenarios retain the two/eight-player zero, one and seven-frame controls,
+The 55 scenarios retain the two/eight-player zero, one and seven-frame controls,
 then exercise every supported count from two through eight players for 64 frames.
 Each full-roster workload runs unvalidated playback, sparse checksums and an
 interior mismatch at frame 32 after a checksum-free frame. Rust must report that
@@ -44,7 +45,8 @@ receipt requires all 21 long workloads independently of corpus generation;
 missing workloads, missing players or shortened playback cannot qualify.
 This gate checks the observed request frames independently of generated expectations.
 Sparse Rust playback must save all frames from 0 through 63.
-Sparse Godot callback and expert playback must save exactly the even frames.
+Sparse Godot callback and expert playback must save exactly the even input frames.
+Version 6 also saves terminal boundary 64 before reporting completion.
 The interior Godot mismatch must save frame 32 after advancing unchecked frame 31,
 then stop without advancing frame 32. Every request must appear in frame order.
 Disabled validation, fully populated checksums and a checked predecessor cannot qualify
@@ -54,15 +56,15 @@ updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
 Python generates original inputs and independently computes every canonical
 state boundary. Rust consumes the original rows; Godot decodes independently
-packed version-4 and version-5 FRRP files. The observed decoded version must
+packed version-4, version-5 and version-6 FRRP files. The observed decoded version must
 match each workload; substituting current files cannot qualify legacy playback.
 Actual save/advance callbacks, player statuses,
 events, completion and failure frames must match their full expected traces.
 Comparisons validate exact fields and numeric types before comparing values.
 Both engines run in two fresh processes with identical results. Every scenario
 runs through callback playback and separately through `configure_expert`,
-`begin_advance`, batch consumption and `complete_request`: 172 Godot observations
-against 43 pinned Rust scenarios. The corpus uses confirmed player statuses;
+`begin_advance`, batch consumption and `complete_request`: 330 Godot observations
+against 55 pinned Rust scenarios. The corpus uses confirmed player statuses;
 Godot's finalized disconnected-status playback has separate deterministic
 coverage in `tests/unit/test_replay_drop.gd`. This comparison does not establish
 upstream status-sensitive recording parity. At the pinned revision,
@@ -72,11 +74,19 @@ upstream status-sensitive recording parity. At the pinned revision,
 is a Godot format extension, not a missing status field that this corpus can
 supply to the unchanged upstream replay API.
 
-Every frame of the version-5 file carries the digest of its input bytes and
+Every frame of the version-5 or version-6 file carries the digest of its input bytes and
 player statuses. Version 4 retains its byte-only digest and defaults every
 player status to `CONFIRMED`. Those digests are a Godot-side integrity extension: the pinned upstream session owns the
 input history and stores no such digest, so the corpus compares only the
 upstream-owned behaviour and never claims parity for the digests.
+
+Twelve paired terminal workloads cover zero, one and seven inputs with two and eight players.
+Matching v6 terminal checksums require one final SAVE. A mismatch confined to the terminal checksum
+must fail at boundary N after every input has run, while historical versions truthfully complete
+without that evidence. The Rust adapter remains unchanged and has no post-input terminal checksum;
+this is a Godot recording extension, independently calculated from the original input rows.
+The separate terminal acceptance gate rejects omitted/reordered final saves, wrong final boundaries,
+false completion, missing workloads and duplicate observations, even when generated expectations agree.
 
 Negative controls mutate intermediate state while preserving the final result,
 input status, frame convention, numeric type, missing/invented events and a
@@ -117,3 +127,17 @@ must keep its uncorrected tail private.
 These cases qualify Godot playback of finalized disconnected statuses. They do
 not establish upstream status-sensitive recording parity or the remaining
 Firefox, WebKit and cross-platform release gates in #45.
+
+
+## Final-boundary captures on native and Web
+
+The ownership witness runs `test_replay_terminal.gd` and `test_replay_terminal_recovery.gd`
+on both native pins and exported Chromium. Explicit capture uses a real bounded SAVE of the finalized
+live prefix. Coverage includes empty/one-frame/capped recordings, staged samples, matching and
+mismatching late input, corrected drop bytes/statuses, callback failure, overflow, cancellation and reentry.
+Paired games diverge only on the last simulated input: historical files lack final evidence;
+v6 fails at boundary N with expected/actual checksums. Checkpoint navigation and paused/expert
+validation recheck the boundary without advancing input or duplicating checksum counts.
+Capture at the recording cap preserves that original prefix; a later live state cannot replace it.
+The API deliberately refuses capture until the entire simulated prefix is finalized, and does not
+capture stopped peers or invent missing state. See the [capture contract](integration.md#capture-the-final-replay-state).
