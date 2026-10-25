@@ -11,7 +11,7 @@ class ReplayAcceptanceTest(unittest.TestCase):
     def test_missing_or_duplicate_workload_cannot_qualify(self):
         observed = self.observed()
         self.assertEqual(len(replay.acceptance_evidence(observed)), 21)
-        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-expert')]:
+        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-expert'), ('godot', '-v4'), ('godot', '-v4-expert')]:
             for duplicate in (False, True):
                 with self.subTest(runtime=runtime, suffix=suffix, duplicate=duplicate):
                     changed = copy.deepcopy(observed)
@@ -30,7 +30,7 @@ class ReplayAcceptanceTest(unittest.TestCase):
     # why_new=workload labels alone cannot establish execution; seam=none
     def test_incomplete_execution_cannot_qualify(self):
         observed = self.observed()
-        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-expert')]:
+        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-expert'), ('godot', '-v4'), ('godot', '-v4-expert')]:
             for fault in ('frame', 'player', 'mismatch'):
                 with self.subTest(runtime=runtime, suffix=suffix, fault=fault):
                     changed = copy.deepcopy(observed)
@@ -70,7 +70,7 @@ class ReplayAcceptanceTest(unittest.TestCase):
                 changed = self.observed(cases)
                 replay.compare(changed, copy.deepcopy(changed))
                 self.assertEqual(len(replay.controls(changed['rust'], changed['rust'])) +
-                                 len(replay.expert_controls(changed['godot'], changed['godot'])), 17)
+                                 len(replay.expert_controls(changed['godot'], changed['godot'])), 21)
                 with self.assertRaisesRegex(ValueError, 'incorrect save frame inventory'):
                     replay.acceptance_evidence(changed)
 
@@ -78,7 +78,7 @@ class ReplayAcceptanceTest(unittest.TestCase):
     # why_new=counts and mismatch markers cannot prove request coverage; seam=none
     def test_request_inventory_cannot_qualify_when_corrupted(self):
         observed = self.observed()
-        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-expert')]:
+        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-expert'), ('godot', '-v4'), ('godot', '-v4-expert')]:
             for mode in ('plain', 'sparse', 'middle-mismatch'):
                 for fault in ('missing-first-save', 'missing-middle-save', 'missing-last-save', 'extra-save',
                               'save-offset', 'advance-offset', 'request-order'):
@@ -109,6 +109,16 @@ class ReplayAcceptanceTest(unittest.TestCase):
                         replay.compare(changed, copy.deepcopy(changed))
                         with self.assertRaisesRegex(ValueError, diagnostic):
                             replay.acceptance_evidence(changed)
+
+    # Value: protects=legacy acceptance proves the decoded file version, not a renamed current file;
+    # fails_when=current bytes substitute for legacy bytes; why_new=only version 5 executes in the oracle; seam=none
+    def test_legacy_version_cannot_be_substituted(self):
+        observed = self.observed()
+        legacy = [case for case in observed['godot']['cases'] if case['name'] == '5p-64-sparse-v4']
+        self.assertEqual(len(legacy), 1, 'legacy replay actually executes')
+        legacy[0]['format_version'] = 5
+        with self.assertRaisesRegex(ValueError, 'incorrect replay format version'):
+            replay.acceptance_evidence(observed)
 
     @staticmethod
     def observed(cases=None):

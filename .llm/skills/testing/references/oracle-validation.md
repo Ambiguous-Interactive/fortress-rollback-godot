@@ -54,6 +54,9 @@ shortened corpus that never reaches its named event must fail those gates.
 For sparse or optional validation, independently require the exact validation
 request schedule. Workload names and advance counts can stay green when validation
 is disabled or every frame is checked; neither executes sparse validation.
+Legacy format acceptance must observe the decoder's actual version, not only a workload name.
+Run independently packed files through each playback interface, then replace legacy bytes
+with a valid current file and require rejection at the format identity boundary.
 For snapshot-omission controls, derive localization from the first serialized
 consumer of the missing field. A mutant that omits a field from every snapshot
 can hide its immediate difference until a later scheduled event exposes it.

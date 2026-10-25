@@ -173,13 +173,16 @@ func _explore(context: RefCounted, seed_value: int, capacity: int, delay: int) -
 			context.equal(code, CODE.NETWORK_BACKPRESSURE, label + " bounded future refusal")
 			pressures += 1
 		else:
-			context.equal(code, CODE.TERMINATED if end_first and model.received.size() == FRAMES else CODE.OK, label + " delivered complete row")
+			context.equal(code, CODE.OK, label + " delivered complete row")
 			model.received[frame] = true
+			var frontier: int = viewer.host_frontier()
 			context.equal(
 				stream.receive_packet(packets[frame], now_us),
-				CODE.TERMINATED if end_first and model.received.size() == FRAMES else CODE.OK,
-				label + " retained duplicate cannot reopen closed input"
+				CODE.OK,
+				label + " retained duplicate is idempotent after input closes"
 			)
+			context.equal(viewer.host_frontier(), frontier, label + " duplicate leaves accepted history unchanged")
+			context.equal(viewer.status().current_frame, model.played, label + " duplicate never simulates history")
 			duplicates += 1
 		var closed: bool = end_first and model.received.size() == FRAMES
 		var ready: int = model.ready(delay, closed)
@@ -253,6 +256,7 @@ func _caller_bounded_catchup_model(context: RefCounted) -> void:
 
 # Value: protects=host-loss precedence; fails_when=keepalives fill gaps or failures play history; why_new=clean model excludes host loss; seam=none
 func _loss_and_conflict_model(context: RefCounted) -> void:
+	_closed_delivery_model(context)
 	for failure: String in ["deadline", "foreign", "conflict"]:
 		var stream: RefCounted = Stream.new()
 		context.equal(stream.configure(_config(3), _identity(), _key(), _digest(), 0, 10, 128), CODE.OK, failure + " configuration")
@@ -309,3 +313,27 @@ func _transcript_mutation_control(context: RefCounted) -> void:
 			context.equal(game.transcript == model.transcript, not mutate, "original-log prefix observer detects changed body at frame=%d" % frame)
 		totals.append(game.value)
 	context.equal(totals[0], totals[1], "temporal mutation preserves final gameplay total; a final checksum alone would miss it")
+
+
+# Value: protects=closed input stays immutable; fails_when=retry acceptance admits new rows; why_new=delivery model only repeats original rows; seam=none
+func _closed_delivery_model(context: RefCounted) -> void:
+	var stream: RefCounted = Stream.new()
+	context.equal(stream.configure(_config(3), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "closed model configuration")
+	_agree(context, stream, "closed model")
+	var model: Model = Model.new()
+	var viewer: RefCounted = stream.playback_session()
+	context.equal(viewer.set_playback(2, 1, 3), CODE.OK, "closed model retains delayed tail")
+	for frame: int in range(2):
+		context.equal(stream.receive_packet(_signed_row(frame, Fixture.new()._row(frame)), frame), CODE.OK, "deliver complete model prefix")
+		model.received[frame] = true
+	context.equal(stream.receive_packet(stream.encode_end(2), 2), CODE.OK, "close model history")
+	context.equal(model.ready(2, true), 2, "closed model releases two original rows")
+	context.equal(stream.receive_packet(_signed_row(1, Fixture.new()._row(1)), 3), CODE.OK, "retained duplicate preserves model closure")
+	context.equal(viewer.recommended_steps(), model.ready(2, true), "retry preserves exact clean tail eligibility")
+	context.equal(stream.receive_packet(_signed_row(2, Fixture.new()._row(2)), 4), CODE.PROTOCOL_FAILED, "new row contradicts immutable exclusive end")
+	context.equal(viewer.host_frontier(), model.received.size() - 1, "refused new row never extends accepted prefix")
+	var game: TranscriptGame = TranscriptGame.new()
+	var driver: RefCounted = Driver.new(viewer, game)
+	var empty: Array[Driver.LocalInput] = []
+	context.equal(driver.step(4, empty).code, CODE.TERMINATED, "contradiction cannot reopen playback")
+	context.equal(game.transcript, model.transcript, "refused new history cannot invoke simulation")

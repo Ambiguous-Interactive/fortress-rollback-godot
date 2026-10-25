@@ -33,7 +33,7 @@ class ReentrantGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
-			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle"]
+			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle", "closed_input_duplicates"]
 	)
 
 
@@ -430,7 +430,7 @@ func _check_viewer_lifetime(context: RefCounted, replace_viewer: bool) -> void:
 			context.equal(viewer.host_frontier(), -1, "replacement viewer retains no old input")
 			context.equal(viewer.status().reason, CODE.OK, "replacement viewer remains live")
 		else:
-			context.equal(stream.receive_packet(packets[2], 1), CODE.TERMINATED if complete_end else CODE.OK, "rejected configuration preserves stream state")
+			context.equal(stream.receive_packet(packets[2], 1), CODE.OK, "rejected configuration preserves stream state")
 			context.equal(stream.poll(99), CODE.OK, "rejected configuration preserves stream clock")
 		var fresh: PackedByteArray = _identity()
 		fresh[31] += 1
@@ -542,7 +542,8 @@ func _keepalive(context: RefCounted) -> void:
 	context.equal(ending.receive_packet(ending.encode_keepalive(), 99), CODE.OK, "idle host may still fill clean-end gap")
 	context.equal(ending.playback_session().recommended_steps(), 0, "keepalive cannot complete clean-end gap")
 	context.equal(ending.receive_packet(ending.encode_row(0, _row(0)), 100), CODE.OK, "missing tail still accepted")
-	context.equal(ending.receive_packet(ending.encode_keepalive(), 101), CODE.TERMINATED, "completed end cannot reopen stream")
+	context.equal(ending.receive_packet(ending.encode_keepalive(), 101), CODE.OK, "late keepalive preserves closed input")
+	context.equal(ending.playback_session().recommended_steps(), 1, "late keepalive does not reapply playback delay")
 	context.equal(ending.poll(1000), CODE.OK, "completed clean stream needs no liveness")
 	context.equal(Stream.new().encode_keepalive().is_empty(), true, "unconfigured keepalive cannot encode")
 
@@ -680,7 +681,64 @@ func _offer_lifecycle(context: RefCounted) -> void:
 	context.equal(stopped.playback_session().status().reason, CODE.CALLBACK_FAILED, "original terminal reason preserved")
 	var ended: RefCounted = _stream(context)
 	context.equal(ended.receive_packet(ended.encode_end(0), 0), CODE.OK, "clean end")
-	context.equal(ended.receive_packet(offer, 1), CODE.TERMINATED, "offer cannot reopen clean end")
+	context.equal(ended.receive_packet(offer, 1), CODE.OK, "retried offer preserves closed input")
+	context.equal(ended.playback_session().begin_advance().code, CODE.TERMINATED, "retried offer cannot reopen empty closed input")
 	var replaced: RefCounted = _stream(context)
 	context.equal(replaced.playback_session().configure(Fixture.new()._config()), CODE.OK, "replace exposed viewer")
 	context.equal(replaced.encode_accept().is_empty(), true, "old agreement cannot answer for replacement viewer")
+
+
+# Value: protects=clean tail survives late retries; fails_when=input closure reports playback termination;
+# why_new=clean-tail case sends no trailing packets; seam=none
+func _closed_input_duplicates(context: RefCounted) -> void:
+	for kind: String in [
+		"row", "end", "keepalive", "offer", "conflicting_row", "conflicting_status", "conflicting_future", "conflicting_end", "conflicting_offer", "forged", "foreign"
+	]:
+		var stream: RefCounted = _stream(context)
+		var viewer: RefCounted = stream.playback_session()
+		context.equal(viewer.set_playback(2, 1, 3), CODE.OK, "hold a delayed tail")
+		var row: PackedByteArray = stream.encode_row(0, _row(0))
+		var end: PackedByteArray = stream.encode_end(1)
+		var packet: PackedByteArray = row
+		match kind:
+			"end":
+				packet = end
+			"keepalive":
+				packet = stream.encode_keepalive()
+			"offer", "conflicting_offer":
+				packet = Stream.encode_offer(_identity(), _digest(), 2, 1, _key())
+				if kind == "conflicting_offer":
+					var unsigned: PackedByteArray = _unsigned(packet)
+					unsigned.encode_u32(64 + 4, Negotiation.CAP_ROW | Negotiation.CAP_END)
+					packet = Stream.authenticate(unsigned, _key())
+			"conflicting_row":
+				packet = stream.encode_row(0, _row(1))
+			"conflicting_status":
+				packet = stream.encode_row(0, _row(0), PackedByteArray([Session.Queue.Status.DISCONNECTED, Session.Queue.Status.CONFIRMED]))
+			"conflicting_future":
+				packet = stream.encode_row(1, _row(1))
+			"foreign":
+				var foreign: PackedByteArray = _identity()
+				foreign[0] ^= 1
+				packet = Stream.authenticate(Stream.encode_header(Stream.KEEPALIVE, 0, 2, 1, foreign, _digest()), _key())
+			"conflicting_end":
+				packet = stream.encode_end(2)
+			"forged":
+				packet = end.duplicate()
+				packet[64] ^= 1
+		context.equal(stream.receive_packet(row, 1), CODE.OK, "retain original final row")
+		context.equal(stream.receive_packet(end, 2), CODE.OK, "close complete input without playing it")
+		context.equal(viewer.status().current_frame, 0, "tail remains paused before late packet")
+		var expected: int = CODE.PROTOCOL_FAILED if kind.begins_with("conflicting") or kind in ["forged", "foreign"] else CODE.OK
+		context.equal(stream.receive_packet(packet, 1000), expected, "late packet disposition: " + kind)
+		if kind.begins_with("conflicting"):
+			context.equal(viewer.status().reason, CODE.PROTOCOL_FAILED, "authenticated contradiction still terminates")
+			continue
+		context.equal(viewer.status().lifecycle, Types.Lifecycle.RUNNING, "retry or forgery cannot terminate accepted clean tail")
+		context.equal(viewer.host_frontier(), 0, "late packet cannot change complete history")
+		var game: RefCounted = GameFixture.Game.new()
+		var driver: RefCounted = Driver.new(viewer, game)
+		context.equal(driver.step(0, _empty()).code, CODE.OK, "play original final row")
+		context.equal(game.value, 1, "canonical tail uses original row")
+		context.equal(driver.step(1, _empty()).code, CODE.TERMINATED, "terminate only after tail playback")
+		context.equal(stream.receive_packet(end, 1001), CODE.TERMINATED, "actual playback termination remains terminal")

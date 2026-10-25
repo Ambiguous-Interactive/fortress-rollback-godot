@@ -70,7 +70,8 @@ func cases() -> PackedStringArray:
 			"control_busy",
 			"control_row_pressure",
 			"reordered_recovery",
-			"heartbeat_fairness"
+			"heartbeat_fairness",
+			"clean_tail_retries"
 		]
 	)
 
@@ -534,4 +535,25 @@ func _heartbeat_fairness(context: RefCounted) -> void:
 			context.equal(fixture.game.value, expected, "fair service preserves independent original state")
 		context.equal(fixture.relay.poll(turns + 100).peer_code, Types.Code.PROTOCOL_FAILED, "deadline equality beats queued heartbeat and future rows")
 		context.equal(fixture.relay.status().received_bytes, 0, "expiry releases every pending original packet")
+		fixture.relay.detach()
+
+
+# Value: protects=relay clean tail with reordered controls; fails_when=trailing retries report peer failure;
+# why_new=playback case stops polling at END; seam=public SDK signals
+func _clean_tail_retries(context: RefCounted) -> void:
+	for receives: int in [1, 4]:
+		var fixture: Dictionary = _fixture(context, true, receives, 8)
+		context.equal(fixture.stream.playback_session().set_playback(2, 1, 3), Types.Code.OK, "paused delayed viewer")
+		var row: PackedByteArray = fixture.stream.encode_row(0, Fixture.new()._row(0))
+		var end: PackedByteArray = fixture.stream.encode_end(1)
+		for packet: PackedByteArray in [row, end, fixture.stream.encode_keepalive(), end, fixture.publisher.encode_offer(), row]:
+			_emit(fixture, packet)
+		for turn: int in range(6):
+			context.equal(fixture.relay.poll(turn + 1).code, Relay.Code.OK, "late authenticated controls preserve clean tail")
+		context.equal(fixture.stream.playback_session().status().current_frame, 0, "relay does not simulate paused tail")
+		context.equal(fixture.relay.status().received_packets, 0, "all duplicate controls drain")
+		context.equal(fixture.relay.status().rejected, 0, "accepted retries are not failures")
+		context.equal(fixture.driver.step(0, _empty()).code, Types.Code.OK, "final original row remains playable")
+		context.equal(fixture.game.value, 1, "canonical final original state")
+		context.equal(fixture.driver.step(1, _empty()).code, Types.Code.TERMINATED, "clean completion follows final callback")
 		fixture.relay.detach()

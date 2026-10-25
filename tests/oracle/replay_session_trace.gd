@@ -58,29 +58,34 @@ func _initialize() -> void:
 		return
 	var results: Array[Dictionary] = []
 	for value: Variant in parser.data:  # JSON input is checked before constructing production objects.
-		if not value is Dictionary or value.size() != 4:
+		if not value is Dictionary or value.size() != 5:
 			_fail("invalid case")
 			return
-		if not value.get("name") is String or not value.get("validate") is bool or not value.get("replay") is String:
+		if not value.get("name") is String or not value.get("validate") is bool or not value.get("replay") is String or not value.get("replay_v4") is String:
 			_fail("invalid case fields")
 			return
 		if not value.get("seed") is float or value.seed != floor(value.seed) or value.seed < 0 or value.seed > 0xffffffff:
 			_fail("invalid seed")
 			return
-		if value.replay.length() % 2 != 0 or value.replay.length() > 1048576 or value.replay != value.replay.hex_decode().hex_encode():
-			_fail("invalid replay hex")
-			return
-		var replay: Replay = Replay.new()
-		if replay.decode(value.replay.hex_decode()) != Replay.DecodeCode.OK or replay.frame_count() > 64 or replay.input_width() != 4:
-			_fail("invalid replay")
-			return
-		for expert: bool in [false, true]:
-			var result: Dictionary = _play(replay, int(value.seed), value.validate, expert)
-			if result.is_empty():
-				_fail("configure failed")
+		for version: int in [5, 4]:
+			var text: String = value.replay if version == 5 else value.replay_v4
+			if text.length() % 2 != 0 or text.length() > 1048576 or text != text.hex_decode().hex_encode():
+				_fail("invalid replay hex")
 				return
-			result.name = value.name + ("-expert" if expert else "")
-			results.append(result)
+			var replay: Replay = Replay.new()
+			if replay.decode(text.hex_decode()) != Replay.DecodeCode.OK or replay.frame_count() > 64 or replay.input_width() != 4:
+				_fail("invalid replay")
+				return
+			if replay._format_version != version:
+				_fail("invalid replay version")
+				return
+			for expert: bool in [false, true]:
+				var result: Dictionary = _play(replay, int(value.seed), value.validate, expert)
+				if result.is_empty():
+					_fail("configure failed")
+					return
+				result.name = value.name + ("-v4" if version == 4 else "") + ("-expert" if expert else "")
+				results.append(result)
 	print("FORTRESS_REPLAY_RESULT " + JSON.stringify({"format": 1, "cases": results}))
 	quit(0)
 
@@ -99,7 +104,7 @@ func _play(replay: Replay, seed: int, validate: bool, expert: bool) -> Dictionar
 		if code != Types.Code.OK:
 			break
 	return {"initial_frame": 0, "current_frame": player.current_frame(),
-		"complete": player.is_complete(), "code": code, "failure_frame": player.failure_frame(),
+		"complete": player.is_complete(), "format_version": replay._format_version, "code": code, "failure_frame": player.failure_frame(),
 		"records": game.records, "bytes": game.bytes().hex_encode()}
 
 

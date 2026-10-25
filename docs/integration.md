@@ -155,6 +155,10 @@ Peer sessions call `FortressPeerSession.step` with the same arguments and add tw
 The driver also reports the session without a session reference. `driver.status()` returns the
 current and confirmed frame, the lifecycle, the terminal `reason` and the `failure_frame`.
 `driver.statistics()` returns the rollback, resimulation, advance and stall counters.
+With opt-in `config.diagnostic_trace_frames`, `driver.diagnostic_trace()` returns
+owned canonical state/input evidence, including after failure. It returns `{}`
+when capture is disabled or the driver is unconfigured. Export before replacing
+the session; see [canonical diagnostics](peer-lifecycle.md#opt-in-canonical-divergence-evidence).
 `driver.confirmed_inputs(frame)` returns owned finalized inputs for confirmed, simulated frames
 outside pending correction. It returns null when unavailable, including during callbacks.
 Read rows before the bounded input history wraps; returned rows survive later driver calls.

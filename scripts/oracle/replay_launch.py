@@ -56,15 +56,15 @@ def corpus():
     return cases
 
 
-def encoded(case):
+def encoded(case, version=5):
     """Independent FRRP packing; Rust consumes the original rows, Godot the actual file bytes."""
-    data = b'FRRP' + struct.pack('<HBIIIHBB', 5, case['players'], 4, len(case['frames']), 0, 0, 8, 0)
+    data = b'FRRP' + struct.pack('<HBIIIHBB', version, case['players'], 4, len(case['frames']), 0, 0, 8, 0)
     data += b'\0' * 4
     for text in ('oracle', '0.1.0', 'fortress-rollback ' + REVISION, str(case['seed']), 'replay-parity-v1'):
         data += bytes([len(text)]) + text.encode('ascii')
     for row, checksum in zip(case['frames'], case['checksums']):
         packed = struct.pack('<' + 'I' * case['players'], *row)
-        statuses = bytes([1] * case['players'])
+        statuses = bytes([1] * case['players']) if version >= 5 else b''
         data += packed + statuses + bytes([checksum is not None])
         if checksum is not None:
             data += bytes.fromhex(checksum)
@@ -73,7 +73,7 @@ def encoded(case):
     return data
 
 
-def expected(case, rust, expert=False):
+def expected(case, rust, expert=False, version=5):
     state = (0, case['seed'], case['seed'], 0)
     records, events = [], []
     failure = -1
@@ -89,13 +89,13 @@ def expected(case, rust, expert=False):
         state = advance(state, row)
         records.append(dict(kind='advance', frame=frame, bytes=state_bytes(state).hex(),
                             inputs=[dict(value=value, status='confirmed') for value in row]))
-    result = dict(name=case['name'] + ('-expert' if expert else ''), initial_frame=-1 if rust else 0,
+    result = dict(name=case['name'] + ('-v4' if version == 4 else '') + ('-expert' if expert else ''), initial_frame=-1 if rust else 0,
                   current_frame=len(case['frames']) - 1 if rust else state[0],
                   complete=True if rust else failure < 0, records=records, bytes=state_bytes(state).hex())
     if rust:
         result.update(exhausted=True, events=events)
     else:
-        result.update(code=16 if failure < 0 else 18, failure_frame=failure)
+        result.update(code=16 if failure < 0 else 18, failure_frame=failure, format_version=version)
     return result
 
 
@@ -118,7 +118,7 @@ def compare(actual, wanted, path='result'):
 
 
 def godot_expected(cases):
-    return dict(format=1, cases=[expected(case, False, expert) for case in cases for expert in (False, True)])
+    return dict(format=1, cases=[expected(case, False, expert, version) for case in cases for version in (5, 4) for expert in (False, True)])
 
 
 def acceptance_evidence(observed):
@@ -128,11 +128,13 @@ def acceptance_evidence(observed):
         for mode in ('plain', 'sparse', 'middle-mismatch'):
             name = f'{players}p-64-{mode}'
             for runtime in ('rust', 'godot'):
-                for suffix in ('', '-expert') if runtime == 'godot' else ('',):
+                for suffix in ('', '-expert', '-v4', '-v4-expert') if runtime == 'godot' else ('',):
                     matches = [case for case in observed[runtime]['cases'] if case['name'] == name + suffix]
                     if len(matches) != 1:
                         raise ValueError(f'{runtime}:{name + suffix}: missing or duplicate acceptance workload')
                     case = matches[0]
+                    if runtime == 'godot' and (type(case.get('format_version')) is not int or case['format_version'] != (4 if '-v4' in suffix else 5)):
+                        raise ValueError(f'{runtime}:{name + suffix}: incorrect replay format version')
                     failed = runtime == 'godot' and mode == 'middle-mismatch'
                     count = 32 if failed else 64
                     advances = [record for record in case['records'] if record['kind'] == 'advance']
@@ -191,7 +193,13 @@ def expert_controls(observed, wanted):
     records = observed['cases'][validated]['records']
     interior = inventory['5p-64-middle-mismatch-expert']
     callback_interior = inventory['5p-64-middle-mismatch']
+    legacy_callback = inventory['5p-64-sparse-v4']
+    legacy_expert = inventory['5p-64-sparse-v4-expert']
     return reject_mutations(observed, wanted, (
+        ('legacy-callback-format', ('cases', legacy_callback, 'format_version'), 5),
+        ('legacy-expert-format', ('cases', legacy_expert, 'format_version'), 5),
+        ('legacy-callback-input-status', ('cases', legacy_callback, 'records', 1, 'inputs', 0, 'status'), 'predicted'),
+        ('legacy-expert-missing-save', ('cases', legacy_expert, 'records'), observed['cases'][legacy_expert]['records'][1:]),
         ('expert-interior-failure-frame', ('cases', interior, 'failure_frame'), 33),
         ('callback-interior-failure-frame', ('cases', callback_interior, 'failure_frame'), 33),
         ('expert-missing-save', ('cases', validated, 'records'), records[1:]),
@@ -253,6 +261,11 @@ def rejection_controls(binary, engine, cases, output):
     invalid_file = output / 'oversized.json'
     invalid_file.write_text('x' * 2097153)
     controls.append(('godot-byte-limit', command + ['--', '--bundle', str(invalid_file.resolve())], None, 'invalid bundle file'))
+    substituted = output / 'substituted-v4.json'
+    case = cases[0]
+    substituted.write_text(json.dumps([dict(name=case['name'], seed=case['seed'], validate=case['validate'],
+                                           replay=encoded(case).hex(), replay_v4=encoded(case).hex())]))
+    controls.append(('godot-substituted-v4', command + ['--', '--bundle', str(substituted.resolve())], None, 'invalid replay version'))
     for name, invocation, input_text, diagnostic in controls:
         log = output / f'{name}.log'
         try:
@@ -308,7 +321,7 @@ def main():
     cases = corpus()
     scenario = json.dumps(cases, indent=2) + '\n'
     (args.output / 'cases.json').write_text(scenario)
-    bundle = [dict(name=case['name'], seed=case['seed'], validate=case['validate'], replay=encoded(case).hex()) for case in cases]
+    bundle = [dict(name=case['name'], seed=case['seed'], validate=case['validate'], replay=encoded(case).hex(), replay_v4=encoded(case, 4).hex()) for case in cases]
     fixture = args.output / 'files.json'
     fixture.write_text(json.dumps(bundle, indent=2) + '\n')
     observations = []
@@ -343,10 +356,10 @@ def main():
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, negative_controls=negative, standalone_rejections=rejected, observations=observations[0],
         limitations=['ReplaySession playback only; recording applicability is audited separately.',
-                     'Native sequential replay; browser replay coverage is in ownership and online probes.',
+                     'Native sequential version-4/version-5 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')
-    print(f'Replay: {len(cases)} pinned upstream cases and both Godot interfaces passed twice; {len(negative)} negative controls rejected.')
+    print(f'Replay: {len(cases)} pinned upstream cases and both portable versions/interfaces passed twice; {len(negative)} negative controls rejected.')
 
 
 if __name__ == '__main__':

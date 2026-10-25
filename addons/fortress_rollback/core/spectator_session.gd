@@ -82,15 +82,16 @@ func playback_policy() -> PackedInt64Array:
 ## Accepts owned complete rows, including out-of-order arrivals within queue_capacity of the next frame.
 ## Statuses are finalized per-player values; omission means every slot is CONFIRMED.
 ## Refusal leaves every row and the contiguous frontier unchanged; retry backpressure after playback.
-## Identical retained duplicates are idempotent. Conflicting duplicates never replace accepted input.
+## Identical retained duplicates are idempotent, including while a closed host's tail awaits playback.
+## Conflicting duplicates never replace accepted input.
 func receive_host_frame(frame: int, inputs: Array[PackedByteArray], statuses: PackedByteArray = PackedByteArray()) -> Types.Result:
 	var code: int = _mutation_code()
 	if code != Code.OK:
 		return Types.Result.new(code)
-	if _host_finished:
-		return Types.Result.new(Code.TERMINATED)
 	if frame < 0 or frame >= Queue.FRAME_MAX:
 		return Types.Result.new(Code.INVALID_FRAME)
+	if _host_finished and _host_tags[frame % _host_tags.size()] != frame:
+		return Types.Result.new(Code.TERMINATED)
 	if inputs.size() != _config.player_count:
 		return Types.Result.new(Code.INVALID_CONFIGURATION)
 	for bytes: PackedByteArray in inputs:
