@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add replay comparison labels to the player API, viewer and failure downloads. Input digest failures are distinct from game-state and restored-checkpoint mismatches.
+
 - Add a bounded SignalFish spectator host publisher with exact-byte send retries and authenticated viewer acceptance. Live exported relay qualification remains pending.
 
 - Add replay failure downloads with the recording fingerprint, comparison hashes and observed game state for diagnosis.
@@ -170,6 +172,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix peer advancement and recovery hiding exhausted counters behind input errors or publishing input before termination.
+
+- Fix spectator SDK getters detaching or replacing playback during validation. Old callbacks cannot alter a replacement viewer.
 
 - Fix completion handlers advancing or reconfiguring a shared session through another driver or the expert API. Handlers now observe the same completed frame; cancellation remains available.
 

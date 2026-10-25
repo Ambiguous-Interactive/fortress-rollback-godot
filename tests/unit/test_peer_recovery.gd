@@ -8,6 +8,8 @@ const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.
 const L = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Game = preload("res://tests/oracle/p2p_game.gd")
 const Reference = preload("res://tests/oracle/reference_game.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 
 
 class RecoveryGame:
@@ -67,6 +69,7 @@ func _final_mesh(context: RefCounted) -> void:
 
 
 func _guards(context: RefCounted) -> void:
+	_terminal_limits(context)
 	context.equal(Peer.new().recover(0).code, Types.Code.NOT_CONFIGURED, "unconfigured peer recovery")
 	var fixture: RefCounted = Fixture.new()
 	var mesh: Dictionary = fixture._build(context, 2, 0, false, 128, false)
@@ -76,8 +79,66 @@ func _guards(context: RefCounted) -> void:
 	peer._busy = true
 	context.equal(peer.recover(0).code, Types.Code.BUSY, "outer peer ownership guard")
 	peer._busy = false
+	for sample: Driver.LocalInput in fixture._inputs(mesh, 0):
+		context.equal(peer._core.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code, Types.Code.OK, "expert batch stages its sample")
+	context.equal(peer._core.begin_advance().code, Types.Code.READY, "expert batch owns requests")
+	var endpoints: Dictionary = peer.network_status().peers
+	context.equal(peer.step(1, fixture._inputs(mesh, 0)).code, Types.Code.BUSY, "expert batch rejects peer advancement")
+	context.equal(peer.recover(1).code, Types.Code.BUSY, "expert batch rejects peer recovery")
+	context.equal(peer.status().lifecycle, Types.Lifecycle.RUNNING, "busy preflight leaves game running")
+	context.equal(peer.network_status().peers, endpoints, "busy preflight leaves endpoint controls unchanged")
+	context.equal(peer.drain_outbox().is_empty(), true, "busy preflight sends no goodbye")
 	context.equal(peer.close(1), I.Code.OK, "explicit peer close")
 	context.equal(peer.recover(2).code, Types.Code.TERMINATED, "recovery cannot resume terminal peer")
+
+
+# Value: protects=peer terminal limits before input or wire mutation; fails_when=wrapper stalls or stages first;
+# why_new=driver controls bypass the peer wrapper; seam=existing counter fixtures
+func _terminal_limits(context: RefCounted) -> void:
+	for counter: String in ["_current", "_batch_id"]:
+		for operation: String in ["missing", "complete", "recover"]:
+			var fixture: RefCounted = Fixture.new()
+			var mesh: Dictionary = fixture._build(context, 2)
+			var peer: Peer = mesh.peers[0]
+			peer._core.set(counter, 2147483647 if counter == "_current" else 9223372036854775807)
+			var before: int = peer.status().current_frame
+			var receipts: PackedInt64Array = peer._core.received_frames()
+			var endpoints: Dictionary = peer.network_status().peers
+			var notices: Array[int] = []
+			peer.step_completed.connect(func(code: int, _before: int, _after: int) -> void: notices.append(code))
+			var empty: Array[Driver.LocalInput] = []
+			var result: Driver.StepResult = peer.recover(1) if operation == "recover" else peer.step(1, fixture._inputs(mesh, 0) if operation == "complete" else empty)
+			context.equal(result.code, Types.Code.FRAME_EXHAUSTED, "peer terminal limit precedes " + operation)
+			context.equal(result.reason, Types.Code.FRAME_EXHAUSTED, "peer result retains terminal exhaustion")
+			context.equal(peer.status().lifecycle, Types.Lifecycle.TERMINATED, "peer exhaustion cannot remain retryable")
+			context.equal(result.frame_after, before, "peer exhausted frontier stays fixed")
+			context.equal(peer._core.received_frames(), receipts, "exhaustion retains no local sample")
+			context.equal(peer.network_status().peers, endpoints, "exhaustion publishes no endpoint input")
+			context.equal(peer.drain_outbox().is_empty(), true, "exhaustion emits no new packet with controls disabled")
+			context.equal(mesh.games[0].requests.is_empty(), true, "exhaustion invokes no game callback")
+			context.equal(notices, [Types.Code.FRAME_EXHAUSTED], "one final exhaustion notification")
+			context.equal(peer.recover(2).code, Types.Code.TERMINATED, "exhausted peer remains terminal")
+	# The ordinary wrapper still accepts unavailable input and recovery while capacity remains.
+	var fixture: RefCounted = Fixture.new()
+	var mesh: Dictionary = fixture._build(context, 2)
+	mesh.peers[0]._core._batch_id = 9223372036854775806
+	var empty: Array[Driver.LocalInput] = []
+	context.equal(mesh.peers[0].step(1, empty).code, Types.Code.MISSING_LOCAL_INPUT, "nonexhausted missing-input control")
+	context.equal(mesh.peers[0].recover(1).code, Types.Code.OK, "nonexhausted idle recovery control")
+	context.equal(mesh.peers[0].step(1, fixture._inputs(mesh, 0)).code, Types.Code.OK, "nonexhausted complete-input control")
+	context.equal(mesh.peers[0].step(2, empty).code, Types.Code.FRAME_EXHAUSTED, "last permitted batch then reaches exhaustion")
+	for recovery: bool in [false, true]:
+		mesh = fixture._build(context, 2, 0, false, 128, true, false, 8, L.Options.new())
+		mesh.peers[0]._core._batch_id = 9223372036854775807
+		var result: Driver.StepResult = mesh.peers[0].recover(1) if recovery else mesh.peers[0].step(1, empty)
+		context.equal(result.code, Types.Code.FRAME_EXHAUSTED, "network-enabled terminal limit")
+		var packets: Array[Dictionary] = fixture._drain(mesh)
+		context.equal(packets.is_empty(), false, "exhaustion still sends its final goodbye")
+		for packet: Dictionary in packets:
+			context.equal(packet.bytes.decode_u16(6), T.Kind.GOODBYE, "terminal limit sends only goodbye")
+			var delivered: int = mesh.peers[packet.to].receive(packet.bytes, fixture._id(packet.from), 1)
+			context.equal(delivered in [I.Code.OK, I.Code.TERMINATED], true, "goodbye duplication remains terminal")
+		context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.TERMINATED, "remote peer receives exhaustion goodbye")
 
 
 func _callbacks(context: RefCounted) -> void:

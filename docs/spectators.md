@@ -447,7 +447,15 @@ Capacity overflow ends playback explicitly and releases retained packets.
 Connection loss, room replacement, identity changes and stream replacement retire
 that delivery lifetime. Retained callbacks from a detached bridge cannot deliver
 into a later configuration. Call `poll(now_us)` even while playback is paused;
-`detach()` also terminates the owned viewer.
+`detach()` also terminates the owned viewer. SDK getters may report a lifetime change
+synchronously. Old polls and packets stop before touching replacement playback;
+recursive polling returns `WRONG_STATE` without terminating the current viewer.
+
+SDK identity getters and configuration properties must return stable values without
+changing previously observed identity or configuration fields. The bridge compares
+two complete configuration-and-identity observations before installation or service.
+This bounded check detects observed changes; it cannot make arbitrary mutating
+getters atomic. Lifetime signals, detach and replacement remain supported during reads.
 
 ```gdscript
 const SpectatorRelay = preload("res://addons/fortress_rollback/transport/signalfish_spectator_relay.gd")

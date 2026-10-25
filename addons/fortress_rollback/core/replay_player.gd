@@ -31,6 +31,7 @@ var _checked_checksum_count: int = 0
 var _validated_through_frame: int = -1
 var _reason: int = Types.Code.OK
 var _failure_frame: int = -1
+var _failure_comparison: String = ""
 var _failure_expected_checksum: PackedByteArray = PackedByteArray()
 var _failure_actual_checksum: PackedByteArray = PackedByteArray()
 var _is_stepping: bool = false
@@ -88,6 +89,7 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 	_validated_through_frame = -1
 	_reason = Types.Code.OK
 	_failure_frame = -1
+	_failure_comparison = ""
 	_failure_expected_checksum.clear()
 	_failure_actual_checksum.clear()
 
@@ -238,8 +240,9 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			if code == Types.Code.OK:
 				if _restoring != null:
 					if checkpoint.checksum != _restoring.checksum:
-						code = _checksum_mismatch(_restoring.checksum, checkpoint.checksum)
+						code = _checksum_mismatch(_restoring.checksum, checkpoint.checksum, "checkpoint_checksum")
 					elif checkpoint.bytes != _restoring.bytes:
+						_failure_comparison = "checkpoint_bytes"
 						code = Types.Code.DESYNC
 				else:
 					code = _accept_checkpoint(checkpoint)
@@ -450,6 +453,7 @@ func _verify_input_digest() -> int:
 	var actual: PackedByteArray = _replay.computed_input_digest(_frame)
 	if actual == expected:
 		return Types.Code.OK
+	_failure_comparison = "input_digest"
 	_failure_expected_checksum = expected.duplicate()
 	_failure_actual_checksum = actual.duplicate()
 	return _fail(Types.Code.DESYNC)
@@ -512,6 +516,13 @@ func failure_code() -> int:
 	return _reason
 
 
+## The first failed comparison: input_digest, state_checksum, checkpoint_checksum or checkpoint_bytes.
+## Empty when no comparison failed, including callback errors, invalid checksum lengths and termination.
+## Successful configure clears it; later rejected operations preserve it.
+func failure_comparison() -> String:
+	return _failure_comparison
+
+
 ## Owned 16-byte evidence for the first checksum or input-digest comparison failure; empty for
 ## other failures. Expected is the recording's checksum during playback or the cached checksum
 ## during restore. Successful configure clears both values; failed configure preserves them.
@@ -524,7 +535,8 @@ func failure_actual_checksum() -> PackedByteArray:
 	return _failure_actual_checksum.duplicate()
 
 
-func _checksum_mismatch(expected: PackedByteArray, actual: PackedByteArray) -> int:
+func _checksum_mismatch(expected: PackedByteArray, actual: PackedByteArray, comparison: String = "state_checksum") -> int:
+	_failure_comparison = comparison
 	_failure_expected_checksum = expected.duplicate()
 	_failure_actual_checksum = actual.duplicate()
 	return Types.Code.DESYNC

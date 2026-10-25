@@ -31,6 +31,8 @@ A replay or spectator format change must update independent consumers and raw pa
 model fixtures as well as the core decoder, oracle and golden. Search magic bytes,
 header builders, authentication helpers, version tuples and binary unpack calls;
 run the whole consumer suites, since old synthetic fixtures can hide stale formats.
+Label failed comparison domains in public diagnostics: an input digest, recorded state
+checksum and cached-state comparison can share a byte width without sharing a cause.
 
 For authenticated spectator rows, a refused future frame must not block earlier gap rows
 needed to free playback capacity. Retain exact refused bytes and bound scanning across
@@ -265,6 +267,8 @@ a latched fatal status does not prove that retained packet queues were released.
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate
 the connection before its signal arrives; a spectator baseline can replace identity.
+Treat SDK getters and protocol-info conversion as synchronous callback boundaries. Observe lifecycle signals during setup; fence recursive entry, detach and replacement;
+keep joint identity/config observations local until revision and failure checks pass. Require stable SDK accessors; repeated reads cannot make arbitrary side effects atomic.
 A known-member reconnect requires a new rollback lifetime when the SDK omits the
 server epoch. Prove refusal with a valid queued packet and no outgoing work.
 

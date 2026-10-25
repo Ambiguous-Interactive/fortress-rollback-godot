@@ -300,12 +300,15 @@ game version differ from the recording. `configure_expert` takes the same config
 
 `step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
 With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
-`DESYNC` means this game build simulates differently from the recording one; playback stops at `failure_frame()`.
+`DESYNC` stops playback at `failure_frame()` when validation fails; the comparison details below identify what differed.
 The final recorded frame also carries a digest of its input row, because the state checksum of the
 following frame - which covers every other row - does not exist for it. A corrupted last input
 stops playback with `DESYNC` at that frame, before the game callback runs.
 `failure_code()` returns the latched failure code, or OK while playback remains healthy.
-`failure_expected_checksum()` and `failure_actual_checksum()` return owned 16-byte evidence for a checksum mismatch.
+`failure_comparison()` identifies the failed comparison: `input_digest`, `state_checksum`,
+`checkpoint_checksum` or `checkpoint_bytes`. It is empty when no comparison failed,
+including callback failures, malformed checksum lengths and explicit termination.
+`failure_expected_checksum()` and `failure_actual_checksum()` return owned 16-byte evidence for a checksum or input-digest mismatch.
 Both remain empty for other failures, including invalid checksum widths or snapshot bytes differing with the same checksum.
 During checkpoint restoration, the expected value comes from the previously validated cache.
 Successful reconfiguration clears the evidence; rejected configuration preserves it.
