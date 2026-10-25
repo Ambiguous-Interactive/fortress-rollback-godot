@@ -131,7 +131,9 @@ frame-major rows to every survivor before certification.
 
 The donor owns the exact journal through retries. A transfer contains at most 64
 chunks of at most 1024 bytes, reduced to fit every survivor's advertised packet
-budget. Each service call sends at most four chunks. Lost and reordered chunks
+budget. Each service call attempts at most four chunks. Donor service rotates
+between survivor links, so refused early links cannot starve a later healthy link.
+Each link keeps its own ordered chunk cursor. Lost and reordered chunks
 are retried; changed duplicates, wrong donors and conflicting retained overlap
 end the match. All target overlaps and suffix capacities are validated before any
 target is installed. New actual rows use normal rollback correction.

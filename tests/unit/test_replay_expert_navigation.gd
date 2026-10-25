@@ -2,6 +2,7 @@ extends RefCounted
 
 # Value: protects=manual replay navigation validates bounded cached states before committing a frame; fails_when=restore skips ordered LOAD/SAVE or trusts malformed state;
 # why_new=existing cache tests use synchronous callbacks only; seam=none
+const Checkpoints = preload("res://tests/unit/test_replay_checkpoints.gd")
 const Fixture = preload("res://tests/unit/test_replay_viewer.gd")
 const Validation = preload("res://tests/unit/test_replay_validation.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
@@ -14,7 +15,7 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["navigation_parity", "restore_integrity", "restore_lifetime"])
+	return PackedStringArray(["navigation_parity", "restore_integrity", "restore_lifetime", "checkpoint_revalidation"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -181,3 +182,67 @@ func _restore_lifetime(context: RefCounted) -> void:
 	context.equal(player.begin_restore_before(0).code, Types.Code.HISTORY_UNAVAILABLE, "old lifetime cannot lend cached state")
 	context.equal(result.batch.next_request(), null, "old batch cannot borrow restarted requests")
 	context.state(game.frame, game.canonical_bytes())
+
+
+# Value: protects=cached replay boundaries detect changed game state during repeated playback;
+# fails_when=duplicate cached frames skip canonical comparison; why_new=restore tests validate LOAD only; seam=none
+func _checkpoint_revalidation(context: RefCounted) -> void:
+	for expert: bool in [false, true]:
+		for operation: String in ["advance", "validate"]:
+			for target: int in [0, 3]:
+				for fault: String in ["none", "checksum", "bytes"]:
+					var replay: Replay = Fixture.recording(8)
+					replay._flags.fill(0)
+					var player: Player = Player.new()
+					var wrapper: Checkpoints.FaultGame = Checkpoints.FaultGame.new()
+					var game: Simulation = wrapper.game
+					if expert:
+						context.equal(player.configure_expert(replay, Simulation.SNAPSHOT_BYTES, null, 3, 4), Types.Code.OK, "manual cache configures")
+					else:
+						context.equal(player.configure(replay, wrapper, Simulation.SNAPSHOT_BYTES, 3, 4), Types.Code.OK, "callback cache configures")
+					for frame: int in 8:
+						context.equal(_dispatch_boundary(player, game, expert, false), Types.Code.OK, "original prefix establishes checkpoints")
+					if expert:
+						_restore(context, player, game, target, target)
+					else:
+						context.equal(player.restore_before(target), Types.Code.OK, "restore original validated state")
+					var expected_checksum: PackedByteArray = Simulation.checksum(game.canonical_bytes())
+					if fault != "none":
+						game.rng_state ^= 1
+					if not expert and fault == "bytes":
+						wrapper.fault = "checksum collision"
+						wrapper.cached_checksum = expected_checksum
+					var code: int = _dispatch_boundary(player, game, expert, operation == "validate", expected_checksum if fault == "bytes" else PackedByteArray())
+					context.equal(code, Types.Code.OK if fault == "none" else Types.Code.DESYNC, fault + " revalidated cached boundary")
+					context.equal(player.checked_checksum_count(), 0, "cached evidence is separate from recorded-checksum coverage")
+					if fault != "none":
+						context.equal(player.current_frame(), target, "changed cached boundary cannot consume input")
+						context.equal(player.failure_frame(), target, "diagnostic identifies changed cached frame")
+						context.equal(player.failure_kind(), Types.Kind.SAVE, "failed checkpoint comparison names SAVE")
+						context.equal(player.failure_comparison(), "checkpoint_" + fault, "diagnostic distinguishes checksum and canonical bytes")
+						context.equal(player.begin_advance().code, Types.Code.DESYNC, "divergence remains latched")
+					context.state(game.frame, game.canonical_bytes())
+
+
+func _dispatch_boundary(player: Player, game: Simulation, expert: bool, validation: bool, checksum: PackedByteArray = PackedByteArray()) -> int:
+	if not expert:
+		return player.validate_current_frame() if validation else player.step()
+	var result: Types.Result = player.begin_validate_current_frame() if validation else player.begin_advance()
+	if result.code != Types.Code.READY:
+		return result.code
+	while true:
+		var request: Types.Request = result.batch.next_request()
+		if request == null:
+			return Types.Code.OK
+		var digest: PackedByteArray = PackedByteArray()
+		var ok: bool
+		if request.kind == Types.Kind.SAVE:
+			var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+			ok = saved.ok
+			digest = saved.checksum if checksum.is_empty() else checksum
+		else:
+			ok = game.simulate_frame(request.frame, request.inputs)
+		var code: int = player.complete_request(request.batch_id, request.request_id, ok, digest).code
+		if code != Types.Code.OK:
+			return code
+	return Types.Code.OK

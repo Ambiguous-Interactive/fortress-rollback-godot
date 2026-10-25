@@ -420,6 +420,9 @@ Both default to zero. Enable both together with a positive snapshot size,
 a capacity of 2–1024, and callback games implementing `load_state`. Expert clients dispatch the load themselves. Reserved snapshot bytes
 (`capacity * max_snapshot_bytes`) must not exceed 16 MiB. The initial checkpoint is
 retained; the oldest later checkpoint is evicted when the cache fills.
+Revisiting a retained boundary compares both its canonical state bytes and checksum,
+including when the recording has no state checksum. A mismatch stops playback
+before consuming that boundary's input; evicted boundaries have no cached comparison.
 
 `checkpoint_frames()` returns an owned ascending list of retained, successfully validated boundaries.
 Use it to offer navigation targets in callback or expert clients. It excludes evicted entries and is empty before the first cache save.

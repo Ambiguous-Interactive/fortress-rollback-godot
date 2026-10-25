@@ -110,16 +110,16 @@ traffic counter in the poll, not difference it at poll entry, or a frame that
 arrived earlier is never reported. Count a refused item as traffic: valid work
 can sit behind it, and an idle rule that ignores refusals can end a service
 batch too early.
-Exercise minimum routing work with a blocked peer ahead of a healthy peer;
-bounded work alone does not prove fair service. Preserve each peer's FIFO while
-rotating service across the frozen roster.
+Exercise enough refused destinations to exhaust the per-poll attempt budget ahead of healthy links.
+Advance the roster cursor after refused attempts too; acceptance-only rotation can starve later links.
+Preserve each peer's FIFO and exact bytes while rotating bounded service across polls.
 The pinned engine's legacy maxPacketLifetime spelling is ignored by browsers
 that expect maxPacketLifeTime. Use the production connection factory correction
 and verify the resulting lifetime; do not claim a zero-retransmit policy.
 
 Authenticated startup retries share the payload path’s clock, callback and terminal-lifetime
-gates. Test initial offers and retries at deadline equality and during active requests;
-a negotiated version mismatch cannot terminate through an active callback.
+gates, including outgoing acceptance helpers. Test deadline equality, stopped viewers and active requests;
+busy acceptance retries preserve exact bytes after completion; version mismatch cannot terminate through a callback.
 Authenticated host liveness and confirmed-input progress are separate observations.
 A spectator keepalive may refresh elapsed host expiry without advancing a row,
 repairing a gap or affecting player confirmation. Keep deadline equality and

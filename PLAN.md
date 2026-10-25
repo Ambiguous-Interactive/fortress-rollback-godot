@@ -405,6 +405,7 @@ Pausing or stepping a replay validates the displayed boundary and its selected i
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
 Viewer checkpoint controls use the owned inventory of retained validated boundaries and cannot bypass playback failure.
+Repeated playback compares canonical bytes and checksums against retained boundaries even without recorded state checksums.
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
 in-memory snapshots without changing the portable file format. Viewer completion distinguishes a verified final state from historical files without terminal checksums.
 Viewer speed controls change
@@ -474,6 +475,7 @@ Unrelated participant roster events preserve ongoing streams, and setup callback
 The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
 Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
 Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
+Caller-owned startup acceptance refuses terminated or actively serviced viewers; an idle retry preserves the agreed bytes.
 Keepalive priority yields to queued row work so repeated host heartbeats cannot starve confirmed playback under a one-packet receive budget.
 Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
 differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
@@ -497,6 +499,7 @@ proposer stops retries after every live survivor acknowledges. Every phase is
 fenced by the complete locally derived operation identity and sender role.
 Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure.
 Historical donor plans apply the same per-survivor acceptance clocks, leaving healthy output capacity available for retained history chunks.
+Bounded donor chunk service rotates across survivors so refused links cannot starve later healthy links.
 A survivor lost before commit aborts the local attempt with `participant_lost`
 and ends the match; committed decisions remain irreversible. A certificate
 that names another value ends the match with a recorded reason

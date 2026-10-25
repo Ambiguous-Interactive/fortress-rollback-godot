@@ -158,9 +158,11 @@ static func encode_offer(identity: PackedByteArray, digest: PackedByteArray, pla
 	return authenticate(packet, key)
 
 
-## The authenticated answer to one accepted offer. Empty bytes mean no agreement yet.
+## The authenticated answer to one accepted offer. Empty bytes mean no agreement or no idle live viewer.
 func encode_accept() -> PackedByteArray:
 	if not _negotiation.agreed() or _config == null or _session._config != _config:
+		return PackedByteArray()
+	if _session._mutation_code() != Code.OK:
 		return PackedByteArray()
 	var packet: PackedByteArray = encode_header(ACCEPT, 0, _config.player_count, _config.input_width, _identity, _digest, _negotiation.version())
 	if packet.is_empty():

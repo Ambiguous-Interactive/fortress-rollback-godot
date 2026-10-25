@@ -105,10 +105,13 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		return Types.Code.OK
 	var work: int = 0
 	var complete: bool = true
-	for index: int in host._ids.size():
+	var first_peer: int = history.next_peer
+	for offset: int in host._ids.size():
+		var index: int = (first_peer + offset) % host._ids.size()
 		if not barrier.participants.has(host._ids[index].hex_encode()):
 			continue
 		var cursor: int = history.cursors.get(index, 0)
+		var previous_work: int = work
 		while cursor < history.journal.size() and work < History.WORK:
 			var payload: Dictionary = owner._payload(barrier, owner.Phase.BACKFILL, owner.Stage.HISTORY, 0)
 			payload.cut = history.cut
@@ -121,6 +124,8 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 			if host._endpoint(index).send_drop_barrier(payload, host._now) != I.Code.OK:
 				break
 			cursor += 1
+		if work > previous_work:
+			history.next_peer = (index + 1) % host._ids.size()
 		history.cursors[index] = cursor
 		complete = complete and cursor == history.journal.size()
 	if complete:
