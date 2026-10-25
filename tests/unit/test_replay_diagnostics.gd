@@ -13,12 +13,14 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["playback_evidence", "restore_evidence", "viewer_evidence", "boundary_validation", "stepped_boundaries", "paused_boundaries"])
+	return PackedStringArray(["playback_evidence", "restore_evidence", "viewer_evidence", "boundary_validation", "stepped_boundaries", "paused_boundaries", "failure_download"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	var player: Player = Player.new()
 	match name:
+		"failure_download":
+			_failure_download(context)
 		"playback_evidence":
 			_playback_evidence(context, player)
 		"restore_evidence":
@@ -36,6 +38,7 @@ func run_case(name: String, context: RefCounted) -> void:
 
 func _playback_evidence(context: RefCounted, player: Player) -> void:
 	context.equal(player.failure_expected_checksum().is_empty(), true, "new player has no failed checksum")
+	context.equal(player.failure_code(), Types.Code.OK, "new player has no failure code")
 	for boundary: int in [0, 8]:
 		var replay: Replay = Fixture.recording()
 		replay._checksums[boundary * Replay.CHECKSUM_BYTES] ^= 1
@@ -48,6 +51,7 @@ func _playback_evidence(context: RefCounted, player: Player) -> void:
 		var actual: PackedByteArray = Simulation.checksum(game.canonical_bytes())
 		context.equal(player.step(), Types.Code.DESYNC, "checksum mismatch stops playback")
 		context.equal(player.failure_frame(), boundary, "evidence identifies exact failing boundary")
+		context.equal(player.failure_code(), Types.Code.DESYNC, "failure code identifies the latched cause")
 		context.bytes_equal(player.failure_expected_checksum(), expected, boundary, "recorded checksum retained")
 		context.bytes_equal(player.failure_actual_checksum(), actual, boundary, "computed checksum retained")
 		var returned: PackedByteArray = player.failure_expected_checksum()
@@ -63,6 +67,7 @@ func _playback_evidence(context: RefCounted, player: Player) -> void:
 		context.equal(player.configure(Fixture.recording(), Simulation.new()), Types.Code.OK, "new playback configures")
 		context.equal(player.failure_expected_checksum().is_empty(), true, "successful configuration clears recorded evidence")
 		context.equal(player.failure_actual_checksum().is_empty(), true, "successful configuration clears computed evidence")
+		context.equal(player.failure_code(), Types.Code.OK, "new playback lifetime clears the failure code")
 		context.state(boundary, game.canonical_bytes())
 
 
@@ -193,7 +198,9 @@ func _stepped_boundaries(context: RefCounted) -> void:
 				if failed:
 					context.equal(viewer.message.contains("stopped at frame %d" % boundary), true, "Step reports the selected failed frame")
 					context.equal(viewer.message.contains("Expected: " + replay.checksum(boundary).hex_encode()), true, "Step retains recorded failure evidence")
-					context.equal(viewer.message.contains("Actual: " + Simulation.checksum(expected.canonical_bytes()).hex_encode()), true, "Step retains computed failure evidence")
+					context.equal(
+						viewer.message.contains("Actual: " + Simulation.checksum(expected.canonical_bytes()).hex_encode()), true, "Step retains computed failure evidence"
+					)
 					var message: String = viewer.message
 					viewer.step()
 					viewer.tick()
@@ -263,3 +270,74 @@ func _paused_boundaries(context: RefCounted) -> void:
 				viewer.tick()
 				context.bytes_equal(viewer.game.canonical_bytes(), before, boundary, "paused state remains unchanged")
 				context.state(boundary, before)
+
+
+# Value: protects=players retain replay divergence evidence tied to the imported file; fails_when=export advances playback or loses original failure;
+# why_new=visible hashes cannot be downloaded or correlated with a recording; seam=none
+func _failure_download(context: RefCounted) -> void:
+	var probe: Viewer = Viewer.new()
+	context.equal(probe.has_method("failure_report_bytes"), true, "replay failures can be downloaded")
+	if not probe.has_method("failure_report_bytes"):
+		return
+	context.equal(probe.call("failure_report_bytes"), PackedByteArray(), "unconfigured playback has no failure report")
+	for fault: String in ["checksum", "digest"]:
+		var replay: Replay = Fixture.recording(12)
+		if fault == "checksum":
+			replay._checksums[8 * Replay.CHECKSUM_BYTES] ^= 1
+		else:
+			replay._digests[8 * Replay.DIGEST_BYTES] ^= 1
+		var source: PackedByteArray = replay.to_bytes()
+		var node: Node2D = Scene.instantiate()
+		node._ready()
+		node.viewer.open_bytes(source)
+		node._refresh()
+		var button: Button = Fixture._button(node, "Download failure")
+		context.equal(button != null, true, "replay scene offers the failure download")
+		if button == null:
+			node._exit_tree()
+			node.free()
+			return
+		context.equal(button.disabled, true, "healthy playback cannot export a failure")
+		context.equal(node.viewer.call("failure_report_bytes"), PackedByteArray(), "healthy playback has no failure report")
+		node.viewer.seek(12)
+		node._physics_process(0.0)
+		context.equal(button.disabled, false, "divergence enables the visible download")
+		var before: PackedByteArray = node.viewer.game.canonical_bytes()
+		var bytes: PackedByteArray = node.viewer.call("failure_report_bytes")
+		context.equal(bytes.size() > 0 and bytes.size() <= 16384, true, "download has a fixed small bound")
+		var report: Dictionary = JSON.parse_string(bytes.get_string_from_utf8())
+		var hash: HashingContext = HashingContext.new()
+		hash.start(HashingContext.HASH_SHA256)
+		hash.update(source)
+		context.equal(report.schema, "fortress-replay-failure-v1", "failure report has its own versioned schema")
+		context.equal(report.replay_sha256, hash.finish().hex_encode(), "report identifies the exact imported recording")
+		context.equal(report.replay_bytes, source.size(), "report records imported file size")
+		context.equal(report.failure.frame, 8, "report identifies the failed boundary")
+		context.equal(report.failure.code, Types.Code.DESYNC, "report preserves the real failure code")
+		context.equal(
+			report.failure.expected, replay.checksum(8).hex_encode() if fault == "checksum" else replay.input_digest(8).hex_encode(), "report preserves expected comparison hash"
+		)
+		context.equal(
+			report.failure.actual,
+			Simulation.checksum(before).hex_encode() if fault == "checksum" else replay.computed_input_digest(8).hex_encode(),
+			"report preserves computed comparison hash"
+		)
+		context.equal(report.observed_state.frame, 8, "state observation names the exposed frame")
+		context.equal(report.observed_state.bytes, before.hex_encode(), "report keeps the actual displayed state without claiming validation")
+		context.equal(report.recording.game_version, replay.game_version(), "report includes reproducible game metadata")
+		context.equal(report.recording.frames, 12, "report preserves the recording extent")
+		context.equal(report.coverage.checked, 8, "report never counts the failed comparison as verified")
+		context.equal(report.coverage.recorded, 12, "report preserves sparse checksum context")
+		context.equal(node.viewer.open_bytes(PackedByteArray([0])), false, "failed replacement leaves old failure evidence")
+		context.equal(node.viewer.call("failure_report_bytes"), bytes, "failed import preserves exact downloadable evidence")
+		bytes.fill(0)
+		context.equal(node.viewer.call("failure_report_bytes").size() > 0, true, "caller cannot mutate retained report evidence")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), before, 8, "report construction does not advance or alter game state")
+		context.equal(node.viewer.current_frame(), 8, "report preserves exposed playback frame")
+		node.viewer.restart()
+		node._refresh()
+		context.equal(button.disabled, true, "restart clears the old downloadable failure")
+		context.equal(node.viewer.call("failure_report_bytes"), PackedByteArray(), "new lifetime cannot export stale divergence")
+		context.state(8, before)
+		node._exit_tree()
+		node.free()

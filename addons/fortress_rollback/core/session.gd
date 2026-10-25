@@ -35,6 +35,7 @@ var _target: int = 0
 var _outcome: int = Code.OK
 var _originals: Dictionary = {}
 var _is_driver_callback: bool = false
+var _is_driver_notification: bool = false
 var _has_confirmation_limit: bool = false
 var _confirmation_limit: int = -1
 var _exposed_confirmed_high_water: int = -1
@@ -46,7 +47,7 @@ var _replay_repair_frame: int = -1
 
 ## Creates owned validated configuration and fresh history; never replaces an open batch.
 func configure(config: Config) -> int:
-	if _is_driver_callback or _batch != null:
+	if _is_driver_callback or _is_driver_notification or _batch != null:
 		return Code.BUSY
 	if config == null or config.validate() != Code.OK:
 		return Code.INVALID_CONFIGURATION
@@ -385,7 +386,7 @@ func confirmed_inputs(frame: int) -> Types.FrameInputs:
 ## Sending may include the confirmed boundary; comparison requires strictly earlier frames.
 func confirmed_checksums(include_boundary: bool = false) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	if _mutation_code() != Code.OK or not _config.checksums_enabled:
+	if _config == null or _reason != Code.OK or _batch != null or _is_driver_callback or not _config.checksums_enabled:
 		return result
 	var ceiling: int = mini(_current, _confirmed() if include_boundary else _confirmed() - 1)
 	for queue: Queue in _queues:
@@ -503,7 +504,7 @@ func _begin_advance(allow_advance: bool) -> Types.Result:
 
 
 func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksum: PackedByteArray = PackedByteArray()) -> Types.Result:
-	if _is_driver_callback:
+	if _is_driver_callback or _is_driver_notification:
 		return Types.Result.new(Code.BUSY)
 	if _reason != Code.OK:
 		return Types.Result.new(Code.TERMINATED)
@@ -751,7 +752,7 @@ func _floor() -> int:
 
 
 func _mutation_code() -> int:
-	if _is_driver_callback:
+	if _is_driver_callback or _is_driver_notification:
 		return Code.BUSY
 	if _config == null:
 		return Code.NOT_CONFIGURED
@@ -784,7 +785,7 @@ func _fatal(code: int, frame: int = -1, kind: int = -1) -> Types.Result:
 
 ## Separate from the batch guard: terminate may clear a batch during a callback.
 func _begin_driver_callback() -> int:
-	if _is_driver_callback:
+	if _is_driver_callback or _is_driver_notification:
 		return Code.BUSY
 	if _active == null or _batch == null:
 		return Code.STALE_REQUEST
@@ -794,3 +795,16 @@ func _begin_driver_callback() -> int:
 
 func _end_driver_callback() -> void:
 	_is_driver_callback = false
+
+
+func _has_driver_guard() -> bool:
+	return _is_driver_callback or _is_driver_notification
+
+
+## Presentation handlers share the session guard across every driver and expert facade.
+func _begin_driver_notification() -> void:
+	_is_driver_notification = true
+
+
+func _end_driver_notification() -> void:
+	_is_driver_notification = false

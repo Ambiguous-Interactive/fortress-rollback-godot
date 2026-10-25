@@ -484,9 +484,54 @@ deliver the authenticated bytes to `publisher.receive_accept()` before that
 publisher emits rows. If an accepted packet is lost afterward, retransmit the
 host's OFFER: each repeated valid OFFER stages the same acceptance again.
 The adapter never sends through the SDK spectator role or assumes host agreement.
-An actual control service, initial-state agreement, host publication over SignalFish,
-real relay acceptance and source/model comparison remain in #131 and #47.
+An actual control service, initial-state agreement, real SDK/server relay acceptance
+and source/model comparison remain in #131 and #47.
 The native dependency qualification does not establish those missing boundaries.
+
+## SignalFish host publication
+
+`FortressSignalFishSpectatorHost` connects a confirmed player session to the SDK's
+public `send_game_data_binary` method. Configure it in a connected finalized room
+for one pre-admitted viewer UUID. It requires the same v3 capability and raw binary
+format as viewer ingress. It does not admit spectators or change player membership.
+
+```gdscript
+const SpectatorHost = preload("res://addons/fortress_rollback/transport/signalfish_spectator_host.gd")
+var publication: RefCounted = SpectatorHost.new()
+var limits: RefCounted = SpectatorHost.Options.new()
+limits.max_packet_bytes = 1024
+var code: int = publication.configure(client, sdk_config, protocol_info, player_session,
+    admitted_viewer_uuid, fresh_identity, private_key, agreed_configuration_digest, limits)
+```
+
+Provision the original state, neutral input, seed, rules and complete dimensions
+through an authenticated application service before attaching either side.
+The bridge sends OFFER repeatedly until that service delivers the viewer's ACCEPT
+through `publication.receive_accept(authenticated_viewer_uuid, bytes)`.
+The UUID must match the admitted viewer; packet authentication alone does not
+establish admission. This method returns a transport result with `peer_code`
+carrying the publisher's specific validation result. The SDK spectator role never
+sends game data.
+
+Call `publication.poll(now_us)` with monotonic microseconds. Each poll bounds SDK
+send attempts and socket buffering. Refused rows retain their exact bytes until
+transport acceptance; missing overwritten history reports `HISTORY_UNAVAILABLE`
+in `peer_code`. Due keepalives take turns with refused ROW or END packets, including with one
+send attempt per poll. A refused heartbeat yields the next attempt to the payload.
+Stop advancing the host, call `finish_host()`, then continue polling to publish the
+remaining confirmed prefix and END. SDK acceptance does not prove remote delivery.
+
+The SDK broadcasts these bytes to other players as well as spectators. The player
+relay adapter rejects FRGS envelopes before changing its protocol clocks or player
+confirmation. Use a separate stream lifetime and private key for each admitted
+viewer; this bridge does not multiplex viewers or provide late state transfer.
+Room or connection replacement, changed player identity, source reconfiguration
+and detach stop publication. `detach()` leaves player gameplay running.
+
+Deterministic SDK doubles cover canonical playback through ring reuse, bounded
+pressure, explicit receipt, clean end and shared player traffic. Actual SDK/server
+execution and exported Fortress games remain unqualified in #131; this API does
+not extend the browser support claim or advance reviewed dependency pins.
 
 ## Check playback against the pinned spectator model
 

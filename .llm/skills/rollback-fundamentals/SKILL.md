@@ -123,6 +123,9 @@ may clear the active batch, but must not reopen configuration, input submission,
 polling, advancement or request completion inside that callback. Status and
 termination remain available; the driver acknowledges only after releasing the
 guard. Test valid request identities as well as terminate-then-reconfigure.
+Completion notifications need a guard on the shared session too. A facade-local flag
+cannot stop a second driver or the expert API from changing state between handlers.
+Test both access paths and cancellation; keep completed read-only exports available.
 Apply callback termination checks to paused validation and checkpoint restoration too.
 Cancellation retains the exposed playback frame as its first-cause diagnostic; a failed checkpoint restore identifies the attempted cached frame.
 Track their active bounded readers/writers so termination expires them. Recheck the

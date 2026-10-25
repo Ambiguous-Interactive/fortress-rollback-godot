@@ -3,6 +3,7 @@ extends Node2D
 const Viewer = preload("res://examples/online/replay_viewer.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE, Color.GOLD, Color.MEDIUM_SEA_GREEN]
+const FAILURE_FILENAME: String = "fortress-replay-failure.json"
 const WEB_IMPORT: String = """
 window.fortressReplayImport = {
   input: null, reader: null,
@@ -34,12 +35,15 @@ window.fortressReplayImport = {
 """
 
 var viewer: Viewer = Viewer.new()
+var _panel: VBoxContainer
 var _status: Label
 var _play: Button
 var _step_button: Button
 var _back_button: Button
 var _previous_checkpoint: Button
 var _next_checkpoint: Button
+var _failure_download: Button
+var _failure_notice: String = ""
 var _restart_button: Button
 var _speed: OptionButton
 var _target: SpinBox
@@ -52,6 +56,7 @@ var _web_callback: JavaScriptObject
 
 func _ready() -> void:
 	var panel: VBoxContainer = VBoxContainer.new()
+	_panel = panel
 	panel.position = Vector2(24, 16)
 	panel.custom_minimum_size = Vector2(680, 0)
 	add_child(panel)
@@ -91,6 +96,7 @@ func _ready() -> void:
 	panel.add_child(checkpoints)
 	_previous_checkpoint = _button(checkpoints, "Previous checkpoint", _jump_checkpoint.bind(false))
 	_next_checkpoint = _button(checkpoints, "Next checkpoint", _jump_checkpoint.bind(true))
+	_failure_download = _button(checkpoints, "Download failure", _download_failure)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -200,10 +206,15 @@ func _physics_process(_delta: float) -> void:
 
 
 func _refresh() -> void:
+	if not viewer.has_failure():
+		_failure_notice = ""
 	_status.text = (
 		"%s\nFrame %d / %d | Checksums checked: %d / %d recorded"
 		% [viewer.message, viewer.current_frame(), viewer.frame_count(), viewer.checked_checksum_count(), viewer.recorded_checksum_count()]
 	)
+	if not _failure_notice.is_empty():
+		_status.text += "\n" + _failure_notice
+	_failure_download.disabled = not viewer.has_failure()
 	_play.text = "Pause" if viewer.is_playing else "Play"
 	_play.disabled = viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
@@ -219,7 +230,7 @@ func _refresh() -> void:
 
 
 func _draw() -> void:
-	var origin: Vector2 = Vector2(24, 225)
+	var origin: Vector2 = Vector2(24, maxf(225.0, _panel.position.y + _panel.size.y + 16.0))
 	var available: Vector2 = get_viewport_rect().size - origin - Vector2(16, 16)
 	var fit: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
 	draw_set_transform(origin, 0.0, Vector2.ONE * fit)
@@ -229,3 +240,23 @@ func _draw() -> void:
 		var tint: Color = COLORS[viewer.game.color[slot]]
 		draw_circle(position, 12, tint)
 		draw_string(ThemeDB.fallback_font, position + Vector2(-4, 5), str(slot + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.BLACK)
+
+
+func _download_failure() -> void:
+	var bytes: PackedByteArray = viewer.failure_report_bytes()
+	if bytes.is_empty():
+		return
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(bytes, FAILURE_FILENAME, "application/json")
+		_failure_notice = "Failure report download requested. Keep the original replay file with it."
+	else:
+		var path: String = "user://" + FAILURE_FILENAME
+		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+		if file == null:
+			_failure_notice = "Could not save the failure report."
+		else:
+			file.store_buffer(bytes)
+			var saved: bool = file.get_error() == OK
+			file.close()
+			_failure_notice = "Failure report saved: " + ProjectSettings.globalize_path(path) if saved else "Could not save the failure report."
+	_refresh()

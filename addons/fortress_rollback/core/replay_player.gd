@@ -507,6 +507,11 @@ func failure_frame() -> int:
 	return _failure_frame
 
 
+## The latched playback failure, or OK while this playback lifetime remains healthy.
+func failure_code() -> int:
+	return _reason
+
+
 ## Owned 16-byte evidence for the first checksum or input-digest comparison failure; empty for
 ## other failures. Expected is the recording's checksum during playback or the cached checksum
 ## during restore. Successful configure clears both values; failed configure preserves them.

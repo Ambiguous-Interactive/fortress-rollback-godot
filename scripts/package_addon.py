@@ -58,6 +58,7 @@ RUNTIME_SCRIPTS = frozenset({
     'transport/signalfish_relay_envelope.gd',
     'transport/signalfish_relay_types.gd',
     'transport/signalfish_spectator_relay.gd',
+    'transport/signalfish_spectator_host.gd',
     'transport/signalfish_webrtc.gd',
     'transport/signalfish_webrtc_connection.gd',
     'transport/signalfish_webrtc_multiplayer_peer.gd',

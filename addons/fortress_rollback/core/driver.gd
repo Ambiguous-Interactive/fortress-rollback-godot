@@ -66,7 +66,7 @@ func _init(session: Session = null, game: RefCounted = null) -> void:
 
 ## Game supplies save_state -> SaveResult and load_state/simulate_frame -> bool.
 func configure(session: Session, game: RefCounted) -> int:
-	if _is_stepping:
+	if _is_stepping or (_session != null and _session._has_driver_guard()) or (session != null and session._has_driver_guard()):
 		return Types.Code.BUSY
 	if session == null or game == null:
 		return Types.Code.INVALID_CONFIGURATION
@@ -280,7 +280,9 @@ func _finish(code: int, before: int) -> StepResult:
 	# An externally opened expert batch owns its events until completion.
 	if code != Types.Code.BUSY:
 		result.events = _session.drain_events()
+		_session._begin_driver_notification()
 		step_completed.emit(result.code, result.frame_before, result.frame_after)
+		_session._end_driver_notification()
 		# A handler may cancel future work after this operation already completed.
 		var status: Types.Status = _session.status()
 		result.reason = status.reason
