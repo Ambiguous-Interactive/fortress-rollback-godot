@@ -25,6 +25,9 @@ Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying
 an oracle's own requests can preserve the same mistake. Keep a temporal mutation
 that retains the final state while violating an intermediate frame.
+Diagnostic windows may include predicted inputs beyond received originals. Check
+their confirmed prefix against originals, then reproduce captured applied inputs
+for speculative playback; retain both confirmed-mismatch and viewer-state controls.
 
 Validate original numeric tokens when parsing erases integer versus float syntax.
 

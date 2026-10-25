@@ -19,6 +19,7 @@ Trigger: new verification capabilities and a review finding in an acceptance gat
 | Aggregation can erase differing metadata before comparison. | Ownership regression controls inject unknown fields, numeric aliases and inconsistent browser metadata. | Reject unknown schemas and compare every batch with exact numeric types before aggregation. |
 | Model sentinel rules can overwrite real runtime policy. | PR #202 comment 4368914238 identifies startup backlog forced to zero; the actual pre-playback trace retains backlog and advice. | Preserve the startup model counterexample in #203 and label synthetic bootstrap separately. |
 | A mutation can reject setup while bypassing actual playback. | A review mutant disabled Model!Next after synthetic bootstrap and still passed the original control. | Require the illegal-transition control to fail inside the actual observed suffix at its independently specified cursor. |
+| Received originals do not bound speculative diagnostic playback. | Online job 121029021080 captured frame 172 with remote originals ending at 169; its applied inputs reproduce all 120 snapshots. | Validate the confirmed prefix against originals, then reproduce the captured applied inputs; retain confirmed-mismatch and viewer-corruption controls. |
 
 The replay acceptance regression fails against the original validator and passes
 after repair. New runtime gates retain precise limits in the replay and spectator
