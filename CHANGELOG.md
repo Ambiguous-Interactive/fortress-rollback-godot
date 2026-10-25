@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add replay final-state validation status and explicit viewer completion messages distinguishing final-state checks from historical checksum coverage.
+
 - Add final-state replay capture to peer sessions and the online example. Press Finish replay before leaving, then download after confirmation to verify the last simulated input.
 
 - Add explicit final replay checksum capture and FRRP v6 playback. Capture after confirmation and recovery to detect differences caused by the last input; existing v4/v5 files remain readable.
@@ -180,6 +182,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix the last surviving peer discarding already received departed-player inputs. Preserve original inputs and statuses through the final receipt before freezing every departed slot.
+
+- Fix spectator completion handlers consuming cancellation events before later handlers and callers can observe them.
 
 - Fix spectator host publication after SDK lifetime signals during setup or identity reads. Rejected publication leaves player gameplay running.
 

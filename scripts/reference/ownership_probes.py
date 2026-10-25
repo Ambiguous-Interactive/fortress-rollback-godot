@@ -139,6 +139,10 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
 EXPECTED['res://tests/unit/test_peer_session.gd'].add('scheduled_inputs')
 EXPECTED['res://tests/unit/test_replay_callbacks.gd'].add('failure_kinds')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'failure_download', 'comparison_domains'})
+EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_coverage', 'viewer_final_coverage'}
+EXPECTED['res://tests/unit/test_peer_drop_history.gd'].add('last_survivor_receipts')
+EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
+    'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -180,9 +184,9 @@ FILES += ['tests/unit/test_frame_inputs.gd']
 FILES += ['tests/unit/test_input_queue.gd']
 FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd', 'tests/unit/test_replay_drop.gd']
 FILES += ['tests/unit/test_replay_validation.gd', 'tests/unit/test_replay_terminal.gd', 'tests/unit/test_replay_terminal_recovery.gd']
-FILES += ['tests/unit/test_replay_expert_navigation.gd']
+FILES += ['tests/unit/test_replay_expert_navigation.gd', 'tests/unit/test_replay_final_coverage.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
-          'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd']
+          'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd', 'tests/unit/test_peer_drop_multi_slot.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd']
@@ -230,6 +234,7 @@ const PeerRecovery = preload("res://tests/unit/test_peer_recovery.gd")
 const PeerReplayCapture = preload("res://tests/unit/test_peer_replay_capture.gd")
 const DriverRecovery = preload("res://tests/unit/test_driver_recovery.gd")
 const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
+const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
 const ReplayCoverage = preload("res://tests/unit/test_replay_coverage.gd")
 const SpectatorModel = preload("res://tests/unit/test_spectator_model.gd")
 const FrameInputs = preload("res://tests/unit/test_frame_inputs.gd")
@@ -243,6 +248,7 @@ const ReplayDrop = preload("res://tests/unit/test_replay_drop.gd")
 const SpectatorStatus = preload("res://tests/unit/test_spectator_status.gd")
 const PeerChecksumRepair = preload("res://tests/unit/test_peer_checksum_repair.gd")
 const DropInventory = preload("res://tests/unit/test_peer_drop_inventory.gd")
+const DropMultiSlot = preload("res://tests/unit/test_peer_drop_multi_slot.gd")
 const DropHistory = preload("res://tests/unit/test_peer_drop_history.gd")
 const HistoryBackfill = preload("res://tests/unit/test_history_backfill.gd")
 const DropCapacity = preload("res://tests/unit/test_peer_drop_capacity.gd")
@@ -260,8 +266,8 @@ func _ready() -> void:
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
-		DriverRecovery, PeerRecovery, PeerReplayCapture, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop,
-		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
+		DriverRecovery, PeerRecovery, PeerReplayCapture, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop,
+		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
