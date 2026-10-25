@@ -185,6 +185,16 @@ The display shows the current frame and stops at the first failed recorded check
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
 A recording with no checksums plays its inputs but explicitly reports that playback could not be verified.
 Checksum failures show both the expected and actual values as hexadecimal strings, including failures at a seek target.
+After a failure, press **Download failure** to retain `fortress-replay-failure.json`.
+Browsers download the file; native runs save it under `user://`, replacing the previous report, and show its full path or an error.
+The report includes the original replay file's SHA-256, recording and playback engine versions,
+failure frame/code, comparison hashes, checksum counts and the observed game state.
+Keep the original `.frrp` with it: the report excludes the input history and cannot replay the match by itself.
+The observed state is diagnostic evidence, not a claim that the failed boundary passed validation.
+Reports are bounded to 16 KiB. Restart clears failure export; a rejected import retains the previous failure.
+This report has a separate versioned schema and is not an input to **Inspect diagnostic file**.
+![Replay failure report download](images/replay-failure.png)
+
 **Back to online** returns to room setup.
 
 The viewer accepts complete recordings of this online integer game with seed 1701,

@@ -187,6 +187,8 @@ For a local driver, you can connect `driver.step_completed(code, frame_before, f
 to update presentation after all callbacks finish. It also runs after a repair-only stall,
 when the frame number stays the same but the corrected game state has changed.
 Keep this handler for presentation: recursive advancement and configuration calls return `BUSY`.
+The session guard also covers expert mutations and other drivers sharing that session.
+Status, counters and completed input exports remain available to presentation handlers.
 
 `driver.terminate(reason = Types.Code.TERMINATED)` stops the session without retaining the expert API.
 Cancellation remains available inside game callbacks and completion handlers; it expires active views and preserves the first terminal cause.
@@ -302,6 +304,7 @@ With a positive snapshot size it first calls `save_state` and compares the recor
 The final recorded frame also carries a digest of its input row, because the state checksum of the
 following frame - which covers every other row - does not exist for it. A corrupted last input
 stops playback with `DESYNC` at that frame, before the game callback runs.
+`failure_code()` returns the latched failure code, or OK while playback remains healthy.
 `failure_expected_checksum()` and `failure_actual_checksum()` return owned 16-byte evidence for a checksum mismatch.
 Both remain empty for other failures, including invalid checksum widths or snapshot bytes differing with the same checksum.
 During checkpoint restoration, the expected value comes from the previously validated cache.

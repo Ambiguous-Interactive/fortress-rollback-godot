@@ -31,7 +31,7 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files and checksum-validated playback with failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded byte envelopes, retained host publication and local delayed-view example](docs/spectators.md).
-- [Online match recording, downloads and offline replay viewer with one-frame backward inspection](docs/online-example.md#record-and-download-a-replay).
+- [Online match recording, downloads and offline replay viewer with backward inspection and failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
@@ -404,6 +404,7 @@ Expert integrations dispatch and acknowledge bounded views themselves; callback 
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Version 5 replay rows preserve confirmed/disconnected player status alongside input bytes; version 4 reads with all-confirmed defaults.
+Historical files checksum pre-input boundaries only; terminal state evidence requires the versioned recording/playback work in [#205](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/205).
 Native and exported Chromium compare every corrected dropped-player replay boundary through callback and expert playback on both engine pins.
 Receipt-only recording rows remain private until mesh confirmation, and coordinated drop repairs that staged tail before export.
 Every recorded frame carries a digest of its own input row and, in version 5, its player statuses, because the state
@@ -434,6 +435,7 @@ the caller's playback policy when it still fits the new ring.
 Successful stream replacement retires the prior owned playback lifetime, including retained drivers.
 The small driver exposes owned finalized inputs and replay exports through the expert session's gates.
 Driver-only clients can cancel through the same terminal lifecycle, including inside callbacks; cancellation expires active views.
+Completion notifications guard the shared session, so another driver or expert facade cannot advance or reconfigure it between handlers.
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
 or forward frame. The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
@@ -454,6 +456,7 @@ all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 The receive-only SignalFish spectator adapter bounds authenticated host ingress, SDK lifetimes and elapsed expiry without seating viewers.
+The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
 Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
 Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
 Keepalive priority yields to queued row work so repeated host heartbeats cannot starve confirmed playback under a one-packet receive budget.

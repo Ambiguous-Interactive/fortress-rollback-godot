@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add a bounded SignalFish spectator host publisher with exact-byte send retries and authenticated viewer acceptance. Live exported relay qualification remains pending.
+
+- Add replay failure downloads with the recording fingerprint, comparison hashes and observed game state for diagnosis.
+
 - Add `FortressDriver.diagnostic_trace()` to export owned opt-in canonical evidence after callback failures without retaining the expert session.
 
 - Add failed callback kinds to driver and peer step/recovery results, preserving the first failure through later calls.
@@ -166,6 +170,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix completion handlers advancing or reconfiguring a shared session through another driver or the expert API. Handlers now observe the same completed frame; cancellation remains available.
 
 - Fix late spectator retries interrupting a clean buffered final tail. Identical retained rows and control packets remain idempotent until playback ends.
 

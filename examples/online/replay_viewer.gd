@@ -11,6 +11,7 @@ const MAX_BYTES: int = Replay.FIXED_BYTES + 1 + Replay.TEXT_FIELDS * (1 + Replay
 const FILE_SIZE_MESSAGE: String = "Replay exceeds the viewer's file-size limit."
 const SEEK_FRAMES_PER_TICK: int = 120
 const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checksums matched."
+const MAX_FAILURE_REPORT_BYTES: int = 16384
 const GAME_VERSION: String = "fortress-online-integer-v1"
 
 var game: Simulation = Simulation.new()
@@ -20,6 +21,8 @@ var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
 var _recorded_checksum_count: int = 0
+var _recording_sha256: String = ""
+var _recording_bytes: int = 0
 var _recording: Replay
 var _player: Player = Player.new()
 
@@ -34,6 +37,11 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	if not _compatible(recording):
 		message = "This viewer needs a complete online integer game recording (up to ten minutes)."
 		return false
+	var hash: HashingContext = HashingContext.new()
+	hash.start(HashingContext.HASH_SHA256)
+	hash.update(bytes)
+	_recording_sha256 = hash.finish().hex_encode()
+	_recording_bytes = bytes.size()
 	_recording = recording
 	_recorded_checksum_count = 0
 	for frame: int in recording.frame_count():
@@ -255,3 +263,41 @@ func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: 
 	if not expected.is_empty():
 		text += "\nExpected: %s\nActual: %s" % [expected.hex_encode(), actual.hex_encode()]
 	return text
+
+
+## Owned JSON evidence for a stopped replay, or empty while playback is healthy.
+## The observed game state is diagnostic data, not a successfully validated boundary.
+## Keep the identified .frrp file with this report; the report does not contain its input history.
+func failure_report_bytes() -> PackedByteArray:
+	if _recording == null or _player.failure_frame() < 0:
+		return PackedByteArray()
+	var report: Dictionary = {
+		"schema": "fortress-replay-failure-v1",
+		"playback_engine": Engine.get_version_info().string,
+		"replay_sha256": _recording_sha256,
+		"replay_bytes": _recording_bytes,
+		"failure":
+		{
+			"frame": _player.failure_frame(),
+			"code": _player.failure_code(),
+			"expected": _player.failure_expected_checksum().hex_encode(),
+			"actual": _player.failure_actual_checksum().hex_encode(),
+		},
+		"recording":
+		{
+			"engine": _recording.engine_version(),
+			"addon": _recording.addon_version(),
+			"upstream": _recording.upstream_revision(),
+			"game_version": _recording.game_version(),
+			"seed": _recording.game_seed(),
+			"frames": _recording.frame_count(),
+		},
+		"observed_state": {"frame": current_frame(), "bytes": game.canonical_bytes().hex_encode()},
+		"coverage": {"checked": checked_checksum_count(), "recorded": recorded_checksum_count()},
+	}
+	var bytes: PackedByteArray = JSON.stringify(report, "\t").to_utf8_buffer()
+	return bytes if bytes.size() <= MAX_FAILURE_REPORT_BYTES else PackedByteArray()
+
+
+func has_failure() -> bool:
+	return _player.failure_frame() >= 0
