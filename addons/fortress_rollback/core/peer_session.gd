@@ -342,6 +342,17 @@ func replay() -> RefCounted:
 	return _core.replay() if _core != null else null
 
 
+## Owned sample staged for the current frame, including during prediction or network pressure.
+## Its frame includes input delay. Retry step with status().current_frame as LocalInput.sample_frame.
+## MISSING_LOCAL_INPUT means the slot needs a new sample; successful advancement releases staged samples.
+func scheduled_local_input(player: int) -> Types.InputResult:
+	if _core == null:
+		var result: Types.InputResult = Types.InputResult.new()
+		result.code = Types.Code.NOT_CONFIGURED
+		return result
+	return _core.scheduled_local_input(player)
+
+
 ## Local delay now in effect, or -1 before configuration or for a slot that is not local.
 func input_delay(player: int) -> int:
 	return _core.input_delay(player) if _core != null else -1

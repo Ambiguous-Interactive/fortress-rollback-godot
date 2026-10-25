@@ -382,6 +382,7 @@ func _comparison_domains(context: RefCounted) -> void:
 					else:
 						player.step()
 				context.equal(player.call("failure_comparison"), "" if fault == "none" else fault, "comparison identity survives every playback entry point")
+				context.equal(player.failure_kind(), Types.Kind.SAVE if fault == "state_checksum" else -1, "only dispatched comparison failures name a request")
 				player.terminate()
 				context.equal(player.call("failure_comparison"), "" if fault == "none" else fault, "termination preserves the first comparison")
 				context.equal(player.configure(null, game), Types.Code.INVALID_CONFIGURATION, "invalid configure preserves diagnosis")
@@ -401,3 +402,15 @@ func _comparison_domains(context: RefCounted) -> void:
 		var expected: String = "checkpoint_checksum" if fault == "wrong state" else ("checkpoint_bytes" if fault == "checksum collision" else "")
 		context.equal(player.call("failure_comparison"), expected, "restore comparison is distinct from callback or snapshot failure")
 		context.state(game.game.frame, game.game.canonical_bytes())
+
+	var viewer: Viewer = Viewer.new()
+	viewer.open_bytes(Fixture.recording(2).to_bytes())
+	viewer.game.frame = 1
+	viewer.step()
+	context.equal(viewer.has_failure(), true, "invalid initial game state rejects the real save callback")
+	context.equal(viewer.message.contains("Failed while saving state."), true, "visible failure identifies the callback operation")
+	var report: Dictionary = JSON.parse_string(viewer.failure_report_bytes().get_string_from_utf8())
+	context.equal(report.failure.code, Types.Code.CALLBACK_FAILED, "download preserves the callback cause")
+	context.equal(report.failure.request_kind, Types.Kind.SAVE, "download identifies the failed request")
+	context.equal(report.failure.comparison, "", "callback diagnosis cannot claim a checksum comparison")
+	context.state(viewer.current_frame(), viewer.game.canonical_bytes())

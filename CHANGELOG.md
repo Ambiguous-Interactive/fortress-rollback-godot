@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add owned retained-input reads to peer sessions so clients can retry stalled steps without resampling local input.
+
+- Add replay callback failure kinds to the player, viewer and failure downloads, identifying failed SAVE, LOAD and ADVANCE callbacks.
+
 - Add replay comparison labels to the player API, viewer and failure downloads. Input digest failures are distinct from game-state and restored-checkpoint mismatches.
 
 - Add a bounded SignalFish spectator host publisher with exact-byte send retries and authenticated viewer acceptance. Live exported relay qualification remains pending.
@@ -172,6 +176,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator host publication after SDK lifetime signals during setup or identity reads. Rejected publication leaves player gameplay running.
 
 - Fix peer advancement and recovery hiding exhausted counters behind input errors or publishing input before termination.
 

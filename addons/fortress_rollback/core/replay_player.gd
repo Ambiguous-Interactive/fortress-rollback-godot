@@ -31,6 +31,7 @@ var _checked_checksum_count: int = 0
 var _validated_through_frame: int = -1
 var _reason: int = Types.Code.OK
 var _failure_frame: int = -1
+var _failure_kind: int = -1
 var _failure_comparison: String = ""
 var _failure_expected_checksum: PackedByteArray = PackedByteArray()
 var _failure_actual_checksum: PackedByteArray = PackedByteArray()
@@ -89,6 +90,7 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 	_validated_through_frame = -1
 	_reason = Types.Code.OK
 	_failure_frame = -1
+	_failure_kind = -1
 	_failure_comparison = ""
 	_failure_expected_checksum.clear()
 	_failure_actual_checksum.clear()
@@ -250,7 +252,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			code = Types.Code.SNAPSHOT_FAILED
 	_expire_request()
 	if code != Types.Code.OK:
-		return Types.Result.new(_fail(code))
+		return Types.Result.new(_fail(code, _active_kind))
 	if _restoring != null:
 		if _active_kind == Types.Kind.LOAD:
 			_active_kind = Types.Kind.SAVE
@@ -293,9 +295,12 @@ func _expire_request() -> void:
 	_active = null
 
 
-func _fail(code: int) -> int:
+func _fail(code: int, kind: int = -1) -> int:
+	if _reason != Types.Code.OK:
+		return _reason
 	_reason = code
 	_failure_frame = _restoring.frame if _restoring != null else _frame
+	_failure_kind = kind
 	_restoring = null
 	_batch = null
 	return code
@@ -431,8 +436,7 @@ func validate_current_frame() -> int:
 	if _reason != Types.Code.OK:
 		return _reason
 	if code != Types.Code.OK:
-		_reason = code
-		_failure_frame = _frame
+		return _fail(code, Types.Kind.SAVE)
 	return code
 
 
@@ -514,6 +518,13 @@ func failure_frame() -> int:
 ## The latched playback failure, or OK while this playback lifetime remains healthy.
 func failure_code() -> int:
 	return _reason
+
+
+## The SAVE, LOAD or ADVANCE request that failed, including snapshot or comparison failures.
+## -1 means no failed request: healthy playback, input digest rejection or explicit termination.
+## Callback and expert playback share this first-cause value; successful configure clears it.
+func failure_kind() -> int:
+	return _failure_kind
 
 
 ## The first failed comparison: input_digest, state_checksum, checkpoint_checksum or checkpoint_bytes.

@@ -95,6 +95,8 @@ The game owns deterministic simulation and complete serialization.
 The library supplies orchestration, validation and sync-test tooling.
 Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
 Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
+Peer clients can read owned staged local samples to retry stalled steps without resampling.
+Replay failure evidence identifies the first failed game request and comparison domain.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
 Godot physics and arbitrary scene state are not made deterministic by rollback.
 

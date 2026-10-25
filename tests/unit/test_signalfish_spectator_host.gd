@@ -22,6 +22,12 @@ class Helper:
 
 class Client:
 	extends Viewer.Client
+	signal room_left
+	signal room_joined
+	signal connection_failed
+	signal reconnected
+	signal authentication_error
+	signal reconnection_failed
 	var buffered: int = 0
 	var outcome: Variant = OK
 	var on_send: Callable
@@ -60,7 +66,9 @@ func cases() -> PackedStringArray:
 			"player_coexistence",
 			"active_requests",
 			"fair_liveness",
-			"finish_retry"
+			"finish_retry",
+			"callback_lifetimes",
+			"setup_callbacks"
 		]
 	)
 
@@ -426,3 +434,89 @@ func _finish_retry(context: RefCounted) -> void:
 		context.equal(fixture.viewer.game.value, expected, "independent final state includes corrected original input")
 		context.equal(fixture.viewer.driver.step(frames, Viewer.new()._empty()).code, S.Code.TERMINATED, "clean END follows exact recovered prefix")
 		_stop(fixture)
+
+
+# Value: protects=host publication lifetime across synchronous SDK callbacks; fails_when=setup misses signals or gates clear them;
+# why_new=ordinary lifetimes emit outside SDK getters; seam=public SDK signals/getters
+func _callback_lifetimes(context: RefCounted) -> void:
+	for boundary: String in ["protocol", "setup_room", "runtime_room"]:
+		for signal_name: String in HostRelay.ViewerRelay.LIFETIME_SIGNALS:
+			for invalidated: bool in [false, true]:
+				var fixture: Dictionary = _fixture(context, false)
+				if boundary != "runtime_room":
+					fixture.relay.detach()
+				var callback: Callable = func() -> void:
+					if invalidated:
+						match signal_name:
+							"spectator_left":
+								fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+							"spectator_joined":
+								fixture.client.spectator_joined.emit(RefCounted.new())
+							"disconnected":
+								fixture.client.disconnected.emit(0, "ended")
+							_:
+								fixture.client.emit_signal(signal_name)
+				if boundary == "protocol":
+					fixture.info.on_info = callback
+				else:
+					fixture.client.on_room = callback
+				var expected: int = HostRelay.Code.WRONG_STATE if invalidated else HostRelay.Code.OK
+				if boundary != "runtime_room":
+					context.equal(_configure_again(fixture), expected, "setup observes lifetime signal: " + boundary + "/" + signal_name)
+					for lifetime_signal: String in HostRelay.ViewerRelay.LIFETIME_SIGNALS:
+						context.equal(fixture.client.get_signal_connection_list(lifetime_signal).size(), 0 if invalidated else 1, "temporary setup listeners released")
+				var result: RefCounted = fixture.relay.poll(0)
+				context.equal(result.code, expected, "poll preserves lifetime failure: " + boundary + "/" + signal_name)
+				context.equal(result.sent, 0 if invalidated else 1, "invalid lifetime sends no OFFER")
+				context.equal(fixture.client.sent.size(), 0 if invalidated else 1, "SDK sends agree with diagnostics")
+				context.equal(fixture.relay.status().code, expected, "status cannot clear failure")
+				context.equal(fixture.relay.finish_host().code, expected, "finalization cannot revive invalid lifetime")
+				if invalidated:
+					context.equal(fixture.relay.receive_accept(VIEWER, PackedByteArray()).code, expected, "acceptance cannot revive invalid lifetime")
+				context.equal(fixture.host.status().lifecycle, S.Lifecycle.RUNNING, "publication failure leaves player host running")
+				fixture.relay.detach()
+				context.equal(_configure_again(fixture), HostRelay.Code.OK, "explicit fresh publication recovers")
+				context.equal(fixture.relay.poll(0).sent, 1, "new publication sends fresh OFFER")
+				fixture.helper._step(context, fixture.driver, 0)
+				_stop(fixture)
+
+
+func _configure_again(fixture: Dictionary) -> int:
+	return fixture.relay.configure(
+		fixture.client, fixture.config, fixture.info, fixture.host, VIEWER, fixture.helper._identity(), fixture.helper._key(), fixture.helper._digest(), fixture.options
+	)
+
+
+# Value: protects=setup recursion, detach and frozen options; fails_when=callbacks install stale publication or retain listeners;
+# why_new=signal controls omit recursive setup and caller mutation; seam=public SDK callbacks
+func _setup_callbacks(context: RefCounted) -> void:
+	for boundary: String in ["protocol", "room"]:
+		for action: String in ["reentry", "detach", "replace", "options", "malformed_signal"]:
+			var fixture: Dictionary = _fixture(context, false)
+			fixture.relay.detach()
+			var callback: Callable = func() -> void:
+				if action in ["detach", "replace"]:
+					fixture.relay.detach()
+				if action in ["reentry", "replace"]:
+					context.equal(_configure_again(fixture), HostRelay.Code.WRONG_STATE, "recursive setup cannot install publication")
+				if action == "options":
+					fixture.options.max_sends_per_poll = 0
+				if action == "malformed_signal":
+					fixture.client.spectator_left.emit("room-one", "ROOM", 0, [])
+					fixture.info.capabilities.clear()
+			if boundary == "protocol":
+				fixture.info.on_info = callback
+			else:
+				fixture.client.on_room = callback
+			var accepted: bool = action in ["reentry", "options"]
+			context.equal(_configure_again(fixture), HostRelay.Code.OK if accepted else HostRelay.Code.WRONG_STATE, "only uninterrupted setup installs publication")
+			for signal_name: String in HostRelay.ViewerRelay.LIFETIME_SIGNALS:
+				context.equal(fixture.client.get_signal_connection_list(signal_name).size(), 1 if accepted else 0, "temporary listeners released on every exit")
+			context.equal(fixture.relay.poll(0).sent, 1 if accepted else 0, "rejected setup cannot publish")
+			context.equal(fixture.host.status().lifecycle, S.Lifecycle.RUNNING, "partial setup never terminates caller host")
+			fixture.relay.detach()
+			fixture.options.max_sends_per_poll = 2
+			fixture.info.capabilities.clear()
+			fixture.info.capabilities.append("spectator_relay")
+			context.equal(_configure_again(fixture), HostRelay.Code.OK, "setup rejection releases guard")
+			_stop(fixture)

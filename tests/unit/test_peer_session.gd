@@ -28,7 +28,8 @@ func cases() -> PackedStringArray:
 			"long_runtime",
 			"request_mismatch",
 			"low_windows",
-			"packet_service"
+			"packet_service",
+			"scheduled_inputs"
 		]
 	)
 
@@ -60,6 +61,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_low_windows(context)
 		"packet_service":
 			_packet_service(context)
+		"scheduled_inputs":
+			_scheduled_inputs(context)
 	context.finish()
 
 
@@ -70,9 +73,21 @@ func _id(value: int, width: int = 8) -> PackedByteArray:
 	return result
 
 
-func _build(context: RefCounted, count: int, delay: int = 0, multiple: bool = false, pending: int = 128, start: bool = true,
-	reentry: bool = false, window: int = 8, lifecycle_options: Variant = null, checksum_interval: int = 60, trace_frames: int = 0, game_override: RefCounted = null,
-	queue_capacity: int = 128) -> Dictionary:
+func _build(
+	context: RefCounted,
+	count: int,
+	delay: int = 0,
+	multiple: bool = false,
+	pending: int = 128,
+	start: bool = true,
+	reentry: bool = false,
+	window: int = 8,
+	lifecycle_options: Variant = null,
+	checksum_interval: int = 60,
+	trace_frames: int = 0,
+	game_override: RefCounted = null,
+	queue_capacity: int = 128
+) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
 		lifecycle_options = L.Options.new()
@@ -257,11 +272,17 @@ func _ingress(context: RefCounted) -> void:
 			var inputs: Variant = malformed if field == 1 else I.Options.new()
 			var lifecycle: Variant = malformed if field == 2 else L.Options.new()
 			var peer: Peer = Peer.new()
-			context.equal(peer.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), handshake, inputs, lifecycle), I.Code.INVALID_ARGUMENT,
-				"malformed options fail at the public variant boundary")
+			context.equal(
+				peer.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), handshake, inputs, lifecycle),
+				I.Code.INVALID_ARGUMENT,
+				"malformed options fail at the public variant boundary"
+			)
 			context.equal(peer.network_status().state, "unconfigured", "invalid options preserve fresh configuration")
-			context.equal(peer.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new()), I.Code.OK,
-				"valid retry succeeds after rejected options")
+			context.equal(
+				peer.configure(setup.peers[0]._config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new()),
+				I.Code.OK,
+				"valid retry succeeds after rejected options"
+			)
 	var mesh: Dictionary = _build(context, 2)
 	context.equal(mesh.peers[0].poll(true), I.Code.INVALID_ARGUMENT, "bool clock rejected")
 	context.equal(mesh.peers[0].receive(PackedByteArray(), _id(7), 0), I.Code.WRONG_SOURCE, "unregistered transport source rejected")
@@ -288,6 +309,10 @@ func _partial_publication(context: RefCounted) -> void:
 	mesh.now = 100
 	context.equal(mesh.peers[0].step(100, _inputs(mesh, 0)).code, Types.Code.NETWORK_BACKPRESSURE, "second endpoint blocks partial publication")
 	context.equal(mesh.peers[0].status().current_frame, 1, "partial publication cannot advance game")
+	var retained: Types.InputResult = mesh.peers[0].scheduled_local_input(0)
+	context.equal(retained.code, Types.Code.OK, "partially published sample remains available")
+	context.equal(retained.frame, 1, "retained frame follows core staging, not the lagging endpoint")
+	context.bytes_equal(retained.bytes, _sample(0, 1), 1, "partial publication keeps exact staged input")
 	var partial_status: Dictionary = mesh.peers[0].network_status()
 	context.equal(partial_status.peers[_id(1).hex_encode()].last_submitted_frame, 1, "first endpoint owns next sample")
 	context.equal(partial_status.peers[_id(2).hex_encode()].last_submitted_frame, 0, "second endpoint preserves earlier sample")
@@ -306,6 +331,8 @@ func _partial_publication(context: RefCounted) -> void:
 	context.equal(mesh.peers[0].step(100, _inputs(mesh, 0)).code, Types.Code.OK, "same retained sample recovers after remaining ACK")
 	context.equal(mesh.peers[0].status().current_frame, 2, "recovered publication advances once")
 	context.equal(mesh.games[0].game.frame, 2, "game callbacks advanced exactly twice")
+	context.equal(mesh.peers[0].scheduled_local_input(0).code, Types.Code.MISSING_LOCAL_INPUT, "complete publication and advance release staged sample")
+	context.bytes_equal(retained.bytes, _sample(0, 1), 1, "caller retains the old sample after successful retry")
 
 
 func _begin_preflight(context: RefCounted) -> void:
@@ -390,8 +417,11 @@ func _request_mismatch(context: RefCounted) -> void:
 	var setup: Dictionary = _build(context, 2, 0, false, 128, false)
 	var config: Config = setup.peers[0]._config.owned_copy()
 	config.queue_capacity = 256
-	context.equal(Peer.new().configure(config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new()), I.Code.INVALID_ARGUMENT,
-		"advertised queue capacity must match the session")
+	context.equal(
+		Peer.new().configure(config, setup.peers[0]._endpoint(0)._local, Game.new(2), H.Options.new(), I.Options.new()),
+		I.Code.INVALID_ARGUMENT,
+		"advertised queue capacity must match the session"
+	)
 
 
 func _request_mismatch_field(context: RefCounted, field: String) -> void:
@@ -530,3 +560,59 @@ func _packet_service(context: RefCounted) -> void:
 			current += 1
 			context.equal(decoded.message.statuses[0].last_frame, 0, "later retry publishes accepted receipt")
 	context.equal(current, 3, "all pending links retry at later boundary")
+
+
+# Value: protects=peer-only retries use owned staged input; fails_when=facade hides or aliases a stalled sample;
+# why_new=driver input policy bypasses network staging and grouped slots; seam=none
+func _scheduled_inputs(context: RefCounted) -> void:
+	var peer: RefCounted = Peer.new()
+	context.equal(peer.has_method("scheduled_local_input"), true, "peer reveals its retained sample")
+	if not peer.has_method("scheduled_local_input"):
+		return
+	context.equal(peer.scheduled_local_input(0).code, Types.Code.NOT_CONFIGURED, "unconfigured peer has no sample")
+	for pending: int in [1, 128]:
+		var mesh: Dictionary = _build(context, 4, 2, true, pending, true, false, 2)
+		peer = mesh.peers[0]
+		for player: int in [0, 1]:
+			context.equal(peer.scheduled_local_input(player).code, Types.Code.MISSING_LOCAL_INPUT, "new local slot needs a sample")
+		for player: int in [-1, 2, 4, 2147483647]:
+			context.equal(peer.scheduled_local_input(player).code, Types.Code.INVALID_PLAYER, "remote and invalid slots cannot expose samples")
+		var packets: Array[Dictionary] = []
+		var stalled: int = Types.Code.OK
+		for frame: int in range(8):
+			mesh.now = frame + 1
+			stalled = peer.step(mesh.now, _inputs(mesh, 0)).code
+			packets.append_array(_drain(mesh))
+			if stalled != Types.Code.OK:
+				break
+			for player: int in [0, 1]:
+				context.equal(peer.scheduled_local_input(player).code, Types.Code.MISSING_LOCAL_INPUT, "completed advance releases sample")
+		context.equal(stalled, Types.Code.NETWORK_BACKPRESSURE if pending == 1 else Types.Code.PREDICTION_STALL, "real peer staging reaches expected pressure")
+		var frame: int = peer.status().current_frame
+		var retry: Array[Driver.LocalInput] = []
+		var retained: Array[Types.InputResult] = []
+		for player: int in [0, 1]:
+			var sample: Types.InputResult = peer.scheduled_local_input(player)
+			context.equal(sample.code, Types.Code.OK, "stalled sample is available")
+			context.equal(sample.frame, frame + 2, "sample frame includes negotiated delay")
+			context.bytes_equal(sample.bytes, _sample(player, frame), frame, "staged sample preserves original buttons")
+			retry.append(Driver.LocalInput.new(player, frame, sample.bytes))
+			sample.bytes[0] ^= 255
+			context.bytes_equal(peer.scheduled_local_input(player).bytes, _sample(player, frame), frame, "owned reads cannot change the retry")
+			retained.append(sample)
+		context.equal(peer.step(mesh.now, retry).code, stalled, "owned samples rebuild an identical retry")
+		context.equal(peer.status().current_frame, frame, "retry cannot invent progress")
+		context.equal(peer.recover(mesh.now).code, Types.Code.OK, "recovery preserves staged local samples")
+		for player: int in [0, 1]:
+			context.bytes_equal(peer.scheduled_local_input(player).bytes, retry[player].bytes, frame, "recovery leaves retained sample usable")
+		for remote_frame: int in range(frame + 1):
+			context.equal(mesh.peers[1].step(mesh.now, _inputs(mesh, 1)).code, Types.Code.OK, "remote supplies missing history")
+			packets.append_array(_drain(mesh))
+			_deliver(context, mesh, packets)
+			packets.clear()
+			_deliver(context, mesh, _drain(mesh))
+		context.equal(peer.step(mesh.now, retry).code, Types.Code.OK, "retry recovered solely from public sample reads advances")
+		context.equal(peer.status().current_frame, frame + 1, "successful retry advances exactly once")
+		for player: int in [0, 1]:
+			context.equal(peer.scheduled_local_input(player).code, Types.Code.MISSING_LOCAL_INPUT, "successful retry releases every local slot")
+			context.equal(retained[player].bytes[0], _sample(player, frame)[0] ^ 255, "owned result survives recovery and advance")
