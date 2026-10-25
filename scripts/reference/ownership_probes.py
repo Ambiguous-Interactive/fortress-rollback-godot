@@ -495,10 +495,23 @@ def verify_sources(expected):
             raise ValueError(f'ownership source changed during execution: {filename}')
 
 
+def validate_phases(records, rounds, versions):
+    """A partition qualifies only after both controls finish for every requested pin."""
+    expected = [[version, negative] for version in versions for negative in (True, False)]
+    observed = [[record.get('engine_version'), record.get('negative_control')] for record in records]
+    labels = [version + ('-negative' if negative else '-positive') for version, negative in expected]
+    if not same_json(observed, expected) or [entry.get('label') for entry in rounds] != labels:
+        raise ValueError('missing or unexpected ownership phase')
+    if any(entry.get('outcome') != 'passed' for entry in rounds):
+        raise ValueError('incomplete ownership phase')
+
+
 def main():
     parser = ReceiptParser(description=__doc__, receipt='ownership.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--web', action='store_true')
+    pins = load_manifest()['godot']
+    parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
     args = parser.parse_args()
     results = CACHE / 'results'
     # One local run at a time owns these paths, and the browser part needs a
@@ -548,7 +561,10 @@ def run_probes(args, results):
     environment = os.environ.copy()
     environment['XDG_DATA_HOME'] = str(CACHE / 'godot-data')
     records = []
-    for version in [data['godot']['minimum'], data['godot']['current_stable']]:
+    versions_requested = [args.version] if args.version is not None else [data['godot']['minimum'], data['godot']['current_stable']]
+    if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
+        raise ValueError('requested ownership engine is not pinned')
+    for version in versions_requested:
         name = f'Godot_v{version}-stable_linux.{arch}.zip'
         archive = fetch(data['artifacts'][name], name, args.offline)
         editor_dir = CACHE / 'ownership-editors' / version
@@ -649,7 +665,7 @@ def run_probes(args, results):
                     reject(started, 'failed', alive=False, errors=failure_lines(output))
                     raise
             native = aggregate_native(batches, negative)
-            record = {'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native}
+            record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
                 templates = fetch(data['artifacts'][template_name], template_name, args.offline)
@@ -710,9 +726,10 @@ def run_probes(args, results):
             records.append(record)
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
+    validate_phases(records, rounds, versions_requested)
     verify_sources(frozen_sources)
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
-              'rounds': rounds,
+              'rounds': rounds, 'versions_requested': versions_requested,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
               'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '

@@ -83,9 +83,13 @@ jobs:
           if-no-files-found: error
 
   ownership:
-    name: Native and Chromium snapshot ownership
+    name: Native and Chromium snapshot ownership ${{ matrix.version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["4.3", "4.7.2"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -106,11 +110,11 @@ jobs:
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
       - name: Verify integer encoding, snapshot ownership and byte sessions
-        run: make representation-probes
+        run: python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: ownership-reference-results
+          name: ownership-reference-results-${{ matrix.version }}
           path: .cache/reference/results/
           if-no-files-found: error
 
