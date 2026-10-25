@@ -69,11 +69,18 @@ func configure(
 			if client.has_signal(signal_name):
 				client.connect(signal_name, invalidate)
 				pending_signals.append(signal_name)
+	var viewer_left: Callable = func(departed_uuid: String, _reason: int, _spectators: Array) -> void:
+		if departed_uuid == viewer_uuid:
+			invalidate.call()
+	if is_instance_valid(client) and client.has_signal("spectator_disconnected"):
+		client.connect("spectator_disconnected", viewer_left)
 	var code: int = _configure(client, sdk_config, protocol_info, host, viewer_uuid, identity, key, digest, options)
 	if is_instance_valid(client):
 		for signal_name: String in pending_signals:
 			if client.is_connected(signal_name, invalidate):
 				client.disconnect(signal_name, invalidate)
+	if is_instance_valid(client) and client.has_signal("spectator_disconnected") and client.is_connected("spectator_disconnected", viewer_left):
+		client.disconnect("spectator_disconnected", viewer_left)
 	_busy = false
 	return code
 
@@ -155,6 +162,12 @@ func _configure(
 				if target != null and target._revision == installed_revision and target._failure == Code.OK:
 					target._failure = Code.WRONG_STATE
 			client.connect(signal_name, _callbacks[signal_name])
+	if client.has_signal("spectator_disconnected"):
+		_callbacks.spectator_disconnected = func(departed_uuid: String, _reason: int, _spectators: Array) -> void:
+			var target: RefCounted = owner.get_ref()
+			if target != null and target._revision == installed_revision and departed_uuid == target._viewer and target._failure == Code.OK:
+				target._failure = Code.WRONG_STATE
+		client.connect("spectator_disconnected", _callbacks.spectator_disconnected)
 	return Code.OK
 
 

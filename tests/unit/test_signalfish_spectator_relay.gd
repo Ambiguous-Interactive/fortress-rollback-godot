@@ -21,6 +21,8 @@ class Client:
 	signal new_spectator_joined(spectator: RefCounted, spectators: Array, reason: int)
 	signal spectator_disconnected(spectator_id: String, reason: int, spectators: Array)
 	signal disconnected(code: int, reason: String)
+	signal player_left(player_id: String)
+	signal player_reconnected(player_id: String)
 	var room: String = "room-one"
 	var state: int = Relay.SPECTATING
 	var connection: int = Relay.CONNECTED
@@ -57,6 +59,17 @@ class Info:
 		var data: Dictionary = super.to_dict()
 		data.capabilities = capabilities.duplicate()
 		return data
+
+
+class DepartureGame:
+	extends GameFixture.Game
+	var departure: Callable
+	var input_code: int = -1
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		departure.call()
+		input_code = inputs.size().code
+		return false if input_code != Types.Code.OK else super.simulate_frame(frame, inputs)
 
 
 class CallbackConfig:
@@ -106,7 +119,9 @@ func cases() -> PackedStringArray:
 			"heartbeat_fairness",
 			"clean_tail_retries",
 			"getter_lifetime",
-			"configure_lifetime"
+			"configure_lifetime",
+			"source_departures",
+			"source_callback_lifetime"
 		]
 	)
 
@@ -776,3 +791,82 @@ func _joint_observation(context: RefCounted) -> void:
 			context.equal(fixture.relay.status().last_receive_code, Relay.Code.WRONG_STATE, "joint-observation mismatch rejects ingress")
 			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.TERMINATED, "joint-observation mismatch retires attached viewer")
 		fixture.relay.detach()
+
+
+# Value: protects=known host loss stops buffered playback; fails_when=roster departures wait for timeout;
+# why_new=room lifetime tests omit selected remote host; seam=public SDK signals
+func _source_departures(context: RefCounted) -> void:
+	for signal_name: String in ["player_left", "player_reconnected"]:
+		for boundary: String in ["idle", "getter", "protocol_setup", "getter_setup"]:
+			for selected: bool in [false, true]:
+				var fixture: Dictionary = _fixture(context)
+				var departing: String = HOST if selected else FOREIGN
+				var callback: Callable = func() -> void: fixture.client.emit_signal(signal_name, departing)
+				var setup: bool = boundary.ends_with("setup")
+				if setup:
+					fixture.relay.detach()
+					var helper: RefCounted = StreamFixture.new()
+					context.equal(
+						fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "fresh source lifetime"
+					)
+					if boundary == "protocol_setup":
+						fixture.info.on_info = callback
+					else:
+						fixture.client.on_room = callback
+					var options: Relay.Options = Relay.Options.new()
+					options.max_packet_bytes = 128
+					context.equal(
+						fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options),
+						Relay.Code.WRONG_STATE if selected else Relay.Code.OK, "setup fences only selected source departure"
+					)
+					context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "rejected setup cannot acquire fresh viewer")
+				else:
+					_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+					context.equal(fixture.relay.poll(1).received, 1, "playable original row buffered before host event")
+					_emit(fixture, fixture.stream.encode_row(1, Fixture.new()._row(1)))
+					if boundary == "getter":
+						fixture.client.on_room = callback
+					else:
+						callback.call()
+					context.equal(fixture.relay.poll(2).code, Relay.Code.WRONG_STATE if selected else Relay.Code.OK, "only selected source ends ingress")
+					context.equal(fixture.relay.status().received_packets, 0, "departed source releases queued rows")
+					context.equal(fixture.driver.step(2, _empty()).code, Types.Code.TERMINATED if selected else Types.Code.OK, "known host loss blocks already playable row")
+					context.equal(fixture.game.value, 0 if selected else 1, "no callback after known host loss")
+				fixture.relay.detach()
+
+
+# Value: protects=host loss fences active and retained callback lifetimes; fails_when=departure lets requests commit or old callbacks kill replacements;
+# why_new=idle source tests omit owned callback views; seam=public SDK signals and game callbacks
+func _source_callback_lifetime(context: RefCounted) -> void:
+	for signal_name: String in ["player_left", "player_reconnected"]:
+		for selected: bool in [false, true]:
+			var fixture: Dictionary = _fixture(context)
+			_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+			context.equal(fixture.relay.poll(1).received, 1, "original row ready for callback")
+			var game: DepartureGame = DepartureGame.new()
+			var client_ref: WeakRef = weakref(fixture.client)
+			game.departure = func() -> void: client_ref.get_ref().emit_signal(signal_name, HOST if selected else FOREIGN)
+			var driver: Driver = Driver.new(fixture.stream.playback_session(), game)
+			context.equal(driver.step(2, _empty()).code, Types.Code.TERMINATED if selected else Types.Code.OK, "host event during callback cannot commit abandoned playback")
+			context.equal(game.input_code, Types.Code.EXPIRED_VIEW if selected else Types.Code.OK, "known host loss expires active bounded inputs")
+			context.equal(fixture.stream.playback_session().status().current_frame, 0 if selected else 1, "only uninterrupted callback commits frame")
+			fixture.relay.detach()
+		var fixture: Dictionary = _fixture(context)
+		var old_callback: Callable = fixture.client.get_signal_connection_list(signal_name)[0].callable
+		fixture.stream.playback_session().terminate(Types.Code.DESYNC)
+		fixture.client.emit_signal(signal_name, HOST)
+		context.equal(fixture.stream.playback_session().status().reason, Types.Code.DESYNC, "known host loss preserves first terminal cause")
+		fixture.relay.detach()
+		var helper: RefCounted = StreamFixture.new()
+		context.equal(
+			fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "explicit replacement viewer"
+		)
+		var options: Relay.Options = Relay.Options.new()
+		options.max_packet_bytes = 128
+		context.equal(fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options), Relay.Code.OK, "fresh source observers")
+		old_callback.call(HOST)
+		context.equal(fixture.relay.status().code, Relay.Code.OK, "old source observer cannot end replacement")
+		context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "replacement playback remains live")
+		fixture.relay.detach()
+		for source_signal: String in ["player_left", "player_reconnected"]:
+			context.equal(fixture.client.get_signal_connection_list(source_signal).size(), 0, "detach releases source observers")

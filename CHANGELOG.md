@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add manual peer request batches without requiring game callbacks, including recovery and final replay capture.
+
 - Add replay final-state validation status and explicit viewer completion messages distinguishing final-state checks from historical checksum coverage.
 
 - Add final-state replay capture to peer sessions and the online example. Press Finish replay before leaving, then download after confirmation to verify the last simulated input.
@@ -182,6 +184,12 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix malformed replay objects replacing active playback or reaching unchecked storage reads.
+
+- Fix spectators continuing buffered playback after their selected host leaves or reconnects. Stop publication when the admitted viewer disconnects; unrelated roster changes preserve ongoing streams.
+
+- Fix peer completion and transport calls bypassing shared callback guards. Handler cancellation now returns the first terminal cause.
 
 - Fix the last surviving peer discarding already received departed-player inputs. Preserve original inputs and statuses through the final receipt before freezing every departed slot.
 

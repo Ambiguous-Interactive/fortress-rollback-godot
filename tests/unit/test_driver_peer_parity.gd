@@ -1,7 +1,7 @@
 extends RefCounted
 
 # Value: protects=driver/expert equivalence inside real encoded P2P; fails_when=request dispatch changes network history;
-# why_new=external-input parity bypasses peer publication, gossip and retransmission; seam=existing peer driver field
+# why_new=external-input parity bypasses peer publication, gossip and retransmission; seam=none
 const Collector = preload("res://tests/runner/test_context.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -10,52 +10,6 @@ const Fixture = preload("res://tests/unit/test_peer_session.gd")
 const Reference = preload("res://tests/oracle/reference_game.gd")
 const Protocol = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Lifecycle = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
-
-
-class ExpertConsumer:
-	extends Driver
-	var skips_load: bool = false
-
-	func step(now_us: int, samples: Array[Driver.LocalInput]) -> Driver.StepResult:
-		return _consume(now_us, samples, true)
-
-	func recover(now_us: int) -> Driver.StepResult:
-		var empty: Array[Driver.LocalInput] = []
-		return _consume(now_us, empty, false)
-
-	func _consume(now_us: int, samples: Array[Driver.LocalInput], forward: bool) -> Driver.StepResult:
-		var before: int = _session.status().current_frame
-		var code: int = _session.poll(now_us).code
-		if code != Types.Code.OK:
-			return Driver.StepResult.new(code, before, before)
-		for sample: Driver.LocalInput in samples:
-			code = _session.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code
-			if code != Types.Code.OK:
-				return Driver.StepResult.new(code, before, before)
-		var opened: Types.Result = _session.begin_advance() if forward else _session.begin_recovery()
-		code = opened.code
-		if code == Types.Code.READY:
-			while true:
-				var request: Types.Request = opened.batch.next_request()
-				if request == null:
-					break
-				var ok: bool = false
-				var checksum: PackedByteArray = PackedByteArray()
-				match request.kind:
-					Types.Kind.SAVE:
-						var saved: Driver.SaveResult = _game.save_state(request.frame, request.writer)
-						ok = saved.ok
-						checksum = saved.checksum
-					Types.Kind.LOAD:
-						ok = true if skips_load else _game.load_state(request.frame, request.reader)
-					Types.Kind.ADVANCE:
-						ok = _game.simulate_frame(request.frame, request.inputs)
-				code = _session.complete_request(request.batch_id, request.request_id, ok, checksum).code
-				if code not in [Types.Code.OK, Types.Code.PREDICTION_STALL]:
-					break
-		var result: Driver.StepResult = Driver.StepResult.new(code, before, _session.status().current_frame)
-		result.events = _session.drain_events()
-		return result
 
 
 func cases() -> PackedStringArray:
@@ -125,7 +79,7 @@ func _compare(context: RefCounted, driven: Dictionary, expert: Dictionary, origi
 func _recover(context: RefCounted, driven: Dictionary, expert: Dictionary) -> void:
 	for index: int in range(driven.peers.size()):
 		var left: Driver.StepResult = driven.peers[index].recover(driven.now)
-		var right: Driver.StepResult = expert.peers[index].recover(expert.now)
+		var right: Driver.StepResult = _manual(expert.peers[index], expert.games[index], expert.now, [], false, expert.get("skip_load", false))
 		context.equal(left.code, right.code, "same recovery outcome")
 		context.equal(left.code, Types.Code.OK, "recovery remains healthy")
 		context.equal(left.events, right.events, "same recovered core events")
@@ -174,10 +128,19 @@ func _load_control(context: RefCounted) -> void:
 	var collector: RefCounted = Collector.new(context.seed)
 	_run(collector, 2, 0, false, false, true)
 	var first: Dictionary = collector.failures[0] if not collector.failures.is_empty() else {}
-	context.equal(first, {
-		"kind": "equality", "label": "same recovery outcome",
-		"actual": str(Types.Code.OK), "expected": str(Types.Code.SNAPSHOT_FAILED),
-	}, "skipped expert LOAD fails at the actual recovery acknowledgement")
+	(
+		context
+		. equal(
+			first,
+			{
+				"kind": "equality",
+				"label": "same recovery outcome",
+				"actual": str(Types.Code.OK),
+				"expected": str(Types.Code.SNAPSHOT_FAILED),
+			},
+			"skipped expert LOAD fails at the actual recovery acknowledgement"
+		)
+	)
 	var has_request_divergence: bool = false
 	for failure: Dictionary in collector.failures:
 		if failure.get("label", "") == "same ordered callbacks, inputs, statuses and snapshot bytes":
@@ -210,12 +173,8 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 	lifecycle.keepalive_interval_us = 20000
 	lifecycle.disconnect_notify_us = 100000
 	var driven: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, queue_capacity)
-	var expert: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, queue_capacity)
-	for index: int in range(expert.peers.size()):
-		# Only the request consumer differs; handshake, endpoints and game callbacks remain production code.
-		var consumer: ExpertConsumer = ExpertConsumer.new(expert.peers[index]._core, expert.games[index])
-		consumer.skips_load = skip_load
-		expert.peers[index]._driver = consumer
+	var expert: Dictionary = fixture._build(context, count, delay, multiple, 128, true, false, 4, lifecycle, 8, 0, null, queue_capacity, 0, true)
+	expert.skip_load = skip_load
 	var pending: Array[Dictionary] = []
 	var stalls: int = 0
 	var event_count: int = 0
@@ -226,7 +185,7 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 			if driven.peers[index].status().current_frame >= target:
 				continue
 			var left: Driver.StepResult = driven.peers[index].step(driven.now, _inputs(driven, index, permute))
-			var right: Driver.StepResult = expert.peers[index].step(expert.now, _inputs(expert, index, permute))
+			var right: Driver.StepResult = _manual(expert.peers[index], expert.games[index], expert.now, _inputs(expert, index, permute), true, skip_load)
 			context.equal(left.code, right.code, "same step outcome under delivery pressure")
 			context.equal(left.code in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "delivery remains recoverable")
 			context.equal(left.events, right.events, "same completed core events")
@@ -265,3 +224,30 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 		for verified: int in reports.values():
 			context.equal(verified > 0, true, "each remote checksum was actually verified")
 		context.bytes_equal(driven.games[index].game.bytes(), original[target], target, "both consumers match independent original history")
+
+
+func _manual(peer: Peer, game: RefCounted, now_us: int, samples: Array[Driver.LocalInput], forward: bool, skip_load: bool = false) -> Driver.StepResult:
+	var before: int = peer.status().current_frame
+	var opened: Types.Result = peer.begin_step(now_us, samples) if forward else peer.begin_recovery(now_us)
+	var result: Driver.StepResult = Driver.StepResult.new(opened.code, before, peer.status().current_frame)
+	if opened.code != Types.Code.READY:
+		return result
+	while true:
+		var request: Types.Request = opened.batch.next_request()
+		if request == null:
+			break
+		var ok: bool = false
+		var checksum: PackedByteArray = PackedByteArray()
+		match request.kind:
+			Types.Kind.SAVE:
+				var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+				ok = saved.ok
+				checksum = saved.checksum
+			Types.Kind.LOAD:
+				ok = true if skip_load else game.load_state(request.frame, request.reader)
+			Types.Kind.ADVANCE:
+				ok = game.simulate_frame(request.frame, request.inputs)
+		result = peer.complete_request(request.batch_id, request.request_id, ok, checksum)
+		if result.code != Types.Code.READY:
+			break
+	return result

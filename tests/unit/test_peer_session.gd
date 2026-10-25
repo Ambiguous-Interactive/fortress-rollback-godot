@@ -87,7 +87,8 @@ func _build(
 	trace_frames: int = 0,
 	game_override: RefCounted = null,
 	queue_capacity: int = 128,
-	replay_frames: int = 0
+	replay_frames: int = 0,
+	expert: bool = false
 ) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
@@ -144,7 +145,10 @@ func _build(
 		if player == 0 and game_override != null:
 			game = game_override
 		var peer: Peer = Peer.new()
-		context.equal(peer.configure(config, local, game, handshake, input, lifecycle_options), I.Code.OK, "configure mesh")
+		var configured: int = (
+			peer.configure_expert(config, local, handshake, input, lifecycle_options) if expert else peer.configure(config, local, game, handshake, input, lifecycle_options)
+		)
+		context.equal(configured, I.Code.OK, "configure mesh")
 		if reentry:
 			game.peer = weakref(peer)
 			game.context = context

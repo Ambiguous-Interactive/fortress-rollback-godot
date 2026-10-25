@@ -243,6 +243,11 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 	return _consume_requests(advance, before)
 
 
+func _consume_prepared_requests(opened: Types.Result, before: int) -> StepResult:
+	_is_stepping = true
+	return _consume_requests(opened, before)
+
+
 func _consume_requests(advance: Types.Result, before: int) -> StepResult:
 	var code: int = advance.code
 	if advance.code != Types.Code.READY:

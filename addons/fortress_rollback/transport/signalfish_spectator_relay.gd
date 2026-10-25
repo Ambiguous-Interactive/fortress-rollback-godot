@@ -10,6 +10,7 @@ const Code = Types.Code
 # Public SignalFishClient.SessionState.SPECTATING on the reviewed and qualified SDKs.
 const SPECTATING: int = 6
 const CONNECTED: int = 2
+const HOST_SIGNALS: Array[String] = ["player_left", "player_reconnected"]
 const LIFETIME_SIGNALS: Array[String] = [
 	"room_left", "room_joined", "spectator_joined", "spectator_left", "disconnected", "connection_failed", "reconnected", "authentication_error", "reconnection_failed"
 ]
@@ -62,17 +63,25 @@ func configure(client: Object, sdk_config: Object, protocol_info: Object, stream
 		var target: RefCounted = owner.get_ref()
 		if target != null and target._revision == revision:
 			target._revision += 1
-	var pending_signals: Array[String] = []
+	var pending_signals: Dictionary = {}
 	if _client == null and is_instance_valid(client):
 		for signal_name: String in LIFETIME_SIGNALS:
 			if client.has_signal(signal_name):
 				client.connect(signal_name, invalidate)
-				pending_signals.append(signal_name)
+				pending_signals[signal_name] = invalidate
+	var host_changed: Callable = func(player_uuid: String) -> void:
+		if player_uuid == host_uuid:
+			invalidate.call()
+	if _client == null and is_instance_valid(client):
+		for signal_name: String in HOST_SIGNALS:
+			if client.has_signal(signal_name):
+				client.connect(signal_name, host_changed)
+				pending_signals[signal_name] = host_changed
 	var code: int = _configure(client, sdk_config, protocol_info, stream, host_uuid, options)
 	if is_instance_valid(client):
 		for signal_name: String in pending_signals:
-			if client.is_connected(signal_name, invalidate):
-				client.disconnect(signal_name, invalidate)
+			if client.is_connected(signal_name, pending_signals[signal_name]):
+				client.disconnect(signal_name, pending_signals[signal_name])
 	_configuring = false
 	return code
 
@@ -150,6 +159,13 @@ func _configure(client: Object, sdk_config: Object, protocol_info: Object, strea
 			_callbacks[signal_name] = func(_a: Variant = null, _b: Variant = null, _c: Variant = null, _d: Variant = null) -> void:
 				var target: RefCounted = owner.get_ref()
 				if target != null and target._revision == installed_revision:
+					target._on_lifetime_ended()
+			client.connect(signal_name, _callbacks[signal_name])
+	for signal_name: String in HOST_SIGNALS:
+		if client.has_signal(signal_name):
+			_callbacks[signal_name] = func(player_uuid: String) -> void:
+				var target: RefCounted = owner.get_ref()
+				if target != null and target._revision == installed_revision and player_uuid == target._host:
 					target._on_lifetime_ended()
 			client.connect(signal_name, _callbacks[signal_name])
 	return Code.OK

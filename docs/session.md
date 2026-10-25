@@ -62,9 +62,10 @@ prediction stalls, input delay, queue wrap and final recovery. Corrected confirm
 callback prefixes and the final state match an independent simulation of the
 original inputs. A committed negative control permutes the same rows in both
 meshes: their final states still match, but intermediate canonical prefixes fail.
-This substitutes
-the request consumer at an internal test boundary; it does not expose a separate
-public expert peer API or establish browser/release support.
+The expert side configures the public peer request API without a game callback consumer.
+Both paths share peer preparation, input publication and completion controls.
+This native comparison does not establish browser/release support.
+See [manual peer requests](peer-expert.md) for setup, acknowledgements and cancellation.
 
 `driver.scheduled_local_input(player)` returns an owned sample retained by a stalled step.
 The driver also exposes local `input_delay` and `set_input_delay` for standalone sessions;
@@ -79,8 +80,9 @@ Use the scalar notification for presentation and the returned `StepResult` for
 the owned event list. Peer callers use `peer.step_completed` or reconcile after
 `peer.step` returns; both observe finished peer control processing. Peer signals
 report every configured attempt, including not-ready/error outcomes. Unconfigured
-and recursive BUSY attempts emit nothing. Mutating peer calls remain BUSY inside
-handlers, and publication drains return empty until the outer call returns.
+and BUSY attempts emit nothing. The shared engine guard also protects handlers from other
+facades. Mutating peer calls remain BUSY inside handlers, and publication drains return empty
+until the outer call returns.
 
 A failed callback terminates the session with `CALLBACK_FAILED`. A null or wrong-typed
 `save_state` result, or a non-boolean load/simulate result, follows the same path.

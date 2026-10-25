@@ -20,6 +20,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint.gd")
 const Advisor = preload("res://addons/fortress_rollback/core/delay_advisor.gd")
 const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const ExpertBatch = preload("res://addons/fortress_rollback/core/peer_request_batch.gd")
 
 
 class Packet:
@@ -34,6 +35,11 @@ class Packet:
 
 var _core: Session = null
 var _driver: Driver = null
+var _expert_mode: bool = false
+var _manual_batch: RefCounted
+var _manual_identity: int = 0
+var _manual_before: int = 0
+var _manual_operation: int = 0
 var _config: Config = null
 var _peers: Dictionary = {}
 var _ids: Array[PackedByteArray] = []
@@ -62,13 +68,22 @@ var _advisor: Advisor = Advisor.new()
 
 ## Caller supplies transport identity, clock, tokens and game callbacks.
 func configure(config: Variant, local: Variant, game: Variant, handshake_options: Variant, input_options: Variant, lifecycle_options: Variant = null) -> int:
-	if _busy:
+	return _configure(config, local, game, handshake_options, input_options, lifecycle_options, false)
+
+
+## Configure a peer without game callbacks. The caller dispatches and acknowledges every ordered request.
+func configure_expert(config: Variant, local: Variant, handshake_options: Variant, input_options: Variant, lifecycle_options: Variant = null) -> int:
+	return _configure(config, local, null, handshake_options, input_options, lifecycle_options, true)
+
+
+func _configure(config: Variant, local: Variant, game: Variant, handshake_options: Variant, input_options: Variant, lifecycle_options: Variant, expert: bool) -> int:
+	if _has_mutation_guard():
 		return I.Code.BUSY
 	if _core != null:
 		return I.Code.WRONG_STATE
 	if not config is Config or config.validate() != Types.Code.OK or config.sync_test:
 		return I.Code.INVALID_ARGUMENT
-	if not local is T.Message or not V.config(local.config) or not game is RefCounted:
+	if not local is T.Message or not V.config(local.config) or (not expert and not game is RefCounted):
 		return I.Code.INVALID_ARGUMENT
 	if not handshake_options is H.Options or not H.valid_options(handshake_options) or not input_options is I.Options or not I.valid_options(input_options):
 		return I.Code.INVALID_ARGUMENT
@@ -116,9 +131,11 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	var core: Session = Session.new()
 	if core.configure(core_config) != Types.Code.OK or core.set_confirmation_limit(-1).code != Types.Code.OK:
 		return I.Code.INVALID_ARGUMENT
-	var driver: Driver = Driver.new()
-	if driver.configure(core, game) != Types.Code.OK:
-		return I.Code.INVALID_ARGUMENT
+	var driver: Driver = null
+	if not expert:
+		driver = Driver.new()
+		if driver.configure(core, game) != Types.Code.OK:
+			return I.Code.INVALID_ARGUMENT
 	var peers: Dictionary = {}
 	var keys: Array = remotes.keys()
 	keys.sort()
@@ -137,6 +154,7 @@ func configure(config: Variant, local: Variant, game: Variant, handshake_options
 	_core = core
 	_fps = profile.fps
 	_driver = driver
+	_expert_mode = expert
 	_config = core_config.owned_copy()
 	_config.local_players = locals
 	_peers = peers
@@ -211,11 +229,7 @@ func receive_and_poll(packet: Variant, attributed_sender: Variant, now_us: Varia
 func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	if _busy or _core == null:
 		return _step(now_us, local_inputs)
-	var result: Driver.StepResult = _step(now_us, local_inputs)
-	_busy = true
-	step_completed.emit(result.code, result.frame_before, result.frame_after)
-	_busy = false
-	return result
+	return _notify_completed(_step(now_us, local_inputs))
 
 
 ## Poll transport controls and correct simulated history without submitting another local input.
@@ -224,18 +238,16 @@ func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 func recover(now_us: Variant) -> Driver.StepResult:
 	if _busy or _core == null:
 		return _recover(now_us)
-	var result: Driver.StepResult = _recover(now_us)
-	_busy = true
-	step_completed.emit(result.code, result.frame_before, result.frame_after)
-	_busy = false
-	return result
+	return _notify_completed(_recover(now_us))
 
 
 ## Save exactly the finalized recorded boundary without polling, advancing or publishing transport controls.
 ## Call recover() first when confirmation or correction lags. Returns the driver's first failed callback metadata.
 func capture_replay_boundary() -> Driver.StepResult:
 	var before: int = status().current_frame
-	if _busy:
+	if _expert_mode:
+		return _result(Types.Code.BUSY if _has_mutation_guard() else Types.Code.UNSUPPORTED, before, before)
+	if _has_mutation_guard():
 		return _result(Types.Code.BUSY, before, before)
 	if _core == null:
 		return _result(Types.Code.NOT_CONFIGURED, before, before)
@@ -252,83 +264,206 @@ func capture_replay_boundary() -> Driver.StepResult:
 	var captured: Driver.StepResult = _driver.capture_replay_boundary()
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 		_remember_diagnostic()
+	return _notify_completed(captured)
+
+
+func _notify_completed(result: Driver.StepResult) -> Driver.StepResult:
+	if result.code == Types.Code.BUSY:
+		return result
+	_busy = true
 	_core._begin_driver_notification()
-	step_completed.emit(captured.code, captured.frame_before, captured.frame_after)
+	step_completed.emit(result.code, result.frame_before, result.frame_after)
 	_core._end_driver_notification()
 	var completed: Types.Status = _core.status()
-	captured.reason = completed.reason
-	captured.failure_frame = completed.failure_frame
-	captured.failure_kind = completed.failure_kind
-	_busy = false
+	result.reason = completed.reason
+	result.failure_frame = completed.failure_frame
+	result.failure_kind = completed.failure_kind
 	if completed.lifecycle == Types.Lifecycle.TERMINATED:
 		_terminate_links()
-	return captured
+	_busy = false
+	return result
+
+
+## Open ordered SAVE/LOAD/ADVANCE requests after ordinary input publication and peer controls.
+## READY owns the peer until every request is acknowledged or close() cancels the batch.
+func begin_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
+	return _begin_manual(now_us, local_inputs, 0)
+
+
+## Correct and finalize history without another local sample or forward frame.
+func begin_recovery(now_us: Variant) -> Types.Result:
+	return _begin_manual(now_us, [], 1)
+
+
+## Open a SAVE-only batch for the finalized recorded boundary, without polling or network publication.
+func begin_capture_replay_boundary() -> Types.Result:
+	return _begin_manual(_now, [], 2)
+
+
+func _begin_manual(now_us: Variant, local_inputs: Variant, operation: int) -> Types.Result:
+	if not _expert_mode:
+		return Types.Result.new(Types.Code.UNSUPPORTED if _core != null else Types.Code.NOT_CONFIGURED)
+	if _has_mutation_guard():
+		return Types.Result.new(Types.Code.BUSY)
+	_manual_before = status().current_frame
+	_manual_operation = operation
+	var opened: Types.Result
+	if operation == 2:
+		if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+			return Types.Result.new(Types.Code.TERMINATED)
+		if not _running():
+			return Types.Result.new(Types.Code.NOT_SYNCHRONIZED)
+		var shared_gate: int = _core._mutation_code()
+		if shared_gate != Types.Code.OK:
+			return Types.Result.new(shared_gate)
+		if _barrier_pending():
+			return Types.Result.new(Types.Code.PREDICTION_STALL)
+		_busy = true
+		opened = _core.begin_capture_replay_boundary()
+	else:
+		opened = _prepare_step(now_us, local_inputs) if operation == 0 else _prepare_recovery(now_us)
+	if opened.code == Types.Code.READY:
+		_manual_batch = opened.batch
+		_manual_identity = _core._batch_id
+		return Types.Result.new(Types.Code.READY, ExpertBatch.new(self, _manual_identity))
+	var result: Driver.StepResult = _result(opened.code, _manual_before, status().current_frame)
+	if _busy and operation != 2:
+		result = _finish_requests(result, operation == 0)
+	_notify_completed(result)
+	return Types.Result.new(result.code)
+
+
+## READY means another ordered request remains; STALE_REQUEST and BUSY leave the active request unchanged.
+## The final result and notification include peer controls and first-cause failure diagnostics.
+func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksum: PackedByteArray = PackedByteArray()) -> Driver.StepResult:
+	var before: int = status().current_frame
+	if _core == null:
+		return _result(Types.Code.NOT_CONFIGURED, before, before)
+	if not _expert_mode:
+		return _result(Types.Code.UNSUPPORTED, before, before)
+	if _core._has_driver_guard():
+		return _result(Types.Code.BUSY, before, before)
+	if _manual_batch == null:
+		return _result(Types.Code.STALE_REQUEST, before, before)
+	var completed: Types.Result = _core.complete_request(batch_id, request_id, callback_ok, checksum)
+	if completed.code == Types.Code.STALE_REQUEST:
+		return _result(completed.code, _manual_before, before)
+	if _core._batch != null:
+		return _result(Types.Code.READY, _manual_before, before)
+	return _finish_manual(completed.code)
+
+
+func _next_manual_request(identity: int) -> Types.Request:
+	if _manual_batch == null or identity != _manual_identity or _core._has_driver_guard():
+		return null
+	var request: Types.Request = _manual_batch.next_request()
+	if request == null:
+		_finish_manual(_core.status().reason)
+	return request
+
+
+func _finish_manual(code: int) -> Driver.StepResult:
+	_manual_batch = null
+	var result: Driver.StepResult = _result(code, _manual_before, status().current_frame)
+	if _manual_operation != 2:
+		result = _finish_requests(result, _manual_operation == 0)
+	return _notify_completed(result)
 
 
 func _recover(now_us: Variant) -> Driver.StepResult:
+	if _expert_mode:
+		return _result(Types.Code.BUSY if _has_mutation_guard() else Types.Code.UNSUPPORTED, status().current_frame, status().current_frame)
 	var before: int = status().current_frame
-	var gate: int = _gate(now_us)
-	if gate != I.Code.OK:
-		return _result(_step_code(gate), before, before)
-	if not _running():
-		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
-	var limit: int = _core._check_advance_limits()
-	if limit != Types.Code.OK:
-		if limit == Types.Code.FRAME_EXHAUSTED:
-			_now = now_us
-			_terminate_links()
-		return _result(limit, before, before)
-	var polled: int = _poll(now_us, [], [], true)
-	if polled != I.Code.OK:
-		return _result(_step_failure(polled), before, before)
-	var control_code: int = _service_controls(now_us, true)
-	if control_code != I.Code.OK:
-		return _result(_step_failure(control_code), before, before)
-	_busy = true
-	var recovered: Driver.StepResult = _driver.recover(now_us)
-	if recovered.code == Types.Code.OK:
+	return _consume_prepared(_prepare_recovery(now_us), before, false)
+
+
+func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
+	if _expert_mode:
+		return _result(Types.Code.BUSY if _has_mutation_guard() else Types.Code.UNSUPPORTED, status().current_frame, status().current_frame)
+	var before: int = status().current_frame
+	return _consume_prepared(_prepare_step(now_us, local_inputs), before, true)
+
+
+func _begin_core_requests(now_us: int, forward: bool) -> Types.Result:
+	var polled: Types.Result = _core.poll(now_us)
+	if polled.code != Types.Code.OK:
+		return polled
+	return _core.begin_advance() if forward else _core.begin_recovery()
+
+
+func _consume_prepared(opened: Types.Result, before: int, forward: bool) -> Driver.StepResult:
+	if opened.code == Types.Code.BUSY or not _busy:
+		return _result(opened.code, before, before)
+	var result: Driver.StepResult = _driver._consume_prepared_requests(opened, before)
+	return _finish_requests(result, forward)
+
+
+func _finish_requests(result: Driver.StepResult, forward: bool) -> Driver.StepResult:
+	if result.code == Types.Code.OK or (forward and result.code == Types.Code.PREDICTION_STALL):
 		_checksum_confirmation = _core.status().confirmed_frame
 	_busy = false
-	_service_controls(now_us, false)
+	_service_controls(_now, false)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
-		return _result(_core.status().reason, before, _core.status().current_frame)
-	return recovered
+		return _result(_core.status().reason, result.frame_before, _core.status().current_frame)
+	return result
 
 
-## Every endpoint retains the scheduled sample before the game can advance.
-func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
-	var before: int = status().current_frame
+func _prepare_recovery(now_us: Variant) -> Types.Result:
 	var gate: int = _gate(now_us)
 	if gate != I.Code.OK:
-		return _result(_step_code(gate), before, before)
+		return Types.Result.new(_step_code(gate))
 	if not _running():
-		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
+		return Types.Result.new(Types.Code.NOT_SYNCHRONIZED)
 	var limit: int = _core._check_advance_limits()
 	if limit != Types.Code.OK:
 		if limit == Types.Code.FRAME_EXHAUSTED:
 			_now = now_us
 			_terminate_links()
-		return _result(limit, before, before)
+		return Types.Result.new(limit)
+	var polled: int = _poll(now_us, [], [], true)
+	if polled != I.Code.OK:
+		return Types.Result.new(_step_failure(polled))
+	var control_code: int = _service_controls(now_us, true)
+	if control_code != I.Code.OK:
+		return Types.Result.new(_step_failure(control_code))
+	_busy = true
+	return _begin_core_requests(now_us, false)
+
+
+## Every endpoint retains the scheduled sample before requests become available.
+func _prepare_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
+	var before: int = status().current_frame
+	var gate: int = _gate(now_us)
+	if gate != I.Code.OK:
+		return Types.Result.new(_step_code(gate))
+	if not _running():
+		return Types.Result.new(Types.Code.NOT_SYNCHRONIZED)
+	var limit: int = _core._check_advance_limits()
+	if limit != Types.Code.OK:
+		if limit == Types.Code.FRAME_EXHAUSTED:
+			_now = now_us
+			_terminate_links()
+		return Types.Result.new(limit)
 	var code: int = _samples_code(local_inputs, before)
 	if code != Types.Code.OK:
-		return _result(code, before, before)
+		return Types.Result.new(code)
 	_now = now_us
 	var polled: int = _poll(now_us, [])
 	if polled != I.Code.OK:
-		return _result(_step_failure(polled), before, before)
+		return Types.Result.new(_step_failure(polled))
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
-		return _result(_step_failure(control_code), before, before)
+		return Types.Result.new(_step_failure(control_code))
 	if _barrier_pending():
 		# The coordinated drop holds the match until the survivors agree the frozen frame.
-		return _result(Types.Code.PREDICTION_STALL, before, before)
+		return Types.Result.new(Types.Code.PREDICTION_STALL)
 	_busy = true
 	var scheduled: int = -1
 	for sample: Driver.LocalInput in local_inputs:
 		var result: Types.Result = _core.submit_local_input(sample.player, sample.sample_frame, sample.bytes)
 		if result.code != Types.Code.OK:
 			_busy = false
-			return _result(result.code, before, before)
+			return Types.Result.new(result.code)
 		scheduled = result.value
 	var data: PackedByteArray = PackedByteArray()
 	for player: int in _config.local_players:
@@ -345,21 +480,13 @@ func _step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 			_busy = false
 			_collect_events()
 			_check_failure()
-			return _result(_step_failure(sent), before, before)
+			return Types.Result.new(_step_failure(sent))
 	code = _confirmation_code()
 	if code != Types.Code.OK:
 		_busy = false
-		return _result(code, before, before)
+		return Types.Result.new(code)
 	_now = now_us
-	var empty: Array[Driver.LocalInput] = []
-	var advanced: Driver.StepResult = _driver.step(now_us, empty)
-	if advanced.code in [Types.Code.OK, Types.Code.PREDICTION_STALL]:
-		_checksum_confirmation = _core.status().confirmed_frame
-	_busy = false
-	_service_controls(now_us, false)
-	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
-		return _result(_core.status().reason, before, _core.status().current_frame)
-	return advanced
+	return _begin_core_requests(now_us, true)
 
 
 func status() -> Types.Status:
@@ -403,7 +530,7 @@ static func max_input_delay(config: Config) -> int:
 ## the starting delay, so decreases, changes before the first step and several local players are UNSUPPORTED.
 ## Delays above max_input_delay(config) are INVALID_CONFIGURATION.
 func set_input_delay(player: int, delay: int) -> int:
-	if _busy:
+	if _has_mutation_guard():
 		return Types.Code.BUSY
 	if _core == null:
 		return Types.Code.NOT_CONFIGURED
@@ -567,7 +694,7 @@ func network_status() -> Dictionary:
 
 func drain_outbox() -> Array[Packet]:
 	var result: Array[Packet] = []
-	if _busy:
+	if _has_mutation_guard():
 		return result
 	for index: int in range(_ids.size()):
 		for bytes: PackedByteArray in _endpoint(index).drain_outbox():
@@ -577,7 +704,7 @@ func drain_outbox() -> Array[Packet]:
 
 func drain_events() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	if _busy:
+	if _has_mutation_guard():
 		return result
 	_collect_events()
 	for event: Dictionary in _events:
@@ -591,7 +718,12 @@ func drain_events() -> Array[Dictionary]:
 
 ## Fixed-membership close queues goodbye on every link and halts advancement.
 func close(now_us: Variant, reason: Variant = 0) -> int:
+	var pending: bool = _manual_batch != null and not _core._has_driver_guard()
+	if pending:
+		_busy = false
 	var code: int = _gate(now_us)
+	if pending:
+		_busy = true
 	if code != I.Code.OK:
 		return code
 	if typeof(reason) != TYPE_INT or reason < 0 or reason > 255:
@@ -606,13 +738,15 @@ func close(now_us: Variant, reason: Variant = 0) -> int:
 			code = closed
 	_collect_events(true)
 	_core.terminate(Types.Code.TERMINATED)
+	_manual_batch = null
+	_busy = false
 	_terminate_links()
 	return code
 
 
 func drain_transitions() -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	if _busy:
+	if _has_mutation_guard():
 		return result
 	for index: int in range(_ids.size()):
 		for transition: Dictionary in _endpoint(index).drain_transitions():
@@ -637,8 +771,12 @@ func _era(index: int) -> int:
 	return connection.substr(0, 4).hex_to_int()
 
 
+func _has_mutation_guard() -> bool:
+	return _busy or (_core != null and _core._has_driver_guard())
+
+
 func _gate(now_us: Variant) -> int:
-	if _busy:
+	if _has_mutation_guard():
 		return I.Code.BUSY
 	if _core == null:
 		return I.Code.WRONG_STATE

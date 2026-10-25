@@ -197,8 +197,13 @@ that step keeps its successful code and committed frame, while the returned term
 Restart with a fresh configured session and game.
 
 Peer callers can use `peer.step_completed` with the same scalar arguments.
-It runs after peer control processing too. Mutating peer calls return `BUSY`
-until handlers return; drain peer packets, events and transitions after `peer.step` returns.
+It runs after peer control processing too. The shared session guard protects every handler,
+including against expert mutations and other drivers using that session.
+Mutating peer calls return `BUSY`, and destructive drains stay empty, until those handlers return.
+This also applies when another driver owns the shared session's callback or completion notification.
+A handler cancellation keeps the completed code and frame, refreshes returned terminal metadata,
+and queues the peer's bounded goodbye burst before returning.
+Drain peer packets, events and transitions after `peer.step` or `peer.recover` returns.
 
 A failed callback stops the session for good. Do not keep stepping a stopped session.
 Start a new session and a new game object: a reconfigured session starts at frame zero
@@ -336,6 +341,11 @@ another game. `player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES, 0, 
 returns `INCOMPATIBLE_RECORDING` when the roster, sample width, neutral input, game seed or
 game version differ from the recording. `configure_expert` takes the same configuration.
 `replay.matches_config(config)` answers the same question without a player.
+
+Both playback modes validate the recording's metadata, backing-array sizes, row flags and statuses before copying it.
+Malformed objects return `INVALID_CONFIGURATION` and preserve existing playback, including its selected frame and checksum coverage.
+`replay.is_valid()` checks that same bounded structure without configuring a player.
+Input digests and state checksums remain comparisons at their owning playback boundary; missing digests stop there with `DESYNC`.
 
 `step()` calls `simulate_frame` with the recorded inputs and returns `OK`, then `FRAME_EXHAUSTED` after the last frame.
 With a positive snapshot size it first calls `save_state` and compares the recorded checksum.
