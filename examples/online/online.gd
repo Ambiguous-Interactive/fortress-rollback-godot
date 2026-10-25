@@ -19,6 +19,7 @@ var trace_checkbox: CheckBox
 var replay_checkbox: CheckBox
 var inspect_button: Button
 var watch_button: Button
+var finish_replay_button: Button
 var replay_button: Button
 var _replay_notice: String = ""
 var _status: Label
@@ -48,10 +49,11 @@ func _ready() -> void:
 	panel.add_child(trace_checkbox)
 	inspect_button = _button(panel, "Inspect diagnostic file", _inspect_diagnostic)
 	var replay_row: HBoxContainer = HBoxContainer.new()
-	panel.add_child(replay_row)
 	replay_checkbox = CheckBox.new()
 	replay_checkbox.text = "Record replay: first 10 minutes (choose before Ready)"
-	replay_row.add_child(replay_checkbox)
+	panel.add_child(replay_checkbox)
+	panel.add_child(replay_row)
+	finish_replay_button = _button(replay_row, "Finish replay", _finish_replay)
 	replay_button = _button(replay_row, "Download replay", _export_replay)
 	watch_button = _button(replay_row, "Watch replay", _watch_replay)
 	_status = Label.new()
@@ -171,6 +173,7 @@ func _update_status() -> void:
 	diagnostics_button.disabled = controller.game_match.local_slot < 0
 	trace_checkbox.disabled = controller.has_readied
 	replay_checkbox.disabled = controller.has_readied
+	finish_replay_button.disabled = controller.state != "playing" or not controller.game_match.record_replay or controller.game_match.replay_finishing
 	replay_button.disabled = not controller.game_match.has_recorded_replay
 	endpoint.editable = not connected
 	player_name.editable = not connected
@@ -192,6 +195,13 @@ func _update_status() -> void:
 		)
 		if game.suggested_delay >= 0:
 			_status.text += "\nSuggested delay for this connection: %d (R applies)" % game.suggested_delay
+		if game.replay_finishing:
+			if game.replay_captured:
+				_status.text += "\nReplay final state captured. Download the replay, then leave the room."
+			elif game.replay_capture_code in [Lobby.Match.Types.Code.PREDICTION_STALL, Lobby.Match.Types.Code.NETWORK_BACKPRESSURE]:
+				_status.text += "\nFinishing replay: waiting for confirmed inputs and correction."
+			else:
+				_status.text += "\nFinal-state evidence unavailable (%d). Download retains historical checksum coverage." % game.replay_capture_code
 		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
 		_status.text += (
 			"\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d"
@@ -217,6 +227,12 @@ func _export_diagnostics() -> void:
 		DisplayServer.clipboard_set(text)
 
 
+func _finish_replay() -> void:
+	var code: int = controller.game_match.finish_replay()
+	_replay_notice = "Gameplay stopped while final replay inputs settle." if code == Lobby.Match.Types.Code.OK else "Could not finish replay (%d)." % code
+	_update_status()
+
+
 ## Owned confirmed-input recording; disabled or empty recordings produce no file.
 func replay_bytes() -> PackedByteArray:
 	var recording: Replay = controller.game_match.peer.replay()
@@ -229,7 +245,7 @@ func _export_replay() -> void:
 		_replay_notice = "No confirmed replay frames are available yet."
 	elif OS.has_feature("web"):
 		JavaScriptBridge.download_buffer(bytes, REPLAY_FILENAME, "application/octet-stream")
-		_replay_notice = "Replay download requested: " + REPLAY_FILENAME
+		_replay_notice = "Replay download requested: " + REPLAY_FILENAME + (" (final state included)" if controller.game_match.replay_captured else " (no final-state evidence)")
 	else:
 		var path: String = "user://" + REPLAY_FILENAME
 		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)

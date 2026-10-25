@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add final-state replay capture to peer sessions and the online example. Press Finish replay before leaving, then download after confirmation to verify the last simulated input.
+
 - Add explicit final replay checksum capture and FRRP v6 playback. Capture after confirmation and recovery to detect differences caused by the last input; existing v4/v5 files remain readable.
 
 - Add owned retained-input reads to peer sessions so clients can retry stalled steps without resampling local input.

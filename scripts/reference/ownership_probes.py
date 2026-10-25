@@ -87,6 +87,7 @@ EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
+EXPECTED['res://tests/unit/test_peer_replay_capture.gd'] = {'capture_final', 'capture_guards', 'capture_callbacks', 'capture_cap'}
 EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity'}
 EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'stepped_boundaries', 'paused_boundaries'})
@@ -171,7 +172,7 @@ FILES += ['tests/unit/test_driver_callback_signatures.gd', 'tests/unit/test_driv
 FILES += ['tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
           'examples/spectator/spectator.gd', 'examples/integration/demo.gd', 'examples/integration/loop.gd', 'examples/integration/effects.gd']
 FILES += ['tests/unit/test_spectator_policy.gd', 'tests/unit/test_replay_speed.gd', 'tests/unit/test_spectator_publisher.gd']
-FILES += ['tests/unit/test_driver_recovery.gd', 'tests/unit/test_peer_recovery.gd']
+FILES += ['tests/unit/test_driver_recovery.gd', 'tests/unit/test_peer_recovery.gd', 'tests/unit/test_peer_replay_capture.gd']
 FILES += ['tests/unit/test_replay_coverage.gd']
 FILES += ['tests/unit/test_peer_checksum_repair.gd']
 FILES += ['tests/unit/test_spectator_model.gd']
@@ -226,6 +227,7 @@ const SpectatorDemo = preload("res://tests/unit/test_spectator_demo.gd")
 const SpectatorPolicy = preload("res://tests/unit/test_spectator_policy.gd")
 const SpectatorPublisher = preload("res://tests/unit/test_spectator_publisher.gd")
 const PeerRecovery = preload("res://tests/unit/test_peer_recovery.gd")
+const PeerReplayCapture = preload("res://tests/unit/test_peer_replay_capture.gd")
 const DriverRecovery = preload("res://tests/unit/test_driver_recovery.gd")
 const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
 const ReplayCoverage = preload("res://tests/unit/test_replay_coverage.gd")
@@ -258,7 +260,8 @@ func _ready() -> void:
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
-		DriverRecovery, PeerRecovery, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop, PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
+		DriverRecovery, PeerRecovery, PeerReplayCapture, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop,
+		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory,
 		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)

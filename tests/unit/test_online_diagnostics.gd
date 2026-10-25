@@ -8,7 +8,7 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["consent", "capture", "replay", "replay_stall"])
+	return PackedStringArray(["consent", "capture", "replay", "replay_stall", "replay_finish"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -42,8 +42,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			node._update_status()
 			context.equal(toggle.disabled, false, "fresh room permits a new choice")
 		node.free()
-	elif name in ["replay", "replay_stall"]:
-		_replay(context, name == "replay_stall")
+	elif name in ["replay", "replay_stall", "replay_finish"]:
+		_replay(context, name == "replay_stall", name == "replay_finish")
 	else:
 		for enabled: bool in [false, true]:
 			var client: Fixture.Client = Fixture.Client.new()
@@ -78,7 +78,7 @@ func run_case(name: String, context: RefCounted) -> void:
 
 
 # Value: protects=confirmed recording without diagnostic consent; fails_when=recording is empty, predicted, or lost on failure; seam=real two-peer game.
-func _replay(context: RefCounted, stalled_start: bool = false) -> void:
+func _replay(context: RefCounted, stalled_start: bool = false, finishing: bool = false) -> void:
 	var helper: RefCounted = Fixture.new()
 	var fixtures: Array[Dictionary] = []
 	for uuid: String in [Fixture.U, Fixture.V]:
@@ -115,6 +115,21 @@ func _replay(context: RefCounted, stalled_start: bool = false) -> void:
 		for fixture: Dictionary in fixtures:
 			fixture.driver.tick(frame * 16667, Fixture.Simulation.RIGHT)
 		helper._deliver(fixtures)
+	if finishing:
+		var ending: Match = fixtures[1].driver
+		var boundary: int = ending.peer.status().current_frame
+		context.equal(ending.finish_replay(), Match.Types.Code.OK, "request final capture before teardown")
+		context.equal(ending.finish_replay(), Match.Types.Code.OK, "finishing is idempotent")
+		for frame: int in range(100, 130):
+			helper._deliver(fixtures)
+			for fixture: Dictionary in fixtures:
+				fixture.driver.tick(frame * 16667, Fixture.Simulation.LEFT)
+		context.equal(ending.peer.status().current_frame, boundary, "finish consumes no more local frames")
+		context.equal(ending.failure, "", "finishing keeps callbacks and transport legal")
+		context.equal(ending.replay_captured, true, "finishing captures after final confirmation and correction")
+		context.equal(ending.replay_capture_code, Match.Types.Code.OK, "capture result is explicit")
+		context.equal(ending.peer.replay().checksum(boundary), Fixture.Simulation.checksum(ending.game.canonical_bytes()), "capture binds final corrected online state")
+		context.equal(ending.raise_input_delay(), Match.Types.Code.BUSY, "finish cannot publish added local delay inputs")
 	var node: Node2D = Scene.new()
 	Engine.get_main_loop().root.add_child(node)
 	if not node.is_node_ready():
@@ -126,6 +141,7 @@ func _replay(context: RefCounted, stalled_start: bool = false) -> void:
 		var bytes: PackedByteArray = node.replay_bytes()
 		var recording: Replay = Replay.new()
 		context.equal(recording.decode(bytes), Replay.DecodeCode.OK, "exported bytes decode as replay")
+		context.equal(bytes.decode_u16(4), 6 if fixture.driver.replay_captured else 5, "only successful explicit capture adds terminal evidence")
 		context.equal(recording.frame_count() > 50, true, "actual confirmed gameplay is recorded")
 		context.equal(recording.frame_count() <= fixture.driver.peer.status().current_frame, true, "recording excludes unsimulated inputs")
 		if recording.frame_count() > 20:

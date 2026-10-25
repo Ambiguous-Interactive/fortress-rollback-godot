@@ -231,6 +231,40 @@ func recover(now_us: Variant) -> Driver.StepResult:
 	return result
 
 
+## Save exactly the finalized recorded boundary without polling, advancing or publishing transport controls.
+## Call recover() first when confirmation or correction lags. Returns the driver's first failed callback metadata.
+func capture_replay_boundary() -> Driver.StepResult:
+	var before: int = status().current_frame
+	if _busy:
+		return _result(Types.Code.BUSY, before, before)
+	if _core == null:
+		return _result(Types.Code.NOT_CONFIGURED, before, before)
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return _result(Types.Code.TERMINATED, before, before)
+	if not _running():
+		return _result(Types.Code.NOT_SYNCHRONIZED, before, before)
+	var shared_gate: int = _core._mutation_code()
+	if shared_gate != Types.Code.OK:
+		return _result(shared_gate, before, before)
+	if _barrier_pending():
+		return _result(Types.Code.PREDICTION_STALL, before, before)
+	_busy = true
+	var captured: Driver.StepResult = _driver.capture_replay_boundary()
+	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
+		_remember_diagnostic()
+	_core._begin_driver_notification()
+	step_completed.emit(captured.code, captured.frame_before, captured.frame_after)
+	_core._end_driver_notification()
+	var completed: Types.Status = _core.status()
+	captured.reason = completed.reason
+	captured.failure_frame = completed.failure_frame
+	captured.failure_kind = completed.failure_kind
+	_busy = false
+	if completed.lifecycle == Types.Lifecycle.TERMINATED:
+		_terminate_links()
+	return captured
+
+
 func _recover(now_us: Variant) -> Driver.StepResult:
 	var before: int = status().current_frame
 	var gate: int = _gate(now_us)

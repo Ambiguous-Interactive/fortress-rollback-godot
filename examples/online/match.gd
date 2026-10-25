@@ -45,6 +45,10 @@ var capture_trace: bool = false
 ## Choose before freeze. Retains the first ten minutes of confirmed gameplay at 60 Hz.
 var record_replay: bool = false
 var has_recorded_replay: bool = false
+## Finishing stops local sampling while transport and correction settle the recorded boundary.
+var replay_finishing: bool = false
+var replay_captured: bool = false
+var replay_capture_code: int = Types.Code.NOT_CONFIGURED
 var _held: int = -1
 var _tokens: int = 0
 var _pending: Array[Peer.Packet] = []
@@ -151,7 +155,9 @@ func tick(now_us: int, buttons: int) -> void:
 		# leave the rest of the frame's budget to the browser and the game.
 		if _pending.is_empty() and fallback.idle():
 			break
-	if failure.is_empty() and peer.network_status().state == "running":
+	if failure.is_empty() and replay_finishing:
+		_finish_replay_boundary(now_us)
+	elif failure.is_empty() and peer.network_status().state == "running":
 		if _held < 0:
 			_held = buttons
 		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(local_slot, peer.status().current_frame, PackedByteArray([_held]))]
@@ -168,8 +174,39 @@ func tick(now_us: int, buttons: int) -> void:
 	_collect_events()
 
 
+## Stop local gameplay and request final-state evidence while game callbacks remain legal.
+## Keep ticking until replay_captured or a non-retryable replay_capture_code; ordinary exports remain available.
+func finish_replay() -> int:
+	if not has_started or not failure.is_empty():
+		return Types.Code.NOT_SYNCHRONIZED
+	if not record_replay:
+		return Types.Code.UNSUPPORTED
+	if replay_finishing:
+		return Types.Code.OK
+	replay_finishing = true
+	replay_capture_code = Types.Code.PREDICTION_STALL
+	return Types.Code.OK
+
+
+func _finish_replay_boundary(now_us: int) -> void:
+	if replay_captured or replay_capture_code not in [Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
+		return
+	var recovered: Driver.StepResult = peer.recover(now_us)
+	replay_capture_code = recovered.code
+	if recovered.code == Types.Code.OK:
+		replay_capture_code = peer.capture_replay_boundary().code
+		replay_captured = replay_capture_code == Types.Code.OK
+		has_recorded_replay = has_recorded_replay or (peer.replay() != null and peer.replay().frame_count() > 0)
+	if peer.status().lifecycle == Types.Lifecycle.TERMINATED:
+		failure = "Final replay state could not be captured (%d). Download the available replay before leaving." % peer.status().reason
+	if failure.is_empty():
+		_service(now_us)
+
+
 ## Delay this player's input by one more frame; the other player receives the added frames as ordinary input.
 func raise_input_delay() -> int:
+	if replay_finishing:
+		return Types.Code.BUSY
 	if not has_started or local_slot < 0:
 		return Types.Code.NOT_SYNCHRONIZED
 	return peer.set_input_delay(local_slot, peer.input_delay(local_slot) + 1)
@@ -177,6 +214,8 @@ func raise_input_delay() -> int:
 
 ## Apply the latest suggestion. The library only suggests; the game chooses whether to raise.
 func apply_suggested_delay() -> int:
+	if replay_finishing:
+		return Types.Code.BUSY
 	if suggested_delay < 0:
 		return Types.Code.INVALID_CONFIGURATION
 	var code: int = peer.set_input_delay(local_slot, suggested_delay)

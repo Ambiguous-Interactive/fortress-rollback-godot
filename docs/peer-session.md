@@ -125,3 +125,20 @@ session, not a supported browser release.
 See [input exchange](input-exchange.md) for bounded retention and ACK rules,
 [session callbacks](session.md) for game state obligations, and
 [source comparisons](oracle-p2p.md) for exact scope and evidence.
+
+
+## Capture a replay endpoint
+
+With replay recording enabled, call `peer.recover(now_us)` until the live boundary
+is corrected and finalized, then call `peer.capture_replay_boundary()`. This returns
+`FortressDriver.StepResult` and requests one bounded game SAVE. It does not poll the
+network, change its clock, submit a sample, or advance a frame. Read `peer.replay()`
+after `OK` for an owned FRRP v6 recording with a checksum at its exact final boundary.
+
+`PREDICTION_STALL` requires more confirmation, correction, or drop agreement first.
+`HISTORY_UNAVAILABLE` means the recording cap is behind the live state; capture at
+the cap before advancing past it. Disabled recording or checksums return `UNSUPPORTED`.
+Callbacks and completion handlers retain their ordinary mutation guards, and failed
+SAVE results retain the first callback kind, failure frame, and terminal reason.
+Capture must run before teardown. Ordinary exports retain v5 coverage unless a
+successful explicit capture already supplied terminal evidence for that prefix.

@@ -146,8 +146,7 @@ class ObservedLobby:
 			}
 		var playing: bool = state == "playing"
 		var status: Variant = game_match.peer.status()
-		scheduling.record_turn(now_us, game_match.peer.network_status().last_now_us,
-			status.current_frame, status.confirmed_frame, playing)
+		scheduling.record_turn(now_us, game_match.peer.network_status().last_now_us, status.current_frame, status.confirmed_frame, playing)
 
 
 class ObservedGame:
@@ -243,6 +242,8 @@ func _process(_delta: float) -> void:
 		"start_enabled": not scene.start_button.disabled,
 		"command_id": command_id,
 		"replay_enabled": not scene.replay_button.disabled,
+		"replay_captured": lobby.game_match.replay_captured,
+		"replay_capture_code": lobby.game_match.replay_capture_code,
 		"replay_playback": replay_playback,
 		"viewer": viewer_report(),
 		"diagnostic_viewer": diagnostic_viewer_report(),
@@ -295,6 +296,9 @@ func _command(value: Dictionary) -> void:
 		"replay":
 			if not scene.replay_button.disabled:
 				scene.replay_button.pressed.emit()
+		"finish_replay":
+			if not scene.finish_replay_button.disabled:
+				scene.finish_replay_button.pressed.emit()
 		"watch_replay":
 			viewer_scene = load("res://examples/online/replay.tscn").instantiate()
 			scene.hide()
@@ -413,5 +417,4 @@ func failure_clocks(lobby: Lobby) -> Array[Dictionary]:
 func diagnostic_viewer_report() -> Dictionary:
 	if diagnostic_scene == null:
 		return {}
-	return {"status": diagnostic_scene.viewer.status(), "state": diagnostic_scene.viewer.game.canonical_bytes().hex_encode(),
-		"message": diagnostic_scene.viewer.message}
+	return {"status": diagnostic_scene.viewer.status(), "state": diagnostic_scene.viewer.game.canonical_bytes().hex_encode(), "message": diagnostic_scene.viewer.message}
