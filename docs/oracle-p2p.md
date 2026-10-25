@@ -285,3 +285,48 @@ engine probe.
 This gate proves the scoped fake-transport gameplay path. It does not establish
 WebRTC delivery, browser deployment, cross-platform release parity, spectator
 sessions, replay format, hot join or broad release timing/fault coverage.
+
+
+## Scoped coordinated-drop history comparison
+
+Run the actual pinned source and production Godot witness with:
+
+```sh
+python3 scripts/oracle/drop_history_launch.py --godot godot
+```
+
+Both pinned engines run this gate in the existing oracle CI leg. The launcher
+executes each implementation twice in fresh processes and records the pinned
+archive, complete upstream source inventory, local sources and project settings,
+resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
+until the receipt commits.
+
+Three peers first play six frames with changing four-byte samples. The departing
+peer then submits frames six through eight. One real recipient link withholds
+frame eight from survivor zero; survivor one retains it. Both survivors expose
+confirmation four while their actual target receipts differ at seven/eight.
+The source explicitly removes the target. Godot detects its elapsed timeout.
+Each implementation must transfer the original missing row from donor one to
+coordinator zero, commit cut eight, and continue to frame twenty-two.
+
+The source trace records actual DropBackfill emission and socket receipt. The
+Godot trace records successful encoded history-packet receipt; an independent
+parser checks its identity, range and original payload. Both survivors export
+twenty finalized input-byte rows. Their corrected canonical game states, original
+input bytes and actual ADVANCE callback statuses must match an independent
+Python reconstruction. Godot finalized-export statuses are checked separately;
+NONE, PREDICTED or unknown numeric values cannot be normalized into CONFIRMED. Trace mutations remove donor emission/receipt or corrupt
+the cut, original input, state, status and encoded packet; each must fail its
+specific validation gate. Three additional process controls perturb an owned Godot
+export to NONE/PREDICTED/unknown status 42 at the observation boundary and require the exact status
+refusal, without changing game state or application callback records.
+
+This establishes one missing-history donor scenario. The two implementations
+use distinct wire formats and different departure triggers. Their retained
+history floors also differ before the drop. This gate does not establish wire
+interoperability, complete barrier participant/sequence/journal parity, all
+asymmetric exposed-frontier cases, multiple targets, physical donor eviction,
+lost/reordered control acceptance, or live browser donor recovery. Those remain
+under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
+[#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
+and [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).

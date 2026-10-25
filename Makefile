@@ -1,4 +1,4 @@
-.PHONY: replay-probes p2p-probes handshake-probes spectator-model queue-probes oracle-probes test-oracle
+.PHONY: replay-probes p2p-probes drop-history-probes handshake-probes spectator-model queue-probes oracle-probes test-oracle
 .PHONY: hot-path-probes representation-probes lint-source hooks lint-llm test-llm
 .PHONY: test-reference reference-baseline llm-index llm-index-prune pre-commit
 .PHONY: godot-check test-godot test-focus test-changed prune prune-apply disk scratch
@@ -62,6 +62,10 @@ queue-probes:
 ## Actual pinned upstream P2P gameplay over injected packet faults
 p2p-probes:
 	$(PY) scripts/oracle/p2p_launch.py --godot $(GODOT)
+
+## Actual pinned upstream and Godot original-history donor recovery
+drop-history-probes:
+	$(PY) scripts/oracle/drop_history_launch.py --godot $(GODOT)
 
 ## Actual pinned upstream P2P handshake and production Godot byte endpoint
 handshake-probes:

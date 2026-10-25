@@ -61,7 +61,7 @@ Compare copied peer-ID algorithms against the actual SDK implementation. Validat
 every SDK path that can change mesh authority before SDK consumption, including
 additive peer directives after partial connection initialization failure. Plan
 validation alone cannot fence those callbacks. Never synthesize public plan notifications
-to replay setup. Fence membership and transport-lifetime changes explicitly.
+to replay setup. Fence local lifetimes and selected remote participant departures; unrelated roster events remain inert.
 A public binary signal without server epoch metadata cannot prove incarnation
 attribution; retain that limit instead of treating reconnect tokens as epochs.
 
@@ -160,12 +160,12 @@ reconfigured sessions by checking ownership identity before termination.
 
 ## Replay Format
 
-Confirmed gameplay replays and diagnostic network/scenario traces are separate
-formats. X1 owns the gameplay replay format; there is no released `FRG1` format.
-The [development oracle](../../../docs/oracle.md) defines its scoped sync-test
-scenario/trace version. It does not define protocol packets or gameplay replay.
-Preserve revisions, wide values and exact ordering; reject unsupported versions.
-Never change a released format silently.
+Gameplay replays and diagnostic network traces have separate formats. X1 owns
+gameplay replay; there is no released `FRG1` format. The
+[development oracle](../../../docs/oracle.md) owns only its scoped sync-test traces.
+Preserve revisions, wide values and ordering; version released format changes.
+Validate mutable recording structure before ownership, including metadata and storage bounds.
+Keep safe missing-digest and content comparisons at their owning playback boundary.
 
 ## Desync Detection
 

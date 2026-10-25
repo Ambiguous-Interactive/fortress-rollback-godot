@@ -9,6 +9,7 @@ to submitted artifacts. Python equality treats booleans, integral floats and
 integers as equal; it is not schema validation. Standalone executables also need
 their own complete schema and nonempty-work boundary.
 Preserve decoded wire fields instead of substituting scenario expectations.
+Preserve request and export statuses separately; unknown or predicted status must not normalize to confirmed.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Test omitted and explicit-null optional
