@@ -23,6 +23,12 @@ verification, final CI and delivery remain pending at this review. Their final
 results belong in the session log and linked issue updates; focused evidence
 does not establish release parity.
 
+The broader ownership witness then found two unchanged local-model expectations
+that still treated closed-input duplicates as terminal. The model now checks
+idempotence and unchanged prefix/playback boundaries, plus a separate refusal
+of new history. All four model cases pass on both pins; the full witness is
+being rerun. This reinforces the existing full-suite and source-freeze gates.
+
 ## Prune ledger
 
 Searched existing networking and oracle guidance before adding lessons.
