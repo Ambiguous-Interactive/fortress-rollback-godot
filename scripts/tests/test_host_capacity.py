@@ -166,10 +166,10 @@ class HostCapacityTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             host_capacity.worker_count(0)
 
-    def test_the_lock_lives_in_the_machine_local_cache(self):
+    def test_the_lock_lives_outside_checkouts(self):
         default = self.previous[0]
-        self.assertEqual(default.parent.name, ".cache")
-        self.assertTrue(default.is_relative_to(SCRIPTS.parent / ".cache"))
+        self.assertTrue(default.is_absolute())
+        self.assertFalse(default.is_relative_to(SCRIPTS.parent))
 
 
 class HostSensitiveLauncherTest(unittest.TestCase):

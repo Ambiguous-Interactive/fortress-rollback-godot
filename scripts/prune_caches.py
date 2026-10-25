@@ -32,6 +32,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import host_capacity
+
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / '.cache'
 
@@ -212,7 +214,7 @@ def protection_set(cited: set[Path]) -> set[Path]:
 
 def is_protected(candidate: Path, protected: set[Path]) -> bool:
     """True when a citation names the candidate or something inside it."""
-    return candidate in protected
+    return candidate in protected or host_capacity.protects_path(candidate)
 
 
 def age_days(path: Path) -> float:
@@ -374,7 +376,7 @@ def plan_scratch(root: Path, ttl_hours: float) -> list[Plan]:
     if not root.is_dir():
         return plans
     for name in sorted(os.listdir(root)):
-        if any(fnmatch.fnmatch(name, pattern) for pattern in SCRATCH_NEVER_TOUCH):
+        if host_capacity.protects_path(root / name) or any(fnmatch.fnmatch(name, pattern) for pattern in SCRATCH_NEVER_TOUCH):
             continue
         path = root / name
         try:
@@ -413,6 +415,9 @@ def apply_plans(plans: list[Plan]) -> int:
     """Delete every planned path, deepest first; report what stayed."""
     skipped = 0
     for plan in sorted(plans, key=lambda item: len(item.path.parts), reverse=True):
+        if host_capacity.protects_path(plan.path):
+            skipped += 1
+            continue
         try:
             if plan.path.is_dir() and not plan.path.is_symlink():
                 shutil.rmtree(plan.path)
