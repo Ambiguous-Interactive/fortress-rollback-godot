@@ -51,7 +51,7 @@ EXPECTED.update({
 })
 EXPECTED.update({
     'res://tests/unit/test_diagnostic_trace.gd': {'owned_window', 'disabled_equality', 'bounds', 'failed_callback', 'local_divergence',
-        'rollback_window'},
+        'rollback_window', 'driver_export'},
     'res://tests/unit/test_peer_diagnostic_trace.gd': {'real_divergence', 'healthy_equality'},
     'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay', 'callback_arguments'},
     'res://tests/unit/test_diagnostic_player.gd': {'captured_window', 'canonical_mismatch', 'malformed', 'callbacks', 'bounds'},
@@ -73,7 +73,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
-        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle'},
+        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
@@ -127,7 +127,7 @@ EXPECTED['res://tests/unit/test_replay_viewer.gd'].add('full_length_recording')
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
-    'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery', 'heartbeat_fairness'}
+    'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery', 'heartbeat_fairness', 'clean_tail_retries'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',

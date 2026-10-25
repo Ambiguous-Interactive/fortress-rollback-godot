@@ -274,7 +274,13 @@ The next connection creates a fresh application match and resets its diagnostics
 Set `Config.diagnostic_trace_frames` before `configure` to retain a local canonical
 window (1–128 frame boundaries; default zero). The peer report then includes
 `trace` with schema `fortress-canonical-trace-v1`. The expert session exposes the
-same window through `diagnostic_trace()`. Disabled sessions retain no trace
+same window through `diagnostic_trace()`. Driver-only clients use
+`driver.diagnostic_trace()` without retaining the expert session. Both return
+owned local evidence, including after callback failure and inside `step_completed`.
+An unconfigured driver or disabled capture returns `{}`; replacing the session
+exports only the new session's evidence. Save an export before replacement to keep it.
+Callers decide whether to save or share these canonical payloads.
+Disabled sessions retain no trace
 payloads and preserve the default diagnostic report shape and game callbacks.
 
 Each sorted frame contains hex-encoded canonical `SAVE` bytes and its checksum,

@@ -54,12 +54,14 @@ updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
 Python generates original inputs and independently computes every canonical
 state boundary. Rust consumes the original rows; Godot decodes independently
-packed version-5 FRRP files. Actual save/advance callbacks, player statuses,
+packed version-4 and version-5 FRRP files. The observed decoded version must
+match each workload; substituting current files cannot qualify legacy playback.
+Actual save/advance callbacks, player statuses,
 events, completion and failure frames must match their full expected traces.
 Comparisons validate exact fields and numeric types before comparing values.
 Both engines run in two fresh processes with identical results. Every scenario
 runs through callback playback and separately through `configure_expert`,
-`begin_advance`, batch consumption and `complete_request`: 86 Godot observations
+`begin_advance`, batch consumption and `complete_request`: 172 Godot observations
 against 43 pinned Rust scenarios. The corpus uses confirmed player statuses;
 Godot's finalized disconnected-status playback has separate deterministic
 coverage in `tests/unit/test_replay_drop.gd`. This comparison does not establish
@@ -71,7 +73,8 @@ is a Godot format extension, not a missing status field that this corpus can
 supply to the unchanged upstream replay API.
 
 Every frame of the version-5 file carries the digest of its input bytes and
-player statuses. Those digests are a Godot-side integrity extension: the pinned upstream session owns the
+player statuses. Version 4 retains its byte-only digest and defaults every
+player status to `CONFIRMED`. Those digests are a Godot-side integrity extension: the pinned upstream session owns the
 input history and stores no such digest, so the corpus compares only the
 upstream-owned behaviour and never claims parity for the digests.
 
@@ -85,7 +88,10 @@ unchanged in the expert-only controls. Separate controls also move the callback
 or expert interior failure frame from 32 to 33. The mismatch scenarios corrupt
 actual encoded checksum bytes and require Godot to stop before simulation.
 Separate process controls reject oversized Rust/Godot bundle files and empty
-or excessive Rust case inventories.
+or excessive Rust case inventories. Legacy controls substitute each interface's
+decoded format, change a callback input status and omit an expert save request.
+A real process control replaces the v4 bytes with valid v5 bytes and
+requires rejection at the format identity boundary.
 
 Receipts bind authored sources, verified engine archive bytes, oracle binary,
 scenario files and the pinned source/lockfile identities. Source and tool hashes

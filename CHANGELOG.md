@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `FortressDriver.diagnostic_trace()` to export owned opt-in canonical evidence after callback failures without retaining the expert session.
+
 - Add failed callback kinds to driver and peer step/recovery results, preserving the first failure through later calls.
 
 - Add retained replay checkpoint listings and Previous/Next checkpoint viewer controls for paused inspection.
@@ -164,6 +166,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix late spectator retries interrupting a clean buffered final tail. Identical retained rows and control packets remain idempotent until playback ends.
 
 - Fix repeated spectator keepalives starving queued confirmed rows when receive work is limited to one packet per poll.
 

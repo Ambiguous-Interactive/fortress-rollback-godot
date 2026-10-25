@@ -139,6 +139,12 @@ func statistics() -> Types.Statistics:
 	return _session.statistics() if _session != null else Types.Statistics.new()
 
 
+## Owned opt-in canonical evidence, including after failure. Empty before configuration or while capture is disabled.
+## Payloads remain local; callers decide whether to save or share them.
+func diagnostic_trace() -> Dictionary:
+	return _session.diagnostic_trace() if _session != null else {}
+
+
 ## Owned local sample retained through a stalled step; MISSING_LOCAL_INPUT when a new sample is needed.
 ## The result frame includes the local input delay, matching the expert session's scheduled frame.
 func scheduled_local_input(player: int) -> Types.InputResult:

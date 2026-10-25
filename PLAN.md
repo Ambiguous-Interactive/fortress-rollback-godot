@@ -383,13 +383,14 @@ known-allocation positive control; flat memory alone is insufficient.
 ## Advanced parity boundaries
 
 Driver and peer step/recovery results expose the first failed callback kind alongside terminal reason and frame.
+Driver-only clients can export owned opt-in canonical traces, including after callback failure, without retaining the expert session.
 Encoded P2P acceptance compares the driver with a manual ordered-request consumer under delayed,
 lost and duplicated traffic, including multiple local slots and queue reuse. Independent original
 input history remains the state oracle; this local comparison does not qualify browser transport.
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
-and an interior mismatch after unchecked frames through both playback interfaces. The pinned upstream
+and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4 and 5. The pinned upstream
 replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
 Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
@@ -436,6 +437,7 @@ Driver-only clients can cancel through the same terminal lifecycle, including in
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
 or forward frame. The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
+Authenticated retries remain idempotent through that buffered tail; input closure alone does not terminate playback.
 The host publisher retains one exact refused packet, advances only on transport acceptance,
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.

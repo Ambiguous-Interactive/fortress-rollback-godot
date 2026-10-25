@@ -171,6 +171,7 @@ func encode_accept() -> PackedByteArray:
 
 ## No receive queue is retained. Backpressure/BUSY leave this packet caller-owned for retry.
 ## Foreign identity, foreign configuration and forged packets are inert. Conflicting accepted history is terminal.
+## Closing input preserves idempotent controls and retained rows until buffered playback actually terminates.
 func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	if _session == null:
 		return Code.NOT_CONFIGURED
@@ -214,8 +215,6 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	var code: int = poll(now_us)
 	if code != Code.OK:
 		return code
-	if _is_finished:
-		return Code.TERMINATED
 	if version != _negotiation.version():
 		return _refuse(Code.UNSUPPORTED)
 	code = _session._mutation_code()
@@ -271,8 +270,6 @@ func _receive_offer(packet: PackedByteArray, now_us: int) -> int:
 	var code: int = poll(now_us)
 	if code != Code.OK:
 		return code
-	if _is_finished:
-		return Code.TERMINATED
 	if _negotiation.agreed():
 		# A retried offer repeats the same agreement and refreshes the host liveness.
 		if packet != _offer:

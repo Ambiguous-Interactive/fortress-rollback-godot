@@ -11,7 +11,7 @@ const Fixture = preload("res://tests/unit/test_driver.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["owned_window", "disabled_equality", "bounds", "failed_callback", "local_divergence", "rollback_window"])
+	return PackedStringArray(["owned_window", "disabled_equality", "bounds", "failed_callback", "local_divergence", "rollback_window", "driver_export"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -20,7 +20,9 @@ func run_case(name: String, context: RefCounted) -> void:
 	if not session.has_method("diagnostic_trace"):
 		context.finish()
 		return
-	if name == "bounds":
+	if name == "driver_export":
+		_driver_export(context)
+	elif name == "bounds":
 		_bounds(context)
 	elif name == "rollback_window":
 		_rollback_window(context)
@@ -172,3 +174,50 @@ func _bounds(context: RefCounted) -> void:
 	context.equal(config.validate(), Types.Code.OK, "exact budget accepted")
 	config.set("diagnostic_replay_command", "x".repeat(513))
 	context.equal(config.validate(), Types.Code.INVALID_CONFIGURATION, "metadata bounded before capture")
+
+
+# Value: protects=driver-only owned failure evidence; fails_when=export needs expert ownership; why_new=trace tests retain sessions; seam=none
+func _driver_export(context: RefCounted) -> void:
+	var empty: RefCounted = Driver.new()
+	context.equal(empty.has_method("diagnostic_trace"), true, "driver exposes canonical failure evidence")
+	if not empty.has_method("diagnostic_trace"):
+		return
+	context.equal(empty.call("diagnostic_trace"), {}, "unconfigured driver has no canonical evidence")
+	var fixture: RefCounted = Fixture.new()
+	for enabled: bool in [false, true]:
+		var session: Session = Session.new()
+		context.equal(session.configure(_config(enabled)), Types.Code.OK, "configure diagnostic policy")
+		var game: RefCounted = Fixture.Game.new()
+		var driver: RefCounted = Driver.new(session, game)
+		var notices: Array[Dictionary] = []
+		var owner: WeakRef = weakref(driver)
+		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
+			notices.append(owner.get_ref().diagnostic_trace())
+		)
+		for frame: int in range(4):
+			context.equal(driver.step(frame, fixture._samples(frame)).code, Types.Code.OK, "complete steps before failure")
+		var retained: Dictionary = driver.call("diagnostic_trace")
+		context.equal(retained, session.diagnostic_trace(), "facade matches expert evidence")
+		if enabled:
+			context.equal(retained.frames.size(), 3, "driver preserves bounded window")
+			context.equal(retained.frames[-1].frame, 3, "driver records completed inputs")
+			context.equal(retained.frames[-1].inputs.size(), 2, "evidence includes canonical per-player inputs")
+			var edited: Dictionary = driver.call("diagnostic_trace")
+			edited.frames[0].state = "mutated"
+			edited.frames[0].inputs[0].bytes = "mutated"
+			edited.first_divergence.source = "mutated"
+			context.equal(driver.call("diagnostic_trace"), retained, "nested export mutation cannot change retained evidence")
+		else:
+			context.equal(retained, {}, "disabled capture exports no payloads")
+		game.fail_kind = Types.Kind.ADVANCE
+		context.equal(driver.step(4, fixture._samples(4)).code, Types.Code.CALLBACK_FAILED, "actual callback failure stops driver")
+		var failed: Dictionary = driver.call("diagnostic_trace")
+		context.equal(failed, session.diagnostic_trace(), "terminal evidence matches expert export")
+		context.equal(notices[-1], failed, "completion handler sees final failure evidence")
+		context.equal(notices[3], retained, "earlier owned evidence survives rollback and failure")
+		if enabled:
+			context.equal(failed.frames[-1].frame, 2, "failed rollback stops at its actual boundary")
+			context.equal(failed.frames[-1].inputs.is_empty(), true, "failed callback never claims applied inputs")
+		context.equal(driver.configure(fixture._session(), Fixture.Game.new()), Types.Code.OK, "replace stopped session")
+		context.equal(driver.call("diagnostic_trace"), {}, "replacement clears the previous session evidence")
+		context.equal(notices[-1], failed, "retained failure evidence survives replacement")

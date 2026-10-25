@@ -282,6 +282,10 @@ that exact deadline and terminates with `PROTOCOL_FAILED`. Calls during an activ
 batch return `BUSY` without changing clocks. Rejected packets do not refresh host
 liveness. A valid keepalive obeys the same strict deadline, monotonic clock, and BUSY rules. A clean END may overtake rows: remaining rows below its exclusive bound
 are accepted until the contiguous prefix is complete, then playback drains cleanly.
+While that final tail remains playable, identical retained rows, the same END,
+keepalives and identical startup offers remain idempotent. They cannot reopen input.
+Authenticated contradictions still terminate the viewer; forged packets stay inert.
+Actual playback termination rejects later delivery with `TERMINATED`.
 A missing tail expires when the host stops delivering accepted packets. Keepalives
 prove host liveness; they do not repair missing history. The caller must terminate
 a known unrecoverable gap. The caller owns transport closure.
