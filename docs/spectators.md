@@ -299,6 +299,9 @@ rosters and player confirmation remain unchanged.
 Startup offers and their retries obey the same monotonic clock, strict host deadline,
 active-request guard and terminal lifetime as row delivery. An offer arriving at the
 deadline expires the viewer before agreement; a retry cannot reopen a clean end.
+`encode_accept()` returns empty bytes after viewer termination or during an active
+request or callback. Retry after the active operation completes; a failed viewer needs
+a fresh stream. A delayed control handoff must not start publication for a stopped viewer.
 
 The host offers the envelope version and the optional kinds it can publish with
 one `OFFER` packet (kind 4). The viewer answers with one `ACCEPT` packet (kind 5).

@@ -180,6 +180,10 @@ exercise a game that differs only on the last input and a matching control.
 
 Paused replay validation must check the selected input digest before publishing snapshot or
 checksum coverage, including input-only playback and boundaries without state checksums.
+Revisited retained checkpoints compare canonical bytes and callback checksums before consuming input,
+even when the recording has no state checksums. Apply comparison to both paused validation and
+advancement through callback and expert APIs; test changed bytes with an unchanged callback checksum.
+Cached comparisons do not increase recorded-checksum coverage, and evicted boundaries provide no cached evidence.
 
 ## Code Samples
 

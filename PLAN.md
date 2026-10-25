@@ -405,6 +405,7 @@ Pausing or stepping a replay validates the displayed boundary and its selected i
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
 Viewer checkpoint controls use the owned inventory of retained validated boundaries and cannot bypass playback failure.
+Repeated playback compares canonical bytes and checksums against retained boundaries even without recorded state checksums.
 Replay checkpoint acceleration is bounded and optional; repeated navigation reuses validated
 in-memory snapshots without changing the portable file format. Viewer completion distinguishes a verified final state from historical files without terminal checksums.
 Viewer speed controls change
@@ -458,11 +459,12 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
-Production spectator ring and playback traces expose a pinned TLA+ startup backlog gap in
-[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203). The gate preserves
-the actual pre-playback counterexample. Separate post-start traces check two slots, binary inputs,
-capacities two/three, ring reuse and one-step catch-up without viewing delay against the model.
-Synthetic bootstrap is labeled separately; full startup/source-model acceptance remains in #47 and #203.
+Actual pinned Rust and Godot spectator traces compare startup prefill, capacities two/three,
+catch-up speeds one/two and exact input transcripts through ring reuse. The scoped startup relation in
+[#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) is complete.
+An anchored runtime-aligned model checks every observed state while preserving the original pinned
+startup counterexample and explicit synthetic synchronization setup. Broader delay, event/status,
+arbitrary-delivery and live acceptance remain in #47 and #131.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
 version 3 delivery, playback requests and confirmed exports. Byte-only callers default to
 all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.
@@ -474,6 +476,7 @@ Unrelated participant roster events preserve ongoing streams, and setup callback
 The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
 Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
 Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
+Caller-owned startup acceptance refuses terminated or actively serviced viewers; an idle retry preserves the agreed bytes.
 Keepalive priority yields to queued row work so repeated host heartbeats cannot starve confirmed playback under a one-packet receive budget.
 Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
 differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
@@ -497,6 +500,7 @@ proposer stops retries after every live survivor acknowledges. Every phase is
 fenced by the complete locally derived operation identity and sender role.
 Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure.
 Historical donor plans apply the same per-survivor acceptance clocks, leaving healthy output capacity available for retained history chunks.
+Bounded donor chunk service rotates across survivors so refused links cannot starve later healthy links.
 A survivor lost before commit aborts the local attempt with `participant_lost`
 and ends the match; committed decisions remain irreversible. A certificate
 that names another value ends the match with a recorded reason

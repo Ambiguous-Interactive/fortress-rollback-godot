@@ -16,10 +16,12 @@ class ReentrantGame:
 	extends GameFixture.Game
 	var stream_ref: WeakRef
 	var stream_codes: PackedInt32Array = PackedInt32Array()
+	var accept_size: int = -1
 
 	func _reenter() -> void:
 		super._reenter()
 		var stream: RefCounted = stream_ref.get_ref()
+		accept_size = stream.encode_accept().size()
 		stream_codes.append(stream.poll(1000))
 		stream_codes.append(stream.receive_packet(stream.encode_end(1), 1000))
 		stream_codes.append(stream.receive_packet(stream.encode_keepalive(), 1000))
@@ -503,6 +505,7 @@ func _busy(context: RefCounted) -> void:
 	game.stream_ref = weakref(callbacks)
 	context.equal(Driver.new(callbacks.playback_session(), game).step(1, _empty()).code, CODE.OK, "guarded callback completes")
 	context.equal(game.stream_codes, PackedInt32Array([CODE.BUSY, CODE.BUSY, CODE.BUSY, CODE.BUSY, CODE.BUSY]), "every stream mutation refuses callback reentry")
+	context.equal(game.accept_size, 0, "game callback cannot issue startup acceptance")
 	context.equal(callbacks.poll(2), CODE.OK, "callback reentry consumes no clock")
 
 
@@ -648,6 +651,7 @@ func _wide_shapes(context: RefCounted) -> void:
 # Value: protects=startup obeys elapsed expiry and callback ownership; fails_when=offers bypass poll;
 # why_new=existing timeout and busy cases deliver rows or keepalives; seam=none
 func _offer_lifecycle(context: RefCounted) -> void:
+	_accept_lifecycle(context)
 	var offer: PackedByteArray = _publisher(context).encode_offer()
 	for agreed: bool in [false, true]:
 		for arrival: int in [99, 100, 101]:
@@ -686,6 +690,45 @@ func _offer_lifecycle(context: RefCounted) -> void:
 	var replaced: RefCounted = _stream(context)
 	context.equal(replaced.playback_session().configure(Fixture.new()._config()), CODE.OK, "replace exposed viewer")
 	context.equal(replaced.encode_accept().is_empty(), true, "old agreement cannot answer for replacement viewer")
+
+
+# Value: protects=only a live idle viewer authenticates startup acceptance; fails_when=delayed control starts host publication after viewer failure;
+# why_new=offer lifecycle checks ingress but not the outgoing answer; seam=none
+func _accept_lifecycle(context: RefCounted) -> void:
+	for cause: String in ["live", "timeout", "failure", "complete", "busy"]:
+		var stream: RefCounted = Stream.new()
+		context.equal(stream.configure(Fixture.new()._config(), _identity(), _key(), _digest(), 0, 100, 128), CODE.OK, "fresh awaiting-answer viewer")
+		var publisher: RefCounted = _publisher(context)
+		context.equal(stream.receive_packet(publisher.encode_offer(), 0), CODE.OK, "offer accepted before control handoff")
+		var original: PackedByteArray = stream.encode_accept()
+		context.equal(original.is_empty(), false, "live viewer can answer startup")
+		context.equal(publisher.agreement_state(), Negotiation.AgreementState.PENDING, "host still waits for actual answer")
+		var viewer: RefCounted = stream.playback_session()
+		var request: Types.Request
+		match cause:
+			"timeout":
+				context.equal(stream.poll(100), CODE.PROTOCOL_FAILED, "viewer expires while answer waits")
+			"failure":
+				viewer.terminate(CODE.CALLBACK_FAILED)
+			"complete":
+				context.equal(stream.receive_packet(stream.encode_end(0), 0), CODE.OK, "close empty stream")
+				context.equal(viewer.begin_advance().code, CODE.TERMINATED, "playback completes before answer retry")
+			"busy":
+				context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 0), CODE.OK, "retain first host row")
+				var advance: Types.Result = viewer.begin_advance()
+				context.equal(advance.code, CODE.READY, "active viewer request fences control")
+				request = advance.batch.next_request()
+		var answer: PackedByteArray = stream.encode_accept()
+		context.equal(answer.is_empty(), cause != "live", "answer respects viewer lifecycle: " + cause)
+		context.equal(publisher.receive_accept(answer), CODE.OK if cause == "live" else CODE.PROTOCOL_FAILED, "dead or busy viewer cannot start host publication")
+		context.equal(publisher.agreement_state(), Negotiation.AgreementState.AGREED if cause == "live" else Negotiation.AgreementState.PENDING, "only live answer starts host")
+		if cause == "busy":
+			context.equal(viewer.complete_request(request.batch_id, request.request_id, true).code, CODE.OK, "complete viewer request")
+			context.equal(stream.encode_accept(), original, "retry after request completion preserves exact acceptance")
+			context.equal(publisher.receive_accept(stream.encode_accept()), CODE.OK, "control can retry after busy request")
+		elif cause != "live":
+			var reason: int = CODE.TERMINATED if cause == "complete" else (CODE.CALLBACK_FAILED if cause == "failure" else CODE.PROTOCOL_FAILED)
+			context.equal(viewer.status().reason, reason, "encoding preserves first terminal cause")
 
 
 # Value: protects=clean tail survives late retries; fails_when=input closure reports playback termination;

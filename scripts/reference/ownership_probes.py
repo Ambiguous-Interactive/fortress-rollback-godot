@@ -104,7 +104,7 @@ EXPECTED['res://tests/unit/test_replay_terminal.gd'] = {
     'capture_final_boundary', 'terminal_validation', 'expert_terminal', 'capture_refusals', 'terminal_golden', 'capture_lifetime', 'recording_cap'}
 EXPECTED['res://tests/unit/test_replay_terminal_recovery.gd'] = {'corrected_terminal', 'retained_drop_terminal', 'certified_drop_terminal'}
 EXPECTED['res://tests/unit/test_replay_validation.gd'] = {'paused_parity', 'paused_integrity', 'paused_lifetime'}
-EXPECTED['res://tests/unit/test_replay_expert_navigation.gd'] = {'navigation_parity', 'restore_integrity', 'restore_lifetime'}
+EXPECTED['res://tests/unit/test_replay_expert_navigation.gd'] = {'navigation_parity', 'restore_integrity', 'restore_lifetime', 'checkpoint_revalidation'}
 EXPECTED['res://tests/unit/test_peer_drop_inventory.gd'] = {
     'independent_inventory_golden', 'startup_feature', 'legacy_startup_refused', 'retained_only_startup_refused', 'control_packet_budget',
     'unknown_version', 'empty_inventory', 'wrong_cardinality', 'wrong_target', 'unbounded_interval', 'changed_certificate', 'candidate_below_receipts',
@@ -125,6 +125,7 @@ EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
     'refused_commit_retries_after_drain', 'partial_prepare_retries_only_refused_link'}
 EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_history', 'retained_history_control', 'journal_after_ring_wrap'}
 EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'complete_history_plan_control'}
+EXPECTED['res://tests/unit/test_peer_drop_donor_fairness.gd'] = {'healthy_donor_destination', 'unpressured_donor_control'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal'})
@@ -195,7 +196,7 @@ FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_h
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd', 'tests/unit/test_peer_drop_multi_slot.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
-FILES += ['tests/unit/test_peer_drop_history_pressure.gd']
+FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
@@ -267,6 +268,7 @@ const DropCapacity = preload("res://tests/unit/test_peer_drop_capacity.gd")
 const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pressure.gd")
+const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairness.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -281,7 +283,7 @@ func _ready() -> void:
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
-		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
+		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

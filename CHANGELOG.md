@@ -185,6 +185,12 @@
 
 ### Fixed
 
+- Fix retained-history publication starving healthy survivors when several other links refuse donor chunks during coordinated peer drop.
+
+- Fix replay navigation accepting changed state at retained checkpoints. Repeated playback now checks canonical bytes even without recorded state checksums.
+
+- Fix spectator startup acceptance after viewer termination or during active game requests. Retry acceptance after the viewer becomes idle.
+
 - Fix malformed replay objects replacing active playback or reaching unchecked storage reads.
 
 - Fix spectators continuing buffered playback after their selected host leaves or reconnects. Stop publication when the admitted viewer disconnects; unrelated roster changes preserve ongoing streams.

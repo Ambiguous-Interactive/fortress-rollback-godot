@@ -245,11 +245,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			code = _read_checkpoint(checkpoint, _writer, checksum, _restoring.frame if _restoring != null else _frame)
 			if code == Types.Code.OK:
 				if _restoring != null:
-					if checkpoint.checksum != _restoring.checksum:
-						code = _checksum_mismatch(_restoring.checksum, checkpoint.checksum, "checkpoint_checksum")
-					elif checkpoint.bytes != _restoring.bytes:
-						_failure_comparison = "checkpoint_bytes"
-						code = Types.Code.DESYNC
+					code = _compare_checkpoint(_restoring, checkpoint)
 				else:
 					code = _accept_checkpoint(checkpoint)
 		elif _active_kind == Types.Kind.LOAD and not _reader.is_complete():
@@ -484,10 +480,24 @@ func _validate_frame() -> int:
 	return Types.Code.OK
 
 
+func _compare_checkpoint(retained: Checkpoint, actual: Checkpoint) -> int:
+	if actual.checksum != retained.checksum:
+		return _checksum_mismatch(retained.checksum, actual.checksum, "checkpoint_checksum")
+	if actual.bytes != retained.bytes:
+		_failure_comparison = "checkpoint_bytes"
+		return Types.Code.DESYNC
+	return Types.Code.OK
+
+
 func _accept_checkpoint(checkpoint: Checkpoint) -> int:
 	var expected: PackedByteArray = _replay.checksum(_frame)
 	if not expected.is_empty() and checkpoint.checksum != expected:
 		return _checksum_mismatch(expected, checkpoint.checksum)
+	for retained: Checkpoint in _checkpoints:
+		if retained.frame == checkpoint.frame:
+			var code: int = _compare_checkpoint(retained, checkpoint)
+			if code != Types.Code.OK:
+				return code
 	if not expected.is_empty() and _frame > _validated_through_frame:
 		_checked_checksum_count += 1
 	if _is_cache_boundary():
