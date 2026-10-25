@@ -446,7 +446,9 @@ host liveness. Further keepalives join the bounded scan until an ordinary packet
 succeeds; continuous heartbeats cannot keep an eligible original row waiting forever.
 Capacity overflow ends playback explicitly and releases retained packets.
 Connection loss, room replacement, identity changes and stream replacement retire
-that delivery lifetime. Retained callbacks from a detached bridge cannot deliver
+that delivery lifetime. The selected host's `player_left` or `player_reconnected`
+notification immediately stops buffered playback and expires active request views.
+Another player's departure or reconnection leaves the viewer running. Retained callbacks from a detached bridge cannot deliver
 into a later configuration. Call `poll(now_us)` even while playback is paused;
 `detach()` also terminates the owned viewer. SDK getters may report a lifetime change
 synchronously. Old polls and packets stop before touching replacement playback;
@@ -541,6 +543,9 @@ and detach stop publication. Setup observes lifetime signals before protocol con
 or SDK getters, and releases temporary listeners on every exit. A signal during a
 getter permanently rejects that publication with `WRONG_STATE`, even when room and
 player values stay unchanged. Polling, acceptance and finalization cannot revive it.
+The admitted viewer's `spectator_disconnected` notification also stops publication;
+another viewer's departure leaves it running. Setup observes these selected-participant
+notifications too, and retained old callbacks cannot stop a replacement lifetime.
 Detach and explicitly configure a fresh publication to recover. Rejected setup and
 `detach()` leave player gameplay running.
 

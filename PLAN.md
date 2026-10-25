@@ -388,11 +388,16 @@ known-allocation positive control; flat memory alone is insufficient.
 
 Driver and peer step/recovery results expose the first failed callback kind alongside terminal reason and frame.
 Driver-only clients can export owned opt-in canonical traces, including after callback failure, without retaining the expert session.
-Encoded P2P acceptance compares the driver with a manual ordered-request consumer under delayed,
+Fixed-membership peers expose callback-free ordered request batches for advancement, recovery and final replay capture.
+Callback and manual peers share input publication and completion controls; pending batches fence transport mutation and expire on explicit cancellation.
+Encoded P2P acceptance compares both public interfaces under delayed,
 lost and duplicated traffic, including multiple local slots and queue reuse. Independent original
 input history remains the state oracle; this local comparison does not qualify browser transport.
+Peer callback and completion guards protect the shared engine across facades; terminal handler cancellation preserves its first cause and closes peer links.
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
+Replay configuration validates mutable recording structure before ownership. Invalid replacements preserve existing playback and validation coverage;
+safe missing-digest and content comparisons remain at their owning playback boundary.
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
 and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4 and 5. The pinned upstream
 replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
@@ -464,6 +469,8 @@ all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 The receive-only SignalFish spectator adapter bounds authenticated host ingress, SDK lifetimes and elapsed expiry without seating viewers.
+Selected-host departure or reconnection stops buffered viewing immediately; admitted-viewer departure stops publication without changing seated gameplay.
+Unrelated participant roster events preserve ongoing streams, and setup callbacks use the same participant lifetime fences.
 The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
 Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
 Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
@@ -505,7 +512,10 @@ cover exposed frontiers and target receipts, and certifies complete retained act
 intervals. Followers independently compare supplied frozen values with their retained cut inputs before certification.
 Bounded donor journals repair missing actual ranges before certification,
 including when the donor differs from the coordinator. [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
-retains pinned-source trace comparison and expanded live missing-history acceptance.
+retains expanded source and live missing-history acceptance. A scoped
+[actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
+now checks remote-donor recovery against independent original canonical prefixes and finalized statuses.
+Its fixed missing-row case does not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission
 journal and its own cut selection remain open in

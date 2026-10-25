@@ -26,6 +26,7 @@ RUNTIME_SCRIPTS = frozenset({
     'core/peer_drop_inventory.gd',
     'core/peer_drop_history.gd',
     'core/peer_drop_transfer.gd',
+    'core/peer_request_batch.gd',
     'core/peer_session.gd',
     'core/replay.gd',
     'core/replay_player.gd',

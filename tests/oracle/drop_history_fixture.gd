@@ -1,0 +1,93 @@
+extends "res://tests/unit/test_peer_drop_backfill.gd"
+
+var _history_receipts: Array[Dictionary] = []
+
+const Base = preload("res://tests/unit/test_peer_drop_backfill.gd")
+
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
+
+
+class ObservedGame:
+	extends Base.WideGame
+	const InputQueue = preload("res://addons/fortress_rollback/core/input_queue.gd")
+	var applied: Dictionary = {}
+
+	static func status_name(status: int) -> String:
+		match status:
+			InputQueue.Status.NONE: return "none"
+			InputQueue.Status.CONFIRMED: return "confirmed"
+			InputQueue.Status.PREDICTED: return "predicted"
+			InputQueue.Status.DISCONNECTED: return "disconnected"
+		return "unknown:" + str(status)
+
+	func simulate_frame(at: int, inputs: S.FrameInputs) -> bool:
+		var row: Array[Dictionary] = []
+		for player: int in range(values.size()):
+			var input: S.InputResult = inputs.read(player)
+			row.append({"bytes": input.bytes.hex_encode(), "status": status_name(input.status)})
+		if not super.simulate_frame(at, inputs):
+			return false
+		applied[at] = row
+		return true
+
+
+func observe(context: RefCounted, status_control: int = -1) -> Dictionary:
+	_mode = "remote_donor"
+	_missing_peer = 0
+	_width = 4
+	_window = 8
+	_slots = 1
+	_seen = 0
+	_donor_sources.clear()
+	var mesh: Dictionary = _wide_mesh(context)
+	for peer: int in range(3):
+		var game: ObservedGame = ObservedGame.new()
+		context.equal(mesh.peers[peer]._driver.configure(mesh.peers[peer]._core, game), Types.Code.OK, "install actual request observer")
+		mesh.games[peer] = game
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	var before: Array[Dictionary] = []
+	for peer: int in range(2):
+		var interval: PackedInt64Array = mesh.peers[peer]._core.retained_input_range(2)
+		before.append({"confirmed": mesh.peers[peer].status().confirmed_frame, "target_first": interval[0], "target_last": interval[1]})
+	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
+	var cuts: Array[int] = [mesh.peers[0]._core.frozen_frame(2), mesh.peers[1]._core.frozen_frame(2)]
+	_play(context, mesh, 16, true, [0, 1], 2)
+	var survivors: Array[Dictionary] = []
+	for peer: int in range(2):
+		var rows: Array[Dictionary] = []
+		for frame: int in range(20):
+			var row: Types.FrameInputs = mesh.peers[peer]._core.confirmed_inputs(frame)
+			var inputs: Array[String] = []
+			if status_control >= 0 and peer == 0 and frame == 0:
+				row._statuses[0] = status_control
+			for player: int in range(3):
+				var input: Types.InputResult = row.read(player)
+				context.equal(input.code, Types.Code.OK, "export actual finalized original input")
+				inputs.append(input.bytes.hex_encode())
+				var expected: int = Queue.Status.DISCONNECTED if player == 2 and frame > 8 else Queue.Status.CONFIRMED
+				context.equal(ObservedGame.status_name(input.status), ObservedGame.status_name(expected), "observed finalized export status")
+			rows.append({"frame": frame, "inputs": inputs,
+				"state": {"frame": frame, "bytes": mesh.games[peer].states[frame].hex_encode(), "inputs": mesh.games[peer].applied[frame]}})
+		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame,
+			"confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
+	return {"format": 1, "complete": true, "before": before, "cuts": cuts, "history_packets": _seen,
+		"donors": _donor_sources.keys(), "history_receipts": _history_receipts, "survivors": survivors, "failures": context.failures}
+
+
+func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
+	for packet: Dictionary in packets:
+		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT and packet.from == 2 and packet.to == 0:
+			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
+				continue
+		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
+		if terminated and code == I.Code.TERMINATED:
+			continue
+		context.equal(code, I.Code.OK, "deliver actual encoded packet")
+		if code == I.Code.OK and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
+				_seen += 1
+				_donor_sources[packet.from] = true
+				_history_receipts.append({"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(),
+					"packet": packet.bytes.hex_encode()})

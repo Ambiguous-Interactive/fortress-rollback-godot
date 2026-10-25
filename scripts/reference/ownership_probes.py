@@ -143,6 +143,12 @@ EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_cover
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'].add('last_survivor_receipts')
 EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
     'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}
+EXPECTED['res://tests/unit/test_peer_notifications.gd'] = {
+    'completion', 'stall_and_repair', 'failure', 'callback_failure', 'shared_engine', 'handler_stop', 'external_facade'}
+EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime'})
+EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'].add('viewer_departures')
+EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {'malformed_storage', 'malformed_metadata', 'valid_recording_ownership'}
+EXPECTED['res://tests/unit/test_peer_expert.gd'] = {'public_api', 'batch_ownership', 'callback_failures', 'recovery', 'pressure', 'capture'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -193,6 +199,9 @@ FILES += ['tests/unit/test_peer_drop_history_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
+FILES += ['tests/unit/test_peer_notifications.gd']
+FILES += ['tests/unit/test_replay_configuration.gd']
+FILES += ['tests/unit/test_peer_expert.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
           'addons/fortress_rollback/transport/signalfish_relay.gd', 'addons/fortress_rollback/transport/signalfish_relay_envelope.gd',
           'addons/fortress_rollback/transport/signalfish_relay_types.gd', 'addons/fortress_rollback/transport/signalfish_spectator_relay.gd',
@@ -232,9 +241,12 @@ const SpectatorPolicy = preload("res://tests/unit/test_spectator_policy.gd")
 const SpectatorPublisher = preload("res://tests/unit/test_spectator_publisher.gd")
 const PeerRecovery = preload("res://tests/unit/test_peer_recovery.gd")
 const PeerReplayCapture = preload("res://tests/unit/test_peer_replay_capture.gd")
+const PeerNotifications = preload("res://tests/unit/test_peer_notifications.gd")
+const PeerExpert = preload("res://tests/unit/test_peer_expert.gd")
 const DriverRecovery = preload("res://tests/unit/test_driver_recovery.gd")
 const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
 const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
+const ReplayConfiguration = preload("res://tests/unit/test_replay_configuration.gd")
 const ReplayCoverage = preload("res://tests/unit/test_replay_coverage.gd")
 const SpectatorModel = preload("res://tests/unit/test_spectator_model.gd")
 const FrameInputs = preload("res://tests/unit/test_frame_inputs.gd")
@@ -266,7 +278,8 @@ func _ready() -> void:
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
-		DriverRecovery, PeerRecovery, PeerReplayCapture, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue, ReplayExpert, ReplayDrop,
+		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
+		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]

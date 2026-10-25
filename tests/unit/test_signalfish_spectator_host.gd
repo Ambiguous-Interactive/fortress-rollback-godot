@@ -68,7 +68,8 @@ func cases() -> PackedStringArray:
 			"fair_liveness",
 			"finish_retry",
 			"callback_lifetimes",
-			"setup_callbacks"
+			"setup_callbacks",
+			"viewer_departures"
 		]
 	)
 
@@ -520,3 +521,48 @@ func _setup_callbacks(context: RefCounted) -> void:
 			fixture.info.capabilities.append("spectator_relay")
 			context.equal(_configure_again(fixture), HostRelay.Code.OK, "setup rejection releases guard")
 			_stop(fixture)
+
+
+# Value: protects=publication stops when admitted viewer leaves; fails_when=host listens only to its own spectator role;
+# why_new=room lifetime tests omit remote spectator departure; seam=public SDK signals
+func _viewer_departures(context: RefCounted) -> void:
+	for boundary: String in ["idle", "getter", "send", "protocol_setup", "getter_setup"]:
+		for selected: bool in [false, true]:
+			var fixture: Dictionary = _fixture(context, false)
+			var departing: String = VIEWER if selected else HOST
+			var callback: Callable = func() -> void: fixture.client.spectator_disconnected.emit(departing, 0, [])
+			var setup: bool = boundary.ends_with("setup")
+			if setup:
+				fixture.relay.detach()
+				if boundary == "protocol_setup":
+					fixture.info.on_info = callback
+				else:
+					fixture.client.on_room = callback
+				context.equal(_configure_again(fixture), HostRelay.Code.WRONG_STATE if selected else HostRelay.Code.OK, "setup fences selected viewer departure")
+			elif boundary == "idle":
+				callback.call()
+			elif boundary == "send":
+				fixture.client.on_send = func(_packet: PackedByteArray) -> void: callback.call()
+			else:
+				fixture.client.on_room = callback
+			var expected: int = HostRelay.Code.WRONG_STATE if selected else HostRelay.Code.OK
+			context.equal(fixture.relay.poll(0).code, expected, "only selected viewer departure stops publication")
+			context.equal(fixture.client.attempted.size(), 1 if boundary == "send" or not selected else 0, "no new sends after viewer departure")
+			context.equal(fixture.relay.finish_host().code, expected, "finish cannot revive abandoned publication")
+			context.equal(fixture.host.status().lifecycle, S.Lifecycle.RUNNING, "viewer departure never stops player host")
+			fixture.helper._step(context, fixture.driver, 0)
+			_stop(fixture)
+
+	var fixture: Dictionary = _fixture(context, false)
+	var old_callback: Callable = fixture.client.get_signal_connection_list("spectator_disconnected")[0].callable
+	fixture.client.outcome = FAILED
+	context.equal(fixture.relay.poll(0).code, HostRelay.Code.SDK_FAILURE, "establish first publication failure")
+	fixture.client.spectator_disconnected.emit(VIEWER, 0, [])
+	context.equal(fixture.relay.status().code, HostRelay.Code.SDK_FAILURE, "viewer departure preserves first publication failure")
+	fixture.relay.detach()
+	fixture.client.outcome = OK
+	context.equal(_configure_again(fixture), HostRelay.Code.OK, "explicit replacement publication")
+	old_callback.call(VIEWER, 0, [])
+	context.equal(fixture.relay.poll(0).sent, 1, "old viewer observer cannot end replacement")
+	_stop(fixture)
+	context.equal(fixture.client.get_signal_connection_list("spectator_disconnected").size(), 0, "detach releases selected viewer observer")

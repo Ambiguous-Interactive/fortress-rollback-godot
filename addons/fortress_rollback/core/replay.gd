@@ -58,6 +58,51 @@ static func valid_shape(players: int, width: int, frames: int, version: int = FO
 	)
 
 
+## Validate metadata and backing-array bounds before copying a caller-owned recording.
+## Input digests and state checksums remain playback comparisons at their owning frame.
+func is_valid() -> bool:
+	if _format_version not in [4, FORMAT_VERSION, TERMINAL_VERSION] or not valid_shape(_players, _width, _frames, _format_version):
+		return false
+	if _input_delay < 0 or _input_delay > 65535 or _max_prediction_frames < 0 or _max_prediction_frames > 128 or _skipped < 0 or _skipped > _frames:
+		return false
+	if _neutral.size() != _width or _text.size() != TEXT_FIELDS:
+		return false
+	for text: String in _text:
+		if not valid_text(text):
+			return false
+	if (
+		_inputs.size() != _frames * _players * _width
+		or _statuses.size() != _frames * _players
+		or _flags.size() != _frames
+		or _checksums.size() != _frames * CHECKSUM_BYTES
+		or _digests.size() > _frames * DIGEST_BYTES
+	):
+		return false
+	if _format_version == TERMINAL_VERSION:
+		if _terminal_checksum.size() != CHECKSUM_BYTES or _skipped != 0:
+			return false
+	elif not _terminal_checksum.is_empty():
+		return false
+	var skipped_seen: int = 0
+	for frame: int in _frames:
+		var flag: int = _flags[frame]
+		if flag not in [0, FLAG_CHECKSUM, FLAG_SKIPPED]:
+			return false
+		skipped_seen += int(flag == FLAG_SKIPPED)
+		for player: int in _players:
+			var status: int = _statuses[frame * _players + player]
+			if status not in [Queue.Status.CONFIRMED, Queue.Status.DISCONNECTED]:
+				return false
+			if status != Queue.Status.CONFIRMED and (_format_version == 4 or flag == FLAG_SKIPPED):
+				return false
+			if flag == FLAG_SKIPPED:
+				var offset: int = (frame * _players + player) * _width
+				for index: int in _width:
+					if _inputs[offset + index] != _neutral[index]:
+						return false
+	return skipped_seen == _skipped
+
+
 ## The digest of one recorded input row: the first 16 bytes of its SHA-256.
 static func digest_row(row: PackedByteArray) -> PackedByteArray:
 	var context: HashingContext = HashingContext.new()
@@ -68,6 +113,8 @@ static func digest_row(row: PackedByteArray) -> PackedByteArray:
 
 ## Metadata text is printable ASCII of at most MAX_TEXT_BYTES, so every stored string round-trips exactly.
 static func valid_text(text: String) -> bool:
+	if text.length() > MAX_TEXT_BYTES:
+		return false
 	return _printable(text.to_utf8_buffer())
 
 
