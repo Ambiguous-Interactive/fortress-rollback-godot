@@ -260,6 +260,9 @@ func _complete_message() -> String:
 
 func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: PackedByteArray) -> String:
 	var text: String = "Replay stopped at frame %d (code %d)." % [frame, code]
+	if code in [Types.Code.CALLBACK_FAILED, Types.Code.SNAPSHOT_FAILED]:
+		var operations: Dictionary = {Types.Kind.SAVE: "saving state", Types.Kind.LOAD: "loading state", Types.Kind.ADVANCE: "simulating input"}
+		text += " Failed while %s." % operations.get(_player.failure_kind(), "processing game state")
 	var comparison: String = _player.failure_comparison()
 	if not comparison.is_empty():
 		var labels: Dictionary = {
@@ -289,6 +292,7 @@ func failure_report_bytes() -> PackedByteArray:
 		{
 			"frame": _player.failure_frame(),
 			"code": _player.failure_code(),
+			"request_kind": _player.failure_kind(),
 			"comparison": _player.failure_comparison(),
 			"expected": _player.failure_expected_checksum().hex_encode(),
 			"actual": _player.failure_actual_checksum().hex_encode(),

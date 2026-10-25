@@ -536,7 +536,12 @@ relay adapter rejects FRGS envelopes before changing its protocol clocks or play
 confirmation. Use a separate stream lifetime and private key for each admitted
 viewer; this bridge does not multiplex viewers or provide late state transfer.
 Room or connection replacement, changed player identity, source reconfiguration
-and detach stop publication. `detach()` leaves player gameplay running.
+and detach stop publication. Setup observes lifetime signals before protocol conversion
+or SDK getters, and releases temporary listeners on every exit. A signal during a
+getter permanently rejects that publication with `WRONG_STATE`, even when room and
+player values stay unchanged. Polling, acceptance and finalization cannot revive it.
+Detach and explicitly configure a fresh publication to recover. Rejected setup and
+`detach()` leave player gameplay running.
 
 Deterministic SDK doubles cover canonical playback through ring reuse, bounded
 pressure, explicit receipt, clean end and shared player traffic. Actual SDK/server

@@ -26,6 +26,7 @@ remains permitted. This restriction counts endpoint identities, not player slots
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Route actual bytes using independently attributed sender identity. |
 | `receive_and_poll(packet, attributed_sender, now_us, next_token = null, tokens = [])` | Receive and service timers using the receipt gossip from the start of the operation. |
 | `step(now_us, local_inputs)` | Existing driver `StepResult`; submit every local slot at the current sample frame. |
+| `scheduled_local_input(player)` | Owned current staged sample, including across prediction stalls and partial network publication. |
 | `close(now_us, reason = 0)` | Queue redundant goodbye packets and halt the fixed-membership game. |
 | `status()` | Existing core status, including frame, confirmation and termination reason. |
 | `network_status()` | Owned endpoint observations keyed by remote hexadecimal identity. |
@@ -54,6 +55,25 @@ frame and accepted sample; drain queues or recover ACKs, then retry identical
 inputs. `PREDICTION_STALL` preserves the current frame but can still repair old
 predictions and save that boundary. Save/load callbacks must therefore tolerate
 repeated frames. Changing an already submitted sample is rejected.
+
+Read `scheduled_local_input(player)` to rebuild a stalled retry without a second
+input cache. `OK` returns owned bytes and the scheduled frame, which includes
+input delay. Set the retry's `LocalInput.sample_frame` to `status().current_frame`,
+not to that scheduled frame. `MISSING_LOCAL_INPUT` means the slot needs fresh
+input. A successful advance releases the staged sample; recovery without a
+forward frame preserves it. Read each local slot separately when one peer owns
+several players. Remote or invalid slots return `INVALID_PLAYER`, and an
+unconfigured peer returns `NOT_CONFIGURED`.
+
+```gdscript
+var retained: Types.InputResult = peer.scheduled_local_input(player)
+var bytes: PackedByteArray = read_buttons() if retained.code == Types.Code.MISSING_LOCAL_INPUT else retained.bytes
+samples.append(Driver.LocalInput.new(player, peer.status().current_frame, bytes))
+```
+
+Use this loop only for configured local slots, after checking the peer is
+running. A retained sample belongs to the current core staging boundary even
+when some network links already accepted it and others still need a retry.
 
 Once the shared engine's frame or request counter is exhausted, `step` and
 `recover` return `FRAME_EXHAUSTED` and terminate before accepting or publishing

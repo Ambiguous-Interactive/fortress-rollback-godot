@@ -130,7 +130,10 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery',
     'heartbeat_fairness', 'clean_tail_retries', 'getter_lifetime', 'configure_lifetime'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
-    'startup', 'canonical_playback', 'pressure', 'lifetimes', 'configuration', 'reentry', 'history_loss', 'player_coexistence', 'active_requests', 'fair_liveness', 'finish_retry'}
+    'startup', 'canonical_playback', 'pressure', 'lifetimes', 'configuration', 'reentry', 'history_loss', 'player_coexistence', 'active_requests',
+    'fair_liveness', 'finish_retry', 'callback_lifetimes', 'setup_callbacks'}
+EXPECTED['res://tests/unit/test_peer_session.gd'].add('scheduled_inputs')
+EXPECTED['res://tests/unit/test_replay_callbacks.gd'].add('failure_kinds')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'failure_download', 'comparison_domains'})
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [

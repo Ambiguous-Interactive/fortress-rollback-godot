@@ -77,13 +77,39 @@ class WrongLoad:
 		return false
 
 
+class FailureGame:
+	extends RefCounted
+	var game: Game = Game.new()
+	var fail_kind: int = -1
+	var owner: WeakRef
+	var terminate_callback: bool = false
+
+	func _accept(kind: int) -> bool:
+		if kind == fail_kind and terminate_callback:
+			owner.get_ref().terminate()
+		return kind != fail_kind
+
+	func save_state(frame: int, writer: Writer) -> Driver.SaveResult:
+		var result: Driver.SaveResult = game.save_state(frame, writer)
+		result.ok = _accept(Types.Kind.SAVE)
+		return result
+
+	func load_state(frame: int, reader: RefCounted) -> bool:
+		return game.load_state(frame, reader) and _accept(Types.Kind.LOAD)
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		return game.simulate_frame(frame, inputs) and _accept(Types.Kind.ADVANCE)
+
+
 func cases() -> PackedStringArray:
-	return PackedStringArray(["snapshot_failures", "uninitialized_replay", "callback_arguments"])
+	return PackedStringArray(["snapshot_failures", "uninitialized_replay", "callback_arguments", "failure_kinds"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	var replay: Replay = _record(context)
-	if name == "callback_arguments":
+	if name == "failure_kinds":
+		_failure_kinds(context, replay)
+	elif name == "callback_arguments":
 		_callback_arguments(context, replay)
 	elif name == "snapshot_failures":
 		_snapshot_failures(context, replay)
@@ -101,6 +127,82 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.equal(player.is_complete(), true, "valid zero-frame recording is complete")
 		context.equal(player.step(), Types.Code.FRAME_EXHAUSTED, "empty recording has no frames")
 	context.finish()
+
+
+# Value: protects=callback and expert replay failures name the failing request without losing first cause;
+# fails_when=all callback errors expose only a shared code/frame; why_new=driver diagnostics do not cover replay; seam=none
+func _failure_kinds(context: RefCounted, replay: Replay) -> void:
+	var probe: Player = Player.new()
+	context.equal(probe.has_method("failure_kind"), true, "replay failures identify the game operation")
+	if not probe.has_method("failure_kind"):
+		return
+	context.equal(probe.call("failure_kind"), -1, "healthy player has no failed request")
+	for expert: bool in [false, true]:
+		for operation: String in ["advance", "save", "validate", "load", "restore save"]:
+			for terminal: bool in [false, true]:
+				var player: Player = Player.new()
+				var game: FailureGame = FailureGame.new()
+				game.owner = weakref(player)
+				if expert:
+					player.configure_expert(replay, Game.SNAPSHOT_BYTES, null, 2, 4)
+				else:
+					player.configure(replay, game, Game.SNAPSHOT_BYTES, 2, 4)
+				for frame: int in 6:
+					context.equal(_dispatch(player, game, player.begin_advance()) if expert else player.step(), Types.Code.OK, "healthy prefix")
+				game.fail_kind = Types.Kind.LOAD if operation == "load" else (Types.Kind.ADVANCE if operation == "advance" else Types.Kind.SAVE)
+				game.terminate_callback = terminal
+				var code: int
+				if expert:
+					var result: Types.Result
+					if operation in ["load", "restore save"]:
+						result = player.begin_restore_before(3)
+					elif operation == "validate":
+						result = player.begin_validate_current_frame()
+					else:
+						result = player.begin_advance()
+					code = _dispatch(player, game, result)
+				elif operation in ["load", "restore save"]:
+					code = player.restore_before(3)
+				elif operation == "validate":
+					code = player.validate_current_frame()
+				else:
+					code = player.step()
+				context.equal(code, Types.Code.TERMINATED if terminal else Types.Code.CALLBACK_FAILED, operation + " first cause")
+				var expected: int = -1 if terminal else game.fail_kind
+				context.equal(player.call("failure_kind"), expected, operation + " request kind")
+				context.equal(player.failure_comparison(), "", "callback failure is not a checksum mismatch")
+				player.terminate()
+				player.begin_validate_current_frame()
+				context.equal(player.configure_expert(null), Types.Code.INVALID_CONFIGURATION, "invalid restart preserves failure")
+				context.equal(player.call("failure_kind"), expected, "later calls preserve first cause")
+				context.equal(player.configure_expert(replay), Types.Code.OK, "explicit restart")
+				context.equal(player.call("failure_kind"), -1, "new lifetime clears failed request")
+				context.state(game.game.frame, game.game.canonical_bytes())
+
+
+func _dispatch(player: Player, game: FailureGame, result: Types.Result) -> int:
+	if result.code != Types.Code.READY:
+		return result.code
+	while true:
+		var request: Types.Request = result.batch.next_request()
+		if request == null:
+			return Types.Code.OK
+		var checksum: PackedByteArray = PackedByteArray()
+		var ok: bool
+		if request.kind == Types.Kind.SAVE:
+			var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+			ok = saved.ok
+			checksum = saved.checksum
+		elif request.kind == Types.Kind.LOAD:
+			ok = game.load_state(request.frame, request.reader)
+		else:
+			ok = game.simulate_frame(request.frame, request.inputs)
+		# Descriptive metadata cannot change which operation failed.
+		request.kind = -1
+		var code: int = player.complete_request(request.batch_id, request.request_id, ok, checksum).code
+		if code != Types.Code.OK:
+			return code
+	return Types.Code.OK
 
 
 func _snapshot_failures(context: RefCounted, replay: Replay) -> void:
@@ -122,6 +224,7 @@ func _snapshot_failures(context: RefCounted, replay: Replay) -> void:
 			context.equal(code, expected, fault + " result")
 			context.equal(player.current_frame(), replay.frame_count() if fault == "none" else frame, fault + " stops before simulation")
 			context.equal(player.failure_frame(), -1 if fault == "none" else frame, fault + " identifies failed frame")
+			context.equal(player.failure_kind(), -1 if fault == "none" else Types.Kind.SAVE, fault + " identifies failed save")
 			context.equal(player.step(), expected, fault + " remains stopped")
 			context.equal(game.retained_writer.status(), Writer.Code.EXPIRED_VIEW, fault + " callback writer expires")
 			context.equal(player.failure_expected_checksum().is_empty(), true, fault + " has no recorded mismatch evidence")

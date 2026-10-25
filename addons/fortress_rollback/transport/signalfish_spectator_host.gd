@@ -57,7 +57,23 @@ func configure(
 	if _client != null or _busy or _checking:
 		return Code.WRONG_STATE
 	_busy = true
+	var revision: int = _revision
+	var owner: WeakRef = weakref(self)
+	var invalidate: Callable = func(_a: Variant = null, _b: Variant = null, _c: Variant = null, _d: Variant = null) -> void:
+		var target: RefCounted = owner.get_ref()
+		if target != null and target._revision == revision:
+			target._revision += 1
+	var pending_signals: Array[String] = []
+	if is_instance_valid(client):
+		for signal_name: String in ViewerRelay.LIFETIME_SIGNALS:
+			if client.has_signal(signal_name):
+				client.connect(signal_name, invalidate)
+				pending_signals.append(signal_name)
 	var code: int = _configure(client, sdk_config, protocol_info, host, viewer_uuid, identity, key, digest, options)
+	if is_instance_valid(client):
+		for signal_name: String in pending_signals:
+			if client.is_connected(signal_name, invalidate):
+				client.disconnect(signal_name, invalidate)
 	_busy = false
 	return code
 
@@ -74,7 +90,10 @@ func _configure(
 	options: Options
 ) -> int:
 	var revision: int = _revision
-	var controls: Options = Options.new() if options == null else options
+	var controls: Options = Options.new()
+	if options != null:
+		for field: String in ["max_packet_bytes", "max_sends_per_poll", "max_socket_buffered_bytes", "offer_retry_us", "keepalive_interval_us"]:
+			controls.set(field, options.get(field))
 	if client == null or sdk_config == null or protocol_info == null or host == null or not Membership.valid_uuid(viewer_uuid) or not _valid_options(controls):
 		return Code.INVALID_ARGUMENT
 	for method: String in ["get_room_id", "get_player_id", "get_session_state", "get_connection_state", "get_buffered_amount", "send_game_data_binary"]:
@@ -84,21 +103,30 @@ func _configure(
 		return Code.INVALID_ARGUMENT
 	# Variant crosses the optional SDK protocol-info boundary.
 	var info: Variant = protocol_info.call("to_dict")
+	if revision != _revision:
+		return Code.WRONG_STATE
+	var snapshot: Dictionary = _read_observation(client, sdk_config, revision)
+	if snapshot.is_empty():
+		return Code.WRONG_STATE
+	var sdk: Dictionary = snapshot.config
+	var observed: Dictionary = snapshot.client
 	if not info is Dictionary or not info.get("capabilities") is Array or info.capabilities.size() > 64 or "spectator_relay" not in info.capabilities:
 		return Code.INCOMPATIBLE_MODE
-	if not info.get("protocol_version") is int or info.protocol_version < 3 or not ViewerRelay._raw_mode(sdk_config):
+	if not info.get("protocol_version") is int or info.protocol_version < 3 or not ViewerRelay._raw_snapshot(sdk):
 		return Code.INCOMPATIBLE_MODE
 	if not info.get("game_data_formats") is Array or info.game_data_formats.size() > 16 or "message_pack" not in info.game_data_formats:
 		return Code.INCOMPATIBLE_MODE
 	for field: String in ["max_outbound_frame_bytes", "max_buffered_bytes"]:
-		if not sdk_config.get(field) is int or sdk_config.get(field) < controls.max_packet_bytes:
+		if not sdk[field] is int or sdk[field] < controls.max_packet_bytes:
 			return Code.TOO_LARGE
 	if not info.get("max_outbound_message_size") is int or info.max_outbound_message_size < controls.max_packet_bytes + 128:
 		return Code.TOO_LARGE
-	if client.call("get_connection_state") != ViewerRelay.CONNECTED or client.call("get_session_state") != FINALIZED:
+	if snapshot != _read_observation(client, sdk_config, revision) or revision != _revision:
 		return Code.WRONG_STATE
-	var player: Variant = client.call("get_player_id")
-	var room: Variant = client.call("get_room_id")
+	if observed.get_connection_state != ViewerRelay.CONNECTED or observed.get_session_state != FINALIZED:
+		return Code.WRONG_STATE
+	var player: Variant = observed.get_player_id
+	var room: Variant = observed.get_room_id
 	if not player is String or not Membership.valid_uuid(player) or not room is String or room.is_empty() or player == viewer_uuid:
 		return Code.WRONG_STATE
 	var publisher: Publisher = Publisher.new()
@@ -124,7 +152,7 @@ func _configure(
 		if client.has_signal(signal_name):
 			_callbacks[signal_name] = func(_a: Variant = null, _b: Variant = null, _c: Variant = null, _d: Variant = null) -> void:
 				var target: RefCounted = owner.get_ref()
-				if target != null and target._revision == installed_revision:
+				if target != null and target._revision == installed_revision and target._failure == Code.OK:
 					target._failure = Code.WRONG_STATE
 			client.connect(signal_name, _callbacks[signal_name])
 	return Code.OK
@@ -291,24 +319,26 @@ func _gate() -> int:
 	var client: Object = _client.get_ref()
 	var config: Object = _sdk_config.get_ref()
 	var host: Session = _host
+	var source_config: RefCounted = _source_config
+	var snapshot: Dictionary = _read_observation(client, config, revision)
 	var failure: int = Code.OK
-	if not is_instance_valid(client) or not is_instance_valid(config):
+	if snapshot.is_empty() or snapshot != _read_observation(client, config, revision):
 		failure = Code.WRONG_STATE
-	elif not ViewerRelay._raw_mode(config):
+	elif not ViewerRelay._raw_snapshot(snapshot.config):
 		failure = Code.INCOMPATIBLE_MODE
 	elif (
-		not config.get("max_outbound_frame_bytes") is int
-		or config.get("max_outbound_frame_bytes") < _options.max_packet_bytes
-		or not config.get("max_buffered_bytes") is int
-		or config.get("max_buffered_bytes") < _options.max_packet_bytes
+		not snapshot.config.max_outbound_frame_bytes is int
+		or snapshot.config.max_outbound_frame_bytes < _options.max_packet_bytes
+		or not snapshot.config.max_buffered_bytes is int
+		or snapshot.config.max_buffered_bytes < _options.max_packet_bytes
 	):
 		failure = Code.TOO_LARGE
 	elif (
-		client.call("get_connection_state") != ViewerRelay.CONNECTED
-		or client.call("get_session_state") != FINALIZED
-		or client.call("get_room_id") != _room
-		or client.call("get_player_id") != _player
-		or host._config != _source_config
+		snapshot.client.get_connection_state != ViewerRelay.CONNECTED
+		or snapshot.client.get_session_state != FINALIZED
+		or snapshot.client.get_room_id != _room
+		or snapshot.client.get_player_id != _player
+		or host._config != source_config
 	):
 		failure = Code.WRONG_STATE
 	elif host._mutation_code() not in [S.Code.OK, S.Code.BUSY]:
@@ -316,8 +346,23 @@ func _gate() -> int:
 	_checking = false
 	if revision != _revision:
 		return Code.WRONG_STATE
-	_failure = failure
+	if _failure == Code.OK:
+		_failure = failure
 	return _failure
+
+
+func _read_observation(client: Object, config: Object, revision: int) -> Dictionary:
+	var sdk: Dictionary = {}
+	var observed: Dictionary = {}
+	for field: String in ["game_data_format", "decode_msgpack_payloads", "max_outbound_frame_bytes", "max_buffered_bytes"]:
+		if revision != _revision or _failure != Code.OK or not is_instance_valid(config):
+			return {}
+		sdk[field] = config.get(field)
+	for method: String in ["get_connection_state", "get_session_state", "get_player_id", "get_room_id"]:
+		if revision != _revision or _failure != Code.OK or not is_instance_valid(client):
+			return {}
+		observed[method] = client.call(method)
+	return {"config": sdk, "client": observed} if revision == _revision and _failure == Code.OK else {}
 
 
 static func _valid_options(options: Options) -> bool:

@@ -305,6 +305,10 @@ The final recorded frame also carries a digest of its input row, because the sta
 following frame - which covers every other row - does not exist for it. A corrupted last input
 stops playback with `DESYNC` at that frame, before the game callback runs.
 `failure_code()` returns the latched failure code, or OK while playback remains healthy.
+`failure_kind()` identifies the `SessionTypes.Kind.SAVE`, `LOAD` or `ADVANCE` request that failed,
+including snapshot and comparison errors. It returns -1 for healthy playback, an input digest
+rejected before a request, or explicit termination. Callback and expert playback preserve the
+first cause until successful reconfiguration; rejected calls do not erase it.
 `failure_comparison()` identifies the failed comparison: `input_digest`, `state_checksum`,
 `checkpoint_checksum` or `checkpoint_bytes`. It is empty when no comparison failed,
 including callback failures, malformed checksum lengths and explicit termination.
