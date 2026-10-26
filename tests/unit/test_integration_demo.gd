@@ -7,7 +7,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match"])
+	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match", "restart_lifetimes"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -16,6 +16,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_delayed_matches(context)
 		"reset_and_validation":
 			_reset_and_validation(context)
+		"restart_lifetimes":
+			_restart_lifetimes(context)
 		"replays_corrected_match":
 			_replays_corrected_match(context)
 	context.finish()
@@ -170,3 +172,47 @@ func _replays_corrected_match(context: RefCounted) -> void:
 	context.equal(demo.loop.game.canonical_bytes(), live, "the live match stays paused")
 	demo.stop_replay()
 	context.equal(demo.shown_game(), demo.loop.game, "returns to the live match")
+
+
+# Value: protects=example restart retires old match and replay capabilities; fails_when=retained handles keep advancing;
+# why_new=reset assertions inspect only fresh state; seam=none
+func _restart_lifetimes(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.start(0), Types.Code.OK, "start retirement fixture")
+	for tick: int in range(10):
+		demo.tick(Game.RIGHT)
+	context.equal(demo.start_replay(), Types.Code.OK, "retain active replay before restart")
+	var old_loop: RefCounted = demo.loop
+	var old_player: RefCounted = demo.replay_player
+	context.equal(demo.reset(), Types.Code.OK, "reset retires owned sessions")
+	context.equal(old_loop.session.status().reason, Types.Code.TERMINATED, "old live session terminates")
+	context.equal(old_loop.tick(10 * Demo.TICK_US, Game.LEFT), Types.Code.TERMINATED, "old loop cannot advance after restart")
+	context.equal(old_player.step(), Types.Code.TERMINATED, "old replay cannot continue")
+	context.equal(demo.replay_player, null, "fresh live match clears replay mode")
+	var next_loop: RefCounted = demo.loop
+	var outcomes: PackedInt32Array = PackedInt32Array()
+	var owner: WeakRef = weakref(demo)
+	var restart: Callable = func(_code: int, _before: int, _after: int) -> void:
+		var target: RefCounted = owner.get_ref()
+		outcomes.append(target.reset())
+		context.equal(target.loop == next_loop, true, "callback cannot replace its live match")
+	next_loop.driver.step_completed.connect(restart)
+	context.equal(demo.tick(Game.LEFT), Types.Code.OK, "live completion callback runs")
+	next_loop.driver.step_completed.disconnect(restart)
+	context.equal(outcomes, PackedInt32Array([Types.Code.BUSY]), "reset rejects active completion owner")
+	context.equal(demo.reset(), Types.Code.OK, "reset works after callback releases")
+	for tick: int in range(10):
+		demo.tick(Game.RIGHT)
+	context.equal(demo.start_replay(), Types.Code.OK, "configure replay replacement fixture")
+	var previous: RefCounted = demo.replay_player
+	context.equal(demo.start_replay(), Types.Code.OK, "replace prior replay")
+	context.equal(previous.step(), Types.Code.TERMINATED, "replay replacement retires previous player")
+	previous = demo.replay_player
+	var batch: Types.Result = previous.begin_advance()
+	context.equal(batch.code, Types.Code.READY, "open replay expert batch")
+	context.equal(demo.start(), Types.Code.BUSY, "active replay batch blocks new match")
+	context.equal(demo.reset(), Types.Code.BUSY, "active replay batch blocks reset")
+	context.equal(demo.start_replay(), Types.Code.BUSY, "active replay batch blocks replay replacement")
+	context.equal(demo.replay_player == previous, true, "busy replacements preserve player identity")
+	demo.stop_replay()
+	context.equal(previous.step(), Types.Code.TERMINATED, "stopping replay retires retained player")

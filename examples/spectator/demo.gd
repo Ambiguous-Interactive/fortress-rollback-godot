@@ -27,9 +27,15 @@ var is_host_connection_lost: bool = false
 var _tick_count: int = 0
 
 
+## Starts a fresh match after retiring prior owned playback and player sessions.
+## Active requests and callbacks retain their match until the current operation completes.
 func start() -> int:
-	host = Host.new()
-	var code: int = host.start(3)
+	if (viewer != null and viewer._mutation_code() == Types.Code.BUSY) or (host != null and host.loop.session._mutation_code() == Types.Code.BUSY):
+		return Types.Code.BUSY
+	if host != null and host.replay_player != null and (host.replay_player._is_stepping or host.replay_player._batch != null):
+		return Types.Code.BUSY
+	var next_host: Host = Host.new()
+	var code: int = next_host.start(3)
 	if code != Types.Code.OK:
 		return code
 	var config: Config = Config.new()
@@ -41,7 +47,7 @@ func start() -> int:
 	config.history_slots = 1
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
 	config.storage_budget_bytes = config.required_storage_bytes()
-	stream = Stream.new()
+	var next_stream: Stream = Stream.new()
 	# A local fixture identity; network integrations supply a fresh agreed lifetime.
 	var identity: PackedByteArray = PackedByteArray()
 	identity.resize(32)
@@ -50,22 +56,33 @@ func start() -> int:
 	var key: PackedByteArray = PackedByteArray()
 	key.resize(Stream.KEY_BYTES)
 	var digest: PackedByteArray = Stream.configuration_digest(config, "demo-seed", "demo-rules")
-	code = stream.configure(config, identity, key, digest, 0, 10000000, 256)
+	code = next_stream.configure(config, identity, key, digest, 0, 10000000, 256)
 	if code != Types.Code.OK:
 		return code
-	publisher = Publisher.new()
-	code = publisher.configure(host.loop.session, identity, key, digest, 256)
+	var next_publisher: Publisher = Publisher.new()
+	code = next_publisher.configure(next_host.loop.session, identity, key, digest, 256)
 	if code != Types.Code.OK:
 		return code
-	code = _negotiate_envelope()
+	code = _negotiate_envelope(next_publisher, next_stream)
 	if code != Types.Code.OK:
 		return code
-	viewer = stream.playback_session()
-	code = viewer.set_playback(12, 4, 4)
+	var next_viewer: Spectator = next_stream.playback_session()
+	code = next_viewer.set_playback(12, 4, 4)
 	if code != Types.Code.OK:
 		return code
-	game = Game.new()
-	driver = Driver.new(viewer, game)
+	var next_game: Game = Game.new()
+	var next_driver: Driver = Driver.new(next_viewer, next_game)
+	if viewer != null:
+		viewer.terminate()
+	if host != null:
+		host.loop.session.terminate()
+		host.stop_replay()
+	host = next_host
+	publisher = next_publisher
+	stream = next_stream
+	viewer = next_viewer
+	game = next_game
+	driver = next_driver
 	is_paused = false
 	viewer_code = Types.Code.OK
 	next_host_frame = 0
@@ -77,17 +94,17 @@ func start() -> int:
 
 
 ## The local transport delivers the startup exchange before the first row.
-func _negotiate_envelope() -> int:
-	var offer: PackedByteArray = publisher.encode_offer()
+func _negotiate_envelope(next_publisher: Publisher, next_stream: Stream) -> int:
+	var offer: PackedByteArray = next_publisher.encode_offer()
 	if offer.is_empty():
 		return Types.Code.INVALID_CONFIGURATION
-	var code: int = stream.receive_packet(offer, 0)
+	var code: int = next_stream.receive_packet(offer, 0)
 	if code != Types.Code.OK:
 		return code
-	var accept: PackedByteArray = stream.encode_accept()
+	var accept: PackedByteArray = next_stream.encode_accept()
 	if accept.is_empty():
 		return Types.Code.INVALID_CONFIGURATION
-	return publisher.receive_accept(accept)
+	return next_publisher.receive_accept(accept)
 
 
 ## Pause continuous viewing and attempt exactly one ordinary confirmed playback step.

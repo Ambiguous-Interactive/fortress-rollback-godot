@@ -262,8 +262,10 @@ func input_delay() -> int:
 ## Whether this recording can drive a session configured with config: the same roster, sample
 ## width, neutral input, game seed and game version. A mismatch means the recorded inputs cannot
 ## reproduce that game's states, so a player must refuse the recording.
+## Only FortressConfig instances (including subclasses) are accepted; unrelated objects return false.
 func matches_config(config: RefCounted) -> bool:
-	if config == null:
+	# Config preloads Replay, so resolve its script here rather than creating a preload cycle.
+	if config == null or not is_instance_of(config, load("res://addons/fortress_rollback/core/config.gd")) or _text.size() != TEXT_FIELDS:
 		return false
 	return (
 		_players == config.player_count

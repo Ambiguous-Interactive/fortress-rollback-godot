@@ -388,6 +388,8 @@ known-allocation positive control; flat memory alone is insufficient.
 
 Driver and peer step/recovery results expose the first failed callback kind alongside terminal reason and frame.
 Driver-only clients can export owned opt-in canonical traces, including after callback failure, without retaining the expert session.
+Snapshot callbacks can read small fields into reusable buffers without a result wrapper; native byte reads remain preferable for wide snapshots.
+Local example restarts retire retained old host/viewer sessions and refuse replacement during active ordered work.
 Fixed-membership peers expose callback-free ordered request batches for advancement, recovery and final replay capture.
 Callback and manual peers share input publication and completion controls; pending batches fence transport mutation and expire on explicit cancellation.
 Encoded P2P acceptance compares both public interfaces under delayed,
@@ -398,7 +400,8 @@ Peer callback and completion guards protect the shared engine across facades; te
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
 Replay configuration validates mutable recording structure before ownership. Portable export rejects malformed
 metadata/storage and incomplete input digests while preserving stored comparison evidence. Invalid replacements preserve existing playback and validation coverage;
-safe missing-digest and content comparisons remain at their owning playback boundary.
+Optional replay compatibility checks accept FortressConfig instances/subclasses and refuse foreign objects before accessing their properties.
+Safe missing-digest and content comparisons remain at their owning playback boundary.
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
 and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4 and 5. The pinned upstream
 replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.

@@ -123,6 +123,19 @@ testing and then desyncs after the first rollback.
 - Return a 16-byte checksum, or set `checksums_enabled = false`. Peer sessions exchange checksums to detect desyncs.
 - Set `max_snapshot_bytes` to your snapshot size and `storage_budget_bytes` to `config.required_storage_bytes()`.
 
+For small fixed-width fields, keep a reusable `PackedByteArray` in your game and call
+`reader.read_into(destination)`. It copies the next `destination.size()` bytes and returns
+`Reader.Code.OK`, `UNDERFLOW` or `EXPIRED_VIEW`, without creating a `ReadResult` wrapper.
+An oversized destination leaves its bytes and the cursor unchanged; underflow remains sticky
+for both read APIs. An empty destination succeeds on a live, error-free reader, including at the end.
+Both APIs share the cursor, so you can mix reusable field reads with `read_bytes(count)`.
+Validate the complete snapshot before publishing restored state, as with `read_bytes`.
+
+The reusable copy loops in GDScript and helps small fields; native `read_bytes()` can be much
+faster for wide snapshots. Packed-array copy-on-write can still allocate when scratch storage
+is shared. This API avoids the result wrapper, without promising allocation-free restoration.
+Scratch bytes are overwritten before use and must not become authoritative simulation state.
+
 ### Simulation
 
 Simulation must give identical results on every machine. Use integers or fixed-point math.
@@ -345,6 +358,8 @@ another game. `player.configure(replay, MyGame.new(), MyGame.SNAPSHOT_BYTES, 0, 
 returns `INCOMPATIBLE_RECORDING` when the roster, sample width, neutral input, game seed or
 game version differ from the recording. `configure_expert` takes the same configuration.
 `replay.matches_config(config)` answers the same question without a player.
+Supply a `FortressConfig` instance or subclass. Unrelated objects return incompatibility without
+reading their properties or replacing existing playback, even if their field names match.
 
 Both playback modes validate the recording's metadata, backing-array sizes, row flags and statuses before copying it.
 Malformed objects return `INVALID_CONFIGURATION` and preserve existing playback, including its selected frame and checksum coverage.

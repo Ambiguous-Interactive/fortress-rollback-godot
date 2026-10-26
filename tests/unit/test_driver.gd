@@ -23,6 +23,7 @@ class Game:
 	var termination_codes: PackedInt32Array = PackedInt32Array()
 	var trace_session: RefCounted
 	var trace_reports: Array[Dictionary] = []
+	var _restore_bytes: PackedByteArray = PackedByteArray([0, 0, 0, 0, 0, 0, 0, 0])
 
 	func _reenter() -> void:
 		if terminating_session != null and trace[trace.size() - 1].begins_with(["save", "load", "advance"][terminating_kind]):
@@ -67,10 +68,9 @@ class Game:
 		_reenter()
 		if terminating_session != null and terminating_session.status().lifecycle == Types.Lifecycle.TERMINATED:
 			return false
-		var restored: RefCounted = reader.read_bytes(8)
-		if restored.code != 0 or not reader.is_complete():
+		if reader.read_into(_restore_bytes) != 0 or not reader.is_complete():
 			return false
-		value = restored.bytes.decode_s64(0)
+		value = _restore_bytes.decode_s64(0)
 		return fail_kind != Types.Kind.LOAD
 
 	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:

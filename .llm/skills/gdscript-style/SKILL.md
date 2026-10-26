@@ -69,6 +69,8 @@ but preserve valid Object/RefCounted/Variant views. Compare named script annotat
 the actual supplied view script and its ancestors. Godot may erase script annotations
 to RefCounted; those erased types cannot be validated from metadata. Test actual
 dispatch as well as rejection, including swapped reader/writer/input views on each pin.
+A public `RefCounted` configuration parameter does not validate its properties. Check the owning script type
+before property access; resolve scripts at runtime when a preload would create a dependency cycle.
 Capture dynamic application callback returns as `Variant`, then validate the exact
 contract before typed assignment or boolean use. An engine type error can bypass
 guard release; coercion can accept malformed success values. Route rejected

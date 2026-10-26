@@ -8,6 +8,15 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
+class RestartGame:
+	extends Game
+	var on_advance: Callable
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		on_advance.call()
+		return super.simulate_frame(frame, inputs)
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		[
@@ -21,7 +30,9 @@ func cases() -> PackedStringArray:
 			"single_frame_end",
 			"single_frame_control",
 			"host_loss",
-			"host_loss_control"
+			"host_loss_control",
+			"restart_lifetimes",
+			"restart_busy"
 		]
 	)
 
@@ -35,7 +46,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		_lost_history(context)
 	elif name == "paused_final_tail":
 		_paused_final_tail(context)
-	elif name in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control"]:
+	elif name in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control", "restart_lifetimes", "restart_busy"]:
 		call("_" + name, context)
 	elif name == "clean_host_end":
 		_clean_host_end(context)
@@ -352,3 +363,91 @@ func _host_loss_control(context: RefCounted) -> void:
 	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "R starts a fresh viewer")
 	context.equal(scene.demo.viewer_code, Types.Code.OK, "restart clears displayed failure")
 	scene.free()
+
+
+# Value: protects=restart retires retained match handles; fails_when=old drivers consume buffered rows;
+# why_new=keyboard restart checks only the replacement viewer; seam=none
+func _restart_lifetimes(context: RefCounted) -> void:
+	for scenario: String in ["control", "restart", "failed"]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "start retained-handle scenario")
+		demo.is_paused = true
+		for tick: int in range(35):
+			context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "buffer old confirmed rows")
+		context.equal(demo.host.start_replay(), Types.Code.OK, "retain host's public replay capability")
+		var old_replay: RefCounted = demo.host.replay_player
+		var old_host: RefCounted = demo.host
+		var old_viewer: RefCounted = demo.viewer
+		var old_driver: RefCounted = demo.driver
+		var old_stream: RefCounted = demo.stream
+		var old_game: Game = demo.game
+		context.equal(old_viewer.recommended_steps() > 0, true, "retained old viewer can consume history")
+		if scenario == "failed":
+			old_viewer.terminate(Types.Code.PROTOCOL_FAILED)
+		if scenario != "control":
+			context.equal(demo.start(), Types.Code.OK, "replace match after buffering")
+			context.equal(old_host.loop.session.status().reason, Types.Code.TERMINATED, "old player match is retired")
+			context.equal(old_viewer.status().reason, Types.Code.PROTOCOL_FAILED if scenario == "failed" else Types.Code.TERMINATED, "viewer retirement preserves first cause")
+		var frame: int = old_game.frame
+		var bytes: PackedByteArray = old_game.canonical_bytes()
+		var samples: Array[Demo.Driver.LocalInput] = []
+		context.equal(
+			old_driver.step(35 * Demo.Host.TICK_US, samples).code,
+			Types.Code.OK if scenario == "control" else Types.Code.TERMINATED, "old driver cannot consume history after replacement"
+		)
+		context.equal(old_replay.step(), Types.Code.OK if scenario == "control" else Types.Code.TERMINATED, "host replay retires with its match")
+		context.equal(old_stream.poll(35 * Demo.Host.TICK_US), Types.Code.OK if scenario == "control" else Types.Code.TERMINATED, "old stream cannot service retired playback")
+		if scenario != "control":
+			context.bytes_equal(old_game.canonical_bytes(), bytes, frame, "retained retired game stays frozen")
+			context.equal(demo.tick(Game.LEFT), Types.Code.OK, "new host remains playable")
+			context.equal(demo.viewer.status().reason, Types.Code.OK, "new viewer remains live")
+
+
+# Value: protects=restart preserves active callback ownership; fails_when=old completion replaces the match;
+# why_new=restart controls run between completed steps; seam=none
+func _restart_busy(context: RefCounted) -> void:
+	for actor: String in ["host", "viewer", "batch", "game_callback", "host_replay_batch"]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "start guarded restart scenario")
+		demo.is_paused = true
+		for tick: int in range(35):
+			demo.tick(Game.RIGHT)
+		var host: RefCounted = demo.host
+		var viewer: RefCounted = demo.viewer
+		var attempts: PackedInt32Array = PackedInt32Array()
+		var restart: Callable = func(_code: int, _before: int, _after: int) -> void:
+			attempts.append(demo.start())
+			context.equal(demo.host == host and demo.viewer == viewer, true, "busy restart preserves match identity")
+		if actor == "host_replay_batch":
+			context.equal(host.start_replay(), Types.Code.OK, "start public host replay")
+			context.equal(host.replay_player.begin_advance().code, Types.Code.READY, "open host replay expert batch")
+			context.equal(demo.start(), Types.Code.BUSY, "host replay batch blocks spectator match replacement")
+			context.equal(demo.host == host and demo.viewer == viewer, true, "host replay batch preserves match identity")
+			host.stop_replay()
+		elif actor == "game_callback":
+			var owner: WeakRef = weakref(demo)
+			var game: RestartGame = RestartGame.new()
+			game.on_advance = func() -> void:
+				var target: RefCounted = owner.get_ref()
+				context.equal(target.start(), Types.Code.BUSY, "active game callback blocks replacement")
+				context.equal(target.host == host and target.viewer == viewer, true, "game callback preserves match identity")
+			demo.game = game
+			demo.driver = Demo.Driver.new(viewer, game)
+			context.equal(demo.step_viewer(), Types.Code.OK, "original game callback completes")
+			game.on_advance = Callable()
+		elif actor == "batch":
+			var advance: Types.Result = viewer.begin_advance()
+			context.equal(advance.code, Types.Code.READY, "open real expert batch")
+			context.equal(demo.start(), Types.Code.BUSY, "active batch blocks match replacement")
+			context.equal(demo.host == host and demo.viewer == viewer, true, "active batch preserves match identity")
+			viewer.terminate()
+		else:
+			var driver: RefCounted = host.loop.driver if actor == "host" else demo.driver
+			driver.step_completed.connect(restart)
+			if actor == "host":
+				context.equal(demo.tick(Game.LEFT), Types.Code.OK, "host completes guarded step")
+			else:
+				context.equal(demo.step_viewer(), Types.Code.OK, "viewer completes guarded step")
+			driver.step_completed.disconnect(restart)
+			context.equal(attempts, PackedInt32Array([Types.Code.BUSY]), "completion callback cannot replace its match")
+		context.equal(demo.start(), Types.Code.OK, "replacement works after ownership releases")

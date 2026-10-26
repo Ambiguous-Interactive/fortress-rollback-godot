@@ -149,8 +149,11 @@ EXPECTED['res://tests/unit/test_peer_notifications.gd'] = {
     'completion', 'stall_and_repair', 'failure', 'callback_failure', 'shared_engine', 'handler_stop', 'external_facade'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'].add('viewer_departures')
-EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {'malformed_storage', 'malformed_metadata', 'valid_recording_ownership'}
+EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {'malformed_storage', 'malformed_metadata', 'valid_recording_ownership', 'invalid_config_type'}
 EXPECTED['res://tests/unit/test_peer_expert.gd'] = {'public_api', 'batch_ownership', 'callback_failures', 'recovery', 'pressure', 'capture'}
+EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures', 'ownership', 'validation', 'misuse', 'wide_writes', 'reusable_reads'}
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy'})
+EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -204,7 +207,7 @@ FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
 FILES += ['tests/unit/test_peer_notifications.gd']
 FILES += ['tests/unit/test_replay_configuration.gd']
-FILES += ['tests/unit/test_peer_expert.gd']
+FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
           'addons/fortress_rollback/transport/signalfish_relay.gd', 'addons/fortress_rollback/transport/signalfish_relay_envelope.gd',
           'addons/fortress_rollback/transport/signalfish_relay_types.gd', 'addons/fortress_rollback/transport/signalfish_spectator_relay.gd',
@@ -249,6 +252,8 @@ const PeerExpert = preload("res://tests/unit/test_peer_expert.gd")
 const DriverRecovery = preload("res://tests/unit/test_driver_recovery.gd")
 const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
 const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
+const IntegrationDemo = preload("res://tests/unit/test_integration_demo.gd")
+const SnapshotHistory = preload("res://tests/unit/test_snapshot_history.gd")
 const ReplayConfiguration = preload("res://tests/unit/test_replay_configuration.gd")
 const ReplayCoverage = preload("res://tests/unit/test_replay_coverage.gd")
 const SpectatorModel = preload("res://tests/unit/test_spectator_model.gd")
@@ -284,7 +289,7 @@ func _ready() -> void:
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
-		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert,
+		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness, DropReadyPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]

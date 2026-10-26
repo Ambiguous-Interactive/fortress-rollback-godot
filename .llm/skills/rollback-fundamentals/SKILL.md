@@ -132,6 +132,8 @@ Cancellation retains the exposed playback frame as its first-cause diagnostic; a
 Track their active bounded readers/writers so termination expires them. Recheck the
 latched terminal reason before accepting callback returns, invoking another callback,
 committing a restored frame or publishing validation coverage.
+Replacing an owned example match must retire its prior sessions and replay player, including retained public handles.
+Stage replacement first and refuse it during callbacks, notifications or active expert batches; clearing the owner reference does not revoke old capabilities.
 Completion getters must also exclude open navigation/revalidation batches and active callbacks, even when
 the exposed frame still equals the final boundary. Test after LOAD and before its verification SAVE.
 

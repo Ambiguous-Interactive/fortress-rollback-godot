@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `SnapshotReader.read_into(destination)` to reuse small fixed-width buffers without creating read-result wrappers. Wide snapshots can keep faster native `read_bytes()` copies.
+
 - Add state-bound spectator configuration digests so startup rejects different canonical initial worlds, even with matching seeds and rules.
 
 - Add manual peer request batches without requiring game callbacks, including recovery and final replay capture.
@@ -186,6 +188,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix local multiplayer and spectator restarts leaving retained old sessions playable. Restarts refuse active callbacks or request batches.
+
+- Fix replay configuration raising script errors for unrelated configuration objects. Invalid replacements now preserve playback.
 
 - Fix replay completion reporting while checkpoint navigation or state revalidation is still in progress.
 
