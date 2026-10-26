@@ -30,6 +30,7 @@ var _frame: int = 0
 var _checked_checksum_count: int = 0
 var _terminal_validated: bool = false
 var _validated_through_frame: int = -1
+var _validated_state_frame: int = -1
 var _reason: int = Types.Code.OK
 var _failure_frame: int = -1
 var _failure_kind: int = -1
@@ -90,6 +91,7 @@ func _reset(replay: Replay, game: RefCounted, max_snapshot_bytes: int, checkpoin
 	_checked_checksum_count = 0
 	_terminal_validated = false
 	_validated_through_frame = -1
+	_validated_state_frame = -1
 	_reason = Types.Code.OK
 	_failure_frame = -1
 	_failure_kind = -1
@@ -260,6 +262,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		else:
 			_terminal_validated = false
 			_frame = _restoring.frame
+			_validated_state_frame = _frame if not _replay.checksum(_frame).is_empty() else -1
 			_restoring = null
 			_batch = null
 	elif _validation_only:
@@ -271,6 +274,7 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 		_validated_through_frame = maxi(_validated_through_frame, _frame)
 		_terminal_validated = false
 		_frame += 1
+		_validated_state_frame = -1
 		_batch = null
 	return Types.Result.new(Types.Code.OK)
 
@@ -498,6 +502,7 @@ func _accept_checkpoint(checkpoint: Checkpoint) -> int:
 			var code: int = _compare_checkpoint(retained, checkpoint)
 			if code != Types.Code.OK:
 				return code
+	_validated_state_frame = _frame if not expected.is_empty() else -1
 	if not expected.is_empty() and _frame > _validated_through_frame:
 		_checked_checksum_count += 1
 	if _is_cache_boundary():
@@ -512,6 +517,15 @@ func _accept_checkpoint(checkpoint: Checkpoint) -> int:
 ## Restoring or rechecking a boundary never counts it twice; input-only playback counts none.
 func checked_checksum_count() -> int:
 	return _checked_checksum_count
+
+
+## Whether the displayed state boundary matched a recorded checksum in its current visit.
+## False after advancing input until a SAVE validates that resulting state, and during open work.
+## A restored checkpoint qualifies only if its boundary also has a recorded checksum.
+## Input digests and cache-only comparisons do not establish recorded state validation.
+## Failure, termination and successful configuration clear the claim.
+func is_current_state_validated() -> bool:
+	return _reason == Types.Code.OK and _replay != null and _batch == null and not _is_stepping and _validated_state_frame == _frame
 
 
 ## Whether the currently displayed final boundary matched its recorded checksum.

@@ -212,6 +212,7 @@ func _refresh() -> void:
 		"%s\nFrame %d / %d | Checksums checked: %d / %d recorded"
 		% [viewer.message, viewer.current_frame(), viewer.frame_count(), viewer.checked_checksum_count(), viewer.recorded_checksum_count()]
 	)
+	_status.text += "\n" + viewer.current_state_coverage_message()
 	if not _failure_notice.is_empty():
 		_status.text += "\n" + _failure_notice
 	_failure_download.disabled = not viewer.has_failure()

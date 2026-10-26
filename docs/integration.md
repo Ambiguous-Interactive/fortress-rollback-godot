@@ -390,6 +390,10 @@ Pass `0` to play inputs without checking. The file stores inputs, not game rules
 `checked_checksum_count()` reports distinct recorded state boundaries whose checksums actually matched.
 Input-only playback reports zero; repeated validation and checkpoint navigation never count a boundary twice.
 Successful configuration starts a fresh count; rejected configuration preserves it.
+`is_current_state_validated()` reports whether the displayed boundary matched a recorded state checksum during its current visit.
+It is false after an input advances until the resulting boundary is saved and compared.
+Restoring a verified checkpoint qualifies only when that boundary also has a recorded checksum; input digests and cache-only comparisons do not qualify.
+Open requests, game callbacks, failure, termination and a new playback lifetime suspend this claim.
 `is_final_state_validated()` separately reports whether the displayed final boundary matched its recorded checksum.
 It is false for historical/input-only playback, during callbacks or open requests, after restoring an earlier boundary,
 and after failure, termination or successful reconfiguration. A checksum count alone cannot establish final-state validation.

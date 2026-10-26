@@ -91,7 +91,7 @@ EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'p
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
 EXPECTED['res://tests/unit/test_peer_replay_capture.gd'] = {'capture_final', 'capture_guards', 'capture_callbacks', 'capture_cap'}
-EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity'}
+EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity', 'selected_state_status'}
 EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'stepped_boundaries', 'paused_boundaries'})
 EXPECTED['res://tests/unit/test_spectator_model.gd'] = {
@@ -144,7 +144,7 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
 EXPECTED['res://tests/unit/test_peer_session.gd'].add('scheduled_inputs')
 EXPECTED['res://tests/unit/test_replay_callbacks.gd'].add('failure_kinds')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'failure_download', 'comparison_domains'})
-EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_coverage', 'viewer_final_coverage'}
+EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_coverage', 'viewer_final_coverage', 'selected_state_coverage'}
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'].add('last_survivor_receipts')
 EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
     'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}
@@ -155,7 +155,7 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'].add('viewer_depar
 EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {'malformed_storage', 'malformed_metadata', 'valid_recording_ownership', 'invalid_config_type'}
 EXPECTED['res://tests/unit/test_peer_expert.gd'] = {'public_api', 'batch_ownership', 'callback_failures', 'recovery', 'pressure', 'capture'}
 EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures', 'ownership', 'validation', 'misuse', 'wide_writes', 'reusable_reads'}
-EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy'})
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy', 'service_busy'})
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [

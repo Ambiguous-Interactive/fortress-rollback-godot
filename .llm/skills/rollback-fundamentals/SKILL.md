@@ -134,6 +134,8 @@ latched terminal reason before accepting callback returns, invoking another call
 committing a restored frame or publishing validation coverage.
 Replacing an owned example match must retire its prior sessions and replay player, including retained public handles.
 Stage replacement first and refuse it during callbacks, notifications or active expert batches.
+Apply the same ownership check before composed service controls change clocks, stage inputs or pause/end playback.
+An inner BUSY result cannot undo those outer side effects; cross each control with host/viewer callbacks and retained expert batches.
 Cancellation may clear the public handle before the callback returns; retain that executing owner privately until it unwinds, including across repeated cancellation.
 Completion getters must also exclude open navigation/revalidation batches and active callbacks, even when
 the exposed frame still equals the final boundary. Test after LOAD and before its verification SAVE.
@@ -189,6 +191,8 @@ Revisited retained checkpoints compare canonical bytes and callback checksums be
 even when the recording has no state checksums. Apply comparison to both paused validation and
 advancement through callback and expert APIs; test changed bytes with an unchanged callback checksum.
 Cached comparisons do not increase recorded-checksum coverage, and evicted boundaries provide no cached evidence.
+Track displayed-state validation separately from lifetime checksum totals. Advancing input clears the selected-state claim;
+only a successful recorded-checksum comparison during that visit can restore it. Cache-only validation does not qualify.
 
 ## Code Samples
 

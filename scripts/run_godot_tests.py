@@ -381,7 +381,7 @@ def discover(category: str) -> list[str]:
 def merge(reports: list[dict], filtered: bool) -> dict:
     """Combine per-suite shard reports into one process-equivalent run, in suite order."""
     if filtered:
-        # A filter matches a subset of suites; only the merged selection must be nonempty.
+        # A case-name filter can leave some suites empty; the merged selection must be nonempty.
         reports = [report for report in reports if report.get("result", {}).get("errors") != [{"kind": "zero_matching_cases"}]
                    or report["result"]["records"]] or reports[:1]
     run = {"shards": reports}
@@ -468,8 +468,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.arguments = sys.argv[1:] if argv is None else argv
     parser.add_argument("--godot", required=True, help="engine name on PATH or a path to it")
     parser.add_argument("--category", choices=("unit", "determinism", "integration"), default="unit")
-    parser.add_argument("--suite", action="append", default=[])
-    parser.add_argument("--filter", default="")
+    parser.add_argument("--suite", action="append", default=[], help="select a suite resource path; repeat for multiple suites")
+    parser.add_argument("--filter", default="", help="select case names containing this text, not suite filenames")
     parser.add_argument("--seed", type=int, default=1701)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)

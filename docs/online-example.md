@@ -195,6 +195,9 @@ remaining inputs and checksums. A first visit still validates the full preceding
 pauses at the last validated boundary. Navigation finishes paused at the requested frame.
 Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
 The display shows the current frame and stops at the first failed recorded checksum.
+The selected-state line separately identifies a matching, unchecked or absent recorded state checksum.
+Advancing an input does not check its resulting state until you pause, step or finish a seek.
+Input digests and cached snapshots do not count as recorded state checksums.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
 Completion identifies whether the final state matched a recorded checksum. Historical recordings explicitly report

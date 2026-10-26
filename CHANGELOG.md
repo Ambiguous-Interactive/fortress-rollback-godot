@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add replay selected-state checksum status to the player API and viewer. Paused inspection distinguishes matching, unchecked and absent recorded checksums.
+
 - Add `SnapshotReader.read_into(destination)` to reuse small fixed-width buffers without creating read-result wrappers. Wide snapshots can keep faster native `read_bytes()` copies.
 
 - Add state-bound spectator configuration digests so startup rejects different canonical initial worlds, even with matching seeds and rules.
@@ -189,6 +191,8 @@
 
 ### Fixed
 
+- Fix spectator example service calls during active callbacks or request batches consuming time or stopping viewing. Busy controls preserve the current match.
+
 - Fix completed spectator playback reporting a relay failure during continued polling or late packet delivery. Cancellation and playback failures remain explicit.
 
 - Fix local multiplayer and spectator restarts leaving retained old sessions playable. Restarts refuse active callbacks or request batches.
@@ -339,6 +343,8 @@
 - Fix invalid transport token callbacks retaining oversized data. Relay and WebRTC adapters validate null or exactly 16 bytes before copying.
 
 ### Improved
+
+- Improve driver step and recovery allocation by reusing the completed request batch's status snapshot.
 
 - Improve multi-peer input processing by reading receipt frames without copying retained packet history. Public status snapshots keep their ownership guarantees.
 

@@ -258,7 +258,7 @@ func _consume_requests(advance: Types.Result, before: int) -> StepResult:
 			var status: Types.Status = _session.status()
 			if status.lifecycle == Types.Lifecycle.TERMINATED:
 				code = status.reason
-			return _finish(code, before)
+			return _finish(code, before, status)
 		# Capture identities before application callbacks can edit request metadata.
 		var batch_id: int = request.batch_id
 		var request_id: int = request.request_id
@@ -287,8 +287,10 @@ func _consume_requests(advance: Types.Result, before: int) -> StepResult:
 	return _finish(code, before)
 
 
-func _result(code: int, before: int) -> StepResult:
-	var status: Types.Status = _session.status() if _session != null else Types.Status.new()
+func _result(code: int, before: int, completed_status: Types.Status = null) -> StepResult:
+	var status: Types.Status = completed_status
+	if status == null:
+		status = _session.status() if _session != null else Types.Status.new()
 	var result: StepResult = StepResult.new(code, before, status.current_frame)
 	# A stopped session keeps its own cause, so a client can tell a desync from a plain stop.
 	result.reason = status.reason
@@ -297,8 +299,8 @@ func _result(code: int, before: int) -> StepResult:
 	return result
 
 
-func _finish(code: int, before: int) -> StepResult:
-	var result: StepResult = _result(code, before)
+func _finish(code: int, before: int, completed_status: Types.Status = null) -> StepResult:
+	var result: StepResult = _result(code, before, completed_status)
 	# An externally opened expert batch owns its events until completion.
 	if code != Types.Code.BUSY:
 		result.events = _session.drain_events()
