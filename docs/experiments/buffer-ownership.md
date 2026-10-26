@@ -82,8 +82,12 @@ an old success. The historical baseline before these probes was
 `97c0d5bfef7eb5f746eae7bb51e6e573ff7e5e04`; source hashes identify this experiment.
 Receipts also bind all files in the selected browser installation, the imported
 Playwright packages, Node and each executed Web export. These inventories must
-remain unchanged through completion. Unused npm command links are outside the
-imported packages; symlinks within any inventoried runtime remain rejected.
+remain unchanged through completion and are checked around every browser batch.
+The extracted Godot executable, installed Web templates and staged project inputs
+are frozen and checked around their applicable commands. Editor import may add
+paired metadata; the mutable `.godot` cache stays outside the authored inventory.
+Unused npm command links are outside the imported packages; symlinks within any
+inventoried runtime remain rejected.
 
 ## Observed engine boundaries
 

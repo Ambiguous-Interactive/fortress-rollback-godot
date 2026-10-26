@@ -572,6 +572,16 @@ def verify_staged(project, expected):
         raise ValueError('ownership staged project changed during execution')
 
 
+def verify_tools(paths, expected):
+    if tool_inventory(paths) != expected:
+        raise ValueError('ownership runtime inputs changed during execution')
+
+
+def verify_browser_inputs(paths, frozen, export, exported_sources):
+    verify_tools(paths, frozen)
+    verify_tools({'export': export}, exported_sources)
+
+
 def tool_inventory(paths):
     """Hash every selected runtime file, rejecting missing inputs and symlinks."""
     result = {}
@@ -709,7 +719,11 @@ def run_probes(args, results):
         prepare_zip(archive, editor_dir, executable_members=(name[:-4],))
         editor = editor_dir / name[:-4]
         editor.chmod(0o755)
+        editor_paths = {'editor': editor}
+        editor_frozen = tool_inventory(editor_paths)
+        verify_tools(editor_paths, editor_frozen)
         actual = run([str(editor), '--version'], environment, results / f'ownership-{version}-version.log').strip()
+        verify_tools(editor_paths, editor_frozen)
         if not actual.startswith(version + '.stable.'):
             raise ValueError('incorrect editor version')
         for negative in (True, False):
@@ -768,7 +782,9 @@ def run_probes(args, results):
                     '[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
             staged_before = inventory(staged_paths(project))
             base = [str(editor), '--headless', '--path', str(project)]
+            verify_tools(editor_paths, editor_frozen)
             run(base + ['--editor', '--quit'], environment, results / f'ownership-{label}-import.log')
+            verify_tools(editor_paths, editor_frozen)
             staged_frozen = freeze_after_import(staged_paths(project), staged_before)
             # Each suite retains both in-process repetitions and its own 180s
             # watchdog. A growing inventory must not merge bounded suites into
@@ -778,6 +794,7 @@ def run_probes(args, results):
                 native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
                 try:
                     verify_staged(project, staged_frozen)
+                    verify_tools(editor_paths, editor_frozen)
                     code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
                                            + ['--suite', suite],
                                            environment, native_log, timeout=180)
@@ -799,6 +816,7 @@ def run_probes(args, results):
                 update(native_progress=progress)
                 try:
                     verify_staged(project, staged_frozen)
+                    verify_tools(editor_paths, editor_frozen)
                     if code != (1 if negative_suite(suite, negative) else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
                         raise ValueError('native command failed outside the intended control')
                     markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
@@ -810,7 +828,8 @@ def run_probes(args, results):
                     reject(started, 'failed', alive=False, errors=failure_lines(output))
                     raise
             native = aggregate_native(batches, negative)
-            record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native, 'staged_inventory': staged_frozen}
+            record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native,
+                      'staged_inventory': staged_frozen, 'editor_inventory': editor_frozen}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
                 templates = fetch(data['artifacts'][template_name], template_name, args.offline)
@@ -820,10 +839,14 @@ def run_probes(args, results):
                     for member in package.namelist():
                         if Path(member).name.startswith('web_'):
                             (template_dir / Path(member).name).write_bytes(package.read(member))
+                export_paths = {**editor_paths, 'web_templates': template_dir}
+                export_frozen = {**editor_frozen, **tool_inventory({'web_templates': template_dir})}
                 export = CACHE / 'ownership-exports' / label
                 export.mkdir(parents=True, exist_ok=True)
                 verify_staged(project, staged_frozen)
+                verify_tools(export_paths, export_frozen)
                 run(base + ['--export-release', 'Web', str(export / 'index.html')], environment, results / f'ownership-{label}-export.log')
+                verify_tools(export_paths, export_frozen)
                 verify_staged(project, staged_frozen)
                 exported_sources = tool_inventory({'export': export})
                 browser_batches = []
@@ -834,9 +857,13 @@ def run_probes(args, results):
                     browser_log = results / f'ownership-{label}-browser-{batch_index:02d}.log'
                     try:
                         verify_staged(project, staged_frozen)
+                        verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                        verify_sources(frozen_sources)
                         output = run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
                                       str(export), json.dumps(suites)], environment, browser_log, timeout=240)
+                        verify_sources(frozen_sources)
                         verify_staged(project, staged_frozen)
+                        verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
                         browser = json.loads(output)
                         browser_identity = validate_browser(browser, browser_identity, args.browser, data)
                         validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
@@ -860,10 +887,8 @@ def run_probes(args, results):
                 if not same_json(browser['result'], native):
                     reject(started, 'failed', alive=False, errors=['native/web ownership divergence'])
                     raise ValueError('native/web ownership divergence')
-                if tool_inventory(browser_paths) != browser_frozen or tool_inventory({'export': export}) != exported_sources:
-                    reject(started, 'failed', alive=False, errors=['ownership browser runtime or exported sources changed'])
-                    raise ValueError('ownership browser runtime or exported sources changed')
-                record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name, export_inventory=exported_sources)
+                record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name,
+                              export_inventory=exported_sources, export_tool_inventory=export_frozen)
             verify_staged(project, staged_frozen)
             records.append(record)
             finish(started)

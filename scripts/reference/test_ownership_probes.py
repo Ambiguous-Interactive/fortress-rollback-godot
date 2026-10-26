@@ -401,7 +401,7 @@ class OwnershipRejectionTests(unittest.TestCase):
     # reported, and the state the rejection found.
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
-                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False):
+                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -423,6 +423,7 @@ class OwnershipRejectionTests(unittest.TestCase):
             for archive_version in ('4.3', '4.7.2'):
                 package.writestr(f'Godot_v{archive_version}-stable_linux.x86_64', 'fake editor')
             package.writestr('chrome-linux/chrome', 'fake browser')
+            package.writestr('templates/web_nothreads_release.zip', 'fake Web template')
         registry = cache / 'browser/node_modules/playwright-core/browsers.json'
         registry.parent.mkdir(parents=True, exist_ok=True)
         registry.write_text('{"browsers": []}\n', encoding='utf-8')
@@ -435,6 +436,10 @@ class OwnershipRejectionTests(unittest.TestCase):
 
         browser_calls = []
         changed_project = []
+        changed_runtime = []
+        changed_tool = []
+        godot_calls = []
+        export_calls = []
         node_target = directory / 'verified-node'
         node_target.write_text('verified node')
         node_path = directory / 'node'
@@ -459,6 +464,8 @@ class OwnershipRejectionTests(unittest.TestCase):
                 (project / ('orphan.gd.uid' if mutation == 'orphan' else 'unknown.gd')).write_text('unpaired generated input')
 
         def run(command, environment, log, timeout=180):
+            if Path(command[0]).name.startswith('Godot_'):
+                godot_calls.append(command)
             if '--version' in command:
                 return f'{Path(command[0]).parent.name}.stable.fixture'
             if '--editor' in command:
@@ -467,7 +474,15 @@ class OwnershipRejectionTests(unittest.TestCase):
                 (project / '.godot').mkdir(exist_ok=True)
                 (project / '.godot/cache').write_text('mutable import cache')
                 mutate_project(project, 'import')
+                if tool_fault == 'import':
+                    Path(command[0]).write_text('mutated editor during import')
+                    changed_tool.append(True)
             if '--export-release' in command:
+                export_calls.append(command)
+                if tool_fault == 'export':
+                    template = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates/4.3.stable/web_nothreads_release.zip'
+                    template.write_text('mutated Web template during export')
+                    changed_tool.append(True)
                 mutate_project(Path(command[command.index('--path') + 1]), 'export')
             if str(command[1]).endswith('ownership.cjs'):
                 browser_calls.append((command, log, timeout))
@@ -488,7 +503,9 @@ class OwnershipRejectionTests(unittest.TestCase):
                                        display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
                     if runtime_fault and len(browser_calls) == 1:
                         target = {'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
-                                  'package': registry, 'export': Path(command[2]) / 'changed.js'}[runtime_fault]
+                                  'package': registry, 'export': Path(command[2]) / 'changed.js',
+                                  'source': root / 'scripts/reference/browser/ownership.cjs',
+                                  'display': root / 'scripts/reference/browser/webrtc_display.cjs'}[runtime_fault]
                         target.write_text('changed runtime input')
                     if len(browser_calls) == 1:
                         if browser_fault == 'unknown':
@@ -521,6 +538,15 @@ class OwnershipRejectionTests(unittest.TestCase):
             project = Path(command[command.index('--path') + 1])
             (project / '.godot/cache').write_text('mutable native cache')
             mutate_project(project, 'native')
+            if tool_fault == 'native' and not changed_tool:
+                Path(command[0]).write_text('mutated editor during native capture')
+                changed_tool.append(True)
+            if runtime_before in ('node', 'browser', 'package', 'source', 'display') and not changed_runtime:
+                target = {'node': node_target, 'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
+                          'package': registry, 'source': root / 'scripts/reference/browser/ownership.cjs',
+                          'display': root / 'scripts/reference/browser/webrtc_display.cjs'}[runtime_before]
+                target.write_text('mutated before first browser execution')
+                changed_runtime.append(True)
             if node_alias and len(capture_calls) == 1:
                 replacement = directory / 'unverified-node'
                 replacement.write_text('unverified node')
@@ -562,8 +588,27 @@ class OwnershipRejectionTests(unittest.TestCase):
             sources.update(firefox_archive=archive, firefox_installation=installation, firefox_executable=executable)
             environment['FORTRESS_FIREFOX_EXECUTABLE'] = str(executable)
 
+        original_inventory = probes.tool_inventory
+
+        def tool_inventory(paths):
+            frozen = original_inventory(paths)
+            if tool_fault == 'editor_freeze' and 'editor' in paths and not changed_tool:
+                paths['editor'].write_text('mutated editor before first use')
+                changed_tool.append(True)
+            if tool_fault == 'template_freeze' and 'web_templates' in paths and not changed_tool:
+                (paths['web_templates'] / 'web_nothreads_release.zip').write_text('mutated Web template before export')
+                changed_tool.append(True)
+            if runtime_before == 'export' and 'export' in paths and not changed_runtime:
+                (paths['export'] / 'changed.js').write_text('mutated export before first browser execution')
+                changed_runtime.append(True)
+            return frozen
+
         original_which = shutil.which
-        with mock.patch.object(probes.shutil, 'which', side_effect=lambda name: str(node_path) if node_alias and name == 'node' else original_which(name)), \
+        def which(name):
+            return str(node_path) if (node_alias or runtime_before == 'node') and name == 'node' else original_which(name)
+
+        with mock.patch.object(probes.shutil, 'which', side_effect=which), \
+                mock.patch.object(probes, 'tool_inventory', side_effect=tool_inventory), \
                 mock.patch.object(probes, 'prepare_firefox', side_effect=prepare_firefox), \
                 mock.patch.object(probes, 'ROOT', root), mock.patch.object(probes, 'CACHE', cache), \
                 mock.patch.object(probes, 'load_manifest', return_value=data), \
@@ -580,6 +625,24 @@ class OwnershipRejectionTests(unittest.TestCase):
                 # The rejected run still fails: the diagnosis is kept, not swallowed.
                 with self.assertRaises(expected):
                     probes.main()
+        if tool_fault:
+            self.assertTrue(changed_tool, 'mutation must reach an extracted tool boundary')
+            self.assertEqual(browser_calls, [], 'changed engine/template must not qualify a browser batch')
+            if tool_fault == 'editor_freeze':
+                self.assertEqual(godot_calls, [], 'changed editor must not execute')
+            elif tool_fault == 'import':
+                self.assertEqual(capture_calls, [], 'import mutation must stop before native execution')
+            elif tool_fault == 'native':
+                self.assertEqual(len(capture_calls), 1, 'native mutation must stop before another engine execution')
+            elif tool_fault == 'template_freeze':
+                self.assertEqual(export_calls, [], 'changed template must not be exported')
+            else:
+                self.assertEqual(len(export_calls), 1, 'export mutation must stop before browser execution')
+        if runtime_before:
+            self.assertTrue(changed_runtime, 'mutation must reach the frozen input boundary')
+            self.assertEqual(browser_calls, [], 'changed runtime or export must never execute')
+        if runtime_fault:
+            self.assertEqual(len(browser_calls), 1, 'mutation during a batch must stop before another executes')
         if expected is None:
             selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
                           for command, log, timeout in capture_calls]
@@ -624,15 +687,33 @@ class OwnershipRejectionTests(unittest.TestCase):
             self.assertEqual(row['browser']['result'], row['native'])
             self.assertEqual(row['native']['count'], probes.EXPECTED_COUNT)
 
+    # Value: protects=verified runtime bytes before execution; fails_when=changes execute then fail only at publication;
+    # why_new=after-use mutation tests establish rejection but not before-use gating; seam=mocked native/export boundaries
+    def test_changed_runtime_or_export_never_executes(self):
+        for selected in ('chromium', 'firefox'):
+            for target in ('node', 'browser', 'package', 'export', 'source', 'display'):
+                with self.subTest(selected=selected, target=target):
+                    results = self.scenario(expected=ValueError, selected=selected, version='4.3', runtime_before=target)
+                    self.assertFalse((results / 'ownership.json').exists())
+                    self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
+
+    # Value: protects=extracted engine and Web templates at actual use; fails_when=verified installation mutates later;
+    # why_new=browser tool hashes omit native/export tools; seam=mocked extraction/import/native/export boundaries
+    def test_engine_and_template_mutations_stop_before_another_use(self):
+        for selected in ('chromium', 'firefox'):
+            for boundary in ('editor_freeze', 'import', 'native', 'template_freeze', 'export'):
+                with self.subTest(selected=selected, boundary=boundary):
+                    results = self.scenario(expected=ValueError, selected=selected, version='4.3', tool_fault=boundary)
+                    self.assertFalse((results / 'ownership.json').exists())
+
     def test_runtime_or_export_mutation_cannot_qualify_either_browser(self):
         for selected in ('chromium', 'firefox'):
-            for target in ('browser', 'package', 'export'):
+            for target in ('browser', 'package', 'export', 'source', 'display'):
                 with self.subTest(selected=selected, target=target):
                     results = self.scenario(expected=ValueError, selected=selected, runtime_fault=target)
                     self.assertFalse((results / 'ownership.json').exists())
                     self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
 
-    # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
     # Value: protects=staged executed bytes and imported metadata; fails_when=stage mutation publishes success;
     # why_new=root hashes and finished exports do not cover execution inputs; seam=mocked engine boundaries
     def test_staged_project_changes_cannot_publish_success(self):
@@ -652,6 +733,7 @@ class OwnershipRejectionTests(unittest.TestCase):
             with self.subTest(selected=selected):
                 self.scenario(expected=None, selected=selected, version='4.3', node_alias=True)
 
+    # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
     def test_completed_phase_inventory_rejects_missing_foreign_and_alias_phases(self):
         records = [{'engine_version': '4.3', 'negative_control': negative} for negative in (True, False)]
         rounds = [{'label': '4.3-' + label, 'outcome': 'passed'} for label in ('negative', 'positive')]
