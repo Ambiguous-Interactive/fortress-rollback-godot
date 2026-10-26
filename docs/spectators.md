@@ -459,6 +459,8 @@ One new keepalive can overtake queued rows so a paused or full viewer still obse
 host liveness. Further keepalives join the bounded scan until an ordinary packet
 succeeds; continuous heartbeats cannot keep an eligible original row waiting forever.
 Capacity overflow ends playback explicitly and releases retained packets.
+SDK frame and buffer limits must keep fitting the agreed packet ceiling, including
+128 bytes of inbound framing allowance. An incompatible runtime change retires playback with `TOO_LARGE` before queued history is delivered.
 Connection loss, room replacement, identity changes and stream replacement retire
 that delivery lifetime. The selected host's `player_left` or `player_reconnected`
 notification immediately stops buffered playback and expires active request views.

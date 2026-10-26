@@ -187,6 +187,10 @@
 
 ### Fixed
 
+- Fix replay completion reporting while checkpoint navigation or state revalidation is still in progress.
+
+- Fix spectator playback continuing after SDK receive limits become too small for the agreed packets.
+
 - Fix coordinated-drop control retries flooding healthy survivors or postponing their deadlines when another link refuses publication.
 
 - Fix replay export accepting malformed recording storage or missing input digests. Invalid recordings now return empty bytes instead of producing broken files.

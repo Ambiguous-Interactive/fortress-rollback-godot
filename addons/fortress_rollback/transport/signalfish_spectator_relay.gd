@@ -345,6 +345,13 @@ func _gate() -> int:
 		var observed: Dictionary = snapshot.client
 		if not _raw_snapshot(sdk) or not sdk.get("max_inbound_packets_per_poll") is int or sdk.max_inbound_packets_per_poll < 1 or sdk.max_inbound_packets_per_poll > 4096:
 			failure = Code.INCOMPATIBLE_MODE
+		elif (
+			not sdk.max_inbound_frame_bytes is int
+			or sdk.max_inbound_frame_bytes < _options.max_packet_bytes + 128
+			or not sdk.max_buffered_bytes is int
+			or sdk.max_buffered_bytes < _options.max_packet_bytes
+		):
+			failure = Code.TOO_LARGE
 		elif snapshot != _read_observation(client, config, revision):
 			failure = Code.WRONG_STATE
 		elif observed.get_connection_state != CONNECTED or observed.get_session_state != SPECTATING or observed.get_player_id != _player or observed.get_room_id != _room:

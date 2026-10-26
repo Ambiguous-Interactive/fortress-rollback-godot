@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare one actual upstream/Godot missing-history donor scenario twice per engine."""
+"""Compare clean and lost-packet upstream/Godot donor recovery twice per engine."""
 import json
 from pathlib import Path
 import subprocess
@@ -12,7 +12,7 @@ from run import setup_rust, rust_environment
 from engine_path import resolve_engine
 from launch import execute
 from p2p_launch import source_files, upstream_inventory, executable_identity, require_unchanged
-from drop_history_contract import compare, negative_controls, require, REVISION
+from drop_history_contract import compare, negative_controls, loss_evidence_controls, require, REVISION
 
 PREFIX = 'FORTRESS_DROP_HISTORY_RESULT '
 
@@ -121,20 +121,29 @@ def main():
     binary = CACHE / 'target/debug/drop_history'
     binary_identity = executable_identity(binary)
     observed = []
+    evidence = {}
+    controls = []
     for repeat in (1, 2):
-        stdout, stderr = execute([str(binary)], args.output / f'source-{repeat}.log')
-        if stderr.strip():
-            raise ValueError('drop history: unexpected source stderr')
-        source = json.loads(stdout)
-        stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
-                                  'res://tests/oracle/drop_history_trace.gd'], args.output / f'godot-{repeat}.log')
-        godot = parse_godot(stdout, stderr)
-        evidence = compare(source, godot)
-        controls = negative_controls(source, godot)
-        observed.append({'source': source, 'godot': godot})
+        scenarios = {}
+        for name, loss in [('clean', False), ('lost-history', True)]:
+            fault_args = ['--drop-first-history'] if loss else []
+            stdout, stderr = execute([str(binary), *fault_args], args.output / f'source-{name}-{repeat}.log')
+            if stderr.strip():
+                raise ValueError('drop history: unexpected source stderr')
+            source = json.loads(stdout)
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+                                      'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
+                                      args.output / f'godot-{name}-{repeat}.log')
+            godot = parse_godot(stdout, stderr)
+            evidence[name] = compare(source, godot, loss)
+            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss))
+            scenarios[name] = {'source': source, 'godot': godot}
+        controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
+        observed.append(scenarios)
     if observed[0] != observed[1]:
         raise ValueError('drop history: fresh-process repeat mismatch')
-    controls.extend(observation_controls(engine, args.output, observed[0]['source']))
+    controls = sorted(set(controls))
+    controls.extend(observation_controls(engine, args.output, observed[0]['clean']['source']))
     require_unchanged('local source inventory', local_sources, inventory())
     require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
@@ -151,8 +160,9 @@ def main():
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'negative_controls': controls,
-        'scope': 'One three-peer original-history/cut scenario: source explicit removal; Godot elapsed timeout; distinct non-interoperable wires.'}, indent=2) + '\n')
-    print('drop history: two survivors preserve twenty original canonical prefixes and statuses through donor recovery, twice', flush=True)
+        'scope': ('Paired clean/lost-first-history three-peer original-history/cut scenarios: source explicit removal; '
+                  'Godot elapsed timeout; distinct non-interoperable wires.')}, indent=2) + '\n')
+    print('drop history: two survivors preserve twenty original canonical prefixes and statuses through clean/lost-packet donor recovery, twice', flush=True)
 
 
 if __name__ == '__main__':

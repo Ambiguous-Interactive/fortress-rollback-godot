@@ -296,7 +296,7 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 ```
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
-executes each implementation twice in fresh processes and records the pinned
+executes paired clean and lost-first-backfill scenarios twice in fresh processes. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
@@ -307,26 +307,43 @@ frame eight from survivor zero; survivor one retains it. Both survivors expose
 confirmation four while their actual target receipts differ at seven/eight.
 The source explicitly removes the target. Godot detects its elapsed timeout.
 Each implementation must transfer the original missing row from donor one to
-coordinator zero, commit cut eight, and continue to frame twenty-two.
+coordinator zero, commit cut eight, and continue to frame twenty-two. The loss
+scenario discards the first actual historical backfill packet before socket delivery.
+Both implementations must resend its exact original range, operation identity and
+bytes, and the recipient must receive that retry. The clean scenario remains a
+paired control with identical canonical input history.
 
-The source trace records actual DropBackfill emission and socket receipt. The
-Godot trace records successful encoded history-packet receipt; an independent
-parser checks its identity, range and original payload. Both survivors export
+The source trace records actual DropBackfill emission and socket receipt. Every
+source control must carry the expected typed operation: coordinator zero,
+generation zero and sequence one, with an independently calculated FNV-1a
+digest of the target slot and generation. Malformed or foreign backfill operations
+cannot pass through matching emission and receipt copies. Each
+control emission has an identity carried through the actual incoming socket queue.
+The Godot trace records encoded history-packet emission and successful receipt;
+both traces reconcile exact receipt multiplicity and order against emissions minus
+the discarded first emission, and require a later retry. Relabeling a clean trace
+as loss, delivering the discarded emission, or reordering source receipts must fail.
+An independent
+parser checks its identity, range and original payload. Godot operation and target
+eras come independently from the fixture's fixed connection IDs; its sequence and
+bounded target digest must match that constructed identity. Both survivors export
 twenty finalized input-byte rows. Their corrected canonical game states, original
 input bytes and actual ADVANCE callback statuses must match an independent
 Python reconstruction. Godot finalized-export statuses are checked separately;
 NONE, PREDICTED or unknown numeric values cannot be normalized into CONFIRMED. Trace mutations remove donor emission/receipt or corrupt
-the cut, original input, state, status and encoded packet; each must fail its
+the cut, original input, state, status and encoded packet. Loss controls remove the
+dropped packet or source retry evidence, or change the recorded lost Godot packet; each must fail its
 specific validation gate. Three additional process controls perturb an owned Godot
 export to NONE/PREDICTED/unknown status 42 at the observation boundary and require the exact status
 refusal, without changing game state or application callback records.
 
-This establishes one missing-history donor scenario. The two implementations
+This establishes one missing-history donor scenario with clean delivery and one
+lost original historical backfill. The two implementations
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all
 asymmetric exposed-frontier cases, multiple targets, physical donor eviction,
-lost/reordered control acceptance, or live browser donor recovery. Those remain
+other lost/reordered control acceptance, or live browser donor recovery. Those remain
 under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
 and [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).

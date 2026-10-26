@@ -232,6 +232,7 @@ func _expiry(context: RefCounted) -> void:
 
 
 func _lifetimes(context: RefCounted) -> void:
+	_capacity_lifetime(context)
 	var roster: Dictionary = _fixture(context)
 	_emit(roster, roster.stream.encode_row(0, Fixture.new()._row(0)))
 	roster.client.new_spectator_joined.emit(RefCounted.new(), [], 0)
@@ -273,6 +274,25 @@ func _lifetimes(context: RefCounted) -> void:
 		if event == "replace_session":
 			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "independently configured viewer survives stale bridge")
 		fixture.relay.detach()
+
+
+# Value: protects=agreed SDK ingress capacity throughout viewing; fails_when=shrunk SDK limits silently outlive queued host rows;
+# why_new=setup size checks omit public configuration changes after attachment; seam=public SDK properties
+func _capacity_lifetime(context: RefCounted) -> void:
+	for field: String in ["max_inbound_frame_bytes", "max_buffered_bytes"]:
+		for fits: bool in [false, true]:
+			var fixture: Dictionary = _fixture(context)
+			_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+			var minimum: int = 256 if field == "max_inbound_frame_bytes" else 128
+			fixture.config.set(field, minimum if fits else minimum - 1)
+			var result: RefCounted = fixture.relay.poll(1)
+			context.equal(result.code, Relay.Code.OK if fits else Relay.Code.TOO_LARGE, "runtime SDK capacity must still fit agreed packets: " + field)
+			context.equal(result.received, 1 if fits else 0, "incompatible capacity cannot deliver queued history")
+			context.equal(fixture.driver.step(0, _empty()).code, Types.Code.OK if fits else Types.Code.TERMINATED, "capacity failure retires buffered playback")
+			context.equal(fixture.game.value, Fixture.new()._row(0)[1][0] if fits else 0, "only compatible lifetime simulates host input")
+			fixture.config.set(field, 100000)
+			context.equal(fixture.relay.poll(2).code, Relay.Code.OK if fits else Relay.Code.TOO_LARGE, "restoring capacity cannot revive failed lifetime")
+			fixture.relay.detach()
 
 
 func _configuration(context: RefCounted) -> void:

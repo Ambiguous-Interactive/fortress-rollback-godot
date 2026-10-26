@@ -1,6 +1,9 @@
 extends "res://tests/unit/test_peer_drop_backfill.gd"
 
 var _history_receipts: Array[Dictionary] = []
+var _history_emissions: Array[Dictionary] = []
+var _lost_history: Array[Dictionary] = []
+var _drop_first_history: bool = false
 
 const Base = preload("res://tests/unit/test_peer_drop_backfill.gd")
 
@@ -31,7 +34,8 @@ class ObservedGame:
 		return true
 
 
-func observe(context: RefCounted, status_control: int = -1) -> Dictionary:
+func observe(context: RefCounted, status_control: int = -1, drop_first_history: bool = false) -> Dictionary:
+	_drop_first_history = drop_first_history
 	_mode = "remote_donor"
 	_missing_peer = 0
 	_width = 4
@@ -72,7 +76,8 @@ func observe(context: RefCounted, status_control: int = -1) -> Dictionary:
 		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame,
 			"confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
 	return {"format": 1, "complete": true, "before": before, "cuts": cuts, "history_packets": _seen,
-		"donors": _donor_sources.keys(), "history_receipts": _history_receipts, "survivors": survivors, "failures": context.failures}
+		"donors": _donor_sources.keys(), "lost_history": _lost_history, "history_emissions": _history_emissions,
+		"history_receipts": _history_receipts, "survivors": survivors, "failures": context.failures}
 
 
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
@@ -81,6 +86,15 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT and packet.from == 2 and packet.to == 0:
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
 				continue
+		var history_emission: Dictionary = {}
+		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
+				history_emission = {"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(),
+					"packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()}
+				_history_emissions.append(history_emission)
+		if _drop_first_history and _lost_history.is_empty() and not history_emission.is_empty():
+			_lost_history.append(history_emission)
+			continue
 		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
 		if terminated and code == I.Code.TERMINATED:
 			continue
@@ -89,5 +103,4 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				_seen += 1
 				_donor_sources[packet.from] = true
-				_history_receipts.append({"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(),
-					"packet": packet.bytes.hex_encode()})
+				_history_receipts.append(history_emission)
