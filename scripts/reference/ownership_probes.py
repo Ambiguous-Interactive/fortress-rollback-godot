@@ -633,9 +633,13 @@ def prepare_browser(data, arch, offline, environment, selected):
     return artifact, paths
 
 
-def validate_phases(records, rounds, versions):
-    """A partition qualifies only after both controls finish for every requested pin."""
-    expected = [[version, negative] for version in versions for negative in (True, False)]
+def validate_phases(records, rounds, versions, phases=None):
+    """Require every requested phase, without granting unrequested qualification."""
+    phases = ['negative', 'positive'] if phases is None else phases
+    if type(phases) is not list or any(type(phase) is not str for phase in phases) or phases not in (
+            ['negative'], ['positive'], ['negative', 'positive']):
+        raise ValueError('invalid requested ownership phases')
+    expected = [[version, phase == 'negative'] for version in versions for phase in phases]
     observed = [[record.get('engine_version'), record.get('negative_control')] for record in records]
     labels = [version + ('-negative' if negative else '-positive') for version, negative in expected]
     if not same_json(observed, expected) or [entry.get('label') for entry in rounds] != labels:
@@ -649,6 +653,7 @@ def main():
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--web', action='store_true')
     parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
+    parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
     pins = load_manifest()['godot']
     parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
     args = parser.parse_args()
@@ -709,6 +714,7 @@ def run_probes(args, results):
         browser_frozen = tool_inventory(browser_paths)
     records = []
     versions_requested = [args.version] if args.version is not None else [data['godot']['minimum'], data['godot']['current_stable']]
+    phases_requested = ['negative', 'positive'] if args.phase == 'both' else [args.phase]
     if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
         raise ValueError('requested ownership engine is not pinned')
     for version in versions_requested:
@@ -726,7 +732,8 @@ def run_probes(args, results):
         verify_tools(editor_paths, editor_frozen)
         if not actual.startswith(version + '.stable.'):
             raise ValueError('incorrect editor version')
-        for negative in (True, False):
+        for phase in phases_requested:
+            negative = phase == 'negative'
             label = f'{version}-' + ('negative' if negative else 'positive')
             started = observe(label)
             project = CACHE / 'ownership-projects' / label
@@ -852,8 +859,9 @@ def run_probes(args, results):
                 browser_batches = []
                 browser_identity = None
                 ordered_suites = sorted(EXPECTED)
-                for batch_index, offset in enumerate(range(0, len(ordered_suites), 4)):
-                    suites = ordered_suites[offset:offset + 4]
+                batch_size = 2 if args.browser == 'firefox' else 4
+                for batch_index, offset in enumerate(range(0, len(ordered_suites), batch_size)):
+                    suites = ordered_suites[offset:offset + batch_size]
                     browser_log = results / f'ownership-{label}-browser-{batch_index:02d}.log'
                     try:
                         verify_staged(project, staged_frozen)
@@ -893,16 +901,17 @@ def run_probes(args, results):
             records.append(record)
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
-    validate_phases(records, rounds, versions_requested)
+    validate_phases(records, rounds, versions_requested, phases_requested)
     verify_sources(frozen_sources)
     if tool_inventory(browser_paths) != browser_frozen:
         raise ValueError('ownership browser runtime changed during execution')
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'browser_requested': args.browser if args.web else None, 'browser_runtime_inventory': browser_frozen,
-              'rounds': rounds, 'versions_requested': versions_requested,
+              'rounds': rounds, 'versions_requested': versions_requested, 'phases_requested': phases_requested,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
-              'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '
+              'records': records, 'scope': 'For requested engine pins and phases only: '
+              'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '
               'no real transport, performance or unselected-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')
 

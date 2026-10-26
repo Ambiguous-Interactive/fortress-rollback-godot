@@ -15,6 +15,7 @@
 | Completion can happen inside a control sender, not only between polls. | The sender-callback regression returned PEER_FAILURE before repair. | Apply the same completion distinction after the callback and test queued late traffic. |
 | Browser provenance must bind the executed path and staged source, not only the original files. | Independent PATH substitution and staged-source mutations evaded the first qualification candidate. | Execute the inventoried Node path; freeze staged sources, Godot, templates and browser inputs; verify each execution boundary. |
 | Firefox exposed repeated owned diagnostic copies in a scalar confirmation fold. | The unchanged eight-player case measured 377.893 seconds; a scalar read measured 141.557 seconds with identical assertions. | Preserve current-read timing and public snapshot ownership; use narrow internal receipt and lifecycle queries. Verify the full batch, not only the isolated case. |
+| A complete case batch can exceed a browser deadline without an assertion failure. | Firefox CI completed 23 peer-drop cases at 195.256260 seconds under a 180-second page limit. | Split suite groups and declare phase partitions; preserve every case, repeat, control and deadline. |
 | Clean playback does not prove clean continued transport service. | Existing clean-tail tests stopped before the next relay poll. | Extend the existing data-driven suite through repeated service, late ingress and SDK loss. |
 
 ## Actions taken

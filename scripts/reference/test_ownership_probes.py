@@ -401,7 +401,7 @@ class OwnershipRejectionTests(unittest.TestCase):
     # reported, and the state the rejection found.
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
-                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None):
+                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None, phase=None):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -618,7 +618,8 @@ class OwnershipRejectionTests(unittest.TestCase):
                 mock.patch.object(probes.host_capacity, 'acquire_when_free', return_value=True), \
                 mock.patch.object(probes.platform, 'machine', return_value='x86_64'), \
                 mock.patch.object(probes.platform, 'system', return_value='Linux'), \
-                mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web', '--browser', selected] + ([] if version is None else ['--version', version])):
+                mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web', '--browser', selected]
+                           + ([] if version is None else ['--version', version]) + ([] if phase is None else ['--phase', phase])):
             if expected is None:
                 probes.main()
             else:
@@ -644,16 +645,18 @@ class OwnershipRejectionTests(unittest.TestCase):
         if runtime_fault:
             self.assertEqual(len(browser_calls), 1, 'mutation during a batch must stop before another executes')
         if expected is None:
+            round_count = (2 if version is None else 1) * (2 if phase in (None, 'both') else 1)
             selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
                           for command, log, timeout in capture_calls]
-            self.assertEqual(selections, [[suite] for suite in sorted(probes.EXPECTED)] * (4 if version is None else 2),
+            self.assertEqual(selections, [[suite] for suite in sorted(probes.EXPECTED)] * round_count,
                              'each round runs every suite once, each under its own watchdog')
             self.assertTrue(all(timeout == 180 for command, log, timeout in capture_calls))
             logs = [log for command, log, timeout in capture_calls]
             self.assertEqual(len(logs), len(set(logs)), 'each native batch keeps its own log')
             groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
             suites = sorted(probes.EXPECTED)
-            self.assertEqual(groups, [suites[offset:offset + 4] for offset in range(0, len(suites), 4)] * (4 if version is None else 2))
+            batch_size = 2 if selected == 'firefox' else 4
+            self.assertEqual(groups, [suites[offset:offset + batch_size] for offset in range(0, len(suites), batch_size)] * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
             browser_logs = [log for command, log, timeout in browser_calls]
             self.assertEqual(len(browser_logs), len(set(browser_logs)), 'each browser batch keeps its own log')
@@ -661,6 +664,35 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     def rounds(self, results):
         return json.loads((results / 'ownership-rounds.json').read_text(encoding='utf-8'))
+
+    # Value: protects=complete partial-phase receipts; fails_when=selector loses work or claims both; why_new=default-only runs; seam=none
+    def test_each_selected_phase_runs_exact_inventory_and_declares_scope(self):
+        for phase in ('negative', 'positive', 'both'):
+            with self.subTest(phase=phase):
+                results = self.scenario(expected=None, selected='firefox', version='4.3', phase=phase)
+                receipt = json.loads((results / 'ownership.json').read_text())
+                phases = ['negative', 'positive'] if phase == 'both' else [phase]
+                self.assertEqual(receipt['phases_requested'], phases)
+                self.assertEqual([row['label'] for row in receipt['rounds']], ['4.3-' + name for name in phases])
+                self.assertEqual([row['negative_control'] for row in receipt['records']], [name == 'negative' for name in phases])
+                for row in receipt['records']:
+                    self.assertEqual(row['browser']['result'], row['native'])
+                    self.assertEqual(row['native']['count'], probes.EXPECTED_COUNT)
+                self.assertIn('requested engine pins and phases only', receipt['scope'])
+
+    # Value: protects=exact phase declarations; fails_when=missing, mismatched or alias inventory publishes; why_new=unpartitioned inventory; seam=none
+    def test_requested_phase_inventory_rejects_missing_mismatched_unknown_and_alias_values(self):
+        records = [{'engine_version': '4.3', 'negative_control': False}]
+        rounds = [{'label': '4.3-positive', 'outcome': 'passed'}]
+        probes.validate_phases(records, rounds, ['4.3'], ['positive'])
+        for phases in ([], ['negative'], ['positive', 'negative'], ['positive', 'positive'], ['unknown'], [False], [0], 'positive'):
+            with self.subTest(phases=phases), self.assertRaises(ValueError):
+                probes.validate_phases(records, rounds, ['4.3'], phases)
+        for negative in (0, 1, None, 'positive'):
+            with self.subTest(negative=negative), self.assertRaises(ValueError):
+                probes.validate_phases([{'engine_version': '4.3', 'negative_control': negative}], rounds, ['4.3'], ['positive'])
+        with self.assertRaises(ValueError):
+            probes.validate_phases([], [], ['4.3'], ['positive'])
 
     # Value: protects=engine CI partitions retain both controls and every case; fails_when=selector changes workload or pin; why_new=default-only orchestration; seam=none
     def test_one_selected_pin_runs_both_complete_rounds(self):
@@ -677,6 +709,7 @@ class OwnershipRejectionTests(unittest.TestCase):
     def test_firefox_runs_complete_inventory_for_both_pins(self):
         results = self.scenario(expected=None, selected='firefox')
         receipt = json.loads((results / 'ownership.json').read_text())
+        self.assertEqual(receipt['phases_requested'], ['negative', 'positive'])
         self.assertEqual(receipt['browser_requested'], 'firefox')
         self.assertTrue(receipt['browser_runtime_inventory'])
         self.assertTrue(any('firefox_executable' in key for key in receipt['browser_runtime_inventory']))
@@ -754,17 +787,21 @@ class OwnershipRejectionTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     probes.validate_phases(altered_records, altered_rounds, ['4.3'])
 
-    def test_unknown_pin_is_rejected_before_tool_qualification(self):
-        with tempfile.TemporaryDirectory() as directory:
-            with (mock.patch.object(probes, 'CACHE', Path(directory)),
-                  mock.patch.object(probes, 'load_manifest', return_value={'godot': {'minimum': '4.3', 'current_stable': '4.7.2'}}),
-                  mock.patch.object(probes.host_capacity, 'acquire_when_free') as acquire,
-                  mock.patch.object(probes, 'run_probes') as execute,
-                  mock.patch('sys.argv', ['ownership_probes.py', '--version', 'untrusted'])):
-                with self.assertRaises(SystemExit):
-                    probes.main()
-                acquire.assert_not_called()
-                execute.assert_not_called()
+    def test_unknown_pin_or_phase_is_rejected_before_tool_qualification(self):
+        for option, value in (('--version', 'untrusted'), ('--phase', 'unknown'), ('--phase', 'True'), ('--phase', '1')):
+            with self.subTest(option=option, value=value), tempfile.TemporaryDirectory() as directory:
+                self.assert_invalid_execution_option(Path(directory), option, value)
+
+    def assert_invalid_execution_option(self, directory, option, value):
+        with (mock.patch.object(probes, 'CACHE', directory),
+              mock.patch.object(probes, 'load_manifest', return_value={'godot': {'minimum': '4.3', 'current_stable': '4.7.2'}}),
+              mock.patch.object(probes.host_capacity, 'acquire_when_free') as acquire,
+              mock.patch.object(probes, 'run_probes') as execute,
+              mock.patch('sys.argv', ['ownership_probes.py', option, value])):
+            with self.assertRaises(SystemExit):
+                probes.main()
+            acquire.assert_not_called()
+            execute.assert_not_called()
 
     def test_a_rejected_browser_run_retains_its_diagnosis(self):
         results = self.scenario(BROWSER_LOG)
@@ -777,6 +814,7 @@ class OwnershipRejectionTests(unittest.TestCase):
         results = self.scenario(expected=None)
         receipt = json.loads((results / 'ownership.json').read_text(encoding='utf-8'))
         self.assertEqual(receipt['versions_requested'], ['4.3', '4.7.2'])
+        self.assertEqual(receipt['phases_requested'], ['negative', 'positive'])
         self.assertEqual([entry['label'] for entry in receipt['rounds']],
                          ['4.3-negative', '4.3-positive', '4.7.2-negative', '4.7.2-positive'])
         for entry in receipt['rounds']:

@@ -83,14 +83,19 @@ jobs:
           if-no-files-found: error
 
   ownership:
-    name: Native and ${{ matrix.browser == 'firefox' && 'Firefox' || 'Chromium' }} snapshot ownership ${{ matrix.version }}
+    name: Native and ${{ matrix.browser == 'firefox' && 'Firefox' || 'Chromium' }} snapshot ownership ${{ matrix.version }}${{ matrix.suffix }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        version: ["4.3", "4.7.2"]
-        browser: [chromium, firefox]
+        include:
+          - {version: "4.3", browser: chromium, phase: both, suffix: ""}
+          - {version: "4.7.2", browser: chromium, phase: both, suffix: ""}
+          - {version: "4.3", browser: firefox, phase: negative, suffix: " negative"}
+          - {version: "4.3", browser: firefox, phase: positive, suffix: " positive"}
+          - {version: "4.7.2", browser: firefox, phase: negative, suffix: " negative"}
+          - {version: "4.7.2", browser: firefox, phase: positive, suffix: " positive"}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -117,14 +122,15 @@ jobs:
       - name: Verify integer encoding, snapshot ownership and byte sessions
         run: |
           if [[ "${{ matrix.browser }}" == firefox ]]; then
-            xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox --version "${{ matrix.version }}"
+            xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox \
+              --version "${{ matrix.version }}" --phase "${{ matrix.phase }}"
           else
             python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
           fi
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && '-firefox' || '' }}
+          name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && format('-firefox-{0}', matrix.phase) || '' }}
           path: .cache/reference/results/
           if-no-files-found: error
 
