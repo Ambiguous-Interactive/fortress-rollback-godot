@@ -30,9 +30,7 @@ var _tick_count: int = 0
 ## Starts a fresh match after retiring prior owned playback and player sessions.
 ## Active requests and callbacks retain their match until the current operation completes.
 func start() -> int:
-	if (viewer != null and viewer._mutation_code() == Types.Code.BUSY) or (host != null and host.loop.session._mutation_code() == Types.Code.BUSY):
-		return Types.Code.BUSY
-	if host != null and host.replay_player != null and (host.replay_player._is_stepping or host.replay_player._batch != null):
+	if (viewer != null and viewer._mutation_code() == Types.Code.BUSY) or (host != null and host._mutation_code() == Types.Code.BUSY):
 		return Types.Code.BUSY
 	var next_host: Host = Host.new()
 	var code: int = next_host.start(3)

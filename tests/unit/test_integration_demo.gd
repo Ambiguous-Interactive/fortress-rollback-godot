@@ -6,6 +6,22 @@ const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
+class StopReplayGame:
+	extends Game
+	var on_save: Callable
+	var on_advance: Callable
+
+	func save_state(saved_frame: int, writer: Game.Writer) -> Game.Driver.SaveResult:
+		if on_save.is_valid():
+			on_save.call()
+		return super.save_state(saved_frame, writer)
+
+	func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
+		if on_advance.is_valid():
+			on_advance.call()
+		return super.simulate_frame(input_frame, inputs)
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match", "restart_lifetimes"])
 
@@ -216,3 +232,44 @@ func _restart_lifetimes(context: RefCounted) -> void:
 	context.equal(demo.replay_player == previous, true, "busy replacements preserve player identity")
 	demo.stop_replay()
 	context.equal(previous.step(), Types.Code.TERMINATED, "stopping replay retires retained player")
+
+	context.equal(demo.reset(), Types.Code.OK, "cancelled expert batch releases replacement ownership")
+	_stopped_replay_callbacks(context)
+
+
+# Value: protects=stopped replay callbacks retain match ownership; fails_when=clearing public player hides callback;
+# why_new=expert cancellation has no executing callback; seam=none
+func _stopped_replay_callbacks(context: RefCounted) -> void:
+	for callback: String in ["save", "advance", "validate"]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(0), Types.Code.OK, "start callback retirement fixture")
+		for tick: int in range(10):
+			demo.tick(Game.RIGHT)
+		context.equal(demo.start_replay(), Types.Code.OK, "start callback replay")
+		var previous: RefCounted = demo.replay_player
+		var old_loop: RefCounted = demo.loop
+		var game: StopReplayGame = StopReplayGame.new()
+		context.equal(previous.configure(demo.loop.session.replay(), game, Game.SNAPSHOT_BYTES), Types.Code.OK, "configure real replay callback")
+		var owner: WeakRef = weakref(demo)
+		var attempts: PackedInt32Array = PackedInt32Array()
+		var stop: Callable = func() -> void:
+			var target: RefCounted = owner.get_ref()
+			target.stop_replay()
+			target.stop_replay()
+			context.equal(target.replay_player, null, "stop immediately leaves replay mode")
+			attempts.append(target.reset())
+			attempts.append(target.start(0))
+			attempts.append(target.start_replay())
+			context.equal(target.loop == old_loop, true, "stopped callback retains live match identity")
+		if callback == "advance":
+			game.on_advance = stop
+		else:
+			game.on_save = stop
+		var result: int = previous.validate_current_frame() if callback == "validate" else previous.step()
+		game.on_advance = Callable()
+		game.on_save = Callable()
+		context.equal(result, Types.Code.TERMINATED, "callback stop preserves termination as first cause")
+		context.equal(attempts, PackedInt32Array([Types.Code.BUSY, Types.Code.BUSY, Types.Code.BUSY]), "all replacement entries retain stopped callback ownership")
+		context.equal(previous.step(), Types.Code.TERMINATED, "stopped replay stays retired")
+		context.equal(demo.start_replay(), Types.Code.OK, "replacement replay works after stopped callback returns")
+		context.equal(demo.reset(), Types.Code.OK, "new match works after stopped callback returns")

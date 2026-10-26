@@ -406,7 +406,7 @@ func _restart_lifetimes(context: RefCounted) -> void:
 # Value: protects=restart preserves active callback ownership; fails_when=old completion replaces the match;
 # why_new=restart controls run between completed steps; seam=none
 func _restart_busy(context: RefCounted) -> void:
-	for actor: String in ["host", "viewer", "batch", "game_callback", "host_replay_batch"]:
+	for actor: String in ["host", "viewer", "batch", "game_callback", "host_replay_batch", "stopped_host_replay_callback"]:
 		var demo: Demo = Demo.new()
 		context.equal(demo.start(), Types.Code.OK, "start guarded restart scenario")
 		demo.is_paused = true
@@ -418,7 +418,23 @@ func _restart_busy(context: RefCounted) -> void:
 		var restart: Callable = func(_code: int, _before: int, _after: int) -> void:
 			attempts.append(demo.start())
 			context.equal(demo.host == host and demo.viewer == viewer, true, "busy restart preserves match identity")
-		if actor == "host_replay_batch":
+		if actor == "stopped_host_replay_callback":
+			context.equal(host.start_replay(), Types.Code.OK, "start cancellable host replay")
+			var player: RefCounted = host.replay_player
+			var game: RestartGame = RestartGame.new()
+			var owner: WeakRef = weakref(demo)
+			game.on_advance = func() -> void:
+				var target: RefCounted = owner.get_ref()
+				target.host.stop_replay()
+				target.host.stop_replay()
+				context.equal(target.host.replay_player, null, "callback cancellation exits host replay mode")
+				attempts.append(target.start())
+				context.equal(target.host == host and target.viewer == viewer, true, "stopped replay callback preserves spectator match identity")
+			context.equal(player.configure(host.loop.session.replay(), game, Game.SNAPSHOT_BYTES), Types.Code.OK, "configure callback host replay")
+			context.equal(player.step(), Types.Code.TERMINATED, "host replay cancellation preserves first cause")
+			game.on_advance = Callable()
+			context.equal(attempts, PackedInt32Array([Types.Code.BUSY]), "stopped host replay callback blocks spectator replacement")
+		elif actor == "host_replay_batch":
 			context.equal(host.start_replay(), Types.Code.OK, "start public host replay")
 			context.equal(host.replay_player.begin_advance().code, Types.Code.READY, "open host replay expert batch")
 			context.equal(demo.start(), Types.Code.BUSY, "host replay batch blocks spectator match replacement")

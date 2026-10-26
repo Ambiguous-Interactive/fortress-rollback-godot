@@ -23,6 +23,7 @@ var lag_ticks: int = 3
 var replay_player: ReplayPlayer
 var replay_game: Game
 var replay_frames: int = 0
+var _stopping_replay: ReplayPlayer
 var _remote_sample_frame: int = -1
 var _pending: Array[RemoteInput] = []
 
@@ -66,7 +67,7 @@ class RemoteInput:
 func start(delay_ticks: int = 3) -> int:
 	if delay_ticks not in [0, 3, 12]:
 		return Types.Code.INVALID_CONFIGURATION
-	if (loop != null and loop.session._mutation_code() == Types.Code.BUSY) or (replay_player != null and (replay_player._is_stepping or replay_player._batch != null)):
+	if _mutation_code() == Types.Code.BUSY:
 		return Types.Code.BUSY
 	var next_effects: DemoEffects = DemoEffects.new()
 	var next_loop: Loop = Loop.new(0, next_effects)
@@ -94,7 +95,7 @@ func reset() -> int:
 
 ## Watches the confirmed frames recorded so far from a fresh game, checking each recorded checksum.
 func start_replay() -> int:
-	if replay_player != null and (replay_player._is_stepping or replay_player._batch != null):
+	if _mutation_code() == Types.Code.BUSY:
 		return Types.Code.BUSY
 	if loop == null:
 		return Types.Code.INVALID_CONFIGURATION
@@ -113,9 +114,24 @@ func start_replay() -> int:
 func stop_replay() -> void:
 	if replay_player != null:
 		replay_player.terminate()
+		if replay_player._is_stepping:
+			_stopping_replay = replay_player
 	replay_player = null
 	replay_game = null
 	replay_frames = 0
+
+
+## Stopping playback clears the public mode immediately, but an executing callback still owns its match.
+func _mutation_code() -> int:
+	if _stopping_replay != null:
+		if _stopping_replay._is_stepping:
+			return Types.Code.BUSY
+		_stopping_replay = null
+	if loop != null and loop.session._mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if replay_player != null and (replay_player._is_stepping or replay_player._batch != null):
+		return Types.Code.BUSY
+	return Types.Code.OK
 
 
 ## OK plays one recorded frame; FRAME_EXHAUSTED holds the last frame; DESYNC means the rules differ.
