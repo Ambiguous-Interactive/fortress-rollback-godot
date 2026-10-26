@@ -70,7 +70,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 	var proposer: bool = barrier.role == owner.Role.PROPOSER
 	if local_donor and not history.prepare(host._core, barrier.slots, host._config.input_width):
 		return Types.Code.HISTORY_UNAVAILABLE
-	var plan_due: bool = barrier.history_plan_us < 0 or now_us - barrier.history_plan_us >= History.RETRY_US or barrier.history_plan_digest != barrier.digest
+	var plan_due: bool = _plan_due(host, barrier, now_us)
 	if proposer and plan_due and (not local_donor or history.plan_turn):
 		var plan: Dictionary = owner._payload(barrier, owner.Phase.PREPARE, owner.Stage.HISTORY, 0)
 		plan.cut = history.cut
@@ -87,9 +87,6 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 					accepted = false
 				else:
 					history.plan_sent_to[index] = {"digest": barrier.digest, "at": now_us}
-		if accepted:
-			barrier.history_plan_us = now_us
-			barrier.history_plan_digest = barrier.digest
 		if local_donor:
 			if accepted:
 				history.plan_turn = false
@@ -98,7 +95,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		return Types.Code.OK
 	if not proposer and history.plan_turn:
 		# A complete donor round yields to a due certificate until it is accepted.
-		if barrier.digest != 0 and (not barrier.certified or barrier.sent_us < 0 or now_us - barrier.sent_us >= History.RETRY_US):
+		if barrier.digest != 0 and (not barrier.certified or owner.publication_due(host, barrier, owner.Phase.REPORT, owner.Stage.READY)):
 			return Types.Code.OK
 		history.plan_turn = false
 	if history.retry_us >= 0 and now_us - history.retry_us < History.RETRY_US:
@@ -133,6 +130,16 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		history.cursors.clear()
 		history.plan_turn = true
 	return Types.Code.OK
+
+
+static func _plan_due(host: Variant, barrier: RefCounted, now_us: int) -> bool:
+	for index: int in host._ids.size():
+		if not barrier.participants.has(host._ids[index].hex_encode()):
+			continue
+		var previous: Dictionary = barrier.history.plan_sent_to.get(index, {})
+		if previous.is_empty() or previous.digest != barrier.digest or now_us - int(previous.at) >= History.RETRY_US:
+			return true
+	return false
 
 
 static func receive(host: Variant, barrier: RefCounted, source: int, event: Dictionary) -> int:

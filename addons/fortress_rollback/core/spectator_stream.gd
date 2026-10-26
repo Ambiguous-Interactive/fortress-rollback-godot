@@ -374,6 +374,30 @@ static func configuration_digest(config: Variant, seed: String, rules_version: S
 	return hashing.finish().slice(0, DIGEST_BYTES)
 
 
+## Bind the match configuration and the game's canonical original snapshot before startup.
+## Both sides must supply identical bytes, including an explicitly empty snapshot if applicable.
+## Reject snapshots above the configured capacity; this does not transfer or restore game state.
+static func configuration_digest_with_state(config: Variant, seed: String, rules_version: String, initial_state: PackedByteArray) -> PackedByteArray:
+	if not config is Config:
+		return PackedByteArray()
+	if config.max_snapshot_bytes < 1 or config.max_snapshot_bytes > 16777216 or initial_state.size() > config.max_snapshot_bytes:
+		return PackedByteArray()
+	var configuration: PackedByteArray = configuration_digest(config, seed, rules_version)
+	if configuration.is_empty():
+		return PackedByteArray()
+	var size_bytes: PackedByteArray = PackedByteArray()
+	size_bytes.resize(4)
+	size_bytes.encode_u32(0, initial_state.size())
+	var hashing: HashingContext = HashingContext.new()
+	hashing.start(HashingContext.HASH_SHA256)
+	hashing.update("FRGS-INITIAL-STATE-v1".to_ascii_buffer())
+	hashing.update(configuration)
+	hashing.update(size_bytes)
+	if not initial_state.is_empty():
+		hashing.update(initial_state)
+	return hashing.finish().slice(0, DIGEST_BYTES)
+
+
 ## Append the keyed tag that authenticates the header and the body of one packet.
 ## The tag sits between the header and the body, so the body keeps its fixed offset.
 static func authenticate(packet: PackedByteArray, key: PackedByteArray) -> PackedByteArray:

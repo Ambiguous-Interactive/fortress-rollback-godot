@@ -283,6 +283,9 @@ var bytes: PackedByteArray = driver.replay().to_bytes()  # or session.replay() /
 `driver.replay()` and `session.replay()` return a copy holding every frame whose inputs are confirmed and already simulated.
 The driver returns null before configuration or when recording is disabled. Changing an exported
 copy cannot change the session's recording.
+`replay.to_bytes()` returns empty if the recording's metadata or backing storage is malformed,
+or an input digest is missing. It preserves stored digests and checksums; playback still reports
+content mismatches at their owning frame instead of silently repairing the evidence.
 Predicted input is never recorded. Each frame also keeps the state checksum when the session still had it.
 `skipped_frames()` counts frames recorded as neutral input because their real input was unavailable.
 It stays zero in normal play; treat a nonzero count as an incomplete replay.

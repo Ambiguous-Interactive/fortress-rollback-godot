@@ -396,7 +396,8 @@ input history remains the state oracle; this local comparison does not qualify b
 Peer callback and completion guards protect the shared engine across facades; terminal handler cancellation preserves its first cause and closes peer links.
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
-Replay configuration validates mutable recording structure before ownership. Invalid replacements preserve existing playback and validation coverage;
+Replay configuration validates mutable recording structure before ownership. Portable export rejects malformed
+metadata/storage and incomplete input digests while preserving stored comparison evidence. Invalid replacements preserve existing playback and validation coverage;
 safe missing-digest and content comparisons remain at their owning playback boundary.
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
 and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4 and 5. The pinned upstream
@@ -441,7 +442,8 @@ Its local example streams corrected original inputs while the host continues.
 Versioned lifetime-bound row envelopes support bounded byte delivery and explicit host expiry.
 Every envelope packet carries a keyed tag over its header and body and the digest of the
 agreed match, so a viewer accepts only a host that holds the shared key and only a match
-it agreed. The envelope version is 3, and the version and the optional kinds
+it agreed. Network startup can bind the complete canonical original snapshot with the state-bound digest helper;
+the caller still owns state agreement, transfer and restoration. The envelope version is 3, and the version and the optional kinds
 are negotiated inside that authenticated boundary before the first row, so a peer that
 speaks another envelope fails at startup with one recorded reason.
 A viewer never simulates a host row it no longer retains, and a reconfigured viewer keeps
@@ -498,7 +500,7 @@ certifies the frame and the digest of that value before the irreversible commit.
 A matching repeated commit is acknowledged after the slot freezes, and the
 proposer stops retries after every live survivor acknowledges. Every phase is
 fenced by the complete locally derived operation identity and sender role.
-Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure.
+Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure, including READY certificates.
 Historical donor plans apply the same per-survivor acceptance clocks, leaving healthy output capacity available for retained history chunks.
 Bounded donor chunk service rotates across survivors so refused links cannot starve later healthy links.
 A survivor lost before commit aborts the local attempt with `participant_lost`
