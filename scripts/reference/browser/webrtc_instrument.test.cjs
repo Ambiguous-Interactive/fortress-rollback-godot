@@ -477,3 +477,147 @@ test('peer-drop answer loss drops one inventory report and passes its exact retr
     delete global.document;
   }
 });
+
+// Value: actual original inputs remain held until prediction, across retries and room reuse.
+function predictionFixture() {
+  const sent = [], timers = [];
+  class Channel {
+    constructor() { this.id = 3; this.readyState = 'open'; }
+    addEventListener() {}
+    send(bytes) { sent.push(Array.from(bytes)); }
+    get bufferedAmount() { return 0; }
+  }
+  class Connection { createDataChannel() { return new Channel(); } }
+  const source = fs.readFileSync(path.join(__dirname, 'online.cjs'), 'utf8');
+  const code = source.slice(source.indexOf('function delayedInputs()'), source.indexOf('\nfunction instrumentSockets()'));
+  const context = vm.createContext({ window: { fortressOnline: { room: 'FIRST', room_id: 'room-first', session_id: '01'.repeat(16),
+    game_lifetime: 1, predicted_frame: -1, predicted_lifetime: 0 } }, RTCPeerConnection: Connection, RTCDataChannel: Channel,
+    setTimeout(callback) { timers.push(callback); }, Uint8Array, ArrayBuffer });
+  vm.runInContext(`${code}; delayedInputs();`, context);
+  return { context, sent, timers, createChannel: () => new Connection().createDataChannel(), channel: new Connection().createDataChannel(), window: context.window };
+}
+const predictionInput = () => { const bytes = new Uint8Array(25); bytes.set([70, 82, 71, 80, 2, 0, 3, 0]); bytes.fill(1, 8); return bytes; };
+
+test('prediction barrier owns exact originals and blocks retries until explicit predicted-step release', () => {
+  const f = predictionFixture();
+  assert.ok(f.window.fortressPredictionGate, 'online input delay needs an explicit prediction barrier');
+  const gate = f.window.fortressPredictionGate;
+  gate.arm({ room: 'FIRST', room_id: 'room-first' });
+  const original = predictionInput();
+  for (let i = 0; i < 26; i++) f.channel.send(original);
+  original[8] = 9;
+  f.timers.forEach(callback => callback());
+  assert.equal(f.sent.length, 0, 'elapsed timers and retransmission count cannot release an original');
+  const handshake = predictionInput(); handshake[6] = 1;
+  f.channel.send(handshake);
+  assert.equal(f.sent.length, 1, 'handshake/control remains live');
+  assert.throws(() => gate.release(), /prediction/);
+  assert.equal(f.sent.length, 1);
+  Object.assign(f.window.fortressOnline, { predicted_frame: 2, predicted_lifetime: 1 });
+  gate.release();
+  assert.equal(f.sent.length, 27);
+  assert.ok(f.sent.slice(1).every(packet => packet[8] === 1), 'sender mutation cannot alter held originals');
+  assert.equal(gate.summary().released, 26);
+  assert.throws(() => gate.release(), /inactive/);
+  Object.assign(f.window.fortressOnline, { game_lifetime: 2, predicted_frame: -1, predicted_lifetime: 0 });
+  gate.arm({ room: 'FIRST', room_id: 'room-first' });
+  assert.equal(gate.summary().released, 0);
+  f.channel = f.createChannel();
+  f.channel.send(predictionInput());
+  assert.equal(f.sent.length, 27, 'a new room has its own active barrier');
+  f.channel.readyState = 'closed';
+  Object.assign(f.window.fortressOnline, { predicted_frame: 2, predicted_lifetime: 2 });
+  assert.throws(() => gate.release(), /closed/);
+  assert.equal(f.sent.length, 27, 'a closed old channel cannot publish successful delivery');
+});
+
+test('prediction barrier fails closed on packet and byte capacity and cannot reset pending work', () => {
+  for (const size of [25, 65536]) {
+    const f = predictionFixture(), gate = f.window.fortressPredictionGate;
+    assert.ok(gate);
+    gate.arm({ room: 'FIRST', room_id: 'room-first' });
+    const packet = new Uint8Array(size); packet.set(predictionInput());
+    const limit = Math.min(256, Math.floor(262144 / size));
+    for (let i = 0; i < limit; i++) f.channel.send(packet);
+    assert.throws(() => gate.arm(), /active/);
+    assert.throws(() => f.channel.send(packet), /capacity/);
+    assert.equal(f.sent.length, 0);
+    Object.assign(f.window.fortressOnline, { predicted_frame: 2, predicted_lifetime: 1 });
+    assert.throws(() => gate.release(), /capacity/);
+    assert.equal(f.sent.length, 0);
+  }
+});
+
+// Value: new physical channels cannot reuse an old room's predicted callback or readiness.
+test('prediction barrier rejects stale and replaced room lifetimes before physical delivery', () => {
+  const f = predictionFixture(), gate = f.window.fortressPredictionGate;
+  const first = { room: 'FIRST', room_id: 'room-first', session_id: '01'.repeat(16), game_lifetime: 1, predicted_frame: -1, predicted_lifetime: 0 };
+  f.window.fortressOnline = first;
+  gate.arm({ room: first.room, room_id: first.room_id });
+  f.channel.send(predictionInput());
+  first.predicted_frame = 2; first.predicted_lifetime = 1;
+  gate.release();
+  f.channel.readyState = 'closed';
+  assert.throws(() => gate.arm({ room: 'SECOND', room_id: 'room-second' }), /lifetime|room|prediction/);
+  assert.equal(f.sent.length, 1);
+  f.window.fortressOnline = { ...first, room: 'SECOND', room_id: 'room-second', session_id: '02'.repeat(16),
+    game_lifetime: 2, predicted_frame: -1, predicted_lifetime: 0 };
+  gate.arm({ room: 'SECOND', room_id: 'room-second' });
+  const replacement = f.createChannel();
+  const packet = predictionInput(); packet.fill(2, 8, 24);
+  replacement.send(packet);
+  f.window.fortressOnline = { ...first };
+  assert.throws(() => gate.release(), /lifetime|room/);
+  assert.equal(f.sent.length, 1, 'old callback cannot release the replacement channel');
+});
+
+// Value: a current callback cannot authorize original bytes or physical channels from another session.
+test('prediction barrier rejects old channels, old packet sessions, and old callback lifetimes', () => {
+  for (const stale of ['channel', 'packet', 'callback']) {
+    const f = predictionFixture(), gate = f.window.fortressPredictionGate;
+    Object.assign(f.window.fortressOnline, { room: 'SECOND', room_id: 'room-second', session_id: '02'.repeat(16), game_lifetime: 2 });
+    gate.arm({ room: 'SECOND', room_id: 'room-second' });
+    const channel = stale === 'channel' ? f.channel : f.createChannel();
+    const packet = predictionInput();
+    if (stale !== 'packet') packet.fill(2, 8, 24);
+    if (stale !== 'callback') assert.throws(() => channel.send(packet), /lifetime/);
+    else {
+      channel.send(packet);
+      Object.assign(f.window.fortressOnline, { predicted_frame: 2, predicted_lifetime: 1 });
+      assert.throws(() => gate.release(), /prediction/);
+      Object.assign(f.window.fortressOnline, { predicted_lifetime: 2 });
+      gate.release();
+      assert.equal(f.sent.length, 1, 'a fresh callback on the matching lifetime is the green control');
+    }
+    if (stale !== 'callback') assert.equal(f.sent.length, 0);
+  }
+});
+
+// Value: real retries between browser evaluations must enter the same atomic release receipt.
+test('prediction release receipt includes originals arriving after the prediction wait', async () => {
+  const source = fs.readFileSync(path.join(__dirname, 'online.cjs'), 'utf8');
+  const start = source.indexOf('      const prediction = await Promise.all(');
+  const end = source.indexOf('      await Promise.all(pages.map(page => wait(page, target =>', start);
+  assert.ok(start >= 0 && end > start);
+  const fixtures = [predictionFixture(), predictionFixture()];
+  for (const f of fixtures) {
+    f.window.fortressPredictionGate.arm({ room: 'FIRST', room_id: 'room-first' });
+    f.channel.send(predictionInput());
+    Object.assign(f.window.fortressOnline, { predicted_frame: 2, predicted_lifetime: 1 });
+  }
+  const pages = fixtures.map(f => ({ async evaluate(operation, argument) {
+    // A real original/retry can enter on every browser turn while the host awaits evaluations.
+    if (f.window.fortressPredictionGate.active) f.channel.send(predictionInput());
+    const result = vm.runInContext(`(${operation.toString()})(${JSON.stringify(argument)})`, f.context);
+    if (f.window.fortressPredictionGate.active) f.channel.send(predictionInput());
+    return result;
+  } }));
+  const execute = new (Object.getPrototypeOf(async function() {}).constructor)('pages', `${source.slice(start, end)}; return prediction;`);
+  const receipts = await execute(pages);
+  receipts.forEach((receipt, index) => {
+    assert.ok(receipt.before.pending >= 2, 'receipt includes the input arriving after prediction readiness');
+    assert.equal(receipt.after.released, receipt.before.pending, 'capture and release have no intervening browser turn');
+    assert.equal(fixtures[index].sent.length, receipt.after.released);
+    assert.equal(receipt.after.pending, 0);
+  });
+});
