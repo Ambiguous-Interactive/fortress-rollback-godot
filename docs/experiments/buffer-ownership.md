@@ -64,7 +64,7 @@ The success receipt is `.cache/reference/results/ownership.json`; raw logs are
 `ownership-<engine>-<negative|positive>-native-<suite>.log` and
 `ownership-<engine>-<negative|positive>-browser-<batch>.log` beside it.
 Native suites run in separate processes with a 180-second watchdog; Web pages
-run groups of at most four Chromium suites or two Firefox suites with the same
+run groups of at most four Chromium suites or one Firefox suite with the same
 180-second page watchdog.
 Each browser launcher retains its 240-second process budget. Every case still
 runs twice in-process. Complete batch inventories and exact metadata/types are

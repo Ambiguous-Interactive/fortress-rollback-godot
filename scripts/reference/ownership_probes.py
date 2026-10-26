@@ -859,7 +859,7 @@ def run_probes(args, results):
                 browser_batches = []
                 browser_identity = None
                 ordered_suites = sorted(EXPECTED)
-                batch_size = 2 if args.browser == 'firefox' else 4
+                batch_size = 1 if args.browser == 'firefox' else 4
                 for batch_index, offset in enumerate(range(0, len(ordered_suites), batch_size)):
                     suites = ordered_suites[offset:offset + batch_size]
                     browser_log = results / f'ownership-{label}-browser-{batch_index:02d}.log'

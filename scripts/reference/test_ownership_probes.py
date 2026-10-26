@@ -655,7 +655,7 @@ class OwnershipRejectionTests(unittest.TestCase):
             self.assertEqual(len(logs), len(set(logs)), 'each native batch keeps its own log')
             groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
             suites = sorted(probes.EXPECTED)
-            batch_size = 2 if selected == 'firefox' else 4
+            batch_size = 1 if selected == 'firefox' else 4
             self.assertEqual(groups, [suites[offset:offset + batch_size] for offset in range(0, len(suites), batch_size)] * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
             browser_logs = [log for command, log, timeout in browser_calls]
