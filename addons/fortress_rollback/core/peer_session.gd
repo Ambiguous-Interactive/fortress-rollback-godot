@@ -473,7 +473,7 @@ func _prepare_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
 		if _is_gone(index):
 			continue
 		var endpoint: Endpoint = _endpoint(index)
-		if endpoint.status().last_submitted_frame == scheduled:
+		if endpoint._last_submitted_frame() == scheduled:
 			continue
 		var sent: int = endpoint.submit(scheduled, data, statuses, now_us)
 		if sent != I.Code.OK:
@@ -859,7 +859,7 @@ func _running() -> bool:
 		if _is_gone(index):
 			# A departed peer no longer holds the match.
 			continue
-		if _peers[_ids[index].hex_encode()].status().state != "running":
+		if not _endpoint(index)._is_running():
 			return false
 	return true
 
@@ -907,6 +907,10 @@ func _gossip_nudge_needed() -> bool:
 
 
 func _confirmation_code() -> int:
+	var active: Array[Endpoint] = []
+	for index: int in range(_ids.size()):
+		if not _is_gone(index):
+			active.append(_endpoint(index))
 	var frames: PackedInt64Array = _core.received_frames()
 	# The fold starts above every slot, so a frozen slot cannot cap the frontier through
 	# the seed value of the first slot.
@@ -917,10 +921,8 @@ func _confirmation_code() -> int:
 			continue
 		var bound: int = frames[slot]
 		if not _config.local_players.has(slot):
-			for index: int in range(_ids.size()):
-				if _is_gone(index):
-					continue
-				bound = mini(bound, _endpoint(index).status().peer_statuses[slot].last_frame)
+			for endpoint: Endpoint in active:
+				bound = mini(bound, endpoint._peer_received_frame(slot))
 		limit = mini(limit, bound)
 	if limit == Queue.FRAME_MAX:
 		# Every slot is frozen, so the frontier cannot move.
@@ -944,8 +946,7 @@ func _check_failure() -> void:
 		if _is_gone(index):
 			# A departed peer is no longer a failure of the match.
 			continue
-		var observed: Dictionary = _endpoint(index).status()
-		if observed.state in ["terminated", "failed"] or not observed.handshake.mismatch.is_empty():
+		if _endpoint(index)._has_failed():
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 		_remember_diagnostic()
@@ -1070,7 +1071,7 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 		if _is_gone(index):
 			continue
 		if send_reports:
-			_frames_ahead = maxi(_frames_ahead, _endpoint(index).status().average_frame_advantage)
+			_frames_ahead = maxi(_frames_ahead, _endpoint(index)._average_frame_advantage())
 	if send_reports and current > _next_wait and _frames_ahead >= 3:
 		_next_wait = current + 60
 		_publish_event({"kind": "wait_recommendation", "skip_frames": _frames_ahead})
@@ -1119,7 +1120,7 @@ func _publish_delay_recommendation() -> bool:
 		if _is_gone(index):
 			# A departed peer has no live round trip time.
 			continue
-		round_trip_ms = maxi(round_trip_ms, _endpoint(index).status().round_trip_time_ms)
+		round_trip_ms = maxi(round_trip_ms, _endpoint(index)._round_trip_time_ms())
 	var current: int = _core.input_delay(player)
 	# set_input_delay needs a prior sample, so none is suggested before one.
 	var local_count: int = _config.local_players.size() if _core.received_frames()[player] != -1 else 0

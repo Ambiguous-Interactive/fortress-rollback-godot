@@ -5,17 +5,27 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-async function placement(mutation = '') {
+async function placement(mutation = '', diagnostics = false) {
   const calls = [];
   const exported = { exports: {} };
   const context = {
-    module: exported, process: { env: { FORTRESS_XDOTOOL_EXECUTABLE: '/owned/xdotool' } },
+    module: exported, process: { env: { FORTRESS_XDOTOOL_EXECUTABLE: '/owned/xdotool', DISPLAY: ':99', XAUTHORITY: '/owned/auth',
+      ...(diagnostics ? { DEBUG: 'pw:browser', DEBUG_FILE: '/owned/browser.log' } : {}) } },
     require(name) {
       if (name === 'node:crypto') return { randomUUID: () => 'unique-owner' };
       assert.equal(name, 'node:child_process');
       return { execFileSync(executable, args, options) {
         assert.equal(executable, '/owned/xdotool');
         assert.equal(options.timeout, 2000);
+        const environment = options.env || context.process.env;
+        assert.equal(environment.DISPLAY, ':99');
+        assert.equal(environment.XAUTHORITY, '/owned/auth');
+        if (diagnostics) {
+          assert.equal(environment.DEBUG, undefined, 'xdotool must not inherit Playwright diagnostics');
+          assert.equal(environment.DEBUG_FILE, undefined);
+          assert.equal(context.process.env.DEBUG, 'pw:browser', 'parent browser diagnostics remain enabled');
+          assert.equal(context.process.env.DEBUG_FILE, '/owned/browser.log');
+        }
         calls.push(Array.from(args));
         if (args[0] === 'search') return mutation === 'ambiguous' ? '123\n456\n' : '123\n';
         if (args[0] === 'getdisplaygeometry') {
@@ -64,6 +74,7 @@ async function placement(mutation = '') {
 }
 
 test('window arrangement identifies only the uniquely titled owned Firefox page', () => placement());
+test('window arrangement isolates Playwright diagnostics from xdotool', () => placement('', true));
 for (const mutation of ['ambiguous', 'small', 'position', 'screen_missing', 'screen_nonnumeric', 'screen_fraction', 'screen_large',
   'width_missing', 'height_missing', 'width_nonnumeric', 'height_nonnumeric', 'width_fraction', 'height_large', 'post_width_nonnumeric', 'post_height_missing',
   'extra_separator', 'missing_separator', 'duplicate_key', 'unknown_key',

@@ -9,6 +9,7 @@ const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Lobby = preload("res://examples/online/lobby.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const ReplayPlayer = preload("res://addons/fortress_rollback/core/replay_player.gd")
 
@@ -154,6 +155,19 @@ class ObservedGame:
 	var saves: Dictionary = {}
 	var restores: int = 0
 	var is_corrupt: bool = false
+	var predicted_frame: int = -1
+	var lifetime: int = 0
+
+	func simulate_frame(input_frame: int, frame_inputs: Types.FrameInputs) -> bool:
+		var predicted: bool = false
+		if input_frame >= 2:
+			for player: int in frame_inputs.player_count():
+				var sample: Types.InputResult = frame_inputs.read(player)
+				predicted = predicted or (sample.code == Types.Code.OK and sample.status == Queue.Status.PREDICTED)
+		var accepted: bool = super.simulate_frame(input_frame, frame_inputs)
+		if accepted and predicted and predicted_frame < 0:
+			predicted_frame = input_frame
+		return accepted
 
 	func save_state(saved_frame: int, writer: Writer) -> Driver.SaveResult:
 		var result: Driver.SaveResult = super.save_state(saved_frame, writer)
@@ -180,6 +194,7 @@ var stale_callbacks: Dictionary = {}
 var replay_playback: Dictionary = {}
 var diagnostic_scene: Node2D
 var viewer_scene: Node2D
+var game_lifetime: int = 0
 
 
 func _ready() -> void:
@@ -200,6 +215,8 @@ func _process(_delta: float) -> void:
 	var lobby: ObservedLobby = scene.controller as ObservedLobby
 	if not lobby.has_readied and not lobby.game_match.game is ObservedGame:
 		observed = ObservedGame.new()
+		game_lifetime += 1
+		observed.lifetime = game_lifetime
 		observed.is_corrupt = JavaScriptBridge.eval("window.fortressOnlineCorrupt || false")
 		lobby.game_match.game = observed
 		inputs.clear()
@@ -236,6 +253,9 @@ func _process(_delta: float) -> void:
 		"failure_diagnostic": lobby.game_match.peer.diagnostics() if lobby.state == "failed" else {},
 		"failure_clocks": failure_clocks(lobby) if lobby.state == "failed" else [],
 		"restores": observed.restores if observed != null else 0,
+		"predicted_frame": observed.predicted_frame if observed != null else -1,
+		"game_lifetime": observed.lifetime if observed != null else 0,
+		"predicted_lifetime": observed.lifetime if observed != null and observed.predicted_frame >= 2 else 0,
 		"corrupt": observed.is_corrupt if observed != null else false,
 		"all_ready": lobby.all_ready,
 		"ready_enabled": not scene.ready_button.disabled,

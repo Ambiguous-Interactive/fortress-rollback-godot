@@ -123,6 +123,14 @@ func receive(packet: Variant, attributed_sender: Variant, now_us: Variant, next_
 	return _commit(plan)
 
 
+func _is_running() -> bool:
+	return _state.state == "running"
+
+
+func _has_failed() -> bool:
+	return _state.state in ["terminated", "failed"] or not _state.mismatch.is_empty()
+
+
 func status() -> Dictionary:
 	return _state.duplicate(true)
 

@@ -415,6 +415,38 @@ def validate_corrupt_control(record, peers):
         raise ValueError('online example corrupt control lost the healthy peer')
 
 
+def validate_prediction_gate(record, peers):
+    """Both actual predicted callbacks precede release of every staged original input."""
+    evidence = record.get('prediction')
+    if (not isinstance(evidence, list) or len(evidence) != 2 or any(not isinstance(item, dict) for item in evidence)
+            or any(type(item.get('page_index')) is not int for item in evidence)
+            or sorted(item['page_index'] for item in evidence) != [0, 1]):
+        raise ValueError('online example prediction barrier evidence missing')
+    pages = {peer['page_index']: peer for peer in peers}
+    retained = {identity['page_index']: identity for identity in record['identity']}
+    for item in evidence:
+        peer = pages[item['page_index']]
+        before, after = item.get('before'), item.get('after')
+        identity = {key: peer.get(key) or retained[item['page_index']].get(key) for key in ('room', 'room_id')}
+        if (type(item.get('frame')) is not int or type(peer.get('frame')) is not int or not 2 <= item['frame'] < peer['frame']
+                or type(peer.get('predicted_frame')) is not int or peer['predicted_frame'] != item['frame']
+                or peer['inputs'][2] != (2 if item['page_index'] == 0 else 4)
+                or not isinstance(before, dict) or not isinstance(after, dict)
+                or any(type(boundary.get(key)) is not int for boundary in (before, after)
+                       for key in ('pending', 'bytes', 'released', 'releases'))
+                or type(peer.get('game_lifetime')) is not int or peer['game_lifetime'] <= 0
+                or type(peer.get('predicted_lifetime')) is not int or peer['predicted_lifetime'] != peer['game_lifetime']
+                or any(boundary.get(key) != identity[key] for boundary in (before, after) for key in ('room', 'room_id'))
+                or any(boundary.get(key) != peer.get(key) for boundary in (before, after) for key in ('session_id', 'game_lifetime'))
+                or any(type(boundary.get('game_lifetime')) is not int for boundary in (before, after))
+                or before.get('active') is not True or before.get('failure') != ''
+                or not 1 <= before['pending'] <= 256 or not 8 * before['pending'] <= before['bytes'] <= 262144
+                or before['released'] != 0 or before['releases'] != 0
+                or after.get('active') is not False or after.get('failure') != ''
+                or after['pending'] != 0 or after['bytes'] != 0 or after['released'] != before['pending'] or after['releases'] != 1):
+            raise ValueError('online example prediction barrier did not precede original delivery')
+
+
 def validate_result(value, corrupt=False, expected_engine=None):
     if (not isinstance(value, dict) or value.get('passed') is not True or type(value.get('browser_instances')) is not int
             or value['browser_instances'] != 2 or value.get('errors') != [] or value.get('corrupt') is not corrupt):
@@ -482,6 +514,7 @@ def validate_result(value, corrupt=False, expected_engine=None):
                     or any(type(buttons) is not int or not 0 <= buttons <= 15 for buttons in history)
                     or not any(history) or history[:2] != [0, 0]):
                 raise ValueError('actual physical keyboard submission evidence incomplete')
+        validate_prediction_gate(record, peers)
         expected = expected_states(histories, min(map(len, histories)))
         for peer in peers:
             intended_desync = (corrupt and peer.get('state') == 'failed' and type(peer.get('terminal_reason')) is int

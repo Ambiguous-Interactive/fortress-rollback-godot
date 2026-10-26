@@ -5,7 +5,10 @@ const { randomUUID } = require('node:crypto');
 async function placeFirefox(page, index) {
   const title = 'fortress-owned-' + randomUUID();
   await page.evaluate(value => { document.title = value; }, title);
-  const execute = args => execFileSync(process.env.FORTRESS_XDOTOOL_EXECUTABLE, args, { encoding: 'utf8', timeout: 2000 }).trim();
+  const environment = { ...process.env };
+  delete environment.DEBUG;
+  delete environment.DEBUG_FILE;
+  const execute = args => execFileSync(process.env.FORTRESS_XDOTOOL_EXECUTABLE, args, { encoding: 'utf8', timeout: 2000, env: environment }).trim();
   const windows = execute(['search', '--sync', '--onlyvisible', '--name', title]).split('\n');
   if (windows.length !== 1 || !/^\d+$/.test(windows[0])) throw new Error('owned Firefox window identity is ambiguous');
   const integer = (value, minimum, maximum) => typeof value === 'string' && /^-?\d+$/.test(value)

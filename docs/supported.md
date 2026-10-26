@@ -26,7 +26,7 @@ executed.
 | Browser | Supported | Evidence |
 | --- | --- | --- |
 | Chromium 141.0.7390.37 on Linux | Yes, for the exported WebRTC witness | The exported Chromium witness runs 2/4/8-peer rooms on both pins |
-| Firefox | Not qualified | An unrestricted local run passes, but the CI eight-player matrix is still open |
+| Firefox 142.0.1 on Linux | Not qualified for release | Full API comparisons are required on both pins; live eight-player acceptance remains open |
 | WebKit | Not qualified | No browser matrix evidence yet |
 | Mixed browsers | Not qualified | Same open work as Firefox and WebKit |
 

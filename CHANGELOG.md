@@ -189,6 +189,8 @@
 
 ### Fixed
 
+- Fix completed spectator playback reporting a relay failure during continued polling or late packet delivery. Cancellation and playback failures remain explicit.
+
 - Fix local multiplayer and spectator restarts leaving retained old sessions playable. Restarts refuse active callbacks or request batches.
 
 - Fix replay configuration raising script errors for unrelated configuration objects. Invalid replacements now preserve playback.
@@ -337,6 +339,8 @@
 - Fix invalid transport token callbacks retaining oversized data. Relay and WebRTC adapters validate null or exactly 16 bytes before copying.
 
 ### Improved
+
+- Improve multi-peer input processing by reading receipt frames without copying retained packet history. Public status snapshots keep their ownership guarantees.
 
 - Improve wide-input queue insertion with native byte copying while preserving input, prediction and rollback-floor ownership.
 

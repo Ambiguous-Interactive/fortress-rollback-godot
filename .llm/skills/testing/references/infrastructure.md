@@ -2,6 +2,9 @@
 
 Use for subprocess runners, receipts, staging, tool provenance and caches.
 
+Scope diagnostic environment variables to their intended child process; unrelated
+helpers can interpret the same variable differently and corrupt structured output.
+
 Tool probes must check process exit status before accepting version text or a
 completion marker. Test both empty failures and plausible output followed by
 nonzero exit. A completed result stream must account for every selected test,
@@ -28,8 +31,11 @@ edit restarts affected fresh-process and source-inventory checks.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
 need bounded readiness polling rather than one successful configuration read.
 
-Run the full CI entry point with its declared per-process watchdog. Size the
-full-suite budget from completed runs without relaxing focused hang controls.
+Run the full CI entry point under both process and job watchdogs. Successful
+pages do not qualify an inventory that exceeds the job deadline. Split long
+inventories into declared partitions while retaining cases, assertions and repeats.
+Bind each partition to its inventory, engine, phase and source/tool identities;
+require the complete union and reject gaps or undeclared overlaps before qualification.
 Shared-host runs keep one worker and known slow-case isolation; serialization must
 not merge individually bounded cases into an over-budget process. Determine lease
 ownership from successful lock acquisition, never from matching owner names.

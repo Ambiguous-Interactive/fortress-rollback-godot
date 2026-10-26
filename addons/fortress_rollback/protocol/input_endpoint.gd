@@ -310,6 +310,30 @@ func status() -> Dictionary:
 	return result
 
 
+func _last_submitted_frame() -> int:
+	return _state.last_submitted_frame
+
+
+func _average_frame_advantage() -> int:
+	return _state.average_frame_advantage
+
+
+func _round_trip_time_ms() -> int:
+	return _state.round_trip_time_ms
+
+
+func _is_running() -> bool:
+	return _handshake != null and not _state.terminated and _handshake._is_running()
+
+
+func _has_failed() -> bool:
+	return _state.terminated or _handshake._has_failed()
+
+
+func _peer_received_frame(slot: int) -> int:
+	return _state.peer_statuses[slot].last_frame
+
+
 func drain_outbox() -> Array[PackedByteArray]:
 	var result: Array[PackedByteArray] = []
 	if _busy or _handshake == null:

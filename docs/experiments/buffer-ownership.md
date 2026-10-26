@@ -24,13 +24,19 @@ From the repository root, run:
 
 ```sh
 python3 scripts/reference/ownership_probes.py --offline --web
+xvfb-run -a python3 scripts/reference/ownership_probes.py --offline --web --browser firefox
 ```
 
 Omit `--offline` to fetch missing digest-pinned artifacts. Pinned Playwright must
 already be installed using the baseline browser setup. The runner constructs
 isolated temporary projects, uses both pinned editors and release Web templates,
-and drives the same seed-1701 scenarios twice in-process, natively and in real
-Chromium. It rejects process failures, engine errors, incomplete inventories,
+and drives the same seed-1701 scenarios twice in-process, natively and in
+the selected Chromium or Firefox browser. Chromium remains the default. Firefox
+requires Ubuntu 24.04, Xvfb and xdotool, and runs a visible owned window with
+`webgl.force-enabled=true` and `webgl.disabled=false`. It uses the existing
+digest-pinned Firefox archive in an installation separate from the transport
+witness. The browser name and exact version must match the selected pin.
+The runner rejects process failures, engine errors, incomplete inventories,
 repeat divergence and native/Web differences. The runner also includes the R1
 integer/encoding suite; its evidence is recorded separately. Godot excludes
 hidden `.llm` directories from exports, so the checksum sample is copied byte
@@ -58,18 +64,50 @@ The success receipt is `.cache/reference/results/ownership.json`; raw logs are
 `ownership-<engine>-<negative|positive>-native-<suite>.log` and
 `ownership-<engine>-<negative|positive>-browser-<batch>.log` beside it.
 Native suites run in separate processes with a 180-second watchdog; Web pages
-run groups of at most four suites with the same 180-second page watchdog.
+run groups of at most four Chromium suites or one Firefox suite with the same
+180-second page watchdog.
+Firefox runs each `test_driver_peer_parity` case in its own page. Each page
+retains both repetitions. The launcher uses native case order, reassembles the
+complete suite, and requires exact equality with the full native suite result.
 Each browser launcher retains its 240-second process budget. Every case still
 runs twice in-process. Complete batch inventories and exact metadata/types are
 checked before the full native/Web results are compared; missing or duplicate
 batches cannot qualify. Receipts declare the selected engine versions.
 The default command runs both pins;
 `--version 4.3` or `--version 4.7.2` runs both control rounds for one pin.
-CI runs those pins in separate jobs under the existing 30-minute job budget.
+CI keeps both Chromium jobs and runs each Firefox pin/control phase in its own
+job under the existing 30-minute budget. Both Firefox phases are required on each pin. Each selection runs the same complete case
+inventory, native comparison and negative controls; it does not filter replay,
+driver or spectator coverage. Firefox output additionally records its WebGL
+preferences and checked window geometry.
+Use `--phase negative` or `--phase positive` only for an explicit partition.
+The receipt declares `phases_requested` and covers only its requested pins and
+phases. A single-phase receipt never establishes complete qualification; both
+phases must pass for every engine. Omitting `--phase` retains both phases.
+Firefox CI on both engine pins also selects `--suite-part 1` or `--suite-part 2` within
+each phase to fit the same 30-minute job cap. Parts alternate the sorted suite
+inventory and repeat the ownership-control suite in both parts. Their union
+covers all 67 suites and 426 cases; only the four control cases overlap.
+Every selected case still runs twice, with exact native/Web comparison.
+Receipts declare `suite_part_requested` and the exact `suites_requested`
+inventory. Both parts and both phases must pass for full qualification.
+Omitting `--suite-part` keeps the complete inventory.
+Owned browser contexts close before their parent process. This releases Firefox's
+startup-window shutdown wait before process exit; runtime hashes still reject
+remaining installation changes. CI retains the last Firefox process lifecycle
+trace in `ownership-firefox-process.log` for exit-code and signal diagnosis.
 Receipts include the pin-manifest hash and executable source hashes. A fresh run removes
 its previous receipt first, so an interrupted or failed attempt cannot preserve
 an old success. The historical baseline before these probes was
 `97c0d5bfef7eb5f746eae7bb51e6e573ff7e5e04`; source hashes identify this experiment.
+Receipts also bind all files in the selected browser installation, the imported
+Playwright packages, Node and each executed Web export. These inventories must
+remain unchanged through completion and are checked around every browser batch.
+The extracted Godot executable, installed Web templates and staged project inputs
+are frozen and checked around their applicable commands. Editor import may add
+paired metadata; the mutable `.godot` cache stays outside the authored inventory.
+Unused npm command links are outside the imported packages; symlinks within any
+inventoried runtime remain rejected.
 
 ## Observed engine boundaries
 

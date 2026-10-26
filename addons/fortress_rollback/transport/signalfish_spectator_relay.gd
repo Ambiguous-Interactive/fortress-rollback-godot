@@ -173,6 +173,7 @@ func _configure(client: Object, sdk_config: Object, protocol_info: Object, strea
 
 ## Poll elapsed expiry before any buffered packet, even while playback is paused or blocked.
 ## BUSY and row pressure retain exact packets; bounded rotation lets reordered gap rows recover.
+## Completed clean END returns OK with peer_code TERMINATED; late packets are discarded.
 ## send_accept(packet) returns an Error from a separate authenticated control transport.
 ## OK means transport acceptance, not host receipt. ERR_BUSY/ERR_OUT_OF_MEMORY retry exact bytes.
 func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
@@ -228,7 +229,7 @@ func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 					_accept = _stream.encode_accept()
 	if blocked and result.peer_code == SessionTypes.Code.OK:
 		result.peer_code = SessionTypes.Code.NETWORK_BACKPRESSURE
-	if result.code == Code.OK and result.peer_code != SessionTypes.Code.OK:
+	if result.code == Code.OK and result.peer_code != SessionTypes.Code.OK and not (result.peer_code == SessionTypes.Code.TERMINATED and _completed_cleanly()):
 		result.code = Code.BACKPRESSURE if result.peer_code in [SessionTypes.Code.BUSY, SessionTypes.Code.NETWORK_BACKPRESSURE] else Code.PEER_FAILURE
 	if result.code in [Code.OK, Code.BACKPRESSURE] and not _accept.is_empty() and send_accept.is_valid() and _session._mutation_code() == SessionTypes.Code.OK:
 		var control_code: int = _send_accept(send_accept)
@@ -289,6 +290,9 @@ func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> voi
 	var revision: int = _revision
 	var code: int = _failure if _checking else _gate()
 	if revision != _revision:
+		return
+	if code == Code.OK and _completed_cleanly():
+		_last_receive = Code.OK
 		return
 	if code == Code.OK and _session.status().lifecycle == SessionTypes.Lifecycle.TERMINATED:
 		_failure = Code.WRONG_STATE
@@ -397,6 +401,16 @@ func _on_lifetime_ended() -> void:
 		_stop_owned_viewer()
 
 
+func _completed_cleanly() -> bool:
+	var state: SessionTypes.Status = _session.status()
+	return (
+		_stream._is_finished
+		and state.lifecycle == SessionTypes.Lifecycle.TERMINATED
+		and state.reason == SessionTypes.Code.TERMINATED
+		and state.current_frame == _stream._end_frame
+	)
+
+
 func _stop_owned_viewer() -> void:
 	if _session != null and _session._config == _source_config:
 		_session.terminate(SessionTypes.Code.PROTOCOL_FAILED)
@@ -421,7 +435,7 @@ func _send_accept(sender: Callable) -> int:
 	if gate != Code.OK:
 		return gate
 	var state: int = _session._mutation_code()
-	if state not in [SessionTypes.Code.OK, SessionTypes.Code.BUSY]:
+	if state not in [SessionTypes.Code.OK, SessionTypes.Code.BUSY] and not (state == SessionTypes.Code.TERMINATED and _completed_cleanly()):
 		_failure = Code.PEER_FAILURE
 		return _failure
 	if not sent is int:

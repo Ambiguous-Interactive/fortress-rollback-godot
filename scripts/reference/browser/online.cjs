@@ -7,16 +7,69 @@ const { instrument } = require('./webrtc.cjs');
 
 function delayedInputs() {
   window.fortressRestartFault = { armed: false, pressure: false, held: [], dropped: 0, pending: 0, reads: 0 };
+  const channelLifetimes = new WeakMap();
+  const gate = { lastLifetime: 0, identity: null, active: false, packets: [], bytes: 0, released: 0, releases: 0, failure: '',
+    arm(expected) {
+      if (this.active || this.packets.length) throw new Error('prediction gate already active');
+      const value = window.fortressOnline;
+      if (!value || value.room !== expected?.room || value.room_id !== expected?.room_id
+          || !value.room || !value.room_id || !/^[a-f0-9]{32}$/.test(value.session_id)
+          || !Number.isSafeInteger(value.game_lifetime) || value.game_lifetime <= this.lastLifetime
+          || value.predicted_frame !== -1 || value.predicted_lifetime !== 0) throw new Error('prediction gate room lifetime invalid');
+      this.identity = { room: value.room, room_id: value.room_id, session_id: value.session_id, game_lifetime: value.game_lifetime };
+      this.lastLifetime = value.game_lifetime;
+      this.active = true; this.bytes = 0; this.released = 0; this.releases = 0; this.failure = '';
+    },
+    current() {
+      const value = window.fortressOnline;
+      if (!value || !this.identity || Object.keys(this.identity).some(key => value[key] !== this.identity[key])) {
+        this.failure = 'prediction gate room lifetime replaced';
+        throw new Error(this.failure);
+      }
+      return value;
+    },
+    hold(channel, send, view) {
+      this.current();
+      const session = Array.from(view.slice(8, 24), byte => byte.toString(16).padStart(2, '0')).join('');
+      if (session !== this.identity.session_id || (channelLifetimes.has(channel) && channelLifetimes.get(channel) !== this.identity.game_lifetime))
+        throw new Error('prediction gate packet/channel lifetime mismatch');
+      channelLifetimes.set(channel, this.identity.game_lifetime);
+      if (this.failure) throw new Error(this.failure);
+      if (this.packets.length >= 256 || this.bytes + view.byteLength > 262144) {
+        this.failure = 'prediction gate capacity exceeded';
+        throw new Error(this.failure);
+      }
+      const owned = view.slice();
+      this.packets.push({ channel, send, owned }); this.bytes += owned.byteLength;
+      window.fortressOnlineDelayed++;
+    },
+    release() {
+      if (this.failure) throw new Error(this.failure);
+      if (!this.active) throw new Error('prediction gate inactive');
+      const value = this.current();
+      if (!(value.predicted_frame >= 2) || value.predicted_lifetime !== this.identity.game_lifetime) throw new Error('prediction step missing');
+      if (!this.packets.length) throw new Error('prediction gate has no original inputs');
+      if (this.packets.some(packet => packet.channel.readyState !== 'open')) {
+        this.failure = 'prediction gate channel closed';
+        throw new Error(this.failure);
+      }
+      for (const packet of this.packets) { packet.send(packet.owned); this.released++; }
+      this.packets = []; this.bytes = 0; this.active = false; this.releases++;
+    },
+    summary() { return { active: this.active, pending: this.packets.length, bytes: this.bytes,
+      released: this.released, releases: this.releases, failure: this.failure, ...this.identity }; },
+  };
+  window.fortressPredictionGate = gate;
   const create = RTCPeerConnection.prototype.createDataChannel;
   RTCPeerConnection.prototype.createDataChannel = function(label, options) {
     const channel = create.call(this, label, options);
     const send = channel.send.bind(channel);
+    channelLifetimes.set(channel, window.fortressOnline?.game_lifetime);
     channel.addEventListener('message', event => {
       if (!window.fortressStaleExpected) return;
       const hex = Array.from(new Uint8Array(event.data), byte => byte.toString(16).padStart(2, '0')).join('');
       if (hex === window.fortressStaleExpected) window.fortressStaleReceived = (window.fortressStaleReceived || 0) + 1;
     });
-    let held = 0;
     const buffered = Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'bufferedAmount')?.get;
     if (channel.id === 3 && buffered) Object.defineProperty(channel, 'bufferedAmount', { get() {
       if (window.fortressRestartFault.pressure) { window.fortressRestartFault.reads++; return 262144; }
@@ -34,10 +87,8 @@ function delayedInputs() {
           if (channel.readyState === 'open') send(owned); else fault.dropped++;
           fault.pending--;
         }, 5000);
-      } else if (view && view.length >= 8 && view[6] === 3 && held++ < 25) {
-        const owned = view.slice();
-        window.fortressOnlineDelayed++;
-        setTimeout(() => { if (channel.readyState === 'open') send(owned); }, 250);
+      } else if (view && view.length >= 8 && view[6] === 3 && gate.active) {
+        gate.hold(channel, send, view);
       } else send(bytes);
     };
     return channel;
@@ -343,7 +394,24 @@ async function main() {
       await wait(pages[0], () => window.fortressOnline.start_enabled);
       await pages[0].keyboard.down('KeyD');
       await pages[1].keyboard.down('KeyW');
+      await Promise.all(pages.map(page => page.evaluate(expected => window.fortressPredictionGate.arm(expected), { room, room_id: identity[0].room_id })));
       await command(pages[0], 'start');
+      // Keep handshake service live while originals are held. Both actual simulation callbacks
+      // must consume a predicted remote input before either sender releases its original bytes.
+      await Promise.all(pages.map(page => wait(page, () => window.fortressPredictionGate.current().predicted_frame >= 2
+        && window.fortressOnline.predicted_lifetime === window.fortressOnline.game_lifetime, 90000)));
+      if (corrupt) {
+        // Originals still bound advancement to the prediction window. Install both physical second
+        // directions before correction can resume either peer and reach the first checksum exchange.
+        await Promise.all([pages[0].keyboard.up('KeyD'), pages[1].keyboard.up('KeyW')]);
+        await Promise.all([pages[0].keyboard.down('KeyS'), pages[1].keyboard.down('KeyA')]);
+      }
+      const prediction = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => {
+        const frame = window.fortressOnline.predicted_frame;
+        const before = window.fortressPredictionGate.summary();
+        window.fortressPredictionGate.release();
+        return { page_index: pageIndex, frame, before, after: window.fortressPredictionGate.summary() };
+      }, index)));
       await Promise.all(pages.map(page => wait(page, target => window.fortressOnline.frame >= target, 90000, corrupt ? 12 : 45)));
       if (round === 3 && !corrupt) await Promise.all(pages.map(page => command(page, 'capture_callbacks')));
       if (round === 4 && !corrupt) {
@@ -360,10 +428,12 @@ async function main() {
         await Promise.all(pages.map(page => command(page, 'old_callbacks')));
       }
       const suspension = round === 0 && !corrupt ? await suspend('short', 750) : null;
-      await pages[0].keyboard.up('KeyD');
-      await pages[1].keyboard.up('KeyW');
-      await pages[0].keyboard.down('KeyS');
-      await pages[1].keyboard.down('KeyA');
+      if (!corrupt) {
+        await pages[0].keyboard.up('KeyD');
+        await pages[1].keyboard.up('KeyW');
+        await pages[0].keyboard.down('KeyS');
+        await pages[1].keyboard.down('KeyA');
+      }
       await Promise.all(pages.map(page => wait(page, target => window.fortressOnline.confirmed >= target, 90000, corrupt ? 20 : 100)));
       let desyncPage = -1;
       if (corrupt) {
@@ -385,7 +455,7 @@ async function main() {
       if (round === 0 && !corrupt) await pages[0].screenshot({ path: diagnostic.replace('-events.log', '.png') });
       const peers = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => ({ ...window.fortressOnline, page_index: pageIndex,
         rtc: { ...window.fortressRtc, channels: window.fortressRtc.channels.slice(-3) }, delayed: window.fortressOnlineDelayed }), index)));
-      rounds.push({ room, peers, diagnostics: [], identity });
+      rounds.push({ room, peers, diagnostics: [], identity, prediction });
       if (corrupt) {
         rounds[round].corrupt_control = { restores: peers.map(peer => peer.restores),
           corrupt_page: peers.find(peer => peer.corrupt)?.page_index, desync_page: desyncPage,

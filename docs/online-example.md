@@ -313,6 +313,12 @@ public hosting and WAN/NAT/TURN remain unverified release gates under
 The harness can reuse verified tool archives; none of that development cache enters the
 installed project or its fresh engine user directories.
 
+For each room, the witness holds bounded original input packets until both current
+game instances have successfully simulated a predicted remote input. Only then does
+it release the original keyboard inputs. Receipts bind this barrier to the room,
+session and game lifetime; stale callbacks or channels cannot supply the proof.
+Both peers must still restore, confirm and match the independent canonical state.
+
 
 `tests/unit/test_online_example.gd` covers optional SDK scene loading, room
 identity validation, real two-peer protocol startup over SDK transport doubles,

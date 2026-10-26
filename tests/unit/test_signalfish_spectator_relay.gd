@@ -118,6 +118,8 @@ func cases() -> PackedStringArray:
 			"reordered_recovery",
 			"heartbeat_fairness",
 			"clean_tail_retries",
+			"post_completion",
+			"terminal_failures",
 			"getter_lifetime",
 			"configure_lifetime",
 			"source_departures",
@@ -890,3 +892,74 @@ func _source_callback_lifetime(context: RefCounted) -> void:
 		fixture.relay.detach()
 		for source_signal: String in ["player_left", "player_reconnected"]:
 			context.equal(fixture.client.get_signal_connection_list(source_signal).size(), 0, "detach releases source observers")
+
+
+# Value: protects=completed relay service and discarded late packets; fails_when=clean END becomes transport failure;
+# why_new=tail retries stop before final playback termination; seam=public SDK signals and driver
+func _post_completion(context: RefCounted) -> void:
+	_control_completion(context)
+	for frames: int in [0, 1]:
+		var fixture: Dictionary = _fixture(context)
+		if frames == 1:
+			_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+			context.equal(fixture.relay.poll(1).code, Relay.Code.OK, "original tail received")
+		_emit(fixture, fixture.stream.encode_end(frames))
+		context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "clean END accepted")
+		context.equal(fixture.relay.poll(3).code, Relay.Code.OK, "finished host remains healthy before playback completion")
+		if frames == 1:
+			context.equal(fixture.driver.step(3, _empty()).code, Types.Code.OK, "final original frame plays")
+		# Leave one packet queued when the final playback call closes the session.
+		_emit(fixture, fixture.stream.encode_keepalive())
+		context.equal(fixture.driver.step(4, _empty()).code, Types.Code.TERMINATED, "normal clean playback completion")
+		for now: int in [4, 1000]:
+			var result: Relay.Types.Result = fixture.relay.poll(now)
+			context.equal(result.code, Relay.Code.OK, "continued relay service preserves clean completion")
+			context.equal(result.peer_code, Types.Code.TERMINATED, "peer code retains playback completion")
+			context.equal(fixture.relay.status().received_packets, 0, "completion releases queued packets")
+		for packet: PackedByteArray in [fixture.stream.encode_end(frames), fixture.stream.encode_keepalive(), fixture.publisher.encode_offer()]:
+			_emit(fixture, packet)
+		fixture.client.game_data_binary_received.emit(FOREIGN, 0, PackedByteArray([0]))
+		context.equal(fixture.relay.status().code, Relay.Code.OK, "late packets cannot poison completed relay")
+		context.equal(fixture.relay.status().received_bytes, 0, "completed ingress retains no bytes")
+		context.equal(fixture.relay.poll(1001).code, Relay.Code.OK, "late ingress preserves completed service")
+		context.equal(fixture.game.value, 1 if frames == 1 else 0, "completion never simulates another frame")
+		fixture.client.player_left.emit(HOST)
+		context.equal(fixture.relay.poll(1002).code, Relay.Code.WRONG_STATE, "completion preserves SDK lifetime fencing")
+		context.equal(fixture.driver.status().reason, Types.Code.TERMINATED, "later lifetime loss preserves completed reason")
+		fixture.relay.detach()
+
+
+# Value: protects=real failures and incomplete cancellation; fails_when=all termination is accepted as completion;
+# why_new=completion path needs negative controls; seam=public SDK signals and driver
+func _terminal_failures(context: RefCounted) -> void:
+	for ended: bool in [false, true]:
+		for reason: int in [Types.Code.TERMINATED, Types.Code.CALLBACK_FAILED, Types.Code.PROTOCOL_FAILED, Types.Code.DESYNC]:
+			var fixture: Dictionary = _fixture(context)
+			if ended:
+				_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+				context.equal(fixture.relay.poll(1).code, Relay.Code.OK, "unplayed tail received")
+				_emit(fixture, fixture.stream.encode_end(1))
+				context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "host ends before tail playback")
+			fixture.driver.terminate(reason)
+			context.equal(fixture.relay.poll(3).code, Relay.Code.PEER_FAILURE, "cancellation and failures are not clean completion")
+			_emit(fixture, fixture.stream.encode_keepalive())
+			context.equal(fixture.relay.status().code, Relay.Code.WRONG_STATE, "terminated incomplete ingress stays fenced")
+			context.equal(fixture.driver.status().reason, reason, "transport preserves first terminal cause")
+			fixture.relay.detach()
+
+
+func _control_completion(context: RefCounted) -> void:
+	for reason: int in [Types.Code.OK, Types.Code.DESYNC]:
+		var fixture: Dictionary = _fixture(context, true, 2)
+		_emit(fixture, fixture.publisher.encode_offer())
+		_emit(fixture, fixture.stream.encode_end(0))
+		var send: Callable = func(_packet: PackedByteArray) -> int:
+			if reason == Types.Code.OK:
+				context.equal(fixture.driver.step(1, _empty()).code, Types.Code.TERMINATED, "sender services completed playback")
+			else:
+				fixture.driver.terminate(reason)
+			return OK
+		var result: Relay.Types.Result = fixture.relay.poll(1, send)
+		context.equal(result.code, Relay.Code.OK if reason == Types.Code.OK else Relay.Code.PEER_FAILURE, "sender distinguishes completion from failure")
+		context.equal(fixture.relay.status().received_packets, 0, "sender termination releases queued packets")
+		fixture.relay.detach()

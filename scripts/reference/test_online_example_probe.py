@@ -125,7 +125,7 @@ def evidence():
         channels = [{'id': index, 'sent': 40 if index == 3 else 0, 'received': 40 if index == 3 else 0,
                      'ordered': index != 3, 'negotiated': True, 'maxPacketLifeTime': 1, 'maxRetransmits': None} for index in (1, 2, 3)]
         peers.append({'slot': slot, 'page_index': slot, 'inputs': histories[slot], 'restores': 1, 'confirmed': 110, 'frame': 110,
-                      'state': 'playing', 'room': 'ROOM01', 'session_id': '01' * 16, 'terminal_reason': 0, 'corrupt': False,
+                      'predicted_frame': 2, 'state': 'playing', 'room': 'ROOM01', 'session_id': '01' * 16, 'terminal_reason': 0, 'corrupt': False,
                       'uuid': f'00000000-0000-0000-0000-{slot + 1:012}', 'direct_rejected': 0,
                       'room_id': '00000000-0000-0000-0000-000000000001', 'failure': '',
                       'snapshots': {str(frame): state for frame, state in states.items()},
@@ -140,11 +140,20 @@ def evidence():
         {'channels': 3 * (index + 1), 'channels_closed': 3 * (index + 1), 'connections': index + 1,
          'connections_closed': index + 1, 'ice_closed': index + 1, 'websockets': index + 1,
          'websockets_closed': index + 1} for _ in range(2)]} for index, room in enumerate(('ROOM01', 'ROOM02', 'ROOM03', 'ROOM04', 'ROOM05'))]
+    for record in rounds:
+        record['prediction'] = [{'page_index': page, 'frame': 2,
+            'before': {'active': True, 'pending': 3, 'bytes': 300, 'released': 0, 'releases': 0, 'failure': ''},
+            'after': {'active': False, 'pending': 0, 'bytes': 0, 'released': 3, 'releases': 1, 'failure': ''}} for page in range(2)]
     for index, record in enumerate(rounds):
         for peer in record['peers']:
             peer['room'] = record['room']
             peer['session_id'] = f'{index + 1:02}' * 16
             peer['room_id'] = f'00000000-0000-0000-0000-{index + 1:012}'
+            peer['game_lifetime'] = index + 1
+            peer['predicted_lifetime'] = index + 1
+            for boundary in ('before', 'after'):
+                record['prediction'][peer['page_index']][boundary].update(
+                    {key: peer[key] for key in ('room', 'room_id', 'session_id', 'game_lifetime')})
         record['diagnostics'] = [diagnostic_download(), diagnostic_download()]
         if index == 0:
             record['diagnostics'][0]['report']['trace'] = trace_evidence(states, histories)
@@ -363,6 +372,41 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                 validate_replay_download(changed)
 
     # Value: protects=independent terminal-file evidence; fails_when=the final checksum or exact suffix is unchecked; seam=none
+    # Value: protects=both-peer original delivery ordering; fails_when=gate is bypassed despite natural rollback; seam=receipt mutations
+    def test_prediction_barrier_rejects_missing_or_fabricated_evidence(self):
+        validate_result(evidence())
+        mutations = [
+            ('old-callback', lambda record: record['peers'][1].update(predicted_lifetime=0)),
+            ('old-room', lambda record: record['prediction'][1]['before'].update(room='OLD')),
+            ('old-session', lambda record: record['prediction'][1]['after'].update(session_id='ff' * 16)),
+            ('old-lifetime', lambda record: record['prediction'][1]['after'].update(game_lifetime=99)),
+            ('bool-lifetime', lambda record: record['prediction'][1]['before'].update(game_lifetime=True)),
+            ('missing', lambda record: record.pop('prediction')),
+            ('one-page', lambda record: record['prediction'].pop()),
+            ('false-frame', lambda record: record['prediction'][1].update(frame=False)),
+            ('early-frame', lambda record: record['prediction'][1].update(frame=1)),
+            ('float-frame', lambda record: record['prediction'][1].update(frame=2.0)),
+            ('no-prediction', lambda record: record['peers'][1].update(predicted_frame=-1)),
+            ('bool-pending', lambda record: record['prediction'][1]['before'].update(pending=True)),
+            ('zero-held', lambda record: record['prediction'][1]['before'].update(pending=0)),
+            ('zero-bytes', lambda record: record['prediction'][1]['before'].update(bytes=0)),
+            ('overflow', lambda record: record['prediction'][1]['before'].update(bytes=262145)),
+            ('inactive', lambda record: record['prediction'][1]['before'].update(active=False)),
+            ('active-int', lambda record: record['prediction'][1]['before'].update(active=1)),
+            ('already-released', lambda record: record['prediction'][1]['before'].update(released=1)),
+            ('release-omitted', lambda record: record['prediction'][1]['after'].update(releases=0)),
+            ('release-duplicated', lambda record: record['prediction'][1]['after'].update(releases=2)),
+            ('release-bool', lambda record: record['prediction'][1]['after'].update(releases=True)),
+            ('lost-original', lambda record: record['prediction'][1]['after'].update(released=2)),
+            ('failure', lambda record: record['prediction'][1]['after'].update(failure='capacity')),
+        ]
+        for name, mutate in mutations:
+            with self.subTest(name=name):
+                value = evidence()
+                mutate(value['rounds'][0])
+                with self.assertRaisesRegex(ValueError, 'online example prediction barrier'):
+                    validate_result(value)
+
     def test_online_replay_terminal_boundary(self):
         original = evidence()['rounds'][0]['replay_download']
         raw = bytearray.fromhex(original['hex'])
@@ -520,6 +564,25 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
         clean['rounds'][0]['peers'][1].update(state='failed', failure='desync', terminal_reason=18)
         with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
             validate_result(clean)
+
+    # Value: cleared terminal lobby fields retain frozen prediction identity; foreign rooms still fail before canonical validation.
+    def test_prediction_receipt_survives_cleared_failed_room_without_accepting_foreign_identity(self):
+        changed = corrupt_snapshot(corrupt_evidence(), 1)
+        failed = changed['rounds'][0]['peers'][1]
+        failed.update(room='', room_id='')
+        with self.assertRaisesRegex(ValueError, 'canonical prefix mismatch at frame 3'):
+            validate_result(changed, corrupt=True)
+        for key, foreign in (('room', 'FOREIGN'), ('room_id', '00000000-0000-0000-0000-000000000099'),
+                             ('session_id', 'ff' * 16), ('game_lifetime', 99)):
+            forged = copy.deepcopy(changed)
+            for boundary in ('before', 'after'):
+                forged['rounds'][0]['prediction'][1][boundary][key] = foreign
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'prediction barrier'):
+                validate_result(forged, corrupt=True)
+        foreign_live = copy.deepcopy(changed)
+        foreign_live['rounds'][0]['peers'][1]['room'] = 'FOREIGN'
+        with self.assertRaisesRegex(ValueError, 'prediction barrier'):
+            validate_result(foreign_live, corrupt=True)
 
     def test_corrupt_control_requires_the_restore_it_waited_for_and_the_desync_reason(self):
         corrupt_snapshot(corrupt_evidence(), 1)
@@ -683,6 +746,8 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             changed = evidence()
             for peer in changed['rounds'][4]['peers']:
                 peer[field] = changed['rounds'][2]['peers'][0][field]
+                for boundary in ('before', 'after'):
+                    changed['rounds'][4]['prediction'][peer['page_index']][boundary][field] = peer[field]
                 if field == 'session_id':
                     for side in ('before', 'after'):
                         peer['stale_callbacks'][side]['session_id'] = peer[field]
@@ -748,6 +813,8 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
         changed = evidence()
         for peer in changed['rounds'][4]['peers']:
             peer['room_id'] = changed['rounds'][3]['peers'][0]['room_id']
+            for boundary in ('before', 'after'):
+                changed['rounds'][4]['prediction'][peer['page_index']][boundary]['room_id'] = peer['room_id']
             for side in ('before', 'after'):
                 peer['stale_callbacks'][side]['room_id'] = peer['room_id']
         with self.assertRaisesRegex(ValueError, 'reused room'):

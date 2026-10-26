@@ -148,3 +148,61 @@ Matching benchmark checksums before and after the change:
 | codec | 2 | 1009799064992073792 |
 | codec | 4 | 5039977378390133760 |
 | codec | 8 | 8583044641210005760 |
+
+
+## Confirmation receipt reads in eight-player sessions
+
+Issue [223](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/223)
+compares the unchanged eight-player driver/expert parity case at seed 1701.
+Both repetitions retain all 21,685 assertions, encoded traffic comparisons,
+callback/status checks and independently reconstructed canonical boundaries.
+The baseline is `7363ecd18a52f4eeffe5e3b3b477ef4d5e72e42b`.
+
+Firefox 142.0.1 with Godot 4.3 on Linux arm64 measured:
+
+| Receipt observation | Complete case time |
+| --- | --- |
+| Full endpoint status per slot and endpoint | 377.893 seconds |
+| One receipt-bank snapshot per endpoint per fold | 173.597 seconds |
+| Internal scalar receipt-frame read | 141.557 seconds |
+
+Delivery accounted for about 89 percent of the original case. Each eight-player
+confirmation fold made 49 complete owned endpoint snapshots to read 49 integers.
+The scalar read preserves each observation's timing and avoids copying retained
+packet/input history. Public diagnostic snapshots keep their existing ownership.
+The scalar-only source-bound batch still lacked sufficient margin under the
+180-second page deadline. The final implementation also reads running and failure
+state, local submission position and timing scalars without copying endpoint
+histories. Acceptance keeps the original 180-second
+page and 240-second process limits; no assertion, case or repeat is removed.
+
+These are workload measurements, not live-game frame-rate or transport claims.
+Run the complete source-bound acceptance with
+`xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox`.
+The deterministic parity suite and both browser controls remain required on both
+engine pins; the extended diagnostic budget used to measure the old slow case
+never changes acceptance deadlines.
+
+
+### Remaining confirmation and handshake observations
+
+A second seed-1701 comparison at `10e9550d193f4af2cb2cdd4d9ffedc0f90095207`
+measures the same two-repeat eight-player case with detailed receive timers.
+All variants have exactly equal complete result records and 21,685 assertions per repetition.
+
+| Variant | Firefox 4.3 case time |
+| --- | --- |
+| Current scalar-read baseline | 81.959 seconds |
+| Narrower transaction bank copying | 81.871 seconds |
+| Active endpoints gathered once per confirmation fold | 68.578 seconds |
+| Handshake scalar predicates | 78.885 seconds |
+| Per-fold endpoints plus handshake predicates | 63.136 seconds |
+
+The transaction change was rejected: its gain was immaterial, so deep transaction
+copies and pressure rollback remain untouched. Gathering active endpoint references
+once avoids repeated identity encoding and lookup within the callback-free fold.
+It preserves slot order, endpoint order and current receipt reads; nothing is cached
+across operations. Handshake predicates preserve public snapshot ownership and read
+the same current state/mismatch scalars without allocating diagnostic dictionaries.
+The combined change reduces case time by 23 percent in this scoped experiment.
+Full native/browser acceptance remains required under the original deadlines.

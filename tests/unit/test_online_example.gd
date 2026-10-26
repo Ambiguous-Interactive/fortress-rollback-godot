@@ -385,6 +385,11 @@ func _idle_batch(context: RefCounted) -> void:
 
 # Value: protects=confirmed callback history; fails_when=render gaps evict evidence; why_new=browser load depends on host cadence; seam=actual session/driver
 func _observer_history(context: RefCounted) -> void:
+	var rejected: Bridge.ObservedGame = Bridge.ObservedGame.new()
+	var predicted_inputs: Types.FrameInputs = Types.FrameInputs.new([PackedByteArray([2]), PackedByteArray([0])],
+		PackedInt32Array([Bridge.Queue.Status.CONFIRMED, Bridge.Queue.Status.PREDICTED]))
+	context.equal(rejected.simulate_frame(2, predicted_inputs), false, "an invalid callback cannot prove prediction")
+	context.equal(rejected.predicted_frame, -1, "failed simulation leaves the prediction barrier closed")
 	var config: Config = Config.new()
 	config.sync_test = false
 	config.check_distance = 0
@@ -404,6 +409,7 @@ func _observer_history(context: RefCounted) -> void:
 	context.equal(game.callback_visible, 0, "active real callback hides owned history")
 	context.equal(Bridge.confirmed_snapshots(core, game.saves).size(), 99, "render cadence cannot erase confirmed callback evidence")
 	context.state(100, game.canonical_bytes())
+	context.equal(game.predicted_frame, -1, "confirmed input callbacks never claim prediction")
 	config.local_players = PackedInt32Array([0])
 	core = Session.new()
 	context.equal(core.configure(config), Types.Code.OK, "external inputs for actual pending correction")
@@ -412,6 +418,7 @@ func _observer_history(context: RefCounted) -> void:
 	driver = Driver.new(core, game)
 	for frame: int in 4:
 		context.equal(driver.step(frame, [Driver.LocalInput.new(0, frame, PackedByteArray([2]))]).code, Types.Code.OK, "predict remote original input")
+	context.equal(game.predicted_frame, 2, "actual successful frame-two prediction opens the witness barrier")
 	var predicted: String = game.saves[3]
 	for frame: int in 5:
 		context.equal(core.receive_input(1, frame, PackedByteArray([4])).code, Types.Code.OK, "actual remote original causes earliest correction")
