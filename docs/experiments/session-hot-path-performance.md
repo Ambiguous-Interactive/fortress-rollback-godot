@@ -172,7 +172,8 @@ The scalar read preserves each observation's timing and avoids copying retained
 packet/input history. Public diagnostic snapshots keep their existing ownership.
 The scalar-only source-bound batch still lacked sufficient margin under the
 180-second page deadline. The final implementation also reads running and failure
-state without copying endpoint histories. Acceptance keeps the original 180-second
+state, local submission position and timing scalars without copying endpoint
+histories. Acceptance keeps the original 180-second
 page and 240-second process limits; no assertion, case or repeat is removed.
 
 These are workload measurements, not live-game frame-rate or transport claims.

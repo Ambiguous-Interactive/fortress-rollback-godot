@@ -473,7 +473,7 @@ func _prepare_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
 		if _is_gone(index):
 			continue
 		var endpoint: Endpoint = _endpoint(index)
-		if endpoint.status().last_submitted_frame == scheduled:
+		if endpoint._last_submitted_frame() == scheduled:
 			continue
 		var sent: int = endpoint.submit(scheduled, data, statuses, now_us)
 		if sent != I.Code.OK:
@@ -1069,7 +1069,7 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 		if _is_gone(index):
 			continue
 		if send_reports:
-			_frames_ahead = maxi(_frames_ahead, _endpoint(index).status().average_frame_advantage)
+			_frames_ahead = maxi(_frames_ahead, _endpoint(index)._average_frame_advantage())
 	if send_reports and current > _next_wait and _frames_ahead >= 3:
 		_next_wait = current + 60
 		_publish_event({"kind": "wait_recommendation", "skip_frames": _frames_ahead})
@@ -1118,7 +1118,7 @@ func _publish_delay_recommendation() -> bool:
 		if _is_gone(index):
 			# A departed peer has no live round trip time.
 			continue
-		round_trip_ms = maxi(round_trip_ms, _endpoint(index).status().round_trip_time_ms)
+		round_trip_ms = maxi(round_trip_ms, _endpoint(index)._round_trip_time_ms())
 	var current: int = _core.input_delay(player)
 	# set_input_delay needs a prior sample, so none is suggested before one.
 	var local_count: int = _config.local_players.size() if _core.received_frames()[player] != -1 else 0

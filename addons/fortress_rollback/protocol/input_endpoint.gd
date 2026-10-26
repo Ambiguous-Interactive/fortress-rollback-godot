@@ -310,6 +310,18 @@ func status() -> Dictionary:
 	return result
 
 
+func _last_submitted_frame() -> int:
+	return _state.last_submitted_frame
+
+
+func _average_frame_advantage() -> int:
+	return _state.average_frame_advantage
+
+
+func _round_trip_time_ms() -> int:
+	return _state.round_trip_time_ms
+
+
 func _is_running() -> bool:
 	return _handshake != null and not _state.terminated and _handshake.status().state == "running"
 
