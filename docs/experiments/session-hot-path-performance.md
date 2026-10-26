@@ -182,3 +182,27 @@ Run the complete source-bound acceptance with
 The deterministic parity suite and both browser controls remain required on both
 engine pins; the extended diagnostic budget used to measure the old slow case
 never changes acceptance deadlines.
+
+
+### Remaining confirmation and handshake observations
+
+A second seed-1701 comparison at `10e9550d193f4af2cb2cdd4d9ffedc0f90095207`
+measures the same two-repeat eight-player case with detailed receive timers.
+All variants have exactly equal complete result records and 21,685 assertions per repetition.
+
+| Variant | Firefox 4.3 case time |
+| --- | --- |
+| Current scalar-read baseline | 81.959 seconds |
+| Narrower transaction bank copying | 81.871 seconds |
+| Active endpoints gathered once per confirmation fold | 68.578 seconds |
+| Handshake scalar predicates | 78.885 seconds |
+| Per-fold endpoints plus handshake predicates | 63.136 seconds |
+
+The transaction change was rejected: its gain was immaterial, so deep transaction
+copies and pressure rollback remain untouched. Gathering active endpoint references
+once avoids repeated identity encoding and lookup within the callback-free fold.
+It preserves slot order, endpoint order and current receipt reads; nothing is cached
+across operations. Handshake predicates preserve public snapshot ownership and read
+the same current state/mismatch scalars without allocating diagnostic dictionaries.
+The combined change reduces case time by 23 percent in this scoped experiment.
+Full native/browser acceptance remains required under the original deadlines.

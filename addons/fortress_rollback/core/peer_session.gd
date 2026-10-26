@@ -907,6 +907,10 @@ func _gossip_nudge_needed() -> bool:
 
 
 func _confirmation_code() -> int:
+	var active: Array[Endpoint] = []
+	for index: int in range(_ids.size()):
+		if not _is_gone(index):
+			active.append(_endpoint(index))
 	var frames: PackedInt64Array = _core.received_frames()
 	# The fold starts above every slot, so a frozen slot cannot cap the frontier through
 	# the seed value of the first slot.
@@ -917,10 +921,8 @@ func _confirmation_code() -> int:
 			continue
 		var bound: int = frames[slot]
 		if not _config.local_players.has(slot):
-			for index: int in range(_ids.size()):
-				if _is_gone(index):
-					continue
-				bound = mini(bound, _endpoint(index)._peer_received_frame(slot))
+			for endpoint: Endpoint in active:
+				bound = mini(bound, endpoint._peer_received_frame(slot))
 		limit = mini(limit, bound)
 	if limit == Queue.FRAME_MAX:
 		# Every slot is frozen, so the frontier cannot move.

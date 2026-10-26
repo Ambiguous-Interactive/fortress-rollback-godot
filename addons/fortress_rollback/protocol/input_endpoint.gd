@@ -323,12 +323,11 @@ func _round_trip_time_ms() -> int:
 
 
 func _is_running() -> bool:
-	return _handshake != null and not _state.terminated and _handshake.status().state == "running"
+	return _handshake != null and not _state.terminated and _handshake._is_running()
 
 
 func _has_failed() -> bool:
-	var handshake: Dictionary = _handshake.status()
-	return _state.terminated or handshake.state in ["terminated", "failed"] or not handshake.mismatch.is_empty()
+	return _state.terminated or _handshake._has_failed()
 
 
 func _peer_received_frame(slot: int) -> int:
