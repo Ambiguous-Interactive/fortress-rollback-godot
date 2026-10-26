@@ -126,6 +126,8 @@ jobs:
       - name: Verify integer encoding, snapshot ownership and byte sessions
         run: |
           if [[ "${{ matrix.browser }}" == firefox ]]; then
+            export DEBUG=pw:browser
+            export DEBUG_FILE="$PWD/.cache/reference/results/ownership-firefox-process.log"
             xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox \
               --version "${{ matrix.version }}" --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
           else

@@ -16,8 +16,22 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / 'scripts/reference/browser/ownership.cjs'
 SUITES = [f'res://tests/unit/test_{name}.gd' for name in ('alpha', 'beta', 'gamma', 'delta')]
 MOCK = r"""
-for (const engine of ['chromium', 'firefox']) module.exports[engine] = { async launch(options) { return {
-  version: () => 'fixture', async close() {}, async newPage() {
+for (const engine of ['chromium', 'firefox']) module.exports[engine] = { async launch(options) {
+  const contexts = [];
+  return {
+  version: () => 'fixture', contexts: () => contexts,
+  async close() {
+    if (process.env.OWNERSHIP_TEST_CLEANUP) console.error(JSON.stringify({cleanup: 'browser', open_contexts: contexts.length}));
+    if (process.env.OWNERSHIP_TEST_CLEANUP === 'browser-error') throw new Error('fixture browser close failure');
+  },
+  async newPage() {
+    const context = { async close() {
+      await Promise.resolve();
+      contexts.splice(contexts.indexOf(context), 1);
+      if (process.env.OWNERSHIP_TEST_CLEANUP) console.error(JSON.stringify({cleanup: 'context'}));
+      if (process.env.OWNERSHIP_TEST_CLEANUP === 'context-error') throw new Error('fixture context close failure');
+    } };
+    contexts.push(context);
     let url;
     return { on() {}, async goto(value) { url = value; },
       async waitForFunction(_operation, _argument, options) {
@@ -56,13 +70,15 @@ print(commands.get(sys.argv[1], ''))
 ''')
         self.xdotool.chmod(0o755)
 
-    def run_browser(self, selector, *, timeout=False, root=None, selected="chromium", verified=True, case_name=None):
+    def run_browser(self, selector, *, timeout=False, root=None, selected="chromium", verified=True, case_name=None, cleanup=False):
         env = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(self.mock),
                'FORTRESS_OWNERSHIP_BROWSER': selected, 'FORTRESS_XDOTOOL_EXECUTABLE': str(self.xdotool)}
         for name in ('chromium', 'firefox'):
             env.pop('FORTRESS_' + name.upper() + '_EXECUTABLE', None)
         if verified:
             env['FORTRESS_' + selected.upper() + '_EXECUTABLE'] = '/fixture/' + selected
+        if cleanup:
+            env['OWNERSHIP_TEST_CLEANUP'] = str(cleanup)
         if timeout:
             env['OWNERSHIP_TEST_TIMEOUT'] = '1'
         else:
@@ -117,6 +133,27 @@ print(commands.get(sys.argv[1], ''))
                     self.assertEqual(value['result']['options']['firefoxUserPrefs'], PREFERENCES)
                     self.assertEqual(value['firefox_preferences'], PREFERENCES)
                     self.assertEqual(value['display']['x'], 0)
+
+    # Value: dispose owned windows before Firefox waits for startup idle tasks; fails_when=browser closes with a live context; seam=module double
+    def test_contexts_close_before_browser_on_success_and_watchdog_failure(self):
+        for timeout in (False, True):
+            with self.subTest(timeout=timeout):
+                child = self.run_browser(json.dumps(SUITES[:1]), selected='firefox', timeout=timeout, cleanup=True)
+                self.assertEqual(child.returncode, int(timeout), child.stderr)
+                cleanup = [json.loads(line) for line in child.stderr.splitlines()
+                           if line.startswith('{') and 'cleanup' in json.loads(line)]
+                self.assertEqual(cleanup, [{'cleanup': 'context'}, {'cleanup': 'browser', 'open_contexts': 0}])
+
+    # Value: cleanup failures still close the process and HTTP server; fails_when=failed context skips browser or failed browser leaks server; seam=module double
+    def test_cleanup_failures_reject_the_process_after_finishing_other_cleanup(self):
+        for boundary in ('context', 'browser'):
+            with self.subTest(boundary=boundary):
+                child = self.run_browser(json.dumps(SUITES[:1]), selected='firefox', cleanup=boundary + '-error')
+                self.assertNotEqual(child.returncode, 0)
+                self.assertIn('fixture ' + boundary + ' close failure', child.stderr)
+                cleanup = [json.loads(line) for line in child.stderr.splitlines()
+                           if line.startswith('{') and 'cleanup' in json.loads(line)]
+                self.assertEqual(cleanup, [{'cleanup': 'context'}, {'cleanup': 'browser', 'open_contexts': 0}])
 
     def test_unknown_browser_or_missing_executable_never_publishes_success(self):
         for selected, verified in [('webkit', True), ('chromium', False), ('firefox', False)]:

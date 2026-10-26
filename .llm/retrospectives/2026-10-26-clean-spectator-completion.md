@@ -19,7 +19,7 @@
 | Profiling disproved a broader transaction rewrite and located repeated identity lookups and handshake snapshots. | Identical eight-peer records measured 81.959 seconds baseline, 81.871 bank-copy variant and 63.136 combined narrow reads. | Reject the immaterial transaction rewrite; preserve atomic plans and use operation-local endpoint references. |
 | Timed packet delay does not guarantee a prediction before original delivery. | CI preserved correct state but one peer never restored; a stale-lifetime mutation also defeated the first barrier. | Require successful current-instance predicted callbacks before releasing bounded originals; bind proof to room, session and game lifetime. |
 | Corrupt rollback can stop a peer before later physical key changes arrive. | CI stopped at frame 38 with the second direction absent; local runs happened to accept it. | Await both second physical key changes while originals still bound advancement, then release; retain movement and desync assertions. |
-| A provenance rejection without an input name cannot explain a runtime mutation. | CI rejected a symlink after a clean page; 15 local Firefox cycles and archive inspection did not reproduce it. | Name logical inventory paths while retaining every guard; track the unexplained mutation in issue 226. |
+| A provenance rejection needs both an input name and process-lifetime evidence. | Named diagnostics found the Firefox installation lock; an updater page reproduced creation, and pinned Juggler source waits for startup idle or window closure. | Close owned contexts before parent shutdown, retain every guard and record exit traces; original CI forced termination remains an inference in issue 226. |
 | Clean playback does not prove clean continued transport service. | Existing clean-tail tests stopped before the next relay poll. | Extend the existing data-driven suite through repeated service, late ingress and SDK loss. |
 
 ## Actions taken
@@ -38,7 +38,7 @@ inventory coverage within the job deadline, with explicit partition identities.
 - Fixed the incomplete transport guidance at its existing canonical paragraph.
 - Retained separate clean input closure and unexpected-host-loss requirements.
 - Reused the existing relay suite and ownership inventory; removed the exploratory test file.
-- No unrelated knowledge entries became obsolete.
+- Updated the existing Firefox lock fact with its updater lifetime and context-first cleanup; no duplicate entry was added.
 
 ## Verification and limits
 
@@ -49,7 +49,7 @@ Its strict controls also cover stale game lifetimes and terminal room cleanup.
 Session delivery also requires complete source-width, harness, ownership-browser and CI gates.
 The local progress log records exact commands, receipts and final outcomes.
 Live authenticated spectator control deployment and broader source parity remain under issues 131 and 47.
-Issue 226 retains the unexplained CI runtime mutation; diagnostics do not claim a lifecycle repair.
+Issue 226 records the original CI exit-cause uncertainty; clean shutdown is checked without excluding runtime files.
 
 ## Outcome
 

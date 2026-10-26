@@ -88,7 +88,12 @@ const path = require('node:path');
     if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display });
     console.log(JSON.stringify(observation));
   } finally {
-    if (browser) await browser.close();
-    server.close();
+    try {
+      if (browser) {
+        // Closing owned windows releases Firefox's startup-idle wait before process shutdown.
+        try { await Promise.all(browser.contexts().map(context => context.close())); }
+        finally { await browser.close(); }
+      }
+    } finally { server.close(); }
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
