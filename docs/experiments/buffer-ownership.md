@@ -66,6 +66,9 @@ The success receipt is `.cache/reference/results/ownership.json`; raw logs are
 Native suites run in separate processes with a 180-second watchdog; Web pages
 run groups of at most four Chromium suites or one Firefox suite with the same
 180-second page watchdog.
+Firefox runs each `test_driver_peer_parity` case in its own page. Each page
+retains both repetitions. The launcher uses native case order, reassembles the
+complete suite, and requires exact equality with the full native suite result.
 Each browser launcher retains its 240-second process budget. Every case still
 runs twice in-process. Complete batch inventories and exact metadata/types are
 checked before the full native/Web results are compared; missing or duplicate

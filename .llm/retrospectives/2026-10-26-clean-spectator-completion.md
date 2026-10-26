@@ -15,10 +15,11 @@
 | Completion can happen inside a control sender, not only between polls. | The sender-callback regression returned PEER_FAILURE before repair. | Apply the same completion distinction after the callback and test queued late traffic. |
 | Browser provenance must bind the executed path and staged source, not only the original files. | Independent PATH substitution and staged-source mutations evaded the first qualification candidate. | Execute the inventoried Node path; freeze staged sources, Godot, templates and browser inputs; verify each execution boundary. |
 | Firefox exposed repeated owned diagnostic copies in a scalar confirmation fold. | The unchanged eight-player case measured 377.893 seconds; a scalar read measured 141.557 seconds with identical assertions. | Preserve current-read timing and public snapshot ownership; use narrow internal receipt and lifecycle queries. Verify the full batch, not only the isolated case. |
-| Complete pages can still exceed a page or whole-job deadline. | CI completed a 195.256260-second batch; singleton jobs later reached only 42/44 pages on 4.3 and 30 on 4.7.2 before the 30-minute cap. | Split pages and declared phase/suite partitions on both pins; preserve every case, repeat, control and deadline. |
+| Complete cases can still exceed page or whole-job deadlines. | CI completed a 195.256260-second batch; singleton jobs hit the 30-minute cap, and a four-case page completed at 180.549121 seconds. | Isolate slow cases, reassemble exact native records and use declared suite partitions; preserve every repeat, control and deadline. |
 | Profiling disproved a broader transaction rewrite and located repeated identity lookups and handshake snapshots. | Identical eight-peer records measured 81.959 seconds baseline, 81.871 bank-copy variant and 63.136 combined narrow reads. | Reject the immaterial transaction rewrite; preserve atomic plans and use operation-local endpoint references. |
 | Timed packet delay does not guarantee a prediction before original delivery. | CI preserved correct state but one peer never restored; a stale-lifetime mutation also defeated the first barrier. | Require successful current-instance predicted callbacks before releasing bounded originals; bind proof to room, session and game lifetime. |
 | Corrupt rollback can stop a peer before later physical key changes arrive. | CI stopped at frame 38 with the second direction absent; local runs happened to accept it. | Await both second physical key changes while originals still bound advancement, then release; retain movement and desync assertions. |
+| A provenance rejection without an input name cannot explain a runtime mutation. | CI rejected a symlink after a clean page; 15 local Firefox cycles and archive inspection did not reproduce it. | Name logical inventory paths while retaining every guard; track the unexplained mutation in issue 226. |
 | Clean playback does not prove clean continued transport service. | Existing clean-tail tests stopped before the next relay poll. | Extend the existing data-driven suite through repeated service, late ingress and SDK loss. |
 
 ## Actions taken
@@ -48,6 +49,7 @@ Its strict controls also cover stale game lifetimes and terminal room cleanup.
 Session delivery also requires complete source-width, harness, ownership-browser and CI gates.
 The local progress log records exact commands, receipts and final outcomes.
 Live authenticated spectator control deployment and broader source parity remain under issues 131 and 47.
+Issue 226 retains the unexplained CI runtime mutation; diagnostics do not claim a lifecycle repair.
 
 ## Outcome
 

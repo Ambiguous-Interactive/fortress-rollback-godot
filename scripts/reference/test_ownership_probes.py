@@ -49,6 +49,36 @@ def batch_value(command):
 
 
 class OwnershipBatchTests(unittest.TestCase):
+    # Value: protects=case pages retain the full native suite and order; fails_when=pages lose, repeat or alter evidence; why_new=suite-only aggregation; seam=none
+    def test_case_pages_reassemble_exact_native_order_and_reject_incomplete_evidence(self):
+        suite = 'res://tests/unit/test_driver_peer_parity.gd'
+        native = next(value for name, value in self.batches() if name == suite)
+        native['records'].reverse()
+        pages = [{**native, 'count': 1, 'records': [copy.deepcopy(record)]} for record in native['records']]
+        self.assertEqual(probes.aggregate_case_pages(suite, pages, native), native)
+        for mutation in ('missing', 'extra', 'order', 'case', 'repeat', 'assertions', 'errors', 'incomplete'):
+            with self.subTest(mutation=mutation):
+                altered = copy.deepcopy(pages)
+                if mutation == 'missing':
+                    altered.pop()
+                elif mutation == 'extra':
+                    altered.append(copy.deepcopy(altered[0]))
+                elif mutation == 'order':
+                    altered.reverse()
+                elif mutation == 'case':
+                    altered[0]['records'][0]['case'] = 'foreign'
+                elif mutation == 'repeat':
+                    altered[0]['records'][0]['runs'].pop()
+                elif mutation == 'assertions':
+                    for run in altered[0]['records'][0]['runs']:
+                        run['assertions'] += 1
+                elif mutation == 'errors':
+                    altered[0]['errors'] = [{'kind': 'abort'}]
+                else:
+                    altered[0]['complete'] = False
+                with self.assertRaises(ValueError):
+                    probes.aggregate_case_pages(suite, altered, native)
+
     # Value: protects=complete partition coverage and live alias controls; fails_when=parts omit cases or controls; why_new=whole inventory only; seam=none
     def test_suite_parts_cover_every_case_with_only_the_control_repeated(self):
         control = 'res://tests/determinism/test_buffer_ownership.gd'
@@ -342,7 +372,7 @@ class OwnershipReceiptTests(unittest.TestCase):
         # engine or script failure.
         self.assertIn('_publish_progress', probes.HOST)
         self.assertIn('fortressOwnershipProgress', probes.HOST)
-        self.assertIn('PackedStringArray(), _publish_progress, _clock)', probes.HOST)
+        self.assertIn('case_names, _publish_progress, _clock)', probes.HOST)
         self.assertIn('func _clock() -> int:', probes.HOST)
         self.assertIn('Time.get_ticks_usec()', probes.HOST)
         self.assertIn('progress["unit"] = "us"', probes.HOST)
@@ -542,8 +572,13 @@ class OwnershipRejectionTests(unittest.TestCase):
                     value = native_value(negative)
                     suites = json.loads(command[3])
                     value['records'] = [row for row in value['records'] if row['suite'] in suites]
+                    if len(command) == 5:
+                        value['records'] = [row for row in value['records'] if row['case'] == command[4]]
                     value['count'] = len(value['records'])
                     value['passed'] = not any(run['failures'] for row in value['records'] for run in row['runs'])
+                    if len(command) == 5 and browser_fault == 'case_assertions':
+                        for run in value['records'][0]['runs']:
+                            run['assertions'] += 1
                     browser = {'browser': selected.title(), 'version': 'fixture', 'result': value, 'errors': []}
                     if selected == 'firefox':
                         browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False},
@@ -705,7 +740,18 @@ class OwnershipRejectionTests(unittest.TestCase):
             groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
             suites = sorted(expected_suites)
             batch_size = 1 if selected == 'firefox' else 4
-            self.assertEqual(groups, [suites[offset:offset + batch_size] for offset in range(0, len(suites), batch_size)] * round_count)
+            expected_groups = []
+            expected_cases = []
+            for offset in range(0, len(suites), batch_size):
+                group = suites[offset:offset + batch_size]
+                if selected == 'firefox' and group == ['res://tests/unit/test_driver_peer_parity.gd']:
+                    cases = [row['case'] for row in native_value(False)['records'] if row['suite'] == group[0]]
+                else:
+                    cases = [None]
+                expected_groups.extend([group] * len(cases))
+                expected_cases.extend(cases)
+            self.assertEqual(groups, expected_groups * round_count)
+            self.assertEqual([command[4] if len(command) == 5 else None for command, log, timeout in browser_calls], expected_cases * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
             browser_logs = [log for command, log, timeout in browser_calls]
             self.assertEqual(len(browser_logs), len(set(browser_logs)), 'each browser batch keeps its own log')
@@ -713,6 +759,13 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     def rounds(self, results):
         return json.loads((results / 'ownership-rounds.json').read_text(encoding='utf-8'))
+
+    # Value: protects=divergent case pages cannot publish or leave a running round; fails_when=assembly trusts repeats only; why_new=suite-level failures; seam=mocked browser
+    def test_case_page_divergence_keeps_a_failed_round_and_no_receipt(self):
+        results = self.scenario(expected=ValueError, selected='firefox', version='4.3', phase='positive', suite_part='1', browser_fault='case_assertions')
+        self.assertFalse((results / 'ownership.json').exists())
+        self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
+        self.assertEqual(self.rounds(results)[0]['errors'], ['incomplete or divergent ownership case pages'])
 
     # Value: protects=complete partial-phase receipts; fails_when=selector loses work or claims both; why_new=default-only runs; seam=none
     def test_each_selected_phase_runs_exact_inventory_and_declares_scope(self):
@@ -951,6 +1004,50 @@ class OwnershipRejectionTests(unittest.TestCase):
         self.assertEqual(len(entry['errors']), probes.MAX_RETAINED_ERRORS)
         self.assertEqual(len(entry['browser_progress']), 7, 'a progress record keeps a fixed number of fields')
         self.assertEqual(entry['browser_progress']['case'], 'golden')
+
+
+# Value: runtime guard failures name exact logical inputs while rejecting symlinks before hashing.
+class RuntimeDiagnosticTests(unittest.TestCase):
+    def test_regular_runtime_files_keep_their_inventory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'browser').mkdir()
+            (root / 'browser/executable').write_bytes(b'verified executable')
+            self.assertEqual(probes.tool_inventory({'firefox': root}), {
+                'firefox/browser/executable': probes.digest(root / 'browser/executable')})
+
+    def test_missing_and_root_symlink_diagnostics_name_only_the_logical_input(self):
+        for kind in ('missing', 'symlink', 'dangling'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = root / 'selected'
+                if kind == 'symlink':
+                    (root / 'target').write_bytes(b'verified executable')
+                    source.symlink_to(root / 'target')
+                elif kind == 'dangling':
+                    source.symlink_to(root / 'absent')
+                with mock.patch.object(probes, 'digest') as digest:
+                    with self.assertRaisesRegex(ValueError, '^ownership runtime input missing or symlinked: firefox$'):
+                        probes.tool_inventory({'firefox': source})
+                    digest.assert_not_called()
+
+    def test_nested_link_diagnostics_name_the_relative_input_without_hashing_the_link(self):
+        for kind in ('file', 'directory', 'dangling'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                installation = root / 'installation'
+                (installation / 'browser').mkdir(parents=True)
+                target = root / 'target'
+                if kind == 'file':
+                    target.write_bytes(b'foreign executable')
+                elif kind == 'directory':
+                    target.mkdir()
+                    (target / 'foreign').write_bytes(b'foreign executable')
+                (installation / 'browser/lock').symlink_to(target, target_is_directory=kind == 'directory')
+                with mock.patch.object(probes, 'digest') as digest:
+                    with self.assertRaisesRegex(ValueError, '^ownership runtime input is symlinked: firefox/browser/lock$'):
+                        probes.tool_inventory({'firefox': installation})
+                    digest.assert_not_called()
 
 
 if __name__ == '__main__':

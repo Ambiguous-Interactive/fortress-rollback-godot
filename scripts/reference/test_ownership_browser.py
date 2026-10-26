@@ -56,7 +56,7 @@ print(commands.get(sys.argv[1], ''))
 ''')
         self.xdotool.chmod(0o755)
 
-    def run_browser(self, selector, *, timeout=False, root=None, selected="chromium", verified=True):
+    def run_browser(self, selector, *, timeout=False, root=None, selected="chromium", verified=True, case_name=None):
         env = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(self.mock),
                'FORTRESS_OWNERSHIP_BROWSER': selected, 'FORTRESS_XDOTOOL_EXECUTABLE': str(self.xdotool)}
         for name in ('chromium', 'firefox'):
@@ -70,6 +70,8 @@ print(commands.get(sys.argv[1], ''))
         command = ['node', str(RUNNER), str(root or self.export)]
         if selector is not None:
             command.append(selector)
+        if case_name is not None:
+            command.append(case_name)
         return subprocess.run(command, env=env, capture_output=True, encoding='utf-8', check=False, timeout=10)
 
     # Value: protects=selected suite coverage; fails_when=URL omits/replaces/reorders selectors; why_new=Python mocks skip real Node CLI; seam=module double
@@ -84,6 +86,19 @@ print(commands.get(sys.argv[1], ''))
                 url = urlsplit(receipt['result']['url'])
                 self.assertEqual(url.path, '/index.html')
                 self.assertEqual(parse_qs(url.query), {'suite': suites})
+
+    # Value: protects=one exact case reaches the Web host without widening selection; fails_when=case ignored; why_new=suite-only URL; seam=module double
+    def test_exact_case_selector_requires_one_suite_and_reaches_the_page(self):
+        child = self.run_browser(json.dumps(SUITES[:1]), case_name='two_peers')
+        self.assertEqual(child.returncode, 0, child.stderr)
+        value = json.loads(child.stdout)
+        self.assertEqual(parse_qs(urlsplit(value['result']['url']).query), {'suite': SUITES[:1], 'case': ['two_peers']})
+        for suites, name in [(SUITES, 'two_peers')] + [(SUITES[:1], name) for name in ('', 'two peers', 'two_peers&case=other', '../case', '1', 'True')]:
+            with self.subTest(suites=suites, name=name):
+                child = self.run_browser(json.dumps(suites), case_name=name)
+                self.assertNotEqual(child.returncode, 0)
+                self.assertEqual(child.stdout, '')
+                self.assertIn('case', child.stderr)
 
     # Value: protects=selected executable and Firefox WebGL launch; fails_when=Chromium silently substitutes;
     # why_new=URL tests do not inspect browser launch options; seam=module double

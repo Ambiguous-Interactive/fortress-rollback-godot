@@ -317,10 +317,20 @@ func _ready() -> void:
 \tfor candidate: Script in scripts:
 \t\tif seen.has(candidate.resource_path):
 \t\t\tselected.append(candidate)
+\tvar requested_cases: Variant = JSON.parse_string(str(JavaScriptBridge.eval("JSON.stringify(new URLSearchParams(location.search).getAll('case'))")))
+\tvar case_names: PackedStringArray = []
+\tvalid = valid and requested_cases is Array
+\tif requested_cases is Array and not requested_cases.is_empty():
+\t\tvalid = valid and requested_cases.size() == 1 and selected.size() == 1
+\t\tif valid:
+\t\t\tvar inventory: Variant = selected[0].new().cases()
+\t\t\tvalid = inventory is PackedStringArray and requested_cases[0] is String and requested_cases[0] in inventory
+\t\t\tif valid:
+\t\t\t\tcase_names.append(requested_cases[0])
 \tif not valid:
 \t\tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(JSON.stringify({"complete": false})))
 \t\treturn
-\tvar result: Dictionary = Scenarios.new().execute(selected, "determinism", "", 1701, PackedStringArray(), _publish_progress, _clock)
+\tvar result: Dictionary = Scenarios.new().execute(selected, "determinism", "", 1701, case_names, _publish_progress, _clock)
 \tvar text: String = JSON.stringify(result)
 \tJavaScriptBridge.eval("document.body.dataset.fortressOwnership = " + JSON.stringify(text))
 \n\n## A rejected run must name the case that was executing and the time the last
@@ -472,6 +482,23 @@ def aggregate_native(batches, negative, expected=None):
                      'errors': [], 'records': records}, negative, expected)
 
 
+def aggregate_case_pages(suite, pages, native):
+    """Retain native case order and every record when a slow suite needs separate pages."""
+    expected = {suite: EXPECTED[suite]}
+    validate(native, False, expected)
+    names = [record['case'] for record in native['records']]
+    if len(pages) != len(names):
+        raise ValueError('missing or duplicate ownership case pages')
+    records = []
+    for name, page in zip(names, pages):
+        validate(page, False, {suite: {name}})
+        records.extend(page['records'])
+    result = validate({'format': 1, 'complete': True, 'count': len(records), 'passed': True, 'errors': [], 'records': records}, False, expected)
+    if not same_json(result, native):
+        raise ValueError('native/web ownership case divergence')
+    return result
+
+
 def validate_coverage(records, part, suites):
     """A partial receipt must describe exactly the canonical requested suite part."""
     expected = select_suites(part)
@@ -616,12 +643,12 @@ def tool_inventory(paths):
     result = {}
     for name, path in paths.items():
         if not path.exists() or path.is_symlink():
-            raise ValueError('ownership runtime input missing or symlinked')
+            raise ValueError(f'ownership runtime input missing or symlinked: {name}')
         for source in sorted(path.rglob('*')) if path.is_dir() else [path]:
+            key = name + '/' + str(source.relative_to(path)) if path.is_dir() else name
             if source.is_symlink():
-                raise ValueError('ownership runtime input is symlinked')
+                raise ValueError(f'ownership runtime input is symlinked: {key}')
             if source.is_file():
-                key = name + '/' + str(source.relative_to(path)) if path.is_dir() else name
                 result[key] = digest(source)
     return result
 
@@ -894,35 +921,52 @@ def run_probes(args, results):
                 batch_size = 1 if args.browser == 'firefox' else 4
                 for batch_index, offset in enumerate(range(0, len(ordered_suites), batch_size)):
                     suites = ordered_suites[offset:offset + batch_size]
-                    browser_log = results / f'ownership-{label}-browser-{batch_index:02d}.log'
-                    try:
-                        verify_staged(project, staged_frozen)
-                        verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
-                        verify_sources(frozen_sources)
-                        output = run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
-                                      str(export), json.dumps(suites)], environment, browser_log, timeout=240)
-                        verify_sources(frozen_sources)
-                        verify_staged(project, staged_frozen)
-                        verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
-                        browser = json.loads(output)
-                        browser_identity = validate_browser(browser, browser_identity, args.browser, data)
-                        validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
-                                 {suite: EXPECTED[suite] for suite in suites})
-                        browser_batches.append((suites, browser['result']))
-                    except Exception:
-                        # The browser watchdog rejected the run. Its inventory of
-                        # page and engine errors, and the progress the page
-                        # published, are in the log and not in the raised error,
-                        # so they are read back before the failure is raised again.
-                        text = browser_log.read_text(encoding='utf-8', errors='replace') if browser_log.exists() else ''
-                        detail = watchdog_detail(text)
-                        if detail is None:
-                            reject(started, 'failed', alive=False, errors=bounded_errors(text.splitlines()[-4:]))
+                    case_names = [None]
+                    native_suite = None
+                    if args.browser == 'firefox' and suites == ['res://tests/unit/test_driver_peer_parity.gd']:
+                        suite_records = [record for record in native['records'] if record['suite'] == suites[0]]
+                        native_suite = {**native, 'passed': True, 'count': len(suite_records), 'records': suite_records}
+                        case_names = [record['case'] for record in suite_records]
+                    pages = []
+                    for case_index, case_name in enumerate(case_names):
+                        suffix = '' if case_name is None else f'-case-{case_index:02d}'
+                        browser_log = results / f'ownership-{label}-browser-{batch_index:02d}{suffix}.log'
+                        try:
+                            verify_staged(project, staged_frozen)
+                            verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                            verify_sources(frozen_sources)
+                            output = run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
+                                          str(export), json.dumps(suites)] + ([] if case_name is None else [case_name]),
+                                          environment, browser_log, timeout=240)
+                            verify_sources(frozen_sources)
+                            verify_staged(project, staged_frozen)
+                            verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                            browser = json.loads(output)
+                            browser_identity = validate_browser(browser, browser_identity, args.browser, data)
+                            validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
+                                     {suite: EXPECTED[suite] if case_name is None else {case_name} for suite in suites})
+                            pages.append(browser['result'])
+                        except Exception:
+                            # The browser watchdog rejected the run. Its inventory of
+                            # page and engine errors, and the progress the page
+                            # published, are in the log and not in the raised error,
+                            # so they are read back before the failure is raised again.
+                            text = browser_log.read_text(encoding='utf-8', errors='replace') if browser_log.exists() else ''
+                            detail = watchdog_detail(text)
+                            if detail is None:
+                                reject(started, 'failed', alive=False, errors=bounded_errors(text.splitlines()[-4:]))
+                                raise
+                            browser_progress = bounded_progress(detail.get('progress'), 'browser')
+                            reject(started, rejected_state(browser_progress), browser_progress=browser_progress,
+                                   alive=detail_alive(detail), errors=detail_errors(detail))
                             raise
-                        browser_progress = bounded_progress(detail.get('progress'), 'browser')
-                        reject(started, rejected_state(browser_progress), browser_progress=browser_progress,
-                               alive=detail_alive(detail), errors=detail_errors(detail))
-                        raise
+                    if native_suite is not None:
+                        try:
+                            browser['result'] = aggregate_case_pages(suites[0], pages, native_suite)
+                        except ValueError:
+                            reject(started, 'failed', alive=False, errors=['incomplete or divergent ownership case pages'])
+                            raise
+                    browser_batches.append((suites, browser['result']))
                 browser['result'] = aggregate_native(browser_batches, negative, selected)
                 if not same_json(browser['result'], native):
                     reject(started, 'failed', alive=False, errors=['native/web ownership divergence'])
