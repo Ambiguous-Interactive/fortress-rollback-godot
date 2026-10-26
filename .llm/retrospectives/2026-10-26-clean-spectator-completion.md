@@ -18,6 +18,7 @@
 | A complete case batch can exceed a browser deadline without an assertion failure. | Firefox CI completed 23 peer-drop cases at 195.256260 seconds under a 180-second page limit. | Split suite groups and declare phase partitions; preserve every case, repeat, control and deadline. |
 | Profiling disproved a broader transaction rewrite and located repeated identity lookups and handshake snapshots. | Identical eight-peer records measured 81.959 seconds baseline, 81.871 bank-copy variant and 63.136 combined narrow reads. | Reject the immaterial transaction rewrite; preserve atomic plans and use operation-local endpoint references. |
 | Timed packet delay does not guarantee a prediction before original delivery. | CI preserved correct state but one peer never restored; a stale-lifetime mutation also defeated the first barrier. | Require successful current-instance predicted callbacks before releasing bounded originals; bind proof to room, session and game lifetime. |
+| Corrupt rollback can stop a peer before later physical key changes arrive. | CI stopped at frame 38 with the second direction absent; local runs happened to accept it. | Await both second physical key changes while originals still bound advancement, then release; retain movement and desync assertions. |
 | Clean playback does not prove clean continued transport service. | Existing clean-tail tests stopped before the next relay poll. | Extend the existing data-driven suite through repeated service, late ingress and SDK loss. |
 
 ## Actions taken

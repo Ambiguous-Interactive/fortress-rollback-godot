@@ -621,3 +621,36 @@ test('prediction release receipt includes originals arriving after the predictio
     assert.equal(receipt.after.pending, 0);
   });
 });
+
+// Value: both physical second directions must already be active when corrupt rollback first unblocks.
+test('corrupt control sets both physical second directions before either original release', async () => {
+  const source = fs.readFileSync(path.join(__dirname, 'online.cjs'), 'utf8');
+  const start = source.indexOf('      // Keep handshake service live while originals are held.');
+  const end = source.indexOf('      if (round === 3 && !corrupt)', start);
+  assert.ok(start >= 0 && end > start);
+  const fixtures = [predictionFixture(), predictionFixture()];
+  const keys = [new Set(['KeyD']), new Set(['KeyW'])];
+  let predictionWaits = 0;
+  const pages = fixtures.map((f, index) => ({
+    keyboard: {
+      async up(key) { assert.equal(predictionWaits, 2); await Promise.resolve(); keys[index].delete(key); },
+      async down(key) { assert.equal(predictionWaits, 2); await Promise.resolve(); keys[index].add(key); },
+    },
+    async evaluate(operation, argument) {
+      assert.ok(keys[0].has('KeyS') && keys[1].has('KeyA'), 'both second physical keys precede every release');
+      assert.ok(!keys[0].has('KeyD') && !keys[1].has('KeyW'), 'first physical directions have ended');
+      return vm.runInContext(`(${operation.toString()})(${JSON.stringify(argument)})`, f.context);
+    },
+  }));
+  for (const f of fixtures) {
+    f.window.fortressPredictionGate.arm({ room: 'FIRST', room_id: 'room-first' });
+    f.channel.send(predictionInput());
+    Object.assign(f.window.fortressOnline, { predicted_frame: 2, predicted_lifetime: 1 });
+  }
+  const wait = async () => { predictionWaits++; };
+  const execute = new (Object.getPrototypeOf(async function() {}).constructor)(
+    'pages', 'wait', 'corrupt', `${source.slice(start, end)}; return prediction;`);
+  const receipts = await execute(pages, wait, true);
+  assert.equal(receipts.length, 2);
+  fixtures.forEach(f => assert.equal(f.sent.length, 1, 'the actual held original was released'));
+});

@@ -400,6 +400,12 @@ async function main() {
       // must consume a predicted remote input before either sender releases its original bytes.
       await Promise.all(pages.map(page => wait(page, () => window.fortressPredictionGate.current().predicted_frame >= 2
         && window.fortressOnline.predicted_lifetime === window.fortressOnline.game_lifetime, 90000)));
+      if (corrupt) {
+        // Originals still bound advancement to the prediction window. Install both physical second
+        // directions before correction can resume either peer and reach the first checksum exchange.
+        await Promise.all([pages[0].keyboard.up('KeyD'), pages[1].keyboard.up('KeyW')]);
+        await Promise.all([pages[0].keyboard.down('KeyS'), pages[1].keyboard.down('KeyA')]);
+      }
       const prediction = await Promise.all(pages.map((page, index) => page.evaluate(pageIndex => {
         const frame = window.fortressOnline.predicted_frame;
         const before = window.fortressPredictionGate.summary();
@@ -422,10 +428,12 @@ async function main() {
         await Promise.all(pages.map(page => command(page, 'old_callbacks')));
       }
       const suspension = round === 0 && !corrupt ? await suspend('short', 750) : null;
-      await pages[0].keyboard.up('KeyD');
-      await pages[1].keyboard.up('KeyW');
-      await pages[0].keyboard.down('KeyS');
-      await pages[1].keyboard.down('KeyA');
+      if (!corrupt) {
+        await pages[0].keyboard.up('KeyD');
+        await pages[1].keyboard.up('KeyW');
+        await pages[0].keyboard.down('KeyS');
+        await pages[1].keyboard.down('KeyA');
+      }
       await Promise.all(pages.map(page => wait(page, target => window.fortressOnline.confirmed >= target, 90000, corrupt ? 20 : 100)));
       let desyncPage = -1;
       if (corrupt) {
