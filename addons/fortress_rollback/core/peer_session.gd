@@ -920,7 +920,7 @@ func _confirmation_code() -> int:
 			for index: int in range(_ids.size()):
 				if _is_gone(index):
 					continue
-				bound = mini(bound, _endpoint(index).status().peer_statuses[slot].last_frame)
+				bound = mini(bound, _endpoint(index)._peer_received_frame(slot))
 		limit = mini(limit, bound)
 	if limit == Queue.FRAME_MAX:
 		# Every slot is frozen, so the frontier cannot move.

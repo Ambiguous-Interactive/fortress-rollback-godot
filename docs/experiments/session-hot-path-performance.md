@@ -148,3 +148,34 @@ Matching benchmark checksums before and after the change:
 | codec | 2 | 1009799064992073792 |
 | codec | 4 | 5039977378390133760 |
 | codec | 8 | 8583044641210005760 |
+
+
+## Confirmation receipt reads in eight-player sessions
+
+Issue [223](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/223)
+compares the unchanged eight-player driver/expert parity case at seed 1701.
+Both repetitions retain all 21,685 assertions, encoded traffic comparisons,
+callback/status checks and independently reconstructed canonical boundaries.
+The baseline is `7363ecd18a52f4eeffe5e3b3b477ef4d5e72e42b`.
+
+Firefox 142.0.1 with Godot 4.3 on Linux arm64 measured:
+
+| Receipt observation | Complete case time |
+| --- | --- |
+| Full endpoint status per slot and endpoint | 377.893 seconds |
+| One receipt-bank snapshot per endpoint per fold | 173.597 seconds |
+| Internal scalar receipt-frame read | 141.557 seconds |
+
+Delivery accounted for about 89 percent of the original case. Each eight-player
+confirmation fold made 49 complete owned endpoint snapshots to read 49 integers.
+The scalar read preserves each observation's timing and avoids copying retained
+packet/input history. Public diagnostic snapshots keep their existing ownership.
+The scalar variant passes the original four-suite batch with unchanged 180-second
+page and 240-second process limits. No assertion, case or repeat was removed.
+
+These are workload measurements, not live-game frame-rate or transport claims.
+Run the complete source-bound acceptance with
+`xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox`.
+The deterministic parity suite and both browser controls remain required on both
+engine pins; the extended diagnostic budget used to measure the old slow case
+never changes acceptance deadlines.

@@ -436,6 +436,7 @@ instead of being presented as a faithful copy.
 Validated replay playback and paused navigation check callback success and bounded snapshot status before
 accepting a boundary; a matching checksum cannot override a failed snapshot write.
 Replay completion also waits for open navigation, revalidation requests and game callbacks to finish.
+Confirmation reads current receipt-frame scalars without duplicating endpoint diagnostic history; public status snapshots stay owned.
 The ownership witness compares the complete driver, replay and spectator case inventory against native execution in pinned Chromium and Firefox on both engines.
 Firefox requires a visible Xvfb window; this API evidence does not establish live transport or full browser-release acceptance.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.

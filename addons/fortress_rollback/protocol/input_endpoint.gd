@@ -310,6 +310,10 @@ func status() -> Dictionary:
 	return result
 
 
+func _peer_received_frame(slot: int) -> int:
+	return _state.peer_statuses[slot].last_frame
+
+
 func drain_outbox() -> Array[PackedByteArray]:
 	var result: Array[PackedByteArray] = []
 	if _busy or _handshake == null:

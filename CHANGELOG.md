@@ -340,6 +340,8 @@
 
 ### Improved
 
+- Improve multi-peer input processing by reading receipt frames without copying retained packet history. Public status snapshots keep their ownership guarantees.
+
 - Improve wide-input queue insertion with native byte copying while preserving input, prediction and rollback-floor ownership.
 
 - Improve driver handling of repeated identical local samples. Each player submits once after the complete list passes validation.
