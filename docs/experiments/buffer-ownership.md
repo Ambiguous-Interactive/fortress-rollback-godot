@@ -24,13 +24,19 @@ From the repository root, run:
 
 ```sh
 python3 scripts/reference/ownership_probes.py --offline --web
+xvfb-run -a python3 scripts/reference/ownership_probes.py --offline --web --browser firefox
 ```
 
 Omit `--offline` to fetch missing digest-pinned artifacts. Pinned Playwright must
 already be installed using the baseline browser setup. The runner constructs
 isolated temporary projects, uses both pinned editors and release Web templates,
-and drives the same seed-1701 scenarios twice in-process, natively and in real
-Chromium. It rejects process failures, engine errors, incomplete inventories,
+and drives the same seed-1701 scenarios twice in-process, natively and in
+the selected Chromium or Firefox browser. Chromium remains the default. Firefox
+requires Ubuntu 24.04, Xvfb and xdotool, and runs a visible owned window with
+`webgl.force-enabled=true` and `webgl.disabled=false`. It uses the existing
+digest-pinned Firefox archive in an installation separate from the transport
+witness. The browser name and exact version must match the selected pin.
+The runner rejects process failures, engine errors, incomplete inventories,
 repeat divergence and native/Web differences. The runner also includes the R1
 integer/encoding suite; its evidence is recorded separately. Godot excludes
 hidden `.llm` directories from exports, so the checksum sample is copied byte
@@ -65,11 +71,19 @@ checked before the full native/Web results are compared; missing or duplicate
 batches cannot qualify. Receipts declare the selected engine versions.
 The default command runs both pins;
 `--version 4.3` or `--version 4.7.2` runs both control rounds for one pin.
-CI runs those pins in separate jobs under the existing 30-minute job budget.
+CI runs both browser selections and both engine pins in separate jobs under
+the existing 30-minute job budget. Each selection runs the same complete case
+inventory, native comparison and negative controls; it does not filter replay,
+driver or spectator coverage. Firefox output additionally records its WebGL
+preferences and checked window geometry.
 Receipts include the pin-manifest hash and executable source hashes. A fresh run removes
 its previous receipt first, so an interrupted or failed attempt cannot preserve
 an old success. The historical baseline before these probes was
 `97c0d5bfef7eb5f746eae7bb51e6e573ff7e5e04`; source hashes identify this experiment.
+Receipts also bind all files in the selected browser installation, the imported
+Playwright packages, Node and each executed Web export. These inventories must
+remain unchanged through completion. Unused npm command links are outside the
+imported packages; symlinks within any inventoried runtime remain rejected.
 
 ## Observed engine boundaries
 

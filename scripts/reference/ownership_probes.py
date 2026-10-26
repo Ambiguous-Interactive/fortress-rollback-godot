@@ -19,6 +19,7 @@ import host_capacity  # noqa: E402
 from receipt_arguments import ReceiptParser
 from godot_smoke import run
 from run import begin_results, capture, captured_text
+from browser.webrtc_matrix import prepare_firefox
 
 PREFIX = 'FORTRESS_TEST_RESULT '
 PROGRESS_PREFIX = 'FORTRESS_TEST_PROGRESS '
@@ -134,7 +135,7 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
     'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery',
-    'heartbeat_fairness', 'clean_tail_retries', 'getter_lifetime', 'configure_lifetime'}
+    'heartbeat_fairness', 'clean_tail_retries', 'post_completion', 'terminal_failures', 'getter_lifetime', 'configure_lifetime'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
     'startup', 'canonical_playback', 'pressure', 'lifetimes', 'configuration', 'reentry', 'history_loss', 'player_coexistence', 'active_requests',
     'fair_liveness', 'finish_retry', 'callback_lifetimes', 'setup_callbacks'}
@@ -347,12 +348,26 @@ def same_json(first, second):
     return first == second
 
 
-def validate_browser(browser, identity):
+def validate_browser(browser, identity, selected='chromium', pins=None):
     """Do not discard an earlier batch's errors or browser identity."""
-    if not isinstance(browser, dict) or set(browser) != {'browser', 'version', 'result', 'errors'}:
+    fields = {'browser', 'version', 'result', 'errors'}
+    if selected == 'firefox':
+        fields |= {'firefox_preferences', 'display'}
+    if not isinstance(browser, dict) or set(browser) != fields:
         raise ValueError('incorrect browser result fields')
-    if browser['browser'] != 'Chromium' or type(browser['version']) is not str or not browser['version']:
+    if selected not in ('chromium', 'firefox') or browser['browser'] != selected.title() or type(browser['version']) is not str or not browser['version']:
         raise ValueError('incorrect browser identity')
+    if pins is not None and browser['version'] != pins['browser'][selected + '_version']:
+        raise ValueError('browser version differs from selected pin')
+    if selected == 'firefox':
+        if not same_json(browser['firefox_preferences'], {'webgl.force-enabled': True, 'webgl.disabled': False}):
+            raise ValueError('Firefox WebGL preferences differ from qualification')
+        display = browser['display']
+        if (not isinstance(display, dict) or set(display) != {'x', 'y', 'width', 'height', 'screen_width', 'screen_height'}
+                or any(type(value) is not int for value in display.values()) or display['x'] != 0 or display['y'] != 0
+                or any(not 1 <= display[key] <= 32768 for key in ('width', 'height', 'screen_width', 'screen_height'))
+                or display['width'] < 81):
+            raise ValueError('Firefox owned window visibility is invalid')
     if type(browser['errors']) is not list or browser['errors']:
         raise ValueError('browser reported errors')
     observed = (browser['browser'], browser['version'])
@@ -531,7 +546,9 @@ def rejected_state(progress):
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
-               'scripts/reference/local_ownership.py', 'docs/reference/pins.json', 'project.godot']
+               'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
+               'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
+               'scripts/reference/browser/package-lock.json', 'docs/reference/pins.json', 'project.godot']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
 
 
@@ -540,6 +557,57 @@ def verify_sources(expected):
         path = ROOT / filename
         if not path.is_file() or digest(path) != checksum:
             raise ValueError(f'ownership source changed during execution: {filename}')
+
+
+def tool_inventory(paths):
+    """Hash every selected runtime file, rejecting missing inputs and symlinks."""
+    result = {}
+    for name, path in paths.items():
+        if not path.exists() or path.is_symlink():
+            raise ValueError('ownership runtime input missing or symlinked')
+        for source in sorted(path.rglob('*')) if path.is_dir() else [path]:
+            if source.is_symlink():
+                raise ValueError('ownership runtime input is symlinked')
+            if source.is_file():
+                key = name + '/' + str(source.relative_to(path)) if path.is_dir() else name
+                result[key] = digest(source)
+    return result
+
+
+def prepare_browser(data, arch, offline, environment, selected):
+    """Own an installation independently of the transport witness's Firefox."""
+    paths = {}
+    if selected == 'firefox':
+        prepare_firefox(data, arch, offline, paths, environment, installation=CACHE / 'ownership-firefox' / arch)
+        artifact = f"firefox-{data['browser']['firefox_revision']}-ubuntu24.04-{arch}.zip"
+        executable = paths['firefox_executable']
+    else:
+        artifact = f"chromium-{data['browser']['chromium_revision']}-{arch}.zip"
+        archive = fetch(data['artifacts'][artifact], artifact, offline)
+        installation = CACHE / 'ownership-chromium' / arch
+        if installation.exists():
+            shutil.rmtree(installation)
+        installation.mkdir(parents=True)
+        prepare_zip(archive, installation, executable_members=('chrome-linux/chrome',))
+        executable = installation / 'chrome-linux/chrome'
+        paths.update(browser_archive=archive, browser_installation=installation, browser_executable=executable)
+        environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(executable)
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise ValueError('selected ownership browser executable is unavailable')
+    package = CACHE / 'browser/node_modules'
+    registry = package / 'playwright-core/browsers.json'
+    if digest(registry) != data['browser']['browser_registry_sha256']:
+        raise ValueError('browser registry differs from pin')
+    node = shutil.which('node')
+    if node is None:
+        raise ValueError('ownership browser requires node')
+    # Node imports these packages directly; npm's unused .bin command links are not executed.
+    paths.update({name: package / relative for name, relative in (
+        ('playwright_test', '@playwright/test'), ('playwright', 'playwright'), ('playwright_core', 'playwright-core'))})
+    paths['node'] = Path(node).resolve()
+    environment['FORTRESS_PLAYWRIGHT_PACKAGE'] = str(package / '@playwright/test')
+    environment['FORTRESS_OWNERSHIP_BROWSER'] = selected
+    return artifact, paths
 
 
 def validate_phases(records, rounds, versions):
@@ -557,9 +625,12 @@ def main():
     parser = ReceiptParser(description=__doc__, receipt='ownership.json', output=CACHE / 'results')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--web', action='store_true')
+    parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
     pins = load_manifest()['godot']
     parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
     args = parser.parse_args()
+    if args.browser != 'chromium' and not args.web:
+        parser.error('--browser firefox requires --web')
     results = CACHE / 'results'
     # One local run at a time owns these paths, and the browser part needs a
     # responsive host: a local test wave would otherwise starve it and turn a
@@ -607,6 +678,12 @@ def run_probes(args, results):
         raise ValueError('ownership tool bootstrap supports Linux arm64/x86_64')
     environment = os.environ.copy()
     environment['XDG_DATA_HOME'] = str(CACHE / 'godot-data')
+    browser_paths = {}
+    browser_frozen = {}
+    browser_artifact = None
+    if args.web:
+        browser_artifact, browser_paths = prepare_browser(data, arch, args.offline, environment, args.browser)
+        browser_frozen = tool_inventory(browser_paths)
     records = []
     versions_requested = [args.version] if args.version is not None else [data['godot']['minimum'], data['godot']['current_stable']]
     if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
@@ -728,16 +805,7 @@ def run_probes(args, results):
                 export = CACHE / 'ownership-exports' / label
                 export.mkdir(parents=True, exist_ok=True)
                 run(base + ['--export-release', 'Web', str(export / 'index.html')], environment, results / f'ownership-{label}-export.log')
-                browser_name = f'chromium-1194-{arch}.zip'
-                browser_zip = fetch(data['artifacts'][browser_name], browser_name, args.offline)
-                browser_dir = CACHE / 'verified-browser' / arch
-                browser_dir.mkdir(parents=True, exist_ok=True)
-                prepare_zip(browser_zip, browser_dir)
-                environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(browser_dir / 'chrome-linux/chrome')
-                environment['FORTRESS_PLAYWRIGHT_PACKAGE'] = str(CACHE / 'browser/node_modules/@playwright/test')
-                registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'
-                if digest(registry) != data['browser']['browser_registry_sha256']:
-                    raise ValueError('browser registry differs from pin')
+                exported_sources = tool_inventory({'export': export})
                 browser_batches = []
                 browser_identity = None
                 ordered_suites = sorted(EXPECTED)
@@ -747,7 +815,7 @@ def run_probes(args, results):
                     try:
                         output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export), json.dumps(suites)], environment, browser_log, timeout=240)
                         browser = json.loads(output)
-                        browser_identity = validate_browser(browser, browser_identity)
+                        browser_identity = validate_browser(browser, browser_identity, args.browser, data)
                         validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
                                  {suite: EXPECTED[suite] for suite in suites})
                         browser_batches.append((suites, browser['result']))
@@ -769,18 +837,24 @@ def run_probes(args, results):
                 if not same_json(browser['result'], native):
                     reject(started, 'failed', alive=False, errors=['native/web ownership divergence'])
                     raise ValueError('native/web ownership divergence')
-                record.update(browser=browser, browser_artifact=browser_name, template_artifact=template_name)
+                if tool_inventory(browser_paths) != browser_frozen or tool_inventory({'export': export}) != exported_sources:
+                    reject(started, 'failed', alive=False, errors=['ownership browser runtime or exported sources changed'])
+                    raise ValueError('ownership browser runtime or exported sources changed')
+                record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name, export_inventory=exported_sources)
             records.append(record)
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
     validate_phases(records, rounds, versions_requested)
     verify_sources(frozen_sources)
+    if tool_inventory(browser_paths) != browser_frozen:
+        raise ValueError('ownership browser runtime changed during execution')
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
+              'browser_requested': args.browser if args.web else None, 'browser_runtime_inventory': browser_frozen,
               'rounds': rounds, 'versions_requested': versions_requested,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
               'records': records, 'scope': 'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '
-              'no real transport, performance or other-browser/platform claim.'}
+              'no real transport, performance or unselected-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')
 
 

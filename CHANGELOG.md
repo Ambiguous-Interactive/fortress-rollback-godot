@@ -189,6 +189,8 @@
 
 ### Fixed
 
+- Fix completed spectator playback reporting a relay failure during continued polling or late packet delivery. Cancellation and playback failures remain explicit.
+
 - Fix local multiplayer and spectator restarts leaving retained old sessions playable. Restarts refuse active callbacks or request batches.
 
 - Fix replay configuration raising script errors for unrelated configuration objects. Invalid replacements now preserve playback.

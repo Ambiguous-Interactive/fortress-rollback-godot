@@ -232,7 +232,9 @@ class OwnershipReceiptTests(unittest.TestCase):
                 cache = Path(directory) / 'cache'
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
-                                       'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py',
+                                       'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
+                                       'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
+                                       'scripts/reference/browser/package-lock.json',
                                        'docs/reference/pins.json', 'project.godot']
                 for filename in files:
                     target = root / filename
@@ -397,7 +399,7 @@ class OwnershipRejectionTests(unittest.TestCase):
     # carry: the case that was executing, the errors the engine or the browser
     # reported, and the state the rejection found.
 
-    def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None, version=None):
+    def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None, version=None, selected="chromium", runtime_fault=None):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -405,7 +407,9 @@ class OwnershipRejectionTests(unittest.TestCase):
         cache = directory / 'cache'
         files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
-                                'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py',
+                                'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
+                                       'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
+                                       'scripts/reference/browser/package-lock.json',
                                 'docs/reference/pins.json', 'project.godot']
         for filename in files:
             target = root / filename
@@ -415,9 +419,14 @@ class OwnershipRejectionTests(unittest.TestCase):
         with zipfile.ZipFile(archive, 'w') as package:
             for archive_version in ('4.3', '4.7.2'):
                 package.writestr(f'Godot_v{archive_version}-stable_linux.x86_64', 'fake editor')
+            package.writestr('chrome-linux/chrome', 'fake browser')
         registry = cache / 'browser/node_modules/playwright-core/browsers.json'
         registry.parent.mkdir(parents=True, exist_ok=True)
         registry.write_text('{"browsers": []}\n', encoding='utf-8')
+        for relative in ('@playwright/test', 'playwright'):
+            installed = cache / 'browser/node_modules' / relative
+            installed.mkdir(parents=True)
+            (installed / 'index.js').write_text('fake installed package')
         results = cache / 'results'
         results.mkdir(parents=True)
 
@@ -435,7 +444,14 @@ class OwnershipRejectionTests(unittest.TestCase):
                     value['records'] = [row for row in value['records'] if row['suite'] in suites]
                     value['count'] = len(value['records'])
                     value['passed'] = not any(run['failures'] for row in value['records'] for run in row['runs'])
-                    browser = {'browser': 'Chromium', 'version': 'fixture', 'result': value, 'errors': []}
+                    browser = {'browser': selected.title(), 'version': 'fixture', 'result': value, 'errors': []}
+                    if selected == 'firefox':
+                        browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False},
+                                       display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
+                    if runtime_fault and len(browser_calls) == 1:
+                        target = {'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
+                                  'package': registry, 'export': Path(command[2]) / 'changed.js'}[runtime_fault]
+                        target.write_text('changed runtime input')
                     if len(browser_calls) == 1:
                         if browser_fault == 'unknown':
                             browser['foreign_field'] = {'abort': 'unrecognized error'}
@@ -488,9 +504,20 @@ class OwnershipRejectionTests(unittest.TestCase):
                               'Godot_v4.7.2-stable_linux.x86_64.zip': {},
                               'Godot_v4.3-stable_export_templates.tpz': {},
                               'Godot_v4.7.2-stable_export_templates.tpz': {},
-                              'chromium-1194-x86_64.zip': {}},
-                'browser': {'browser_registry_sha256': probes.digest(registry)}}
-        with mock.patch.object(probes, 'ROOT', root), mock.patch.object(probes, 'CACHE', cache), \
+                              'chromium-1194-x86_64.zip': {}, 'firefox-1495-ubuntu24.04-x86_64.zip': {}},
+                'browser': {'browser_registry_sha256': probes.digest(registry), 'chromium_revision': '1194', 'chromium_version': 'fixture',
+                            'firefox_revision': '1495', 'firefox_version': 'fixture'}}
+        def prepare_firefox(_pins, _arch, _offline, sources, environment, installation=None):
+            self.assertEqual(installation, cache / 'ownership-firefox/x86_64')
+            executable = installation / 'firefox/firefox'
+            executable.parent.mkdir(parents=True)
+            executable.write_text('fake verified Firefox')
+            executable.chmod(0o755)
+            sources.update(firefox_archive=archive, firefox_installation=installation, firefox_executable=executable)
+            environment['FORTRESS_FIREFOX_EXECUTABLE'] = str(executable)
+
+        with mock.patch.object(probes, 'prepare_firefox', side_effect=prepare_firefox), \
+                mock.patch.object(probes, 'ROOT', root), mock.patch.object(probes, 'CACHE', cache), \
                 mock.patch.object(probes, 'load_manifest', return_value=data), \
                 mock.patch.object(probes, 'fetch', return_value=archive), \
                 mock.patch.object(probes, 'run', side_effect=run), \
@@ -498,7 +525,7 @@ class OwnershipRejectionTests(unittest.TestCase):
                 mock.patch.object(probes.host_capacity, 'acquire_when_free', return_value=True), \
                 mock.patch.object(probes.platform, 'machine', return_value='x86_64'), \
                 mock.patch.object(probes.platform, 'system', return_value='Linux'), \
-                mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web'] + ([] if version is None else ['--version', version])):
+                mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web', '--browser', selected] + ([] if version is None else ['--version', version])):
             if expected is None:
                 probes.main()
             else:
@@ -533,6 +560,29 @@ class OwnershipRejectionTests(unittest.TestCase):
                 self.assertEqual(receipt['versions_requested'], [version])
                 self.assertEqual([row['label'] for row in receipt['rounds']], [version + '-negative', version + '-positive'])
                 self.assertEqual([row['native']['count'] for row in receipt['records']], [probes.EXPECTED_COUNT] * 2)
+
+    # Value: protects=Firefox qualifies every native case and control with pinned runtime provenance;
+    # fails_when=another browser substitutes, runtime mutates, or Firefox weakens inventory; why_new=old orchestrator only supported Chromium; seam=none
+    def test_firefox_runs_complete_inventory_for_both_pins(self):
+        results = self.scenario(expected=None, selected='firefox')
+        receipt = json.loads((results / 'ownership.json').read_text())
+        self.assertEqual(receipt['browser_requested'], 'firefox')
+        self.assertTrue(receipt['browser_runtime_inventory'])
+        self.assertTrue(any('firefox_executable' in key for key in receipt['browser_runtime_inventory']))
+        self.assertEqual(len(receipt['records']), 4)
+        for row in receipt['records']:
+            self.assertEqual(row['browser_artifact'], 'firefox-1495-ubuntu24.04-x86_64.zip')
+            self.assertEqual(row['browser']['browser'], 'Firefox')
+            self.assertEqual(row['browser']['result'], row['native'])
+            self.assertEqual(row['native']['count'], probes.EXPECTED_COUNT)
+
+    def test_runtime_or_export_mutation_cannot_qualify_either_browser(self):
+        for selected in ('chromium', 'firefox'):
+            for target in ('browser', 'package', 'export'):
+                with self.subTest(selected=selected, target=target):
+                    results = self.scenario(expected=ValueError, selected=selected, runtime_fault=target)
+                    self.assertFalse((results / 'ownership.json').exists())
+                    self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
 
     # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
     def test_completed_phase_inventory_rejects_missing_foreign_and_alias_phases(self):

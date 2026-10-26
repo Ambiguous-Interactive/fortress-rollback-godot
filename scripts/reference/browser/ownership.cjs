@@ -14,7 +14,13 @@ const path = require('node:path');
   }
   const root = path.resolve(process.argv[2]);
   if (!fs.statSync(root).isDirectory()) throw new Error('export root must be an existing directory');
-  const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+  const selected = process.env.FORTRESS_OWNERSHIP_BROWSER || 'chromium';
+  if (!['chromium', 'firefox'].includes(selected)) throw new Error('unsupported ownership browser');
+  const executable = process.env[`FORTRESS_${selected.toUpperCase()}_EXECUTABLE`];
+  if (!executable) throw new Error('ownership browser needs a verified executable');
+  const engines = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+  const { placeFirefox } = require('./webrtc_display.cjs');
+  const preferences = { 'webgl.force-enabled': true, 'webgl.disabled': false };
   const errors = [];
   const server = http.createServer((request, response) => {
     const relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
@@ -29,16 +35,17 @@ const path = require('node:path');
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
   try {
-    browser = await chromium.launch({
-      headless: true, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
+    browser = await engines[selected].launch(selected === 'chromium' ? {
+      headless: true, executablePath: executable,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
-    });
+    } : { headless: false, executablePath: executable, firefoxUserPrefs: preferences });
     const page = await browser.newPage();
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     const url = new URL(`http://127.0.0.1:${server.address().port}/index.html`);
     for (const suite of suites) url.searchParams.append('suite', suite);
     await page.goto(url.toString());
+    const display = selected === 'firefox' ? await placeFirefox(page, 0) : null;
     try {
       // Each batch keeps the existing page budget on bounded CI runners.
       await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
@@ -71,7 +78,9 @@ const path = require('node:path');
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
-    console.log(JSON.stringify({ browser: 'Chromium', version: browser.version(), result, errors }));
+    const observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result, errors };
+    if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display });
+    console.log(JSON.stringify(observation));
   } finally {
     if (browser) await browser.close();
     server.close();

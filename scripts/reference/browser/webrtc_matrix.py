@@ -46,7 +46,7 @@ def seed_firefox_runtime_lock(installation):
         raise ValueError('Firefox runtime lock unexpectedly present in fresh archive') from failure
 
 
-def prepare_firefox(pins, arch, offline, sources, environment):
+def prepare_firefox(pins, arch, offline, sources, environment, installation=None):
     if not os.environ.get('DISPLAY'):
         raise ValueError('Firefox WebGL witness requires DISPLAY; launch with xvfb-run -a')
     name = f"firefox-{pins['browser']['firefox_revision']}-ubuntu24.04-{arch}.zip"
@@ -55,7 +55,7 @@ def prepare_firefox(pins, arch, offline, sources, environment):
     release = Path('/etc/os-release').read_text()
     if 'ID=ubuntu\n' not in release or 'VERSION_ID="24.04"' not in release:
         raise ValueError('pinned Firefox witness requires Ubuntu 24.04')
-    installation = CACHE / 'webrtc-firefox' / arch
+    installation = CACHE / 'webrtc-firefox' / arch if installation is None else Path(installation)
     if installation.exists():
         shutil.rmtree(installation)
     with zipfile.ZipFile(archive) as package:

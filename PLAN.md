@@ -436,6 +436,8 @@ instead of being presented as a faithful copy.
 Validated replay playback and paused navigation check callback success and bounded snapshot status before
 accepting a boundary; a matching checksum cannot override a failed snapshot write.
 Replay completion also waits for open navigation, revalidation requests and game callbacks to finish.
+The ownership witness compares the complete driver, replay and spectator case inventory against native execution in pinned Chromium and Firefox on both engines.
+Firefox requires a visible Xvfb window; this API evidence does not establish live transport or full browser-release acceptance.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.
@@ -460,6 +462,7 @@ Remote-input sessions can recover and finalize confirmed replay history without 
 or forward frame. The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
 Authenticated retries remain idempotent through that buffered tail; input closure alone does not terminate playback.
+After playback reaches the authenticated END boundary, relay polling preserves normal completion and discards late ingress; unfinished cancellation and failures stay distinct.
 The host publisher retains one exact refused packet, advances only on transport acceptance,
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.

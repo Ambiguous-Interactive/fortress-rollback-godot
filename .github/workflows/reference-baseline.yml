@@ -83,13 +83,14 @@ jobs:
           if-no-files-found: error
 
   ownership:
-    name: Native and Chromium snapshot ownership ${{ matrix.version }}
+    name: Native and ${{ matrix.browser }} snapshot ownership ${{ matrix.version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
+        browser: [chromium, firefox]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -108,13 +109,22 @@ jobs:
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
-          .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
+          .cache/reference/browser/node_modules/.bin/playwright install-deps "${{ matrix.browser }}"
+          if [[ "${{ matrix.browser }}" == firefox ]]; then
+            sudo apt-get update
+            sudo apt-get install -y xvfb xdotool
+          fi
       - name: Verify integer encoding, snapshot ownership and byte sessions
-        run: python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
+        run: |
+          if [[ "${{ matrix.browser }}" == firefox ]]; then
+            xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox --version "${{ matrix.version }}"
+          else
+            python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
+          fi
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: ownership-reference-results-${{ matrix.version }}
+          name: ownership-reference-results-${{ matrix.version }}-${{ matrix.browser }}
           path: .cache/reference/results/
           if-no-files-found: error
 

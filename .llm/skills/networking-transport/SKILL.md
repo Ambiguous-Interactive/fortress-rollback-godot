@@ -135,9 +135,9 @@ Exercise one-send poll budgets: refused payloads and smaller liveness packets ne
 turns across polls, including when only the heartbeat fits the socket capacity.
 Preserve retryable session stalls at transport facade boundaries, including finish-host
 confirmation or repair waits. A specific peer code does not excuse a terminal outer code.
-Input closure is separate from playback termination. After END, test late identical controls
-and retained row retries through the relay while the final tail is paused. Preserve authenticated
-conflict checks and forbid new rows; ordinary retries must not become peer failures.
+Input closure is separate from playback termination. After END, test retries while the tail is paused and after its last driver step.
+Preserve authenticated conflicts before completion; completed clean END must not map normal termination to peer failure on polling or SDK callbacks.
+Cross completion inside control callbacks with queued late traffic; cancellation, host loss and incomplete tails must still fail.
 When a stream exposes its playback session, fence both packet delivery and elapsed
 expiry against successful session replacement. Equal configuration values do not
 preserve a connection lifetime; rejected configuration must preserve the valid stream.

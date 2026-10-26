@@ -125,8 +125,12 @@ the complete native and browser records must be identical. A failed repair
 must keep its uncorrected tail private.
 
 These cases qualify Godot playback of finalized disconnected statuses. They do
-not establish upstream status-sensitive recording parity or the remaining
-Firefox, WebKit and cross-platform release gates in #45.
+not establish upstream status-sensitive recording parity. The ownership runner
+also supports the same complete replay inventory under pinned Firefox through
+`--web --browser firefox`, with exact native/browser record comparison and
+both control rounds for each engine pin. Its receipts identify which browser
+actually ran; Chromium results do not qualify Firefox. WebKit and the remaining
+cross-platform release gates in #45 remain separate.
 
 
 ## Final-boundary captures on native and Web

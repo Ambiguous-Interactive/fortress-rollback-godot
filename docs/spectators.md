@@ -472,6 +472,12 @@ into a later configuration. Call `poll(now_us)` even while playback is paused;
 synchronously. Old polls and packets stop before touching replacement playback;
 recursive polling returns `WRONG_STATE` without terminating the current viewer.
 
+After the authenticated END and final playback termination, relay polling returns
+`OK` with `peer_code == TERMINATED`. Queued and late packets are discarded without
+turning completion into a transport failure. SDK lifetime changes still fence the
+bridge. Cancellation before the final playback boundary and actual playback failures
+remain failures; completion does not hide them.
+
 SDK identity getters and configuration properties must return stable values without
 changing previously observed identity or configuration fields. The bridge compares
 two complete configuration-and-identity observations before installation or service.
