@@ -2,6 +2,9 @@
 
 Use for subprocess runners, receipts, staging, tool provenance and caches.
 
+Scope diagnostic environment variables to their intended child process; unrelated
+helpers can interpret the same variable differently and corrupt structured output.
+
 Tool probes must check process exit status before accepting version text or a
 completion marker. Test both empty failures and plausible output followed by
 nonzero exit. A completed result stream must account for every selected test,
