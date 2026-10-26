@@ -328,6 +328,7 @@ gets the same terminal SAVE from `begin_advance()` or `begin_validate_current_fr
 A mismatch reports boundary N and the expected/actual checksums without simulating input N.
 Input-only playback still completes without state verification. Distinct checksum counts include the final boundary
 only after comparison, and navigation rechecks it without counting it twice.
+Completion remains false during open navigation or validation requests and inside game callbacks.
 
 To watch it, start from the same initial game state and step a `FortressReplayPlayer` once per physics frame:
 

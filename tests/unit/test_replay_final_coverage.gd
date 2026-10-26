@@ -15,9 +15,11 @@ class ObservedGame:
 	extends Simulation
 	var owner: WeakRef
 	var observations: Array[bool] = []
+	var completion_observations: Array[bool] = []
 
 	func save_state(frame: int, writer: RefCounted) -> Driver.SaveResult:
 		observations.append(owner.get_ref().is_final_state_validated())
+		completion_observations.append(owner.get_ref().is_complete())
 		return super.save_state(frame, writer)
 
 
@@ -93,18 +95,22 @@ func _final_state_coverage(context: RefCounted) -> void:
 				var expected: int = Types.Code.DESYNC if coverage == "mismatch" else (Types.Code.OK if coverage == "terminal" else Types.Code.FRAME_EXHAUSTED)
 				context.equal(code, expected, "terminal comparison has its own outcome")
 				context.equal(player.call("is_final_state_validated"), coverage == "terminal", "only matching final evidence qualifies")
-				if coverage == "terminal" and frames > 0:
+				if coverage in ["historical", "terminal"] and frames > 0:
+					context.equal(player.is_complete(), true, "finished playback is complete before navigation")
 					var restoration: Types.Result = player.begin_restore_before(0)
 					context.equal(restoration.code, Types.Code.READY, "validated playback can inspect an earlier checkpoint")
+					context.equal(player.is_complete(), false, "open navigation suspends playback completion")
 					context.equal(player.call("is_final_state_validated"), false, "open restoration suspends final validation")
 					var request: Types.Request = restoration.batch.next_request()
 					context.equal(game.load_state(request.frame, request.reader), true, "loads initial state")
 					context.equal(player.complete_request(request.batch_id, request.request_id, true).code, Types.Code.OK, "acknowledges checkpoint load")
 					context.equal(player.call("is_final_state_validated"), false, "loaded earlier state cannot retain a final-state claim")
+					context.equal(player.is_complete(), false, "loaded state awaits verification before navigation completes")
 					request = restoration.batch.next_request()
 					var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
 					context.equal(player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "verifies restored checkpoint")
 					context.equal(player.call("is_final_state_validated"), false, "an earlier displayed boundary is not the final validated state")
+					context.equal(player.is_complete(), false, "restored earlier boundary requires replaying inputs")
 				player.terminate()
 				context.equal(player.call("is_final_state_validated"), false, "terminated playback claims no current validation")
 				context.equal(player.configure_expert(replay), Types.Code.OK, "explicit replacement starts a new lifetime")
@@ -116,9 +122,11 @@ func _final_state_coverage(context: RefCounted) -> void:
 		context.equal(probe.validate_current_frame(), Types.Code.OK, "paused final validation succeeds")
 		context.equal(probe.call("is_final_state_validated"), true, "successful callback publishes final validation")
 	context.equal(observed.observations, [false, false], "callbacks cannot claim final validation while their state save is incomplete")
+	context.equal(observed.completion_observations, [false, false], "callbacks cannot report completion while their state save is incomplete")
 	var validation: Types.Result = probe.begin_validate_current_frame()
 	context.equal(validation.code, Types.Code.READY, "manual final revalidation opens a SAVE")
 	context.equal(probe.call("is_final_state_validated"), false, "an open final SAVE suspends the completion claim")
+	context.equal(probe.is_complete(), false, "an open final SAVE cannot report completed playback")
 	probe.terminate()
 
 

@@ -432,6 +432,7 @@ match the running game. A recording with substituted inputs is reported as such
 instead of being presented as a faithful copy.
 Validated replay playback and paused navigation check callback success and bounded snapshot status before
 accepting a boundary; a matching checksum cannot override a failed snapshot write.
+Replay completion also waits for open navigation, revalidation requests and game callbacks to finish.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 
 Single-host spectators precede redundant-host failover.
@@ -478,6 +479,7 @@ Unrelated participant roster events preserve ongoing streams, and setup callback
 The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
 Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
 Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
+Runtime SDK receive limits must still fit the agreed spectator packets; shrinking them retires queued playback before delivery.
 Caller-owned startup acceptance refuses terminated or actively serviced viewers; an idle retry preserves the agreed bytes.
 Keepalive priority yields to queued row work so repeated host heartbeats cannot starve confirmed playback under a one-packet receive budget.
 Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
@@ -520,7 +522,7 @@ Bounded donor journals repair missing actual ranges before certification,
 including when the donor differs from the coordinator. [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188)
 retains expanded source and live missing-history acceptance. A scoped
 [actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
-now checks remote-donor recovery against independent original canonical prefixes and finalized statuses.
+now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
 Its fixed missing-row case does not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission

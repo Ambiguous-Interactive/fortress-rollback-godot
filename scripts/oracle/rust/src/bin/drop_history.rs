@@ -18,7 +18,7 @@ impl Game {
 struct Profile;
 impl Config for Profile { type Input = [u8; 4]; type State = Game; type Address = String; }
 #[derive(Default)]
-struct Buffers { incoming: Vec<(String, Message)>, outgoing: Vec<(String, Message)>, received: Vec<(String, Message)> }
+struct Buffers { incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message)>, received: Vec<Value> }
 struct Socket(Arc<Mutex<Buffers>>);
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
@@ -27,8 +27,12 @@ impl NonBlockingSocket<String> for Socket {
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
         let mut queue = self.0.lock().unwrap();
         let messages = std::mem::take(&mut queue.incoming);
-        queue.received.extend(messages.iter().cloned());
-        messages
+        queue.received.extend(messages.iter().filter_map(|(_, message, control)| control.as_ref().map(|record| {
+            let mut received = record.clone();
+            received["body"] = serde_json::to_value(message).unwrap()["body"].clone();
+            received
+        })));
+        messages.into_iter().map(|(sender, message, _)| (sender, message)).collect()
     }
 }
 fn sample(player: usize, frame: i32) -> [u8; 4] {
@@ -62,33 +66,42 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
     }
     Ok(())
 }
-fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: &mut Vec<Value>) -> Result<bool, String> {
+#[derive(Default)]
+struct Fault { enabled: bool, dropped: Vec<Value> }
+fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: &mut Vec<Value>, fault: &mut Fault) -> Result<bool, String> {
     let mut delivered = false;
     for (sender, queue) in buffers.iter().enumerate() {
         for (address, message) in std::mem::take(&mut queue.lock().unwrap().outgoing) {
             let recipient = address.parse::<usize>().map_err(|_| "address")?;
             if (missing && sender == 2 && recipient == 0) || (silent && (sender == 2 || recipient == 2)) { continue; }
             let raw = serde_json::to_value(&message).map_err(|error| error.to_string())?;
+            let mut emitted_control = None;
             if let Some(body) = raw["body"].as_object() {
                 if body.keys().any(|kind| kind.starts_with("Drop")) {
-                    control.push(json!({"from":sender,"to":recipient,"body":body}));
+                    let packet = json!({"from":sender,"to":recipient,"body":body,"emission":control.len()});
+                    emitted_control = Some(packet.clone());
+                    control.push(packet.clone());
+                    if fault.enabled && fault.dropped.is_empty() && sender == 1 && recipient == 0 && body.contains_key("DropBackfill") {
+                        fault.dropped.push(packet);
+                        continue;
+                    }
                 }
             }
-            buffers[recipient].lock().unwrap().incoming.push((sender.to_string(), message));
+            buffers[recipient].lock().unwrap().incoming.push((sender.to_string(), message, emitted_control));
             delivered = true;
         }
     }
     Ok(delivered)
 }
 fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>], missing: bool,
-    silent: bool, control: &mut Vec<Value>) -> Result<(), String> {
+    silent: bool, control: &mut Vec<Value>, fault: &mut Fault) -> Result<(), String> {
     for _ in 0..16 {
         for session in sessions.iter_mut().take(if silent { 2 } else { 3 }) { session.poll_remote_clients(); }
-        if !route(buffers, missing, silent, control)? { return Ok(()); }
+        if !route(buffers, missing, silent, control, fault)? { return Ok(()); }
     }
     Err("unbounded settlement".into())
 }
-fn run() -> Result<Value, String> {
+fn run(loss: bool) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
@@ -111,7 +124,8 @@ fn run() -> Result<Value, String> {
         buffers.push(queue);
     }
     let mut control = Vec::new();
-    settle(&mut sessions, &buffers, false, false, &mut control)?;
+    let mut fault = Fault { enabled: loss, ..Default::default() };
+    settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     for session in &mut sessions {
         if format!("{:?}", session.current_state()) != "Running" { return Err("bootstrap".into()); }
         session.events().for_each(drop);
@@ -119,12 +133,12 @@ fn run() -> Result<Value, String> {
     for _ in 0..6 {
         *clock.lock().unwrap() += 1000;
         for player in 0..3 { advance(&mut sessions[player], &mut games[player], player, &mut histories[player])?; }
-        settle(&mut sessions, &buffers, false, false, &mut control)?;
+        settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     }
     for frame in 6..9 {
         *clock.lock().unwrap() += 1000;
         advance(&mut sessions[2], &mut games[2], 2, &mut histories[2])?;
-        settle(&mut sessions, &buffers, frame == 8, false, &mut control)?;
+        settle(&mut sessions, &buffers, frame == 8, false, &mut control, &mut fault)?;
     }
     let before = (0..2).map(|peer| {
         let range = sessions[peer].diagnostic_player_retained_input_range(PlayerHandle::new(2));
@@ -132,9 +146,9 @@ fn run() -> Result<Value, String> {
             "target_last":range.map(|value|value.1.as_i32())})
     }).collect::<Vec<_>>();
     for session in sessions.iter_mut().take(2) { session.remove_player(PlayerHandle::new(2)).map_err(|error| format!("{error:?}"))?; }
-    for _ in 0..40 {
+    for _ in 0..160 {
         *clock.lock().unwrap() += 1000;
-        settle(&mut sessions, &buffers, true, true, &mut control)?;
+        settle(&mut sessions, &buffers, true, true, &mut control, &mut fault)?;
     }
     let mut dropped = Vec::new();
     for session in sessions.iter_mut().take(2) {
@@ -143,18 +157,11 @@ fn run() -> Result<Value, String> {
     for _ in 0..16 {
         *clock.lock().unwrap() += 1000;
         for player in 0..2 { advance(&mut sessions[player], &mut games[player], player, &mut histories[player])?; }
-        settle(&mut sessions, &buffers, true, true, &mut control)?;
+        settle(&mut sessions, &buffers, true, true, &mut control, &mut fault)?;
     }
     let mut received_controls = Vec::new();
-    for (recipient, queue) in buffers.iter().enumerate().take(2) {
-        for (sender, message) in &queue.lock().unwrap().received {
-            let raw = serde_json::to_value(message).map_err(|error| error.to_string())?;
-            if let Some(body) = raw["body"].as_object() {
-                if body.keys().any(|kind| kind.starts_with("Drop")) {
-                    received_controls.push(json!({"from":sender.parse::<usize>().map_err(|_|"sender")?,"to":recipient,"body":body}));
-                }
-            }
-        }
+    for queue in buffers.iter().take(2) {
+        received_controls.extend(queue.lock().unwrap().received.iter().cloned());
     }
     let mut survivors = Vec::new();
     for peer in 0..2 {
@@ -168,8 +175,9 @@ fn run() -> Result<Value, String> {
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
     Ok(json!({"format":1,"complete":true,"upstream_revision":"f13cd5c0f2815926785a395947e18da0dbea0dd8",
-        "before":before,"dropped":dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
+        "before":before,"dropped":dropped,"lost_history":fault.dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
 }
 fn main() {
-    if std::env::args().len() != 1 { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
-    match run() { Ok(result) => println!("{result}"), Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); } } }
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if !arguments.is_empty() && arguments != ["--drop-first-history"] { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
+    match run(!arguments.is_empty()) { Ok(result) => println!("{result}"), Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); } } }

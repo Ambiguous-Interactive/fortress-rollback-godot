@@ -536,8 +536,13 @@ func _needs_terminal_validation() -> bool:
 	return _max_snapshot_bytes > 0 and not _replay.checksum(_replay.frame_count()).is_empty() and not _terminal_validated
 
 
+## Healthy playback at its final boundary, with no open request or game callback.
+## Navigation and revalidation suspend completion until their ordered work succeeds.
 func is_complete() -> bool:
-	return _replay != null and _reason == Types.Code.OK and _frame >= _replay.frame_count() and not _needs_terminal_validation()
+	return (
+		_replay != null and _reason == Types.Code.OK and _batch == null and not _is_stepping
+		and _frame >= _replay.frame_count() and not _needs_terminal_validation()
+	)
 
 
 func failure_frame() -> int:
