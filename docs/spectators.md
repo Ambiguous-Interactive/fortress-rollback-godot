@@ -205,7 +205,7 @@ Use `playback_session()` with the ordinary driver and fresh initial game state.
 ```gdscript
 const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
 var stream: Stream = Stream.new()
-var digest: PackedByteArray = Stream.configuration_digest(config, "seed-1", "rules-1")
+var digest: PackedByteArray = Stream.configuration_digest_with_state(config, "seed-1", "rules-1", original_snapshot)
 var code: int = stream.configure(config, agreed_identity, agreed_key, digest, 0, 2000000, 65536)
 # Continue only on OK.
 # The startup exchange comes first:
@@ -224,9 +224,20 @@ exchange is 88 bytes and a complete row is the header plus one sample and
 one status byte per player.
 The key is a shared secret that never travels in a packet. The digest binds the
 agreed match: the player count, the input width, the neutral input, the seed and the
-rules version. `Stream.configuration_digest(config, seed, rules_version)` derives it
-from the same values on both sides, so a viewer that agreed another match refuses
-every packet of this one. The seed and the rules version travel as printable ASCII,
+rules version. For network startup, use
+`Stream.configuration_digest_with_state(config, seed, rules_version, original_snapshot)`
+on both sides. Supply the game's complete canonical initial snapshot, before frame zero,
+not its current state or a checksum. The helper also binds those bytes, so equal seeds
+cannot hide different original worlds. It rejects snapshots above `config.max_snapshot_bytes`
+before hashing and returns an owned 16-byte digest. It neither transfers nor restores the snapshot;
+the caller must configure its game from exactly those agreed bytes before playback.
+
+The state-bound digest is the first 16 bytes of SHA-256 over ASCII `FRGS-INITIAL-STATE-v1`,
+the legacy 16-byte configuration digest, the snapshot byte count as little-endian u32,
+and the snapshot bytes. An explicitly empty snapshot has its own state-bound digest.
+The three-argument `configuration_digest` retains its historical bytes for existing callers,
+but does not bind an original state. Mixing the helpers fails startup agreement.
+The seed and the rules version travel as printable ASCII,
 so both sides agree on one encoding. A digest helper returns empty bytes for a
 configuration it cannot describe, and the stream then refuses to configure. Use fresh identities and a fresh key for a new network
 lifetime, and derive a fresh digest for a new match.

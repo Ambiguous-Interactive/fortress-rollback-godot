@@ -67,14 +67,10 @@ class Barrier:
 	var chunk_count: int = 0
 	var certified: bool = false
 	var adopted: bool = false
-	var sent_us: int = -1
-	var sent_digest: int = 0
 	var sent_to: Dictionary = {}
 	var started_us: int = 0
 	var chunk_budget: int = 0
 	var history: History = History.new()
-	var history_plan_us: int = -1
-	var history_plan_digest: int = -1
 	var ready_receipts: Dictionary = {}
 
 
@@ -321,7 +317,7 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
 	barrier.state = COMMITTED
-	barrier.sent_us = now_us if _send(host, barrier, Phase.COMMIT) else -1
+	_send(host, barrier, Phase.COMMIT)
 	_freeze(host, barrier.index, barrier.cut, barrier.value, true)
 
 
@@ -336,12 +332,9 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 		return
 	if barrier.certified:
 		# The certificate is retried until the proposer commits it.
-		if barrier.sent_us < 0 or now_us - barrier.sent_us >= RETRY_US:
-			if _send(host, barrier, Phase.REPORT, Stage.READY):
-				barrier.sent_us = now_us
+		if publication_due(host, barrier, Phase.REPORT, Stage.READY):
+			if _send(host, barrier, Phase.REPORT, Stage.READY, 0, true):
 				barrier.history.plan_turn = false
-			else:
-				barrier.sent_us = -1
 		return
 	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, barrier.cut):
 		# A final candidate can overtake the donor plan; incomplete history never certifies.
@@ -364,11 +357,8 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 	barrier.digest = digest
 	barrier.ready_receipts = Inventory.capture(host._core, barrier.slots)
 	barrier.certified = true
-	if _send(host, barrier, Phase.REPORT, Stage.READY):
-		barrier.sent_us = now_us
+	if _send(host, barrier, Phase.REPORT, Stage.READY, 0, true):
 		barrier.history.plan_turn = false
-	else:
-		barrier.sent_us = -1
 
 
 ## The proposer opened the operation and named the frame it proposes.
@@ -403,7 +393,6 @@ func _receive_prepare(host: Variant, index: int, key: String, barrier: Barrier, 
 		barrier.cut = cut
 		barrier.digest = digest
 	barrier.adopted = true
-	barrier.sent_us = -1
 
 
 ## A survivor reported its window, its certificate or its need for the value.
@@ -658,6 +647,19 @@ func _abort_reason(reason: int) -> String:
 	return "timeout"
 
 
+## Each accepted destination owns its retry deadline, including partial sends.
+func publication_due(host: Variant, barrier: Barrier, phase: int, stage: int) -> bool:
+	var digest: int = int(_payload(barrier, phase, stage, 0).cut_digest)
+	for index: int in host._ids.size():
+		if index == barrier.index or is_gone(host._ids[index].hex_encode()):
+			continue
+		var previous: Dictionary = barrier.sent_to.get(index, {})
+		if previous.is_empty() or previous.phase != phase or previous.stage != stage \
+			or previous.digest != digest or host._now - int(previous.at) >= RETRY_US:
+			return true
+	return false
+
+
 ## Send one barrier phase to every survivor that still takes part in the match.
 func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE, reason: int = 0, retry: bool = false) -> bool:
 	var payload: Dictionary = _payload(barrier, phase, stage, reason)
@@ -784,13 +786,8 @@ func _digest(bytes: PackedByteArray) -> int:
 
 
 ## Retry a barrier phase on the bounded interval.
-func _retry(host: Variant, barrier: Barrier, now_us: int, phase: int) -> void:
-	var changed: bool = phase == Phase.PREPARE and barrier.sent_digest != barrier.digest
-	if not changed and barrier.sent_us >= 0 and now_us - barrier.sent_us < RETRY_US:
-		return
-	if _send(host, barrier, phase, Stage.INVENTORY if phase == Phase.REPORT else Stage.NONE, 0, true):
-		barrier.sent_us = now_us
-		barrier.sent_digest = barrier.digest
+func _retry(host: Variant, barrier: Barrier, _now_us: int, phase: int) -> void:
+	_send(host, barrier, phase, Stage.INVENTORY if phase == Phase.REPORT else Stage.NONE, 0, true)
 
 
 ## The frame through which this survivor retains the departed slot's inputs.

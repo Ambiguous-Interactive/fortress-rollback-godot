@@ -348,7 +348,11 @@ func computed_input_digest(frame: int) -> PackedByteArray:
 	return digest_row(payload)
 
 
+## Return a portable file, or empty for malformed storage or incomplete input digests.
+## Preserve stored digest/checksum evidence without recomputing it; playback owns content comparisons.
 func to_bytes() -> PackedByteArray:
+	if not is_valid() or _digests.size() != _frames * DIGEST_BYTES:
+		return PackedByteArray()
 	var bytes: PackedByteArray = MAGIC.to_ascii_buffer()
 	bytes.resize(FIXED_BYTES)
 	bytes.encode_u16(4, _format_version)

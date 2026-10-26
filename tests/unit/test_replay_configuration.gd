@@ -1,7 +1,7 @@
 extends RefCounted
 
-# Value: protects=malformed recording objects cannot replace working playback or cause unchecked indexing;
-# fails_when=configuration checks only dimensions; why_new=file decoding does not validate caller-owned recording edits; seam=none
+# Value: protects=malformed recording objects cannot replace playback or export invalid files;
+# fails_when=configuration or export checks only dimensions; why_new=file decoding does not validate caller-owned recording edits; seam=none
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -78,6 +78,7 @@ func _rejection(context: RefCounted, expert: bool, field: String, length_delta: 
 			"legacy status":
 				malformed._format_version = 4
 				malformed._statuses[0] = Queue.Status.DISCONNECTED
+	context.equal(malformed.to_bytes().is_empty(), true, field + " cannot export malformed replay bytes")
 	var game: Simulation = Simulation.new()
 	var player: Player = Player.new()
 	context.equal(_configure(player, valid, game, expert), Types.Code.OK, "valid control configures")
@@ -109,6 +110,11 @@ func _configure(player: Player, replay: Replay, game: Simulation, expert: bool) 
 
 
 func _ownership(context: RefCounted) -> void:
+	var incomplete: Replay = Fixture.recording(4)
+	incomplete._digests.resize(incomplete._digests.size() - 1)
+	context.equal(incomplete.is_valid(), true, "missing digest remains a playback-owned failure")
+	context.equal(incomplete.to_bytes().is_empty(), true, "missing digest cannot produce a truncated portable file")
+	context.equal(Replay.new().to_bytes().is_empty(), true, "unconfigured replay has no portable export")
 	for expert: bool in [false, true]:
 		for version: int in [4, 5, 6]:
 			var source: Replay = Fixture.recording(4)

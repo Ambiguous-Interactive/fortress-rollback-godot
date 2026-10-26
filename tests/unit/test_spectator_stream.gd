@@ -35,7 +35,7 @@ class ReentrantGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
-			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle", "closed_input_duplicates"]
+			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle", "closed_input_duplicates", "initial_state_agreement"]
 	)
 
 
@@ -785,3 +785,44 @@ func _closed_input_duplicates(context: RefCounted) -> void:
 		context.equal(game.value, 1, "canonical tail uses original row")
 		context.equal(driver.step(1, _empty()).code, CODE.TERMINATED, "terminate only after tail playback")
 		context.equal(stream.receive_packet(end, 1001), CODE.TERMINATED, "actual playback termination remains terminal")
+
+
+# Value: protects=original state agreement before authenticated playback; fails_when=only seeds bind startup;
+# why_new=existing match digest omits canonical initial bytes; seam=none
+func _initial_state_agreement(context: RefCounted) -> void:
+	var helper: RefCounted = Stream.new()
+	context.equal(helper.has_method("configuration_digest_with_state"), true, "canonical initial state can bind startup")
+	if not helper.has_method("configuration_digest_with_state"):
+		return
+	var config: RefCounted = Fixture.new()._config()
+	var original: PackedByteArray = PackedByteArray([7, 0, 0, 0, 0, 0, 0, 0])
+	var digest: PackedByteArray = helper.configuration_digest_with_state(config, "seed-1", "rules-1", original)
+	context.equal(digest.hex_encode(), "fb45ca3df137d6c84f90667de679b66b", "independent SHA-256 configuration and canonical state golden")
+	context.equal(helper.configuration_digest_with_state(config, "seed-1", "rules-1", original.duplicate()), digest, "equal owned state agrees")
+	original[7] = 9
+	var different: PackedByteArray = helper.configuration_digest_with_state(config, "seed-1", "rules-1", original)
+	context.equal(different != digest, true, "one changed same-length state byte changes agreement")
+	context.equal(digest.hex_encode(), "fb45ca3df137d6c84f90667de679b66b", "caller mutation cannot rewrite previously derived digest")
+	var empty: PackedByteArray = helper.configuration_digest_with_state(config, "seed-1", "rules-1", PackedByteArray())
+	context.equal(empty.size(), Stream.DIGEST_BYTES, "explicit empty snapshot has a state-bound digest")
+	context.equal(empty != _digest(), true, "explicit empty snapshot is distinct from legacy unbound digest")
+	context.equal(_digest().hex_encode(), "d2deccf9f3deb3d06e7cc546fabec43b", "legacy configuration digest is unchanged")
+	original.resize(config.max_snapshot_bytes + 1)
+	context.equal(helper.configuration_digest_with_state(config, "seed-1", "rules-1", original).is_empty(), true, "oversized initial state refused")
+	context.equal(helper.configuration_digest_with_state(null, "seed-1", "rules-1", PackedByteArray()).is_empty(), true, "invalid configuration refused")
+	context.equal(helper.configuration_digest_with_state(config, "seed\n", "rules-1", PackedByteArray()).is_empty(), true, "noncanonical metadata refused")
+	for offered: PackedByteArray in [digest, different, _digest(), empty]:
+		var viewer: RefCounted = Stream.new()
+		context.equal(viewer.configure(config, _identity(), _key(), digest, 0, 100, 128), CODE.OK, "viewer agrees original canonical state")
+		var offer: PackedByteArray = Stream.encode_offer(_identity(), offered, 2, 1, _key())
+		context.equal(viewer.receive_packet(offer, 1), CODE.OK if offered == digest else CODE.PROTOCOL_FAILED, "startup accepts only matching initial state")
+		context.equal(viewer.agreement_version(), Stream.VERSION if offered == digest else 0, "mismatch cannot negotiate playback")
+		context.equal(viewer.playback_session().host_frontier(), -1, "startup never fabricates a confirmed row")
+		if offered == digest:
+			var game: RefCounted = GameFixture.Game.new()
+			game.value = 7
+			var driver: RefCounted = Driver.new(viewer.playback_session(), game)
+			context.equal(viewer.receive_packet(viewer.encode_row(0, _row(0)), 2), CODE.OK, "state-bound original row admitted")
+			context.equal(driver.step(0, _empty()).code, CODE.OK, "matching original world starts playback")
+			context.equal(game.value, 64, "independent canonical state after initial value seven and original inputs")
+		context.equal(viewer.poll(100), CODE.OK if offered == digest else CODE.PROTOCOL_FAILED, "mismatched state never refreshes host deadline")

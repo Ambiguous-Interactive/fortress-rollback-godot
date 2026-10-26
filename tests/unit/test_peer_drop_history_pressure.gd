@@ -7,11 +7,12 @@ var _split_delivery: bool = false
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["partial_history_plan_retry", "complete_history_plan_control"])
+	return PackedStringArray(["partial_history_plan_retry", "staggered_history_plan_retry", "complete_history_plan_control"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	var pressured: bool = name == "partial_history_plan_retry"
+	var pressured: bool = name != "complete_history_plan_control"
+	var staggered: bool = name == "staggered_history_plan_retry"
 	_mode = "history_pressure"
 	_missing_peer = -1
 	_width = 4
@@ -47,10 +48,13 @@ func run_case(name: String, context: RefCounted) -> void:
 	else:
 		context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "the complete control publishes both plans without ACK pressure")
 	context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array([2] if pressured else [1, 2]), "healthy survivors accept the initial history plan")
+	var accepted_at: int = mesh.now
 	if pressured:
 		context.equal(mesh.peers[0].receive(_pressure_input.bytes, _id(1), mesh.now), I.Code.OK, "sustained real ACK pressure refuses the original link again")
 		context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array(), "sustained refusal does not flood the already accepted survivor")
-		context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "retry the refused history plan without advancing time")
+		if staggered:
+			mesh.now += Drop.RETRY_US / 2
+		context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "retry the refused history plan after output drains")
 		context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array([1]), "only the refused survivor receives the immediate plan retry")
 	context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "service the retained journal after the original plan reaches every survivor")
 	var chunks: PackedInt32Array = PackedInt32Array()
@@ -60,11 +64,11 @@ func run_case(name: String, context: RefCounted) -> void:
 			and decoded.message.phase == Drop.Phase.BACKFILL:
 			chunks.append(packet.to[0] - 1)
 	context.equal(chunks, PackedInt32Array([1, 2]), "healthy outboxes are available for exact retained donor chunks")
-	context.equal(mesh.peers[0].poll(mesh.now + Drop.RETRY_US - 1), I.Code.OK, "service one tick before the accepted plan's retry deadline")
+	context.equal(mesh.peers[0].poll(accepted_at + Drop.RETRY_US - 1), I.Code.OK, "service one tick before the accepted plan's retry deadline")
 	context.equal(mesh.peers[0].drain_outbox().is_empty(), true, "accepted plans stay quiet before the deadline")
-	mesh.now += Drop.RETRY_US
+	mesh.now = accepted_at + Drop.RETRY_US
 	context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "service the exact retry deadline after the unacknowledged donor round")
-	context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array([1, 2]), "each accepted plan retries at the normal deadline")
+	context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array([2] if staggered else [1, 2]), "each accepted plan retries at its own deadline")
 	_split_delivery = false
 	for tick: int in range(20):
 		mesh.now += Drop.RETRY_US

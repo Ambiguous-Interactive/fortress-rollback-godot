@@ -73,7 +73,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
-        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates'},
+        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates', 'initial_state_agreement'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
@@ -122,10 +122,11 @@ EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
 EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
     'fast_capacity_control', 'slow_complete_control', 'slow_minimum_capacity', 'slow_remote_donor', 'slow_lost_plan',
     'refused_prepare_retries_after_drain', 'refused_inventory_retries_after_drain',
-    'refused_commit_retries_after_drain', 'partial_prepare_retries_only_refused_link'}
+    'refused_commit_retries_after_drain', 'partial_prepare_retries_only_refused_link', 'staggered_prepare_retry'}
 EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_history', 'retained_history_control', 'journal_after_ring_wrap'}
-EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'complete_history_plan_control'}
+EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'staggered_history_plan_retry', 'complete_history_plan_control'}
 EXPECTED['res://tests/unit/test_peer_drop_donor_fairness.gd'] = {'healthy_donor_destination', 'unpressured_donor_control'}
+EXPECTED['res://tests/unit/test_peer_drop_ready_pressure.gd'] = {'partial_ready_retry', 'staggered_ready_retry', 'complete_ready_control'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal'})
@@ -197,6 +198,7 @@ FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_h
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
+FILES += ['tests/unit/test_peer_drop_ready_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
@@ -269,6 +271,7 @@ const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pressure.gd")
 const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairness.gd")
+const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressure.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -283,7 +286,7 @@ func _ready() -> void:
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
-		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
+		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness, DropReadyPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

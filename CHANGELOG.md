@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add state-bound spectator configuration digests so startup rejects different canonical initial worlds, even with matching seeds and rules.
+
 - Add manual peer request batches without requiring game callbacks, including recovery and final replay capture.
 
 - Add replay final-state validation status and explicit viewer completion messages distinguishing final-state checks from historical checksum coverage.
@@ -184,6 +186,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix coordinated-drop control retries flooding healthy survivors or postponing their deadlines when another link refuses publication.
+
+- Fix replay export accepting malformed recording storage or missing input digests. Invalid recordings now return empty bytes instead of producing broken files.
 
 - Fix retained-history publication starving healthy survivors when several other links refuse donor chunks during coordinated peer drop.
 

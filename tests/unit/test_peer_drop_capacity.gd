@@ -37,7 +37,7 @@ func cases() -> PackedStringArray:
 	return PackedStringArray([
 		"fast_capacity_control", "slow_complete_control", "slow_minimum_capacity", "slow_remote_donor", "slow_lost_plan",
 		"refused_prepare_retries_after_drain", "refused_inventory_retries_after_drain",
-		"refused_commit_retries_after_drain", "partial_prepare_retries_only_refused_link",
+		"refused_commit_retries_after_drain", "partial_prepare_retries_only_refused_link", "staggered_prepare_retry",
 	])
 
 
@@ -48,8 +48,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		_commit_pressure(context)
 		context.finish()
 		return
-	if name == "partial_prepare_retries_only_refused_link":
-		_partial_pressure(context)
+	if name in ["partial_prepare_retries_only_refused_link", "staggered_prepare_retry"]:
+		_partial_pressure(context, name == "staggered_prepare_retry")
 		context.finish()
 		return
 	if name.begins_with("refused_"):
@@ -157,7 +157,7 @@ func _keep_alive(context: RefCounted, mesh: Dictionary, sender: int, recipient: 
 
 # Value: protects=partial publication retries the refused peer without flooding accepted peers; fails_when=all-peer clocks lose link ownership;
 # why_new=two-survivor cases have only one publication destination; seam=none
-func _partial_pressure(context: RefCounted) -> void:
+func _partial_pressure(context: RefCounted, staggered: bool = false) -> void:
 	_mode = "retry_pressure"
 	_missing_peer = -1
 	_width = 4
@@ -176,6 +176,9 @@ func _partial_pressure(context: RefCounted) -> void:
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			first.append(packet.to[0] - 1)
 	context.equal(first, PackedInt32Array([2]), "the healthy survivor accepted the first PREPARE")
+	var accepted_at: int = mesh.now
+	if staggered:
+		mesh.now += Drop.RETRY_US / 2
 	context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "retry only after draining the refused link")
 	var second: PackedInt32Array = PackedInt32Array()
 	for packet: Peer.Packet in mesh.peers[0].drain_outbox():
@@ -183,8 +186,16 @@ func _partial_pressure(context: RefCounted) -> void:
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			second.append(packet.to[0] - 1)
 	context.equal(second, PackedInt32Array([1]), "only the refused survivor receives an immediate retry")
-	context.equal(mesh.peers[0].poll(mesh.now + Drop.RETRY_US - 1), I.Code.OK, "accepted links retain their normal retry interval")
+	context.equal(mesh.peers[0].poll(accepted_at + Drop.RETRY_US - 1), I.Code.OK, "accepted links retain their normal retry interval")
 	context.equal(mesh.peers[0].drain_outbox().is_empty(), true, "neither accepted publication repeats before its own deadline")
+	if staggered:
+		context.equal(mesh.peers[0].poll(accepted_at + Drop.RETRY_US), I.Code.OK, "the early accepted link reaches its own retry equality")
+		var due: PackedInt32Array = PackedInt32Array()
+		for packet: Peer.Packet in mesh.peers[0].drain_outbox():
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				due.append(packet.to[0] - 1)
+		context.equal(due, PackedInt32Array([2]), "a later refused-link acceptance cannot postpone the healthy PREPARE")
 
 
 # Value: protects=irreversible commit publication resumes after ACK pressure; fails_when=an unsent COMMIT starts its retry clock;
