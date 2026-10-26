@@ -189,8 +189,6 @@
 
 ### Fixed
 
-- Make the exported online rollback check wait for both current game instances to predict before delivering held original inputs. Bind its evidence to the room and game lifetime so scheduling and stale callbacks cannot supply a false result.
-
 - Fix completed spectator playback reporting a relay failure during continued polling or late packet delivery. Cancellation and playback failures remain explicit.
 
 - Fix local multiplayer and spectator restarts leaving retained old sessions playable. Restarts refuse active callbacks or request batches.

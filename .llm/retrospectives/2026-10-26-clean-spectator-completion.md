@@ -40,7 +40,10 @@ and regression controls; no duplicate instruction was added.
 ## Verification and limits
 
 The regression fails before repair and all 26 relay cases pass twice on both engine pins.
-Session delivery also requires complete source-width, harness, runtime/browser and CI gates.
+The repaired online witness passed the full source-bound flow on both engine pins,
+including actual current-room rollback, replay, outage recovery and corrupt-state rejection.
+Its strict controls also cover stale game lifetimes and terminal room cleanup.
+Session delivery also requires complete source-width, harness, ownership-browser and CI gates.
 The local progress log records exact commands, receipts and final outcomes.
 Live authenticated spectator control deployment and broader source parity remain under issues 131 and 47.
 
