@@ -83,7 +83,7 @@ jobs:
           if-no-files-found: error
 
   ownership:
-    name: Native and ${{ matrix.browser }} snapshot ownership ${{ matrix.version }}
+    name: Native and ${{ matrix.browser == 'firefox' && 'Firefox' || 'Chromium' }} snapshot ownership ${{ matrix.version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
@@ -124,7 +124,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: ownership-reference-results-${{ matrix.version }}-${{ matrix.browser }}
+          name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && '-firefox' || '' }}
           path: .cache/reference/results/
           if-no-files-found: error
 

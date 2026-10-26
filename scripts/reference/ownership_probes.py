@@ -20,6 +20,8 @@ from receipt_arguments import ReceiptParser
 from godot_smoke import run
 from run import begin_results, capture, captured_text
 from browser.webrtc_matrix import prepare_firefox
+from browser.webrtc_import import freeze_after_import
+from signalfish_probe import inventory
 
 PREFIX = 'FORTRESS_TEST_RESULT '
 PROGRESS_PREFIX = 'FORTRESS_TEST_PROGRESS '
@@ -547,6 +549,7 @@ def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
                'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
+               'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
                'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
                'scripts/reference/browser/package-lock.json', 'docs/reference/pins.json', 'project.godot']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
@@ -557,6 +560,16 @@ def verify_sources(expected):
         path = ROOT / filename
         if not path.is_file() or digest(path) != checksum:
             raise ValueError(f'ownership source changed during execution: {filename}')
+
+
+def staged_paths(project):
+    """Include every staged input while leaving the engine's mutable cache outside evidence."""
+    return {path.name: path for path in project.iterdir() if path.name != '.godot'}
+
+
+def verify_staged(project, expected):
+    if inventory(staged_paths(project)) != expected:
+        raise ValueError('ownership staged project changed during execution')
 
 
 def tool_inventory(paths):
@@ -749,8 +762,14 @@ def run_probes(args, results):
             (project / 'main.tscn').write_text(
                 '[gd_scene load_steps=2 format=3]\n[ext_resource type="Script" path="res://host.gd" id="1"]\n'
                 '[node name="Ownership" type="Node"]\nscript = ExtResource("1")\n')
+            if args.web:
+                (project / 'export_presets.cfg').write_text(
+                    '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\nexport_filter="all_resources"\ninclude_filter="*.json"\nexclude_filter=""\n'
+                    '[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
+            staged_before = inventory(staged_paths(project))
             base = [str(editor), '--headless', '--path', str(project)]
             run(base + ['--editor', '--quit'], environment, results / f'ownership-{label}-import.log')
+            staged_frozen = freeze_after_import(staged_paths(project), staged_before)
             # Each suite retains both in-process repetitions and its own 180s
             # watchdog. A growing inventory must not merge bounded suites into
             # one process that exceeds their shared deadline.
@@ -758,6 +777,7 @@ def run_probes(args, results):
             for suite in sorted(EXPECTED):
                 native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
                 try:
+                    verify_staged(project, staged_frozen)
                     code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
                                            + ['--suite', suite],
                                            environment, native_log, timeout=180)
@@ -778,6 +798,7 @@ def run_probes(args, results):
                 progress = bounded_progress(last_progress(output), 'native')
                 update(native_progress=progress)
                 try:
+                    verify_staged(project, staged_frozen)
                     if code != (1 if negative_suite(suite, negative) else 0) or 'SCRIPT ERROR:' in output or any(s.startswith('ERROR:') for s in output.splitlines()):
                         raise ValueError('native command failed outside the intended control')
                     markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
@@ -789,7 +810,7 @@ def run_probes(args, results):
                     reject(started, 'failed', alive=False, errors=failure_lines(output))
                     raise
             native = aggregate_native(batches, negative)
-            record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native}
+            record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native, 'staged_inventory': staged_frozen}
             if args.web:
                 template_name = f'Godot_v{version}-stable_export_templates.tpz'
                 templates = fetch(data['artifacts'][template_name], template_name, args.offline)
@@ -799,12 +820,11 @@ def run_probes(args, results):
                     for member in package.namelist():
                         if Path(member).name.startswith('web_'):
                             (template_dir / Path(member).name).write_bytes(package.read(member))
-                (project / 'export_presets.cfg').write_text(
-                    '[preset.0]\nname="Web"\nplatform="Web"\nrunnable=true\nexport_filter="all_resources"\ninclude_filter="*.json"\nexclude_filter=""\n'
-                    '[preset.0.options]\nvariant/extensions_support=false\nvariant/thread_support=false\n')
                 export = CACHE / 'ownership-exports' / label
                 export.mkdir(parents=True, exist_ok=True)
+                verify_staged(project, staged_frozen)
                 run(base + ['--export-release', 'Web', str(export / 'index.html')], environment, results / f'ownership-{label}-export.log')
+                verify_staged(project, staged_frozen)
                 exported_sources = tool_inventory({'export': export})
                 browser_batches = []
                 browser_identity = None
@@ -813,7 +833,10 @@ def run_probes(args, results):
                     suites = ordered_suites[offset:offset + 4]
                     browser_log = results / f'ownership-{label}-browser-{batch_index:02d}.log'
                     try:
-                        output = run(['node', str(ROOT / 'scripts/reference/browser/ownership.cjs'), str(export), json.dumps(suites)], environment, browser_log, timeout=240)
+                        verify_staged(project, staged_frozen)
+                        output = run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
+                                      str(export), json.dumps(suites)], environment, browser_log, timeout=240)
+                        verify_staged(project, staged_frozen)
                         browser = json.loads(output)
                         browser_identity = validate_browser(browser, browser_identity, args.browser, data)
                         validate(browser['result'], any(negative_suite(suite, negative) for suite in suites),
@@ -841,6 +864,7 @@ def run_probes(args, results):
                     reject(started, 'failed', alive=False, errors=['ownership browser runtime or exported sources changed'])
                     raise ValueError('ownership browser runtime or exported sources changed')
                 record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name, export_inventory=exported_sources)
+            verify_staged(project, staged_frozen)
             records.append(record)
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')

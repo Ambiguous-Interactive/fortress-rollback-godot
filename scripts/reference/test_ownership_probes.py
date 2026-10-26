@@ -233,6 +233,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                        'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
+                                       'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
                                        'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
                                        'scripts/reference/browser/package-lock.json',
                                        'docs/reference/pins.json', 'project.godot']
@@ -399,7 +400,8 @@ class OwnershipRejectionTests(unittest.TestCase):
     # carry: the case that was executing, the errors the engine or the browser
     # reported, and the state the rejection found.
 
-    def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None, version=None, selected="chromium", runtime_fault=None):
+    def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
+                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -408,6 +410,7 @@ class OwnershipRejectionTests(unittest.TestCase):
         files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                 'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
+                                       'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
                                        'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
                                        'scripts/reference/browser/package-lock.json',
                                 'docs/reference/pins.json', 'project.godot']
@@ -431,12 +434,47 @@ class OwnershipRejectionTests(unittest.TestCase):
         results.mkdir(parents=True)
 
         browser_calls = []
+        changed_project = []
+        node_target = directory / 'verified-node'
+        node_target.write_text('verified node')
+        node_path = directory / 'node'
+        node_path.symlink_to(node_target)
+
+        def mutate_project(project, boundary):
+            if not project_fault or changed_project or project_fault[0] != boundary:
+                return
+            changed_project.append(True)
+            mutation = project_fault[1]
+            target = project / 'addons/fortress_rollback/core/driver.gd'
+            if mutation == 'source':
+                target.write_bytes(target.read_bytes() + b'changed staged source')
+            elif mutation == 'delete':
+                target.unlink()
+            elif mutation == 'metadata':
+                Path(str(target) + '.uid').write_text('uid://changed')
+            elif mutation == 'import':
+                target = project / 'fixture.png'
+                target.write_bytes(b'changed resource')
+            else:
+                (project / ('orphan.gd.uid' if mutation == 'orphan' else 'unknown.gd')).write_text('unpaired generated input')
 
         def run(command, environment, log, timeout=180):
             if '--version' in command:
                 return f'{Path(command[0]).parent.name}.stable.fixture'
+            if '--editor' in command:
+                project = Path(command[command.index('--path') + 1])
+                Path(str(project / 'host.gd') + '.uid').write_text('uid://legitimate')
+                (project / '.godot').mkdir(exist_ok=True)
+                (project / '.godot/cache').write_text('mutable import cache')
+                mutate_project(project, 'import')
+            if '--export-release' in command:
+                mutate_project(Path(command[command.index('--path') + 1]), 'export')
             if str(command[1]).endswith('ownership.cjs'):
                 browser_calls.append((command, log, timeout))
+                if node_alias:
+                    executed_node = node_path.resolve() if command[0] == 'node' else Path(command[0]).resolve()
+                    self.assertEqual(executed_node, node_target, 'browser must execute verified Node despite changed PATH alias')
+                mutate_project(cache / 'ownership-projects' / Path(command[2]).name, 'browser')
                 negative = '-negative' in str(command[2])
                 if browser_log is None:
                     value = native_value(negative)
@@ -480,6 +518,14 @@ class OwnershipRejectionTests(unittest.TestCase):
 
         def capture(command, environment, log, timeout):
             capture_calls.append((command, log, timeout))
+            project = Path(command[command.index('--path') + 1])
+            (project / '.godot/cache').write_text('mutable native cache')
+            mutate_project(project, 'native')
+            if node_alias and len(capture_calls) == 1:
+                replacement = directory / 'unverified-node'
+                replacement.write_text('unverified node')
+                node_path.unlink()
+                node_path.symlink_to(replacement)
             code, value = batch_value(command)
             output = probes.PREFIX + json.dumps(value) + '\n'
             output += probes.PROGRESS_PREFIX + json.dumps(NATIVE_PROGRESS) + '\n'
@@ -516,7 +562,9 @@ class OwnershipRejectionTests(unittest.TestCase):
             sources.update(firefox_archive=archive, firefox_installation=installation, firefox_executable=executable)
             environment['FORTRESS_FIREFOX_EXECUTABLE'] = str(executable)
 
-        with mock.patch.object(probes, 'prepare_firefox', side_effect=prepare_firefox), \
+        original_which = shutil.which
+        with mock.patch.object(probes.shutil, 'which', side_effect=lambda name: str(node_path) if node_alias and name == 'node' else original_which(name)), \
+                mock.patch.object(probes, 'prepare_firefox', side_effect=prepare_firefox), \
                 mock.patch.object(probes, 'ROOT', root), mock.patch.object(probes, 'CACHE', cache), \
                 mock.patch.object(probes, 'load_manifest', return_value=data), \
                 mock.patch.object(probes, 'fetch', return_value=archive), \
@@ -585,6 +633,25 @@ class OwnershipRejectionTests(unittest.TestCase):
                     self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
 
     # Value: protects=complete declared phase receipts; fails_when=missing controls or foreign pins publish; why_new=per-batch validation omits phase inventory; seam=none
+    # Value: protects=staged executed bytes and imported metadata; fails_when=stage mutation publishes success;
+    # why_new=root hashes and finished exports do not cover execution inputs; seam=mocked engine boundaries
+    def test_staged_project_changes_cannot_publish_success(self):
+        for selected in ('chromium', 'firefox'):
+            for boundary in ('import', 'native', 'export', 'browser'):
+                for mutation in ('source', 'delete', 'orphan', 'unknown', 'import'):
+                    with self.subTest(selected=selected, boundary=boundary, mutation=mutation):
+                        results = self.scenario(expected=ValueError, selected=selected, version='4.3', project_fault=(boundary, mutation))
+                        self.assertFalse((results / 'ownership.json').exists())
+            for boundary in ('native', 'export', 'browser'):
+                with self.subTest(selected=selected, boundary=boundary, mutation='metadata'):
+                    results = self.scenario(expected=ValueError, selected=selected, version='4.3', project_fault=(boundary, 'metadata'))
+                    self.assertFalse((results / 'ownership.json').exists())
+
+    def test_browser_executes_frozen_node_after_path_alias_replacement(self):
+        for selected in ('chromium', 'firefox'):
+            with self.subTest(selected=selected):
+                self.scenario(expected=None, selected=selected, version='4.3', node_alias=True)
+
     def test_completed_phase_inventory_rejects_missing_foreign_and_alias_phases(self):
         records = [{'engine_version': '4.3', 'negative_control': negative} for negative in (True, False)]
         rounds = [{'label': '4.3-' + label, 'outcome': 'passed'} for label in ('negative', 'positive')]
