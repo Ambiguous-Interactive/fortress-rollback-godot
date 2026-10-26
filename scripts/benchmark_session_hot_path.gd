@@ -14,6 +14,7 @@ extends SceneTree
 #
 # The results are published in docs/experiments/session-hot-path-performance.md.
 
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -66,6 +67,33 @@ class ControlWriter:
 		return _bytes.slice(0, _cursor)
 
 
+class DriverGame:
+	extends RefCounted
+	var state: PackedByteArray = PackedByteArray()
+	var checksum_bytes: PackedByteArray = PackedByteArray()
+	var checksum: int = HASH_OFFSET
+
+	func _init() -> void:
+		state.resize(STATE_BYTES)
+		state.fill(1)
+		checksum_bytes.resize(16)
+		checksum_bytes[15] = 255
+
+	func save_state(_frame: int, writer: RefCounted) -> Driver.SaveResult:
+		return Driver.SaveResult.new(writer.write_bytes(state) == Status.Code.OK, checksum_bytes)
+
+	func load_state(_frame: int, reader: RefCounted) -> bool:
+		return reader.read_into(state) == Status.Code.OK and reader.is_complete()
+
+	func simulate_frame(_frame: int, inputs: Types.FrameInputs) -> bool:
+		for player: int in range(inputs.player_count()):
+			var input: RefCounted = inputs.read(player)
+			for byte: int in input.bytes:
+				checksum = ((checksum ^ byte) * HASH_PRIME) & HASH_MASK
+			checksum = ((checksum ^ input.status) * HASH_PRIME) & HASH_MASK
+		return true
+
+
 func _initialize() -> void:
 	var snapshot: Dictionary = _snapshot()
 	var reports: Array[Dictionary] = []
@@ -73,6 +101,7 @@ func _initialize() -> void:
 		reports.append({
 			"players": players,
 			"steady": _steady(players),
+			"driver": _driver(players),
 			"rollback": _rollback(players),
 			"codec": _codec(players),
 		})
@@ -95,6 +124,34 @@ func _steady(players: int) -> Dictionary:
 		var run: Dictionary = _steady_run(players)
 		samples.append(run["usec"])
 		checksum = run["checksum"]
+	return _summary(samples, checksum, FRAMES)
+
+
+# The public driver runs the same inputs and game work as the expert steady workload.
+func _driver(players: int) -> Dictionary:
+	var samples: Array[int] = []
+	var checksum: int = 0
+	for sample: int in range(SAMPLES):
+		var session: RefCounted = _session(players)
+		var game: DriverGame = DriverGame.new()
+		var driver: RefCounted = Driver.new(session, game)
+		var local: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, 0, PackedByteArray(LOCAL))]
+		var start: int = Time.get_ticks_usec()
+		for frame: int in range(FRAMES):
+			for player: int in range(1, players):
+				if session.receive_input(player, frame, PackedByteArray([(frame + player) & 255])).code != Types.Code.OK:
+					_fail("driver remote input rejected")
+					return {}
+			local[0].sample_frame = frame
+			var result: RefCounted = driver.step(frame, local)
+			if result.code != Types.Code.OK or result.frame_before != frame or result.frame_after != frame + 1:
+				_fail("driver frame did not complete")
+				return {}
+		samples.append(Time.get_ticks_usec() - start)
+		checksum = game.checksum
+		if checksum != BASELINE.steady[players]:
+			_fail("driver state differs from the expert workload")
+			return {}
 	return _summary(samples, checksum, FRAMES)
 
 
@@ -358,6 +415,8 @@ func _matches_baseline(report: Dictionary) -> bool:
 		return false
 	for entry: Dictionary in report["reports"]:
 		var players: int = entry["players"]
+		if entry["driver"]["checksum"] != BASELINE["steady"][players]:
+			return false
 		for name: String in ["steady", "rollback", "codec"]:
 			if entry[name]["checksum"] != BASELINE[name][players]:
 				return false

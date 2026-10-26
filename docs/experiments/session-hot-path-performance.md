@@ -36,6 +36,7 @@ is a reviewed change and not a benchmark repair.
 
 | Workload | What it measures | Shape |
 | --- | --- | --- |
+| `driver` | The public driver: local sample, ordered callbacks, completion notification guards and result metadata | Same confirmed inputs and 4 KiB state as `steady`, 400 frames, 15 samples |
 | `steady` | A whole session frame: local sample, confirmed remote samples, the ordered save and advance requests, the game's own save and the input view | 4 KiB game state, one local player, 400 frames, 15 samples |
 | `rollback` | The same session with the remote inputs one window late, so every correction loads a snapshot and resimulates the prediction window | 8-frame window, 400 frames, 15 samples |
 | `snapshot` | One snapshot write: the production writer against the previous per-byte control | 4 KiB payload, 400 writes, 15 samples |
@@ -206,3 +207,36 @@ across operations. Handshake predicates preserve public snapshot ownership and r
 the same current state/mismatch scalars without allocating diagnostic dictionaries.
 The combined change reduces case time by 23 percent in this scoped experiment.
 Full native/browser acceptance remains required under the original deadlines.
+
+
+## Driver completion status reuse
+
+The driver used two complete status snapshots between the last ordered request
+and result construction. No application callback runs between these reads.
+Passing the first owned snapshot to result construction removes one status
+allocation and one scan of the player queues from each completed batch.
+The driver still reads status after completion handlers, so cancellation in a
+handler retains its current terminal reason and failure metadata.
+
+The `driver` workload measures ordinary completed steps for 2, 4 and 8 players.
+It requires the existing expert `steady` checksum after every sample, rather
+than introducing a second checksum baseline. Local sample objects are reused;
+their frame changes between steps. Callback saves, input reads and ordinary
+result allocations remain part of the measured work.
+
+On this shared Linux ARM64 host, alternating the original driver at `341053b`
+and the status-reuse driver produced these microseconds per completed step.
+Each entry is the median of three runs' p50s, each containing 15 samples of
+400 frames. Alternate the variants' order between runs to reduce order bias.
+Use the same benchmark script and engine for both source variants.
+
+| Engine | 2 players | 4 players | 8 players |
+| --- | --- | --- | --- |
+| 4.7.2 | 46.37 → 45.17 | 60.66 → 58.46 | 86.14 → 83.40 |
+| 4.3 | 65.75 → 64.19 | 82.12 → 83.95 | 111.60 → 111.53 |
+
+Godot 4.7.2 improved about 3–4 percent in this workload. Godot 4.3 did not
+show a consistent timing improvement; the four-player median increased.
+The removed allocation and queue scan are deterministic work reductions,
+not a promise of faster frames on every host. These measurements cover native
+steady steps, not browser performance, rollback bursts or total allocation counts.

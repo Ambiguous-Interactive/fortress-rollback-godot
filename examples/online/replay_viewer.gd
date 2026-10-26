@@ -182,6 +182,21 @@ func checked_checksum_count() -> int:
 	return _player.checked_checksum_count()
 
 
+## Recorded state coverage at the displayed boundary, independently of lifetime checksum totals.
+## Input integrity and cache-only comparisons are separate from recorded state checksums.
+func current_state_coverage_message() -> String:
+	if _recording == null:
+		return "No recording loaded."
+	var prefix: String = "State at frame %d: " % current_frame()
+	if has_failure():
+		return prefix + "playback failed."
+	if _player.is_current_state_validated():
+		return prefix + "recorded checksum matched."
+	if _recording.checksum(current_frame()).is_empty():
+		return prefix + "no recorded checksum."
+	return prefix + "recorded checksum not checked."
+
+
 func current_frame() -> int:
 	return _player.current_frame()
 

@@ -32,7 +32,8 @@ func cases() -> PackedStringArray:
 			"host_loss",
 			"host_loss_control",
 			"restart_lifetimes",
-			"restart_busy"
+			"restart_busy",
+			"service_busy"
 		]
 	)
 
@@ -46,7 +47,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		_lost_history(context)
 	elif name == "paused_final_tail":
 		_paused_final_tail(context)
-	elif name in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control", "restart_lifetimes", "restart_busy"]:
+	elif name in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control", "restart_lifetimes", "restart_busy", "service_busy"]:
 		call("_" + name, context)
 	elif name == "clean_host_end":
 		_clean_host_end(context)
@@ -393,7 +394,8 @@ func _restart_lifetimes(context: RefCounted) -> void:
 		var samples: Array[Demo.Driver.LocalInput] = []
 		context.equal(
 			old_driver.step(35 * Demo.Host.TICK_US, samples).code,
-			Types.Code.OK if scenario == "control" else Types.Code.TERMINATED, "old driver cannot consume history after replacement"
+			Types.Code.OK if scenario == "control" else Types.Code.TERMINATED,
+			"old driver cannot consume history after replacement"
 		)
 		context.equal(old_replay.step(), Types.Code.OK if scenario == "control" else Types.Code.TERMINATED, "host replay retires with its match")
 		context.equal(old_stream.poll(35 * Demo.Host.TICK_US), Types.Code.OK if scenario == "control" else Types.Code.TERMINATED, "old stream cannot service retired playback")
@@ -467,3 +469,51 @@ func _restart_busy(context: RefCounted) -> void:
 			driver.step_completed.disconnect(restart)
 			context.equal(attempts, PackedInt32Array([Types.Code.BUSY]), "completion callback cannot replace its match")
 		context.equal(demo.start(), Types.Code.OK, "replacement works after ownership releases")
+
+
+# Value: protects=active callbacks and expert batches own spectator service; fails_when=recursive controls consume time or stop viewing;
+# why_new=restart guards do not cover playback and service actions; seam=none
+func _service_busy(context: RefCounted) -> void:
+	for actor: String in ["host", "viewer", "batch"]:
+		for action: String in ["tick", "step_viewer", "finish_host"]:
+			var demo: Demo = Demo.new()
+			context.equal(demo.start(), Types.Code.OK, "start guarded service")
+			demo.is_paused = true
+			for tick: int in range(35):
+				demo.tick(Game.RIGHT)
+			var owner: WeakRef = weakref(demo)
+			var attempts: PackedInt32Array = PackedInt32Array()
+			var attempt: Callable = func(_code: int = 0, _before: int = 0, _after: int = 0) -> void:
+				var target: RefCounted = owner.get_ref()
+				var before: Array = _service_observation(target)
+				var code: int = target.tick(Game.LEFT) if action == "tick" else target.call(action)
+				attempts.append(code)
+				context.equal(code, Types.Code.BUSY, "active " + actor + " refuses " + action)
+				context.equal(_service_observation(target), before, "refused service preserves clocks, playback and host state")
+			if actor == "batch":
+				context.equal(demo.viewer.begin_advance().code, Types.Code.READY, "retain ordinary viewer expert batch")
+				attempt.call()
+				demo.viewer.terminate()
+			else:
+				var driver: RefCounted = demo.host.loop.driver if actor == "host" else demo.driver
+				driver.step_completed.connect(attempt)
+				context.equal(demo.tick(Game.RIGHT) if actor == "host" else demo.step_viewer(), Types.Code.OK, "outer service completes")
+				driver.step_completed.disconnect(attempt)
+				context.equal(demo.viewer.status().reason, Types.Code.OK, "refusal does not terminate viewing")
+				context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "service resumes after completion handler")
+			context.equal(attempts.size(), 1, "one guarded service attempt")
+
+
+func _service_observation(demo: RefCounted) -> Array:
+	return [
+		demo._tick_count,
+		demo.host.tick_count,
+		demo.host.pending_input_count(),
+		demo.host.loop.game.frame,
+		demo.game.frame,
+		demo.next_host_frame,
+		demo.viewer_code,
+		demo.is_paused,
+		demo.is_finishing,
+		demo.viewer.status().reason
+	]

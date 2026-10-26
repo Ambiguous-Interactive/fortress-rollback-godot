@@ -16,19 +16,23 @@ class ObservedGame:
 	var owner: WeakRef
 	var observations: Array[bool] = []
 	var completion_observations: Array[bool] = []
+	var selected_observations: Array[bool] = []
 
 	func save_state(frame: int, writer: RefCounted) -> Driver.SaveResult:
 		observations.append(owner.get_ref().is_final_state_validated())
+		selected_observations.append(owner.get_ref().is_current_state_validated())
 		completion_observations.append(owner.get_ref().is_complete())
 		return super.save_state(frame, writer)
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["final_state_coverage", "viewer_final_coverage"])
+	return PackedStringArray(["final_state_coverage", "viewer_final_coverage", "selected_state_coverage"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "final_state_coverage":
+	if name == "selected_state_coverage":
+		_selected_state_coverage(context)
+	elif name == "final_state_coverage":
 		_final_state_coverage(context)
 	else:
 		_viewer_final_coverage(context)
@@ -83,8 +87,10 @@ func _final_state_coverage(context: RefCounted) -> void:
 				var player: Player = Player.new()
 				var game: Simulation = Simulation.new()
 				var bound: int = 0 if coverage == "input only" else Simulation.SNAPSHOT_BYTES
-				var code: int = player.configure_expert(replay, bound, null, 1 if bound > 0 else 0, 5 if bound > 0 else 0) if expert else player.configure(
-					replay, game, bound, 1 if bound > 0 else 0, 5 if bound > 0 else 0
+				var code: int = (
+					player.configure_expert(replay, bound, null, 1 if bound > 0 else 0, 5 if bound > 0 else 0)
+					if expert
+					else player.configure(replay, game, bound, 1 if bound > 0 else 0, 5 if bound > 0 else 0)
 				)
 				context.equal(code, Types.Code.OK, "coverage fixture configures")
 				context.equal(player.call("is_final_state_validated"), false, "import alone never validates the final state")
@@ -121,10 +127,12 @@ func _final_state_coverage(context: RefCounted) -> void:
 	for attempt: int in 2:
 		context.equal(probe.validate_current_frame(), Types.Code.OK, "paused final validation succeeds")
 		context.equal(probe.call("is_final_state_validated"), true, "successful callback publishes final validation")
+	context.equal(observed.selected_observations, [false, false], "callback work suspends selected-state validation")
 	context.equal(observed.observations, [false, false], "callbacks cannot claim final validation while their state save is incomplete")
 	context.equal(observed.completion_observations, [false, false], "callbacks cannot report completion while their state save is incomplete")
 	var validation: Types.Result = probe.begin_validate_current_frame()
 	context.equal(validation.code, Types.Code.READY, "manual final revalidation opens a SAVE")
+	context.equal(probe.call("is_current_state_validated"), false, "open revalidation suspends an earlier selected-state match")
 	context.equal(probe.call("is_final_state_validated"), false, "an open final SAVE suspends the completion claim")
 	context.equal(probe.is_complete(), false, "an open final SAVE cannot report completed playback")
 	probe.terminate()
@@ -149,3 +157,60 @@ func _viewer_final_coverage(context: RefCounted) -> void:
 			context.equal(viewer.message.contains("no checksums"), true, "checksum-free completion remains explicitly unverified")
 		else:
 			context.equal(viewer.message.contains("Replay complete"), false, "failed final state is never presented as complete")
+
+
+# Value: protects=selected-state coverage cannot inherit a lifetime checksum count; fails_when=unchecked boundaries or cache-only snapshots claim recorded validation;
+# why_new=final-state and lifetime counters do not cover intermediate displayed states; seam=none
+func _selected_state_coverage(context: RefCounted) -> void:
+	var probe: Player = Player.new()
+	context.equal(probe.has_method("is_current_state_validated"), true, "selected boundary exposes its own checksum coverage")
+	if not probe.has_method("is_current_state_validated"):
+		return
+	context.equal(probe.call("is_current_state_validated"), false, "unconfigured state is unverified")
+	for expert: bool in [false, true]:
+		for validates: bool in [false, true]:
+			var replay: Replay = _recording(4, true)
+			replay._flags[1] = 0
+			var game: Simulation = Simulation.new()
+			var player: Player = Player.new()
+			var bound: int = Simulation.SNAPSHOT_BYTES if validates else 0
+			var interval: int = 1 if validates else 0
+			var capacity: int = 5 if validates else 0
+			var configured: int = player.configure_expert(replay, bound, null, interval, capacity) if expert else player.configure(replay, game, bound, interval, capacity)
+			context.equal(configured, Types.Code.OK, "configure selected-boundary coverage")
+			for frame: int in 4:
+				context.equal(player.call("is_current_state_validated"), false, "advance does not validate the resulting state")
+				var validation: Types.Result = player.begin_validate_current_frame()
+				context.equal(player.call("is_current_state_validated"), false, "open validation cannot publish a matching checksum")
+				if validation.code == Types.Code.READY:
+					var request: Types.Request = validation.batch.next_request()
+					var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+					context.equal(player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "validate selected state")
+				else:
+					context.equal(validation.code, Types.Code.OK, "input-only validation needs no SAVE")
+				context.equal(player.call("is_current_state_validated"), validates and frame != 1, "only a present matching recorded checksum qualifies")
+				context.equal(_dispatch(player, game) if expert else player.step(), Types.Code.OK, "advance verified input")
+			context.equal(player.call("is_current_state_validated"), false, "terminal evidence remains unchecked after the last input")
+			context.equal(_dispatch(player, game) if expert else player.step(), Types.Code.OK if validates else Types.Code.FRAME_EXHAUSTED, "check optional terminal state")
+			context.equal(player.call("is_current_state_validated"), validates, "terminal SAVE qualifies the selected final state")
+			if validates:
+				for target: int in [1, 2]:
+					var restore: Types.Result = player.begin_restore_before(target)
+					context.equal(restore.code, Types.Code.READY, "restore selected cached state")
+					context.equal(player.call("is_current_state_validated"), false, "restoration suspends selected-state validation")
+					var request: Types.Request = restore.batch.next_request()
+					context.equal(game.load_state(request.frame, request.reader), true, "load cached state")
+					context.equal(player.complete_request(request.batch_id, request.request_id, true).code, Types.Code.OK, "acknowledge load")
+					context.equal(player.call("is_current_state_validated"), false, "LOAD alone does not validate restored state")
+					request = restore.batch.next_request()
+					var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+					context.equal(player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "compare restored state")
+					context.equal(player.call("is_current_state_validated"), target == 2, "cache-only comparison cannot invent a recorded checksum")
+			var previous: bool = player.call("is_current_state_validated")
+			context.equal(player.configure(Replay.new(), Simulation.new()), Types.Code.INVALID_CONFIGURATION, "refuse malformed replacement")
+			context.equal(player.call("is_current_state_validated"), previous, "refused replacement preserves selected-state coverage")
+			player.terminate()
+			context.equal(player.call("is_current_state_validated"), false, "termination removes selected-state claim")
+			context.equal(player.configure(replay, Simulation.new(), bound), Types.Code.OK, "replace playback lifetime")
+			context.equal(player.call("is_current_state_validated"), false, "replacement has no validated boundary")
+			context.state(game.frame, game.canonical_bytes())

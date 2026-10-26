@@ -30,7 +30,7 @@ var _tick_count: int = 0
 ## Starts a fresh match after retiring prior owned playback and player sessions.
 ## Active requests and callbacks retain their match until the current operation completes.
 func start() -> int:
-	if (viewer != null and viewer._mutation_code() == Types.Code.BUSY) or (host != null and host._mutation_code() == Types.Code.BUSY):
+	if _mutation_code() == Types.Code.BUSY:
 		return Types.Code.BUSY
 	var next_host: Host = Host.new()
 	var code: int = next_host.start(3)
@@ -108,6 +108,8 @@ func _negotiate_envelope(next_publisher: Publisher, next_stream: Stream) -> int:
 ## Pause continuous viewing and attempt exactly one ordinary confirmed playback step.
 ## Delay and missing input still stall; this never advances or samples the host.
 func step_viewer() -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
 	if viewer == null:
 		return Types.Code.NOT_CONFIGURED
 	is_paused = true
@@ -135,6 +137,8 @@ func lose_host_connection() -> int:
 ## Stop at the current host frame, correct outstanding predictions and send the complete clean tail.
 ## A paused viewer can resume and drain that tail before its normal terminal notification.
 func finish_host() -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
 	if host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
@@ -145,6 +149,8 @@ func finish_host() -> int:
 
 ## Host continues when the viewer pauses, falls behind or fails. All loops have explicit work bounds.
 func tick(buttons: int) -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
 	_tick_count += 1
@@ -194,3 +200,9 @@ func tick(buttons: int) -> int:
 			if viewer_code != Types.Code.OK:
 				break
 	return code
+
+
+func _mutation_code() -> int:
+	if (viewer != null and viewer._mutation_code() == Types.Code.BUSY) or (host != null and host._mutation_code() == Types.Code.BUSY):
+		return Types.Code.BUSY
+	return Types.Code.OK

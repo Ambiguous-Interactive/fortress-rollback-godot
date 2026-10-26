@@ -12,11 +12,13 @@ const Scene = preload("res://examples/online/replay.tscn")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["coverage", "counting", "unchecked_seek", "paused_input_integrity"])
+	return PackedStringArray(["coverage", "counting", "unchecked_seek", "paused_input_integrity", "selected_state_status"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "paused_input_integrity":
+	if name == "selected_state_status":
+		_selected_state_status(context)
+	elif name == "paused_input_integrity":
 		_paused_input_integrity(context)
 	elif name == "unchecked_seek":
 		_unchecked_seek(context)
@@ -181,3 +183,65 @@ func _paused_input_integrity(context: RefCounted) -> void:
 		context.equal(viewer.message.contains(replay.input_digest(boundary).hex_encode()), true, "viewer exposes input digest evidence")
 		context.equal(viewer.checked_checksum_count(), 0, "checksum-absent input corruption never invents state coverage")
 		context.state(boundary, viewer.game.canonical_bytes())
+
+
+# Value: protects=the visible selected state distinguishes matching, absent and pending recorded checksums;
+# fails_when=lifetime coverage implies a newly displayed boundary was checked; why_new=coverage labels count historical comparisons only; seam=none
+func _selected_state_status(context: RefCounted) -> void:
+	var probe: Viewer = Viewer.new()
+	context.equal(probe.has_method("current_state_coverage_message"), true, "viewer explains selected-state verification")
+	if not probe.has_method("current_state_coverage_message"):
+		return
+	for checksums: bool in [false, true]:
+		var replay: Replay = Fixture.recording(130)
+		if checksums:
+			replay._flags[1] = 0
+		else:
+			replay._flags.fill(0)
+		var node: Node2D = Scene.instantiate()
+		node._ready()
+		context.equal(node.viewer.open_bytes(replay.to_bytes()), true, "open selected-state coverage fixture")
+		node._refresh()
+		var expected: String = "State at frame 0: recorded checksum not checked." if checksums else "State at frame 0: no recorded checksum."
+		context.equal(node.viewer.call("current_state_coverage_message"), expected, "import alone never qualifies a recorded checksum")
+		context.equal(_has_status(node, expected), true, "selected-state coverage appears in the scene")
+		node.viewer.seek(0)
+		node._refresh()
+		expected = "State at frame 0: recorded checksum matched." if checksums else "State at frame 0: no recorded checksum."
+		context.equal(_has_status(node, expected), true, "paused initial boundary explains recorded state coverage")
+		node.viewer.step()
+		node._refresh()
+		context.equal(_has_status(node, "State at frame 1: no recorded checksum."), true, "cache snapshot at a checksum gap is not recorded evidence")
+		node.viewer.toggle_play()
+		node._physics_process(0.0)
+		expected = "State at frame 2: recorded checksum not checked." if checksums else "State at frame 2: no recorded checksum."
+		context.equal(_has_status(node, expected), true, "playing input does not validate the resulting displayed state")
+		node.viewer.toggle_play()
+		node._refresh()
+		expected = "State at frame 2: recorded checksum matched." if checksums else "State at frame 2: no recorded checksum."
+		context.equal(_has_status(node, expected), true, "pausing validates the displayed state when recorded evidence exists")
+		node.viewer.seek(130)
+		node.viewer.tick()
+		node.viewer.cancel_seek()
+		node._refresh()
+		expected = "State at frame 122: recorded checksum matched." if checksums else "State at frame 122: no recorded checksum."
+		context.equal(_has_status(node, expected), true, "canceled bounded seek identifies its actual displayed boundary")
+		node.viewer.seek(130)
+		node.viewer.tick()
+		node._refresh()
+		context.equal(_has_status(node, "State at frame 130: no recorded checksum."), true, "historical completion cannot qualify an unrecorded final state")
+		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+		node._exit_tree()
+		node.free()
+	var corrupt: Replay = Fixture.recording(4)
+	corrupt._checksums[0] ^= 1
+	probe.open_bytes(corrupt.to_bytes())
+	probe.seek(0)
+	context.equal(probe.call("current_state_coverage_message"), "State at frame 0: playback failed.", "failed boundary cannot publish validation")
+
+
+func _has_status(node: Node, text: String) -> bool:
+	for label: Node in node.find_children("*", "Label", true, false):
+		if label.text.contains(text):
+			return true
+	return false
