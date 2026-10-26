@@ -49,6 +49,52 @@ def batch_value(command):
 
 
 class OwnershipBatchTests(unittest.TestCase):
+    # Value: protects=complete partition coverage and live alias controls; fails_when=parts omit cases or controls; why_new=whole inventory only; seam=none
+    def test_suite_parts_cover_every_case_with_only_the_control_repeated(self):
+        control = 'res://tests/determinism/test_buffer_ownership.gd'
+        first, second = [probes.select_suites(part) for part in ('1', '2')]
+        self.assertEqual(set(first) | set(second), set(probes.EXPECTED))
+        self.assertEqual(set(first) & set(second), {control})
+        cases = {(suite, case) for part in (first, second) for suite, names in part.items() for case in names}
+        self.assertEqual(cases, {(suite, case) for suite, names in probes.EXPECTED.items() for case in names})
+        self.assertEqual(len(cases), probes.EXPECTED_COUNT)
+        self.assertEqual(probes.select_suites('all'), probes.EXPECTED)
+        for part in ('unknown', '', True, 1, 1.0, None):
+            with self.subTest(part=part), self.assertRaises(ValueError):
+                probes.select_suites(part)
+
+    # Value: protects=declared partial receipts retain exact native/Web evidence; fails_when=scope or results lie; why_new=unpartitioned validation; seam=none
+    def test_partition_coverage_rejects_missing_foreign_or_mismatched_evidence(self):
+        selected = probes.select_suites('2')
+        suites = {suite: sorted(cases) for suite, cases in selected.items()}
+        for negative in (False, True):
+            native = probes.aggregate_native([(suite, value) for suite, value in self.batches(negative) if suite in selected], negative, selected)
+            records = [{'negative_control': negative, 'native': native, 'browser': {'result': copy.deepcopy(native)}}]
+            probes.validate_coverage(records, '2', suites)
+            for mutation in ('declaration', 'foreign', 'missing', 'browser', 'alias', 'control', 'order', 'cases', 'empty', 'part'):
+                with self.subTest(negative=negative, mutation=mutation):
+                    altered, declared = copy.deepcopy(records), copy.deepcopy(suites)
+                    if mutation == 'declaration':
+                        declared.pop(next(iter(declared)))
+                    elif mutation == 'foreign':
+                        declared['foreign'] = ['foreign']
+                    elif mutation == 'missing':
+                        altered[0]['native']['records'].pop()
+                    elif mutation == 'browser':
+                        altered[0]['browser']['result']['records'][0]['runs'][0]['assertions'] += 1
+                    elif mutation == 'alias':
+                        altered[0]['negative_control'] = int(negative)
+                    elif mutation == 'control':
+                        altered[0]['native']['records'] = [row for row in altered[0]['native']['records'] if row['case'] != 'owned_input']
+                    elif mutation == 'order':
+                        declared = dict(reversed(list(declared.items())))
+                    elif mutation == 'cases':
+                        declared[next(iter(declared))].reverse()
+                    elif mutation == 'empty':
+                        altered = []
+                    with self.assertRaises(ValueError):
+                        probes.validate_coverage(altered, '1' if mutation == 'part' else '2', declared)
+
     # Value: protects=complete ordered native/Web equality; fails_when=batch loses or substitutes records; why_new=whole-run tests cannot exercise aggregation; seam=none
     def batches(self, negative=False):
         value = native_value(negative)
@@ -401,7 +447,8 @@ class OwnershipRejectionTests(unittest.TestCase):
     # reported, and the state the rejection found.
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
-                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None, phase=None):
+                 version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None,
+                 phase=None, suite_part='all'):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -619,7 +666,8 @@ class OwnershipRejectionTests(unittest.TestCase):
                 mock.patch.object(probes.platform, 'machine', return_value='x86_64'), \
                 mock.patch.object(probes.platform, 'system', return_value='Linux'), \
                 mock.patch('sys.argv', ['ownership_probes.py', '--offline', '--web', '--browser', selected]
-                           + ([] if version is None else ['--version', version]) + ([] if phase is None else ['--phase', phase])):
+                           + ([] if version is None else ['--version', version]) + ([] if phase is None else ['--phase', phase])
+                           + ([] if suite_part == 'all' else ['--suite-part', suite_part])):
             if expected is None:
                 probes.main()
             else:
@@ -646,15 +694,16 @@ class OwnershipRejectionTests(unittest.TestCase):
             self.assertEqual(len(browser_calls), 1, 'mutation during a batch must stop before another executes')
         if expected is None:
             round_count = (2 if version is None else 1) * (2 if phase in (None, 'both') else 1)
+            expected_suites = probes.select_suites(suite_part)
             selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
                           for command, log, timeout in capture_calls]
-            self.assertEqual(selections, [[suite] for suite in sorted(probes.EXPECTED)] * round_count,
+            self.assertEqual(selections, [[suite] for suite in sorted(expected_suites)] * round_count,
                              'each round runs every suite once, each under its own watchdog')
             self.assertTrue(all(timeout == 180 for command, log, timeout in capture_calls))
             logs = [log for command, log, timeout in capture_calls]
             self.assertEqual(len(logs), len(set(logs)), 'each native batch keeps its own log')
             groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
-            suites = sorted(probes.EXPECTED)
+            suites = sorted(expected_suites)
             batch_size = 1 if selected == 'firefox' else 4
             self.assertEqual(groups, [suites[offset:offset + batch_size] for offset in range(0, len(suites), batch_size)] * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
@@ -678,7 +727,21 @@ class OwnershipRejectionTests(unittest.TestCase):
                 for row in receipt['records']:
                     self.assertEqual(row['browser']['result'], row['native'])
                     self.assertEqual(row['native']['count'], probes.EXPECTED_COUNT)
-                self.assertIn('requested engine pins and phases only', receipt['scope'])
+                self.assertIn('requested engine pins, phases and suite inventory only', receipt['scope'])
+
+    # Value: protects=CI parts run both real controls with exact declared native/Web coverage; fails_when=selector drops work; why_new=whole-run orchestration; seam=none
+    def test_suite_parts_run_exact_declared_inventory_and_both_controls(self):
+        for part in ('1', '2'):
+            with self.subTest(part=part):
+                results = self.scenario(expected=None, selected='firefox', version='4.3', suite_part=part)
+                receipt = json.loads((results / 'ownership.json').read_text())
+                selected = probes.select_suites(part)
+                self.assertEqual(receipt['suite_part_requested'], part)
+                self.assertEqual(receipt['suites_requested'], {suite: sorted(cases) for suite, cases in selected.items()})
+                self.assertEqual([row['negative_control'] for row in receipt['records']], [True, False])
+                for row in receipt['records']:
+                    self.assertEqual(row['native']['count'], sum(map(len, selected.values())))
+                    self.assertEqual(row['browser']['result'], row['native'])
 
     # Value: protects=exact phase declarations; fails_when=missing, mismatched or alias inventory publishes; why_new=unpartitioned inventory; seam=none
     def test_requested_phase_inventory_rejects_missing_mismatched_unknown_and_alias_values(self):
@@ -788,7 +851,8 @@ class OwnershipRejectionTests(unittest.TestCase):
                     probes.validate_phases(altered_records, altered_rounds, ['4.3'])
 
     def test_unknown_pin_or_phase_is_rejected_before_tool_qualification(self):
-        for option, value in (('--version', 'untrusted'), ('--phase', 'unknown'), ('--phase', 'True'), ('--phase', '1')):
+        for option, value in (('--version', 'untrusted'), ('--phase', 'unknown'), ('--phase', 'True'), ('--phase', '1'),
+                              ('--suite-part', 'unknown'), ('--suite-part', 'True'), ('--suite-part', '1.0')):
             with self.subTest(option=option, value=value), tempfile.TemporaryDirectory() as directory:
                 self.assert_invalid_execution_option(Path(directory), option, value)
 
@@ -815,6 +879,8 @@ class OwnershipRejectionTests(unittest.TestCase):
         receipt = json.loads((results / 'ownership.json').read_text(encoding='utf-8'))
         self.assertEqual(receipt['versions_requested'], ['4.3', '4.7.2'])
         self.assertEqual(receipt['phases_requested'], ['negative', 'positive'])
+        self.assertEqual(receipt['suite_part_requested'], 'all')
+        self.assertEqual(receipt['suites_requested'], {suite: sorted(cases) for suite, cases in probes.EXPECTED.items()})
         self.assertEqual([entry['label'] for entry in receipt['rounds']],
                          ['4.3-negative', '4.3-positive', '4.7.2-negative', '4.7.2-positive'])
         for entry in receipt['rounds']:

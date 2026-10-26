@@ -90,12 +90,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {version: "4.3", browser: chromium, phase: both, suffix: ""}
-          - {version: "4.7.2", browser: chromium, phase: both, suffix: ""}
-          - {version: "4.3", browser: firefox, phase: negative, suffix: " negative"}
-          - {version: "4.3", browser: firefox, phase: positive, suffix: " positive"}
-          - {version: "4.7.2", browser: firefox, phase: negative, suffix: " negative"}
-          - {version: "4.7.2", browser: firefox, phase: positive, suffix: " positive"}
+          - {version: "4.3", browser: chromium, phase: both, suite_part: all, suffix: "", part_suffix: ""}
+          - {version: "4.7.2", browser: chromium, phase: both, suite_part: all, suffix: "", part_suffix: ""}
+          - {version: "4.3", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
+          - {version: "4.3", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
+          - {version: "4.3", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
+          - {version: "4.3", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
+          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: all, suffix: " negative", part_suffix: ""}
+          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: all, suffix: " positive", part_suffix: ""}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -123,14 +125,14 @@ jobs:
         run: |
           if [[ "${{ matrix.browser }}" == firefox ]]; then
             xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox \
-              --version "${{ matrix.version }}" --phase "${{ matrix.phase }}"
+              --version "${{ matrix.version }}" --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
           else
             python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
           fi
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && format('-firefox-{0}', matrix.phase) || '' }}
+          name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && format('-firefox-{0}', matrix.phase) || '' }}${{ matrix.part_suffix }}
           path: .cache/reference/results/
           if-no-files-found: error
 

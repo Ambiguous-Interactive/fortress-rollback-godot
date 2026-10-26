@@ -447,18 +447,47 @@ def negative_suite(suite, negative):
     return negative and suite == 'res://tests/determinism/test_buffer_ownership.gd'
 
 
-def aggregate_native(batches, negative):
+def select_suites(part):
+    """Split suite work while retaining the alias control in every part."""
+    if type(part) is not str or part not in ('all', '1', '2'):
+        raise ValueError('invalid ownership suite part')
+    ordered = sorted(EXPECTED)
+    selected = ordered if part == 'all' else ordered[int(part) - 1::2]
+    control = 'res://tests/determinism/test_buffer_ownership.gd'
+    return {suite: EXPECTED[suite] for suite in ordered if suite in selected or suite == control}
+
+
+def aggregate_native(batches, negative, expected=None):
     """Require every complete batch, retaining the browser's suite/case order."""
+    expected = EXPECTED if expected is None else expected
     batches = [([suites] if isinstance(suites, str) else suites, result) for suites, result in batches]
-    if [suite for suites, result in batches for suite in suites] != sorted(EXPECTED):
+    if [suite for suites, result in batches for suite in suites] != sorted(expected):
         raise ValueError('missing, duplicate or unordered suite batches')
     records = []
     for suites, result in batches:
-        expected = {suite: EXPECTED[suite] for suite in suites}
-        validate(result, any(negative_suite(suite, negative) for suite in suites), expected)
+        subset = {suite: expected[suite] for suite in suites}
+        validate(result, any(negative_suite(suite, negative) for suite in suites), subset)
         records.extend(result['records'])
     return validate({'format': 1, 'complete': True, 'count': len(records), 'passed': not negative,
-                     'errors': [], 'records': records}, negative)
+                     'errors': [], 'records': records}, negative, expected)
+
+
+def validate_coverage(records, part, suites):
+    """A partial receipt must describe exactly the canonical requested suite part."""
+    expected = select_suites(part)
+    if type(suites) is not dict or list(suites) != sorted(expected) or not same_json(suites, {suite: sorted(cases) for suite, cases in expected.items()}):
+        raise ValueError('incorrect declared ownership suite inventory')
+    if type(records) is not list or not records:
+        raise ValueError('missing ownership coverage records')
+    for record in records:
+        negative = record.get('negative_control')
+        if type(negative) is not bool:
+            raise ValueError('incorrect ownership control type')
+        validate(record['native'], negative, expected)
+        if 'browser' in record:
+            validate(record['browser']['result'], negative, expected)
+            if not same_json(record['native'], record['browser']['result']):
+                raise ValueError('native/web ownership divergence')
 
 
 def last_progress(output):
@@ -654,6 +683,7 @@ def main():
     parser.add_argument('--web', action='store_true')
     parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
     parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
+    parser.add_argument('--suite-part', choices=['all', '1', '2'], default='all')
     pins = load_manifest()['godot']
     parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
     args = parser.parse_args()
@@ -715,6 +745,8 @@ def run_probes(args, results):
     records = []
     versions_requested = [args.version] if args.version is not None else [data['godot']['minimum'], data['godot']['current_stable']]
     phases_requested = ['negative', 'positive'] if args.phase == 'both' else [args.phase]
+    selected = select_suites(args.suite_part)
+    suites_requested = {suite: sorted(cases) for suite, cases in selected.items()}
     if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
         raise ValueError('requested ownership engine is not pinned')
     for version in versions_requested:
@@ -797,7 +829,7 @@ def run_probes(args, results):
             # watchdog. A growing inventory must not merge bounded suites into
             # one process that exceeds their shared deadline.
             batches = []
-            for suite in sorted(EXPECTED):
+            for suite in sorted(selected):
                 native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
                 try:
                     verify_staged(project, staged_frozen)
@@ -834,7 +866,7 @@ def run_probes(args, results):
                 except Exception:
                     reject(started, 'failed', alive=False, errors=failure_lines(output))
                     raise
-            native = aggregate_native(batches, negative)
+            native = aggregate_native(batches, negative, selected)
             record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native,
                       'staged_inventory': staged_frozen, 'editor_inventory': editor_frozen}
             if args.web:
@@ -858,7 +890,7 @@ def run_probes(args, results):
                 exported_sources = tool_inventory({'export': export})
                 browser_batches = []
                 browser_identity = None
-                ordered_suites = sorted(EXPECTED)
+                ordered_suites = sorted(selected)
                 batch_size = 1 if args.browser == 'firefox' else 4
                 for batch_index, offset in enumerate(range(0, len(ordered_suites), batch_size)):
                     suites = ordered_suites[offset:offset + batch_size]
@@ -891,7 +923,7 @@ def run_probes(args, results):
                         reject(started, rejected_state(browser_progress), browser_progress=browser_progress,
                                alive=detail_alive(detail), errors=detail_errors(detail))
                         raise
-                browser['result'] = aggregate_native(browser_batches, negative)
+                browser['result'] = aggregate_native(browser_batches, negative, selected)
                 if not same_json(browser['result'], native):
                     reject(started, 'failed', alive=False, errors=['native/web ownership divergence'])
                     raise ValueError('native/web ownership divergence')
@@ -902,15 +934,17 @@ def run_probes(args, results):
             finish(started)
             print(f'Ownership {label}: native' + (' and Web' if args.web else '') + ' verified')
     validate_phases(records, rounds, versions_requested, phases_requested)
+    validate_coverage(records, args.suite_part, suites_requested)
     verify_sources(frozen_sources)
     if tool_inventory(browser_paths) != browser_frozen:
         raise ValueError('ownership browser runtime changed during execution')
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'browser_requested': args.browser if args.web else None, 'browser_runtime_inventory': browser_frozen,
               'rounds': rounds, 'versions_requested': versions_requested, 'phases_requested': phases_requested,
+              'suite_part_requested': args.suite_part, 'suites_requested': suites_requested,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],
               'sources': frozen_sources,
-              'records': records, 'scope': 'For requested engine pins and phases only: '
+              'records': records, 'scope': 'For requested engine pins, phases and suite inventory only: '
               'Integer/ownership, byte handshakes, input recovery, 2–8-player gameplay and replay playback; '
               'no real transport, performance or unselected-browser/platform claim.'}
     (results / 'ownership.json').write_text(json.dumps(report, indent=2) + '\n')

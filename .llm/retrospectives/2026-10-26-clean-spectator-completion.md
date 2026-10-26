@@ -15,7 +15,7 @@
 | Completion can happen inside a control sender, not only between polls. | The sender-callback regression returned PEER_FAILURE before repair. | Apply the same completion distinction after the callback and test queued late traffic. |
 | Browser provenance must bind the executed path and staged source, not only the original files. | Independent PATH substitution and staged-source mutations evaded the first qualification candidate. | Execute the inventoried Node path; freeze staged sources, Godot, templates and browser inputs; verify each execution boundary. |
 | Firefox exposed repeated owned diagnostic copies in a scalar confirmation fold. | The unchanged eight-player case measured 377.893 seconds; a scalar read measured 141.557 seconds with identical assertions. | Preserve current-read timing and public snapshot ownership; use narrow internal receipt and lifecycle queries. Verify the full batch, not only the isolated case. |
-| A complete case batch can exceed a browser deadline without an assertion failure. | Firefox CI completed 23 peer-drop cases at 195.256260 seconds under a 180-second page limit. | Split suite groups and declare phase partitions; preserve every case, repeat, control and deadline. |
+| Complete pages can still exceed a page or whole-job deadline. | CI completed a 195.256260-second batch; singleton 4.3 jobs later reached only 42/44 of 67 pages before the 30-minute cap. | Split pages and declared phase/suite partitions; preserve every case, repeat, control and deadline. |
 | Profiling disproved a broader transaction rewrite and located repeated identity lookups and handshake snapshots. | Identical eight-peer records measured 81.959 seconds baseline, 81.871 bank-copy variant and 63.136 combined narrow reads. | Reject the immaterial transaction rewrite; preserve atomic plans and use operation-local endpoint references. |
 | Timed packet delay does not guarantee a prediction before original delivery. | CI preserved correct state but one peer never restored; a stale-lifetime mutation also defeated the first barrier. | Require successful current-instance predicted callbacks before releasing bounded originals; bind proof to room, session and game lifetime. |
 | Corrupt rollback can stop a peer before later physical key changes arrive. | CI stopped at frame 38 with the second direction absent; local runs happened to accept it. | Await both second physical key changes while originals still bound advancement, then release; retain movement and desync assertions. |
@@ -29,7 +29,8 @@ input-closure guidance was replaced in place to avoid a duplicate rule and retai
 its paused-tail authentication requirement. No state, replay or wire format changed.
 The existing [testing evidence contract](../skills/testing/references/infrastructure.md)
 already requires staged-source verification. Its enforcement belongs in the witness
-and regression controls; no duplicate instruction was added.
+and regression controls. Its existing budget paragraph now also requires complete
+inventory coverage within the job deadline, with explicit partition identities.
 
 ## Prune ledger
 

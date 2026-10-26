@@ -81,6 +81,14 @@ Use `--phase negative` or `--phase positive` only for an explicit partition.
 The receipt declares `phases_requested` and covers only its requested pins and
 phases. A single-phase receipt never establishes complete qualification; both
 phases must pass for every engine. Omitting `--phase` retains both phases.
+Godot 4.3 Firefox CI also selects `--suite-part 1` or `--suite-part 2` within
+each phase to fit the same 30-minute job cap. Parts alternate the sorted suite
+inventory and repeat the ownership-control suite in both parts. Their union
+covers all 67 suites and 426 cases; only the four control cases overlap.
+Every selected case still runs twice, with exact native/Web comparison.
+Receipts declare `suite_part_requested` and the exact `suites_requested`
+inventory. Both parts and both phases must pass for full qualification.
+Omitting `--suite-part` keeps the complete inventory.
 Receipts include the pin-manifest hash and executable source hashes. A fresh run removes
 its previous receipt first, so an interrupted or failed attempt cannot preserve
 an old success. The historical baseline before these probes was
