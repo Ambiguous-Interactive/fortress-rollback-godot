@@ -6,7 +6,7 @@ const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["round_trip", "failures", "ownership", "validation", "misuse", "wide_writes"])
+	return PackedStringArray(["round_trip", "failures", "ownership", "validation", "misuse", "wide_writes", "reusable_reads"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -23,6 +23,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_misuse(context)
 		"wide_writes":
 			_wide_writes(context)
+		"reusable_reads":
+			_reusable_reads(context)
 	context.finish()
 
 
@@ -197,3 +199,54 @@ func _misuse(context: RefCounted) -> void:
 	var final_load: RefCounted = history.begin_load(3)
 	final_load.reader.read_bytes(1)
 	history.finish_load(final_load.reader, true)
+
+
+# Value: protects=reusable read ownership and errors; fails_when=copy changes source, cursor or rejected destination; why_new=read_bytes allocates wrappers; seam=none
+func _reusable_reads(context: RefCounted) -> void:
+	var history: RefCounted = History.new()
+	context.equal(history.configure(3, 4096, 2, 2, 65536, true), History.Code.OK, "reusable reader history")
+	for width: int in [0, 1, 7, 64, 4096]:
+		var payload: PackedByteArray = PackedByteArray()
+		payload.resize(width)
+		for index: int in width:
+			payload[index] = (index * 31 + 7) & 255
+		var saved: RefCounted = history.begin_save(0)
+		context.equal(saved.writer.write_bytes(payload), History.Code.OK, "write reusable fixture")
+		context.equal(history.finish_save(saved.writer, true, _checksum()), History.Code.OK, "publish reusable fixture")
+		var loaded: RefCounted = history.begin_load(0)
+		context.equal(loaded.reader.has_method("read_into"), true, "reader provides reusable copy")
+		if not loaded.reader.has_method("read_into"):
+			history.terminate_views()
+			return
+		var prefix: int = width / 2
+		context.bytes_equal(loaded.reader.read_bytes(prefix).bytes, payload.slice(0, prefix), 0, "owned prefix shares cursor")
+		var destination: PackedByteArray = PackedByteArray()
+		destination.resize(width - prefix)
+		destination.fill(255)
+		context.equal(loaded.reader.read_into(destination), History.Code.OK, "copy remaining bytes into reusable buffer")
+		context.bytes_equal(destination, payload.slice(prefix), 0, "exact reusable suffix")
+		context.equal(loaded.reader.position().value, width, "shared cursor advances once")
+		context.equal(loaded.reader.is_complete(), true, "reusable copy completes the snapshot")
+		context.equal(loaded.reader.read_into(PackedByteArray()), History.Code.OK, "empty copy at end succeeds")
+		if not destination.is_empty():
+			destination[0] ^= 255
+		context.equal(history.finish_load(loaded.reader, true), History.Code.OK, "ordinary completion accepts reusable read")
+		context.bytes_equal(history.inspect(0).bytes, payload, 0, "destination does not alias retained snapshot")
+		var sentinel: PackedByteArray = PackedByteArray([91])
+		context.equal(loaded.reader.read_into(sentinel), History.Code.EXPIRED_VIEW, "completed reusable view expires")
+		context.bytes_equal(sentinel, PackedByteArray([91]), 0, "expired copy preserves destination")
+		loaded = history.begin_load(0)
+		var too_wide: PackedByteArray = PackedByteArray()
+		too_wide.resize(width + 1)
+		too_wide.fill(91)
+		var preserved: PackedByteArray = too_wide.duplicate()
+		context.equal(loaded.reader.read_into(too_wide), History.Code.UNDERFLOW, "oversized reusable copy refuses")
+		context.bytes_equal(too_wide, preserved, 0, "underflow preserves entire destination")
+		context.equal(loaded.reader.position().value, 0, "underflow preserves cursor")
+		context.equal(loaded.reader.read_into(PackedByteArray()), History.Code.UNDERFLOW, "reusable error is sticky")
+		context.equal(loaded.reader.read_bytes(0).code, History.Code.UNDERFLOW, "sticky error crosses APIs")
+		context.equal(history.finish_load(loaded.reader, true), History.Code.UNDERFLOW, "reusable underflow fails completion")
+		loaded = history.begin_load(0)
+		history.terminate_views()
+		context.equal(loaded.reader.read_into(sentinel), History.Code.EXPIRED_VIEW, "termination expires reusable reader")
+		context.bytes_equal(sentinel, PackedByteArray([91]), 0, "termination preserves caller bytes")

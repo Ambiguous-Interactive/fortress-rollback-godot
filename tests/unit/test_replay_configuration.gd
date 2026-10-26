@@ -13,12 +13,31 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Viewer = preload("res://examples/online/replay_viewer.gd")
 
 
+class SimilarConfig:
+	extends RefCounted
+	var getter_calls: int = 0
+	var player_count: int:
+		get:
+			getter_calls += 1
+			return 2
+	var input_width: int = 1
+	var neutral_input: PackedByteArray = PackedByteArray([0])
+	var diagnostic_seed: String = "1701"
+	var diagnostic_version: String = Viewer.GAME_VERSION
+
+
+class DerivedConfig:
+	extends Config
+
+
 func cases() -> PackedStringArray:
-	return PackedStringArray(["malformed_storage", "malformed_metadata", "valid_recording_ownership"])
+	return PackedStringArray(["malformed_storage", "malformed_metadata", "valid_recording_ownership", "invalid_config_type"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "valid_recording_ownership":
+	if name == "invalid_config_type":
+		_invalid_config_type(context)
+	elif name == "valid_recording_ownership":
 		_ownership(context)
 	else:
 		var fields: PackedStringArray = PackedStringArray(["_inputs", "_statuses", "_flags", "_checksums", "_digests", "_neutral"])
@@ -34,6 +53,46 @@ func run_case(name: String, context: RefCounted) -> void:
 						continue
 					_rejection(context, expert, field, length_delta)
 	context.finish()
+
+
+# Value: protects=wrong configuration objects return incompatibility without replacing playback;
+# fails_when=matching property names substitute for FortressConfig or absent properties raise; why_new=shape tests mutate recordings only; seam=none
+func _invalid_config_type(context: RefCounted) -> void:
+	var recording: Replay = Fixture.recording(4)
+	var similar: RefCounted = SimilarConfig.new()
+	context.equal(recording.matches_config(similar), false, "matching property names do not establish a session configuration")
+	context.equal(similar.getter_calls, 0, "foreign property getters cannot run during compatibility validation")
+	for expert: bool in [false, true]:
+		var player: Player = Player.new()
+		var game: Simulation = Simulation.new()
+		context.equal(_configure(player, recording, game, expert), Types.Code.OK, "real config control configures")
+		if expert:
+			Validation.new()._advance(context, player, game)
+		else:
+			context.equal(player.step(), Types.Code.OK, "real config control advances")
+		for foreign: RefCounted in [similar, RefCounted.new()]:
+			var code: int = player.configure_expert(recording, Simulation.SNAPSHOT_BYTES, foreign) if expert else player.configure(
+				recording, Simulation.new(), Simulation.SNAPSHOT_BYTES, 0, 0, foreign
+			)
+			context.equal(code, Types.Code.INCOMPATIBLE_RECORDING, "wrong config type refuses both public playback modes")
+		context.equal(recording.matches_config(RefCounted.new()), false, "an unrelated object refuses without property access")
+		context.equal(player.current_frame(), 1, "refused config preserves selected frame")
+		context.equal(player.checked_checksum_count(), 1, "refused config preserves verified coverage")
+		if expert:
+			Validation.new()._advance(context, player, game)
+		else:
+			context.equal(player.step(), Types.Code.OK, "prior game still receives ordered callbacks")
+		context.equal(player.current_frame(), 2, "prior recording continues after refusal")
+		context.state(game.frame, game.canonical_bytes())
+	context.equal(similar.getter_calls, 0, "refused configurations cannot execute foreign getters or replace playback reentrantly")
+	var derived: Config = DerivedConfig.new()
+	derived.diagnostic_seed = "1701"
+	derived.diagnostic_version = Viewer.GAME_VERSION
+	context.equal(recording.matches_config(derived), true, "FortressConfig subclasses remain compatible")
+	context.equal(Replay.new().matches_config(derived), false, "uninitialized recording cannot match a config")
+	var invalid: Replay = recording.owned_copy()
+	invalid._text.clear()
+	context.equal(invalid.matches_config(derived), false, "malformed recording metadata refuses before indexing")
 
 
 func _rejection(context: RefCounted, expert: bool, field: String, length_delta: int) -> void:

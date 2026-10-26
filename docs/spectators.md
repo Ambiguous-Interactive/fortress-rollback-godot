@@ -28,6 +28,8 @@ After the last frame, press N once more to report completion.
 Press L to simulate a known loss of the viewer's host connection. Buffered viewer
 frames stop immediately, including while paused, and the last displayed state remains.
 The host keeps playing. R starts a fresh game after completion or connection loss.
+Restart retires the prior host and viewer, including retained driver and stream handles.
+An active callback or expert request batch must finish before restart can succeed.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.
 

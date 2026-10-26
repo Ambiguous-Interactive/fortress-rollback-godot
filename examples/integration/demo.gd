@@ -23,6 +23,7 @@ var lag_ticks: int = 3
 var replay_player: ReplayPlayer
 var replay_game: Game
 var replay_frames: int = 0
+var _stopping_replay: ReplayPlayer
 var _remote_sample_frame: int = -1
 var _pending: Array[RemoteInput] = []
 
@@ -66,25 +67,36 @@ class RemoteInput:
 func start(delay_ticks: int = 3) -> int:
 	if delay_ticks not in [0, 3, 12]:
 		return Types.Code.INVALID_CONFIGURATION
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	var next_effects: DemoEffects = DemoEffects.new()
+	var next_loop: Loop = Loop.new(0, next_effects)
+	next_loop.game = DemoGame.new()
+	var code: int = next_loop.start()
+	if code != Types.Code.OK:
+		return code
+	if loop != null:
+		loop.session.terminate()
+	stop_replay()
 	lag_ticks = delay_ticks
 	tick_count = 0
 	stall_count = 0
 	_remote_sample_frame = -1
 	_pending.clear()
-	effects = DemoEffects.new()
-	loop = Loop.new(0, effects)
-	loop.game = DemoGame.new()
-	return loop.start()
+	effects = next_effects
+	loop = next_loop
+	return Types.Code.OK
 
 
 ## Clears snapshots, samples, pending deliveries and presentation history.
 func reset() -> int:
-	stop_replay()
 	return start(lag_ticks)
 
 
 ## Watches the confirmed frames recorded so far from a fresh game, checking each recorded checksum.
 func start_replay() -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
 	if loop == null:
 		return Types.Code.INVALID_CONFIGURATION
 	var player: ReplayPlayer = ReplayPlayer.new()
@@ -92,6 +104,7 @@ func start_replay() -> int:
 	var replay: RefCounted = loop.session.replay()
 	var code: int = player.configure(replay, game, Game.SNAPSHOT_BYTES)
 	if code == Types.Code.OK:
+		stop_replay()
 		replay_player = player
 		replay_game = game
 		replay_frames = replay.frame_count()
@@ -99,9 +112,26 @@ func start_replay() -> int:
 
 
 func stop_replay() -> void:
+	if replay_player != null:
+		replay_player.terminate()
+		if replay_player._is_stepping:
+			_stopping_replay = replay_player
 	replay_player = null
 	replay_game = null
 	replay_frames = 0
+
+
+## Stopping playback clears the public mode immediately, but an executing callback still owns its match.
+func _mutation_code() -> int:
+	if _stopping_replay != null:
+		if _stopping_replay._is_stepping:
+			return Types.Code.BUSY
+		_stopping_replay = null
+	if loop != null and loop.session._mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if replay_player != null and (replay_player._is_stepping or replay_player._batch != null):
+		return Types.Code.BUSY
+	return Types.Code.OK
 
 
 ## OK plays one recorded frame; FRAME_EXHAUSTED holds the last frame; DESYNC means the rules differ.
