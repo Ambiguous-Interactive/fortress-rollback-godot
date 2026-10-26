@@ -170,8 +170,10 @@ Delivery accounted for about 89 percent of the original case. Each eight-player
 confirmation fold made 49 complete owned endpoint snapshots to read 49 integers.
 The scalar read preserves each observation's timing and avoids copying retained
 packet/input history. Public diagnostic snapshots keep their existing ownership.
-The scalar variant passes the original four-suite batch with unchanged 180-second
-page and 240-second process limits. No assertion, case or repeat was removed.
+The scalar-only source-bound batch still lacked sufficient margin under the
+180-second page deadline. The final implementation also reads running and failure
+state without copying endpoint histories. Acceptance keeps the original 180-second
+page and 240-second process limits; no assertion, case or repeat is removed.
 
 These are workload measurements, not live-game frame-rate or transport claims.
 Run the complete source-bound acceptance with

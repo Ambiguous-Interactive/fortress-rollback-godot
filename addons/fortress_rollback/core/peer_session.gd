@@ -859,7 +859,7 @@ func _running() -> bool:
 		if _is_gone(index):
 			# A departed peer no longer holds the match.
 			continue
-		if _peers[_ids[index].hex_encode()].status().state != "running":
+		if not _endpoint(index)._is_running():
 			return false
 	return true
 
@@ -944,8 +944,7 @@ func _check_failure() -> void:
 		if _is_gone(index):
 			# A departed peer is no longer a failure of the match.
 			continue
-		var observed: Dictionary = _endpoint(index).status()
-		if observed.state in ["terminated", "failed"] or not observed.handshake.mismatch.is_empty():
+		if _endpoint(index)._has_failed():
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 		_remember_diagnostic()
