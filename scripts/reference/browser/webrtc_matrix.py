@@ -11,10 +11,11 @@ PAIRS = {'chromium': ('chromium', 'chromium'), 'firefox': ('firefox', 'firefox')
 
 
 def validate_identity(result, pair, pins):
-    preferences = {'webgl.force-enabled': True, 'webgl.disabled': False} if 'firefox' in pair else None
+    preferences = {'webgl.force-enabled': True, 'webgl.disabled': False, 'toolkit.shutdown.fastShutdownStage': 0} if 'firefox' in pair else None
     expected = [{'name': name, 'version': pins['browser'][name + '_version']} for name in pair]
     if (not isinstance(result, dict) or result.get('browsers') != expected
             or result.get('firefox_preferences') != preferences
+            or (preferences is not None and any(type(result['firefox_preferences'][key]) is not type(value) for key, value in preferences.items()))
             or result.get('browser') != '/'.join(pair) or result.get('version') != expected[0]['version']):
         raise ValueError('browser process identities differ from the selected pinned pair')
     for record in result.get('records', []):

@@ -21,6 +21,9 @@
 | Corrupt rollback can stop a peer before later physical key changes arrive. | CI stopped at frame 38 with the second direction absent; local runs happened to accept it. | Await both second physical key changes while originals still bound advancement, then release; retain movement and desync assertions. |
 | A provenance rejection needs both an input name and process-lifetime evidence. | Named diagnostics found the Firefox installation lock; an updater page reproduced creation, and pinned Juggler source waits for startup idle or window closure. | Close owned contexts before parent shutdown, retain every guard and record exit traces; original CI forced termination remains an inference in issue 226. |
 | A shared diagnostic variable can change unrelated subprocess output. | Playwright DEBUG also made xdotool emit command lines; the strict JSON parser rejected the added data. | Remove only DEBUG and DEBUG_FILE from the copied xdotool environment, preserve parent tracing and reject extra JSON output. |
+| Normal exit and context-first cleanup do not establish final destructor execution. | Merged main retained the updater lock after exit zero; the real late-mutex control fails at fast shutdown and preserves all runtime hashes at stage zero. | Request full shutdown in both Firefox launchers and retain a paired real-browser regression under the original inventory guard. |
+| Automation can override the setting an experiment intends to compare. | Marionette replaced both profile-only settings with stage three. | Read the actual setting after initialization and during the tested callback; discard misconfigured comparisons as proof. |
+| Parent exit does not establish completion of its owned process group. | A real child ignoring SIGTERM survived the first cleanup implementation after its parent exited. | Check descendants before final inventories and test cleanup when the parent exits before its children. |
 | Clean playback does not prove clean continued transport service. | Existing clean-tail tests stopped before the next relay poll. | Extend the existing data-driven suite through repeated service, late ingress and SDK loss. |
 
 ## Actions taken
@@ -50,7 +53,9 @@ Its strict controls also cover stale game lifetimes and terminal room cleanup.
 Session delivery also requires complete source-width, harness, ownership-browser and CI gates.
 The local progress log records exact commands, receipts and final outcomes.
 Live authenticated spectator control deployment and broader source parity remain under issues 131 and 47.
-Issue 226 records the original CI exit-cause uncertainty; clean shutdown is checked without excluding runtime files.
+The [shutdown experiment](../../docs/experiments/firefox-shutdown.md) supersedes the
+forced-termination hypothesis with paired real-mutex evidence. The exact original
+asynchronous trigger remains inferred; runtime files are never excluded.
 
 ## Outcome
 

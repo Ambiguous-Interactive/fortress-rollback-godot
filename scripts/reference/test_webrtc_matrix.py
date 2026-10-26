@@ -16,13 +16,23 @@ class BrowserMatrixIdentity(unittest.TestCase):
     def test_selected_pair_requires_both_pinned_processes_and_each_peer_assignment(self):
         pins = load_manifest()
         for pair in PAIRS.values():
-            preferences = {'webgl.force-enabled': True, 'webgl.disabled': False} if 'firefox' in pair else None
+            preferences = {'webgl.force-enabled': True, 'webgl.disabled': False,
+                           'toolkit.shutdown.fastShutdownStage': 0} if 'firefox' in pair else None
             original = {'browser': '/'.join(pair), 'firefox_preferences': preferences, 'version': pins['browser'][pair[0] + '_version'],
                         'browsers': [{'name': name, 'version': pins['browser'][name + '_version']} for name in pair],
                         'records': [{'peers': [{'browser': pair[index % 2], 'display': {'x': index * 80, 'y': 0, 'width': 1280,
                             'height': 720, 'screen_width': 1280, 'screen_height': 1024} if pair[index % 2] == 'firefox' else None}
                             for index in range(count)]} for count in (2, 4, 8)]}
             validate_identity(original, pair, pins)
+            if preferences:
+                for replacement in (None, False, True, 0.0, 1, 3, '0'):
+                    changed = copy.deepcopy(original)
+                    if replacement is None:
+                        del changed['firefox_preferences']['toolkit.shutdown.fastShutdownStage']
+                    else:
+                        changed['firefox_preferences']['toolkit.shutdown.fastShutdownStage'] = replacement
+                    with self.subTest(pair=pair, shutdown=replacement), self.assertRaisesRegex(ValueError, 'process identities'):
+                        validate_identity(changed, pair, pins)
             for field in ('browser', 'version', 'browsers', *(['firefox_preferences'] if preferences else [])):
                 changed = copy.deepcopy(original)
                 changed[field] = None

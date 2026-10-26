@@ -182,7 +182,8 @@ async function failedRoom(hung = false, pair = ['chromium', 'chromium']) {
   assert.deepEqual(launches.map(value => value.engine), pair);
   for (const value of launches) {
     assert.equal(value.options.headless, value.engine === 'chromium');
-    if (value.engine === 'firefox') assert.equal(value.options.firefoxUserPrefs['webgl.force-enabled'], true);
+    if (value.engine === 'firefox') assert.deepEqual(JSON.parse(JSON.stringify(value.options.firefoxUserPrefs)),
+      { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 });
   }
   assert.deepEqual(failure.browsers, pair.map(name => ({ name, version: name === 'chromium' ? '141.0.7390.37' : '142.0.1' })));
   assert.equal(failure.failed_rooms.length, 1);

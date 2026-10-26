@@ -5,7 +5,7 @@ const net = require('node:net');
 const path = require('node:path');
 const { waitGameplay, waitDefaultSetup, boundedRoom } = require('./webrtc_watchdog.cjs');
 const { placeFirefox } = require('./webrtc_display.cjs');
-const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false };
+const FIREFOX_PREFS = { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 };
 
 async function closeDepartingRtc(pages, now = () => performance.now()) {
   await Promise.all(pages.map(page => page.waitForFunction(() => document.body.dataset.fortressDropReady === 'true', null, { timeout: 30000 })));

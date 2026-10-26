@@ -200,7 +200,7 @@ print(commands.get(sys.argv[1], ''))
 
 
 PINS = {'browser': {'chromium_version': '141.0.7390.37', 'firefox_version': '142.0.1'}}
-PREFERENCES = {'webgl.force-enabled': True, 'webgl.disabled': False}
+PREFERENCES = {'webgl.force-enabled': True, 'webgl.disabled': False, 'toolkit.shutdown.fastShutdownStage': 0}
 
 
 def observed(name):
@@ -230,6 +230,17 @@ class OwnershipBrowserIdentityTests(unittest.TestCase):
                 changed[field] = replacement
                 with self.subTest(field=field, replacement=replacement), self.assertRaises(ValueError):
                     probes.validate_browser(changed, None, 'firefox', PINS)
+
+    # Value: late updater locks require full shutdown; missing, coerced or fast settings cannot qualify Firefox.
+    def test_full_shutdown_preference_requires_exact_integer_zero(self):
+        for replacement in (None, False, True, 0.0, 1, 3, '0'):
+            changed = observed('firefox')
+            if replacement is None:
+                del changed['firefox_preferences']['toolkit.shutdown.fastShutdownStage']
+            else:
+                changed['firefox_preferences']['toolkit.shutdown.fastShutdownStage'] = replacement
+            with self.subTest(replacement=replacement), self.assertRaisesRegex(ValueError, 'preferences'):
+                probes.validate_browser(changed, None, 'firefox', PINS)
 
 
 if __name__ == '__main__':
