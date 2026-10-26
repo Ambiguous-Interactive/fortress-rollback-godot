@@ -96,8 +96,10 @@ jobs:
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
           - {version: "4.3", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
           - {version: "4.3", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
-          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: all, suffix: " negative", part_suffix: ""}
-          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: all, suffix: " positive", part_suffix: ""}
+          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
+          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
+          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
+          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
