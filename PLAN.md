@@ -45,6 +45,7 @@ Local development contracts and evidence entry points:
 - [Actual server-process restart and old-room packet rejection](docs/online-example.md#verification).
 - [Source-family inventory and remaining semantic audit](docs/reference/INVENTORY.md).
 - [Measured packed-buffer and snapshot ownership](docs/experiments/buffer-ownership.md).
+- [Firefox late updater-lock regression and full shutdown](docs/experiments/firefox-shutdown.md).
 - [Measured integer and fixed-width encoding contracts](docs/experiments/integer-encoding.md).
 - [Measured session hot path, snapshot copy and codec cost](docs/experiments/session-hot-path-performance.md).
 - [Measured Reference Baseline job time and the dominant browser work](docs/reference/jobs.md).

@@ -28,6 +28,8 @@ do not supersede CI failures for the same source candidate. A failed rerun
 must never leave a stale success receipt beside logs from its replacement.
 Finalize fixtures before declaring a verification snapshot frozen. An intervening
 edit restarts affected fresh-process and source-inventory checks.
+Read actual runtime settings after automation initializes; requested profile
+values can be overridden before the behavior under test executes.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
 need bounded readiness polling rather than one successful configuration read.
 
@@ -43,6 +45,8 @@ Host-wide locks must coordinate independent checkout roots by default. Exercise 
 cross-root contenders and keep the lock inode through pruning, even when idle;
 unlinking an idle lock can race with acquisition. Validate shared directory ownership
 and permissions before opening its lock. Bound child readiness reads as well as exit waits.
+Verify owned descendants have exited before accepting final file inventories;
+parent exit alone does not establish process-group completion.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent

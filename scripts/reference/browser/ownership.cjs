@@ -24,7 +24,7 @@ const path = require('node:path');
   if (!executable) throw new Error('ownership browser needs a verified executable');
   const engines = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const { placeFirefox } = require('./webrtc_display.cjs');
-  const preferences = { 'webgl.force-enabled': true, 'webgl.disabled': false };
+  const preferences = { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 };
   const errors = [];
   const server = http.createServer((request, response) => {
     const relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);

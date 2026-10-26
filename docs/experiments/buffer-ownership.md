@@ -33,7 +33,8 @@ isolated temporary projects, uses both pinned editors and release Web templates,
 and drives the same seed-1701 scenarios twice in-process, natively and in
 the selected Chromium or Firefox browser. Chromium remains the default. Firefox
 requires Ubuntu 24.04, Xvfb and xdotool, and runs a visible owned window with
-`webgl.force-enabled=true` and `webgl.disabled=false`. It uses the existing
+`webgl.force-enabled=true`, `webgl.disabled=false` and
+`toolkit.shutdown.fastShutdownStage=0`. It uses the existing
 digest-pinned Firefox archive in an installation separate from the transport
 witness. The browser name and exact version must match the selected pin.
 The runner rejects process failures, engine errors, incomplete inventories,
@@ -92,9 +93,11 @@ Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
 inventory. Both parts and both phases must pass for full qualification.
 Omitting `--suite-part` keeps the complete inventory.
-Owned browser contexts close before their parent process. This releases Firefox's
-startup-window shutdown wait before process exit; runtime hashes still reject
-remaining installation changes. CI retains the last Firefox process lifecycle
+Owned browser contexts close before their parent process. Full Firefox shutdown
+also runs the destructor that removes late updater locks; exit code zero alone
+does not prove cleanup. The [paired shutdown control](firefox-shutdown.md)
+exercises late lock acquisition with the original inventory guard.
+Runtime hashes still reject remaining installation changes. CI retains the last Firefox process lifecycle
 trace in `ownership-firefox-process.log` for exit-code and signal diagnosis.
 Receipts include the pin-manifest hash and executable source hashes. A fresh run removes
 its previous receipt first, so an interrupted or failed attempt cannot preserve

@@ -372,8 +372,9 @@ def validate_browser(browser, identity, selected='chromium', pins=None):
     if pins is not None and browser['version'] != pins['browser'][selected + '_version']:
         raise ValueError('browser version differs from selected pin')
     if selected == 'firefox':
-        if not same_json(browser['firefox_preferences'], {'webgl.force-enabled': True, 'webgl.disabled': False}):
-            raise ValueError('Firefox WebGL preferences differ from qualification')
+        if not same_json(browser['firefox_preferences'], {'webgl.force-enabled': True, 'webgl.disabled': False,
+                                                        'toolkit.shutdown.fastShutdownStage': 0}):
+            raise ValueError('Firefox preferences differ from qualification')
         display = browser['display']
         if (not isinstance(display, dict) or set(display) != {'x', 'y', 'width', 'height', 'screen_width', 'screen_height'}
                 or any(type(value) is not int for value in display.values()) or display['x'] != 0 or display['y'] != 0

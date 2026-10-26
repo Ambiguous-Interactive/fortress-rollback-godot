@@ -133,6 +133,13 @@ jobs:
           else
             python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
           fi
+      - name: Verify late Firefox updater lock cleanup
+        if: matrix.browser == 'firefox' && matrix.version == '4.3' && matrix.phase == 'positive' && matrix.suite_part == '1'
+        run: |
+          python3 scripts/reference/firefox_shutdown_control.py \
+            --firefox .cache/reference/ownership-firefox/x86_64/firefox/firefox \
+            --work-dir .cache/scratch/firefox-shutdown-control \
+            --output .cache/reference/results/firefox-shutdown-control
       - uses: actions/upload-artifact@v6
         if: always()
         with:

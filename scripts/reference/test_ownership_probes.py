@@ -581,7 +581,8 @@ class OwnershipRejectionTests(unittest.TestCase):
                             run['assertions'] += 1
                     browser = {'browser': selected.title(), 'version': 'fixture', 'result': value, 'errors': []}
                     if selected == 'firefox':
-                        browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False},
+                        browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False,
+                                                          'toolkit.shutdown.fastShutdownStage': 0},
                                        display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
                     if runtime_fault and len(browser_calls) == 1:
                         target = {'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
