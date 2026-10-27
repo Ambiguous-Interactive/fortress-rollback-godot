@@ -25,6 +25,8 @@ The host continues playing during inspection. E stops the host at its current
 frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
 After the last frame, press N once more to report completion.
+The viewer shows `BUFFERING` at startup while it waits for enough confirmed input to preserve
+its delay. A paused final tail shows `FINAL TAIL PAUSED` and the resume/step controls.
 Press L to simulate a known loss of the viewer's host connection. Buffered viewer
 frames stop immediately, including while paused, and the last displayed state remains.
 The host keeps playing. R starts a fresh game after completion or connection loss.
@@ -36,7 +38,7 @@ This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.
 
 A long viewer pause can exhaust retained host history. The viewer then stops
-with `HISTORY_UNAVAILABLE`; the host keeps playing. The example encodes and receives spectator byte packets
+with `HISTORY UNAVAILABLE` and the R restart control; the host keeps playing. The example encodes and receives spectator byte packets
 in the same process, with an injected ten-second host deadline. It requires no server,
 SDK or native extension. The example negotiates the envelope version before its
 first row and sends keepalives on ticks without accepted rows,

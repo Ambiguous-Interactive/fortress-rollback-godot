@@ -61,10 +61,16 @@ func _update_label() -> void:
 		_label.text = "Could not start: code %d" % _code
 		return
 	var state: String = "PAUSED" if demo.is_paused else "WATCHING"
+	if not demo.is_paused and demo.game.frame == 0 and demo.viewer.recommended_steps() == 0:
+		state = "BUFFERING | waiting for confirmed input"
 	if demo.is_finishing:
-		state = "DRAINING FINAL TAIL" if demo.is_host_finished else "CONFIRMING FINAL INPUTS"
+		state = "CONFIRMING FINAL INPUTS"
+		if demo.is_host_finished:
+			state = "FINAL TAIL PAUSED | P: resume or N: step" if demo.is_paused else "DRAINING FINAL TAIL"
 	if demo.viewer.status().lifecycle == Types.Lifecycle.TERMINATED:
 		state = "COMPLETE | R: start again" if demo.viewer_code == Types.Code.TERMINATED else "STOPPED: code %d | R: start again" % demo.viewer_code
+		if demo.viewer_code == Types.Code.HISTORY_UNAVAILABLE:
+			state = "HISTORY UNAVAILABLE | R: start again"
 	if demo.is_host_connection_lost:
 		state = "HOST CONNECTION LOST | R: start again"
 	_label.text = (
