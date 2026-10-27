@@ -58,7 +58,23 @@ One room launches one exported page per peer, completes a real handshake, submit
 and the page count therefore set the browser time; the export and the engine
 bootstrap are already restored from the cache and are not the dominant part.
 
-## Scope
+## Ownership job deadline
+
+The ownership matrix has a 45-minute job deadline. This includes tool and operating
+system preparation, native execution, browser execution and teardown. Case watchdogs,
+partition inventories, repetitions and negative controls retain their own bounds.
+
+Main run [40562144174](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/40562144174)
+cancelled its Godot 4.3 Firefox positive part 1 job at the former 30-minute limit.
+The job started at 18:40:27 UTC on 2026-10-27; verification could only start at
+18:51:28. The same verification step passed in 20m14s in candidate run
+[40556289538](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/40556289538),
+whose browser/OS preparation took 31 seconds. Combining the observed main startup
+with the passing verification duration needs 31m15s before final cleanup.
+The wider job budget preserves the full workload and permits that measured cold
+preparation without cancelling a valid verification run.
+
+## Baseline scope
 
 This table records the measured baseline and names the dominant browser work.
 It does not shorten a browser job. The reduction of the room and page work

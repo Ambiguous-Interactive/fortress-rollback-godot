@@ -36,7 +36,19 @@ truncation expectation with a recoverable-gap contract. No other stale rule was
 identified. Regenerate guidance and run its linters/self-tests before delivery.
 Cache pruning is report-only; this session creates no whole-worktree copies.
 
-## Outcome
+## Postmerge incident
+
+Main job 122393721262 was cancelled at its 30-minute limit after startup consumed
+11m01s. Candidate job 122373118271 had passed the same verification in 20m14s,
+with only 31 seconds of browser/OS setup. The combined observed phases need
+31m15s before cleanup; a green warm candidate did not qualify that cold budget.
+The follow-up raises the outer ownership job limit to 45 minutes, preserving
+every inner watchdog, matrix partition, case, repeat and assertion. The testing
+infrastructure guidance now includes cold setup in the outer job budget.
+This postmerge failure requires a separate repair PR; the session PR is already
+merged. Main completion remains unproven until the repair's merge CI passes.
+
+## Session outcome
 
 State: `findings-acted`.
 
