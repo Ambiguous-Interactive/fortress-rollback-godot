@@ -85,6 +85,7 @@ def replay_download(histories):
                     + hashlib.sha256(bytes([histories[0][frame], histories[1][frame], 1, 1])).digest()[:16] for frame in range(frames))
     raw += bytes.fromhex(game_checksum(states[frames]))
     return {'filename': 'fortress-online.frrp', 'hex': raw.hex(), 'disabled_peer': True,
+            'command_boundaries': {'accepted': 33792, 'rejected': 33793, 'binary_limit': 16384},
             'before': {'state': 'failed', 'frame': frames, 'restores': 1}, 'after': {'state': 'failed', 'frame': frames, 'restores': 1},
             'peers': [{'slot': slot, 'inputs': history} for slot, history in enumerate(histories)],
             'playback': {'decode_code': 0, 'code': 16, 'frames': frames, 'failure_frame': -1, 'canonical': states[frames]}}
@@ -361,6 +362,11 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                        lambda v: v.update(hex=v['hex'] + '00'),
                        lambda v: v.update(hex=v['hex'][:-2] + 'ff'),
                        lambda v: v.update(disabled_peer=False),
+                       lambda v: v.pop('command_boundaries'),
+                       lambda v: v['command_boundaries'].update(accepted=16384),
+                       lambda v: v['command_boundaries'].update(rejected=33792),
+                       lambda v: v['command_boundaries'].update(binary_limit=16385),
+                       lambda v: v['command_boundaries'].update(binary_limit=16384.0),
                        lambda v: v['peers'][0]['inputs'].__setitem__(4, 15),
                        lambda v: v['playback'].update(canonical='00' * 136),
                        lambda v: v['playback'].update(decode_code=False),

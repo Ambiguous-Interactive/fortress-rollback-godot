@@ -38,6 +38,7 @@ pages do not qualify an inventory that exceeds the job deadline. Split long
 inventories into declared partitions while retaining cases, assertions and repeats.
 Include cold tool/OS preparation in the outer job budget; a warm setup duration cannot reserve a valid verification window.
 Localize stalled package acquisition before changing budgets again; preserve repository signature and checksum authentication when selecting mirror alternatives.
+Size harness command envelopes after encoding and serialization; a binary payload cap does not include hex expansion or JSON overhead.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
 Shared-host runs keep one worker and known slow-case isolation; serialization must

@@ -305,9 +305,42 @@ async function collectReplay(pages, command, diagnostic) {
   if (bytes.length > 16384) throw new Error('online witness replay exceeds its short-match byte bound');
   await download.saveAs(diagnostic.replace('-events.log', '-replay.frrp'));
   await command(page, 'validate_replay', { hex: bytes.toString('hex') });
+  // Value: real exported commands accept hex/JSON overhead and reject excess; earlier short replays missed the envelope limit; seam=none.
+  const playback = await page.evaluate(() => window.fortressOnline.replay_playback);
+  const commandLimit = 2 * 16384 + 1024;
+  const boundary = await page.evaluate(({ hex, limit }) => {
+    const id = window.fortressOnlineCommand.id + 1;
+    const value = { hex, padding: '', kind: 'validate_replay', id };
+    value.padding = ' '.repeat(limit - JSON.stringify(value).length);
+    return value;
+  }, { hex: bytes.toString('hex'), limit: commandLimit });
+  await command(page, 'validate_replay', { hex: boundary.hex, padding: boundary.padding });
+  const accepted = await page.evaluate(() => ({ length: JSON.stringify(window.fortressOnlineCommand).length,
+    playback: window.fortressOnline.replay_playback, id: window.fortressOnline.command_id }));
+  if (accepted.length !== commandLimit || JSON.stringify(accepted.playback) !== JSON.stringify(playback))
+    throw new Error('maximum command envelope did not preserve actual replay playback');
+  await page.evaluate(limit => {
+    window.fortressOnlineEnvelopeObservation = window.fortressOnline;
+    const value = window.fortressOnlineCommand;
+    value.id += 1;
+    value.padding = '';
+    value.padding = ' '.repeat(limit + 1 - JSON.stringify(value).length);
+  }, commandLimit);
+  await page.waitForFunction(() => window.fortressOnline !== window.fortressOnlineEnvelopeObservation, null, { timeout: 10000 });
+  const rejected = await page.evaluate(() => ({ length: JSON.stringify(window.fortressOnlineCommand).length,
+    id: window.fortressOnline.command_id }));
+  if (rejected.length !== commandLimit + 1 || rejected.id !== accepted.id)
+    throw new Error('oversized command envelope was accepted');
+  for (const [length, expected] of [[16384, 1], [16385, 3]]) {
+    await command(page, 'validate_replay', { hex: Buffer.alloc(length).toString('hex') });
+    const result = await page.evaluate(() => window.fortressOnline.replay_playback);
+    if (result.decode_code !== expected) throw new Error(`binary replay boundary ${length}: ${JSON.stringify(result)}`);
+  }
+  await command(page, 'validate_replay', { hex: bytes.toString('hex') });
   const after = await page.evaluate(() => ({ state: window.fortressOnline.state, frame: window.fortressOnline.frame,
     restores: window.fortressOnline.restores }));
-  return { filename: download.suggestedFilename(), hex: bytes.toString('hex'), before, after, disabled_peer: disabledPeer, peers,
+  return { command_boundaries: { accepted: accepted.length, rejected: rejected.length, binary_limit: 16384 },
+    filename: download.suggestedFilename(), hex: bytes.toString('hex'), before, after, disabled_peer: disabledPeer, peers,
     playback: await page.evaluate(() => window.fortressOnline.replay_playback) };
 }
 

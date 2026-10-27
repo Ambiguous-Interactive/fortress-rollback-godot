@@ -117,6 +117,11 @@ def validate_replay_download(value, expected_engine, round_record):
     if (not isinstance(value, dict) or value.get('filename') != 'fortress-online.frrp' or value.get('disabled_peer') is not True
             or not isinstance(value.get('hex'), str) or not re.fullmatch(r'(?:[0-9a-f]{2}){23,16384}', value['hex'])):
         raise ValueError('online replay download missing or unbounded')
+    boundaries = value.get('command_boundaries')
+    expected = {'accepted': 33792, 'rejected': 33793, 'binary_limit': 16384}
+    if (not isinstance(boundaries, dict) or boundaries != expected
+            or any(type(boundaries.get(key)) is not int for key in expected)):
+        raise ValueError('online replay command envelope boundaries missing or invalid')
     before, after = value.get('before'), value.get('after')
     if (not isinstance(before, dict) or not isinstance(after, dict) or before != after or before.get('state') != 'failed'
             or any(type(boundary.get(key)) is not int for boundary in (before, after) for key in ('frame', 'restores'))
