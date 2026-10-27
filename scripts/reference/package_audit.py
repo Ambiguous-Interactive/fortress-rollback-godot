@@ -20,6 +20,8 @@ SMOKE = '''extends SceneTree
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
+const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Handshake = preload("res://addons/fortress_rollback/protocol/handshake.gd")
@@ -51,6 +53,14 @@ class Game:
             if inputs.read(player).bytes.size() != 1:
                 return false
         ticks += 1
+        return true
+
+class SpectatorGame:
+    extends Game
+    func simulate_frame(_frame: int, inputs: RefCounted) -> bool:
+        for player: int in range(2):
+            var input: RefCounted = inputs.read(player)
+            ticks = (ticks * 17 + input.bytes[0] + input.status * 31) % 251
         return true
 
 func _initialize() -> void:
@@ -191,21 +201,95 @@ func _spectator_session() -> bool:
     config.check_distance = 0
     config.max_snapshot_bytes = 1
     config.storage_budget_bytes = 100000
+    config.replay_max_frames = 3
     var session: Spectator = Spectator.new()
     if session.configure(config) != Types.Code.OK:
         return false
-    var game: Game = Game.new()
+    var game: SpectatorGame = SpectatorGame.new()
     var driver: Driver = Driver.new(session, game)
     var empty: Array[Driver.LocalInput] = []
     if driver.step(0, empty).code != Types.Code.PREDICTION_STALL or game.ticks != 0:
         return false
     if session.submit_local_input(0, 0, PackedByteArray([1])).code != Types.Code.UNSUPPORTED:
         return false
-    var row: Array[PackedByteArray] = [PackedByteArray([1]), PackedByteArray([2])]
-    if session.receive_host_frame(0, row).code != Types.Code.OK:
+    var expected: PackedInt32Array = PackedInt32Array([75, 244, 158])
+    for frame: int in range(3):
+        var row: Array[PackedByteArray] = [PackedByteArray([frame + 1]), PackedByteArray([frame + 2])]
+        var statuses: PackedByteArray = PackedByteArray([1, 1 if frame == 0 else 3])
+        if session.receive_host_frame(frame, row, statuses).code != Types.Code.OK:
+            return false
+        var result: Driver.StepResult = driver.step(frame + 1, empty)
+        if result.code != Types.Code.OK or result.frame_after != frame + 1 or game.ticks != expected[frame]:
+            return false
+    if driver.capture_replay_boundary().code != Types.Code.OK:
         return false
-    var result: Driver.StepResult = driver.step(1, empty)
-    return result.code == Types.Code.OK and result.frame_after == 1 and game.ticks == 1
+    if session.finish_host() != Types.Code.OK or driver.step(4, empty).code != Types.Code.TERMINATED:
+        return false
+    var recording: Replay = Replay.new()
+    if recording.decode(driver.replay().to_bytes()) != Replay.DecodeCode.OK or recording.frame_count() != 3:
+        return false
+    if recording.skipped_frames() != 0 or recording.checksum(3).size() != 16:
+        return false
+    if recording.inputs(1).read(1).status != 3 or recording.inputs(2).read(1).bytes != PackedByteArray([4]):
+        return false
+    for expert: bool in [false, true]:
+        var playback: Player = Player.new()
+        var replay_game: SpectatorGame = SpectatorGame.new()
+        var code: int = playback.configure_expert(recording, 1) if expert else playback.configure(recording, replay_game, 1)
+        if code != Types.Code.OK:
+            return false
+        for _work: int in range(4):
+            if expert:
+                if not _replay_requests(playback, replay_game):
+                    return false
+            elif playback.step() != Types.Code.OK:
+                return false
+        if not playback.is_complete() or not playback.is_final_state_validated() or replay_game.ticks != expected[2]:
+            print("installed_spectator_replay: final state not validated")
+            return false
+    var corrupt: PackedByteArray = recording.to_bytes()
+    corrupt[corrupt.size() - 1] ^= 128
+    var broken: Replay = Replay.new()
+    if broken.decode(corrupt) != Replay.DecodeCode.OK:
+        return false
+    for expert: bool in [false, true]:
+        var playback: Player = Player.new()
+        var replay_game: SpectatorGame = SpectatorGame.new()
+        var code: int = playback.configure_expert(broken, 1) if expert else playback.configure(broken, replay_game, 1)
+        if code != Types.Code.OK:
+            return false
+        for _work: int in range(4):
+            if expert:
+                if not _replay_requests(playback, replay_game):
+                    break
+            elif playback.step() != Types.Code.OK:
+                break
+        if playback.failure_code() != Types.Code.DESYNC or playback.failure_frame() != 3 or playback.is_final_state_validated():
+            print("installed_spectator_replay: corrupted final checksum accepted")
+            return false
+    return true
+
+
+func _replay_requests(playback: Player, game: SpectatorGame) -> bool:
+    var opened: Types.Result = playback.begin_advance()
+    if opened.code != Types.Code.READY:
+        return false
+    while true:
+        var request: Types.Request = opened.batch.next_request()
+        if request == null:
+            return true
+        var checksum: PackedByteArray = PackedByteArray()
+        var ok: bool
+        if request.kind == Types.Kind.SAVE:
+            var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+            ok = saved.ok
+            checksum = saved.checksum
+        else:
+            ok = game.simulate_frame(request.frame, request.inputs)
+        if playback.complete_request(request.batch_id, request.request_id, ok, checksum).code != Types.Code.OK:
+            return false
+    return true
+
 
 
 func _deliver(peers: Array[Peer], roster: Array[PackedByteArray], now_us: int) -> bool:
@@ -259,7 +343,7 @@ def main():
               'command': command, 'engine_sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
               'exit': process.returncode, 'marker': MARKER,
               'limits': 'Addon-only candidate: every runtime script loads without SignalFish; one driver tick, 70 two-peer gameplay steps, '
-                        'full checksum/quality bytes, terminal timeout and confirmed-only spectator tick; '
+                        'full checksum/quality bytes, terminal timeout and status-sensitive spectator recording with callback/expert final replay validation; '
                         'not a supported release or browser networking gate.'}
     receipt.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'passed': True, 'files': len(entries), 'results': str(receipt)}))

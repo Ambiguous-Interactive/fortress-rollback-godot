@@ -5,14 +5,19 @@ const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE]
 
+const REPLAY_FILENAME: String = "fortress-spectator.frrp"
+
 var demo: Demo = Demo.new()
 var _code: int = Types.Code.OK
+var _replay_notice: String = ""
 var _label: Label
 
 
 func _ready() -> void:
 	_label = Label.new()
 	_label.position = Vector2(24, 20)
+	_label.size.x = 712
+	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_label)
 	_code = demo.start()
 	_update_label()
@@ -43,8 +48,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		demo.lose_host_connection()
 	elif event.keycode == KEY_E:
 		demo.finish_host()
+	elif event.keycode == KEY_V:
+		_export_replay()
 	elif event.keycode == KEY_R:
 		_code = demo.start()
+		_replay_notice = ""
 	_update_label()
 
 
@@ -75,12 +83,32 @@ func _update_label() -> void:
 		state = "HOST CONNECTION LOST | R: start again"
 	_label.text = (
 		"Delayed spectator | %s\n" % state
-		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host\nL: lose host link | R: restart\n"
+		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host\nL: lose host link | V: save viewed replay | R: restart\n"
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
 		+ "Viewer holds 12 confirmed frames and catches up at most 4 per tick.\n"
 		+ "A long pause can exceed retained history; the host keeps playing.\n"
 		+ "Two local views. Live spectator networking is not connected."
+		+ ("\n" + _replay_notice if not _replay_notice.is_empty() else "")
 	)
+
+
+func _export_replay() -> void:
+	var bytes: PackedByteArray = demo.replay_bytes()
+	if bytes.is_empty():
+		_replay_notice = "No viewed replay is available, or playback is busy."
+		return
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(bytes, REPLAY_FILENAME, "application/octet-stream")
+		_replay_notice = "Replay download requested: " + REPLAY_FILENAME
+	else:
+		var path: String = "user://" + REPLAY_FILENAME
+		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+		if file == null:
+			_replay_notice = "Could not save replay (%d)." % FileAccess.get_open_error()
+			return
+		file.store_buffer(bytes)
+		file.flush()
+		_replay_notice = "Replay saved: " + ProjectSettings.globalize_path(path) if file.get_error() == OK else "Could not write replay."
 
 
 func _board_top() -> float:
