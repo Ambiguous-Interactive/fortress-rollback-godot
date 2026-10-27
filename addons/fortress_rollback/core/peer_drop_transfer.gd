@@ -77,6 +77,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		plan.bound = history.first
 		plan.bytes = PackedByteArray([history.donor, 0, 0])
 		plan.bytes.encode_u16(1, history.chunk_bytes)
+		var published: bool = false
 		for index: int in host._ids.size():
 			if barrier.participants.has(host._ids[index].hex_encode()):
 				var previous: Dictionary = history.plan_sent_to.get(index, {})
@@ -84,7 +85,8 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 					continue
 				if host._endpoint(index).send_drop_barrier(plan, host._now) == I.Code.OK:
 					history.plan_sent_to[index] = {"digest": barrier.digest, "at": now_us}
-		if local_donor and history.plan_turn:
+					published = true
+		if local_donor and history.plan_turn and published:
 			history.plan_turn = false
 			return Types.Code.OK
 	if not local_donor:
@@ -95,6 +97,7 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 			return Types.Code.OK
 		history.plan_turn = false
 	var work: int = 0
+	var advanced: bool = false
 	var complete: bool = true
 	var first_peer: int = history.next_peer
 	for offset: int in host._ids.size():
@@ -122,13 +125,14 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 			if host._endpoint(index).send_drop_barrier(payload, host._now) != I.Code.OK:
 				break
 			cursor += 1
+			advanced = true
 		if work > previous_work:
 			history.next_peer = (index + 1) % host._ids.size()
 		history.cursors[index] = cursor
 		if cursor == history.journal.size():
 			history.round_sent_to[index] = now_us
 		complete = complete and cursor == history.journal.size()
-	if proposer or complete:
+	if (proposer and advanced) or complete:
 		history.plan_turn = true
 	return Types.Code.OK
 

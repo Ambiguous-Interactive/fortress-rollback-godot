@@ -13,6 +13,7 @@
 | --- | --- | --- |
 | Independent retry clocks do not prevent a global phase gate from starving healthy data. | `peer_drop_transfer.gd:90` returned after every incomplete plan round; the new plan-fairness regression observed zero healthy chunks. | Permit data only for destinations that accepted the current plan, while refused plans keep retrying. |
 | A phase fix needs both retry equality and lost-data controls. | Fresh review reproduced zero data at equality and no healthy retransmission after a lost chunk while a foreign plan stayed blocked. | Give completed donor rounds per-link deadlines and yield partial plan rounds to healthy data. |
+| A candidate is not frozen while its broader tests remain unresolved. | Two full verification attempts were superseded by scheduler repairs from broader tests. | Require completed focused gates and an explicit final source hash before freezing; retain stopped runs as superseded evidence. |
 | A trimmed recording can already contain valid evidence for its new endpoint. | `replay.gd:420` now selects the original pre-input checksum at the prefix boundary; callback and expert tests detect final-only mutation. | Preserve existing v6 evidence without borrowing later checksums or promoting historical formats. |
 | No immediately eligible steps does not imply playback has stalled. | The first spectator label candidate called healthy caught-up playback BUFFERING; the positive WATCHING control rejected it. | Restrict the startup label to the initial displayed frame and preserve terminal precedence. |
 
