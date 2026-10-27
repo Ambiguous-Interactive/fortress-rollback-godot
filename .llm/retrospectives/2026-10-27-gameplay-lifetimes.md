@@ -16,6 +16,15 @@ above 8 KiB through the exported online bridge. Trigger: debugging and review fi
 | Comparing expected operation digests misses inconsistent actual target lists. | Cold review changes the second source target generation in both emission and receipt; original comparator accepts. | Oracle guidance requires actual ordered target membership validation. |
 | Envelope-boundary padding does not prove valid large replay playback. | Prior-main online artifacts contain only 7,221/7,332-byte replays. | Existing collector now requires a real >8 KiB replay; wait for frame 224 within unchanged bounds. |
 
+## CI continuation
+
+The first candidate missed the copied ownership probe’s explicit `obsolete_rows`
+registration. CI job 122510849025 passed all 27 native spectator cases, then rejected
+its older 26-case inventory. The existing declaration/inventory test reproduces
+that exact mismatch. Registering the case restores the native and browser selections.
+The existing infrastructure guidance already requires this alignment; no duplicate
+rule is added. The follow-up runs the owning Python guard before pushing again.
+
 ## Evidence
 
 Local receipts are retained under `.cache/scratch/session100/` and `.cache/tests/`.
