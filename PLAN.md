@@ -434,6 +434,7 @@ Every recorded frame carries a digest of its own input row and, in version 5, it
 checksum of the following frame only covers a row when that following frame
 carries a checksum. Those digests are a Godot-side integrity extension; the pinned
 upstream session owns the input history.
+Public recording reads refuse incomplete or invalid input/status rows without hiding complete earlier rows; missing metadata and digest bytes remain unavailable.
 A recording carries the roster, sample width, neutral input, seed and game version
 of the session that produced it, and a player refuses a recording that does not
 match the running game. A recording with substituted inputs is reported as such
@@ -469,6 +470,7 @@ Remote-input sessions can recover and finalize confirmed replay history without 
 or forward frame. The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
 Authenticated retries remain idempotent through that buffered tail; input closure alone does not terminate playback.
+Direct clean closure refuses accepted rows beyond a gap without closing input; callers fill the missing rows and retry before draining the complete tail.
 After playback reaches the authenticated END boundary, relay polling preserves normal completion and discards late ingress; unfinished cancellation and failures stay distinct.
 The host publisher retains one exact refused packet, advances only on transport acceptance,
 and fences host replacement while keeping liveness separate from row pressure.

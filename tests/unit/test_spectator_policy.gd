@@ -35,7 +35,7 @@ func _digest(config: Variant = null) -> PackedByteArray:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["confirmation_policy", "playback_events", "failure_events", "empty_end_and_reentry", "completion_status"])
+	return PackedStringArray(["confirmation_policy", "playback_events", "failure_events", "empty_end_and_reentry", "completion_status", "gapped_end"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -256,3 +256,46 @@ func _completion_status(context: RefCounted) -> void:
 			context.equal(viewer.is_complete(), mode == "clean", "rejected replacement preserves completion")
 			context.equal(viewer.configure(Fixture.new()._config()), Types.Code.OK, "fresh playback replaces old lifetime")
 			context.equal(viewer.is_complete(), false, "successful replacement clears completion")
+
+
+# Value: protects=clean closure preserves every accepted host row; fails_when=finish drops buffered rows beyond a gap;
+# why_new=clean-end cases deliberately truncated gapped buffers; seam=none
+func _gapped_end(context: RefCounted) -> void:
+	for start: int in [0, 8]:
+		for gap: int in [0, 1, 2]:
+			var viewer: RefCounted = Spectator.new()
+			context.equal(viewer.configure(Fixture.new()._config()), Types.Code.OK, "configure gapped ending")
+			var game: RefCounted = GameFixture.Game.new()
+			var driver: RefCounted = Driver.new(viewer, game)
+			var empty: Array[Driver.LocalInput] = []
+			var expected: int = 0
+			for frame: int in start:
+				viewer.receive_host_frame(frame, Fixture.new()._row(frame))
+				context.equal(driver.step(frame, empty).code, Types.Code.OK, "play prefix through ring reuse")
+				for bytes: PackedByteArray in Fixture.new()._row(frame):
+					expected = expected * 3 + bytes[0] + frame
+			context.equal(viewer.set_playback(2, 1, 3), Types.Code.OK, "delay ending playback before closure")
+			for offset: int in 4:
+				if offset != gap:
+					context.equal(viewer.receive_host_frame(start + offset, Fixture.new()._row(start + offset)).code, Types.Code.OK, "retain later ending rows")
+			viewer.drain_events()
+			var refused: int = viewer.finish_host()
+			context.equal(refused, Types.Code.PREDICTION_STALL, "clean closure waits for missing accepted history")
+			if refused != Types.Code.PREDICTION_STALL:
+				continue
+			context.equal(viewer.finish_host(), Types.Code.PREDICTION_STALL, "repeated closure leaves gap recoverable")
+			context.equal(viewer.playback_policy(), PackedInt64Array([2, 1, 3]), "gap refusal preserves viewing policy")
+			context.equal(viewer.status().lifecycle, Types.Lifecycle.RUNNING, "gap refusal preserves live viewer")
+			context.equal(viewer.drain_events().is_empty(), true, "refusal does not publish closure")
+			context.equal(viewer.is_complete(), false, "gap refusal cannot claim completion")
+			context.equal(viewer.receive_host_frame(start + gap, Fixture.new()._row(start + gap)).code, Types.Code.OK, "gap remains receivable after refusal")
+			context.equal(viewer.finish_host(), Types.Code.OK, "complete retained tail closes")
+			context.equal(viewer.finish_host(), Types.Code.OK, "complete closure remains idempotent")
+			for frame: int in range(start, start + 4):
+				context.equal(driver.step(frame, empty).code, Types.Code.OK, "play every accepted ending row")
+				for bytes: PackedByteArray in Fixture.new()._row(frame):
+					expected = expected * 3 + bytes[0] + frame
+				context.equal(game.value, expected, "canonical state retains original host tail")
+			context.equal(driver.step(start + 4, empty).code, Types.Code.TERMINATED, "complete full clean tail")
+			context.equal(viewer.is_complete(), true, "full accepted history qualifies completion")
+			context.equal(viewer.status().current_frame, start + 4, "completion includes buffered suffix")

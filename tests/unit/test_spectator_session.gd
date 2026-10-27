@@ -346,7 +346,7 @@ func _shapes(context: RefCounted) -> void:
 # Value: protects=advice-driven clean end; fails_when=final empty advice hides lifecycle completion; why_new=direct step end bypasses advice; seam=none
 func _clean_end_advice(context: RefCounted) -> void:
 	for scenario: Dictionary in [
-		{"rows": [], "delay": 0, "frames": 0}, {"rows": [0], "delay": 0, "frames": 1}, {"rows": [0, 1, 2], "delay": 2, "frames": 3}, {"rows": [0, 2], "delay": 1, "frames": 1}
+		{"rows": [], "delay": 0, "frames": 0}, {"rows": [0], "delay": 0, "frames": 1}, {"rows": [0, 1, 2], "delay": 2, "frames": 3}
 	]:
 		var session: RefCounted = _spectator(context)
 		var game: RefCounted = Fixture.Game.new()

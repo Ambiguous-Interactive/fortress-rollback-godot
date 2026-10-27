@@ -165,7 +165,7 @@ Gameplay replays and diagnostic network traces have separate formats. X1 owns
 gameplay replay; there is no released `FRG1` format. The
 [development oracle](../../../docs/oracle.md) owns only its scoped sync-test traces.
 Preserve revisions, wide values and ordering; version released format changes.
-Validate mutable recording structure before ownership, including metadata and storage bounds.
+Validate mutable recording structure before ownership. Public row reads also check dimensions and complete input/status storage before indexing or slicing.
 Keep safe missing-digest and content comparisons at their owning playback boundary.
 Trimmed recordings use their endpoint's own checksum, never later or absent evidence. Prefix copies must only shrink every backing buffer: padding short checksums, digests, flags, inputs or statuses fabricates exportable evidence. Test partial rows and absent storage.
 

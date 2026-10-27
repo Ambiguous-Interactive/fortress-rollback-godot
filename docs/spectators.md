@@ -422,10 +422,11 @@ Continue servicing the viewer through that final call, including an empty stream
 
 ## End the stream
 
-For a known clean end, call `finish_host()`. It refuses further rows, releases
-the configured viewing delay, plays the remaining contiguous prefix and then
-terminates. Buffered rows beyond a gap cannot be played. Do not call it while
-expecting retransmissions to fill a gap. Continue servicing `recommended_steps()`
+For a known clean end, call `finish_host()`. A gap before an accepted later row
+returns `PREDICTION_STALL` without closing input or publishing `HOST_FINISHED`.
+Deliver the missing rows and retry. On success, it refuses new rows, releases
+the configured viewing delay, plays the full retained tail and then terminates.
+Continue servicing `recommended_steps()`
 after finishing the host, including its final terminal call. This reports
 `TERMINATED`, runs no game callback, and then recommends zero further work.
 
