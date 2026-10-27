@@ -159,6 +159,7 @@ cannot undo those effects. Nonterminal BUSY must preserve transport state.
 When callers service only a recommended number of steps, include pending lifecycle
 completion after payload drains. Test clean end through that public service loop
 with empty input, a delayed tail and a gap; direct advancement can conceal starvation.
+Clean closure must preserve every accepted row. Refuse a known gap before a buffered suffix without closing input, then verify recovery and complete tail playback.
 Include wrapper-owned staging payloads and frame tags in configuration storage
 reservations before allocation. Verify exact-budget acceptance and rejection one
 byte below it; a bounded extra ring still consumes the declared budget.

@@ -81,7 +81,8 @@ EXPECTED.update({
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
     'res://tests/unit/test_spectator_demo.gd': {'corrected_viewing', 'pause_and_catchup', 'lost_history', 'idle_host_liveness'},
-    'res://tests/unit/test_spectator_policy.gd': {'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status'},
+    'res://tests/unit/test_spectator_policy.gd': {
+        'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status', 'gapped_end'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
     'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step'},
 })
@@ -118,7 +119,7 @@ EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
 EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
     'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
 EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
-EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls'}
+EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls', 'partial_publication'}
 EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
     'remote_donor', 'loss_reorder', 'conflicting_duplicate', 'malformed_chunk', 'wrong_donor', 'lost_history_timeout',
     'resource_limit', 'multiple_target_slots', 'no_donor', 'conflicting_overlap'}
@@ -155,7 +156,8 @@ EXPECTED['res://tests/unit/test_peer_notifications.gd'] = {
     'completion', 'stall_and_repair', 'failure', 'callback_failure', 'shared_engine', 'handler_stop', 'external_facade'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'].add('viewer_departures')
-EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {'malformed_storage', 'malformed_metadata', 'valid_recording_ownership', 'invalid_config_type'}
+EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {
+    'malformed_storage', 'malformed_metadata', 'valid_recording_ownership', 'invalid_config_type', 'recording_accessors'}
 EXPECTED['res://tests/unit/test_peer_expert.gd'] = {'public_api', 'batch_ownership', 'callback_failures', 'recovery', 'pressure', 'capture'}
 EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures', 'ownership', 'validation', 'misuse', 'wide_writes', 'reusable_reads'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy', 'service_busy'})

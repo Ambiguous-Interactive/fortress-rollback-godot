@@ -197,6 +197,10 @@
 
 ### Fixed
 
+- Fix replay accessors exposing incomplete rows or indexing missing metadata. Invalid row reads return no inputs or digest while complete earlier rows stay readable.
+
+- Fix clean spectator closure discarding accepted rows beyond a gap. Fill the missing rows and retry `finish_host()` after `PREDICTION_STALL` to play the full tail.
+
 - Fix replay prefixes padding missing input and checksum storage. Trimming preserves incomplete data and refuses invalid exports instead of inventing recorded bytes.
 
 - Fix spectator relay cancellation being reported as successful completion at the final playback boundary, including empty matches.

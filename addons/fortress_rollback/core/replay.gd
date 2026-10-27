@@ -246,7 +246,7 @@ func skipped_frames() -> int:
 
 
 func is_skipped_frame(frame: int) -> bool:
-	return frame >= 0 and frame < _frames and _flags[frame] == FLAG_SKIPPED
+	return frame >= 0 and frame < _frames and frame < _flags.size() and _flags[frame] == FLAG_SKIPPED
 
 
 ## The recording session's neutral input, which skipped frames hold for every player.
@@ -286,31 +286,32 @@ func sync_test() -> bool:
 
 ## Godot version and commit of the recording build.
 func engine_version() -> String:
-	return _text[0]
+	return _text[0] if _text.size() > 0 else ""
 
 
 func addon_version() -> String:
-	return _text[1]
+	return _text[1] if _text.size() > 1 else ""
 
 
 ## The pinned fortress-rollback revision whose replay semantics this addon follows.
 func upstream_revision() -> String:
-	return _text[2]
+	return _text[2] if _text.size() > 2 else ""
 
 
 ## config.diagnostic_seed of the recording session.
 func game_seed() -> String:
-	return _text[3]
+	return _text[3] if _text.size() > 3 else ""
 
 
 ## config.diagnostic_version of the recording session.
 func game_version() -> String:
-	return _text[4]
+	return _text[4] if _text.size() > 4 else ""
 
 
-## Fresh finalized inputs and confirmed/disconnected player statuses for one frame, in the same form simulate_frame receives during a session.
+## Fresh finalized inputs and confirmed/disconnected statuses, in the form simulate_frame receives.
+## Null for invalid dimensions, format or frame, or an incomplete row or invalid player status.
 func inputs(frame: int) -> Types.FrameInputs:
-	if frame < 0 or frame >= _frames:
+	if not _has_input_row(frame):
 		return null
 	var bytes: Array[PackedByteArray] = []
 	var statuses: PackedInt32Array = PackedInt32Array()
@@ -335,21 +336,35 @@ func checksum(frame: int) -> PackedByteArray:
 ## The digest recorded for one frame's input row. A decoded file keeps the digest it carried, so a
 ## corrupted row cannot silently agree with it.
 func input_digest(frame: int) -> PackedByteArray:
-	if frame < 0 or frame >= _frames:
+	if frame < 0 or frame >= _frames or frame >= _digests.size() / DIGEST_BYTES:
 		return PackedByteArray()
 	return _digests.slice(frame * DIGEST_BYTES, (frame + 1) * DIGEST_BYTES)
 
 
 ## The digest computed from one frame's stored input row. It differs from the recorded digest
 ## exactly when the row or its recorded digest was changed after the file was written.
+## Empty for invalid dimensions, format or frame, or an incomplete row or invalid player status.
 func computed_input_digest(frame: int) -> PackedByteArray:
-	if frame < 0 or frame >= _frames:
+	if not _has_input_row(frame):
 		return PackedByteArray()
 	var row: int = _players * _width
 	var payload: PackedByteArray = _inputs.slice(frame * row, (frame + 1) * row)
 	if _format_version >= 5:
 		payload.append_array(_statuses.slice(frame * _players, (frame + 1) * _players))
 	return digest_row(payload)
+
+
+func _has_input_row(frame: int) -> bool:
+	if frame < 0 or frame >= _frames or _format_version not in [4, FORMAT_VERSION, TERMINAL_VERSION] or not valid_shape(_players, _width, _frames, _format_version):
+		return false
+	var samples: int = (frame + 1) * _players
+	if samples * _width > _inputs.size() or samples > _statuses.size():
+		return false
+	for player: int in _players:
+		var status: int = _statuses[frame * _players + player]
+		if status not in [Queue.Status.CONFIRMED, Queue.Status.DISCONNECTED] or (_format_version == 4 and status != Queue.Status.CONFIRMED):
+			return false
+	return true
 
 
 ## Return a portable file, or empty for malformed storage or incomplete input digests.

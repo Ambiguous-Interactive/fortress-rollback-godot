@@ -299,6 +299,10 @@ copy cannot change the session's recording.
 `replay.to_bytes()` returns empty if the recording's metadata or backing storage is malformed,
 or an input digest is missing. It preserves stored digests and checksums; playback still reports
 content mismatches at their owning frame instead of silently repairing the evidence.
+When inspecting an edited recording, `inputs(frame)` returns null for an incomplete row or invalid
+format, dimensions or player status. `computed_input_digest(frame)` returns empty for the same
+rejections. Complete earlier rows remain readable after a later row is truncated. Missing metadata
+fields return empty strings, and absent frame flags cannot claim substituted input.
 Predicted input is never recorded. Each frame also keeps the state checksum when the session still had it.
 `skipped_frames()` counts frames recorded as neutral input because their real input was unavailable.
 It stays zero in normal play; treat a nonzero count as an incomplete replay.

@@ -8,19 +8,25 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Peer = preload("res://addons/fortress_rollback/core/peer_session.gd")
 const Fixture = preload("res://tests/unit/test_peer_session.gd")
 const Reference = preload("res://tests/oracle/reference_game.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
 const Protocol = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Lifecycle = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["two_peers", "multiple_local_slots", "eight_peers", "observer_controls"])
+	return PackedStringArray(["two_peers", "multiple_local_slots", "eight_peers", "observer_controls", "partial_publication"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "partial_publication":
+		_partial_publication(context)
+		context.finish()
+		return
 	if name == "observer_controls":
 		_temporal_permutation_control(context)
 		_load_control(context)
+		_partial_publication_control(context)
 		context.finish()
 		return
 	var unconfigured: RefCounted = Peer.new()
@@ -275,7 +281,7 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 		context.bytes_equal(driven.games[index].game.bytes(), original[target], target, "both consumers match independent original history")
 
 
-func _manual(peer: Peer, game: RefCounted, now_us: int, samples: Array[Driver.LocalInput], forward: bool, skip_load: bool = false) -> Driver.StepResult:
+func _manual(peer: Peer, game: RefCounted, now_us: int, samples: Array[Driver.LocalInput], forward: bool, skip_load: bool = false, skip_advance: bool = false) -> Driver.StepResult:
 	var before: int = peer.status().current_frame
 	var opened: Types.Result = peer.begin_step(now_us, samples) if forward else peer.begin_recovery(now_us)
 	var result: Driver.StepResult = Driver.StepResult.new(opened.code, before, peer.status().current_frame)
@@ -295,8 +301,131 @@ func _manual(peer: Peer, game: RefCounted, now_us: int, samples: Array[Driver.Lo
 			Types.Kind.LOAD:
 				ok = true if skip_load else game.load_state(request.frame, request.reader)
 			Types.Kind.ADVANCE:
-				ok = game.simulate_frame(request.frame, request.inputs)
+				ok = true if skip_advance and request.frame == before else game.simulate_frame(request.frame, request.inputs)
 		result = peer.complete_request(request.batch_id, request.request_id, ok, checksum)
 		if result.code != Types.Code.READY:
 			break
 	return result
+
+
+# Value: protects=expert/driver parity after one link accepts a sample; fails_when=refusal loses or republishes it;
+# why_new=delivery-loss parity never fills publication capacity; seam=none
+func _partial_publication(context: RefCounted, skip_advance: bool = false) -> void:
+	var fixture: RefCounted = Fixture.new()
+	var driven: Dictionary = fixture._build(context, 3, 0, false, 1)
+	var expert: Dictionary = fixture._build(context, 3, 0, false, 1, true, false, 8, null, 60, 0, null, 128, 0, true)
+	for mesh: Dictionary in [driven, expert]:
+		var notices: Array[PackedInt64Array] = []
+		mesh.notices = notices
+		mesh.peers[0].step_completed.connect(func(code: int, before: int, after: int) -> void: notices.append(PackedInt64Array([code, before, after])))
+	for index: int in range(3):
+		var left: Driver.StepResult = driven.peers[index].step(1, _inputs(driven, index))
+		var right: Driver.StepResult = _manual(expert.peers[index], expert.games[index], 1, _inputs(expert, index), true)
+		context.equal(left.code, right.code, "initial publication consumers agree")
+		context.equal(left.code, Types.Code.OK, "initial publication advances")
+	var initial: Array[Dictionary] = fixture._drain(driven)
+	context.equal(initial, fixture._drain(expert), "same original encoded publication")
+	var first_link: Array[Dictionary] = []
+	for packet: Dictionary in initial:
+		if packet.from == 0 and packet.to == 1:
+			first_link.append(packet)
+	for mesh: Dictionary in [driven, expert]:
+		mesh.now = 1
+		fixture._deliver(context, mesh, first_link)
+	var acks: Array[Dictionary] = fixture._drain(driven)
+	context.equal(acks, fixture._drain(expert), "same capacity-releasing acknowledgement")
+	for mesh: Dictionary in [driven, expert]:
+		fixture._deliver(context, mesh, acks)
+		context.equal(mesh.peers[0].network_status().peers[fixture._id(1).hex_encode()].pending_frames, 0, "first link has capacity")
+		context.equal(mesh.peers[0].network_status().peers[fixture._id(2).hex_encode()].pending_frames, 1, "second link remains full")
+	for attempt: int in range(2):
+		var left: Driver.StepResult = driven.peers[0].step(100, _inputs(driven, 0))
+		var right: Driver.StepResult = _manual(expert.peers[0], expert.games[0], 100, _inputs(expert, 0), true)
+		context.equal(left.code, right.code, "partial publication consumers agree")
+		context.equal(left.code, Types.Code.NETWORK_BACKPRESSURE, "full second link refuses publication")
+		context.equal(left.events, right.events, "same refused core events")
+		context.equal(driven.games[0].requests, expert.games[0].requests, "same callbacks through refusal")
+		context.equal(driven.games[0].game.frame, 1, "refused publication invokes no new game callback")
+		context.bytes_equal(driven.peers[0].scheduled_local_input(0).bytes, _sample(0, 1), 1, "driver retains original partially published sample")
+		context.bytes_equal(expert.peers[0].scheduled_local_input(0).bytes, _sample(0, 1), 1, "expert retains original partially published sample")
+		var published: Array[Dictionary] = fixture._drain(driven)
+		context.equal(published, fixture._drain(expert), "same partial publication packet bytes and destinations")
+		context.equal(published.size(), 1 if attempt == 0 else 0, "accepted link publishes once across retries")
+		if attempt == 0:
+			for mesh: Dictionary in [driven, expert]:
+				mesh.partial = published
+	for mesh: Dictionary in [driven, expert]:
+		mesh.now = 100
+		fixture._deliver(context, mesh, initial)
+	acks = fixture._drain(driven)
+	context.equal(acks, fixture._drain(expert), "same remaining capacity acknowledgement")
+	for mesh: Dictionary in [driven, expert]:
+		fixture._deliver(context, mesh, acks)
+		fixture._deliver(context, mesh, mesh.partial)
+	acks = fixture._drain(driven)
+	context.equal(acks, fixture._drain(expert), "same partial sample acknowledgement")
+	for mesh: Dictionary in [driven, expert]:
+		fixture._deliver(context, mesh, acks)
+	var left: Driver.StepResult = driven.peers[0].step(100, _inputs(driven, 0))
+	var right: Driver.StepResult = _manual(expert.peers[0], expert.games[0], 100, _inputs(expert, 0), true, false, skip_advance)
+	context.equal(left.code, right.code, "retry after remaining acknowledgement agrees")
+	context.equal(left.code, Types.Code.OK, "retained sample advances after pressure clears")
+	context.equal(driven.games[0].requests, expert.games[0].requests, "same complete callbacks and canonical states")
+	context.bytes_equal(driven.games[0].game.bytes(), expert.games[0].game.bytes(), 2, "same continuing canonical state")
+	context.equal(driven.peers[0].status().current_frame, 2, "resumed sample advances exactly once")
+	context.equal(driven.peers[0].scheduled_local_input(0).code, Types.Code.MISSING_LOCAL_INPUT, "accepted sample released only after advance")
+	var completed: Array[Dictionary] = fixture._drain(driven)
+	context.equal(completed, fixture._drain(expert), "same completed retry publication")
+	context.equal(completed.size(), 1, "retry publishes only to the remaining recipient")
+	var limits: Protocol.Limits = Protocol.Limits.new()
+	limits.player_count = 3
+	limits.input_width = 4
+	for packet: Dictionary in completed:
+		context.equal([packet.from, packet.to], [0, 2], "retry targets the previously refused link")
+		var decoded: Protocol.Result = Codec.decode(packet.bytes, limits)
+		context.equal(decoded.code, Protocol.Code.OK, "retry packet decodes")
+		if decoded.code == Protocol.Code.OK:
+			context.equal(decoded.message.kind, Protocol.Kind.INPUT, "retry publishes gameplay input")
+			context.equal(decoded.message.start_frame, 1, "retry publishes the retained scheduled frame")
+			context.equal(decoded.message.frame_count, 1, "retry publishes one scheduled frame")
+			context.equal(decoded.message.players, PackedByteArray([0]), "retry publishes only the owning local slot")
+			context.bytes_equal(decoded.message.data, _sample(0, 1), 1, "retry packet contains the original sample")
+	var original: RefCounted = Reference.new(3, 2)
+	for frame: int in range(2):
+		var row: Array[Dictionary] = []
+		for player: int in range(3):
+			row.append({"player": player, "bytes": _sample(player, frame if player == 0 else 0).hex_encode(), "status": "confirmed"})
+		context.equal(original.advance(row), "", "independent partially delivered history")
+	context.bytes_equal(driven.games[0].game.bytes(), original.bytes(), 2, "driver retry matches independent input history")
+	context.bytes_equal(expert.games[0].game.bytes(), original.bytes(), 2, "expert retry matches independent input history")
+	for index: int in range(3):
+		context.equal(driven.peers[index].drain_events(), expert.peers[index].drain_events(), "same accumulated peer events through partial publication")
+		context.equal(driven.peers[index].drain_transitions(), expert.peers[index].drain_transitions(), "same accumulated protocol transitions through partial publication")
+	context.equal(driven.notices, expert.notices, "same completion notification transcript through partial publication")
+	(
+		context
+		. equal(
+			driven.notices,
+			[
+				PackedInt64Array([Types.Code.OK, 0, 1]),
+				PackedInt64Array([Types.Code.NETWORK_BACKPRESSURE, 1, 1]),
+				PackedInt64Array([Types.Code.NETWORK_BACKPRESSURE, 1, 1]),
+				PackedInt64Array([Types.Code.OK, 1, 2]),
+			],
+			"notifications preserve the refused and resumed frontiers"
+		)
+	)
+
+
+func _partial_publication_control(context: RefCounted) -> void:
+	var collector: RefCounted = Collector.new(context.seed)
+	_partial_publication(collector, true)
+	context.equal(collector.failures.size(), 3, "omitted retry ADVANCE fails transcript, paired and independent state comparisons")
+	var labels: Array[String] = []
+	for failure: Dictionary in collector.failures:
+		labels.append(failure.get("label", ""))
+	context.equal(
+		labels,
+		["same complete callbacks and canonical states", "same continuing canonical state", "expert retry matches independent input history"],
+		"only intended partial-publication comparisons fail"
+	)

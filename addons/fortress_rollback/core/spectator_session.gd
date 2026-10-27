@@ -174,13 +174,17 @@ func is_complete() -> bool:
 	return _playback_complete
 
 
-## Clean end releases the delayed contiguous tail, then terminates. Gaps remain unavailable.
+## Clean end releases the delayed contiguous tail, then terminates.
+## A gap before an accepted later row returns PREDICTION_STALL without closing input; retry after filling it.
 ## For unexpected host loss use terminate(PROTOCOL_FAILED), which stops immediately.
 func finish_host() -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
 		return code
 	if not _host_finished:
+		for frame: int in _host_tags:
+			if frame > _host_frontier:
+				return Code.PREDICTION_STALL
 		_host_finished = true
 		_events.append(Event.new(EventKind.HOST_FINISHED, _current))
 	return Code.OK

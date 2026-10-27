@@ -31,11 +31,13 @@ class DerivedConfig:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["malformed_storage", "malformed_metadata", "valid_recording_ownership", "invalid_config_type"])
+	return PackedStringArray(["malformed_storage", "malformed_metadata", "valid_recording_ownership", "invalid_config_type", "recording_accessors"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "invalid_config_type":
+	if name == "recording_accessors":
+		_recording_accessors(context)
+	elif name == "invalid_config_type":
 		_invalid_config_type(context)
 	elif name == "valid_recording_ownership":
 		_ownership(context)
@@ -203,3 +205,71 @@ func _ownership(context: RefCounted) -> void:
 					context.equal(player.step(), Types.Code.OK, "owned playback survives caller edits")
 			context.equal(player.is_complete(), true, "supported playback completes with original owned rows")
 			context.state(game.frame, game.canonical_bytes())
+
+
+# Value: protects=public replay reads refuse incomplete rows without publishing short samples or crashing;
+# fails_when=accessors trust declared frames over retained bytes; why_new=configuration rejects malformed storage before reads; seam=none
+func _recording_accessors(context: RefCounted) -> void:
+	var source: Replay = Fixture.recording(3)
+	for players: int in [2, 8]:
+		for width: int in [1, 3]:
+			var control: Replay = source.owned_copy()
+			control._players = players
+			control._width = width
+			control._inputs.resize(3 * players * width)
+			control._statuses.resize(3 * players)
+			control._statuses.fill(Queue.Status.CONFIRMED)
+			_row_bounds(context, control)
+	for dimension: String in ["_players", "_width", "_frames"]:
+		for value: int in [-1, 0, 9223372036854775807]:
+			var replay: Replay = source.owned_copy()
+			replay.set(dimension, value)
+			context.equal(replay.inputs(0), null, "invalid dimensions refuse before indexing or multiplication")
+			context.equal(replay.computed_input_digest(0), PackedByteArray(), "invalid dimensions cannot publish a row digest")
+	for version: int in [3, 4, 5, 6, 7]:
+		for status: int in [-1, Queue.Status.CONFIRMED, Queue.Status.PREDICTED, Queue.Status.DISCONNECTED, 255]:
+			var replay: Replay = source.owned_copy()
+			replay._format_version = version
+			replay._statuses[2] = status
+			var valid: bool = version in [4, 5, 6] and status in [Queue.Status.CONFIRMED, Queue.Status.DISCONNECTED] and not (version == 4 and status == Queue.Status.DISCONNECTED)
+			context.equal(replay.inputs(1) != null, valid, "requested row exposes only format-compatible finalized statuses")
+			context.equal(not replay.computed_input_digest(1).is_empty(), valid, "invalid statuses cannot publish a row digest")
+			context.equal(replay.inputs(0) != null, version in [4, 5, 6], "a later invalid status preserves complete earlier rows")
+	for size: int in [0, 1, 15, 16, 17, 32, 47, 48]:
+		var replay: Replay = source.owned_copy()
+		replay._digests.resize(size)
+		for frame: int in [-1, 0, 1, 2, 3, 9223372036854775806]:
+			var complete: bool = frame >= 0 and frame < 3 and (frame + 1) * Replay.DIGEST_BYTES <= size
+			context.equal(replay.input_digest(frame), source.input_digest(frame) if complete else PackedByteArray(), "input digest reads require complete stored evidence")
+			replay._frames = 9223372036854775807
+		context.equal(replay.input_digest(9223372036854775806), PackedByteArray(), "hostile frame metadata cannot overflow digest indexing")
+	var flags: Replay = source.owned_copy()
+	flags._flags.clear()
+	context.equal(flags.is_skipped_frame(0), false, "missing frame flags cannot claim substitution or index absent bytes")
+	for size: int in range(Replay.TEXT_FIELDS + 1):
+		var replay: Replay = source.owned_copy()
+		replay._text.resize(size)
+		var names: PackedStringArray = PackedStringArray(["engine_version", "addon_version", "upstream_revision", "game_seed", "game_version"])
+		for index: int in names.size():
+			context.equal(replay.call(names[index]), source.call(names[index]) if index < size else "", "missing metadata is unavailable without indexing absent fields")
+	context.state(0, source.to_bytes())
+
+
+func _row_bounds(context: RefCounted, source: Replay) -> void:
+	for field: String in ["_inputs", "_statuses"]:
+		var unit: int = source.player_count() * (source.input_width() if field == "_inputs" else 1)
+		for size: int in [0, unit - 1, unit, unit + 1, 2 * unit, 3 * unit - 1, 3 * unit]:
+			var replay: Replay = source.owned_copy()
+			var retained: PackedByteArray = replay.get(field)
+			retained.resize(size)
+			replay.set(field, retained)
+			for frame: int in [-1, 0, 1, 2, 3, 9223372036854775807]:
+				var complete: bool = frame >= 0 and frame < 3 and (frame + 1) * unit <= size
+				var inputs: Types.FrameInputs = replay.inputs(frame)
+				context.equal(inputs != null, complete, field + " reads require a complete requested row")
+				context.equal(replay.computed_input_digest(frame), source.computed_input_digest(frame) if complete else PackedByteArray(), "partial rows cannot publish a digest")
+				if complete and inputs != null:
+					for player: int in source.player_count():
+						context.equal(inputs.read(player).bytes, source.inputs(frame).read(player).bytes, "complete prefix inputs survive later truncation")
+						context.equal(inputs.read(player).status, source.inputs(frame).read(player).status, "complete prefix statuses survive later truncation")
+			context.equal(replay.get(field), retained, "reads preserve incomplete source bytes")
