@@ -86,6 +86,14 @@ attempts and errors too. Unconfigured and BUSY calls emit nothing. Read the fina
 state for presentation inside the handler; mutating peer calls stay BUSY and drains
 return empty until handlers finish. Drain packets, events and transitions after `step` returns.
 
+`confirmed_inputs(frame)` returns an owned finalized row for confirmed, simulated
+history outside pending correction. Use it for confirmed effects or spectator
+publication without enabling replay recording or retaining the expert session.
+It returns null before configuration, during game callbacks or expert request
+processing, and when the requested history is unavailable. Completed rows remain
+readable inside `step_completed`; read them before the bounded input ring wraps.
+Changing a returned row cannot change the match or later exports.
+
 Clock values are nonnegative, nondecreasing integers. A valid operation consumes
 its supplied clock before component mutations, including a partially published
 multi-link operation. Link publication is independently atomic; the façade does

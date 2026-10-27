@@ -55,6 +55,7 @@ var _inputs: Types.FrameInputs
 ## Optional checkpoints also require load_state; interval and capacity must both be positive.
 ## Capacity includes the initial state, ranges from 2 to 1024, and retains at most 16 MiB.
 ## Cached boundaries save state even without a recorded checksum; configure clears the cache.
+## A successfully validated terminal checksum also retains the final boundary, regardless of interval.
 ## A supplied config refuses a recording that does not match the running game.
 func configure(replay: Replay, game: RefCounted, max_snapshot_bytes: int = 0, checkpoint_interval: int = 0, checkpoint_capacity: int = 0, config: RefCounted = null) -> int:
 	if _is_stepping or _batch != null:
@@ -260,8 +261,8 @@ func complete_request(batch_id: int, request_id: int, callback_ok: bool, checksu
 			_active_kind = Types.Kind.SAVE
 			_request_id += 1
 		else:
-			_terminal_validated = false
 			_frame = _restoring.frame
+			_terminal_validated = _frame == _replay.frame_count() and not _replay.checksum(_frame).is_empty()
 			_validated_state_frame = _frame if not _replay.checksum(_frame).is_empty() else -1
 			_restoring = null
 			_batch = null
@@ -342,11 +343,11 @@ func _retain_checkpoint(checkpoint: Checkpoint) -> void:
 	for retained: Checkpoint in _checkpoints:
 		if retained.frame == checkpoint.frame:
 			return
-	# Preserve the initial state while evicting the oldest noninitial checkpoint.
-	if _checkpoints.size() >= _checkpoint_capacity:
-		_checkpoints.remove_at(1)
 	_checkpoints.append(checkpoint)
 	_checkpoints.sort_custom(func(first: Checkpoint, second: Checkpoint) -> bool: return first.frame < second.frame)
+	# Backward inspection may insert an older boundary than every retained noninitial checkpoint.
+	if _checkpoints.size() > _checkpoint_capacity:
+		_checkpoints.remove_at(1)
 
 
 ## Owned ascending frame numbers of retained, successfully validated checkpoints.
@@ -451,7 +452,10 @@ func _needs_save() -> bool:
 
 
 func _is_cache_boundary() -> bool:
-	return _checkpoint_interval > 0 and _frame < _replay.frame_count() and _frame % _checkpoint_interval == 0
+	return _checkpoint_interval > 0 and (
+		(_frame < _replay.frame_count() and _frame % _checkpoint_interval == 0)
+		or (_frame == _replay.frame_count() and not _replay.checksum(_frame).is_empty())
+	)
 
 
 ## Every frame carries the digest of its own input row, so a corrupted row is refused at the

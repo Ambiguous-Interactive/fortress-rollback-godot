@@ -26,11 +26,13 @@ class ObservedGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["final_state_coverage", "viewer_final_coverage", "selected_state_coverage"])
+	return PackedStringArray(["final_state_coverage", "viewer_final_coverage", "selected_state_coverage", "terminal_checkpoints"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "selected_state_coverage":
+	if name == "terminal_checkpoints":
+		_terminal_checkpoints(context)
+	elif name == "selected_state_coverage":
 		_selected_state_coverage(context)
 	elif name == "final_state_coverage":
 		_final_state_coverage(context)
@@ -151,6 +153,21 @@ func _viewer_final_coverage(context: RefCounted) -> void:
 		context.equal(viewer.has_failure(), coverage == "mismatch", "final mismatch remains a failure")
 		if coverage == "terminal":
 			context.equal(viewer.message.contains("including the final state"), true, "completion names verified final state")
+			var node: Node2D = Fixture.Scene.instantiate()
+			node._ready()
+			node.viewer.open_bytes(replay.to_bytes())
+			node.viewer.seek(2)
+			while node.viewer.is_seeking():
+				node._physics_process(0.0)
+			var expected: PackedByteArray = node.viewer.game.canonical_bytes()
+			Fixture._button(node, "Previous checkpoint").pressed.emit()
+			context.equal(node.viewer.current_frame(), 0, "visible navigation inspects the initial checkpoint")
+			Fixture._button(node, "Next checkpoint").pressed.emit()
+			context.equal(node.viewer.current_frame(), 2, "visible Next checkpoint reaches the verified ending")
+			context.equal(node.viewer.is_seeking() or node.viewer.is_playing, false, "terminal checkpoint navigation finishes paused without replaying input")
+			context.bytes_equal(node.viewer.game.canonical_bytes(), expected, 2, "visible final checkpoint restores canonical ending")
+			node._exit_tree()
+			node.free()
 		elif coverage == "historical":
 			context.equal(viewer.message.contains("final state has no recorded checksum"), true, "historical completion names missing final evidence")
 		elif coverage == "none":
@@ -214,3 +231,61 @@ func _selected_state_coverage(context: RefCounted) -> void:
 			context.equal(player.configure(replay, Simulation.new(), bound), Types.Code.OK, "replace playback lifetime")
 			context.equal(player.call("is_current_state_validated"), false, "replacement has no validated boundary")
 			context.state(game.frame, game.canonical_bytes())
+
+
+# Value: protects=validated match endings remain directly navigable within the checkpoint budget; fails_when=the final SAVE is discarded;
+# why_new=checkpoint controls cover only pre-input boundaries; seam=none
+func _terminal_checkpoints(context: RefCounted) -> void:
+	for frames: int in [0, 1, 4, 6]:
+		for expert: bool in [false, true]:
+			for coverage: String in ["terminal", "historical", "mismatch"]:
+				var replay: Replay = _recording(frames, coverage != "historical", coverage == "mismatch")
+				var player: Player = Player.new()
+				var game: Simulation = Simulation.new()
+				var configured: int = player.configure_expert(replay, Simulation.SNAPSHOT_BYTES, null, 3, 2) if expert else player.configure(
+					replay, game, Simulation.SNAPSHOT_BYTES, 3, 2
+				)
+				context.equal(configured, Types.Code.OK, "configure bounded terminal navigation")
+				for frame: int in frames:
+					context.equal(_dispatch(player, game) if expert else player.step(), Types.Code.OK, "play original canonical inputs")
+				var original: PackedByteArray = game.canonical_bytes()
+				var before: PackedInt64Array = player.checkpoint_frames()
+				var code: int = _dispatch(player, game) if expert else player.step()
+				var expected: int = Types.Code.DESYNC if coverage == "mismatch" else (Types.Code.OK if coverage == "terminal" else Types.Code.FRAME_EXHAUSTED)
+				context.equal(code, expected, "final checkpoint requires a successful terminal comparison")
+				if coverage != "terminal":
+					context.equal(player.checkpoint_frames(), before, "absent or failed terminal evidence cannot create a checkpoint")
+					continue
+				var inventory: PackedInt64Array = PackedInt64Array([0, frames]) if frames > 0 else PackedInt64Array([0])
+				context.equal(player.checkpoint_frames(), inventory, "final retention preserves initial state and configured capacity")
+				context.equal(player.is_complete(), true, "matching terminal checkpoint completes playback")
+				var checked: int = player.checked_checksum_count()
+				if frames > 0:
+					context.equal(_restore_checkpoint(player, game, 0, expert), Types.Code.OK, "inspect initial checkpoint")
+					context.equal(player.current_frame(), 0, "initial checkpoint restores exactly")
+					context.equal(player.is_final_state_validated(), false, "earlier state cannot inherit final evidence")
+					context.equal(_restore_checkpoint(player, game, frames, expert), Types.Code.OK, "jump directly to validated ending")
+					context.equal(player.current_frame(), frames, "final checkpoint restores without another input")
+					context.bytes_equal(game.canonical_bytes(), original, frames, "restored ending matches original canonical bytes")
+					context.equal(player.is_current_state_validated(), true, "restored ending has recorded boundary evidence")
+					context.equal(player.is_final_state_validated(), true, "verified final restoration preserves terminal evidence")
+					context.equal(player.is_complete(), true, "restoring the verified ending needs no redundant SAVE")
+					context.equal(player.checked_checksum_count(), checked, "restoration does not invent distinct checksum coverage")
+					context.equal(_dispatch(player, game) if expert else player.step(), Types.Code.FRAME_EXHAUSTED, "restored completion consumes no input")
+				context.state(frames, game.canonical_bytes())
+
+
+func _restore_checkpoint(player: Player, game: Simulation, target: int, expert: bool) -> int:
+	if not expert:
+		return player.restore_before(target)
+	var restoration: Types.Result = player.begin_restore_before(target)
+	if restoration.code != Types.Code.READY:
+		return restoration.code
+	var request: Types.Request = restoration.batch.next_request()
+	var loaded: bool = game.load_state(request.frame, request.reader)
+	var code: int = player.complete_request(request.batch_id, request.request_id, loaded).code
+	if code != Types.Code.OK:
+		return code
+	request = restoration.batch.next_request()
+	var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+	return player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code

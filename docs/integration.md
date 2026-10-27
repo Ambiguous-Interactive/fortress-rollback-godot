@@ -172,7 +172,7 @@ With opt-in `config.diagnostic_trace_frames`, `driver.diagnostic_trace()` return
 owned canonical state/input evidence, including after failure. It returns `{}`
 when capture is disabled or the driver is unconfigured. Export before replacing
 the session; see [canonical diagnostics](peer-lifecycle.md#opt-in-canonical-divergence-evidence).
-`driver.confirmed_inputs(frame)` returns owned finalized inputs for confirmed, simulated frames
+`driver.confirmed_inputs(frame)` and `peer.confirmed_inputs(frame)` return owned finalized inputs for confirmed, simulated frames
 outside pending correction. It returns null when unavailable, including during callbacks.
 Read rows before the bounded input history wraps; returned rows survive later driver calls.
 Every step and recovery result carries the same terminal `reason`, `failure_frame` and `failure_kind`,
@@ -447,6 +447,11 @@ Both default to zero. Enable both together with a positive snapshot size,
 a capacity of 2–1024, and callback games implementing `load_state`. Expert clients dispatch the load themselves. Reserved snapshot bytes
 (`capacity * max_snapshot_bytes`) must not exceed 16 MiB. The initial checkpoint is
 retained; the oldest later checkpoint is evicted when the cache fills.
+A successful terminal checksum comparison also retains the final boundary, even
+when it falls between checkpoint intervals. It uses the same bounded capacity.
+After inspecting an earlier frame, restore that checkpoint to return directly to
+the verified ending without simulating the tail again. Historical recordings
+without a terminal checksum do not gain a final checkpoint.
 Revisiting a retained boundary compares both its canonical state bytes and checksum,
 including when the recording has no state checksum. A mismatch stops playback
 before consuming that boundary's input; evicted boundaries have no cached comparison.

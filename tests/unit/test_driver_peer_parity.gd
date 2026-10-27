@@ -10,6 +10,7 @@ const Fixture = preload("res://tests/unit/test_peer_session.gd")
 const Reference = preload("res://tests/oracle/reference_game.gd")
 const Protocol = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Lifecycle = preload("res://addons/fortress_rollback/protocol/lifecycle_types.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
@@ -22,6 +23,12 @@ func run_case(name: String, context: RefCounted) -> void:
 		_load_control(context)
 		context.finish()
 		return
+	var unconfigured: RefCounted = Peer.new()
+	context.equal(unconfigured.has_method("confirmed_inputs"), true, "network clients can read finalized inputs")
+	if not unconfigured.has_method("confirmed_inputs"):
+		context.finish()
+		return
+	context.equal(unconfigured.confirmed_inputs(0), null, "unconfigured peer has no finalized row")
 	var count: int = 8 if name == "eight_peers" else (6 if name == "multiple_local_slots" else 2)
 	var multiple: bool = name == "multiple_local_slots"
 	_run(context, count, 2 if multiple else 0, multiple)
@@ -59,6 +66,7 @@ func _compare(context: RefCounted, driven: Dictionary, expert: Dictionary, origi
 		context.equal(driven.games[index].requests, expert.games[index].requests, "same ordered callbacks, inputs, statuses and snapshot bytes")
 		context.bytes_equal(driven.games[index].game.bytes(), expert.games[index].game.bytes(), left.status().current_frame, "same canonical game state")
 		var status: Types.Status = left.status()
+		_compare_finalized_inputs(context, left, right, checks)
 		if status.pending_rollback_frame == -1:
 			var latest: Dictionary = {}
 			for request: Dictionary in driven.games[index].requests:
@@ -74,6 +82,43 @@ func _compare(context: RefCounted, driven: Dictionary, expert: Dictionary, origi
 		driven.games[index].requests.clear()
 		expert.games[index].requests.clear()
 	return event_count
+
+
+# Value: protects=network clients receive owned finalized inputs; fails_when=peer facade exposes provisional rows;
+# why_new=canonical state parity does not exercise the public input export; seam=none
+func _compare_finalized_inputs(context: RefCounted, left: Peer, right: Peer, checks: Array[int]) -> void:
+	var status: Types.Status = left.status()
+	context.equal(left.confirmed_inputs(-1), null, "negative row is unavailable")
+	context.equal(left.confirmed_inputs(status.current_frame), null, "unsimulated row is unavailable")
+	var delay: int = 0
+	for player: int in range(left._config.player_count):
+		if left.input_delay(player) >= 0:
+			delay = left.input_delay(player)
+			break
+	for frame: int in range(maxi(0, status.current_frame - 3), status.current_frame):
+		var visible: bool = frame <= status.confirmed_frame and (status.pending_rollback_frame < 0 or frame < status.pending_rollback_frame)
+		var row: Types.FrameInputs = left.confirmed_inputs(frame)
+		var manual: Types.FrameInputs = right.confirmed_inputs(frame)
+		context.equal(row != null, visible, "only finalized corrected network rows are visible")
+		context.equal(manual != null, visible, "expert facade shares finalized export gates")
+		if row == null or manual == null:
+			continue
+		checks[1] += 1
+		context.equal(row.player_count(), left._config.player_count, "owned finalized roster")
+		for player: int in range(row.player_count()):
+			var sample_frame: int = frame - delay
+			if checks[3] == 1 and sample_frame in [10, 11]:
+				sample_frame = 21 - sample_frame
+			var expected: PackedByteArray = PackedByteArray([0, 0, 0, 0]) if frame < delay else _sample(player, sample_frame)
+			var actual: Types.InputResult = row.read(player)
+			context.equal(actual.status, Queue.Status.CONFIRMED, "finalized original input status")
+			context.bytes_equal(actual.bytes, expected, frame, "network row matches independent original input")
+			context.bytes_equal(manual.read(player).bytes, expected, frame, "manual network row matches independent original input")
+			actual.bytes[0] ^= 255
+			context.bytes_equal(left.confirmed_inputs(frame).read(player).bytes, expected, frame, "caller mutation cannot change retained network inputs")
+	if status.pending_rollback_frame >= 0:
+		checks[2] += 1
+		context.equal(left.confirmed_inputs(status.pending_rollback_frame), null, "pending correction withholds affected row")
 
 
 func _recover(context: RefCounted, driven: Dictionary, expert: Dictionary) -> void:
@@ -167,7 +212,7 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 	var target: int = 24 if count == 8 else 40
 	context.equal(target > 2 * queue_capacity, true, "workload crosses at least two full input-ring wraps")
 	var original: Array[PackedByteArray] = _original(context, count, delay, target)
-	var checks: Array[int] = [0]
+	var checks: Array[int] = [0, 0, 0, int(permute)]
 	var fixture: RefCounted = Fixture.new()
 	var lifecycle: Lifecycle.Options = Lifecycle.Options.new()
 	lifecycle.keepalive_interval_us = 20000
@@ -196,6 +241,8 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 			_deliver(context, fixture, driven, expert, pending, true)
 			_collect(context, fixture, driven, expert, pending)
 			_deliver(context, fixture, driven, expert, pending, false)
+			for index: int in range(driven.peers.size()):
+				_compare_finalized_inputs(context, driven.peers[index], expert.peers[index], checks)
 			_recover(context, driven, expert)
 			_collect(context, fixture, driven, expert, pending)
 			_deliver(context, fixture, driven, expert, pending, false)
@@ -213,6 +260,8 @@ func _run(context: RefCounted, count: int, delay: int, multiple: bool, permute: 
 		event_count += _compare(context, driven, expert, original, checks)
 	context.equal(event_count > 0, true, "peer control events actually observed")
 	context.equal(checks[0] > 0, true, "independent intermediate finalized boundaries actually checked")
+	context.equal(checks[1] > 0, true, "public finalized rows actually checked")
+	context.equal(checks[2] > 0, true, "pending correction export gate actually checked")
 	for index: int in range(driven.peers.size()):
 		var peer: Peer = driven.peers[index]
 		context.equal(peer.status().current_frame, target, "crossed queue wrap with no extra forward frame")

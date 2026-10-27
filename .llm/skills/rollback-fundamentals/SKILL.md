@@ -191,6 +191,8 @@ Revisited retained checkpoints compare canonical bytes and callback checksums be
 even when the recording has no state checksums. Apply comparison to both paused validation and
 advancement through callback and expert APIs; test changed bytes with an unchanged callback checksum.
 Cached comparisons do not increase recorded-checksum coverage, and evicted boundaries provide no cached evidence.
+Exercise checkpoint eviction after backward navigation, when newly visited frames can be older than retained ones.
+Apply chronological retention to the combined candidates before eviction; insertion order must not discard a newer verified ending.
 Track displayed-state validation separately from lifetime checksum totals. Advancing input clears the selected-state claim;
 only a successful recorded-checksum comparison during that visit can restore it. Cache-only validation does not qualify.
 

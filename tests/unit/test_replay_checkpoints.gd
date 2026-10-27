@@ -133,6 +133,7 @@ func _bounded_cache(context: RefCounted) -> void:
 	context.equal(probe.has_method("checkpoint_frames"), true, "bounded cache exposes its actual inventory")
 	if not probe.has_method("checkpoint_frames"):
 		return
+	_chronological_cache(context)
 	var replay: RefCounted = Fixture.recording(12)
 	var player: Player = Player.new()
 	context.equal(player.checkpoint_frames(), PackedInt64Array(), "unconfigured inventory is empty")
@@ -162,6 +163,41 @@ func _bounded_cache(context: RefCounted) -> void:
 	context.equal(player.configure(replay, Simulation.new(), Simulation.SNAPSHOT_BYTES), Types.Code.OK, "ordinary playback remains compatible")
 	context.equal(player.restore_before(0), Types.Code.HISTORY_UNAVAILABLE, "reconfiguration releases previous cache")
 	context.equal(player.call("checkpoint_frames"), PackedInt64Array(), "new lifetime has no inherited inventory")
+
+
+# Value: protects=backward inspection preserves newer retained checkpoints; fails_when=older revisits evict future state;
+# why_new=bounded cache tests only insert chronologically; seam=none
+func _chronological_cache(context: RefCounted) -> void:
+	for terminal: bool in [false, true]:
+		for capacity: int in [2, 3]:
+			var replay: RefCounted = Fixture.recording(12)
+			var expected: Simulation = Simulation.new()
+			for frame: int in 12:
+				expected.simulate_frame(frame, replay.inputs(frame))
+			if terminal:
+				replay._format_version = replay.TERMINAL_VERSION
+				replay._terminal_checksum = Simulation.checksum(expected.canonical_bytes())
+			var game: Simulation = Simulation.new()
+			var player: Player = Player.new()
+			context.equal(player.configure(replay, game, Simulation.SNAPSHOT_BYTES, 3, capacity), Types.Code.OK, "configure chronological cache")
+			for frame: int in 12:
+				context.equal(player.step(), Types.Code.OK, "populate bounded checkpoint history")
+			if terminal:
+				context.equal(player.step(), Types.Code.OK, "validate and retain final checkpoint")
+			var inventory: PackedInt64Array = PackedInt64Array([0, 12 if terminal else 9])
+			if capacity == 3:
+				inventory.insert(1, 9 if terminal else 6)
+			context.equal(player.checkpoint_frames(), inventory, "initial state and newest chronological checkpoints retained")
+			context.equal(player.restore_before(0), Types.Code.OK, "inspect older retained state")
+			for frame: int in 5:
+				context.equal(player.step(), Types.Code.OK, "inspect through an evicted older cache boundary")
+			context.equal(player.checkpoint_frames(), inventory, "older insertion cannot evict a newer checkpoint")
+			var newest: int = inventory[-1]
+			context.equal(player.restore_before(newest), Types.Code.OK, "newest checkpoint remains directly navigable")
+			context.equal(player.current_frame(), newest, "navigation restores newest state without replaying its prefix")
+			if terminal:
+				context.bytes_equal(game.canonical_bytes(), expected.canonical_bytes(), 12, "retained ending restores original canonical state")
+				context.equal(player.is_final_state_validated(), true, "retained ending restores final-state evidence")
 
 
 func _restore_failures(context: RefCounted) -> void:

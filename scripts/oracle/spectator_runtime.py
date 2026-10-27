@@ -190,8 +190,9 @@ def check(engine, output, jar, root):
     if traces[0] != traces[1]:
         raise ValueError('runtime spectator traces do not repeat')
     (output / 'observed.json').write_text(json.dumps(traces[0], indent=2) + '\n')
-    from spectator_startup import check_rust
+    from spectator_startup import check_rust, check_delay
     rust = check_rust(traces[0], output)
+    delayed = check_delay(engine, output / 'delayed')
     evidence = []
     for trace in traces[0]:
         label = ('preplay-' if trace['preplay'] else 'started-') + str(trace['capacity']) + '-speed-' + str(trace['speed'])
@@ -219,9 +220,9 @@ def check(engine, output, jar, root):
         evidence.append(item)
     if digest(Path(engine)) != engine_hash:
         raise ValueError('spectator engine changed during observation')
-    return {'complete': True, 'traces': evidence, 'rust': rust, 'repetitions': 2, 'engine_version': version,
+    return {'complete': True, 'traces': evidence, 'rust': rust, 'delayed': delayed, 'repetitions': 2, 'engine_version': version,
             'engine_sha256': engine_hash, 'observations_sha256': digest(output / 'observed.json'),
             'pinned_runtime_sha256': digest(UPSTREAM / 'src/sessions/p2p_spectator_session.rs'),
             'limitations': ['Preplay backlog diverges from the pinned model at its NULL frame sentinel; see issue #203.',
                             'The runtime-aligned model changes two NULL-frame backlog predicates and checks one-request microsteps.',
-                            'Rust/Godot service-cycle comparison covers only in-order no-delay two-player binary input; handshake events are not compared.']}
+                            'Rust/Godot service cycles cover in-order two-player binary input with zero, one and capacity-minus-one delay; handshake events are not compared.']}
