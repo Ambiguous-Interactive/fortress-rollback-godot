@@ -71,35 +71,29 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 	if local_donor and not history.prepare(host._core, barrier.slots, host._config.input_width):
 		return Types.Code.HISTORY_UNAVAILABLE
 	var plan_due: bool = _plan_due(host, barrier, now_us)
-	if proposer and plan_due and (not local_donor or history.plan_turn):
+	if proposer and plan_due:
 		var plan: Dictionary = owner._payload(barrier, owner.Phase.PREPARE, owner.Stage.HISTORY, 0)
 		plan.cut = history.cut
 		plan.bound = history.first
 		plan.bytes = PackedByteArray([history.donor, 0, 0])
 		plan.bytes.encode_u16(1, history.chunk_bytes)
-		var accepted: bool = true
 		for index: int in host._ids.size():
 			if barrier.participants.has(host._ids[index].hex_encode()):
 				var previous: Dictionary = history.plan_sent_to.get(index, {})
-				if not previous.is_empty() and previous.digest == barrier.digest and now_us - int(previous.at) < History.RETRY_US:
+				if not previous.is_empty() and previous.digest == barrier.digest and ((local_donor and not history.plan_turn) or now_us - int(previous.at) < History.RETRY_US):
 					continue
-				if host._endpoint(index).send_drop_barrier(plan, host._now) != I.Code.OK:
-					accepted = false
-				else:
+				if host._endpoint(index).send_drop_barrier(plan, host._now) == I.Code.OK:
 					history.plan_sent_to[index] = {"digest": barrier.digest, "at": now_us}
-		if local_donor:
-			if accepted:
-				history.plan_turn = false
+		if local_donor and history.plan_turn:
+			history.plan_turn = false
 			return Types.Code.OK
-	if not local_donor or (proposer and history.plan_turn):
+	if not local_donor:
 		return Types.Code.OK
 	if not proposer and history.plan_turn:
 		# A complete donor round yields to a due certificate until it is accepted.
 		if barrier.digest != 0 and (not barrier.certified or owner.publication_due(host, barrier, owner.Phase.REPORT, owner.Stage.READY)):
 			return Types.Code.OK
 		history.plan_turn = false
-	if history.retry_us >= 0 and now_us - history.retry_us < History.RETRY_US:
-		return Types.Code.OK
 	var work: int = 0
 	var complete: bool = true
 	var first_peer: int = history.next_peer
@@ -107,7 +101,14 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		var index: int = (first_peer + offset) % host._ids.size()
 		if not barrier.participants.has(host._ids[index].hex_encode()):
 			continue
+		if proposer and history.plan_sent_to.get(index, {}).get("digest", -1) != barrier.digest:
+			complete = false
+			continue
 		var cursor: int = history.cursors.get(index, 0)
+		if cursor == history.journal.size():
+			if now_us - int(history.round_sent_to[index]) < History.RETRY_US:
+				continue
+			cursor = 0
 		var previous_work: int = work
 		while cursor < history.journal.size() and work < History.WORK:
 			var payload: Dictionary = owner._payload(barrier, owner.Phase.BACKFILL, owner.Stage.HISTORY, 0)
@@ -124,10 +125,10 @@ static func service(owner: RefCounted, host: Variant, barrier: RefCounted, now_u
 		if work > previous_work:
 			history.next_peer = (index + 1) % host._ids.size()
 		history.cursors[index] = cursor
+		if cursor == history.journal.size():
+			history.round_sent_to[index] = now_us
 		complete = complete and cursor == history.journal.size()
-	if complete:
-		history.retry_us = now_us
-		history.cursors.clear()
+	if proposer or complete:
 		history.plan_turn = true
 	return Types.Code.OK
 

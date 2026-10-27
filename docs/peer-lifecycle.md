@@ -138,7 +138,9 @@ are retried; changed duplicates, wrong donors and conflicting retained overlap
 end the match. All target overlaps and suffix capacities are validated before any
 target is installed. New actual rows use normal rollback correction.
 Plan retries and donor rounds take separate publication turns. A refused plan
-retains its turn; a completed follower-donor round yields to a due certificate.
+remains immediately retryable while already planned links receive their retained
+chunks. The proposer sends no donor chunks to a link before its plan is accepted.
+A completed follower-donor round yields to a due certificate.
 The plan also announces the final candidate, preserving progress with an accepted
 one-packet output queue even when service calls match the 50-millisecond retry
 interval. Applications still need a deadline sufficient for their transfer and
