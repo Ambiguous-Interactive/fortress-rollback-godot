@@ -59,7 +59,7 @@ def main():
               'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True, encoding='utf-8')),
               'platform': platform.platform(), 'formal': formal, 'runtime': runtime, 'source_sha256': source_hashes,
               'limitations': [
-                  'Godot projection covers no delay and binary input for one active slot; Rust compares catch-up speeds one and two.' if runtime else
+                  'Formal projection covers no delay; actual Rust/Godot comparison also covers bounded stream delay and catch-up speeds one and two.' if runtime else
                   'Upstream SpectatorSession model only; no Godot observation requested.',
                   'Synthetic sync preconditions do not establish runtime handshake, events, expiry or status parity.',
                   'No live SignalFish spectator routing is established (see #131).']}

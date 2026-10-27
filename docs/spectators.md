@@ -629,6 +629,15 @@ its actual returned ADVANCE request count proves the selected catch-up decision.
 Rust has no public pacing-advice getter, so its advice field is derived from the
 observed backlog and configured policy, then checked against the request count.
 
+Eight additional source workloads use capacities four and five, delay one or
+capacity minus one, and catch-up speeds one and two. Every delivery boundary,
+service cycle and callback input must agree with the pinned Rust session.
+These runs exercise the strict catch-up threshold and repeated ring reuse while
+leaving the delayed final rows buffered. They do not simulate a clean host ending.
+Controls reject bypassed delay, catch-up based on the raw backlog, and reordered
+callback inputs. An executed control swaps the first two delivered input samples;
+it preserves their total but must fail the original ordered transcript comparison.
+
 The original pinned model remains unchanged. Its `ReceiveInput` action forces
 `framesBehind = 0` while `currentFrame = NULL_FRAME`; actual Rust and Godot both
 report backlog one after the first row. The original preplay traces must still
@@ -652,7 +661,8 @@ Raw original observations, generated models, TLC logs, source/tool identities,
 Rust binary hashes and all control results remain in the receipt directory.
 
 This scope uses two-player binary input for one active slot, neutral input for
-the other, no stream delay, and in-order host delivery. The port exposes the next
+the other, and in-order host delivery. Formal projection still covers only zero
+stream delay; the separate source comparison covers the delays above. The port exposes the next
 frame; Rust and the model expose the last played frame, so projection subtracts
 one. Handshake/event/timeout parity, disconnected statuses, arbitrary delivery
 and live SignalFish acceptance remain in #47 and #131. This fixes the scoped

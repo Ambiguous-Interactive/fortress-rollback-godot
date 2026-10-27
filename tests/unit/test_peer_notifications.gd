@@ -27,6 +27,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.finish()
 		return
 	var notices: Array[PackedInt32Array] = []
+	var finalized_rows: Array[Types.FrameInputs] = []
 	var reference: WeakRef = weakref(peer)
 	var game: RefCounted = mesh.games[0]
 	peer.connect(
@@ -36,6 +37,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			notices.append(PackedInt32Array([code, before, after]))
 			context.equal(target.status().current_frame, after, "final corrected frame visible")
 			context.equal(game.game.frame, after, "all game callbacks completed")
+			var finalized: int = mini(after - 1, target.status().confirmed_frame)
+			var row: Types.FrameInputs = target.confirmed_inputs(finalized)
+			if row != null:
+				finalized_rows.append(row)
 			context.equal(target.poll(999), I.Code.BUSY, "signal cannot poll")
 			context.equal(target.close(999), I.Code.BUSY, "signal cannot close")
 			context.equal(target.begin(999, []), I.Code.BUSY, "signal cannot begin")
@@ -54,6 +59,9 @@ func run_case(name: String, context: RefCounted) -> void:
 			context.equal(mesh.peers[1].step(mesh.now, fixture._inputs(mesh, 1)).code, Types.Code.OK, "remote step")
 			fixture._deliver(context, mesh, fixture._drain(mesh))
 			fixture._deliver(context, mesh, fixture._drain(mesh))
+		context.equal(finalized_rows.size() > 0, true, "completion handlers can export finalized inputs")
+		for row: Types.FrameInputs in finalized_rows:
+			context.equal(row.read(0).code, Types.Code.OK, "notification rows remain owned across later peer steps")
 	elif name == "stall_and_repair":
 		for frame: int in 2:
 			context.equal(peer.step(frame, fixture._inputs(mesh, 0)).code, Types.Code.OK, "predict remote")

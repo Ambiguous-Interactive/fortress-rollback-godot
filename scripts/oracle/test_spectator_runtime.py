@@ -188,5 +188,125 @@ class SpectatorRuntimeTests(unittest.TestCase):
                 compare(mutant, observed)
 
 
+class SpectatorDelayTests(unittest.TestCase):
+    @staticmethod
+    def bundle(mutate_input=False):
+        bundle = []
+        for preplay in (True, False):
+            for capacity in (4, 5):
+                for speed in (1, 2):
+                    delay = 1 if preplay else capacity - 1
+                    current, received = -1, -1
+                    tags, inputs = [-1] * capacity, [[0, 0] for _ in range(capacity)]
+
+                    def observation():
+                        backlog = received - current
+                        available = max(0, backlog - delay)
+                        return {'current': current, 'received': received, 'tags': tags[:], 'inputs': deepcopy(inputs),
+                                'backlog': backlog, 'advice': min(available, speed), 'catchup': available > 1}
+
+                    def policy():
+                        value = observation()
+                        return {field: value[field] for field in ('current', 'backlog', 'advice', 'catchup')}
+
+                    observations, services, cycles = [observation()], [policy()], []
+                    for received in range(12):
+                        tags[received % capacity] = received
+                        sample = (1 - received % 2) if mutate_input and received < 2 else received % 2
+                        inputs[received % capacity] = [sample, 0]
+                        observations.append(observation())
+                        services.append(policy())
+                        if received - current == capacity or received == 11:
+                            while received - current > delay:
+                                before = policy()
+                                for _ in range(before['advice']):
+                                    current += 1
+                                    observations.append(observation())
+                                cycles.append({'before': before, 'steps': before['advice'], 'after': policy()})
+                            services.append(policy())
+                            observations.append(observation())
+                    transcript = [[frame, 1 - frame % 2 if mutate_input and frame < 2 else frame % 2, 0]
+                                  for frame in range(12 - delay)]
+                    bundle.append({'capacity': capacity, 'preplay': preplay, 'speed': speed, 'delay': delay,
+                                   'observations': observations, 'service_observations': services, 'cycles': cycles, 'transcript': transcript})
+        return bundle
+
+    # Value: protects=every delivered and simulated ring state is retained; fails_when=startup copies replace the observed history;
+    # why_new=service projections do not inspect detailed ring snapshots; seam=none
+    def test_delay_ring_history_cannot_be_omitted_or_detached(self):
+        from spectator_startup import validate_delay_bundle
+        for mutate_input in (False, True):
+            bundle = self.bundle(mutate_input)
+            validate_delay_bundle(bundle, mutate_input=mutate_input)
+            controls = []
+            omitted = deepcopy(bundle)
+            for trace in omitted:
+                trace['observations'] = [deepcopy(trace['observations'][0]) for _ in range(14)]
+            controls.append(omitted)
+            missing = deepcopy(bundle)
+            del missing[0]['observations'][5]
+            controls.append(missing)
+            for field, index, value in [('tags', 0, 4), ('inputs', 0, [0 if mutate_input else 1, 0])]:
+                malformed = deepcopy(bundle)
+                malformed[0]['observations'][1][field][index] = value
+                controls.append(malformed)
+            for index, value in enumerate(controls):
+                with self.subTest(mutate_input=mutate_input, control=index), self.assertRaisesRegex(ValueError, 'delayed spectator observations'):
+                    validate_delay_bundle(value, mutate_input=mutate_input)
+
+    # Value: protects=negative execution validates every service cycle before accepting its intended transcript mismatch;
+    # fails_when=an earlier expected difference hides later omitted or reordered service records; why_new=ring checks exclude policy projections; seam=none
+    def test_delay_service_history_cannot_hide_behind_temporal_control(self):
+        from spectator_startup import validate_delay_bundle
+        for mutate_input in (False, True):
+            bundle = self.bundle(mutate_input)
+            validate_delay_bundle(bundle, mutate_input=mutate_input)
+            for index in range(8):
+                for field in ('service_observations', 'cycles'):
+                    mutant = deepcopy(bundle)
+                    sequence = mutant[index][field]
+                    if field == 'service_observations':
+                        sequence[1], sequence[2] = sequence[2], sequence[1]
+                    else:
+                        sequence.pop()
+                    diagnostic = 'delayed spectator services' if field == 'service_observations' else 'delayed spectator cycles'
+                    with self.subTest(mutate_input=mutate_input, trace=index, field=field), self.assertRaisesRegex(ValueError, diagnostic):
+                        validate_delay_bundle(mutant, mutate_input=mutate_input)
+
+    # Value: protects=nonzero delay source gate and exact temporal order; fails_when=observer ignores delay or swaps inputs;
+    # why_new=the existing runtime corpus explicitly excludes stream delay; seam=none
+    def test_delay_controls_reject_real_policy_and_temporal_mutations(self):
+        from spectator_startup import delay_controls
+        value = {'format': 1, 'traces': [{'observations': [
+            {'advice': 0}, {'advice': 0}, {}, {}, {}, {'catchup': False}], 'transcript': [[0, 0, 0], [1, 1, 0]]}]}
+        self.assertEqual([item['name'] for item in delay_controls(value, deepcopy(value))],
+                         ['delay-bypass', 'raw-backlog-catchup', 'temporal-input'])
+
+    # Value: protects=effective backlog policy typing; fails_when=raw host distance triggers catchup or numeric aliases pass;
+    # why_new=no-delay model cannot distinguish raw and viewable backlog; seam=none
+    def test_delay_policy_checks_effective_backlog_and_strict_types(self):
+        from spectator_startup import _delay_policy
+        item = {'current': 0, 'backlog': 3, 'advice': 1, 'catchup': False}
+        _delay_policy(item, 5, 2, 2)
+        for field, value in [('current', False), ('backlog', 3.0), ('advice', True), ('catchup', 0), ('advice', 2), ('catchup', True)]:
+            mutant = deepcopy(item)
+            mutant[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                _delay_policy(mutant, 5, 2, 2)
+
+    # Value: protects=declared delay workloads cannot silently shrink; fails_when=one short transcript is presented as complete;
+    # why_new=exact comparison alone can match two incomplete outputs; seam=none
+    def test_delay_inventory_rejects_missing_and_malformed_workloads(self):
+        from spectator_startup import validate_delay_bundle
+        for value in [[], [None] * 8, [{}] * 8, [self.trace()] * 8]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_delay_bundle(value)
+
+    @staticmethod
+    def trace():
+        return {'capacity': True, 'preplay': True, 'speed': 1, 'delay': 1, 'observations': [],
+                'transcript': [], 'service_observations': [], 'cycles': []}
+
+
 if __name__ == '__main__':
     unittest.main()

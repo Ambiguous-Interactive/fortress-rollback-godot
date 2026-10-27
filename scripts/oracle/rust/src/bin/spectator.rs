@@ -32,24 +32,24 @@ fn builder(seed: u64) -> SessionBuilder<Profile> {
             quality_report_interval: Duration::from_secs(100), ..Default::default() })
         .with_sync_config(SyncConfig { num_sync_packets: 1, keepalive_interval: Duration::from_secs(100), ..Default::default() })
 }
-fn observe(viewer: &fortress_rollback::SpectatorSession<Profile>, speed: usize) -> Value {
+fn observe(viewer: &fortress_rollback::SpectatorSession<Profile>, speed: usize, delay: usize) -> Value {
     let backlog = viewer.frames_behind_host();
     json!({"current": viewer.current_frame().as_i32(), "backlog": backlog,
-        "advice": std::cmp::min(backlog, if backlog > 1 { speed } else { 1 }), "catchup": backlog > 1})
+        "advice": std::cmp::min(backlog.saturating_sub(delay), if backlog.saturating_sub(delay) > 1 { speed } else { 1 }), "catchup": backlog.saturating_sub(delay) > 1})
 }
-fn run(capacity: usize, preplay: bool, speed: usize) -> Result<Value, String> {
+fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool) -> Result<Value, String> {
     let queues = vec![Arc::new(Mutex::new(Queue::default())), Arc::new(Mutex::new(Queue::default()))];
     let mut host = builder(1701).add_player(PlayerType::Local, 0.into()).unwrap()
         .add_player(PlayerType::Local, 1.into()).unwrap()
         .add_player(PlayerType::Spectator("1".into()), 2.into()).unwrap()
         .start_p2p_session(Socket(queues[0].clone())).unwrap();
     let mut viewer = builder(1702).with_spectator_config(SpectatorConfig {
-        buffer_size: capacity, catchup_speed: speed, max_frames_behind: 1, stream_delay: 0, ..Default::default() })
+        buffer_size: capacity, catchup_speed: speed, max_frames_behind: 1, stream_delay: delay, ..Default::default() })
         .try_start_spectator_session("0".into(), Socket(queues[1].clone())).unwrap();
     for _ in 0..8 { host.poll_remote_clients(); viewer.poll_remote_clients(); transfer(&queues); }
     if format!("{:?}", viewer.current_state()) != "Running" { return Err("spectator bootstrap incomplete".into()); }
     let mut transcript = Vec::<Vec<i32>>::new();
-    let mut observations = vec![observe(&viewer, speed)];
+    let mut observations = vec![observe(&viewer, speed, delay)];
     let mut cycles = Vec::new();
     for frame in 0..12 {
         for attempt in 0..3 {
@@ -62,10 +62,12 @@ fn run(capacity: usize, preplay: bool, speed: usize) -> Result<Value, String> {
             }
         }
         host.poll_remote_clients(); transfer(&queues); viewer.poll_remote_clients(); transfer(&queues);
-        observations.push(observe(&viewer, speed));
-        if (preplay && frame % capacity == capacity - 1) || (!preplay && frame % capacity == 0) || frame == 11 {
-            while viewer.frames_behind_host() > 0 {
-                let before = observe(&viewer, speed);
+        observations.push(observe(&viewer, speed, delay));
+        let service = if delayed { viewer.frames_behind_host() == capacity }
+            else { (preplay && frame % capacity == capacity - 1) || (!preplay && frame % capacity == 0) };
+        if service || frame == 11 {
+            while viewer.frames_behind_host() > delay {
+                let before = observe(&viewer, speed, delay);
                 let requests = viewer.advance_frame().map_err(|e| format!("{e:?}"))?;
                 let mut count = 0;
                 for request in requests {
@@ -79,20 +81,24 @@ fn run(capacity: usize, preplay: bool, speed: usize) -> Result<Value, String> {
                     } else { return Err("unexpected spectator snapshot".into()); }
                 }
                 if count == 0 { return Err("spectator made no progress".into()); }
-                cycles.push(json!({"before": before, "steps": count, "after": observe(&viewer, speed)}));
+                cycles.push(json!({"before": before, "steps": count, "after": observe(&viewer, speed, delay)}));
             }
-            observations.push(observe(&viewer, speed));
+            observations.push(observe(&viewer, speed, delay));
             if viewer.advance_frame().is_ok() { return Err("spectator did not stall on empty input".into()); }
         }
     }
-    Ok(json!({"capacity": capacity, "preplay": preplay, "speed": speed,
-        "observations": observations, "cycles": cycles, "transcript": transcript}))
+    let mut result = json!({"capacity": capacity, "preplay": preplay, "speed": speed,
+        "observations": observations, "cycles": cycles, "transcript": transcript});
+    if delayed { result["delay"] = json!(delay); }
+    Ok(result)
 }
 fn main() {
     let result = (|| -> Result<Vec<Value>, String> {
         let mut traces = Vec::new();
-        for preplay in [true, false] { for capacity in [2, 3] { for speed in [1, 2] {
-            traces.push(run(capacity, preplay, speed)?);
+        let delayed = std::env::args().any(|argument| argument == "--delayed");
+        for preplay in [true, false] { for capacity in if delayed { [4, 5] } else { [2, 3] } { for speed in [1, 2] {
+            let delay = if delayed { if preplay { 1 } else { capacity - 1 } } else { 0 };
+            traces.push(run(capacity, preplay, speed, delay, delayed)?);
         } } }
         Ok(traces)
     })();

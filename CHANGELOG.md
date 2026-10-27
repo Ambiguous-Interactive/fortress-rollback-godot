@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add `peer.confirmed_inputs(frame)` for owned finalized input rows. Network clients can drive confirmed effects and spectator publication without enabling recording.
+
+- Add final replay checkpoints after successful terminal-state validation. Return to the verified ending after backward inspection without replaying the tail; checkpoint memory stays bounded.
+
 - Add spectator example replay export with V. Save viewed history and its captured final state, including clean empty matches; recording retains the first ten minutes.
 
 - Add replay selected-state checksum status to the player API and viewer. Paused inspection distinguishes matching, unchecked and absent recorded checksums.
@@ -192,6 +196,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix replay checkpoint eviction during backward inspection. Revisiting an older uncached boundary preserves the initial state and newest checkpoints, including a verified match ending.
 
 - Fix spectator stop reporting after external or callback cancellation. Preserve the original cause through later host errors; `is_complete()` and the example distinguish clean playback completion from cancellation.
 

@@ -147,7 +147,7 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
 EXPECTED['res://tests/unit/test_peer_session.gd'].add('scheduled_inputs')
 EXPECTED['res://tests/unit/test_replay_callbacks.gd'].add('failure_kinds')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'failure_download', 'comparison_domains'})
-EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_coverage', 'viewer_final_coverage', 'selected_state_coverage'}
+EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_coverage', 'viewer_final_coverage', 'selected_state_coverage', 'terminal_checkpoints'}
 EXPECTED['res://tests/unit/test_peer_drop_history.gd'].add('last_survivor_receipts')
 EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
     'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}

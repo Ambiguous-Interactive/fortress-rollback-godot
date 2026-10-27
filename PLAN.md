@@ -97,9 +97,11 @@ The library supplies orchestration, validation and sync-test tooling.
 Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
 Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
 Peer clients can read owned staged local samples to retry stalled steps without resampling.
+They can also export owned finalized input rows for confirmed effects and spectator publication without recording.
 Replay failure evidence identifies the first failed game request and comparison domain.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
+Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
 Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
 Godot physics and arbitrary scene state are not made deterministic by rollback.
@@ -477,7 +479,9 @@ Actual pinned Rust and Godot spectator traces compare startup prefill, capacitie
 catch-up speeds one/two and exact input transcripts through ring reuse. The scoped startup relation in
 [#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) is complete.
 An anchored runtime-aligned model checks every observed state while preserving the original pinned
-startup counterexample and explicit synthetic synchronization setup. Broader delay, event/status,
+startup counterexample and explicit synthetic synchronization setup. Separate actual-source traces compare
+delay one and capacity-minus-one through ring reuse, including exact catch-up service cycles.
+Broader delay and tail policies, event/status,
 arbitrary-delivery and live acceptance remain in #47 and #131.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
 version 3 delivery, playback requests and confirmed exports. Byte-only callers default to

@@ -21,6 +21,8 @@ state and every supported post-state, including actual backlog and pacing advice
 Do not substitute a model's sentinel rules for runtime policy observations.
 Label synthetic bootstrap separately, retain startup counterexamples, and require
 transition-control rejection inside the actual observed suffix, not only its setup.
+When a detailed observation stream accompanies a smaller comparison projection, validate its complete
+delivery and microstep inventory too. Repeating valid startup records must not replace exercised history.
 
 Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying

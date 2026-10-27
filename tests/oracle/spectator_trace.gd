@@ -29,9 +29,12 @@ class Game:
 
 func _initialize() -> void:
 	var traces: Array[Dictionary] = []
+	var delayed: bool = "--delayed" in OS.get_cmdline_user_args()
+	var mutate_input: bool = "--mutate-input" in OS.get_cmdline_user_args()
 	for case_id: int in range(8):
-		var capacity: int = 2 + (case_id / 2) % 2
+		var capacity: int = (4 if delayed else 2) + (case_id / 2) % 2
 		var preplay: bool = case_id < 4
+		var delay: int = (1 if preplay else capacity - 1) if delayed else 0
 		var speed: int = 1 + case_id % 2
 		var config: Config = Config.new()
 		config.spectator = true
@@ -44,7 +47,7 @@ func _initialize() -> void:
 		config.max_snapshot_bytes = 8
 		config.storage_budget_bytes = config.required_storage_bytes()
 		var viewer: Spectator = Spectator.new()
-		if viewer.configure(config) != Types.Code.OK or viewer.set_playback(0, 1, speed) != Types.Code.OK:
+		if viewer.configure(config) != Types.Code.OK or viewer.set_playback(delay, 1, speed) != Types.Code.OK:
 			quit(2)
 			return
 		var game: Game = Game.new()
@@ -54,15 +57,18 @@ func _initialize() -> void:
 		var cycles: Array[Dictionary] = []
 		var empty: Array[Driver.LocalInput] = []
 		for frame: int in range(12):
-			var row: Array[PackedByteArray] = [PackedByteArray([frame % 2]), PackedByteArray([0])]
+			var sample: int = (1 - frame % 2) if mutate_input and frame < 2 else frame % 2
+			var row: Array[PackedByteArray] = [PackedByteArray([sample]), PackedByteArray([0])]
 			if viewer.receive_host_frame(frame, row).code != Types.Code.OK:
 				quit(2)
 				return
 			observations.append(_observe(viewer))
 			service_observations.append(_policy(viewer))
 			# Preserve preplay backlog; the second case starts before filling a complete ring.
-			if (preplay and frame % capacity == capacity - 1) or (not preplay and frame % capacity == 0) or frame == 11:
-				while viewer.host_frontier() >= viewer.status().current_frame:
+			var full: bool = viewer.host_frontier() - viewer.status().current_frame + 1 == capacity
+			var service: bool = full if delayed else ((preplay and frame % capacity == capacity - 1) or (not preplay and frame % capacity == 0))
+			if service or frame == 11:
+				while viewer.recommended_steps() > 0:
 					var before: Dictionary = _policy(viewer)
 					var advice: int = viewer.recommended_steps()
 					for _step: int in range(advice):
@@ -78,6 +84,8 @@ func _initialize() -> void:
 				observations.append(_observe(viewer))
 		traces.append({"capacity": capacity, "preplay": preplay, "speed": speed, "observations": observations, "transcript": game.transcript,
 			"service_observations": service_observations, "cycles": cycles})
+		if delayed:
+			traces[-1]["delay"] = delay
 	print("FORTRESS_SPECTATOR_TRACE " + JSON.stringify(traces))
 	quit(0)
 
@@ -90,9 +98,10 @@ func _observe(viewer: Spectator) -> Dictionary:
 			row = [viewer._host_rows[index][0], viewer._host_rows[index][1]]
 		buffer.append(row)
 	var backlog: int = viewer.host_frontier() - viewer.status().current_frame + 1
+	var available: int = maxi(0, backlog - viewer.playback_policy()[0])
 	return {
 		"current": viewer.status().current_frame - 1, "received": viewer.host_frontier(), "tags": Array(viewer._host_tags), "inputs": buffer,
-		"backlog": backlog, "advice": viewer.recommended_steps(), "catchup": backlog > viewer.playback_policy()[1]
+		"backlog": backlog, "advice": viewer.recommended_steps(), "catchup": available > viewer.playback_policy()[1]
 	}
 
 

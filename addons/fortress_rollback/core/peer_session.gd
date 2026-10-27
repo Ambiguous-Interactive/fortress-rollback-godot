@@ -503,6 +503,12 @@ func replay() -> RefCounted:
 	return _core.replay() if _core != null else null
 
 
+## Owned finalized inputs for a simulated, mesh-confirmed frame; null while unavailable or under correction.
+## Read before queue history wraps. Rows remain owned across later steps and completion notifications.
+func confirmed_inputs(frame: int) -> Types.FrameInputs:
+	return _core.confirmed_inputs(frame) if _core != null else null
+
+
 ## Owned sample staged for the current frame, including during prediction or network pressure.
 ## Its frame includes input delay. Retry step with status().current_frame as LocalInput.sample_frame.
 ## MISSING_LOCAL_INPUT means the slot needs a new sample; successful advancement releases staged samples.
