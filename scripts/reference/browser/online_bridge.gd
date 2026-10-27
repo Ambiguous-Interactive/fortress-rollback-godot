@@ -12,6 +12,8 @@ const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const ReplayPlayer = preload("res://addons/fortress_rollback/core/replay_player.gd")
+# A 16 KiB replay becomes 32 KiB of hex; reserve bounded JSON field overhead.
+const MAX_COMMAND_CHARS: int = 2 * 16384 + 1024
 
 
 ## Bounded summary of the host's service cadence and of its confirmation waits.
@@ -207,7 +209,7 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	# Commands cross the browser bridge as bounded JSON, never as executable snippets.
 	var text: String = JavaScriptBridge.eval("JSON.stringify(window.fortressOnlineCommand || {})")
-	if text.length() <= 16384:
+	if text.length() <= MAX_COMMAND_CHARS:
 		var value: Variant = JSON.parse_string(text)
 		if value is Dictionary and int(value.get("id", 0)) > command_id:
 			command_id = int(value.id)

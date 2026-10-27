@@ -63,6 +63,28 @@ cover unchanged source/keyring bytes, retained mirror metadata and permissions,
 idempotence, rejection without mutation, comments and lookalike hostnames.
 The testing guidance now requires localizing acquisition before further budget changes.
 
+## Verification continuation: encoded command bounds
+
+Main job 122475096240 reached the online browser witness after 19 seconds of
+package setup, then timed out awaiting command acknowledgement. Its downloaded
+217-frame replay is 8,220 bytes. Hex encoding and JSON produce 16,482 characters,
+exceeding the bridge's 16,384-character command cap despite satisfying its
+16 KiB binary replay cap. The artifact retains command 8 and no playback result;
+validation command 9 was ignored. This is a deterministic harness size mismatch.
+The repair budgets encoded envelopes separately from decoded payloads and adds
+actual bridge boundary controls. No workload or binary decoder limit is reduced.
+The testing infrastructure guidance now records that sizing rule.
+
+## Verification continuation: combined control budget
+
+Candidate job 122480013894 ran all 222 reference tests successfully in 559.091
+seconds, then all 95 oracle tests successfully in 45.952 seconds. Their combined
+605.043 seconds exceed the 600-second outer deadline before setup and cleanup;
+the runner cancelled the job even though both suite logs ended in `OK`.
+The repair gives this existing combined job 15 minutes, preserving every command,
+case, assertion and inner watchdog. Earlier warm completion at 9m51s left only
+nine seconds of headroom. The existing cold-budget rule covers this finding too.
+
 ## Final outcome
 
 State: `findings-acted`.

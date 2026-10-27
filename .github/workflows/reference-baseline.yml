@@ -41,7 +41,8 @@ jobs:
   contracts:
     name: Reference negative controls
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Both full suites took over ten minutes together; reserve setup and teardown time.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
