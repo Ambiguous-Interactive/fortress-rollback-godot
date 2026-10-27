@@ -75,6 +75,16 @@ The repair budgets encoded envelopes separately from decoded payloads and adds
 actual bridge boundary controls. No workload or binary decoder limit is reduced.
 The testing infrastructure guidance now records that sizing rule.
 
+## Verification continuation: combined control budget
+
+Candidate job 122480013894 ran all 222 reference tests successfully in 559.091
+seconds, then all 95 oracle tests successfully in 45.952 seconds. Their combined
+605.043 seconds exceed the 600-second outer deadline before setup and cleanup;
+the runner cancelled the job even though both suite logs ended in `OK`.
+The repair gives this existing combined job 15 minutes, preserving every command,
+case, assertion and inner watchdog. Earlier warm completion at 9m51s left only
+nine seconds of headroom. The existing cold-budget rule covers this finding too.
+
 ## Final outcome
 
 State: `findings-acted`.

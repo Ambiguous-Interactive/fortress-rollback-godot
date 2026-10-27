@@ -58,6 +58,23 @@ One room launches one exported page per peer, completes a real handshake, submit
 and the page count therefore set the browser time; the export and the engine
 bootstrap are already restored from the cache and are not the dominant part.
 
+## Negative-control job deadline
+
+The negative-control job has a 15-minute outer deadline for setup, both complete
+Python suites and cleanup. Each subprocess keeps its existing watchdog.
+
+Run [40586724579](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/40586724579)
+exceeded the former 10-minute deadline on 2026-10-27. The reference suite passed
+all 222 tests with nine skips in 559.091 seconds. The oracle suite then passed
+all 95 tests in 45.952 seconds before the runner reported cancellation.
+Their combined execution took 605.043 seconds before setup and cleanup.
+
+The same job passed in 9m51s in run
+[40581746832](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/40581746832),
+leaving only nine seconds of the former budget. The 15-minute deadline adds
+about five minutes for runtime variation and preparation. Both suite commands,
+case inventories, assertions and inner watchdogs remain unchanged.
+
 ## Ownership job deadline
 
 The ownership matrix has a 45-minute job deadline. This includes tool and operating
