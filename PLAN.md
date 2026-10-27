@@ -101,6 +101,7 @@ They can also export owned finalized input rows for confirmed effects and specta
 Replay failure evidence identifies the first failed game request and comparison domain.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
+Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.
 Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
 Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
@@ -475,6 +476,7 @@ Stream delivery and expiry remain bound to the configured playback lifetime; dir
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
 `is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
+The spectator relay uses that completion authority even when cancellation occurs exactly at an authenticated final boundary or inside acceptance delivery.
 Actual pinned Rust and Godot spectator traces compare startup prefill, capacities two/three,
 catch-up speeds one/two and exact input transcripts through ring reuse. The scoped startup relation in
 [#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) is complete.

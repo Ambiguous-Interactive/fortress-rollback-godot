@@ -929,18 +929,22 @@ func _post_completion(context: RefCounted) -> void:
 		fixture.relay.detach()
 
 
-# Value: protects=real failures and incomplete cancellation; fails_when=all termination is accepted as completion;
-# why_new=completion path needs negative controls; seam=public SDK signals and driver
+# Value: protects=cancellation remains distinct from completion; fails_when=terminal reason and final frame imply success;
+# why_new=completion needs controls at empty and consumed final boundaries; seam=public SDK signals and driver
 func _terminal_failures(context: RefCounted) -> void:
-	for ended: bool in [false, true]:
+	for boundary: String in ["live", "tail", "empty_boundary", "played_boundary"]:
 		for reason: int in [Types.Code.TERMINATED, Types.Code.CALLBACK_FAILED, Types.Code.PROTOCOL_FAILED, Types.Code.DESYNC]:
 			var fixture: Dictionary = _fixture(context)
-			if ended:
-				_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
-				context.equal(fixture.relay.poll(1).code, Relay.Code.OK, "unplayed tail received")
-				_emit(fixture, fixture.stream.encode_end(1))
+			if boundary != "live":
+				if boundary != "empty_boundary":
+					_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+				context.equal(fixture.relay.poll(1).code, Relay.Code.OK, "host stream healthy before ending")
+				_emit(fixture, fixture.stream.encode_end(0 if boundary == "empty_boundary" else 1))
 				context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "host ends before tail playback")
+				if boundary == "played_boundary":
+					context.equal(fixture.driver.step(2, _empty()).code, Types.Code.OK, "play final row before cancellation")
 			fixture.driver.terminate(reason)
+			context.equal(fixture.stream.playback_session().is_complete(), false, "termination without clean service never completes playback")
 			context.equal(fixture.relay.poll(3).code, Relay.Code.PEER_FAILURE, "cancellation and failures are not clean completion")
 			_emit(fixture, fixture.stream.encode_keepalive())
 			context.equal(fixture.relay.status().code, Relay.Code.WRONG_STATE, "terminated incomplete ingress stays fenced")
@@ -949,7 +953,7 @@ func _terminal_failures(context: RefCounted) -> void:
 
 
 func _control_completion(context: RefCounted) -> void:
-	for reason: int in [Types.Code.OK, Types.Code.DESYNC]:
+	for reason: int in [Types.Code.OK, Types.Code.TERMINATED, Types.Code.DESYNC]:
 		var fixture: Dictionary = _fixture(context, true, 2)
 		_emit(fixture, fixture.publisher.encode_offer())
 		_emit(fixture, fixture.stream.encode_end(0))

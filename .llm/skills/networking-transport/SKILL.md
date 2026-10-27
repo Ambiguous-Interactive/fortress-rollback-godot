@@ -138,6 +138,7 @@ confirmation or repair waits. A specific peer code does not excuse a terminal ou
 Input closure is separate from playback termination. After END, test retries while the tail is paused and after its last driver step.
 Preserve authenticated conflicts before completion; completed clean END must not map normal termination to peer failure on polling or SDK callbacks.
 Cross completion inside control callbacks with queued late traffic; cancellation, host loss and incomplete tails must still fail.
+Use the playback completion authority: final-frame equality plus a generic terminal reason can also identify cancellation, even for empty matches.
 When a stream exposes its playback session, fence both packet delivery and elapsed
 expiry against successful session replacement. Equal configuration values do not
 preserve a connection lifetime; rejected configuration must preserve the valid stream.
@@ -166,8 +167,7 @@ gameplay replay; there is no released `FRG1` format. The
 Preserve revisions, wide values and ordering; version released format changes.
 Validate mutable recording structure before ownership, including metadata and storage bounds.
 Keep safe missing-digest and content comparisons at their owning playback boundary.
-Trimmed recordings use their endpoint's own checksum, never later or absent evidence.
-Prefix copies must only shrink validation storage: resizing a short digest array upward fabricates exportable evidence. Test partial rows as well as absent digests.
+Trimmed recordings use their endpoint's own checksum, never later or absent evidence. Prefix copies must only shrink every backing buffer: padding short checksums, digests, flags, inputs or statuses fabricates exportable evidence. Test partial rows and absent storage.
 
 ## Desync Detection
 

@@ -22,7 +22,9 @@ import local_ownership
 
 class ClaimTest(unittest.TestCase):
     def setUp(self):
-        self.directory = Path(tempfile.mkdtemp())
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
 
     def claim(self, resource='ownership', timeout=0.0):
         return local_ownership.claim(resource, timeout=timeout, directory=self.directory)
@@ -44,8 +46,8 @@ class ClaimTest(unittest.TestCase):
 
         def second():
             try:
-                self.claim(timeout=10.0)
-                outcomes.append('acquired')
+                with self.claim(timeout=10.0):
+                    outcomes.append('acquired')
             except ValueError as error:
                 outcomes.append(str(error))
 
@@ -56,6 +58,7 @@ class ClaimTest(unittest.TestCase):
             self.assertEqual(outcomes, [], 'the second claim must wait, not fail')
         thread.join()
         self.assertEqual(outcomes, ['acquired'])
+        self.assertTrue(local_ownership.holder(self.directory / 'ownership.lock')['released'])
 
     def test_different_resources_do_not_block_each_other(self):
         with self.claim('ownership'):

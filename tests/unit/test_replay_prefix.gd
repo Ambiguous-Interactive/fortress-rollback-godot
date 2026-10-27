@@ -10,12 +10,14 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["captured_prefix_evidence", "prefix_evidence_boundaries", "incomplete_prefix_digests"])
+	return PackedStringArray(["captured_prefix_evidence", "prefix_evidence_boundaries", "incomplete_prefix_digests", "incomplete_prefix_storage"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "captured_prefix_evidence":
 		_captured_prefix_evidence(context)
+	elif name == "incomplete_prefix_storage":
+		_incomplete_prefix_storage(context)
 	elif name == "incomplete_prefix_digests":
 		_incomplete_prefix_digests(context)
 	else:
@@ -113,3 +115,64 @@ func _prefix_evidence_boundaries(context: RefCounted) -> void:
 		var historical_prefix: Replay = historical.owned_prefix(1)
 		context.equal(historical_prefix.checksum(1).is_empty(), true, "historical final boundaries do not opt into terminal validation")
 		context.equal(historical_prefix.to_bytes().decode_u16(4), version, "historical format remains unchanged")
+
+
+# Value: protects=trimming cannot fabricate missing gameplay or state evidence; fails_when=prefix padding repairs malformed source storage;
+# why_new=digest coverage does not exercise input, status, flag or checksum truncation; seam=none
+func _incomplete_prefix_storage(context: RefCounted) -> void:
+	for captured: bool in [false, true]:
+		for field: String in ["_inputs", "_statuses", "_flags", "_checksums"]:
+			var unit: int = Replay.CHECKSUM_BYTES if field == "_checksums" else (1 if field == "_flags" else 2)
+			for retained_bytes: int in [0, unit - 1, unit, unit + 1, 4 * unit - 1, 4 * unit]:
+				var source: Replay = Fixture.new()._recording(4, captured)
+				var original: PackedByteArray = source.get(field)
+				original.resize(retained_bytes)
+				source.set(field, original.duplicate())
+				if field in ["_flags", "_checksums"]:
+					for frame: int in 4:
+						var available: bool = retained_bytes >= (frame + 1) * unit
+						context.equal(source.checksum(frame).size(), Replay.CHECKSUM_BYTES if available else 0, "partial state evidence is unavailable")
+				for boundary: int in [0, 1, 2, 4, 5]:
+					var prefix: Replay = source.owned_prefix(boundary)
+					var frames: int = mini(boundary, 4)
+					var expected: PackedByteArray = original.slice(0, frames * unit)
+					context.equal(prefix.get(field), expected, field + " prefix cannot add missing bytes")
+					var complete: bool = expected.size() == frames * unit
+					context.equal(prefix.is_valid(), complete, field + " incomplete storage remains invalid")
+					context.equal(not prefix.to_bytes().is_empty(), complete, field + " incomplete storage cannot export")
+					for expert: bool in [false, true]:
+						var player: Player = Player.new()
+						var game: Simulation = Simulation.new()
+						var code: int = player.configure_expert(prefix, Simulation.SNAPSHOT_BYTES) if expert else player.configure(prefix, game, Simulation.SNAPSHOT_BYTES)
+						context.equal(code, Types.Code.OK if complete else Types.Code.INVALID_CONFIGURATION, field + " missing storage cannot configure playback")
+					context.equal(source.get(field), original, field + " prefix leaves source storage unchanged")
+	_incomplete_terminal_evidence(context)
+
+
+# Value: protects=terminal checksum reads expose only complete v6 evidence; fails_when=malformed or historical terminal bytes leak;
+# why_new=ordinary checksum-row truncation does not reach the terminal branch; seam=none
+func _incomplete_terminal_evidence(context: RefCounted) -> void:
+	for frames: int in [0, 4]:
+		for version: int in [4, 5, Replay.TERMINAL_VERSION]:
+			for retained_bytes: int in [0, 1, 15, 16, 17]:
+				var source: Replay = Fixture.new()._recording(frames, true)
+				source._format_version = version
+				source._terminal_checksum.resize(retained_bytes)
+				if version == 4:
+					for frame: int in frames:
+						var digest: PackedByteArray = source.computed_input_digest(frame)
+						for index: int in Replay.DIGEST_BYTES:
+							source._digests[frame * Replay.DIGEST_BYTES + index] = digest[index]
+				var original: PackedByteArray = source._terminal_checksum.duplicate()
+				var available: bool = version == Replay.TERMINAL_VERSION and retained_bytes == Replay.CHECKSUM_BYTES
+				var expected: PackedByteArray = original if available else PackedByteArray()
+				var prefix: Replay = source.owned_prefix(frames)
+				var checksum: PackedByteArray = source.checksum(frames)
+				context.equal(checksum, expected, "terminal read requires complete v6 evidence")
+				context.equal(prefix.checksum(frames), expected, "full prefix cannot promote malformed terminal evidence")
+				checksum.fill(0)
+				context.equal(source._terminal_checksum, original, "terminal reads and prefixes preserve owned source bytes")
+				context.equal(prefix._terminal_checksum, original, "full prefix preserves malformed source storage for validation")
+				var valid: bool = available if version == Replay.TERMINAL_VERSION else retained_bytes == 0
+				context.equal(source.is_valid(), valid, "source validity still rejects malformed terminal storage")
+				context.equal(not prefix.to_bytes().is_empty(), valid, "full prefix cannot export malformed terminal storage")

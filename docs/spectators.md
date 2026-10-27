@@ -509,8 +509,9 @@ recursive polling returns `WRONG_STATE` without terminating the current viewer.
 After the authenticated END and final playback termination, relay polling returns
 `OK` with `peer_code == TERMINATED`. Queued and late packets are discarded without
 turning completion into a transport failure. SDK lifetime changes still fence the
-bridge. Cancellation before the final playback boundary and actual playback failures
-remain failures; completion does not hide them.
+bridge. Only `viewer.is_complete()` establishes clean playback completion. Cancellation
+remains a failure even at the final boundary, before the clean terminal service call,
+including an empty match. Actual playback failures remain failures too.
 
 SDK identity getters and configuration properties must return stable values without
 changing previously observed identity or configuration fields. The bridge compares

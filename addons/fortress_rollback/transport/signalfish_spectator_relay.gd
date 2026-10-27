@@ -405,6 +405,7 @@ func _completed_cleanly() -> bool:
 	var state: SessionTypes.Status = _session.status()
 	return (
 		_stream._is_finished
+		and _session.is_complete()
 		and state.lifecycle == SessionTypes.Lifecycle.TERMINATED
 		and state.reason == SessionTypes.Code.TERMINATED
 		and state.current_frame == _stream._end_frame
