@@ -193,6 +193,10 @@
 
 ### Fixed
 
+- Fix spectator stop reporting after external or callback cancellation. Preserve the original cause through later host errors; `is_complete()` and the example distinguish clean playback completion from cancellation.
+
+- Fix replay prefixes inventing missing input digest bytes. Incomplete retained rows remain unavailable for portable export and stop playback at their owning frame.
+
 - Fix peer-drop history transfer waiting on an unrelated survivor's refused plan. Healthy survivors receive their missing original inputs while the blocked link retries.
 
 - Fix trimmed captured replays losing an available checksum for their new final state. Prefixes without that evidence retain their existing validation limits.

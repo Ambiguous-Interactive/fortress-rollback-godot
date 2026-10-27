@@ -30,6 +30,10 @@ its delay. A paused final tail shows `FINAL TAIL PAUSED` and the resume/step con
 Press L to simulate a known loss of the viewer's host connection. Buffered viewer
 frames stop immediately, including while paused, and the last displayed state remains.
 The host keeps playing. R starts a fresh game after completion or connection loss.
+Viewer failures keep their original reason through later ticks, single-frame inspection,
+completion callbacks and independent host failures. A failed viewer never displays a clean
+completion message just because its next operation reports a generic stopped result.
+Plain cancellation shows `STOPPED`; only fully serviced clean host endings show `COMPLETE`.
 Restart retires the prior host and viewer, including retained driver and stream handles.
 An active callback or expert request batch must finish before restart, another tick,
 single-frame inspection or clean host ending can succeed. These actions return `BUSY`
@@ -411,6 +415,9 @@ terminal cause. Repeated termination cannot replace it or publish another event.
 
 `HOST_FINISHED` does not mean playback has completed. A paused viewer still owns
 its delayed tail; only the terminal event after final playback reports completion.
+`viewer.is_complete()` becomes true only on that ordinary clean terminal call.
+It stays false after cancellation, host loss or callback failure, including cancellation
+at the final input boundary before the terminal call. Successful configuration resets it.
 Continue servicing the viewer through that final call, including an empty stream.
 
 ## End the stream

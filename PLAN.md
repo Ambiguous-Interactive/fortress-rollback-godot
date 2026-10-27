@@ -472,6 +472,7 @@ and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 These local events do not establish host authentication or a network handshake.
+`is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
 Actual pinned Rust and Godot spectator traces compare startup prefill, capacities two/three,
 catch-up speeds one/two and exact input transcripts through ring reuse. The scoped startup relation in
 [#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203) is complete.
@@ -533,7 +534,7 @@ including when the donor differs from the coordinator. [#188](https://github.com
 retains expanded source and live missing-history acceptance. A scoped
 [actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
 now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
-Its fixed missing-row case does not establish complete barrier parity or the remaining fault matrix.
+Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission
 journal and its own cut selection remain open in

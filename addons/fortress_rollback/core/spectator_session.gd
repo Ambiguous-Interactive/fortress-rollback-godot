@@ -29,6 +29,7 @@ var _host_statuses: Array[PackedByteArray] = []
 var _host_tags: PackedInt64Array = PackedInt64Array()
 var _host_frontier: int = -1
 var _host_finished: bool = false
+var _playback_complete: bool = false
 var _stream_delay: int = 0
 var _max_frames_behind: int = 1
 var _catchup_speed: int = 1
@@ -48,6 +49,7 @@ func configure(config: Config) -> int:
 	_host_tags.fill(-1)
 	_host_frontier = -1
 	_host_finished = false
+	_playback_complete = false
 	_stream_delay = 0
 	_max_frames_behind = 1
 	_catchup_speed = 1
@@ -166,6 +168,12 @@ func recommended_steps() -> int:
 	return mini(available, _catchup_speed if available > _max_frames_behind else 1)
 
 
+## True only after ordinary playback consumes the clean host tail and publishes completion.
+## Cancellation, unexpected loss and callback failure never become clean completion.
+func is_complete() -> bool:
+	return _playback_complete
+
+
 ## Clean end releases the delayed contiguous tail, then terminates. Gaps remain unavailable.
 ## For unexpected host loss use terminate(PROTOCOL_FAILED), which stops immediately.
 func finish_host() -> int:
@@ -185,6 +193,7 @@ func begin_advance() -> Types.Result:
 	if _current == Queue.FRAME_MAX or _batch_id == 9223372036854775807:
 		return super.begin_advance()
 	if _host_finished and _host_frontier < _current:
+		_playback_complete = true
 		terminate(Code.TERMINATED)
 		return Types.Result.new(Code.TERMINATED)
 	if recommended_steps() == 0:

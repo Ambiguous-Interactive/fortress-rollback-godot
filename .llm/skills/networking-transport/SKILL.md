@@ -167,6 +167,7 @@ Preserve revisions, wide values and ordering; version released format changes.
 Validate mutable recording structure before ownership, including metadata and storage bounds.
 Keep safe missing-digest and content comparisons at their owning playback boundary.
 Trimmed recordings use their endpoint's own checksum, never later or absent evidence.
+Prefix copies must only shrink validation storage: resizing a short digest array upward fabricates exportable evidence. Test partial rows as well as absent digests.
 
 ## Desync Detection
 

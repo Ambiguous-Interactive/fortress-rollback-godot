@@ -407,6 +407,7 @@ func owned_copy() -> RefCounted:
 ## Export only finalized history while keeping receipt-only rows private for later confirmation.
 ## Trimming a captured v6 recording retains a recorded checksum at the new final boundary,
 ## when present. Historical versions and absent boundary evidence retain their original limits.
+## Missing digest bytes remain missing; a prefix cannot fabricate exportable validation evidence.
 func owned_prefix(frames: int) -> RefCounted:
 	var copy: RefCounted = owned_copy()
 	copy._frames = clampi(frames, 0, _frames)
@@ -414,7 +415,7 @@ func owned_prefix(frames: int) -> RefCounted:
 	copy._statuses.resize(copy._frames * _players)
 	copy._checksums.resize(copy._frames * CHECKSUM_BYTES)
 	copy._flags.resize(copy._frames)
-	copy._digests.resize(copy._frames * DIGEST_BYTES)
+	copy._digests.resize(mini(copy._digests.size(), copy._frames * DIGEST_BYTES))
 	copy._skipped = copy._flags.count(FLAG_SKIPPED)
 	if copy._frames != _frames:
 		copy._terminal_checksum = checksum(copy._frames) if _format_version == TERMINAL_VERSION else PackedByteArray()

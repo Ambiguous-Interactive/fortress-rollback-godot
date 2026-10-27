@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare clean and lost-packet upstream/Godot donor recovery twice per engine."""
+"""Compare single/multiple-row clean and lost-packet donor recovery twice per engine."""
 import json
 from pathlib import Path
 import subprocess
@@ -53,6 +53,34 @@ def observation_controls(engine, output, source):
         controls.append('observed_export_' + status)
     return controls
 
+
+
+
+def interior_history_control(engine, output, source):
+    result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
+        'res://tests/oracle/drop_history_trace.gd', '--', '--multi-row-history', '--corrupt-interior-history'],
+        cwd=ROOT, env=rust_environment(), capture_output=True, text=True, encoding='utf-8', timeout=120)
+    (output / 'observer-interior-history.log').write_text(result.stdout + result.stderr)
+    require(result.returncode == 0, 'interior control must reach completed playback')
+    godot = parse_godot(result.stdout, result.stderr)
+    require(godot['failures'] == [] and godot['cuts'] == [11, 11], 'interior control must preserve agreed final cut')
+    original = bytes((frame * 11 + 14 + index) % 251 for frame in range(8, 12) for index in range(4))
+    changed = bytearray(original)
+    changed[4], changed[8] = changed[8], changed[4]
+    receipts = godot['history_receipts']
+    require(bool(receipts) and all(packet['bytes'] == changed.hex() for packet in receipts), 'interior control actual changed donor bytes')
+    require(sum(changed) == sum(original) and changed[:4] == original[:4] and changed[-4:] == original[-4:],
+            'interior control preserves endpoints and sum')
+    expected_final = source['survivors'][0]['rows'][-1]['state']['bytes']
+    require(all(survivor['rows'][-1]['state']['bytes'] == expected_final for survivor in godot['survivors']),
+            'interior control must preserve original final canonical state')
+    try:
+        compare(source, godot, False, 4)
+    except ValueError as error:
+        require(str(error) == 'drop history: Godot original rows, statuses or canonical states', 'interior control unrelated comparison failure')
+    else:
+        raise ValueError('drop history: interior history control survived')
+    return 'observed_interior_history_permutation'
 
 
 
@@ -125,8 +153,11 @@ def main():
     controls = []
     for repeat in (1, 2):
         scenarios = {}
-        for name, loss in [('clean', False), ('lost-history', True)]:
+        for name, loss, missing_rows in [('clean', False, 1), ('lost-history', True, 1),
+                                         ('multi-clean', False, 4), ('multi-lost-history', True, 4)]:
             fault_args = ['--drop-first-history'] if loss else []
+            if missing_rows == 4:
+                fault_args.append('--multi-row-history')
             stdout, stderr = execute([str(binary), *fault_args], args.output / f'source-{name}-{repeat}.log')
             if stderr.strip():
                 raise ValueError('drop history: unexpected source stderr')
@@ -135,15 +166,17 @@ def main():
                                       'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
                                       args.output / f'godot-{name}-{repeat}.log')
             godot = parse_godot(stdout, stderr)
-            evidence[name] = compare(source, godot, loss)
-            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss))
+            evidence[name] = compare(source, godot, loss, missing_rows)
+            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss, missing_rows))
             scenarios[name] = {'source': source, 'godot': godot}
         controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
+        controls.extend('multi:' + control for control in loss_evidence_controls(scenarios['multi-clean'], scenarios['multi-lost-history'], 4))
         observed.append(scenarios)
     if observed[0] != observed[1]:
         raise ValueError('drop history: fresh-process repeat mismatch')
     controls = sorted(set(controls))
     controls.extend(observation_controls(engine, args.output, observed[0]['clean']['source']))
+    controls.append(interior_history_control(engine, args.output, observed[0]['multi-clean']['source']))
     require_unchanged('local source inventory', local_sources, inventory())
     require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
@@ -160,9 +193,9 @@ def main():
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'negative_controls': controls,
-        'scope': ('Paired clean/lost-first-history three-peer original-history/cut scenarios: source explicit removal; '
+        'scope': ('Paired one/four-row clean/lost-first-history three-peer original-history/cut scenarios: source explicit removal; '
                   'Godot elapsed timeout; distinct non-interoperable wires.')}, indent=2) + '\n')
-    print('drop history: two survivors preserve twenty original canonical prefixes and statuses through clean/lost-packet donor recovery, twice', flush=True)
+    print('drop history: two survivors preserve twenty original canonical prefixes and statuses through one/four-row clean/lost-packet donor recovery, twice', flush=True)
 
 
 if __name__ == '__main__':

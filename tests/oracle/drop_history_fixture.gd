@@ -4,6 +4,7 @@ var _history_receipts: Array[Dictionary] = []
 var _history_emissions: Array[Dictionary] = []
 var _lost_history: Array[Dictionary] = []
 var _drop_first_history: bool = false
+var _corrupt_interior_history: bool = false
 
 const Base = preload("res://tests/unit/test_peer_drop_backfill.gd")
 
@@ -34,8 +35,11 @@ class ObservedGame:
 		return true
 
 
-func observe(context: RefCounted, status_control: int = -1, drop_first_history: bool = false) -> Dictionary:
+func observe(
+	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1, corrupt_interior: bool = false
+) -> Dictionary:
 	_drop_first_history = drop_first_history
+	_corrupt_interior_history = corrupt_interior
 	_mode = "remote_donor"
 	_missing_peer = 0
 	_width = 4
@@ -50,6 +54,8 @@ func observe(context: RefCounted, status_control: int = -1, drop_first_history: 
 		mesh.games[peer] = game
 	_play(context, mesh, 6, true)
 	_leave(context, mesh, 2)
+	if missing_rows == 4:
+		_leave(context, mesh, 2)
 	var before: Array[Dictionary] = []
 	for peer: int in range(2):
 		var interval: PackedInt64Array = mesh.peers[peer]._core.retained_input_range(2)
@@ -69,13 +75,13 @@ func observe(context: RefCounted, status_control: int = -1, drop_first_history: 
 				var input: Types.InputResult = row.read(player)
 				context.equal(input.code, Types.Code.OK, "export actual finalized original input")
 				inputs.append(input.bytes.hex_encode())
-				var expected: int = Queue.Status.DISCONNECTED if player == 2 and frame > 8 else Queue.Status.CONFIRMED
+				var expected: int = Queue.Status.DISCONNECTED if player == 2 and frame > 7 + missing_rows else Queue.Status.CONFIRMED
 				context.equal(ObservedGame.status_name(input.status), ObservedGame.status_name(expected), "observed finalized export status")
 			rows.append({"frame": frame, "inputs": inputs,
 				"state": {"frame": frame, "bytes": mesh.games[peer].states[frame].hex_encode(), "inputs": mesh.games[peer].applied[frame]}})
 		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame,
 			"confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
-	return {"format": 1, "complete": true, "before": before, "cuts": cuts, "history_packets": _seen,
+	return {"format": 1, "complete": true, "missing_rows": missing_rows, "before": before, "cuts": cuts, "history_packets": _seen,
 		"donors": _donor_sources.keys(), "lost_history": _lost_history, "history_emissions": _history_emissions,
 		"history_receipts": _history_receipts, "survivors": survivors, "failures": context.failures}
 
@@ -95,6 +101,18 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if _drop_first_history and _lost_history.is_empty() and not history_emission.is_empty():
 			_lost_history.append(history_emission)
 			continue
+		if _corrupt_interior_history and not history_emission.is_empty() and packet.to == 0:
+			decoded.message.bytes = decoded.message.bytes.duplicate()
+			var original: int = decoded.message.bytes[4]
+			decoded.message.bytes[4] = decoded.message.bytes[8]
+			decoded.message.bytes[8] = original
+			var altered: T.Result = Codec.encode(decoded.message, _limits(mesh.count))
+			context.equal(altered.code, T.Code.OK, "interior corruption preserves valid packet dimensions")
+			packet = packet.duplicate(true)
+			packet.bytes = altered.bytes
+			history_emission = history_emission.duplicate(true)
+			history_emission.bytes = decoded.message.bytes.hex_encode()
+			history_emission.packet = packet.bytes.hex_encode()
 		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
 		if terminated and code == I.Code.TERMINATED:
 			continue

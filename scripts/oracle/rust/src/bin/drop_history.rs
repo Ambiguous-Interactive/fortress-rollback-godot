@@ -101,7 +101,7 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
@@ -135,10 +135,10 @@ fn run(loss: bool) -> Result<Value, String> {
         for player in 0..3 { advance(&mut sessions[player], &mut games[player], player, &mut histories[player])?; }
         settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     }
-    for frame in 6..9 {
+    for frame in 6..(8 + missing_rows) {
         *clock.lock().unwrap() += 1000;
         advance(&mut sessions[2], &mut games[2], 2, &mut histories[2])?;
-        settle(&mut sessions, &buffers, frame == 8, false, &mut control, &mut fault)?;
+        settle(&mut sessions, &buffers, frame >= 8, false, &mut control, &mut fault)?;
     }
     let before = (0..2).map(|peer| {
         let range = sessions[peer].diagnostic_player_retained_input_range(PlayerHandle::new(2));
@@ -175,9 +175,11 @@ fn run(loss: bool) -> Result<Value, String> {
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
     Ok(json!({"format":1,"complete":true,"upstream_revision":"f13cd5c0f2815926785a395947e18da0dbea0dd8",
-        "before":before,"dropped":dropped,"lost_history":fault.dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
+        "missing_rows":missing_rows,"before":before,"dropped":dropped,"lost_history":fault.dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
 }
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
-    if !arguments.is_empty() && arguments != ["--drop-first-history"] { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
-    match run(!arguments.is_empty()) { Ok(result) => println!("{result}"), Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); } } }
+    let loss = arguments.contains(&"--drop-first-history".into());
+    let multi = arguments.contains(&"--multi-row-history".into());
+    if arguments.len() != usize::from(loss) + usize::from(multi) { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
+    match run(loss, if multi { 4 } else { 1 }) { Ok(result) => println!("{result}"), Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); } } }

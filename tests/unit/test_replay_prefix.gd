@@ -10,15 +10,44 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["captured_prefix_evidence", "prefix_evidence_boundaries"])
+	return PackedStringArray(["captured_prefix_evidence", "prefix_evidence_boundaries", "incomplete_prefix_digests"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "captured_prefix_evidence":
 		_captured_prefix_evidence(context)
+	elif name == "incomplete_prefix_digests":
+		_incomplete_prefix_digests(context)
 	else:
 		_prefix_evidence_boundaries(context)
 	context.finish()
+
+
+# Value: protects=prefixes preserve incomplete digest evidence; fails_when=trimming fabricates zero-padded digests;
+# why_new=prefix tests only use complete recording storage; seam=none
+func _incomplete_prefix_digests(context: RefCounted) -> void:
+	for retained_bytes: int in [0, 15, 16, 17, 63, 64]:
+		var source: Replay = Fixture.new()._recording(4, true)
+		source._digests.resize(retained_bytes)
+		var original: PackedByteArray = source._digests.duplicate()
+		for boundary: int in [0, 1, 2, 4, 5]:
+			var prefix: Replay = source.owned_prefix(boundary)
+			var expected: PackedByteArray = original.slice(0, mini(boundary, 4) * Replay.DIGEST_BYTES)
+			context.equal(prefix._digests, expected, "prefix keeps only original digest bytes")
+			var complete: bool = expected.size() == prefix.frame_count() * Replay.DIGEST_BYTES
+			context.equal(not prefix.to_bytes().is_empty(), complete, "only complete retained evidence can be exported")
+			for expert: bool in [false, true]:
+				var player: Player = Player.new()
+				var game: Simulation = Simulation.new()
+				var code: int = player.configure_expert(prefix, Simulation.SNAPSHOT_BYTES) if expert else player.configure(prefix, game, Simulation.SNAPSHOT_BYTES)
+				context.equal(code, Types.Code.OK, "incomplete digest remains a playback-owned failure")
+				for frame: int in mini(retained_bytes / Replay.DIGEST_BYTES, prefix.frame_count()):
+					context.equal(Fixture.new()._dispatch(player, game) if expert else player.step(), Types.Code.OK, "complete digest rows remain playable")
+				if not complete:
+					context.equal(Fixture.new()._dispatch(player, game) if expert else player.step(), Types.Code.DESYNC, "first incomplete digest stops playback")
+					context.equal(player.failure_frame(), retained_bytes / Replay.DIGEST_BYTES, "failure identifies first incomplete row")
+				context.state(game.frame, game.canonical_bytes())
+		context.equal(source._digests, original, "prefix generation preserves source digest evidence")
 
 
 func _captured_prefix_evidence(context: RefCounted) -> void:
