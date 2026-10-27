@@ -129,6 +129,9 @@ EXPECTED['res://tests/unit/test_peer_drop_capacity.gd'] = {
 EXPECTED['res://tests/unit/test_peer_drop_eviction.gd'] = {'unequal_retained_history', 'retained_history_control', 'journal_after_ring_wrap'}
 EXPECTED['res://tests/unit/test_peer_drop_history_pressure.gd'] = {'partial_history_plan_retry', 'staggered_history_plan_retry', 'complete_history_plan_control'}
 EXPECTED['res://tests/unit/test_peer_drop_donor_fairness.gd'] = {'healthy_donor_destination', 'unpressured_donor_control'}
+EXPECTED['res://tests/unit/test_peer_drop_plan_fairness.gd'] = {
+    'refused_plan_preserves_healthy_data', 'complete_plan_data_control', 'half_retry_lost_chunk',
+    'half_retry_lost_chunk_control', 'equal_retry_lost_chunk', 'equal_retry_lost_chunk_control'}
 EXPECTED['res://tests/unit/test_peer_drop_ready_pressure.gd'] = {'partial_ready_retry', 'staggered_ready_retry', 'complete_ready_control'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
@@ -156,7 +159,9 @@ EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {'malformed_storage'
 EXPECTED['res://tests/unit/test_peer_expert.gd'] = {'public_api', 'batch_ownership', 'callback_failures', 'recovery', 'pressure', 'capture'}
 EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures', 'ownership', 'validation', 'misuse', 'wide_writes', 'reusable_reads'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy', 'service_busy'})
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].add('playback_feedback')
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
+EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -199,11 +204,13 @@ FILES += ['tests/unit/test_input_queue.gd']
 FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd', 'tests/unit/test_replay_drop.gd']
 FILES += ['tests/unit/test_replay_validation.gd', 'tests/unit/test_replay_terminal.gd', 'tests/unit/test_replay_terminal_recovery.gd']
 FILES += ['tests/unit/test_replay_expert_navigation.gd', 'tests/unit/test_replay_final_coverage.gd']
+FILES += ['tests/unit/test_replay_prefix.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd', 'tests/unit/test_peer_drop_multi_slot.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
+FILES += ['tests/unit/test_peer_drop_plan_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_ready_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
@@ -265,6 +272,7 @@ const InputQueue = preload("res://tests/unit/test_input_queue.gd")
 const ReplayExpert = preload("res://tests/unit/test_replay_expert.gd")
 const ReplayTerminalRecovery = preload("res://tests/unit/test_replay_terminal_recovery.gd")
 const ReplayTerminal = preload("res://tests/unit/test_replay_terminal.gd")
+const ReplayPrefix = preload("res://tests/unit/test_replay_prefix.gd")
 const ReplayValidation = preload("res://tests/unit/test_replay_validation.gd")
 const ReplayNavigation = preload("res://tests/unit/test_replay_expert_navigation.gd")
 const ReplayDrop = preload("res://tests/unit/test_replay_drop.gd")
@@ -279,6 +287,7 @@ const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pressure.gd")
 const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairness.gd")
+const DropPlanFairness = preload("res://tests/unit/test_peer_drop_plan_fairness.gd")
 const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressure.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
@@ -292,9 +301,9 @@ func _ready() -> void:
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
-		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo,
+		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
-		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness, DropReadyPressure,
+		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness, DropPlanFairness, DropReadyPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

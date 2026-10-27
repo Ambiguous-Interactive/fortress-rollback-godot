@@ -166,6 +166,7 @@ gameplay replay; there is no released `FRG1` format. The
 Preserve revisions, wide values and ordering; version released format changes.
 Validate mutable recording structure before ownership, including metadata and storage bounds.
 Keep safe missing-digest and content comparisons at their owning playback boundary.
+Trimmed recordings use their endpoint's own checksum, never later or absent evidence.
 
 ## Desync Detection
 
@@ -179,10 +180,8 @@ Keep safe missing-digest and content comparisons at their owning playback bounda
 
 ## What Belongs Here vs Elsewhere
 
-Keep layout version separate from semantic compatibility. Audit every supported
-upstream message field before choosing a Godot representation; preserve epochs,
-ACKs and wide token bytes in the semantic projection. Test independent byte
-goldens and malformed bodies through the production decoder on native and Web.
+Keep layout version separate from semantic compatibility. Audit every supported upstream message field before choosing a Godot representation;
+preserve epochs, ACKs and wide token bytes in the semantic projection. Test independent byte goldens and malformed bodies through the production decoder on native and Web.
 Round-trip agreement alone cannot establish field preservation or source parity.
 
 Keep valid remote handshake dimensions, semantic versions and feature masks
@@ -221,8 +220,8 @@ unable to certify while awaiting bounded retries; do not terminate merely for
 that reordering. Validate every target overlap and suffix capacity before any
 target installation, and retain exact donor bytes independently of send pressure.
 Cross the smallest accepted publication queue with polling at retry equality.
-Control retries must yield to retained data and vice versa; consume a publication
-turn or retry timestamp only after acceptance. Test faster polling and staggered link acceptance; no shared gate may shift another link's deadline.
+Control and data yield fairly; consume turns/timestamps only after acceptance. Test fast polling and staggered acceptance without shifting another link's deadline.
+Send data after its destination accepts its plan, even while another destination refuses.
 Keep conflicting immutable overlaps separate from incomplete coverage. A truthful
 shorter certificate is missing history, not conflicting history.
 After draining publication space, re-poll before accepting buffered traffic;
