@@ -179,6 +179,8 @@ After leaving the room, press **Watch replay**, then **Open replay** and choose 
 `fortress-online.frrp` file. Native builds use a file dialog; browsers use a local
 file chooser without uploading the file or using browser storage. Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
+Keyboard controls: **P** plays or pauses, **N** steps forward, **B** steps backward,
+**R** restarts, and **Esc** cancels a seek. Shortcuts preserve text entry and file chooser input; modified and held-key repeats are ignored.
 Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and available checksum
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame and finishes paused. Step and Pause validate the displayed

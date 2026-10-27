@@ -226,6 +226,7 @@ func receive_and_poll(packet: Variant, attributed_sender: Variant, now_us: Varia
 
 
 ## Configured attempts emit once, including stalls and errors; unconfigured and BUSY calls emit nothing.
+## Omit local slots already retained by a stalled attempt; every other local slot needs a current sample.
 func step(now_us: Variant, local_inputs: Variant) -> Driver.StepResult:
 	if _busy or _core == null:
 		return _step(now_us, local_inputs)
@@ -286,6 +287,7 @@ func _notify_completed(result: Driver.StepResult) -> Driver.StepResult:
 
 ## Open ordered SAVE/LOAD/ADVANCE requests after ordinary input publication and peer controls.
 ## READY owns the peer until every request is acknowledged or close() cancels the batch.
+## Like step(), accepts omitted slots only when their current samples are already staged.
 func begin_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
 	return _begin_manual(now_us, local_inputs, 0)
 
@@ -458,13 +460,12 @@ func _prepare_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
 		# The coordinated drop holds the match until the survivors agree the frozen frame.
 		return Types.Result.new(Types.Code.PREDICTION_STALL)
 	_busy = true
-	var scheduled: int = -1
 	for sample: Driver.LocalInput in local_inputs:
 		var result: Types.Result = _core.submit_local_input(sample.player, sample.sample_frame, sample.bytes)
 		if result.code != Types.Code.OK:
 			_busy = false
 			return Types.Result.new(result.code)
-		scheduled = result.value
+	var scheduled: int = _core.scheduled_local_input(_config.local_players[0]).frame
 	var data: PackedByteArray = PackedByteArray()
 	for player: int in _config.local_players:
 		data.append_array(_core.scheduled_local_input(player).bytes)
@@ -871,7 +872,7 @@ func _running() -> bool:
 
 
 func _samples_code(samples: Variant, frame: int) -> int:
-	if not samples is Array or samples.size() != _config.local_players.size():
+	if not samples is Array or samples.size() > _config.local_players.size():
 		return Types.Code.MISSING_LOCAL_INPUT
 	var seen: Dictionary = {}
 	for sample: Variant in samples:
@@ -885,6 +886,9 @@ func _samples_code(samples: Variant, frame: int) -> int:
 		if previous.code == Types.Code.OK and previous.bytes != sample.bytes:
 			return Types.Code.INPUT_ALREADY_SUBMITTED
 		seen[sample.player] = true
+	for player: int in _config.local_players:
+		if not seen.has(player) and _core.scheduled_local_input(player).code != Types.Code.OK:
+			return Types.Code.MISSING_LOCAL_INPUT
 	return Types.Code.OK
 
 

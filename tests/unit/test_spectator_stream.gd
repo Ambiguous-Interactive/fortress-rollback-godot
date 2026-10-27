@@ -35,7 +35,8 @@ class ReentrantGame:
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
-			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle", "closed_input_duplicates", "initial_state_agreement"]
+			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle", "closed_input_duplicates",
+			"initial_state_agreement", "obsolete_rows"]
 	)
 
 
@@ -826,3 +827,47 @@ func _initial_state_agreement(context: RefCounted) -> void:
 			context.equal(driver.step(0, _empty()).code, CODE.OK, "matching original world starts playback")
 			context.equal(game.value, 64, "independent canonical state after initial value seven and original inputs")
 		context.equal(viewer.poll(100), CODE.OK if offered == digest else CODE.PROTOCOL_FAILED, "mismatched state never refreshes host deadline")
+
+
+# Value: protects=transport-independent obsolete row retries; fails_when=evicted input fails a healthy stream or renews liveness;
+# why_new=relay masks errors only for SDK callers; seam=none
+func _obsolete_rows(context: RefCounted) -> void:
+	for closed_tail: bool in [false, true]:
+		var stream: RefCounted = _stream(context)
+		var viewer: RefCounted = stream.playback_session()
+		var game: RefCounted = GameFixture.Game.new()
+		var driver: RefCounted = Driver.new(viewer, game)
+		var obsolete: PackedByteArray = stream.encode_row(0, _row(0))
+		var expected: int = 0
+		for frame: int in range(12):
+			context.equal(stream.receive_packet(stream.encode_row(frame, _row(frame)), frame + 1), CODE.OK, "accept original through ring reuse")
+			if not closed_tail or frame < 8:
+				context.equal(driver.step(frame, _empty()).code, CODE.OK, "play original confirmed prefix")
+				for player: int in range(2):
+					expected = expected * 3 + _row(frame)[player][0] + frame
+		if closed_tail:
+			context.equal(stream.receive_packet(stream.encode_end(12), 13), CODE.OK, "close input with a retained unplayed tail")
+		var before: int = viewer.status().current_frame
+		var malformed: PackedByteArray = obsolete.duplicate()
+		malformed[malformed.size() - 1] = 255
+		malformed = Stream.authenticate(_unsigned(malformed), _key())
+		context.equal(stream.receive_packet(malformed, 20), CODE.INVALID_CONFIGURATION, "obsolete rows still validate finalized statuses")
+		var forged: PackedByteArray = obsolete.duplicate()
+		forged[64] ^= 1
+		context.equal(stream.receive_packet(forged, 20), CODE.PROTOCOL_FAILED, "obsolete rows still authenticate their bytes")
+		context.equal(stream.receive_packet(obsolete, 20), CODE.OK, "authenticated obsolete row is inert for every transport")
+		context.equal(viewer.status().current_frame, before, "obsolete traffic preserves displayed boundary")
+		context.equal(viewer.host_frontier(), 11, "obsolete traffic preserves contiguous host history")
+		context.equal(game.value, expected, "obsolete traffic never repeats simulation")
+		if closed_tail:
+			for frame: int in range(8, 12):
+				context.equal(driver.step(frame, _empty()).code, CODE.OK, "late retry preserves complete clean tail")
+				for player: int in range(2):
+					expected = expected * 3 + _row(frame)[player][0] + frame
+			context.equal(game.value, expected, "clean tail equals original canonical input history")
+			context.equal(driver.step(12, _empty()).code, CODE.TERMINATED, "tail completion remains authoritative")
+			context.equal(viewer.is_complete(), true, "obsolete retry cannot prevent clean completion")
+		else:
+			context.equal(stream.receive_packet(obsolete, 111), CODE.OK, "obsolete retry before deadline remains inert")
+			context.equal(stream.receive_packet(obsolete, 112), CODE.PROTOCOL_FAILED, "obsolete retry cannot renew host deadline")
+			context.equal(driver.step(12, _empty()).code, CODE.TERMINATED, "real host expiry stops viewing")

@@ -317,6 +317,9 @@ signed with another key and packets for another agreed match return
 `PROTOCOL_FAILED` without changing the session and without refreshing host
 liveness. Conflicting accepted history terminates the viewer. Reordering and
 identical retained duplicates use the same bounded row ring as direct delivery.
+Authenticated rows older than playback whose history has expired return `OK`
+without changing playback or renewing host liveness. This policy applies to
+every byte transport; retained conflicting rows still terminate the viewer.
 No extra receive queue is retained. On `BUSY` or `NETWORK_BACKPRESSURE`, keep the
 exact packet and retry after the active batch or playback frees capacity.
 

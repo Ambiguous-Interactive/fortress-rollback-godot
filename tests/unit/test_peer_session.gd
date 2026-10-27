@@ -583,6 +583,11 @@ func _scheduled_inputs(context: RefCounted) -> void:
 			context.equal(peer.scheduled_local_input(player).code, Types.Code.MISSING_LOCAL_INPUT, "new local slot needs a sample")
 		for player: int in [-1, 2, 4, 2147483647]:
 			context.equal(peer.scheduled_local_input(player).code, Types.Code.INVALID_PLAYER, "remote and invalid slots cannot expose samples")
+		var incomplete: Array[Driver.LocalInput] = [_inputs(mesh, 0)[0]]
+		context.equal(peer.step(mesh.now, incomplete).code, Types.Code.MISSING_LOCAL_INPUT, "fresh omitted slot refuses incomplete list")
+		context.equal(peer.scheduled_local_input(0).code, Types.Code.MISSING_LOCAL_INPUT, "incomplete list does not stage its valid prefix")
+		var empty: Array[Driver.LocalInput] = []
+		context.equal(peer.step(mesh.now, empty).code, Types.Code.MISSING_LOCAL_INPUT, "fresh empty list needs samples")
 		var packets: Array[Dictionary] = []
 		var stalled: int = Types.Code.OK
 		for frame: int in range(8):
@@ -607,6 +612,11 @@ func _scheduled_inputs(context: RefCounted) -> void:
 			context.bytes_equal(peer.scheduled_local_input(player).bytes, _sample(player, frame), frame, "owned reads cannot change the retry")
 			retained.append(sample)
 		context.equal(peer.step(mesh.now, retry).code, stalled, "owned samples rebuild an identical retry")
+		context.equal(peer.step(mesh.now, empty).code, stalled, "staged empty retry preserves actual pressure")
+		var conflicting: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([99, 0, 0, 0]))]
+		context.equal(peer.step(mesh.now, conflicting).code, Types.Code.INPUT_ALREADY_SUBMITTED, "partial conflicting retry cannot replace original buttons")
+		var wrong_frame: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame + 1, retry[0].bytes)]
+		context.equal(peer.step(mesh.now, wrong_frame).code, Types.Code.INVALID_FRAME, "omitted retained slots cannot mask supplied sample errors")
 		context.equal(peer.status().current_frame, frame, "retry cannot invent progress")
 		context.equal(peer.recover(mesh.now).code, Types.Code.OK, "recovery preserves staged local samples")
 		for player: int in [0, 1]:
@@ -617,7 +627,7 @@ func _scheduled_inputs(context: RefCounted) -> void:
 			_deliver(context, mesh, packets)
 			packets.clear()
 			_deliver(context, mesh, _drain(mesh))
-		context.equal(peer.step(mesh.now, retry).code, Types.Code.OK, "retry recovered solely from public sample reads advances")
+		context.equal(peer.step(mesh.now, empty).code, Types.Code.OK, "empty retry advances original delayed samples after pressure clears")
 		context.equal(peer.status().current_frame, frame + 1, "successful retry advances exactly once")
 		for player: int in [0, 1]:
 			context.equal(peer.scheduled_local_input(player).code, Types.Code.MISSING_LOCAL_INPUT, "successful retry releases every local slot")

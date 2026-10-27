@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add keyboard replay inspection: P plays or pauses, N/B step forward/backward, R restarts, and Esc cancels a seek. Text entry and file chooser input remain available.
+
+- Add empty and partial peer input retries using retained local samples. Callback and expert clients can resume stalled publication without rebuilding submitted inputs.
+
 - Add `peer.confirmed_inputs(frame)` for owned finalized input rows. Network clients can drive confirmed effects and spectator publication without enabling recording.
 
 - Add final replay checkpoints after successful terminal-state validation. Return to the verified ending after backward inspection without replaying the tail; checkpoint memory stays bounded.
@@ -196,6 +200,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix custom spectator byte transports rejecting authenticated rows after playback history expires. Obsolete rows preserve playback and cannot renew host liveness.
 
 - Fix SignalFish transport cleanup requested from callbacks. Direct, relay and fallback queues and relay observers are released when the active poll returns.
 

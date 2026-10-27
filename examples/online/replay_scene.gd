@@ -63,6 +63,9 @@ func _ready() -> void:
 	var title: Label = Label.new()
 	title.text = "Watch an online recording | no server required"
 	panel.add_child(title)
+	var shortcuts: Label = Label.new()
+	shortcuts.text = "P play/pause | N next frame | B back one frame | R restart | Esc cancel seek"
+	panel.add_child(shortcuts)
 	var buttons: HBoxContainer = HBoxContainer.new()
 	panel.add_child(buttons)
 	_button(buttons, "Open replay", _open)
@@ -198,6 +201,33 @@ func _back() -> void:
 func _exit_tree() -> void:
 	if _web_import != null:
 		_web_import.dispose()
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not event is InputEventKey or not event.pressed or event.echo or event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
+		return
+	if _dialog != null and _dialog.visible:
+		return
+	if is_inside_tree():
+		var focused: Control = get_viewport().gui_get_focus_owner()
+		if focused is LineEdit or focused is TextEdit:
+			return
+	var action: Button
+	match event.keycode:
+		KEY_P:
+			action = _play
+		KEY_N:
+			action = _step_button
+		KEY_B:
+			action = _back_button
+		KEY_R:
+			action = _restart_button
+		KEY_ESCAPE:
+			action = _cancel_button
+	if action != null and not action.disabled:
+		action.pressed.emit()
+		if is_inside_tree():
+			get_viewport().set_input_as_handled()
 
 
 func _physics_process(_delta: float) -> void:
