@@ -34,7 +34,8 @@ func cases() -> PackedStringArray:
 			"restart_lifetimes",
 			"restart_busy",
 			"service_busy",
-			"playback_feedback"
+			"playback_feedback",
+			"terminal_feedback"
 		]
 	)
 
@@ -50,7 +51,18 @@ func run_case(name: String, context: RefCounted) -> void:
 		_paused_final_tail(context)
 	elif (
 		name
-		in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control", "restart_lifetimes", "restart_busy", "service_busy", "playback_feedback"]
+		in [
+			"single_frame",
+			"single_frame_end",
+			"single_frame_control",
+			"host_loss",
+			"host_loss_control",
+			"restart_lifetimes",
+			"restart_busy",
+			"service_busy",
+			"playback_feedback",
+			"terminal_feedback"
+		]
 	):
 		call("_" + name, context)
 	elif name == "clean_host_end":
@@ -564,3 +576,63 @@ func _playback_feedback(context: RefCounted) -> void:
 	context.equal(scene._label.text.contains("HISTORY UNAVAILABLE"), true, "lost history has a readable reason")
 	context.equal(scene._label.text.contains("R: start again"), true, "lost history explains how to recover")
 	scene.free()
+
+
+# Value: protects=failed viewers retain their first cause in controls and labels; fails_when=generic stop reports COMPLETE;
+# why_new=existing loss cases terminate through the demo itself; seam=none
+func _terminal_feedback(context: RefCounted) -> void:
+	for actor: String in ["external", "completion", "host", "clean", "cancel", "cancel_tail", "cancel_boundary"]:
+		for service: String in ["tick", "step"]:
+			var scene: Node2D = Scene.new()
+			scene._ready()
+			for tick: int in range(40):
+				scene.demo.tick(Game.RIGHT)
+			scene.demo.is_paused = true
+			context.equal(scene.demo.viewer.is_complete(), false, "buffered viewer has not completed")
+			var expected: int = Types.Code.TERMINATED if actor in ["clean", "cancel", "cancel_tail", "cancel_boundary"] else Types.Code.HISTORY_UNAVAILABLE
+			if actor in ["clean", "cancel_tail", "cancel_boundary"]:
+				context.equal(scene.demo.finish_host(), Types.Code.OK, "clean input ending")
+				for tick: int in 30:
+					scene.demo.tick(0)
+				if actor == "cancel_boundary":
+					for tick: int in 40:
+						if scene.demo.game.frame == scene.demo.next_host_frame:
+							break
+						scene.demo.step_viewer()
+					context.equal(scene.demo.game.frame, scene.demo.next_host_frame, "cancellation at exact clean final input boundary")
+					context.equal(scene.demo.viewer.status().reason, Types.Code.OK, "ordinary terminal notification remains unserviced")
+				if actor == "clean":
+					scene.demo.is_paused = false
+					for tick: int in 30:
+						scene.demo.tick(0)
+					scene.demo.is_paused = true
+			if actor == "completion":
+				var viewer: WeakRef = weakref(scene.demo.viewer)
+				scene.demo.driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void: viewer.get_ref().terminate(expected), CONNECT_ONE_SHOT)
+			else:
+				scene.demo.viewer.terminate(expected)
+				scene._update_label()
+				context.equal(scene._label.text.contains("COMPLETE"), actor == "clean", "label reads committed cause before another service")
+			if actor == "host":
+				scene.demo.host.loop.session.terminate(Types.Code.CALLBACK_FAILED)
+			if service == "tick":
+				scene.demo.is_paused = false
+				scene.demo.tick(Game.LEFT)
+			else:
+				scene.demo.step_viewer()
+			var frame: int = scene.demo.game.frame
+			var canonical: PackedByteArray = scene.demo.game.canonical_bytes()
+			context.equal(scene.demo.viewer_code, expected, "service reports committed first cause")
+			context.equal(scene.demo.viewer.status().reason, expected, "service cannot replace first cause")
+			context.equal(scene.demo.viewer.is_complete(), actor == "clean", "ordinary clean end alone completes playback")
+			context.equal(scene.demo.step_viewer(), expected, "inspection preserves committed cause")
+			scene.demo.tick(Game.LEFT)
+			scene._update_label()
+			context.equal(scene.demo.viewer_code, expected, "later host service cannot overwrite viewer cause")
+			context.equal(scene._label.text.contains("COMPLETE"), actor == "clean", "only clean termination displays completion")
+			context.equal(scene._label.text.contains("HISTORY UNAVAILABLE"), expected == Types.Code.HISTORY_UNAVAILABLE, "failure displays its specific cause")
+			context.equal(scene.demo.game.frame, frame, "later service consumes no buffered frame")
+			context.bytes_equal(scene.demo.game.canonical_bytes(), canonical, frame, "stopped viewer preserves displayed state")
+			context.equal(scene.demo.start(), Types.Code.OK, "restart clears failed lifetime")
+			context.equal(scene.demo.viewer_code, Types.Code.OK, "new viewer reports a fresh lifetime")
+			scene.free()

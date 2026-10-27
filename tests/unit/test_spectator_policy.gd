@@ -21,8 +21,6 @@ class DrainingGame:
 		drain_counts.append(viewer.drain_events().size())
 
 
-
-
 func _key() -> PackedByteArray:
 	var key: PackedByteArray = PackedByteArray()
 	key.resize(32)
@@ -35,8 +33,9 @@ func _digest(config: Variant = null) -> PackedByteArray:
 	var agreed: Variant = config if config != null else Fixture.new()._config()
 	return Stream.configuration_digest(agreed, "seed-1", "rules-1")
 
+
 func cases() -> PackedStringArray:
-	return PackedStringArray(["confirmation_policy", "playback_events", "failure_events", "empty_end_and_reentry"])
+	return PackedStringArray(["confirmation_policy", "playback_events", "failure_events", "empty_end_and_reentry", "completion_status"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -203,10 +202,11 @@ func _notification_events(context: RefCounted) -> void:
 		context.equal(viewer.receive_host_frame(0, Fixture.new()._row(0)).code, Types.Code.OK, "notification row available")
 		var driver: RefCounted = Driver.new(viewer, GameFixture.Game.new())
 		var drain_counts: Array[int] = []
-		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
-			if cancel:
-				viewer.terminate(Types.Code.PROTOCOL_FAILED)
-			drain_counts.append(viewer.drain_events().size())
+		driver.step_completed.connect(
+			func(_code: int, _before: int, _after: int) -> void:
+				if cancel:
+					viewer.terminate(Types.Code.PROTOCOL_FAILED)
+				drain_counts.append(viewer.drain_events().size())
 		)
 		driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void: drain_counts.append(viewer.drain_events().size()))
 		var empty: Array[Driver.LocalInput] = []
@@ -221,3 +221,38 @@ func _notification_events(context: RefCounted) -> void:
 			context.equal(events[0].reason, Types.Code.PROTOCOL_FAILED, "cancellation cause remains exact")
 			context.equal(events[0].frame, 1, "terminal event identifies completed boundary")
 		context.equal(viewer.drain_events().size(), 0, "terminal event drains exactly once after notification")
+
+
+# Value: protects=completion means fully serviced clean host ending; fails_when=generic cancellation claims completion;
+# why_new=terminal reason alone cannot distinguish an unconsumed tail or canceled final boundary; seam=none
+func _completion_status(context: RefCounted) -> void:
+	for frames: int in [0, 3]:
+		for mode: String in ["clean", "cancel", "tail", "boundary", "failure"]:
+			var viewer: RefCounted = Spectator.new()
+			context.equal(viewer.is_complete(), false, "unconfigured viewer is incomplete")
+			context.equal(viewer.configure(Fixture.new()._config()), Types.Code.OK, "configure completion viewer")
+			context.equal(viewer.is_complete(), false, "fresh viewer is incomplete")
+			for frame: int in frames:
+				context.equal(viewer.receive_host_frame(frame, Fixture.new()._row(frame)).code, Types.Code.OK, "retain complete host input")
+			var driver: RefCounted = Driver.new(viewer, GameFixture.Game.new())
+			var empty: Array[Driver.LocalInput] = []
+			if mode != "cancel":
+				context.equal(viewer.finish_host(), Types.Code.OK, "close host input")
+			context.equal(viewer.is_complete(), false, "input closure alone never completes playback")
+			if mode in ["clean", "boundary"]:
+				for frame: int in frames:
+					context.equal(driver.step(frame, empty).code, Types.Code.OK, "consume one clean tail row")
+				context.equal(viewer.is_complete(), false, "last consumed row still awaits terminal call")
+			if mode == "clean":
+				context.equal(driver.step(frames, empty).code, Types.Code.TERMINATED, "ordinary service completes clean ending")
+			else:
+				viewer.terminate(Types.Code.PROTOCOL_FAILED if mode == "failure" else Types.Code.TERMINATED)
+			context.equal(viewer.is_complete(), mode == "clean", "cancellation and failure never claim completion")
+			context.equal(driver.step(frames + 1, empty).code, Types.Code.TERMINATED, "terminal service cannot revive viewer")
+			context.equal(viewer.is_complete(), mode == "clean", "terminal retry preserves completion status")
+			var invalid: RefCounted = Fixture.new()._config()
+			invalid.queue_capacity = 0
+			context.equal(viewer.configure(invalid), Types.Code.INVALID_CONFIGURATION, "reject invalid replacement")
+			context.equal(viewer.is_complete(), mode == "clean", "rejected replacement preserves completion")
+			context.equal(viewer.configure(Fixture.new()._config()), Types.Code.OK, "fresh playback replaces old lifetime")
+			context.equal(viewer.is_complete(), false, "successful replacement clears completion")

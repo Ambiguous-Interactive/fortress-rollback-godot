@@ -115,6 +115,7 @@ func step_viewer() -> int:
 	if viewer == null:
 		return Types.Code.NOT_CONFIGURED
 	is_paused = true
+	viewer_code = _viewer_result(viewer_code)
 	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 		return viewer_code
 	var samples: Array[Driver.LocalInput] = []
@@ -164,8 +165,9 @@ func tick(buttons: int) -> int:
 			is_host_finished = code == Types.Code.OK
 	if code != Types.Code.OK and code != Types.Code.PREDICTION_STALL:
 		viewer.terminate(code)
-		viewer_code = code
+		viewer_code = _viewer_result(code)
 		return code
+	viewer_code = _viewer_result(viewer_code)
 	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 		return code
 	viewer_code = stream.poll(_tick_count * Host.TICK_US)
@@ -226,7 +228,12 @@ func _advance_viewer(samples: Array[Driver.LocalInput]) -> int:
 		var captured: Driver.StepResult = driver.capture_replay_boundary()
 		if captured.reason != Types.Code.OK:
 			return captured.reason
-	return driver.step(_tick_count * Host.TICK_US, samples).code
+	return _viewer_result(driver.step(_tick_count * Host.TICK_US, samples).code)
+
+
+func _viewer_result(code: int) -> int:
+	var status: Types.Status = viewer.status()
+	return status.reason if status.lifecycle == Types.Lifecycle.TERMINATED else code
 
 
 func _mutation_code() -> int:

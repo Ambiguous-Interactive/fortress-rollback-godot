@@ -296,22 +296,25 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 ```
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
-executes paired clean and lost-first-backfill scenarios twice in fresh processes. It records the pinned
+executes one-row and four-row missing-history cases, each with clean and lost-first-backfill delivery, twice in fresh processes. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
 
 Three peers first play six frames with changing four-byte samples. The departing
-peer then submits frames six through eight. One real recipient link withholds
-frame eight from survivor zero; survivor one retains it. Both survivors expose
-confirmation four while their actual target receipts differ at seven/eight.
+peer then submits frames six through eight or eleven. One real recipient link withholds
+frames starting at eight from survivor zero; survivor one retains the complete suffix. Both survivors expose
+confirmation four while their actual target receipts differ at seven/eight or seven/eleven.
 The source explicitly removes the target. Godot detects its elapsed timeout.
-Each implementation must transfer the original missing row from donor one to
-coordinator zero, commit cut eight, and continue to frame twenty-two. The loss
+Each implementation must transfer every original missing row from donor one to
+coordinator zero, commit cut eight or eleven, and continue to frame twenty-two. The loss
 scenario discards the first actual historical backfill packet before socket delivery.
 Both implementations must resend its exact original range, operation identity and
 bytes, and the recipient must receive that retry. The clean scenario remains a
-paired control with identical canonical input history.
+paired control with identical canonical input history. The four-row case also changes actual
+encoded interior donor bytes before delivery. Swapping two interior bytes preserves both
+endpoint rows, the payload sum and the final canonical state; the independent prefix comparison
+must still reject the altered intermediate history.
 
 The source trace records actual DropBackfill emission and socket receipt. Every
 source control must carry the expected typed operation: coordinator zero,

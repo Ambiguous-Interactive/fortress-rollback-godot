@@ -75,9 +75,10 @@ func _update_label() -> void:
 		state = "CONFIRMING FINAL INPUTS"
 		if demo.is_host_finished:
 			state = "FINAL TAIL PAUSED | P: resume or N: step" if demo.is_paused else "DRAINING FINAL TAIL"
-	if demo.viewer.status().lifecycle == Types.Lifecycle.TERMINATED:
-		state = "COMPLETE | R: start again" if demo.viewer_code == Types.Code.TERMINATED else "STOPPED: code %d | R: start again" % demo.viewer_code
-		if demo.viewer_code == Types.Code.HISTORY_UNAVAILABLE:
+	var status: Types.Status = demo.viewer.status()
+	if status.lifecycle == Types.Lifecycle.TERMINATED:
+		state = "COMPLETE | R: start again" if demo.viewer.is_complete() else "STOPPED: code %d | R: start again" % status.reason
+		if status.reason == Types.Code.HISTORY_UNAVAILABLE:
 			state = "HISTORY UNAVAILABLE | R: start again"
 	if demo.is_host_connection_lost:
 		state = "HOST CONNECTION LOST | R: start again"
