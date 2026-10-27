@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::{Arc, Mutex}, time::Duration};
 
 #[derive(Clone)]
-struct Game { frame: i32, values: [i64; 3] }
+struct Game { frame: i32, values: Vec<i64> }
 impl Game {
     fn bytes(&self) -> Vec<u8> {
         let mut result = i64::from(self.frame).to_le_bytes().to_vec();
-        for value in self.values { result.extend(value.to_le_bytes()); }
+        for value in &self.values { result.extend(value.to_le_bytes()); }
         result
     }
 }
@@ -41,7 +41,10 @@ fn sample(player: usize, frame: i32) -> [u8; 4] {
 fn hex(bytes: &[u8]) -> String { bytes.iter().map(|byte| format!("{byte:02x}")).collect() }
 fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
     states: &mut BTreeMap<i32, Value>) -> Result<(), String> {
-    session.add_local_input(PlayerHandle::new(player), sample(player, game.frame)).map_err(|error| format!("{error:?}"))?;
+    let slots = game.values.len() / 3;
+    for slot in player * slots..(player + 1) * slots {
+        session.add_local_input(PlayerHandle::new(slot), sample(slot, game.frame)).map_err(|error| format!("{error:?}"))?;
+    }
     for request in session.advance_frame().map_err(|error| format!("{error:?}"))? {
         match request {
             FortressRequest::SaveGameState { cell, frame } => {
@@ -101,24 +104,26 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool, missing_rows: i32) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32, target_slots: usize) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
     let mut buffers = Vec::new();
-    let mut games = vec![Game { frame: 0, values: [0; 3] }; 3];
+    let mut games = vec![Game { frame: 0, values: vec![0; 3 * target_slots] }; 3];
     let mut histories = vec![BTreeMap::new(); 3];
     for peer in 0..3 {
         let shared = clock.clone();
         let protocol = ProtocolConfig { clock: Some(Arc::new(move || origin + Duration::from_micros(*shared.lock().unwrap()))),
             protocol_rng_seed: Some(1701 + peer as u64), quality_report_interval: Duration::from_secs(100), ..Default::default() };
         let sync = SyncConfig { num_sync_packets: 1, keepalive_interval: Duration::from_secs(100), ..Default::default() };
-        let mut builder = SessionBuilder::<Profile>::new().with_num_players(3).map_err(|error| format!("{error:?}"))?
+        let mut builder = SessionBuilder::<Profile>::new().with_num_players(3 * target_slots).map_err(|error| format!("{error:?}"))?
             .with_max_prediction_window(8).with_disconnect_behavior(DisconnectBehavior::ContinueWithout)
             .with_protocol_config(protocol).with_sync_config(sync)
             .with_disconnect_timeout(Duration::from_secs(100)).with_disconnect_notify_delay(Duration::from_secs(50));
-        for slot in 0..3 { builder = builder.add_player(if slot == peer { PlayerType::Local } else { PlayerType::Remote(slot.to_string()) },
-            PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?; }
+        for slot in 0..3 * target_slots {
+            let kind = if slot / target_slots == peer { PlayerType::Local } else { PlayerType::Remote((slot / target_slots).to_string()) };
+            builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
+        }
         let queue = Arc::new(Mutex::new(Buffers::default()));
         sessions.push(builder.start_p2p_session(Socket(queue.clone())).map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
@@ -141,11 +146,13 @@ fn run(loss: bool, missing_rows: i32) -> Result<Value, String> {
         settle(&mut sessions, &buffers, frame >= 8, false, &mut control, &mut fault)?;
     }
     let before = (0..2).map(|peer| {
-        let range = sessions[peer].diagnostic_player_retained_input_range(PlayerHandle::new(2));
-        json!({"confirmed":sessions[peer].confirmed_frame().as_i32(),"target_first":range.map(|value|value.0.as_i32()),
-            "target_last":range.map(|value|value.1.as_i32())})
+        let ranges = (2 * target_slots..3 * target_slots).map(|slot| {
+            let range = sessions[peer].diagnostic_player_retained_input_range(PlayerHandle::new(slot));
+            json!({"slot":slot,"first":range.map(|value|value.0.as_i32()),"last":range.map(|value|value.1.as_i32())})
+        }).collect::<Vec<_>>();
+        json!({"confirmed":sessions[peer].confirmed_frame().as_i32(),"targets":ranges})
     }).collect::<Vec<_>>();
-    for session in sessions.iter_mut().take(2) { session.remove_player(PlayerHandle::new(2)).map_err(|error| format!("{error:?}"))?; }
+    for session in sessions.iter_mut().take(2) { session.remove_player(PlayerHandle::new(2 * target_slots)).map_err(|error| format!("{error:?}"))?; }
     for _ in 0..160 {
         *clock.lock().unwrap() += 1000;
         settle(&mut sessions, &buffers, true, true, &mut control, &mut fault)?;
@@ -174,12 +181,18 @@ fn run(loss: bool, missing_rows: i32) -> Result<Value, String> {
         survivors.push(json!({"peer":peer,"current_frame":sessions[peer].current_frame().as_i32(),
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
-    Ok(json!({"format":1,"complete":true,"upstream_revision":"f13cd5c0f2815926785a395947e18da0dbea0dd8",
-        "missing_rows":missing_rows,"before":before,"dropped":dropped,"lost_history":fault.dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
+    Ok(json!({"format":2,"complete":true,"upstream_revision":"f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
+        "lost_history":fault.dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
 }
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let loss = arguments.contains(&"--drop-first-history".into());
     let multi = arguments.contains(&"--multi-row-history".into());
-    if arguments.len() != usize::from(loss) + usize::from(multi) { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
-    match run(loss, if multi { 4 } else { 1 }) { Ok(result) => println!("{result}"), Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); } } }
+    let grouped = arguments.contains(&"--multiple-target-slots".into());
+    if arguments.len() != usize::from(loss) + usize::from(multi) + usize::from(grouped) { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }) {
+        Ok(result) => println!("{result}"),
+        Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
+    }
+}

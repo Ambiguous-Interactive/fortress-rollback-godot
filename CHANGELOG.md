@@ -197,6 +197,10 @@
 
 ### Fixed
 
+- Fix SignalFish transport cleanup requested from callbacks. Direct, relay and fallback queues and relay observers are released when the active poll returns.
+
+- Fix spectator relay failures from delayed authenticated rows after playback history wraps. Obsolete rows leave playback and host expiry unchanged.
+
 - Fix replay accessors exposing incomplete rows or indexing missing metadata. Invalid row reads return no inputs or digest while complete earlier rows stay readable.
 
 - Fix clean spectator closure discarding accepted rows beyond a gap. Fill the missing rows and retry `finish_host()` after `PREDICTION_STALL` to play the full tail.

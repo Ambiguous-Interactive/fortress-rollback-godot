@@ -124,6 +124,7 @@ Authenticated host liveness and confirmed-input progress are separate observatio
 A spectator keepalive may refresh elapsed host expiry without advancing a row,
 repairing a gap or affecting player confirmation. Keep deadline equality and
 foreign-packet inertness unchanged, and agree support for optional packet kinds.
+Discard validated obsolete spectator rows without renewing liveness, including during clean-tail playback; retain conflicts while rows remain in history.
 Priority liveness traffic must yield to queued row work. Test repeated keepalives with a one-packet budget;
 a one-shot bypass can pass while repeated priority insertion indefinitely resets the receive cursor.
 A confirmed-row publisher owns each refused packet until exact transport acceptance;
@@ -145,7 +146,6 @@ preserve a connection lifetime; rejected configuration must preserve the valid s
 Successful stream replacement must also retire its prior owned playback session: a retained
 driver can otherwise consume buffered rows without calling the stream. Preserve independently
 reconfigured sessions by checking ownership identity before termination.
-
 ## Serialization Rules
 
 1. All packets are built with `StreamPeerBuffer` in **explicit little-endian,
@@ -261,8 +261,8 @@ Terminal application failure must close signaling as well as detach game transpo
 Keep callback-owning objects alive while their callbacks execute; finish asynchronous
 close handshakes without servicing gameplay. Test physical socket closure before
 user cleanup, since a later Leave can hide a leaked connection or room membership.
-When busy adapters defer detach, retry cleanup after the active operation unwinds;
-a latched fatal status does not prove that retained packet queues were released.
+When busy adapters defer detach, complete cleanup automatically after the active operation unwinds;
+a latched fatal status does not prove queues or listeners were released. Recheck after channel/socket getters before sending.
 
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate

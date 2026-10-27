@@ -100,6 +100,7 @@ func cases() -> PackedStringArray:
 		[
 			"startup",
 			"playback",
+			"obsolete_rows",
 			"refusal",
 			"queue_pressure",
 			"expiry",
@@ -187,6 +188,75 @@ func _playback(context: RefCounted) -> void:
 	context.equal(fixture.relay.poll(13).received, 1, "END delivered")
 	context.equal(fixture.relay.status().received_bytes, 0, "retained bytes drained")
 	fixture.relay.detach()
+
+
+# Value: protects=late authenticated rows after ring reuse; fails_when=obsolete duplicates report peer failure;
+# why_new=playback covers fresh rows only; seam=public SDK ingress
+func _obsolete_rows(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context)
+	var obsolete: PackedByteArray = fixture.stream.encode_row(0, Fixture.new()._row(0))
+	var expected: int = 0
+	for frame: int in range(12):
+		_emit(fixture, fixture.stream.encode_row(frame, Fixture.new()._row(frame)))
+		context.equal(fixture.relay.poll(frame + 1).code, Relay.Code.OK, "original row received through repeated wraps")
+		context.equal(fixture.driver.step(frame + 1, _empty()).code, Types.Code.OK, "original row played")
+		for player: int in range(2):
+			expected = expected * 3 + Fixture.new()._row(frame)[player][0] + frame
+	context.equal(fixture.stream.playback_session().receive_host_frame(0, Fixture.new()._row(0)).code, Types.Code.INVALID_FRAME, "direct API still identifies evicted row")
+	for index: int in 2:
+		var frame: int = index * 12
+		var malformed: PackedByteArray = fixture.stream.encode_row(frame, Fixture.new()._row(frame))
+		malformed[malformed.size() - 1] = 255
+		malformed = Stream.authenticate(StreamFixture.new()._unsigned(malformed), StreamFixture.new()._key())
+		_emit(fixture, malformed)
+		var rejected: Relay.Types.Result = fixture.relay.poll(13 + index)
+		context.equal(rejected.code, Relay.Code.PEER_FAILURE, "malformed past and current rows are not obsolete duplicates")
+		context.equal(rejected.peer_code, Types.Code.INVALID_CONFIGURATION, "invalid finalized status keeps its diagnostic")
+		context.equal(fixture.stream.playback_session().host_frontier(), 11, "malformed current row cannot close the next gap")
+	var exhausted: PackedByteArray = obsolete.duplicate()
+	exhausted.encode_u32(60, 4294967295)
+	exhausted = Stream.authenticate(StreamFixture.new()._unsigned(exhausted), StreamFixture.new()._key())
+	_emit(fixture, exhausted)
+	context.equal(fixture.relay.poll(15).peer_code, Types.Code.INVALID_FRAME, "exhausted future frame cannot become an obsolete duplicate")
+	_emit(fixture, obsolete)
+	_emit(fixture, fixture.stream.encode_row(12, Fixture.new()._row(12)))
+	context.equal(fixture.relay.poll(20).code, Relay.Code.OK, "late evicted duplicate does not report peer failure")
+	context.equal(fixture.relay.status().received_packets, 1, "obsolete packet releases its bounded queue slot")
+	context.equal(fixture.relay.poll(21).code, Relay.Code.OK, "fresh row behind obsolete duplicate remains deliverable")
+	context.equal(fixture.driver.step(21, _empty()).code, Types.Code.OK, "fresh row still plays")
+	for player: int in range(2):
+		expected = expected * 3 + Fixture.new()._row(12)[player][0] + 12
+	context.equal(fixture.game.value, expected, "obsolete row cannot replay or rewrite canonical history")
+	_emit(fixture, obsolete)
+	context.equal(fixture.relay.poll(120).code, Relay.Code.OK, "obsolete traffic before deadline is inert")
+	_emit(fixture, obsolete)
+	context.equal(fixture.relay.poll(121).peer_code, Types.Code.PROTOCOL_FAILED, "obsolete duplicate cannot refresh host liveness")
+	context.equal(fixture.driver.step(121, _empty()).code, Types.Code.TERMINATED, "real host expiry stops playback")
+	fixture.relay.detach()
+	var conflict: Dictionary = _fixture(context)
+	_emit(conflict, conflict.stream.encode_row(0, Fixture.new()._row(0)))
+	conflict.relay.poll(1)
+	conflict.driver.step(1, _empty())
+	_emit(conflict, conflict.stream.encode_row(0, Fixture.new()._row(1)))
+	context.equal(conflict.relay.poll(2).code, Relay.Code.PEER_FAILURE, "retained conflicting past row remains a failure")
+	context.equal(conflict.driver.step(2, _empty()).code, Types.Code.TERMINATED, "retained conflict still stops buffered playback")
+	conflict.relay.detach()
+	var tail: Dictionary = _fixture(context)
+	var old_tail: PackedByteArray = tail.stream.encode_row(0, Fixture.new()._row(0))
+	for frame: int in range(6):
+		_emit(tail, tail.stream.encode_row(frame, Fixture.new()._row(frame)))
+		tail.relay.poll(frame + 1)
+		tail.driver.step(frame + 1, _empty())
+	_emit(tail, tail.stream.encode_row(6, Fixture.new()._row(6)))
+	_emit(tail, tail.stream.encode_end(7))
+	context.equal(tail.relay.poll(7).code, Relay.Code.OK, "final row received before END")
+	context.equal(tail.relay.poll(8).code, Relay.Code.OK, "declared clean tail remains playable")
+	_emit(tail, old_tail)
+	context.equal(tail.relay.poll(9).code, Relay.Code.OK, "obsolete duplicate cannot turn a closed tail into peer failure")
+	context.equal(tail.driver.step(9, _empty()).code, Types.Code.OK, "closed original tail still plays")
+	context.equal(tail.driver.step(10, _empty()).code, Types.Code.TERMINATED, "closed tail still completes normally")
+	context.equal(tail.stream.playback_session().is_complete(), true, "late obsolete row preserves clean completion authority")
+	tail.relay.detach()
 
 
 func _refusal(context: RefCounted) -> void:
@@ -839,7 +909,8 @@ func _source_departures(context: RefCounted) -> void:
 					options.max_packet_bytes = 128
 					context.equal(
 						fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.stream, HOST, options),
-						Relay.Code.WRONG_STATE if selected else Relay.Code.OK, "setup fences only selected source departure"
+						Relay.Code.WRONG_STATE if selected else Relay.Code.OK,
+						"setup fences only selected source departure"
 					)
 					context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "rejected setup cannot acquire fresh viewer")
 				else:

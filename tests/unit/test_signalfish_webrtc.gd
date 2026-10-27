@@ -180,9 +180,20 @@ func _plan_revision(context: RefCounted, fixture: Dictionary, name: String) -> v
 
 
 func _reentry(context: RefCounted, fixture: Dictionary) -> void:
-	fixture.mesh.transport.on_poll = fixture.direct.detach
-	context.equal(fixture.direct.poll(0).code, W.Code.WRONG_STATE, "callback teardown fails closed")
-	context.equal(fixture.direct.status().code, W.Code.WRONG_STATE, "reentry failure latched")
+	for boundary: String in ["poll", "buffered"]:
+		context.equal((fixture.direct as W).enqueue_batch([packet(fixture, 9)]), W.Code.OK, "retain output before callback detach")
+		fixture.mesh.transport.on_poll = fixture.direct.detach if boundary == "poll" else Callable()
+		fixture.mesh.transport.channel.on_buffered = fixture.direct.detach if boundary == "buffered" else Callable()
+		context.equal(fixture.direct.poll(0).code, W.Code.WRONG_STATE, "callback teardown fails closed " + boundary)
+		context.equal(fixture.direct.status().code, W.Code.WRONG_STATE, "reentry failure latched")
+		context.equal(fixture.mesh.transport.sent.size(), 0, "callback detach never sends output " + boundary)
+		context.equal(fixture.direct.status().pending_packets, 0, "callback detach releases pending packets after poll")
+		context.equal(fixture.direct.status().pending_bytes, 0, "callback detach releases pending bytes after poll")
+		fixture.mesh.transport.on_poll = Callable()
+		fixture.mesh.transport.channel.on_buffered = Callable()
+		var options: W.Options = W.Options.new()
+		options.max_packet_bytes = 512
+		context.equal(fixture.direct.configure(fixture.mesh, fixture.membership, fixture.adapter, fixture.peer, options), W.Code.OK, "reconfigure after deferred detach")
 
 
 # Value: protects=idle service batches; fails_when=refused traffic looks like an empty socket; why_new=receive counts only accepted packets; seam=direct poll result
@@ -234,6 +245,7 @@ class Channel:
 	var maximum: int = 512
 	var lifetime: int = 1
 	var retransmits: int = 65535
+	var on_buffered: Callable = Callable()
 
 	func get_max_packet_life_time() -> int:
 		return lifetime
@@ -248,6 +260,8 @@ class Channel:
 		return ordered
 
 	func get_buffered_amount() -> int:
+		if on_buffered.is_valid():
+			on_buffered.call()
 		return buffered
 
 

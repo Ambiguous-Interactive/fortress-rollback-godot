@@ -118,5 +118,7 @@ func _invalid_tokens(context: RefCounted) -> void:
 		context.equal(result.received, 0, "invalid token never advances peer")
 		context.equal(fixture.direct.get("_token") == null, true, "invalid token never retained")
 		context.equal(fixture.direct.poll(20).code, expected, "callback failure latched")
+		if size in [-3, -2]:
+			context.equal(fixture.direct.status().received_bytes, 0, "callback detach releases retained ingress")
 		F.new().destroy(fixture)
 		RF.new()._destroy(real)

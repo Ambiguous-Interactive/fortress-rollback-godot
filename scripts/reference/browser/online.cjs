@@ -302,7 +302,7 @@ async function collectReplay(pages, command, diagnostic) {
   await command(page, 'replay');
   const download = await pending;
   const bytes = fs.readFileSync(await download.path());
-  if (bytes.length > 16384) throw new Error('online witness replay exceeds its short-match byte bound');
+  if (bytes.length <= 8192 || bytes.length > 16384) throw new Error('online witness replay must exceed 8 KiB within its 16 KiB short-match bound');
   await download.saveAs(diagnostic.replace('-events.log', '-replay.frrp'));
   await command(page, 'validate_replay', { hex: bytes.toString('hex') });
   // Value: real exported commands accept hex/JSON overhead and reject excess; earlier short replays missed the envelope limit; seam=none.
@@ -500,6 +500,7 @@ async function main() {
       }
       if (suspension) rounds[round].suspension = suspension;
       if (round === 0 && !corrupt) {
+        await wait(pages[1], () => window.fortressOnline.frame >= 224, 90000);
         const captureBefore = await pages[1].evaluate(() => ({ frame: window.fortressOnline.frame,
           restores: window.fortressOnline.restores }));
         await command(pages[1], 'finish_replay');

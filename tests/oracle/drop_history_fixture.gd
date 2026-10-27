@@ -18,10 +18,14 @@ class ObservedGame:
 
 	static func status_name(status: int) -> String:
 		match status:
-			InputQueue.Status.NONE: return "none"
-			InputQueue.Status.CONFIRMED: return "confirmed"
-			InputQueue.Status.PREDICTED: return "predicted"
-			InputQueue.Status.DISCONNECTED: return "disconnected"
+			InputQueue.Status.NONE:
+				return "none"
+			InputQueue.Status.CONFIRMED:
+				return "confirmed"
+			InputQueue.Status.PREDICTED:
+				return "predicted"
+			InputQueue.Status.DISCONNECTED:
+				return "disconnected"
 		return "unknown:" + str(status)
 
 	func simulate_frame(at: int, inputs: S.FrameInputs) -> bool:
@@ -36,7 +40,7 @@ class ObservedGame:
 
 
 func observe(
-	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1, corrupt_interior: bool = false
+	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1, corrupt_interior: bool = false, target_slots: int = 1
 ) -> Dictionary:
 	_drop_first_history = drop_first_history
 	_corrupt_interior_history = corrupt_interior
@@ -44,12 +48,12 @@ func observe(
 	_missing_peer = 0
 	_width = 4
 	_window = 8
-	_slots = 1
+	_slots = target_slots
 	_seen = 0
 	_donor_sources.clear()
 	var mesh: Dictionary = _wide_mesh(context)
 	for peer: int in range(3):
-		var game: ObservedGame = ObservedGame.new()
+		var game: ObservedGame = ObservedGame.new(3 * _slots)
 		context.equal(mesh.peers[peer]._driver.configure(mesh.peers[peer]._core, game), Types.Code.OK, "install actual request observer")
 		mesh.games[peer] = game
 	_play(context, mesh, 6, true)
@@ -58,10 +62,18 @@ func observe(
 		_leave(context, mesh, 2)
 	var before: Array[Dictionary] = []
 	for peer: int in range(2):
-		var interval: PackedInt64Array = mesh.peers[peer]._core.retained_input_range(2)
-		before.append({"confirmed": mesh.peers[peer].status().confirmed_frame, "target_first": interval[0], "target_last": interval[1]})
+		var targets: Array[Dictionary] = []
+		for slot: int in range(2 * _slots, 3 * _slots):
+			var interval: PackedInt64Array = mesh.peers[peer]._core.retained_input_range(slot)
+			targets.append({"slot": slot, "first": interval[0], "last": interval[1]})
+		before.append({"confirmed": mesh.peers[peer].status().confirmed_frame, "targets": targets})
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
-	var cuts: Array[int] = [mesh.peers[0]._core.frozen_frame(2), mesh.peers[1]._core.frozen_frame(2)]
+	var cuts: Array = []
+	for peer: int in range(2):
+		var target_cuts: Array[int] = []
+		for slot: int in range(2 * _slots, 3 * _slots):
+			target_cuts.append(mesh.peers[peer]._core.frozen_frame(slot))
+		cuts.append(target_cuts)
 	_play(context, mesh, 16, true, [0, 1], 2)
 	var survivors: Array[Dictionary] = []
 	for peer: int in range(2):
@@ -71,19 +83,31 @@ func observe(
 			var inputs: Array[String] = []
 			if status_control >= 0 and peer == 0 and frame == 0:
 				row._statuses[0] = status_control
-			for player: int in range(3):
+			for player: int in range(3 * _slots):
 				var input: Types.InputResult = row.read(player)
 				context.equal(input.code, Types.Code.OK, "export actual finalized original input")
 				inputs.append(input.bytes.hex_encode())
-				var expected: int = Queue.Status.DISCONNECTED if player == 2 and frame > 7 + missing_rows else Queue.Status.CONFIRMED
+				var expected: int = Queue.Status.DISCONNECTED if player >= 2 * _slots and frame > 7 + missing_rows else Queue.Status.CONFIRMED
 				context.equal(ObservedGame.status_name(input.status), ObservedGame.status_name(expected), "observed finalized export status")
-			rows.append({"frame": frame, "inputs": inputs,
-				"state": {"frame": frame, "bytes": mesh.games[peer].states[frame].hex_encode(), "inputs": mesh.games[peer].applied[frame]}})
-		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame,
-			"confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
-	return {"format": 1, "complete": true, "missing_rows": missing_rows, "before": before, "cuts": cuts, "history_packets": _seen,
-		"donors": _donor_sources.keys(), "lost_history": _lost_history, "history_emissions": _history_emissions,
-		"history_receipts": _history_receipts, "survivors": survivors, "failures": context.failures}
+			rows.append(
+				{"frame": frame, "inputs": inputs, "state": {"frame": frame, "bytes": mesh.games[peer].states[frame].hex_encode(), "inputs": mesh.games[peer].applied[frame]}}
+			)
+		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame, "confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
+	return {
+		"format": 2,
+		"complete": true,
+		"missing_rows": missing_rows,
+		"target_slots": _slots,
+		"before": before,
+		"cuts": cuts,
+		"history_packets": _seen,
+		"donors": _donor_sources.keys(),
+		"lost_history": _lost_history,
+		"history_emissions": _history_emissions,
+		"history_receipts": _history_receipts,
+		"survivors": survivors,
+		"failures": context.failures
+	}
 
 
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
@@ -95,17 +119,18 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		var history_emission: Dictionary = {}
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
-				history_emission = {"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(),
-					"packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()}
+				history_emission = {
+					"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(), "packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()
+				}
 				_history_emissions.append(history_emission)
 		if _drop_first_history and _lost_history.is_empty() and not history_emission.is_empty():
 			_lost_history.append(history_emission)
 			continue
 		if _corrupt_interior_history and not history_emission.is_empty() and packet.to == 0:
 			decoded.message.bytes = decoded.message.bytes.duplicate()
-			var original: int = decoded.message.bytes[4]
-			decoded.message.bytes[4] = decoded.message.bytes[8]
-			decoded.message.bytes[8] = original
+			var original: int = decoded.message.bytes[4 * _slots]
+			decoded.message.bytes[4 * _slots] = decoded.message.bytes[8 * _slots]
+			decoded.message.bytes[8 * _slots] = original
 			var altered: T.Result = Codec.encode(decoded.message, _limits(mesh.count))
 			context.equal(altered.code, T.Code.OK, "interior corruption preserves valid packet dimensions")
 			packet = packet.duplicate(true)

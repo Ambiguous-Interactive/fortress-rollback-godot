@@ -207,6 +207,14 @@ func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 				break
 			var received_kind: int = _received[_receive_cursor][5]
 			result.peer_code = _stream.receive_packet(_received[_receive_cursor], now_us)
+			if (
+				result.peer_code in [SessionTypes.Code.INVALID_FRAME, SessionTypes.Code.TERMINATED]
+				and received_kind == Stream.ROW
+				and _received[_receive_cursor].decode_u32(60) < _session.status().current_frame
+				and _session.status().lifecycle == SessionTypes.Lifecycle.RUNNING
+			):
+				# Played rows can outlive the bounded duplicate journal; they cannot repair or refresh it.
+				result.peer_code = SessionTypes.Code.OK
 			if result.peer_code == SessionTypes.Code.BUSY:
 				break
 			if result.peer_code == SessionTypes.Code.NETWORK_BACKPRESSURE:

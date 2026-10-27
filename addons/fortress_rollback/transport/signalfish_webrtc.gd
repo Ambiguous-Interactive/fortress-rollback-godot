@@ -29,6 +29,7 @@ var _token: Variant = null
 var _token_ready: bool = false
 var _failure: int = Code.OK
 var _busy: bool = false
+var _detach_requested: bool = false
 var _rejected: int = 0
 # Packets taken off the socket, refused ones included. A refused packet is still traffic.
 var _consumed: int = 0
@@ -133,13 +134,20 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 				break
 			var packet: Peer.Packet = _pending[0]
 			var destination: int = packet.to.decode_u32(0)
-			result.code = _channel_gate(transport, destination, packet.bytes.size())
+			var readiness: int = _channel_gate(transport, destination, packet.bytes.size())
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
+			result.code = readiness
 			if result.code != Code.OK:
 				_refused_destination = _membership.identity(_membership.uuid_for_peer_id(destination))
 				break
 			transport.call("set_target_peer", destination)
 			transport.call("set_transfer_mode", MultiplayerPeer.TRANSFER_MODE_UNRELIABLE)
 			transport.call("set_transfer_channel", 0)
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
 			var code: Error = transport.call("put_packet", packet.bytes.duplicate())
 			if code != OK:
 				_refused_destination = _membership.identity(_membership.uuid_for_peer_id(destination))
@@ -155,6 +163,9 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 	_activity = result.activity
 	_sent = result.sent
 	_busy = false
+	if _detach_requested:
+		result.code = Code.WRONG_STATE
+		detach()
 	return result
 
 
@@ -271,6 +282,7 @@ func status() -> Dictionary:
 
 func detach() -> void:
 	if _busy:
+		_detach_requested = true
 		_failure = Code.WRONG_STATE
 		return
 	_mesh = null
@@ -286,6 +298,7 @@ func detach() -> void:
 	_generation = ""
 	_revision = -1
 	_failure = Code.OK
+	_detach_requested = false
 	_consumed = 0
 	_activity = 0
 	_sent = 0

@@ -61,6 +61,9 @@ func run_case(name: String, context: RefCounted) -> void:
 			(fixture.fallback as F).enqueue_batch([packet(fixture, 9)])
 			context.equal(fixture.fallback.poll(0).code, F.Code.WRONG_STATE, "callback detach latched")
 			context.equal(fixture.mesh.transport.sent.size() + fixture.client.sent.size(), 0, "callback detach sends nothing")
+			context.equal(fixture.fallback.status().pending_packets, 0, "callback detach releases coordinator output")
+			context.equal(fixture.direct.status().pending_packets, 0, "callback detach releases direct output")
+			context.equal(fixture.client.get_signal_connection_list("game_data_binary_received").size(), 0, "callback detach releases relay observer")
 		"fatal_relay":
 			var envelope: PackedByteArray = E.encode(fixture.membership.handshake_message().session_id, M.V, M.U, PackedByteArray([1]))
 			for _index: int in 3:

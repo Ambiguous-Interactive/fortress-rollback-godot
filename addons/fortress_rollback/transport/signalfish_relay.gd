@@ -38,6 +38,7 @@ var _traffic: int = 0
 var _activity: int = 0
 var _sent: int = 0
 var _busy: bool = false
+var _detach_requested: bool = false
 
 
 ## Use actual SDK config and ProtocolInfo observed before joining; JSON fallback is refused.
@@ -174,6 +175,9 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 				result.code = _failure
 				break
 			var buffered: int = transport.call("get_buffered_amount")
+			result.code = _gate()
+			if result.code != Code.OK:
+				break
 			if buffered < 0 or buffered > _options.max_socket_buffered_bytes - _pending[0].size():
 				result.code = Code.BACKPRESSURE
 				break
@@ -194,6 +198,9 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Types.Resul
 	_activity = result.activity
 	_sent = result.sent
 	_busy = false
+	if _detach_requested:
+		result.code = Code.WRONG_STATE
+		detach()
 	return result
 
 
@@ -209,6 +216,7 @@ func status() -> Dictionary:
 
 func detach() -> void:
 	if _busy:
+		_detach_requested = true
 		_failure = Code.WRONG_STATE
 		return
 	var client: Object = _client.get_ref() if _client != null else null
@@ -229,6 +237,7 @@ func detach() -> void:
 	_activity = 0
 	_sent = 0
 	_failure = Code.OK
+	_detach_requested = false
 
 
 func _on_binary(from_uuid: String, encoding: int, bytes: PackedByteArray) -> void:
