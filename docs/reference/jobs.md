@@ -74,7 +74,27 @@ with the passing verification duration needs 31m15s before final cleanup.
 The wider job budget preserves the full workload and permits that measured cold
 preparation without cancelling a valid verification run.
 
-## Baseline scope
+## Ubuntu package mirror selection
+
+The hosted runner uses `mirror+file:/etc/apt/apt-mirrors.txt`; its
+[provisioning script](https://github.com/actions/runner-images/blob/main/images/ubuntu/scripts/build/configure-apt-sources.sh)
+gives the Azure HTTP mirror priority over the configured Ubuntu HTTPS alternatives.
+APT's [mirror transport](https://manpages.ubuntu.com/manpages/noble/man1/apt-transport-mirror.1.html)
+uses those priorities and fails over after acquisition errors.
+
+Run [40571093291](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/40571093291)
+later cancelled its Godot 4.7.2 Firefox negative part 2 job at 45 minutes while
+APT still retried Azure repository indexes. Verification never started.
+The earlier run fetched only 17.7 MB in 9m35s at 30.8 kB/s from that mirror.
+
+Every reference job that installs Ubuntu packages now prepares the existing
+mirror list before its first APT operation. Preparation removes only the Azure
+entry, retains the configured HTTPS archive/security alternatives, and leaves
+source suites, components and `Signed-By` settings unchanged. It refuses missing
+references or alternatives before editing and preserves the mirror file mode.
+Package signature and checksum authentication remain enabled.
+
+## Measured baseline scope
 
 This table records the measured baseline and names the dominant browser work.
 It does not shorten a browser job. The reduction of the room and page work

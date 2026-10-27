@@ -48,7 +48,22 @@ infrastructure guidance now includes cold setup in the outer job budget.
 This postmerge failure requires a separate repair PR; the session PR is already
 merged. Main completion remains unproven until the repair's merge CI passes.
 
-## Session outcome
+## Verification continuation: package acquisition
+
+The renewed verification found three jobs still installing dependencies after
+30 minutes. The ownership job then reached its 45-minute limit without starting
+verification. Its completed log records repeated Azure repository-index retries.
+The prior log also measured 17.7 MB in 9m35s at 30.8 kB/s. The outer budget repair
+covered the original measured startup but could not resolve a stalled mirror.
+
+Runner provisioning uses a prioritized mirror file. The next repair removes only
+the Azure preference before APT in all four installing job families, preserving
+the existing HTTPS alternatives and source authentication. Actual CLI fixtures
+cover unchanged source/keyring bytes, retained mirror metadata and permissions,
+idempotence, rejection without mutation, comments and lookalike hostnames.
+The testing guidance now requires localizing acquisition before further budget changes.
+
+## Final outcome
 
 State: `findings-acted`.
 
