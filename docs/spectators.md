@@ -495,6 +495,9 @@ so a future row cannot block the earlier rows needed to free playback capacity.
 One new keepalive can overtake queued rows so a paused or full viewer still observes
 host liveness. Further keepalives join the bounded scan until an ordinary packet
 succeeds; continuous heartbeats cannot keep an eligible original row waiting forever.
+Authenticated late rows that playback already consumed and the bounded ring evicted
+are discarded without reporting peer failure or refreshing host liveness. Retained
+conflicting rows and malformed past or current rows keep their validation errors.
 Capacity overflow ends playback explicitly and releases retained packets.
 SDK frame and buffer limits must keep fitting the agreed packet ceiling, including
 128 bytes of inbound framing allowance. An incompatible runtime change retires playback with `TOO_LARGE` before queued history is delivered.

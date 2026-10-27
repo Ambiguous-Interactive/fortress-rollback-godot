@@ -130,6 +130,18 @@ func _pressure(context: RefCounted) -> void:
 	if fixture.client.sent.size() == 2:
 		context.equal(Envelope.decode(fixture.client.sent[1], 512).payload, PackedByteArray([22]), "FIFO order")
 	context.equal(fixture.relay.status().pending_bytes, 0, "queue fully accounted")
+	context.equal((fixture.relay as Relay).enqueue_batch([_packet(fixture, 33)]), Relay.Code.OK, "queue output before buffered callback")
+	fixture.client.transport.on_buffered = fixture.relay.detach
+	context.equal(fixture.relay.poll(4).code, Relay.Code.WRONG_STATE, "buffer query teardown fails closed")
+	context.equal(fixture.client.sent.size(), 2, "buffer query teardown cannot send queued output")
+	context.equal(fixture.relay.status().pending_bytes, 0, "buffer query teardown releases output")
+	context.equal(fixture.client.get_signal_connection_list("game_data_binary_received").size(), 0, "buffer query teardown releases observer")
+	fixture.client.transport.on_buffered = Callable()
+	var options: Relay.Options = Relay.Options.new()
+	options.max_packet_bytes = 512
+	context.equal(fixture.relay.configure(fixture.client, fixture.config, fixture.info, fixture.membership, fixture.adapter, fixture.peer, options),
+		Relay.Code.OK, "reconfigure after deferred relay detach")
+
 	_destroy(fixture)
 
 
@@ -260,8 +272,11 @@ class Client:
 class Transport:
 	extends RefCounted
 	var buffered: int = 0
+	var on_buffered: Callable = Callable()
 
 	func get_buffered_amount() -> int:
+		if on_buffered.is_valid():
+			on_buffered.call()
 		return buffered
 
 

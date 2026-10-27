@@ -104,6 +104,7 @@ Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4
 Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.
 Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
 Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
+Authenticated spectator ingress ignores validated duplicates after viewed history expires without renewing host liveness.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
 Godot physics and arbitrary scene state are not made deterministic by rollback.
 

@@ -38,6 +38,7 @@ var _relay_peers: Dictionary = {}
 var _ready_since: Dictionary = {}
 var _failure: int = Code.OK
 var _busy: bool = false
+var _detach_requested: bool = false
 
 
 ## Both transports must use the same frozen membership, adapter and PeerSession.
@@ -171,6 +172,8 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 	gate = _gate()
 	if gate != Code.OK:
 		result.code = gate
+	if _detach_requested:
+		detach()
 	return result
 
 
@@ -221,6 +224,7 @@ func _has_pending(uuid: String) -> bool:
 ## Detach the coordinator before releasing its transport objects.
 func detach() -> void:
 	if _busy:
+		_detach_requested = true
 		_failure = Code.WRONG_STATE
 		_direct.detach()
 		_relay.detach()
@@ -240,6 +244,7 @@ func detach() -> void:
 	_last_now = -1
 	_route_cursor = 0
 	_failure = Code.OK
+	_detach_requested = false
 
 
 func _fair_pending() -> Array[Peer.Packet]:

@@ -176,6 +176,9 @@ func _invalid_tokens(context: RefCounted) -> void:
 		context.equal(result.received, 0, "invalid token never advances peer")
 		context.equal(fixture.relay.get("_receive_token") == null, true, "invalid token never retained")
 		context.equal(fixture.relay.poll(20).code, expected, "callback failure latched")
+		if size in [-3, -2]:
+			context.equal(fixture.relay.status().received_bytes, 0, "callback detach releases retained ingress")
+			context.equal(fixture.client.get_signal_connection_list("game_data_binary_received").size(), 0, "callback detach releases SDK observer")
 		F.new()._destroy(fixture)
 
 

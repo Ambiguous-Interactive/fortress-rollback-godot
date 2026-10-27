@@ -123,7 +123,8 @@ or rollback lifetime; the coordinator never fabricates SDK plans or resets histo
 A receive overflow or peer failure is terminal. An invalid direct transport
 lifetime under an unchanged mesh plan is also terminal; it cannot authorize
 relay fallback. An accepted relay plan explicitly permits direct teardown. During callbacks, detach fails
-closed. Call `fallback.detach()`, then detach direct and relay, then the plan adapter.
+closed and releases retained queues and observers when the active poll returns.
+Call `fallback.detach()`, then detach direct and relay, then the plan adapter.
 
 ## Evidence and remaining work
 

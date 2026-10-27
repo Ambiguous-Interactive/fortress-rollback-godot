@@ -296,15 +296,18 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 ```
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
-executes one-row and four-row missing-history cases, each with clean and lost-first-backfill delivery, twice in fresh processes. It records the pinned
+executes one-row and four-row single-target cases plus four-row two-target cases,
+each with clean and lost-first-backfill delivery, twice in fresh processes. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
 
-Three peers first play six frames with changing four-byte samples. The departing
+Three endpoints first play six frames with changing four-byte samples.
+Each endpoint owns one slot in the single-target cases and two in the grouped cases. The departing
 peer then submits frames six through eight or eleven. One real recipient link withholds
 frames starting at eight from survivor zero; survivor one retains the complete suffix. Both survivors expose
 confirmation four while their actual target receipts differ at seven/eight or seven/eleven.
+Every grouped target has its own observed retained interval and original changing inputs.
 The source explicitly removes the target. Godot detects its elapsed timeout.
 Each implementation must transfer every original missing row from donor one to
 coordinator zero, commit cut eight or eleven, and continue to frame twenty-two. The loss
@@ -313,13 +316,17 @@ Both implementations must resend its exact original range, operation identity an
 bytes, and the recipient must receive that retry. The clean scenario remains a
 paired control with identical canonical input history. The four-row case also changes actual
 encoded interior donor bytes before delivery. Swapping two interior bytes preserves both
-endpoint rows, the payload sum and the final canonical state; the independent prefix comparison
+endpoint rows, every player's final accumulator and the final canonical state; the independent prefix comparison
 must still reject the altered intermediate history.
 
 The source trace records actual DropBackfill emission and socket receipt. Every
 source control must carry the expected typed operation: coordinator zero,
 generation zero and sequence one, with an independently calculated FNV-1a
-digest of the target slot and generation. Malformed or foreign backfill operations
+digest of every ordered target slot and generation. The parser separately checks
+actual PREPARE target generations and participant lists, every inventory receipt,
+phase-specific certificate fields and independently reconstructed commit digests.
+A matching operation digest cannot substitute for those payload fields.
+Malformed or foreign backfill operations
 cannot pass through matching emission and receipt copies. Each
 control emission has an identity carried through the actual incoming socket queue.
 The Godot trace records encoded history-packet emission and successful receipt;
@@ -329,7 +336,9 @@ as loss, delivering the discarded emission, or reordering source receipts must f
 An independent
 parser checks its identity, range and original payload. Godot operation and target
 eras come independently from the fixture's fixed connection IDs; its sequence and
-bounded target digest must match that constructed identity. Both survivors export
+bounded target digest must match that constructed identity. The grouped case checks
+both target freeze cuts, both target generations and both retained inventories;
+removing or changing only the second target must fail. Both survivors export
 twenty finalized input-byte rows. Their corrected canonical game states, original
 input bytes and actual ADVANCE callback statuses must match an independent
 Python reconstruction. Godot finalized-export statuses are checked separately;
@@ -340,12 +349,12 @@ specific validation gate. Three additional process controls perturb an owned God
 export to NONE/PREDICTED/unknown status 42 at the observation boundary and require the exact status
 refusal, without changing game state or application callback records.
 
-This establishes one missing-history donor scenario with clean delivery and one
-lost original historical backfill. The two implementations
+This establishes single-target and grouped two-target missing-history donor scenarios
+with clean delivery and one lost original historical backfill. The two implementations
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all
-asymmetric exposed-frontier cases, multiple targets, physical donor eviction,
+asymmetric exposed-frontier cases, physical donor eviction,
 other lost/reordered control acceptance, or live browser donor recovery. Those remain
 under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)
