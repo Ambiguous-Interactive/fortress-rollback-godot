@@ -67,6 +67,8 @@ jobs:
             .cache/reference/cargo/registry/cache
             .cache/reference/cargo/registry/index
           key: reference-rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
+      - name: Select Ubuntu HTTPS mirror alternatives
+        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Install upstream linker prerequisites
         run: sudo apt-get update && sudo apt-get install -y clang lld
       - name: Reproduce reference twice
@@ -113,6 +115,8 @@ jobs:
         with:
           path: .cache/reference/downloads
           key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
+      - name: Select Ubuntu HTTPS mirror alternatives
+        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Install pinned browser runner and operating system dependencies
         run: |
           mkdir -p .cache/reference/browser
@@ -165,6 +169,8 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: "22.23.3"
+      - name: Select Ubuntu HTTPS mirror alternatives
+        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Select Java 17 for scoped model checking
         if: matrix.part == 'oracles'
         run: |
@@ -303,6 +309,8 @@ jobs:
           key: reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-${{ steps.pinned.outputs.build }}
           restore-keys: |
             reference-signalfish-server-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.pinned.outputs.pins }}-
+      - name: Select Ubuntu HTTPS mirror alternatives
+        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Install pinned browser runner and operating system dependencies
         run: |
           mkdir -p .cache/reference/browser
