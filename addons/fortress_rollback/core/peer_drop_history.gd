@@ -18,7 +18,7 @@ var chunks: Dictionary = {}
 var journal: Array[PackedByteArray] = []
 var cursors: Dictionary = {}
 var next_peer: int = 0
-var retry_us: int = -1
+var round_sent_to: Dictionary = {}
 var plan_turn: bool = true
 var plan_sent_to: Dictionary = {}
 

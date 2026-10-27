@@ -49,20 +49,35 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "the complete control publishes both plans without ACK pressure")
 	context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array([2] if pressured else [1, 2]), "healthy survivors accept the initial history plan")
 	var accepted_at: int = mesh.now
+	var chunks: PackedInt32Array = PackedInt32Array()
 	if pressured:
 		context.equal(mesh.peers[0].receive(_pressure_input.bytes, _id(1), mesh.now), I.Code.OK, "sustained real ACK pressure refuses the original link again")
-		context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array(), "sustained refusal does not flood the already accepted survivor")
+		var sustained: Array[Peer.Packet] = mesh.peers[0].drain_outbox()
+		context.equal(_plans(context, sustained), PackedInt32Array(), "sustained refusal does not flood the already accepted survivor")
+		for packet: Peer.Packet in sustained:
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(4))
+			if (
+				decoded.code == T.Code.OK
+				and decoded.message.kind == T.Kind.DROP_BARRIER
+				and decoded.message.stage == Drop.Stage.HISTORY
+				and decoded.message.phase == Drop.Phase.BACKFILL
+			):
+				chunks.append(packet.to[0] - 1)
 		if staggered:
 			mesh.now += Drop.RETRY_US / 2
 		context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "retry the refused history plan after output drains")
 		context.equal(_plans(context, mesh.peers[0].drain_outbox()), PackedInt32Array([1]), "only the refused survivor receives the immediate plan retry")
 	context.equal(mesh.peers[0].poll(mesh.now), I.Code.OK, "service the retained journal after the original plan reaches every survivor")
-	var chunks: PackedInt32Array = PackedInt32Array()
 	for packet: Peer.Packet in mesh.peers[0].drain_outbox():
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(4))
-		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.stage == Drop.Stage.HISTORY \
-			and decoded.message.phase == Drop.Phase.BACKFILL:
+		if (
+			decoded.code == T.Code.OK
+			and decoded.message.kind == T.Kind.DROP_BARRIER
+			and decoded.message.stage == Drop.Stage.HISTORY
+			and decoded.message.phase == Drop.Phase.BACKFILL
+		):
 			chunks.append(packet.to[0] - 1)
+	chunks.sort()
 	context.equal(chunks, PackedInt32Array([1, 2]), "healthy outboxes are available for exact retained donor chunks")
 	context.equal(mesh.peers[0].poll(accepted_at + Drop.RETRY_US - 1), I.Code.OK, "service one tick before the accepted plan's retry deadline")
 	context.equal(mesh.peers[0].drain_outbox().is_empty(), true, "accepted plans stay quiet before the deadline")
@@ -101,8 +116,12 @@ func _plans(context: RefCounted, packets: Array[Peer.Packet]) -> PackedInt32Arra
 	for packet: Peer.Packet in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(4))
 		context.equal(decoded.code, T.Code.OK, "published history pressure packets retain valid framing")
-		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.stage == Drop.Stage.HISTORY \
-			and decoded.message.phase == Drop.Phase.PREPARE:
+		if (
+			decoded.code == T.Code.OK
+			and decoded.message.kind == T.Kind.DROP_BARRIER
+			and decoded.message.stage == Drop.Stage.HISTORY
+			and decoded.message.phase == Drop.Phase.PREPARE
+		):
 			plans.append(packet.to[0] - 1)
 	return plans
 
@@ -112,11 +131,9 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 		if _split_delivery and decoded.code == T.Code.OK:
-			if packet.from == 3 and packet.to == 1 and decoded.message.kind == T.Kind.INPUT \
-				and decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
+			if packet.from == 3 and packet.to == 1 and decoded.message.kind == T.Kind.INPUT and decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
 				continue
-			if packet.to == 0 and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.REPORT \
-				and decoded.message.stage == Drop.Stage.INVENTORY:
+			if packet.to == 0 and decoded.message.kind == T.Kind.DROP_BARRIER and decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.INVENTORY:
 				_held_inventories[packet.from] = packet.duplicate(true)
 				continue
 		accepted.append(packet)

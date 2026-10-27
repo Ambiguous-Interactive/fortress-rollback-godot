@@ -33,7 +33,8 @@ func cases() -> PackedStringArray:
 			"host_loss_control",
 			"restart_lifetimes",
 			"restart_busy",
-			"service_busy"
+			"service_busy",
+			"playback_feedback"
 		]
 	)
 
@@ -47,7 +48,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		_lost_history(context)
 	elif name == "paused_final_tail":
 		_paused_final_tail(context)
-	elif name in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control", "restart_lifetimes", "restart_busy", "service_busy"]:
+	elif (
+		name
+		in ["single_frame", "single_frame_end", "single_frame_control", "host_loss", "host_loss_control", "restart_lifetimes", "restart_busy", "service_busy", "playback_feedback"]
+	):
 		call("_" + name, context)
 	elif name == "clean_host_end":
 		_clean_host_end(context)
@@ -517,3 +521,46 @@ func _service_observation(demo: RefCounted) -> Array:
 		demo.is_finishing,
 		demo.viewer.status().reason
 	]
+
+
+# Value: protects=viewer explains buffering, paused final tail and lost history; fails_when=idle viewing claims active playback;
+# why_new=demo lifecycle tests inspect codes without user guidance; seam=scene labels
+func _playback_feedback(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	context.equal(scene._label.text.contains("BUFFERING"), true, "startup explains why viewer has not advanced")
+	context.equal(scene._label.text.contains("confirmed input"), true, "startup identifies the input wait")
+	for tick: int in range(60):
+		scene.demo.tick(Game.RIGHT)
+	scene._update_label()
+	context.equal(scene.demo.game.frame > 0, true, "control reaches actual viewing")
+	context.equal(scene._label.text.contains("WATCHING"), true, "eligible live input shows normal watching")
+	scene.demo.is_paused = true
+	for tick: int in range(20):
+		scene.demo.tick(Game.LEFT)
+	scene._update_label()
+	context.equal(scene._label.text.contains("PAUSED"), true, "ordinary pause stays visible")
+	context.equal(scene.demo.finish_host(), Types.Code.OK, "stop host while viewer is paused")
+	for tick: int in range(20):
+		scene.demo.tick(0)
+	scene._update_label()
+	context.equal(scene.demo.is_host_finished, true, "host has published clean ending")
+	context.equal(scene._label.text.contains("FINAL TAIL PAUSED"), true, "paused tail does not claim to drain")
+	context.equal(scene._label.text.contains("P: resume or N: step"), true, "paused final tail gives recovery controls")
+	scene.demo.is_paused = false
+	scene.demo.tick(0)
+	scene._update_label()
+	context.equal(scene._label.text.contains("DRAINING FINAL TAIL"), true, "resumed tail shows actual draining")
+	for tick: int in range(40):
+		scene.demo.tick(0)
+	scene._update_label()
+	context.equal(scene._label.text.contains("COMPLETE"), true, "clean ending takes precedence over draining")
+	context.equal(scene.demo.start(), Types.Code.OK, "fresh lost-history scenario")
+	scene.demo.is_paused = true
+	for tick: int in range(300):
+		scene.demo.tick(0)
+	scene._update_label()
+	context.equal(scene.demo.viewer_code, Types.Code.HISTORY_UNAVAILABLE, "long pause actually loses bounded host history")
+	context.equal(scene._label.text.contains("HISTORY UNAVAILABLE"), true, "lost history has a readable reason")
+	context.equal(scene._label.text.contains("R: start again"), true, "lost history explains how to recover")
+	scene.free()

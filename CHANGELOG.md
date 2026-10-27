@@ -191,6 +191,12 @@
 
 ### Fixed
 
+- Fix peer-drop history transfer waiting on an unrelated survivor's refused plan. Healthy survivors receive their missing original inputs while the blocked link retries.
+
+- Fix trimmed captured replays losing an available checksum for their new final state. Prefixes without that evidence retain their existing validation limits.
+
+- Fix spectator example messages for startup buffering, paused final tails and lost history. Paused tails explain how to resume or step; lost history explains how to restart.
+
 - Fix spectator example service calls during active callbacks or request batches consuming time or stopping viewing. Busy controls preserve the current match.
 
 - Fix completed spectator playback reporting a relay failure during continued polling or late packet delivery. Cancellation and playback failures remain explicit.
