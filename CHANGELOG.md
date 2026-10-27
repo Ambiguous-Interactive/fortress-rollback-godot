@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add spectator example replay export with V. Save viewed history and its captured final state, including clean empty matches; recording retains the first ten minutes.
+
 - Add replay selected-state checksum status to the player API and viewer. Paused inspection distinguishes matching, unchecked and absent recorded checksums.
 
 - Add `SnapshotReader.read_into(destination)` to reuse small fixed-width buffers without creating read-result wrappers. Wide snapshots can keep faster native `read_bytes()` copies.

@@ -58,13 +58,16 @@ then extracts them into a temporary Godot project. That project contains only
 the installed addon, minimal project settings and the audit script. It loads
 every runtime script without the SDK, advances one local driver tick, runs
 70 frames between two byte peers, exchanges checksum and quality messages,
-checks terminal timeout behavior, and plays one confirmed spectator frame.
-The spectator smoke also refuses local input and waits when host data is missing.
+checks terminal timeout behavior, and records three status-sensitive confirmed spectator frames.
+The spectator smoke refuses local input, waits for missing host data, exports a
+captured final boundary, and validates the portable recording through both callback
+and expert replay. Independent expected game states cover disconnected status.
 
 `package-audit.json` records success, archive and engine hashes, and archive
 paths. `clean-addon.log` records engine output. A failure clears the prior
-success receipt. The negative control adds a missing SDK preload to an existing
-adapter and confirms that the clean install fails; repairing it must pass.
+success receipt. One negative control adds a missing SDK preload to an existing adapter. Another
+disables final replay validation in the installed addon. Both must fail the clean
+audit, clear prior success evidence and pass again after repair.
 The builder tests also verify reproducibility under changed host metadata and
 reject missing scripts or transport families, native files, orphan UIDs and
 development scripts.

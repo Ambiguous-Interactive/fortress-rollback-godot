@@ -46,6 +46,29 @@ including initial prediction and viewer backpressure.
 
 ![Local host and delayed spectator](images/spectator-example.png)
 
+## Save the viewed history
+
+Press V to save `fortress-spectator.frrp`: browsers download the file; native builds
+save it under `user://` and show the full path. The example records the first ten
+minutes of viewed input, including finalized player statuses. It does not record
+host frames the viewer has not played. Saving leaves host gameplay and viewing
+controls unchanged.
+
+A live or paused save captures the displayed state boundary through the ordinary
+driver SAVE callback. A clean ending captures that boundary before the viewer
+terminates, including a match with no input frames. Loading the bytes with
+`FortressReplay.decode()` and playing them with `FortressReplayPlayer` and the
+[example game](../examples/integration/game.gd) reproduces the viewed state.
+The online integer replay viewer uses another game and refuses these files.
+
+The demo's `replay_bytes()` returns owned portable bytes. It returns empty while
+callbacks or expert requests own the match, before startup, or when an empty
+failed viewer has no captured state. After connection loss or missing history,
+it exports the prefix already viewed; it never promotes buffered host input into
+played history. A final checksum exists only if that exact boundary was captured.
+After ten minutes, export retains the first ten minutes without claiming the
+later displayed state was recorded. Restart clears the old recording.
+
 ## Configure the viewer
 
 Start the game from the host's original initial state. The player count, input

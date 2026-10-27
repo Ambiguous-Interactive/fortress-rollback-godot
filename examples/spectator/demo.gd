@@ -11,6 +11,7 @@ const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const SEND_BUDGET: int = 16
+const REPLAY_FRAMES: int = Host.Loop.REPLAY_FRAMES
 
 var host: Host
 var publisher: Publisher
@@ -44,6 +45,7 @@ func start() -> int:
 	config.max_prediction_frames = 0
 	config.history_slots = 1
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
+	config.replay_max_frames = REPLAY_FRAMES
 	config.storage_budget_bytes = config.required_storage_bytes()
 	var next_stream: Stream = Stream.new()
 	# A local fixture identity; network integrations supply a fresh agreed lifetime.
@@ -116,7 +118,7 @@ func step_viewer() -> int:
 	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 		return viewer_code
 	var samples: Array[Driver.LocalInput] = []
-	viewer_code = driver.step(_tick_count * Host.TICK_US, samples).code
+	viewer_code = _advance_viewer(samples)
 	return viewer_code
 
 
@@ -196,10 +198,35 @@ func tick(buttons: int) -> int:
 	if not is_paused:
 		var samples: Array[Driver.LocalInput] = []
 		for _step: int in range(viewer.recommended_steps()):
-			viewer_code = driver.step(_tick_count * Host.TICK_US, samples).code
+			viewer_code = _advance_viewer(samples)
 			if viewer_code != Types.Code.OK:
 				break
 	return code
+
+
+## Save the displayed confirmed prefix, with its current boundary checksum when available.
+## Empty while callbacks or expert work own state, or before any usable evidence exists.
+## A stopped viewer keeps its existing recording; capture never revives failed playback.
+func replay_bytes() -> PackedByteArray:
+	if viewer == null or _mutation_code() == Types.Code.BUSY:
+		return PackedByteArray()
+	if viewer.status().lifecycle != Types.Lifecycle.TERMINATED:
+		var captured: Driver.StepResult = driver.capture_replay_boundary()
+		if captured.reason != Types.Code.OK:
+			viewer_code = captured.reason
+	var recording: RefCounted = driver.replay()
+	if recording == null or (recording.frame_count() == 0 and recording.checksum(0).is_empty()):
+		return PackedByteArray()
+	return recording.to_bytes()
+
+
+func _advance_viewer(samples: Array[Driver.LocalInput]) -> int:
+	# Completion retires the session; save its exact final boundary while callbacks are still allowed.
+	if is_host_finished and viewer.status().current_frame == next_host_frame and viewer.recommended_steps() > 0:
+		var captured: Driver.StepResult = driver.capture_replay_boundary()
+		if captured.reason != Types.Code.OK:
+			return captured.reason
+	return driver.step(_tick_count * Host.TICK_US, samples).code
 
 
 func _mutation_code() -> int:

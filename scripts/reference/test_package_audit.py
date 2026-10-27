@@ -91,6 +91,41 @@ class RuntimeScriptControls(unittest.TestCase):
                 self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], True)
 
 
+class SpectatorReplayInstallControls(unittest.TestCase):
+    # Value: installed capture must preserve final status and reject failed final validation.
+    def test_installed_spectator_replay_is_actually_validated(self):
+        if GODOT is None:
+            self.skipTest('pass --godot to execute real addon controls')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copytree(package_audit.ROOT / package_audit.ADDON, root / package_audit.ADDON)
+            shutil.copyfile(package_audit.ROOT / 'LICENSE', root / 'LICENSE')
+            canonical = root / 'docs/reference/licenses/fortress-LICENSE-MIT'
+            canonical.parent.mkdir(parents=True)
+            shutil.copyfile(package_audit.ROOT / 'docs/reference/licenses/fortress-LICENSE-MIT', canonical)
+            output = root / 'results'
+            arguments = ['package_audit.py', '--godot', str(GODOT), '--output', str(output)]
+            with patch.object(package_audit, 'ROOT', root), patch('sys.argv', arguments):
+                package_audit.main()
+                self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], True)
+                player = root / package_audit.ADDON / 'core/replay_player.gd'
+                original = player.read_text()
+                anchor = 'if not expected.is_empty() and checkpoint.checksum != expected:'
+                self.assertEqual(original.count(anchor), 1)
+                replacement = 'if _frame != _replay.frame_count() and not expected.is_empty() and checkpoint.checksum != expected:'
+                player.write_text(original.replace(anchor, replacement))
+                with self.assertRaisesRegex(ValueError, 'clean addon failed'):
+                    package_audit.main()
+                self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], False)
+                log = (output / 'clean-addon.log').read_text()
+                self.assertIn('installed_spectator_replay', log)
+                self.assertNotIn(package_audit.MARKER, log)
+                self.assertNotIn('ERROR:', log)
+                player.write_text(original)
+                package_audit.main()
+                self.assertIs(json.loads((output / 'package-audit.json').read_text())['passed'], True)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--godot', type=Path)

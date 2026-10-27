@@ -162,6 +162,7 @@ EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes',
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].add('playback_feedback')
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
 EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries'}
+EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -192,7 +193,7 @@ FILES += ['tests/unit/test_diagnostic_viewer.gd', 'examples/online/diagnostic_vi
 FILES += ['tests/unit/test_spectator_session.gd', 'tests/unit/test_driver_callback_results.gd']
 FILES += ['tests/unit/test_replay_checkpoints.gd', 'tests/unit/test_spectator_stream.gd']
 FILES += ['tests/unit/test_driver_callback_signatures.gd', 'tests/unit/test_driver_script_view_types.gd', 'tests/unit/test_replay_diagnostics.gd']
-FILES += ['tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
+FILES += ['tests/unit/test_spectator_demo_recording.gd', 'tests/unit/test_spectator_demo.gd', 'examples/spectator/demo.gd',
           'examples/spectator/spectator.gd', 'examples/integration/demo.gd', 'examples/integration/loop.gd', 'examples/integration/effects.gd']
 FILES += ['tests/unit/test_spectator_policy.gd', 'tests/unit/test_replay_speed.gd', 'tests/unit/test_spectator_publisher.gd']
 FILES += ['tests/unit/test_driver_recovery.gd', 'tests/unit/test_peer_recovery.gd', 'tests/unit/test_peer_replay_capture.gd']
@@ -252,6 +253,7 @@ const CallbackResults = preload("res://tests/unit/test_driver_callback_results.g
 const CallbackSignatures = preload("res://tests/unit/test_driver_callback_signatures.gd")
 const ScriptViewTypes = preload("res://tests/unit/test_driver_script_view_types.gd")
 const ReplayDiagnostics = preload("res://tests/unit/test_replay_diagnostics.gd")
+const SpectatorDemoRecording = preload("res://tests/unit/test_spectator_demo_recording.gd")
 const SpectatorDemo = preload("res://tests/unit/test_spectator_demo.gd")
 const SpectatorPolicy = preload("res://tests/unit/test_spectator_policy.gd")
 const SpectatorPublisher = preload("res://tests/unit/test_spectator_publisher.gd")
@@ -299,7 +301,7 @@ func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
-\t\tReplayDiagnostics, SpectatorDemo, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
+\t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
