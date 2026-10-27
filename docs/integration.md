@@ -330,8 +330,10 @@ also return `HISTORY_UNAVAILABLE`. Disabled recording or checksums return `UNSUP
 Failed, overflowing or canceled saves publish no new terminal evidence and keep the normal first-failure diagnostics.
 
 Appending inputs or rewriting a recorded tail removes its previous terminal checksum. Capture again after
-finalization to verify the new endpoint. A shorter owned prefix drops terminal evidence rather than moving
-it to another frame. Ordinary v4/v5 files remain readable and preserve their exact layout when saved;
+finalization to verify the new endpoint. A shorter owned prefix of a captured v6 recording keeps an existing
+pre-input checksum at its new endpoint as terminal evidence. Without that checksum it falls back to v5;
+the original later endpoint's checksum never moves to another frame.
+Ordinary v4/v5 files remain readable and preserve their exact layout when saved;
 loading an old file cannot invent evidence about its final state.
 
 With a positive snapshot bound, terminal-file playback needs one final SAVE after the last ADVANCE.

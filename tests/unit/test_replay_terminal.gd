@@ -132,7 +132,7 @@ func _capture(context: RefCounted) -> void:
 		checksum.fill(0)
 		context.equal(copied.checksum(count), replay.checksum(count), "terminal evidence is owned")
 		if count > 0:
-			context.equal(replay.owned_prefix(count - 1).checksum(count - 1).is_empty(), true, "shorter prefix cannot inherit a different terminal")
+			context.equal(replay.owned_prefix(count - 1).checksum(count - 1), replay.checksum(count - 1), "shorter captured prefix keeps its own boundary checksum")
 		for corrupt: PackedByteArray in [bytes.slice(0, -1), bytes + PackedByteArray([0])]:
 			context.equal(decoded.decode(corrupt), Replay.DecodeCode.MALFORMED, "rejects missing or trailing terminal bytes")
 			context.equal(decoded.to_bytes(), bytes, "rejected decode preserves recording")
