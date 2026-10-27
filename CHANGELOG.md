@@ -197,6 +197,10 @@
 
 ### Fixed
 
+- Fix replay prefixes padding missing input and checksum storage. Trimming preserves incomplete data and refuses invalid exports instead of inventing recorded bytes.
+
+- Fix spectator relay cancellation being reported as successful completion at the final playback boundary, including empty matches.
+
 - Fix replay checkpoint eviction during backward inspection. Revisiting an older uncached boundary preserves the initial state and newest checkpoints, including a verified match ending.
 
 - Fix spectator stop reporting after external or callback cancellation. Preserve the original cause through later host errors; `is_complete()` and the example distinguish clean playback completion from cancellation.

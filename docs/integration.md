@@ -333,8 +333,10 @@ Appending inputs or rewriting a recorded tail removes its previous terminal chec
 finalization to verify the new endpoint. A shorter owned prefix of a captured v6 recording keeps an existing
 pre-input checksum at its new endpoint as terminal evidence. Without that checksum it falls back to v5;
 the original later endpoint's checksum never moves to another frame.
-Prefixes preserve incomplete input digests without padding missing bytes. Only a prefix whose retained
-rows have complete digests can produce portable bytes; playback stops at the first incomplete row.
+Prefixes only trim retained input, status, flag, checksum and digest bytes; missing storage is never padded.
+Incomplete input, status, flag or checksum storage prevents export and playback configuration. Missing input
+digests prevent portable export; playback stops at the first incomplete digest row. A captured prefix uses
+its endpoint checksum only when the complete original checksum remains present.
 Ordinary v4/v5 files remain readable and preserve their exact layout when saved;
 loading an old file cannot invent evidence about its final state.
 

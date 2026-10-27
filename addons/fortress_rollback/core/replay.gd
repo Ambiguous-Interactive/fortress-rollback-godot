@@ -324,8 +324,10 @@ func inputs(frame: int) -> Types.FrameInputs:
 ## Empty when no state checksum was recorded at this boundary. Version 6 also permits frame_count().
 func checksum(frame: int) -> PackedByteArray:
 	if frame == _frames:
-		return _terminal_checksum.duplicate()
-	if frame < 0 or frame >= _frames or _flags[frame] != FLAG_CHECKSUM:
+		return _terminal_checksum.duplicate() if _format_version == TERMINAL_VERSION and _terminal_checksum.size() == CHECKSUM_BYTES else PackedByteArray()
+	if frame < 0 or frame >= _frames or frame >= _flags.size() or _flags[frame] != FLAG_CHECKSUM:
+		return PackedByteArray()
+	if _checksums.size() < (frame + 1) * CHECKSUM_BYTES:
 		return PackedByteArray()
 	return _checksums.slice(frame * CHECKSUM_BYTES, (frame + 1) * CHECKSUM_BYTES)
 
@@ -407,14 +409,14 @@ func owned_copy() -> RefCounted:
 ## Export only finalized history while keeping receipt-only rows private for later confirmation.
 ## Trimming a captured v6 recording retains a recorded checksum at the new final boundary,
 ## when present. Historical versions and absent boundary evidence retain their original limits.
-## Missing digest bytes remain missing; a prefix cannot fabricate exportable validation evidence.
+## Missing backing bytes remain missing; a prefix cannot fabricate gameplay or validation evidence.
 func owned_prefix(frames: int) -> RefCounted:
 	var copy: RefCounted = owned_copy()
 	copy._frames = clampi(frames, 0, _frames)
-	copy._inputs.resize(copy._frames * _players * _width)
-	copy._statuses.resize(copy._frames * _players)
-	copy._checksums.resize(copy._frames * CHECKSUM_BYTES)
-	copy._flags.resize(copy._frames)
+	copy._inputs.resize(mini(copy._inputs.size(), copy._frames * _players * _width))
+	copy._statuses.resize(mini(copy._statuses.size(), copy._frames * _players))
+	copy._checksums.resize(mini(copy._checksums.size(), copy._frames * CHECKSUM_BYTES))
+	copy._flags.resize(mini(copy._flags.size(), copy._frames))
 	copy._digests.resize(mini(copy._digests.size(), copy._frames * DIGEST_BYTES))
 	copy._skipped = copy._flags.count(FLAG_SKIPPED)
 	if copy._frames != _frames:

@@ -216,6 +216,7 @@ class InUseTest(unittest.TestCase):
             self.assertTrue(prune_caches.in_use(self.target))
         finally:
             process.stdin.close()
+            process.stdout.close()
             process.wait(timeout=10)
 
     def test_an_open_handle_on_the_candidate_counts_as_in_use(self):
