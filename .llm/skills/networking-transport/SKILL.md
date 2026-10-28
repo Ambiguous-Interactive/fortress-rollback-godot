@@ -98,9 +98,9 @@ outgoing and incoming work across those transitions; repeated identical plans
 must not fabricate a replacement. Reserve PacketPeer reads for one consumer and
 capture sender/channel/mode before get_packet advances to the next packet.
 Inspect actual browser data channels, not just Godot option dictionaries.
-Composed path switching must preserve each adapter's terminal lifetime fences
-before transferring output, including zero or already-due fallback grace periods;
-relay availability cannot turn a replaced direct transport into a valid lifetime.
+Composed path switching preserves terminal SDK failures and lifetime fences before transferring output,
+including zero or due fallback grace. Relay availability cannot validate a replaced or failed direct adapter.
+Test send/read and prelatched errors through status, enqueue and polling, separately from retryable busy sends.
 Clear a pre-fallback unavailability timer on demonstrated direct recovery, and
 observe restoration readiness even during polls without outgoing packets.
 Arm refusal timers from the actual refused destination, not an aggregate poll

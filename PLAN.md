@@ -326,6 +326,7 @@ records its loss regression and delivery gate.
 The bounded fallback coordinator routes individual unready links through relay
 and restores ready direct channels in the same rollback session. Injected
 three-peer tests cover overlapping delivery and corrected canonical game history.
+Terminal direct SDK errors fence composed relay publication; ordinary send pressure remains recoverable.
 Transport polls report the traffic they moved, refused packets included, so a
 bounded service batch can stop on an idle route without leaving valid bytes
 queued behind refused traffic.

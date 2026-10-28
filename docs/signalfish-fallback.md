@@ -120,7 +120,8 @@ An accepted relay plan immediately moves new output to relay. A replacement
 mesh generation, changed offerer roles, room or membership changes, SDK reconnect,
 and incarnation changes remain fenced. These require a new supported transport
 or rollback lifetime; the coordinator never fabricates SDK plans or resets history.
-A receive overflow or peer failure is terminal. An invalid direct transport
+A receive overflow, peer failure or terminal direct SDK error is terminal.
+A refused direct send (`ERR_BUSY`) remains retryable; other direct socket errors preserve their original failure and fence relay publication. An invalid direct transport
 lifetime under an unchanged mesh plan is also terminal; it cannot authorize
 relay fallback. An accepted relay plan explicitly permits direct teardown. During callbacks, detach fails
 closed and releases retained queues and observers when the active poll returns.

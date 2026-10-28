@@ -148,7 +148,7 @@ func poll(now_us: int, next_token_factory: Callable = Callable()) -> Relay.Resul
 	result.received += direct_result.received
 	result.activity = direct_result.activity
 	result.peer_code = direct_result.peer_code
-	if direct_result.code in [Code.PEER_FAILURE, Code.INVALID_ARGUMENT] \
+	if direct_result.code in [Code.PEER_FAILURE, Code.INVALID_ARGUMENT, Code.SDK_FAILURE] \
 		or (direct_result.code == Code.WRONG_STATE and _adapter.status().route == "mesh"):
 		_failure = direct_result.code
 	elif _gate() == Code.OK:
@@ -200,8 +200,8 @@ func _gate() -> int:
 	var state: Dictionary = _adapter.status()
 	if state.route not in ["mesh", "relay", "relay_required"] or (state.route == "mesh" and state.lifetime_revision != _revision):
 		_failure = Code.WRONG_STATE
-	if _failure == Code.OK and state.route == "mesh" and _direct.status().code == Code.WRONG_STATE:
-		_failure = Code.WRONG_STATE
+	if _failure == Code.OK and state.route == "mesh":
+		_failure = _direct.status().code
 	if _failure == Code.OK and _relay.status().code != Code.OK:
 		_failure = _relay.status().code
 	return _failure

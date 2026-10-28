@@ -174,6 +174,7 @@ EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence'
 EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards'}
 for _suite in ['host', 'relay']:
     EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
+EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {'send_failure', 'receive_failure', 'latched_failure', 'busy_control'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -237,6 +238,9 @@ FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fo
           'addons/fortress_rollback/transport/signalfish_relay_types.gd', 'addons/fortress_rollback/transport/signalfish_spectator_relay.gd',
           'tests/unit/test_signalfish_membership.gd', 'tests/unit/test_signalfish_relay.gd', 'tests/unit/test_signalfish_spectator_relay.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_spectator_host.gd', 'tests/unit/test_signalfish_spectator_host.gd']
+FILES += ['tests/unit/test_signalfish_fallback_failure.gd', 'tests/unit/test_signalfish_fallback.gd', 'tests/unit/test_signalfish_webrtc.gd',
+          'addons/fortress_rollback/transport/signalfish_fallback.gd', 'addons/fortress_rollback/transport/signalfish_webrtc.gd',
+          'addons/fortress_rollback/transport/signalfish_webrtc_types.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -313,6 +317,7 @@ const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 const DriverPeerParity = preload("res://tests/unit/test_driver_peer_parity.gd")
 const DriverDropParity = preload("res://tests/unit/test_driver_drop_parity.gd")
 const SpectatorRelay = preload("res://tests/unit/test_signalfish_spectator_relay.gd")
+const FallbackFailure = preload("res://tests/unit/test_signalfish_fallback_failure.gd")
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
@@ -324,7 +329,7 @@ func _ready() -> void:
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
-		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
+		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation, FallbackFailure]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.
 \t# JSON decoding is a dynamic boundary; reject unknown or repeated paths.

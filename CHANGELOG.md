@@ -203,6 +203,8 @@
 
 ### Fixed
 
+- Fix direct socket errors being hidden by successful relay polling. Terminal SDK failures now stop the fallback coordinator; ordinary busy sends still recover through relay.
+
 - Fix contradictory repeated peer-drop certificates being ignored. A changed frame or value digest stops the pending agreement without freezing player history.
 
 - Fix lost peer-drop acknowledgements stopping commit recovery at the negotiation deadline. Committed survivors retry until every live survivor acknowledges.
