@@ -1,11 +1,34 @@
 """Value: reject exported qualification receipts without complete physical and canonical evidence."""
 import copy
 import unittest
+from types import SimpleNamespace
 
-from spectator_browser import validate
+from spectator_browser import validate, validate_fault
 
 
 class SpectatorBrowserTests(unittest.TestCase):
+    def test_fault_requires_no_acceptance_completion_or_playback(self):
+        browser = {'browser': 'Chromium', 'version': '156.0', 'errors': [],
+                   'result': {'passed': False, 'reason': 'browser original-state or membership binding', 'errors': []},
+                   'state': {'compared': 0, 'frame': 0, 'simulations': 0, 'accept_pending': False, 'accept_delivered': False}}
+        control = SimpleNamespace(accepted_once=False, received=0, done=None)
+        validate_fault(1, browser, True, control)
+        with self.assertRaises(ValueError):
+            validate_fault(1, browser, True, control, 'late browser teardown failure')
+        for changes in [{'accepted_once': True}, {'received': 1}, {'done': {}}, {'done': {'complete': True}}]:
+            with self.subTest(control=changes), self.assertRaises(ValueError):
+                validate_fault(1, browser, True, SimpleNamespace(**{**vars(control), **changes}))
+        for field, value in browser['state'].items():
+            for bad in [None, True if type(value) is int else 1, 1 if type(value) is int else True, float(value)]:
+                with self.subTest(field=field, value=bad), self.assertRaises(ValueError):
+                    validate_fault(1, {**browser, 'state': {**browser['state'], field: bad}}, True, control)
+        for changes in [{'state': None}, {'state': {}}, {'errors': ['late failure']}, {'result': {}}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_fault(1, {**browser, **changes}, True, control)
+        for code, alive in [(0, True), (1, False)]:
+            with self.subTest(code=code, alive=alive), self.assertRaises(ValueError):
+                validate_fault(code, browser, alive, control)
+
     def healthy(self):
         host = {'passed': True, 'frames': 48, 'seated_players': 2, 'confirmed': 47, 'host_rollbacks': 46}
         browser = {'browser': 'Chromium', 'version': '156.0', 'errors': [], 'result':

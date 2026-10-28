@@ -276,6 +276,11 @@ func _fail(reason: String) -> void:
 	if completed:
 		return
 	completed = true
+	var observed: Dictionary = {
+		"compared": compared, "frame": 0 if game == null else game.frame, "simulations": 0 if game == null else game.simulation_calls,
+		"accept_pending": accept_pending, "accept_delivered": accept_delivered
+	}
+	JavaScriptBridge.eval("window.fortressSpectatorState=" + JSON.stringify(observed))
 	JavaScriptBridge.eval("window.fortressSpectatorResult=" + JSON.stringify({"passed": false, "reason": reason, "errors": errors}))
 	_cleanup()
 

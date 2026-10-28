@@ -36,6 +36,15 @@ integration guidance records the distinction without suppressing real errors.
 All four final browser cells and both native healthy cells pass after these changes. The earlier live ownership run correctly
 rejected the changed source inventory; its partial rounds are not final evidence.
 
+Later review found that the altered-state gate checked its expected error without
+enforcing zero earlier acceptance/playback. It now checks the independent control
+state before host termination and after HTTP shutdown, plus typed viewer observations.
+The callback observer increments at entry so rejected calls cannot disappear;
+its native regression is red before repair and green on both pins, with unchanged
+canonical game bytes. Existing browser guidance now requires those independent
+negative observations. Ownership inputs are disjoint from this fixture-only delta;
+all four completed rounds still match every current source hash.
+
 ## Verification
 
 - Both pinned engines pass all 24 fallback/mixed cases, repeated in fresh processes.

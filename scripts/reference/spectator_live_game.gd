@@ -3,6 +3,8 @@ extends RefCounted
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 var frame: int = 0
 var sums: PackedInt64Array = PackedInt64Array([0, 0])
+# Observer count deliberately survives game save/restore.
+var simulation_calls: int = 0
 
 
 func canonical_bytes() -> PackedByteArray:
@@ -33,6 +35,7 @@ func load_state(saved_frame: int, reader: RefCounted) -> bool:
 
 
 func simulate_frame(current_frame: int, inputs: RefCounted) -> bool:
+	simulation_calls += 1
 	if current_frame != frame:
 		return false
 	for player: int in 2:

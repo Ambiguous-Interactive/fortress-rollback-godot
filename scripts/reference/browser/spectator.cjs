@@ -23,8 +23,9 @@ const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
     await page.goto(process.argv[2] + '/index.html');
     await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
     const result = await page.evaluate(() => window.fortressSpectatorResult);
+    const state = await page.evaluate(() => window.fortressSpectatorState);
     await page.waitForFunction(() => window.fortressSpectatorSockets.length>0 && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000});
-    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,errors}));
+    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,state,errors}));
     if (errors.length || result.passed !== true) process.exitCode=1;
   } finally {clearTimeout(watchdog);await browser.close();}
 })().catch(error => {console.error(error);process.exitCode=1;});

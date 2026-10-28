@@ -220,7 +220,7 @@ def run(args):
                 try:
                     wait_ready(server, port)
                     if args.browser_viewer:
-                        result = spectator_browser.execute(engine, project, runtime_path, export_server.url, browser_environment, args.output, args.browser_fault)
+                        result = spectator_browser.execute(engine, project, runtime_path, export_server.url, browser_environment, args.output, control, args.browser_fault)
                         if not args.browser_fault and (control.received < 1 or control.done is None):
                             raise ValueError('browser authenticated acceptance or completion missing')
                     else:
@@ -260,6 +260,8 @@ def run(args):
             control.close()
             if export_server:
                 export_server.close()
+        if args.browser_fault:
+            spectator_browser.validate_no_acceptance(control)
         if before != inventory(sources) or frozen != inventory(executed) or source_inventory(args.server_source) != server_before:
             raise ValueError('live witness inputs changed before publication')
         receipt.write_text(json.dumps({'passed': True, 'schema_version': 1, 'result': result, 'sources': before,

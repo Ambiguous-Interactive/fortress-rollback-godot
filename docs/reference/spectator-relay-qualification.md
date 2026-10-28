@@ -279,7 +279,9 @@ pinned engine/templates/browser and SDK/server identities bind the receipt.
 
 Add `--browser-fault initial-state` for a controlled altered admission state.
 It must reach the exported viewer's original-state rejection before ACCEPT or
-playback. A healthy control must complete all canonical comparisons. CI runs
+playback. Independent control state remains unaccepted before host teardown and
+after HTTP shutdown; typed viewer observations prove zero simulation callbacks,
+including rejected attempts. A healthy control must complete all canonical comparisons. CI runs
 both cells on Godot 4.3 and 4.7.2 with pinned Chromium.
 
 This is viewer browser acceptance, not the complete #245 witness. The host and

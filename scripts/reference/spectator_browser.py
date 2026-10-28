@@ -95,7 +95,27 @@ class ExportServer:
             raise ValueError('spectator export server did not stop')
 
 
-def execute(engine, project, runtime, url, environment, output, fault=None):
+def validate_no_acceptance(control):
+    if control.accepted_once is not False or type(control.received) is not int or control.received != 0 or control.done is not None:
+        raise ValueError('exported initial-state control accepted or completed playback')
+
+
+def validate_fault(returncode, browser, host_alive, control, stderr=''):
+    if (stderr or type(returncode) is not int or returncode != 1 or host_alive is not True or type(browser) is not dict
+            or browser.get('browser') != 'Chromium' or type(browser.get('version')) is not str or not browser['version']
+            or browser.get('errors') != [] or type(browser.get('result')) is not dict):
+        raise ValueError('exported initial-state control did not reach its intended rejection')
+    result = browser['result']
+    if result.get('passed') is not False or result.get('reason') != 'browser original-state or membership binding' or result.get('errors') != []:
+        raise ValueError('exported initial-state control did not reach its intended rejection')
+    expected = {'compared': 0, 'frame': 0, 'simulations': 0, 'accept_pending': False, 'accept_delivered': False}
+    observed = browser.get('state')
+    if type(observed) is not dict or any(type(observed.get(key)) is not type(value) or observed[key] != value for key, value in expected.items()):
+        raise ValueError('exported initial-state control performed acceptance or playback work')
+    validate_no_acceptance(control)
+
+
+def execute(engine, project, runtime, url, environment, output, control, fault=None):
     with (output / 'native.log').open('wb') as log:
         host = subprocess.Popen([str(engine), '--headless', '--path', str(project), '--script', 'res://spectator_browser_host.gd', '--', str(runtime)],
                                 stdout=log, stderr=subprocess.STDOUT)
@@ -110,9 +130,7 @@ def execute(engine, project, runtime, url, environment, output, fault=None):
             browser_output = process.stdout
             if fault:
                 browser = json.loads(browser_output)
-                if (process.returncode != 1 or browser.get('errors') != [] or browser.get('result') !=
-                        {'passed': False, 'reason': 'browser original-state or membership binding', 'errors': []} or host.poll() is not None):
-                    raise ValueError('exported initial-state control did not reach its intended rejection')
+                validate_fault(process.returncode, browser, host.poll() is None, control, process.stderr)
                 return {'fault': fault, 'rejected': True, 'viewer': browser}
             if process.returncode != 0 or process.stderr:
                 raise ValueError('exported spectator failed; inspect browser.log')
