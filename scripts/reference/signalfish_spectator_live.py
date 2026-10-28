@@ -99,7 +99,7 @@ def main():
     scenario.add_argument('--late-signal', choices=LATE_SIGNALS)
     scenario.add_argument('--departure', choices=['host', 'viewer'])
     scenario.add_argument('--browser-viewer', action='store_true')
-    parser.add_argument('--browser-fault', choices=['initial-state', 'viewer-departure'])
+    parser.add_argument('--browser-fault', choices=['initial-state', 'viewer-departure', 'host-departure'])
     args = parser.parse_args()
     if args.browser_fault and not args.browser_viewer:
         parser.error('--browser-fault requires --browser-viewer')

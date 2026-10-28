@@ -387,11 +387,13 @@ last input stops playback with `DESYNC` before its game callback runs.
 including snapshot and comparison errors. It returns -1 for healthy playback, an input digest
 rejected before a request, or explicit termination. Callback and expert playback preserve the
 first cause until successful reconfiguration; rejected calls do not erase it.
-`failure_comparison()` identifies the failed comparison: `input_digest`, `state_checksum`,
+`failure_comparison()` identifies the failed comparison: `input_digest`, `input_digest_missing`, `state_checksum`,
 `checkpoint_checksum` or `checkpoint_bytes`. It is empty when no comparison failed,
 including callback failures, malformed checksum lengths and explicit termination.
 `failure_expected_checksum()` and `failure_actual_checksum()` return owned 16-byte evidence for a checksum or input-digest mismatch.
 Both remain empty for other failures, including invalid checksum widths or snapshot bytes differing with the same checksum.
+Missing or incomplete recorded input digests report `input_digest_missing`: expected evidence stays empty,
+while actual evidence contains the computed 16-byte input-row digest. Playback stops before invoking a game callback.
 During checkpoint restoration, the expected value comes from the previously validated cache.
 Successful reconfiguration clears the evidence; rejected configuration preserves it.
 A failed snapshot write stops with `SNAPSHOT_FAILED`, even if the callback returns a matching checksum.

@@ -282,7 +282,7 @@ It must reach the exported viewer's original-state rejection before ACCEPT or
 playback. Independent control state remains unaccepted before host teardown and
 after HTTP shutdown; typed viewer observations prove zero simulation callbacks,
 including rejected attempts. A healthy control must complete all canonical comparisons. CI runs
-the healthy, altered-state and viewer-departure cells on Godot 4.3 and 4.7.2 with pinned Chromium.
+the healthy, altered-state, viewer-departure and host-departure cells on Godot 4.3 and 4.7.2 with pinned Chromium.
 
 Add `--browser-fault viewer-departure` to close the exported viewer's actual
 WebSocket from Chromium after a canonical pause with at least two buffered rows.
@@ -295,8 +295,20 @@ scheduled remote inputs and reaches canonical boundary 48 with two seats intact.
 The browser controller separately proves it closed a live socket; a synthetic SDK
 signal or receipt field alone cannot satisfy this cell.
 
+Add `--browser-fault host-departure` to close the selected native host's actual
+socket after the exported viewer reports an authenticated canonical buffered pause.
+The host repairs its original confirmed prefix through boundary 20 before closure.
+The separate seated SDK client and exported viewer must each observe that exact
+host UUID depart through the real server. Before explicit relay polling, the viewer
+attempts another driver step and requires terminated playback, discarded ingress,
+unchanged frame, canonical bytes and simulation count. Its own socket stays connected.
+The host independently requires disconnected transport and stopped publication.
+Both engine pins run this cell in CI. A mutation disabling only the selected-host
+lifetime callback must fail the before-poll playback check; later polling cannot
+supply the immediate-callback evidence.
+
 This is viewer browser acceptance, not the complete #245 witness. The host and
 second seated client remain native; remote seated game inputs still use an
 injected schedule. Exported host gameplay, actual remote seated input transport,
-host loss, replacement and additional browsers remain unqualified. The loopback bearer
+replacement and additional browsers remain unqualified. The loopback bearer
 fixture remains development tooling; applications own production identity policy.

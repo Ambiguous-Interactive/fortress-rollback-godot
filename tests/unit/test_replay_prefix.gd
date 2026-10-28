@@ -30,6 +30,7 @@ func run_case(name: String, context: RefCounted) -> void:
 func _incomplete_prefix_digests(context: RefCounted) -> void:
 	for retained_bytes: int in [0, 15, 16, 17, 63, 64]:
 		var source: Replay = Fixture.new()._recording(4, true)
+		var complete_digests: PackedByteArray = source._digests.duplicate()
 		source._digests.resize(retained_bytes)
 		var original: PackedByteArray = source._digests.duplicate()
 		for boundary: int in [0, 1, 2, 4, 5]:
@@ -39,16 +40,35 @@ func _incomplete_prefix_digests(context: RefCounted) -> void:
 			var complete: bool = expected.size() == prefix.frame_count() * Replay.DIGEST_BYTES
 			context.equal(not prefix.to_bytes().is_empty(), complete, "only complete retained evidence can be exported")
 			for expert: bool in [false, true]:
-				var player: Player = Player.new()
-				var game: Simulation = Simulation.new()
-				var code: int = player.configure_expert(prefix, Simulation.SNAPSHOT_BYTES) if expert else player.configure(prefix, game, Simulation.SNAPSHOT_BYTES)
-				context.equal(code, Types.Code.OK, "incomplete digest remains a playback-owned failure")
-				for frame: int in mini(retained_bytes / Replay.DIGEST_BYTES, prefix.frame_count()):
-					context.equal(Fixture.new()._dispatch(player, game) if expert else player.step(), Types.Code.OK, "complete digest rows remain playable")
-				if not complete:
-					context.equal(Fixture.new()._dispatch(player, game) if expert else player.step(), Types.Code.DESYNC, "first incomplete digest stops playback")
-					context.equal(player.failure_frame(), retained_bytes / Replay.DIGEST_BYTES, "failure identifies first incomplete row")
-				context.state(game.frame, game.canonical_bytes())
+				for paused: bool in [false, true]:
+					var player: Player = Player.new()
+					var game: Simulation = Simulation.new()
+					var code: int = player.configure_expert(prefix, Simulation.SNAPSHOT_BYTES) if expert else player.configure(prefix, game, Simulation.SNAPSHOT_BYTES)
+					context.equal(code, Types.Code.OK, "incomplete digest remains a playback-owned failure")
+					for frame: int in mini(retained_bytes / Replay.DIGEST_BYTES, prefix.frame_count()):
+						context.equal(Fixture.new()._dispatch(player, game) if expert else player.step(), Types.Code.OK, "complete digest rows remain playable")
+					if not complete:
+						var before: PackedByteArray = game.canonical_bytes()
+						var missing: int = retained_bytes / Replay.DIGEST_BYTES
+						var actual: PackedByteArray = complete_digests.slice(missing * Replay.DIGEST_BYTES, (missing + 1) * Replay.DIGEST_BYTES)
+						if paused:
+							code = player.begin_validate_current_frame().code if expert else player.validate_current_frame()
+						else:
+							code = Fixture.new()._dispatch(player, game) if expert else player.step()
+						context.equal(code, Types.Code.DESYNC, "first incomplete digest stops playback")
+						context.equal(player.failure_frame(), missing, "failure identifies first incomplete row")
+						context.equal(player.failure_kind(), -1, "missing digest fails before dispatching a request")
+						context.equal(player.failure_comparison(), "input_digest_missing", "missing digest is distinct from a content mismatch")
+						context.equal(player.failure_expected_checksum(), PackedByteArray(), "missing digest cannot fabricate expected evidence")
+						context.equal(player.failure_actual_checksum(), actual, "missing digest keeps independently computed row evidence")
+						context.bytes_equal(game.canonical_bytes(), before, missing, "digest rejection does not consume input or alter state")
+						var returned: PackedByteArray = player.failure_actual_checksum()
+						returned.fill(0)
+						player.terminate()
+						context.equal(player.begin_advance().code, Types.Code.DESYNC, "termination preserves the original digest failure")
+						context.equal(player.failure_comparison(), "input_digest_missing", "termination preserves the missing-digest domain")
+						context.equal(player.failure_actual_checksum(), actual, "computed evidence is owned and first-cause stable")
+					context.state(game.frame, game.canonical_bytes())
 		context.equal(source._digests, original, "prefix generation preserves source digest evidence")
 
 

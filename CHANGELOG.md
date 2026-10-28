@@ -203,6 +203,8 @@
 
 ### Fixed
 
+- Fix replay failure diagnostics for missing or incomplete input digests. Playback and paused inspection identify absent evidence and preserve the computed row digest.
+
 - Fix direct socket errors being hidden by successful relay polling. Terminal SDK failures now stop the fallback coordinator; ordinary busy sends still recover through relay.
 
 - Fix contradictory repeated peer-drop certificates being ignored. A changed frame or value digest stops the pending agreement without freezing player history.

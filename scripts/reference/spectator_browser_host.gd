@@ -2,6 +2,7 @@ extends "res://signalfish_spectator_live.gd"
 
 var physical_departure_frame: int = -1
 var resumed_frame: int = -1
+var host_left_observed: bool = false
 
 
 func _run() -> void:
@@ -22,10 +23,14 @@ func _run() -> void:
 				departure_observed = true
 				physical_departure_frame = -1 if host_session == null else host_session.status().current_frame
 		)
+		client.player_left.connect(func(id: String) -> void:
+			if index == 1 and departure_started and id == admission.host:
+				host_left_observed = true
+		)
 		client.protocol_info.connect(func(info: RefCounted) -> void: protocol[index] = info)
 		client.lobby_state_changed.connect(func(_state: int, _players: PackedStringArray, all_ready: bool) -> void: ready[index] = all_ready)
 		for signal_name: String in ["protocol_error", "server_error", "authentication_error", "connection_failed", "disconnected", "room_join_failed"]:
-			client.connect(signal_name, func(_a: Variant = null, _b: Variant = null) -> void: _error(signal_name))
+			client.connect(signal_name, func(_a: Variant = null, _b: Variant = null) -> void: _error(signal_name, index))
 		if client.configure(config) != OK or client.connect_to_server(runtime.endpoint) != OK:
 			_fail("browser host SDK setup")
 			return
@@ -117,6 +122,9 @@ func _run() -> void:
 		_fail("browser authenticated ACCEPT")
 		return
 	for frame: int in FRAMES:
+		if frame == 20 and runtime.get("browser_fault") == "host-departure":
+			await _depart_selected_host()
+			return
 		if frame == 20 and runtime.get("browser_fault") == "viewer-departure":
 			if not await _wait(func() -> bool: return departure_observed, "paused exported viewer departure"):
 				return
@@ -179,5 +187,55 @@ func _run() -> void:
 			}
 		)
 	)
+	_cleanup()
+	quit(0)
+
+
+func _depart_selected_host() -> void:
+	for frame: int in range(17, 20):
+		host_session.receive_input(1, frame, _input(frame, 1))
+	if host_driver.recover(_now()).code != S.Code.OK or host_game.canonical_bytes() != _expected(20):
+		_fail("departing host original canonical repair")
+		return
+	var response: Dictionary = {}
+	var deadline: int = _now() + 15000000
+	while _now() < deadline and errors.is_empty():
+		publication.poll(_now())
+		response = await _http("/paused", runtime.host_token)
+		if response.status == 200:
+			break
+		await process_frame
+	if response.get("status") != 200 or response.body.frame < 8 or response.body.buffered_rows < 2:
+		_fail("host departure lacks exported buffered pause")
+		return
+	var paused_boundary: int = response.body.frame
+	departure = "host"
+	departure_started = true
+	clients[0].close()
+	if not await _wait(func() -> bool: return host_left_observed, "remote seated host departure"):
+		return
+	var stopped: bool = publication.poll(_now()).code == Transport.Code.WRONG_STATE
+	if clients[0].get_connection_state() == Relay.CONNECTED or not stopped:
+		_fail("selected host socket or publication stayed active")
+		return
+	deadline = _now() + 15000000
+	while _now() < deadline and errors.is_empty():
+		response = await _http("/done", runtime.host_token)
+		if response.status == 200:
+			break
+		await process_frame
+	for _drain: int in 3:
+		await process_frame
+	if response.status != 200 or not errors.is_empty() or host_game.canonical_bytes() != _expected(20):
+		_fail("selected host departure final audit")
+		return
+	completed = true
+	print("FORTRESS_BROWSER_HOST_RESULT ", JSON.stringify({
+		"passed": true, "departure": "host", "frames": host_game.frame,
+		"host_rollbacks": host_session.statistics().rollback_count,
+		"confirmed": host_session.status().confirmed_frame, "socket_closed": clients[0].get_connection_state() != Relay.CONNECTED,
+		"remote_host_departure_observed": host_left_observed, "publication_stopped": stopped,
+		"viewer_paused_frame": paused_boundary
+	}))
 	_cleanup()
 	quit(0)

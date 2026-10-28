@@ -376,7 +376,7 @@ jobs:
               --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
               --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
               --output ".cache/reference/results/spectator-live-$version"
-            for browser_cell in healthy initial-state viewer-departure; do
+            for browser_cell in healthy initial-state viewer-departure host-departure; do
               browser_args=()
               if [ "$browser_cell" != healthy ]; then browser_args=(--browser-fault "$browser_cell"); fi
               python3 scripts/reference/signalfish_spectator_live.py \

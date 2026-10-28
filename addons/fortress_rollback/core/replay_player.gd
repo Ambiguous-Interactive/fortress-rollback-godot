@@ -462,12 +462,10 @@ func _is_cache_boundary() -> bool:
 ## frame that owns it. A recording without that digest cannot be verified and is refused.
 func _verify_input_digest() -> int:
 	var expected: PackedByteArray = _replay.input_digest(_frame)
-	if expected.size() != Replay.DIGEST_BYTES:
-		return _fail(Types.Code.DESYNC)
 	var actual: PackedByteArray = _replay.computed_input_digest(_frame)
-	if actual == expected:
+	if expected.size() == Replay.DIGEST_BYTES and actual == expected:
 		return Types.Code.OK
-	_failure_comparison = "input_digest"
+	_failure_comparison = "input_digest_missing" if expected.size() != Replay.DIGEST_BYTES else "input_digest"
 	_failure_expected_checksum = expected.duplicate()
 	_failure_actual_checksum = actual.duplicate()
 	return _fail(Types.Code.DESYNC)
@@ -579,7 +577,7 @@ func failure_kind() -> int:
 	return _failure_kind
 
 
-## The first failed comparison: input_digest, state_checksum, checkpoint_checksum or checkpoint_bytes.
+## The first failed comparison: input_digest, input_digest_missing, state_checksum, checkpoint_checksum or checkpoint_bytes.
 ## Empty when no comparison failed, including callback errors, invalid checksum lengths and termination.
 ## Successful configure clears it; later rejected operations preserve it.
 func failure_comparison() -> String:
@@ -587,8 +585,8 @@ func failure_comparison() -> String:
 
 
 ## Owned 16-byte evidence for the first checksum or input-digest comparison failure; empty for
-## other failures. Expected is the recording's checksum during playback or the cached checksum
-## during restore. Successful configure clears both values; failed configure preserves them.
+## other failures or a missing/incomplete recorded digest. Expected comes from the recording
+## during playback or the cache during restore. Successful configure clears both values; failed configure preserves them.
 func failure_expected_checksum() -> PackedByteArray:
 	return _failure_expected_checksum.duplicate()
 
