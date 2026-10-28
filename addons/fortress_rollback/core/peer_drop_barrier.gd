@@ -194,8 +194,7 @@ func service(host: Variant, now_us: int) -> void:
 			if barrier.role == Role.PROPOSER and not _acknowledged_by_all(host, barrier):
 				# The commit is irreversible, so it is retried until every survivor
 				# acknowledges it. A lost commit must not leave a survivor behind.
-				if now_us - barrier.started_us < host._lifecycle.drop_barrier_timeout_us:
-					_retry(host, barrier, now_us, Phase.COMMIT)
+				_retry(host, barrier, now_us, Phase.COMMIT)
 			continue
 		if barrier.state != PENDING:
 			continue
@@ -667,6 +666,8 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 			continue
 		var key: String = host._ids[index].hex_encode()
 		if is_gone(key):
+			continue
+		if phase == Phase.COMMIT and barrier.acknowledged.has(key):
 			continue
 		var previous: Dictionary = barrier.sent_to.get(index, {})
 		if retry and not previous.is_empty() and previous.phase == phase and previous.stage == stage \

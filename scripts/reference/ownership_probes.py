@@ -137,6 +137,7 @@ EXPECTED['res://tests/unit/test_peer_drop_plan_fairness.gd'] = {
     'half_retry_lost_chunk_control', 'equal_retry_lost_chunk', 'equal_retry_lost_chunk_control'}
 EXPECTED['res://tests/unit/test_peer_drop_ready_pressure.gd'] = {'partial_ready_retry', 'staggered_ready_retry', 'complete_ready_control'}
 EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused_ready_preserves_remote_donor', 'remote_donor_ready_control'}
+EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection'})
@@ -220,6 +221,7 @@ FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_ev
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_plan_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_ready_pressure.gd', 'tests/unit/test_peer_drop_remote_donor_pressure.gd']
+FILES += ['tests/unit/test_peer_drop_late_ack.gd', 'tests/unit/test_peer_drop_commit.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
@@ -300,6 +302,7 @@ const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairnes
 const DropPlanFairness = preload("res://tests/unit/test_peer_drop_plan_fairness.gd")
 const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressure.gd")
 const DropRemoteDonorPressure = preload("res://tests/unit/test_peer_drop_remote_donor_pressure.gd")
+const DropLateAck = preload("res://tests/unit/test_peer_drop_late_ack.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -316,7 +319,7 @@ func _ready() -> void:
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
-		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure,
+		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

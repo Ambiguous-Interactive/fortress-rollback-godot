@@ -25,6 +25,7 @@ import local_ownership
 FILES = ['signalfish_spectator_live.gd', 'spectator_live_game.gd']
 MARKER = 'FORTRESS_LIVE_SPECTATOR_RESULT '
 FAILURE = 'FORTRESS_LIVE_SPECTATOR_FAILED '
+DEPARTURE = 'FORTRESS_LIVE_SPECTATOR_DEPARTURE '
 LATE_SIGNALS = ['spectator_join_failed', 'spectator_left', 'spectator_disconnected']
 
 
@@ -52,6 +53,23 @@ def validate_late_failure(returncode, output, signal_name):
     return {'signal': signal_name, 'rejected': True}
 
 
+def validate_departure(returncode, output, departure):
+    rows = [json.loads(line[len(DEPARTURE):]) for line in output.splitlines() if line.startswith(DEPARTURE)]
+    if returncode != 0 or 'ERROR:' in output or MARKER in output or FAILURE in output or len(rows) != 1 or not isinstance(rows[0], dict):
+        raise ValueError('physical spectator departure was not verified')
+    result = rows[0]
+    for field, expected in [('passed', True), ('departure', departure), ('remote_departure', True), ('socket_closed', True),
+                            ('host_continued', departure == 'viewer'), ('host_frame', 21 if departure == 'viewer' else 20)]:
+        if type(result.get(field)) is not type(expected) or result[field] != expected:
+            raise ValueError('incomplete physical departure evidence: ' + field)
+    for field, minimum in [('buffered_rows', 2), ('viewer_frame', 1), ('compared', 1), ('viewer_binary_receives', 1)]:
+        if type(result.get(field)) is not int or result[field] < minimum:
+            raise ValueError('missing paused history at physical departure: ' + field)
+    if result['viewer_frame'] != result['compared'] or result['viewer_frame'] >= 20 or result['viewer_frame'] + result['buffered_rows'] > 20:
+        raise ValueError('inconsistent physical departure history')
+    return result
+
+
 def verify_engine(engine, data, offline):
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
     if platform.system() != 'Linux' or arch is None:
@@ -75,7 +93,9 @@ def main():
     parser.add_argument('--build-receipt', required=True, type=Path)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--offline', action='store_true')
-    parser.add_argument('--late-signal', choices=LATE_SIGNALS)
+    scenario = parser.add_mutually_exclusive_group()
+    scenario.add_argument('--late-signal', choices=LATE_SIGNALS)
+    scenario.add_argument('--departure', choices=['host', 'viewer'])
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     with local_ownership.claim('spectator-live', directory=args.output):
@@ -167,6 +187,8 @@ def run(args):
                     command = [str(engine), '--headless', '--path', str(project), '--script', 'res://signalfish_spectator_live.gd', '--', str(runtime_path)]
                     if args.late_signal:
                         command.append(args.late_signal)
+                    elif args.departure:
+                        command.append(args.departure)
                     try:
                         process = subprocess.run(command, capture_output=True, timeout=75)
                     except subprocess.TimeoutExpired as failure:
@@ -177,7 +199,10 @@ def run(args):
                     output = process.stdout + process.stderr
                     (args.output / 'native.log').write_bytes(output)
                     text = output.decode('utf-8')
-                    result = validate_late_failure(process.returncode, text, args.late_signal) if args.late_signal else validate_result(process.returncode, text)
+                    if args.departure:
+                        result = validate_departure(process.returncode, text, args.departure)
+                    else:
+                        result = validate_late_failure(process.returncode, text, args.late_signal) if args.late_signal else validate_result(process.returncode, text)
                     if control.received < 1 or control.rejected < 2:
                         raise ValueError('authenticated control or rejection controls missing')
                     if before != inventory(sources) or frozen != inventory(executed) or source_inventory(args.server_source) != server_before:
@@ -195,11 +220,12 @@ def run(args):
             raise ValueError('live witness inputs changed before publication')
         receipt.write_text(json.dumps({'passed': True, 'schema_version': 1, 'result': result, 'sources': before,
                                       'executed': frozen, 'server_source': server_before, 'sdk_revision': sdk['revision'], 'server_revision': server_pin['revision'],
-                                      'engine_version': engine_version, 'python_version': sys.version, 'negative_control': args.late_signal,
+                                      'engine_version': engine_version, 'python_version': sys.version, 'negative_control': args.late_signal, 'departure': args.departure,
                                       'control_accepts': control.received, 'control_rejections': control.rejected,
                                       'limitations': ['Loopback test admission uses per-run bearer capabilities, not a production identity provider.',
                                                       'Seated remote inputs use an injected deterministic schedule; spectator bytes use real sockets.',
-                                                      'Native single-process host/viewer; exported browsers and full lifecycle matrix remain unqualified.']}, indent=2) + '\n')
+                                                      'Native single-process host/viewer; exported browsers and remaining lifecycle matrix remain unqualified.'
+                                                      ]}, indent=2) + '\n')
         print(json.dumps({'passed': True, 'receipt': str(receipt), 'result': result}))
 
 

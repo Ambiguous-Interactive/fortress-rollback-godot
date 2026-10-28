@@ -119,7 +119,11 @@ fn recording(case: RecordingCase) -> Result<Value, String> {
     let mut records = Vec::new();
     let mut advances = Vec::new();
     let mut saves = Vec::new();
-    for frame in 0..case.count {
+    let mut services = Vec::new();
+    for _ in 0..case.count * 2 {
+        if state[0] as usize == case.count { break; }
+        let frame = state[0];
+        let first_record = records.len();
         for slot in 0..case.players {
             let value = case.seed.wrapping_add((frame as u32).wrapping_mul(1234567)).wrapping_add((slot as u32).wrapping_mul(0x1020304));
             session.add_local_input(slot.into(), value).map_err(|e| e.to_string())?;
@@ -149,7 +153,10 @@ fn recording(case: RecordingCase) -> Result<Value, String> {
                 _ => return Err("unexpected recording request".into()),
             }
         }
+        let requests: Vec<_> = records[first_record..].iter().map(|record| record["kind"].clone()).collect();
+        services.push(json!({"before":frame, "after":state[0], "requests":requests}));
     }
+    if state[0] as usize != case.count { return Err("recording did not reach target frame".into()); }
     let replay = session.into_replay().map_err(|e| e.to_string())?;
     let encoded = replay.to_bytes().map_err(|e| e.to_string())?;
     let decoded = Replay::<u32>::from_bytes(&encoded).map_err(|e| e.to_string())?;
@@ -159,7 +166,7 @@ fn recording(case: RecordingCase) -> Result<Value, String> {
         frames:decoded.frames.clone(), checksums:checksums.clone() }, 66)?;
     Ok(json!({"name":case.name, "frames":decoded.frames, "checksums":checksums,
         "skipped":decoded.metadata.skipped_frames, "players":decoded.num_players,
-        "total_frames":decoded.metadata.total_frames, "records":records, "advances":advances, "saves":saves, "playback":played}))
+        "total_frames":decoded.metadata.total_frames, "records":records, "advances":advances, "saves":saves, "services":services, "playback":played}))
 }
 
 fn main() -> Result<(), String> {

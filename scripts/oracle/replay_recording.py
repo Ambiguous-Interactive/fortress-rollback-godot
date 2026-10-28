@@ -7,22 +7,24 @@ from replay_launch import advance, compare, expected as playback_expected, state
 
 
 def corpus():
-    return [dict(name=f'record-{players}p-{count}-delay{delay}', players=players, count=count,
-                 delay=delay, prediction=2, seed=0xffffffff)
-            for players in range(2, 9) for count in (0, 1, 7, 64) for delay in (0, 2)]
+    return [dict(name=f'record-{players}p-{count}-delay{delay}' + ('-prediction0' if prediction == 0 else ''),
+                 players=players, count=count, delay=delay, prediction=prediction, seed=0xffffffff)
+            for prediction in (2, 0) for players in range(2, 9) for count in (0, 1, 7, 64) for delay in (0, 2)]
 
 
 def expected(case, rust):
     count, delay, players = case['count'], case['delay'], case['players']
-    recorded = (count - 1 + delay if count >= 2 else 0) if rust else count
+    lockstep = case['prediction'] == 0
+    recorded = (max(delay + 1, count + delay - 1) if delay and count else count) if rust and lockstep else (
+        (count - 1 + delay if count >= 2 else 0) if rust else count)
     rows = [[0 if frame < delay else (case['seed'] + (frame - delay) * 1234567 + slot * 0x1020304) & 0xffffffff
              for slot in range(players)] for frame in range(max(count, recorded))]
     state = (0, case['seed'], case['seed'], 0)
-    boundaries, advances, records = [], [], []
+    boundaries, advances, records, services = [], [], [], []
     for row in rows:
         boundaries.append(state_bytes(state).hex())
         frame = state[0]
-        if frame < count:
+        if frame < count and not lockstep:
             saved = dict(kind='save', frame=frame, bytes=boundaries[-1], inputs=[])
             if rust and frame == 0:
                 records.append(copy.deepcopy(saved))
@@ -32,27 +34,31 @@ def expected(case, rust):
         if frame < count:
             records.append(dict(kind='advance', frame=frame, bytes=advances[-1],
                                 inputs=[dict(value=value, status='confirmed') for value in row]))
-    checksums = [boundaries[frame] if not rust or delay == 0 or frame == 0 else None for frame in range(recorded)]
+            if rust and lockstep and (delay == 0 or frame == 0):
+                services.append(dict(before=frame, after=frame, requests=[]))
+            requests = ['advance'] if lockstep else (['save', 'save', 'advance'] if rust and frame == 0 else ['save', 'advance'])
+            services.append(dict(before=frame, after=frame + 1, requests=requests))
+    checksums = [boundaries[frame] if not lockstep and (not rust or delay == 0 or frame == 0) else None for frame in range(recorded)]
     playback = playback_expected(dict(name=case['name'], players=players, seed=case['seed'], validate=True,
                                       frames=rows[:recorded], checksums=checksums), rust)
     return dict(name=case['name'], players=players, total_frames=recorded, skipped=0, frames=rows[:recorded],
-                checksums=checksums, records=records, advances=advances[:count], saves=([0] if rust and count else []) + list(range(count)),
-                playback=playback)
+                checksums=checksums, records=records, advances=advances[:count], saves=[] if lockstep else ([0] if rust and count else []) + list(range(count)),
+                services=services, playback=playback)
 
 
 def acceptance(observed):
     """Require all roster/delay/length boundaries even if a changed generator agrees with itself."""
-    names = [f'record-{players}p-{count}-delay{delay}' for players in range(2, 9)
-             for count in (0, 1, 7, 64) for delay in (0, 2)]
+    names = [f'record-{players}p-{count}-delay{delay}' + suffix for suffix in ('', '-prediction0')
+             for players in range(2, 9) for count in (0, 1, 7, 64) for delay in (0, 2)]
     for runtime in ('rust', 'godot'):
         cases = observed[runtime]['cases']
         if sorted(case['name'] for case in cases) != sorted(names):
             raise ValueError(f'{runtime}: incomplete recording workload inventory')
         for case in cases:
             # Reconstruct workload dimensions from the independently required name, not output metadata.
-            _, roster, length, delayed = case['name'].split('-')
+            _, roster, length, delayed, *mode = case['name'].split('-')
             specification = dict(name=case['name'], players=int(roster[:-1]), count=int(length),
-                                 delay=int(delayed[5:]), prediction=2, seed=0xffffffff)
+                                 delay=int(delayed[5:]), prediction=0 if mode else 2, seed=0xffffffff)
             compare(case, expected(specification, runtime == 'rust'), f'recording.{runtime}.{case["name"]}')
     return names
 
@@ -66,22 +72,30 @@ def observe(binary, engine, root, output, execute):
     command = [str(engine), '--headless', '--path', str(root), '--script', 'res://tests/oracle/replay_session_trace.gd',
                '--', '--recording', str(fixture.resolve())]
     for repeat in (1, 2):
-        stdout, stderr = execute([str(binary), '--recording'], output / f'recording-rust-{repeat}.log', scenario)
-        if stderr.strip():
-            raise ValueError('Rust recording emitted unexpected stderr')
-        rust = json.loads(stdout)
-        stdout, stderr = execute(command, output / f'recording-godot-{repeat}.log')
-        if any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
-            raise ValueError('Godot recording engine error')
-        prefix = 'FORTRESS_REPLAY_RESULT '
-        lines = [line[len(prefix):] for line in stdout.splitlines() if line.startswith(prefix)]
-        if len(lines) != 1:
-            raise ValueError('missing or duplicate recording completion')
-        godot = json.loads(lines[0])
-        for runtime, actual in [('rust', rust), ('godot', godot)]:
+        combined = {runtime: dict(format=1, cases=[]) for runtime in ('rust', 'godot')}
+        for prediction in (2, 0):
+            partition = [case for case in cases if case['prediction'] == prediction]
+            text = json.dumps(partition, indent=2) + '\n'
+            part_file = output / f'recording-prediction{prediction}.json'
+            part_file.write_text(text)
+            stdout, stderr = execute([str(binary), '--recording'], output / f'recording-rust-{repeat}-prediction{prediction}.log', text)
+            if stderr.strip():
+                raise ValueError('Rust recording emitted unexpected stderr')
+            rust = json.loads(stdout)
+            stdout, stderr = execute(command[:-1] + [str(part_file.resolve())], output / f'recording-godot-{repeat}-prediction{prediction}.log')
+            if any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
+                raise ValueError('Godot recording engine error')
+            prefix = 'FORTRESS_REPLAY_RESULT '
+            lines = [line[len(prefix):] for line in stdout.splitlines() if line.startswith(prefix)]
+            if len(lines) != 1:
+                raise ValueError('missing or duplicate recording completion')
+            for runtime, actual in [('rust', rust), ('godot', json.loads(lines[0]))]:
+                compare(actual, dict(format=1, cases=[expected(case, runtime == 'rust') for case in partition]), f'recording.{runtime}')
+                combined[runtime]['cases'].extend(actual['cases'])
+        for runtime, actual in combined.items():
             wanted = dict(format=1, cases=[expected(case, runtime == 'rust') for case in cases])
             compare(actual, wanted, f'recording.{runtime}')
-        observations.append(dict(rust=rust, godot=godot))
+        observations.append(combined)
     compare(observations[0], observations[1])
     workloads = acceptance(observations[0])
     negative = controls(observations[0])
@@ -168,7 +182,7 @@ def controls(observed):
     results = []
     for runtime in ('rust', 'godot'):
         for fault in ('missing-player', 'input-order', 'checksum-coverage', 'prefix-length', 'canonical-state', 'playback-state',
-                      'original-status', 'original-value', 'original-save-state', 'original-order', 'original-missing-save'):
+                      'original-status', 'original-value', 'original-save-state', 'original-order', 'original-missing-save', 'original-unexpected-load'):
             changed = copy.deepcopy(observed)
             case = next(case for case in changed[runtime]['cases'] if case['name'] == 'record-5p-64-delay2')
             original_index = next(i for i, record in enumerate(case['records'])
@@ -189,6 +203,9 @@ def controls(observed):
                     fields[fault] += '.bytes'
                 elif fault == 'original-order':
                     case['records'][original_index:original_index + 2] = reversed(case['records'][original_index:original_index + 2])
+                elif fault == 'original-unexpected-load':
+                    case['records'].insert(original_index, dict(record, kind='load'))
+                    fields[fault] = 'records'
                 else:
                     case['records'].pop(original_index)
                     fields[fault] = 'records'
@@ -212,4 +229,28 @@ def controls(observed):
                 results.append(f'{runtime}-{fault}')
             else:
                 raise ValueError(f'{runtime}-{fault}: recording mutation accepted')
+        for delay in (0, 2):
+            for fault in ('service-omission', 'fabricated-checksum', 'resampled-input', 'premature-target'):
+                changed = copy.deepcopy(observed)
+                case = next(case for case in changed[runtime]['cases'] if case['name'] == f'record-5p-64-delay{delay}-prediction0')
+                field = 'services'
+                if fault == 'service-omission':
+                    case['services'].pop(0)
+                elif fault == 'fabricated-checksum':
+                    case['checksums'][0] = '00' * 16
+                    field = 'checksums[0]'
+                elif fault == 'resampled-input':
+                    case['frames'][31][2] ^= 1
+                    field = 'frames[31][2]'
+                else:
+                    case['services'][-1]['after'] -= 1
+                    field = f'services[{len(case["services"]) - 1}].after'
+                try:
+                    acceptance(changed)
+                except ValueError as error:
+                    if f'recording.{runtime}.{case["name"]}.{field}' not in str(error):
+                        raise ValueError(f'{fault}: wrong lockstep recording rejection: {error}') from error
+                    results.append(f'{runtime}-delay{delay}-{fault}')
+                else:
+                    raise ValueError(f'{runtime}-delay{delay}-{fault}: lockstep recording mutation accepted')
     return results

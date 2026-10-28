@@ -431,6 +431,8 @@ Viewer speed controls change
 only the bounded number of recorded frames serviced; each simulation step stays fixed.
 Callback and expert replay playback share ordered save/advance requests in the same player.
 Expert integrations dispatch and acknowledge bounded views themselves; callback navigation remains optional.
+Actual-source recording comparisons cover all-local prediction windows zero and two,
+retaining empty source service attempts separately from completed simulation frames.
 Replay records confirmed gameplay history; diagnostic network traces are a
 separate format. Both need versions, validation and reproducible provenance.
 Version 5 replay rows preserve confirmed/disconnected player status alongside input bytes; version 4 reads with all-confirmed defaults.
@@ -521,6 +523,8 @@ SDK delivery from the remaining exported Fortress witness. The reviewed SDK/serv
 the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
 The native Fortress witness now requires actual SDK/server publication and viewer receipt,
 original canonical agreement and a bounded authenticated loopback admission/acceptance path.
+Native physical host/viewer socket departures stop paused buffered viewing; viewer loss
+also preserves the seated host's canonical continuation. Exported lifetimes remain unqualified.
 Production application admission and the full lifecycle matrix remain part of #131.
 [Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) owns the next browser witness.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
@@ -538,6 +542,8 @@ certifies the frame and the digest of that value before the irreversible commit.
 A matching repeated commit is acknowledged after the slot freezes, and the
 proposer stops retries after every live survivor acknowledges. Every phase is
 fenced by the complete locally derived operation identity and sender role.
+Committed retries remain eligible after the pending agreement's negotiation deadline;
+acknowledgement, survivor departure or local termination ends their eligible work.
 Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure, including READY certificates.
 Historical donor plans apply the same per-survivor acceptance clocks, leaving healthy output capacity available for retained history chunks.
 Bounded donor chunk service rotates across survivors so refused links cannot starve later healthy links.

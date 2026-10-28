@@ -3,13 +3,39 @@ import copy
 import json
 import unittest
 
-from signalfish_spectator_live import FAILURE, LATE_SIGNALS, MARKER, validate_late_failure, validate_result
+from signalfish_spectator_live import DEPARTURE, FAILURE, LATE_SIGNALS, MARKER, validate_departure, validate_late_failure, validate_result
 
 
 class SpectatorLiveTests(unittest.TestCase):
     def valid(self):
         return {'passed': True, 'frames': 48, 'compared': 48, 'seated_players': 2, 'viewer_seated': False,
                 'host_rollbacks': 46, 'binary_receives': 100, 'viewer_binary_receives': 50, 'catchup_steps': 4, 'paused_frames': 8, 'provisioning_controls': 7}
+
+    # Value: protects=physical loss receipt; fails_when=socket, history or canonical evidence is absent; why_new=clean-end receipts omit loss; seam=none
+    def test_departure_requires_remote_socket_and_buffered_history_evidence(self):
+        for departure in ['host', 'viewer']:
+            healthy = {'passed': True, 'departure': departure, 'remote_departure': True, 'socket_closed': True,
+                       'host_continued': departure == 'viewer', 'host_frame': 21 if departure == 'viewer' else 20,
+                       'buffered_rows': 8, 'viewer_frame': 10, 'compared': 10, 'viewer_binary_receives': 18}
+            self.assertEqual(validate_departure(0, DEPARTURE + json.dumps(healthy), departure), healthy)
+            for field in healthy:
+                invalid = [None, 0, True, float(healthy[field])] if type(healthy[field]) is int else [None, 1, not healthy[field]]
+                if field == 'departure':
+                    invalid = [None, 1, 'viewer' if departure == 'host' else 'host']
+                for value in invalid:
+                    if type(value) is type(healthy[field]) and value == healthy[field]:
+                        continue
+                    altered = {**healthy, field: value}
+                    with self.subTest(departure=departure, field=field, value=value), self.assertRaises(ValueError):
+                        validate_departure(0, DEPARTURE + json.dumps(altered), departure)
+            for changed in [{'viewer_frame': 20, 'compared': 20}, {'buffered_rows': 1}, {'buffered_rows': 30}, {'compared': 9}]:
+                with self.subTest(changed=changed), self.assertRaises(ValueError):
+                    validate_departure(0, DEPARTURE + json.dumps({**healthy, **changed}), departure)
+            output = DEPARTURE + json.dumps(healthy)
+            for code, text in [(1, output), (0, ''), (0, output + '\n' + output), (0, output + '\nERROR: late failure'),
+                               (0, output + '\n' + MARKER + '{}'), (0, output + '\n' + FAILURE + '{}')]:
+                with self.subTest(code=code), self.assertRaises(ValueError):
+                    validate_departure(code, text, departure)
 
     def test_late_controls_require_the_actual_final_failure(self):
         for name in LATE_SIGNALS:
