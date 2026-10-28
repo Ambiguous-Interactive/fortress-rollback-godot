@@ -362,6 +362,9 @@ def main():
     if args.offline:
         command.append('--offline')
     execute(command, args.output / 'build.log', timeout=600)
+    test_command = list(command)
+    test_command[2] = 'test'
+    execute(test_command, args.output / 'observer-tests.log', timeout=600)
     binary = CACHE / 'target/debug/replay'
     binary_hash = digest(binary)
     cases = corpus()
@@ -406,7 +409,7 @@ def main():
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
         standalone_rejections=rejected, observations=observations[0], recording=recording,
-        limitations=['Recording covers all-local P2PSession at prediction windows 0 and 2; remote confirmation/drop recording remains separate.',
+        limitations=['Recording and continuing extraction cover all-local P2PSession at prediction windows 0 and 2; remote confirmation/drop remains separate.',
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')

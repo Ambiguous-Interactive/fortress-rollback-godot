@@ -542,6 +542,9 @@ The [golden fixture](../tests/fixtures/replay/golden.json) comes from an indepen
 [Python generator](../scripts/reference/replay_golden.py); `make test-reference` checks that they match.
 
 Recording stages receipt-only rows privately until mesh confirmation. `session.replay()` exports only finalized, simulated history outside pending correction.
+Each call returns an owned snapshot while gameplay and recording continue. Keeping an earlier export or decoded file does not change it when later inputs finalize.
+The pinned source's `take_replay()` instead disables further recording while leaving gameplay active; this is an explicit API difference.
+The [continuing-extraction probe](oracle-replay.md#extract-a-recording-while-gameplay-continues) checks both policies against original canonical histories.
 A coordinated drop repairs staged rows after the agreed cut; checksums for changed states are omitted rather than copied from the old history.
 
 ## Change input delay during a match

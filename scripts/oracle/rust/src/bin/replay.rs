@@ -4,6 +4,7 @@
 use fortress_rollback::replay::{Replay, ReplayMetadata};
 use fortress_rollback::sessions::replay_session::ReplaySession;
 use fortress_rollback::{Config, FortressEvent, FortressRequest, InputStatus, Message, NonBlockingSocket, PlayerType, SessionBuilder};
+use fortress_rollback::{FortressError, InvalidRequestKind};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, Read};
@@ -55,10 +56,14 @@ fn run(case: Case, limit: usize) -> Result<Value, String> {
     let replay = Replay { num_players: case.players, frames: case.frames, checksums,
         metadata: ReplayMetadata { library_version: "oracle".into(), num_players: case.players,
             total_frames: case.checksums.len(), skipped_frames: 0 } };
-    let mut session = if case.validate { ReplaySession::<Cfg>::new_with_validation(replay) } else { ReplaySession::<Cfg>::new(replay) }
+    play_replay(case.name, case.seed, case.validate, replay)
+}
+
+fn play_replay(name: String, seed: u32, validate: bool, replay: Replay<u32>) -> Result<Value, String> {
+    let mut session = if validate { ReplaySession::<Cfg>::new_with_validation(replay) } else { ReplaySession::<Cfg>::new(replay) }
         .map_err(|e| e.to_string())?;
     let initial = session.current_frame().as_i32();
-    let mut state = [0, case.seed, case.seed, 0];
+    let mut state = [0, seed, seed, 0];
     let mut records = Vec::new();
     let mut events = Vec::new();
     while !session.is_complete() {
@@ -94,7 +99,7 @@ fn run(case: Case, limit: usize) -> Result<Value, String> {
         }
     }
     let exhausted = session.advance_frame().is_err();
-    Ok(json!({"name":case.name, "initial_frame":initial, "current_frame":session.current_frame().as_i32(),
+    Ok(json!({"name":name, "initial_frame":initial, "current_frame":session.current_frame().as_i32(),
         "complete":session.is_complete(), "exhausted":exhausted, "records":records, "events":events, "bytes":hex(&bytes(&state))}))
 }
 
@@ -107,7 +112,7 @@ impl NonBlockingSocket<String> for NoNetwork {
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> { Vec::new() }
 }
 
-fn recording(case: RecordingCase) -> Result<Value, String> {
+fn recording(case: RecordingCase, extract: bool) -> Result<Value, String> {
     if !(2..=8).contains(&case.players) || case.count > 64 || case.delay > 2 || ![0, 2].contains(&case.prediction) {
         return Err("invalid recording dimensions".into());
     }
@@ -120,6 +125,10 @@ fn recording(case: RecordingCase) -> Result<Value, String> {
     let mut advances = Vec::new();
     let mut saves = Vec::new();
     let mut services = Vec::new();
+    let extraction_frame = std::cmp::max(1, case.count / 2);
+    let mut extracted = None;
+    let mut extracted_bytes = Vec::new();
+    let mut extracted_decoded = None;
     for _ in 0..case.count * 2 {
         if state[0] as usize == case.count { break; }
         let frame = state[0];
@@ -155,28 +164,46 @@ fn recording(case: RecordingCase) -> Result<Value, String> {
         }
         let requests: Vec<_> = records[first_record..].iter().map(|record| record["kind"].clone()).collect();
         services.push(json!({"before":frame, "after":state[0], "requests":requests}));
+        if extract && state[0] as usize == extraction_frame && extracted.is_none() {
+            let replay = session.take_replay().map_err(|e| e.to_string())?;
+            extracted_bytes = replay.to_bytes().map_err(|e| e.to_string())?;
+            extracted_decoded = Some(Replay::<u32>::from_bytes(&extracted_bytes).map_err(|e| e.to_string())?);
+            extracted = Some(replay);
+        }
     }
     if state[0] as usize != case.count { return Err("recording did not reach target frame".into()); }
-    let replay = session.into_replay().map_err(|e| e.to_string())?;
+    let second_refused = extract && matches!(session.take_replay(),
+        Err(FortressError::InvalidRequestStructured { kind: InvalidRequestKind::NotSupported { .. } }));
+    let replay = if extract { extracted.ok_or("extraction boundary not reached")? }
+        else { session.into_replay().map_err(|e| e.to_string())? };
     let encoded = replay.to_bytes().map_err(|e| e.to_string())?;
-    let decoded = Replay::<u32>::from_bytes(&encoded).map_err(|e| e.to_string())?;
+    let decoded = if extract { extracted_decoded.ok_or("missing retained decoded recording")? }
+        else { Replay::<u32>::from_bytes(&encoded).map_err(|e| e.to_string())? };
     if replay != decoded { return Err("recording roundtrip changed history".into()); }
     let checksums: Vec<_> = decoded.checksums.iter().map(|value| value.map(|n| hex(&n.to_le_bytes()))).collect();
-    let played = run(Case { name: case.name.clone(), players:case.players, seed:case.seed, validate:true,
-        frames:decoded.frames.clone(), checksums:checksums.clone() }, 66)?;
-    Ok(json!({"name":case.name, "frames":decoded.frames, "checksums":checksums,
+    let played = play_replay(case.name.clone(), case.seed, true, decoded.clone())?;
+    let mut result = json!({"name":case.name, "frames":decoded.frames, "checksums":checksums,
         "skipped":decoded.metadata.skipped_frames, "players":decoded.num_players,
-        "total_frames":decoded.metadata.total_frames, "records":records, "advances":advances, "saves":saves, "services":services, "playback":played}))
+        "total_frames":decoded.metadata.total_frames, "records":records, "advances":advances, "saves":saves, "services":services, "playback":played});
+    if extract {
+        result["extraction"] = json!({"at":extraction_frame, "final_frame":state[0],
+            "early_unchanged":encoded == extracted_bytes
+                && decoded.to_bytes().map_err(|e| e.to_string())? == extracted_bytes, "second_extraction_refused":second_refused,
+            "later_frames":-1, "later_rows":[], "later_checksums":[], "later_playback":null});
+    }
+    Ok(result)
 }
 
 fn main() -> Result<(), String> {
     let mut input = String::new();
     io::stdin().take(2_097_153).read_to_string(&mut input).map_err(|e| e.to_string())?;
     if input.len() > 2_097_152 { return Err("bundle exceeds byte limit".into()); }
-    if std::env::args().skip(1).collect::<Vec<_>>() == ["--recording"] {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    let extract = arguments == ["--recording-extraction"];
+    if arguments == ["--recording"] || extract {
         let cases: Vec<RecordingCase> = serde_json::from_str(&input).map_err(|e| e.to_string())?;
         if cases.is_empty() || cases.len() > 64 { return Err("invalid recording case count".into()); }
-        let results = cases.into_iter().map(recording).collect::<Result<Vec<_>, _>>()?;
+        let results = cases.into_iter().map(|case| recording(case, extract)).collect::<Result<Vec<_>, _>>()?;
         println!("{}", json!({"format":1, "cases":results}));
         return Ok(());
     }
@@ -185,4 +212,27 @@ fn main() -> Result<(), String> {
     let results = cases.into_iter().map(|case| run(case, 64)).collect::<Result<Vec<_>, _>>()?;
     println!("{}", json!({"format":1, "cases":results}));
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Value: protects=the decoded recording's metadata reaches source validation; fails_when=the observer repairs metadata before playback; seam=none
+    #[test]
+    fn decoded_metadata_reaches_playback_validation() {
+        let replay = Replay { num_players: 2, frames: vec![vec![1u32, 2]], checksums: vec![None],
+            metadata: ReplayMetadata { library_version: "retained-recording".into(), num_players: 2, total_frames: 1, skipped_frames: 0 } };
+        let encoded = replay.to_bytes().expect("valid recording encodes");
+        let decoded = Replay::<u32>::from_bytes(&encoded).expect("recording decodes");
+        assert!(play_replay("control".into(), 0, true, decoded.clone()).is_ok());
+        for field in ["num_players", "total_frames"] {
+            let mut malformed = decoded.clone();
+            if field == "num_players" { malformed.metadata.num_players = 3; }
+            else { malformed.metadata.total_frames = 2; }
+            let error = play_replay("malformed".into(), 0, true, malformed).expect_err("source must reject malformed metadata");
+            assert!(error.contains(field), "wrong metadata rejection: {error}");
+        }
+    }
 }

@@ -1,5 +1,8 @@
 extends "res://signalfish_spectator_live.gd"
 
+var physical_departure_frame: int = -1
+var resumed_frame: int = -1
+
 
 func _run() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
@@ -14,6 +17,11 @@ func _run() -> void:
 		config.decode_msgpack_payloads = false
 		config.auto_poll = false
 		modes.append(config)
+		client.spectator_disconnected.connect(func(id: String, _reason: int, _spectators: Array) -> void:
+			if id == viewer_uuid and index == 0:
+				departure_observed = true
+				physical_departure_frame = -1 if host_session == null else host_session.status().current_frame
+		)
 		client.protocol_info.connect(func(info: RefCounted) -> void: protocol[index] = info)
 		client.lobby_state_changed.connect(func(_state: int, _players: PackedStringArray, all_ready: bool) -> void: ready[index] = all_ready)
 		for signal_name: String in ["protocol_error", "server_error", "authentication_error", "connection_failed", "disconnected", "room_join_failed"]:
@@ -109,6 +117,13 @@ func _run() -> void:
 		_fail("browser authenticated ACCEPT")
 		return
 	for frame: int in FRAMES:
+		if frame == 20 and runtime.get("browser_fault") == "viewer-departure":
+			if not await _wait(func() -> bool: return departure_observed, "paused exported viewer departure"):
+				return
+			resumed_frame = host_session.status().current_frame
+			if publication.poll(_now()).code != Transport.Code.WRONG_STATE:
+				_fail("departed browser publication still active")
+				return
 		if frame >= 3:
 			host_session.receive_input(1, frame - 3, _input(frame - 3, 1))
 		var inputs: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, _input(frame, 0))]
@@ -122,13 +137,18 @@ func _run() -> void:
 	if host_driver.recover(_now()).code != S.Code.OK or host_game.canonical_bytes() != _expected(FRAMES):
 		_fail("browser host canonical repair")
 		return
-	if publication.finish_host().code != Transport.Code.OK:
+	var departed: bool = runtime.get("browser_fault") == "viewer-departure"
+	if departed and publication.poll(_now()).code != Transport.Code.WRONG_STATE:
+		_fail("browser viewer departure kept publication live")
+		return
+	if not departed and publication.finish_host().code != Transport.Code.OK:
 		_fail("browser host finish")
 		return
 	deadline = Time.get_ticks_usec() + 15000000
 	var done: bool = false
 	while not done and Time.get_ticks_usec() < deadline:
-		publication.poll(_now())
+		if not departed:
+			publication.poll(_now())
 		response = await _http("/done", runtime.host_token)
 		done = response.status == 200
 		await process_frame
@@ -151,7 +171,11 @@ func _run() -> void:
 				"frames": FRAMES,
 				"host_rollbacks": host_session.statistics().rollback_count,
 				"seated_players": clients[0].get_players().size(),
-				"confirmed": host_session.status().confirmed_frame
+				"confirmed": host_session.status().confirmed_frame,
+				"viewer_departure_observed": departure_observed,
+				"host_frame_at_departure": physical_departure_frame,
+				"host_resumed_frame": resumed_frame,
+				"publication_stopped": departed and publication.status().code == Transport.Code.WRONG_STATE
 			}
 		)
 	)

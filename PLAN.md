@@ -415,11 +415,13 @@ metadata/storage and incomplete input digests while preserving stored comparison
 Optional replay compatibility checks accept FortressConfig instances/subclasses and refuse foreign objects before accessing their properties.
 Safe missing-digest and content comparisons remain at their owning playback boundary.
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
-and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4 and 5. The pinned upstream
+and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4, 5 and 6. The pinned upstream
 replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
 Actual all-local source recording/export now runs every roster size two through eight with
-input delays zero/two and prediction window two. Each runtime round-trips and plays its own format;
+input delays zero/two and prediction windows zero/two. Each runtime round-trips and plays its own format;
 source export timing and checksum differences remain explicit in the [recording comparison](docs/oracle-replay.md#actual-recording-applicability).
+Continuing extraction compares original gameplay after a mid-match export and retained early playback.
+Pinned Rust disables recording after `take_replay()`; Godot keeps recording and returns independent owned exports.
 Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
@@ -529,6 +531,7 @@ The exported Chromium viewer now runs in an independent browser context on both 
 receives original state/configuration through a role-separated cross-origin authenticated control boundary,
 and consumes real relay OFFER/rows/END while comparing 48 independent canonical boundaries.
 Pause/catch-up, clean completion and altered initial-state rejection are qualified for this viewer/native-host slice.
+Physical exported-viewer departure also stops paused buffered playback while the native host preserves canonical seated gameplay.
 The development bearer service is not a production identity provider; seated remote inputs remain an injected schedule.
 [Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245)
 retains exported host/seated transport, physical departure/replacement, pressure and remaining browser lifecycle cells.
@@ -572,6 +575,7 @@ retains expanded source and live missing-history acceptance. A scoped
 [actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
 now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
 Grouped four-row cases also create unequal public exposed frontiers four/five through a real coordinator advance; complete source inventories and negative controls bind that evidence.
+The unequal grouped schedule also loses the first irreversible COMMIT, alone and after donor-history loss, and requires its exact retry before continued original-history agreement.
 Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission

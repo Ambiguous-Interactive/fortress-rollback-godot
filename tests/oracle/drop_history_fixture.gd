@@ -3,6 +3,10 @@ extends "res://tests/unit/test_peer_drop_backfill.gd"
 var _history_receipts: Array[Dictionary] = []
 var _history_emissions: Array[Dictionary] = []
 var _lost_history: Array[Dictionary] = []
+var _commit_emissions: Array[Dictionary] = []
+var _commit_receipts: Array[Dictionary] = []
+var _lost_commit: Array[Dictionary] = []
+var _drop_first_commit: bool = false
 var _drop_first_history: bool = false
 var _corrupt_interior_history: bool = false
 
@@ -41,8 +45,9 @@ class ObservedGame:
 
 func observe(
 	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1,
-	corrupt_interior: bool = false, target_slots: int = 1, unequal: bool = false
+	corrupt_interior: bool = false, target_slots: int = 1, unequal: bool = false, drop_first_commit: bool = false
 ) -> Dictionary:
+	_drop_first_commit = drop_first_commit
 	_drop_first_history = drop_first_history
 	_corrupt_interior_history = corrupt_interior
 	_mode = "remote_donor"
@@ -97,7 +102,7 @@ func observe(
 			)
 		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame, "confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
 	return {
-		"format": 2,
+		"format": 3,
 		"complete": true,
 		"missing_rows": missing_rows,
 		"target_slots": _slots,
@@ -106,6 +111,9 @@ func observe(
 		"history_packets": _seen,
 		"donors": _donor_sources.keys(),
 		"lost_history": _lost_history,
+		"lost_commit": _lost_commit,
+		"commit_emissions": _commit_emissions,
+		"commit_receipts": _commit_receipts,
 		"history_emissions": _history_emissions,
 		"history_receipts": _history_receipts,
 		"survivors": survivors,
@@ -120,12 +128,19 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
 				continue
 		var history_emission: Dictionary = {}
+		var commit_emission: Dictionary = {}
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+			if decoded.message.phase == Drop.Phase.COMMIT:
+				commit_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _commit_emissions.size()}
+				_commit_emissions.append(commit_emission)
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				history_emission = {
 					"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(), "packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()
 				}
 				_history_emissions.append(history_emission)
+		if _drop_first_commit and _lost_commit.is_empty() and not commit_emission.is_empty():
+			_lost_commit.append(commit_emission)
+			continue
 		if _drop_first_history and _lost_history.is_empty() and not history_emission.is_empty():
 			_lost_history.append(history_emission)
 			continue
@@ -145,6 +160,8 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if terminated and code == I.Code.TERMINATED:
 			continue
 		context.equal(code, I.Code.OK, "deliver actual encoded packet")
+		if code == I.Code.OK and not commit_emission.is_empty():
+			_commit_receipts.append(commit_emission)
 		if code == I.Code.OK and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				_seen += 1

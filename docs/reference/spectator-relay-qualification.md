@@ -282,10 +282,21 @@ It must reach the exported viewer's original-state rejection before ACCEPT or
 playback. Independent control state remains unaccepted before host teardown and
 after HTTP shutdown; typed viewer observations prove zero simulation callbacks,
 including rejected attempts. A healthy control must complete all canonical comparisons. CI runs
-both cells on Godot 4.3 and 4.7.2 with pinned Chromium.
+the healthy, altered-state and viewer-departure cells on Godot 4.3 and 4.7.2 with pinned Chromium.
+
+Add `--browser-fault viewer-departure` to close the exported viewer's actual
+WebSocket from Chromium after a canonical pause with at least two buffered rows.
+The browser must report the SDK disconnect, terminated playback, discarded ingress
+and unchanged frame, canonical bytes and simulation count after another driver call.
+These synchronous effects are checked before relay polling can discover the closed socket.
+The native host must observe that viewer's departure through the real server and
+stop publication. It then resumes from measured boundary 20, repairs the original
+scheduled remote inputs and reaches canonical boundary 48 with two seats intact.
+The browser controller separately proves it closed a live socket; a synthetic SDK
+signal or receipt field alone cannot satisfy this cell.
 
 This is viewer browser acceptance, not the complete #245 witness. The host and
 second seated client remain native; remote seated game inputs still use an
 injected schedule. Exported host gameplay, actual remote seated input transport,
-replacement/loss and additional browsers remain unqualified. The loopback bearer
+host loss, replacement and additional browsers remain unqualified. The loopback bearer
 fixture remains development tooling; applications own production identity policy.

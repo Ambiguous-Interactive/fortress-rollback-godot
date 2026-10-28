@@ -396,6 +396,12 @@
 
 ### Improved
 
+- Verify continued gameplay and independent recordings after mid-match replay export against pinned source behavior.
+
+- Verify original-history recovery after losing a peer-drop COMMIT, including combined donor-data loss.
+
+- Qualify paused exported spectator shutdown after physical viewer departure while seated gameplay continues.
+
 - Improve driver step and recovery allocation by reusing the completed request batch's status snapshot.
 
 - Improve multi-peer input processing by reading receipt frames without copying retained packet history. Public status snapshots keep their ownership guarantees.

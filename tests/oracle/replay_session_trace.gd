@@ -66,7 +66,7 @@ class Game:
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
-	if args.size() != 2 or args[0] not in ["--bundle", "--recording"]:
+	if args.size() != 2 or args[0] not in ["--bundle", "--recording", "--recording-extraction"]:
 		_fail("expected --bundle PATH")
 		return
 	var file: FileAccess = FileAccess.open(args[1], FileAccess.READ)
@@ -82,13 +82,13 @@ func _initialize() -> void:
 	if parser.parse(bundle_text) != OK or not parser.data is Array or parser.data.is_empty() or parser.data.size() > 64:
 		_fail("invalid bundle")
 		return
-	if args[0] == "--recording":
+	if args[0] in ["--recording", "--recording-extraction"]:
 		var recorded: Array[Dictionary] = []
 		for value: Variant in parser.data:  # Checked recording-only schema precedes every conversion.
 			if not _valid_recording_case(value):
 				_fail("invalid recording case")
 				return
-			var result: Dictionary = _record(value)
+			var result: Dictionary = _record(value, args[0] == "--recording-extraction")
 			if result.is_empty():
 				_fail("recording failed")
 				return
@@ -203,7 +203,7 @@ func _valid_recording_case(value: Variant) -> bool:  # External JSON can contain
 	)
 
 
-func _record(value: Dictionary) -> Dictionary:
+func _record(value: Dictionary, extract: bool = false) -> Dictionary:
 	var config: Config = Config.new()
 	config.player_count = int(value.players)
 	config.input_width = 4
@@ -228,6 +228,10 @@ func _record(value: Dictionary) -> Dictionary:
 	game.state[2] = int(value.seed)
 	var driver: Driver = Driver.new(session, game)
 	var services: Array[Dictionary] = []
+	var extracted: Replay
+	var extracted_decoded: Replay
+	var extracted_bytes: PackedByteArray
+	var extraction_frame: int = maxi(1, int(value.count) / 2)
 	for frame: int in int(value.count):
 		var first_record: int = game.records.size()
 		var samples: Array[Driver.LocalInput] = []
@@ -241,9 +245,17 @@ func _record(value: Dictionary) -> Dictionary:
 		for index: int in range(first_record, game.records.size()):
 			requests.append(game.records[index].kind)
 		services.append({"before": frame, "after": int(game.state[0]), "requests": requests})
-	var replay: Replay = session.replay()
-	var decoded: Replay = Replay.new()
-	if decoded.decode(replay.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != replay.to_bytes():
+		if extract and game.state[0] == extraction_frame:
+			extracted = session.replay()
+			extracted_bytes = extracted.to_bytes()
+			extracted_decoded = Replay.new()
+			if extracted_decoded.decode(extracted_bytes) != Replay.DecodeCode.OK:
+				return {}
+	var replay: Replay = extracted if extract else session.replay()
+	if replay == null:
+		return {}
+	var decoded: Replay = extracted_decoded if extract else Replay.new()
+	if (not extract and decoded.decode(replay.to_bytes()) != Replay.DecodeCode.OK) or decoded.to_bytes() != replay.to_bytes():
 		return {}
 	var rows: Array[Array] = []
 	var checksums: Array = []  # JSON checksum evidence is null or a hexadecimal string.
@@ -267,6 +279,26 @@ func _record(value: Dictionary) -> Dictionary:
 			advances.append(record.bytes)
 	var played: Dictionary = _play(decoded, int(value.seed), true, false)
 	played.name = value.name
-	return {"name": value.name, "frames": rows, "checksums": checksums, "skipped": decoded.skipped_frames(),
+	var result: Dictionary = {"name": value.name, "frames": rows, "checksums": checksums, "skipped": decoded.skipped_frames(),
 		"players": decoded.player_count(), "total_frames": decoded.frame_count(), "records": game.records,
 		"advances": advances, "saves": saves, "services": services, "playback": played}
+	if extract:
+		var later: Replay = session.replay()
+		var later_decoded: Replay = Replay.new()
+		if later_decoded.decode(later.to_bytes()) != Replay.DecodeCode.OK:
+			return {}
+		var later_rows: Array[Array] = []
+		var later_checksums: Array = []  # Optional recorded checksum is null or hexadecimal bytes.
+		for frame: int in later_decoded.frame_count():
+			var row: Array[int] = []
+			for slot: int in config.player_count:
+				row.append(later_decoded.inputs(frame).read(slot).bytes.decode_u32(0))
+			later_rows.append(row)
+			var checksum: PackedByteArray = later_decoded.checksum(frame)
+			later_checksums.append(null if checksum.is_empty() else checksum.hex_encode())
+		var later_playback: Dictionary = _play(later_decoded, int(value.seed), true, false)
+		later_playback.name = value.name
+		result.extraction = {"at": extraction_frame, "final_frame": int(game.state[0]),
+			"early_unchanged": replay.to_bytes() == extracted_bytes and extracted_decoded.to_bytes() == extracted_bytes, "second_extraction_refused": false,
+			"later_frames": later_decoded.frame_count(), "later_rows": later_rows, "later_checksums": later_checksums, "later_playback": later_playback}
+	return result
