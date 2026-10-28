@@ -203,6 +203,8 @@
 
 ### Fixed
 
+- Fix contradictory repeated peer-drop certificates being ignored. A changed frame or value digest stops the pending agreement without freezing player history.
+
 - Fix lost peer-drop acknowledgements stopping commit recovery at the negotiation deadline. Committed survivors retry until every live survivor acknowledges.
 
 - Fix SignalFish spectator startup rejecting real SDK protocol metadata. Host and viewer bridges read the SDK's typed version and size limits.

@@ -442,10 +442,12 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		if not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):
 			_abort(host, barrier, Abort.MISSING_HISTORY)
 			return
+		var certificate: Dictionary = {"cut": int(event.get("cut", -1)), "digest": int(event.get("cut_digest", 0))}
 		if barrier.certificates.has(identity):
-			# A duplicated certificate never counts twice.
+			if barrier.certificates[identity] != certificate:
+				_abort(host, barrier, Abort.CONFLICTING_HISTORY)
 			return
-		barrier.certificates[identity] = {"cut": int(event.get("cut", -1)), "digest": int(event.get("cut_digest", 0))}
+		barrier.certificates[identity] = certificate
 		return
 	if stage == Stage.COMMITTED:
 		if barrier.state == COMMITTED and int(event.get("cut", -1)) == barrier.cut and int(event.get("cut_digest", 0)) == barrier.digest:

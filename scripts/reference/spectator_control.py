@@ -6,6 +6,7 @@ import secrets
 import socket
 import sys
 import threading
+from urllib.parse import urlsplit
 
 MAX_BYTES = 4096
 REQUEST_SECONDS = 2
@@ -35,7 +36,15 @@ class DeadlineServer(HTTPServer):
 
 
 class Control:
-    def __init__(self):
+    def __init__(self, allowed_origin=None):
+        if allowed_origin is not None:
+            parsed = urlsplit(allowed_origin)
+            if (not allowed_origin.isascii() or parsed.scheme not in ['http', 'https'] or not parsed.hostname
+                    or parsed.username is not None or parsed.password is not None
+                    or allowed_origin != parsed.scheme + '://' + parsed.netloc):
+                raise ValueError('browser origin must be an exact HTTP(S) origin')
+            parsed.port  # Validate a declared port before starting a server.
+        self.allowed_origin = allowed_origin
         self.host_token = secrets.token_hex(32)
         self.viewer_token = secrets.token_hex(32)
         self.lock = threading.Lock()
@@ -75,7 +84,24 @@ class Control:
             def do_GET(self):
                 self.dispatch()
 
+            def allowed_origin(self):
+                origins = self.headers.get_all('Origin', [])
+                return len(origins) == 1 and state.allowed_origin is not None and origins[0] == state.allowed_origin
+
+            def do_OPTIONS(self):
+                methods = self.headers.get_all('Access-Control-Request-Method', [])
+                header_values = self.headers.get_all('Access-Control-Request-Headers', [])
+                headers = [name.strip().lower() for name in header_values[0].split(',')] if len(header_values) == 1 else []
+                if (not self.allowed_origin() or len(methods) != 1 or methods[0] not in ['GET', 'POST']
+                        or len(header_values) > 1 or any(name not in ['authorization', 'content-type'] for name in headers)):
+                    self.respond(403, {'error': 'browser_request_denied'})
+                    return
+                self.respond(200, {'preflight': True})
+
             def dispatch(self):
+                if self.headers.get_all('Origin', []) and not self.allowed_origin():
+                    self.respond(403, {'error': 'wrong_origin'})
+                    return
                 role = 'host' if self.path in ['/admit', '/take'] else 'viewer'
                 expected = 'Bearer ' + (state.host_token if role == 'host' else state.viewer_token)
                 supplied = self.headers.get('Authorization', '')
@@ -139,6 +165,13 @@ class Control:
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Content-Length', str(len(encoded)))
                 self.send_header('Cache-Control', 'no-store')
+                if state.allowed_origin is not None:
+                    self.send_header('Vary', 'Origin')
+                if self.allowed_origin():
+                    self.send_header('Access-Control-Allow-Origin', state.allowed_origin)
+                    if self.command == 'OPTIONS' and code == 200:
+                        self.send_header('Access-Control-Allow-Methods', 'GET, POST')
+                        self.send_header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
                 self.end_headers()
                 self.wfile.write(encoded)
 
