@@ -569,6 +569,7 @@ including when the donor differs from the coordinator. [#188](https://github.com
 retains expanded source and live missing-history acceptance. A scoped
 [actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
 now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
+Grouped four-row cases also create unequal public exposed frontiers four/five through a real coordinator advance; complete source inventories and negative controls bind that evidence.
 Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission

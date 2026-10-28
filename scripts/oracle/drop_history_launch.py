@@ -155,14 +155,17 @@ def main():
     controls = []
     for repeat in (1, 2):
         scenarios = {}
-        for name, loss, missing_rows, target_slots in [
-                ('clean', False, 1, 1), ('lost-history', True, 1, 1), ('multi-clean', False, 4, 1), ('multi-lost-history', True, 4, 1),
-                ('grouped-clean', False, 4, 2), ('grouped-lost-history', True, 4, 2)]:
+        for name, loss, missing_rows, target_slots, unequal in [
+                ('clean', False, 1, 1, False), ('lost-history', True, 1, 1, False), ('multi-clean', False, 4, 1, False), ('multi-lost-history', True, 4, 1, False),
+                ('grouped-clean', False, 4, 2, False), ('grouped-lost-history', True, 4, 2, False),
+                ('unequal-clean', False, 4, 2, True), ('unequal-lost-history', True, 4, 2, True)]:
             fault_args = ['--drop-first-history'] if loss else []
             if missing_rows == 4:
                 fault_args.append('--multi-row-history')
             if target_slots == 2:
                 fault_args.append('--multiple-target-slots')
+            if unequal:
+                fault_args.append('--unequal-exposure')
             stdout, stderr = execute([str(binary), *fault_args], args.output / f'source-{name}-{repeat}.log')
             if stderr.strip():
                 raise ValueError('drop history: unexpected source stderr')
@@ -171,13 +174,15 @@ def main():
                                       'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
                                       args.output / f'godot-{name}-{repeat}.log')
             godot = parse_godot(stdout, stderr)
-            evidence[name] = compare(source, godot, loss, missing_rows, target_slots)
-            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss, missing_rows, target_slots))
+            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal)
+            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss, missing_rows, target_slots, unequal))
             scenarios[name] = {'source': source, 'godot': godot}
         controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
         controls.extend('multi:' + control for control in loss_evidence_controls(scenarios['multi-clean'], scenarios['multi-lost-history'], 4))
         controls.extend('grouped:' + control for control in loss_evidence_controls(
             scenarios['grouped-clean'], scenarios['grouped-lost-history'], 4, 2))
+        controls.extend('unequal:' + control for control in loss_evidence_controls(
+            scenarios['unequal-clean'], scenarios['unequal-lost-history'], 4, 2, True))
         observed.append(scenarios)
     if observed[0] != observed[1]:
         raise ValueError('drop history: fresh-process repeat mismatch')
@@ -202,7 +207,7 @@ def main():
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
-                  'Godot elapsed timeout; distinct non-interoperable wires.')}, indent=2) + '\n')
+                  'Godot elapsed timeout; equal and unequal exposed frontiers; distinct non-interoperable wires.')}, indent=2) + '\n')
     print('drop history: two survivors preserve twenty original canonical prefixes and statuses through '
           'one/four-row single/two-target clean/lost-packet donor recovery, twice', flush=True)
 

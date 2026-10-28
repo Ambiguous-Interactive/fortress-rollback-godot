@@ -104,7 +104,7 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool, missing_rows: i32, target_slots: usize) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
@@ -144,6 +144,11 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize) -> Result<Value, Stri
         *clock.lock().unwrap() += 1000;
         advance(&mut sessions[2], &mut games[2], 2, &mut histories[2])?;
         settle(&mut sessions, &buffers, frame >= 8, false, &mut control, &mut fault)?;
+    }
+    if unequal {
+        *clock.lock().unwrap() += 1000;
+        advance(&mut sessions[0], &mut games[0], 0, &mut histories[0])?;
+        settle(&mut sessions, &buffers, true, false, &mut control, &mut fault)?;
     }
     let before = (0..2).map(|peer| {
         let ranges = (2 * target_slots..3 * target_slots).map(|slot| {
@@ -190,8 +195,11 @@ fn main() {
     let loss = arguments.contains(&"--drop-first-history".into());
     let multi = arguments.contains(&"--multi-row-history".into());
     let grouped = arguments.contains(&"--multiple-target-slots".into());
-    if arguments.len() != usize::from(loss) + usize::from(multi) + usize::from(grouped) { eprintln!("drop history: unexpected argument"); std::process::exit(2); }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }) {
+    let unequal = arguments.contains(&"--unequal-exposure".into());
+    if arguments.len() != usize::from(unequal) + usize::from(loss) + usize::from(multi) + usize::from(grouped) {
+        eprintln!("drop history: unexpected argument"); std::process::exit(2);
+    }
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }

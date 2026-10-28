@@ -297,7 +297,7 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
 executes one-row and four-row single-target cases plus four-row two-target cases,
-each with clean and lost-first-backfill delivery, twice in fresh processes. It records the pinned
+each with clean and lost-first-backfill delivery, twice in fresh processes. Two additional grouped four-row cases use unequal exposed confirmation. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
@@ -308,7 +308,16 @@ peer then submits frames six through eight or eleven. One real recipient link wi
 frames starting at eight from survivor zero; survivor one retains the complete suffix. Both survivors expose
 confirmation four while their actual target receipts differ at seven/eight or seven/eleven.
 Every grouped target has its own observed retained interval and original changing inputs.
-The source explicitly removes the target. Godot detects its elapsed timeout.
+The unequal-exposure pair also advances only coordinator zero once through its real
+request API. Its new original input reaches survivor one, producing public confirmed
+frontiers four and five without editing an inventory or session counter. The actual
+source inventories retain floors three and two. Each process must report those exact
+frontiers and inventory payloads; replacing either higher exposed frontier with four
+fails an independent negative control. Coordinator zero reaches frame twenty-three
+while survivor one reaches twenty-two, preserving the same twenty original canonical
+prefixes. Both clean and lost-first-history cases exercise this schedule.
+The source then explicitly removes the target. Godot detects its elapsed timeout.
+
 Each implementation must transfer every original missing row from donor one to
 coordinator zero, commit cut eight or eleven, and continue to frame twenty-two. The loss
 scenario discards the first actual historical backfill packet before socket delivery.
@@ -354,7 +363,7 @@ with clean delivery and one lost original historical backfill. The two implement
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all
-asymmetric exposed-frontier cases, physical donor eviction,
+asymmetric exposed-frontier cases beyond the four/five schedule, physical donor eviction,
 other lost/reordered control acceptance, or live browser donor recovery. Those remain
 under [#188](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/188),
 [#48](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/48)

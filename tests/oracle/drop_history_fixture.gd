@@ -40,7 +40,8 @@ class ObservedGame:
 
 
 func observe(
-	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1, corrupt_interior: bool = false, target_slots: int = 1
+	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1,
+	corrupt_interior: bool = false, target_slots: int = 1, unequal: bool = false
 ) -> Dictionary:
 	_drop_first_history = drop_first_history
 	_corrupt_interior_history = corrupt_interior
@@ -60,6 +61,8 @@ func observe(
 	_leave(context, mesh, 2)
 	if missing_rows == 4:
 		_leave(context, mesh, 2)
+	if unequal:
+		_play(context, mesh, 1, true, [0])
 	var before: Array[Dictionary] = []
 	for peer: int in range(2):
 		var targets: Array[Dictionary] = []
