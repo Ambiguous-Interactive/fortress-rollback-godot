@@ -118,7 +118,7 @@ Research inspected these exact revisions:
 | Project | Research baseline |
 | --- | --- |
 | Fortress Rollback | `d124c89080004d96971a629bb0427056ee1805e3` |
-| SignalFish Godot SDK | `8cf70cc2b776ff00cfad2740030352174d35ba46` |
+| SignalFish Godot SDK | `8e1475ed12a618fb41660bd1c8a1b0c934dee77f` |
 | SignalFish server | `8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560` |
 
 These are inputs to baseline reproduction, not claims that all upstream suites
@@ -519,7 +519,10 @@ differential/model acceptance remain open in #131 and #47. The upstream SDK and 
 [qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
 SDK delivery from the remaining exported Fortress witness. The reviewed SDK/server pins now include
 the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
-The deployed spectator control path and exported spectator witness remain part of #131.
+The native Fortress witness now requires actual SDK/server publication and viewer receipt,
+original canonical agreement and a bounded authenticated loopback admission/acceptance path.
+Production application admission and the full lifecycle matrix remain part of #131.
+[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) owns the next browser witness.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
@@ -648,7 +651,7 @@ are 180 characters; `make lint-source` checks every tracked source file.
 - [Upstream session interface](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/session_trait.rs)
 - [Confirmed-state simulation oracle](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/tests/simulation/harness/oracle.rs)
 - [Handshake runtime-to-model trace contract](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/specs/tla/traces/sync-handshake-v1/README.md)
-- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/8cf70cc2b776ff00cfad2740030352174d35ba46)
+- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/8e1475ed12a618fb41660bd1c8a1b0c934dee77f)
 - [SignalFish transport fallback contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/architecture/transport-fallback.md)
 - [SignalFish delivery and incarnation contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/adr/0006-protocol-v3-delivery-reliability.md)
 - [Godot packed-array ownership](https://docs.godotengine.org/en/4.3/classes/class_packedbytearray.html)

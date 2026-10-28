@@ -168,6 +168,8 @@ EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback',
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
 EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries', 'incomplete_prefix_digests', 'incomplete_prefix_storage'}
 EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards'}
+for _suite in ['host', 'relay']:
+    EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',

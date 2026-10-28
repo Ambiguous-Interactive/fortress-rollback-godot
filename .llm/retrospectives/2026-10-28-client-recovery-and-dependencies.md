@@ -32,6 +32,35 @@ new-capability and debugging retrospective rules.
 - Full session CI and delivery evidence belong to the session PR and issue
   updates; these local observations do not replace those gates.
 
+## Live integration and upgrade findings
+
+The real spectator witness found two production integration defects that typed
+unit doubles had hidden. The SDK remained in lobby state after server-driven
+`GameStarting`; its guarded state projection now ships in upstream SDK PR #469,
+squash `8e1475ed12a618fb41660bd1c8a1b0c934dee77f`. All SDK candidate and
+merge-triggered runtime, documentation and harness workflows pass. The local
+bridges also rejected legitimate raw JSON numbers; they now read the SDK's
+strict typed version/limit properties, as the ordinary relay already does.
+
+The final native witness passes on both pinned engines against the verified
+merged archive. Each healthy process compares 48 canonical boundaries, observes
+46 actual rollbacks and 50 viewer-specific binary receipts, then completes its
+paused catch-up and clean tail. Three final-drain failures per engine must be
+rejected without success markers. Fresh review reproduced their original false
+success, then verified the repaired subscriptions and post-drain adapter gates.
+This applies the existing browser-integration skill's late-failure rule.
+
+Fresh review also reproduced an unauthenticated trickle request blocking the
+local control service's cleanup. An absolute owned-socket deadline now bounds the
+single worker; the new regression fails before repair and passes afterwards.
+The service remains a loopback development fixture, not an identity provider.
+
+Firefox 157 removed the updater component used by the old shutdown control.
+The replacement acquires a real native profile lock at the same late shutdown
+boundary. Stage 1 leaves only its own lock and fails the unchanged guard;
+stage 0 preserves the complete installation. Real browser runs and fresh review
+verify both controls. The failure was in obsolete test tooling, not gameplay.
+
 ## Prune ledger
 
 Corrected the reference guide's obsolete claim that sources had never advanced.
@@ -43,3 +72,4 @@ provenance evidence. No additional skill or overlapping knowledge topic was adde
 
 State: `findings-acted`.
 The broader roadmap acceptance gates remain with #45, #47, #48, #131 and #188.
+Focused exported spectator qualification is tracked in #245.

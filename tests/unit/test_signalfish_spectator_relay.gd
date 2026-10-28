@@ -61,6 +61,16 @@ class Info:
 		return data
 
 
+class JSONInfo:
+	extends RefCounted
+	# Variant deliberately probes malformed optional-SDK public properties.
+	var protocol_version: Variant = 3
+	var max_outbound_message_size: Variant = 4096
+
+	func to_dict() -> Dictionary:
+		return {"protocol_version": 3.0, "max_outbound_message_size": 4096.0, "capabilities": ["spectator_relay"], "game_data_formats": ["message_pack"]}
+
+
 class DepartureGame:
 	extends GameFixture.Game
 	var departure: Callable
@@ -106,6 +116,7 @@ func cases() -> PackedStringArray:
 			"expiry",
 			"lifetimes",
 			"configuration",
+			"sdk_numbers",
 			"busy",
 			"blocked_liveness",
 			"retained_callbacks",
@@ -365,6 +376,22 @@ func _capacity_lifetime(context: RefCounted) -> void:
 			fixture.config.set(field, 100000)
 			context.equal(fixture.relay.poll(2).code, Relay.Code.OK if fits else Relay.Code.TOO_LARGE, "restoring capacity cannot revive failed lifetime")
 			fixture.relay.detach()
+
+
+# Value: protects=real SDK JSON metadata configures viewing; fails_when=raw JSON floats replace authoritative typed properties; seam=public SDK shape
+func _sdk_numbers(context: RefCounted) -> void:
+	for value: Variant in [3, 2, 3.5, false, "3", NAN, INF]:
+		var fixture: Dictionary = _fixture(context, false)
+		fixture.relay.detach()
+		var helper: RefCounted = StreamFixture.new()
+		fixture.stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128)
+		var info: JSONInfo = JSONInfo.new()
+		info.protocol_version = value
+		var options: Relay.Options = Relay.Options.new()
+		options.max_packet_bytes = 128
+		var code: int = fixture.relay.configure(fixture.client, fixture.config, info, fixture.stream, HOST, options)
+		context.equal(code, Relay.Code.OK if value is int and value == 3 else Relay.Code.INCOMPATIBLE_MODE, "typed protocol property controls admission")
+		fixture.relay.detach()
 
 
 func _configuration(context: RefCounted) -> void:

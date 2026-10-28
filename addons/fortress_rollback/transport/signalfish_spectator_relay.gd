@@ -103,13 +103,14 @@ func _configure(client: Object, sdk_config: Object, protocol_info: Object, strea
 		return Code.INVALID_ARGUMENT
 	# Variant crosses the optional SDK's public protocol-info boundary.
 	var info: Variant = protocol_info.call("to_dict")
+	var protocol_version: Variant = protocol_info.get("protocol_version")
 	if not info is Dictionary or not info.get("capabilities") is Array or info.capabilities.size() > 64:
 		return Code.INCOMPATIBLE_MODE
 	var snapshot: Dictionary = _read_observation(client, sdk_config, revision)
 	if snapshot.is_empty():
 		return Code.WRONG_STATE
 	var sdk: Dictionary = snapshot.config
-	if "spectator_relay" not in info.capabilities or not info.get("protocol_version") is int or info.protocol_version < 3 or not _raw_snapshot(sdk):
+	if "spectator_relay" not in info.capabilities or not protocol_version is int or protocol_version < 3 or not _raw_snapshot(sdk):
 		return Code.INCOMPATIBLE_MODE
 	if not info.get("game_data_formats") is Array or info.game_data_formats.size() > 16 or "message_pack" not in info.game_data_formats:
 		return Code.INCOMPATIBLE_MODE

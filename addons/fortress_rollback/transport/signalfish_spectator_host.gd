@@ -110,6 +110,8 @@ func _configure(
 		return Code.INVALID_ARGUMENT
 	# Variant crosses the optional SDK protocol-info boundary.
 	var info: Variant = protocol_info.call("to_dict")
+	var protocol_version: Variant = protocol_info.get("protocol_version")
+	var server_limit: Variant = protocol_info.get("max_outbound_message_size")
 	if revision != _revision:
 		return Code.WRONG_STATE
 	var snapshot: Dictionary = _read_observation(client, sdk_config, revision)
@@ -119,14 +121,14 @@ func _configure(
 	var observed: Dictionary = snapshot.client
 	if not info is Dictionary or not info.get("capabilities") is Array or info.capabilities.size() > 64 or "spectator_relay" not in info.capabilities:
 		return Code.INCOMPATIBLE_MODE
-	if not info.get("protocol_version") is int or info.protocol_version < 3 or not ViewerRelay._raw_snapshot(sdk):
+	if not protocol_version is int or protocol_version < 3 or not ViewerRelay._raw_snapshot(sdk):
 		return Code.INCOMPATIBLE_MODE
 	if not info.get("game_data_formats") is Array or info.game_data_formats.size() > 16 or "message_pack" not in info.game_data_formats:
 		return Code.INCOMPATIBLE_MODE
 	for field: String in ["max_outbound_frame_bytes", "max_buffered_bytes"]:
 		if not sdk[field] is int or sdk[field] < controls.max_packet_bytes:
 			return Code.TOO_LARGE
-	if not info.get("max_outbound_message_size") is int or info.max_outbound_message_size < controls.max_packet_bytes + 128:
+	if not server_limit is int or server_limit < controls.max_packet_bytes + 128:
 		return Code.TOO_LARGE
 	if snapshot != _read_observation(client, sdk_config, revision) or revision != _revision:
 		return Code.WRONG_STATE

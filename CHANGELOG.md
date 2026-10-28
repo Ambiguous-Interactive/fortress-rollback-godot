@@ -203,6 +203,8 @@
 
 ### Fixed
 
+- Fix SignalFish spectator startup rejecting real SDK protocol metadata. Host and viewer bridges read the SDK's typed version and size limits.
+
 - Fix remote peer-drop donors stalling healthy history recovery when another survivor refuses a certificate packet.
 
 - Fix clean spectator completion at the frame and request-token limits. Fully played host tails report completion without requesting another frame.
