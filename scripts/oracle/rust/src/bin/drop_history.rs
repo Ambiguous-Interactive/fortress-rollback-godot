@@ -70,7 +70,9 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
     Ok(())
 }
 #[derive(Default)]
-struct Fault { enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value> }
+struct Fault {
+    enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize, dropped_ack: Vec<Value>
+}
 fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: &mut Vec<Value>, fault: &mut Fault) -> Result<bool, String> {
     let mut delivered = false;
     for (sender, queue) in buffers.iter().enumerate() {
@@ -84,6 +86,12 @@ fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: 
                     let packet = json!({"from":sender,"to":recipient,"body":body,"emission":control.len()});
                     emitted_control = Some(packet.clone());
                     control.push(packet.clone());
+                    if fault.ack_enabled && fault.dropped_ack.is_empty() && sender == 1 && recipient == 0
+                        && body.get("DropReport").and_then(|value| value.get("stage")).and_then(Value::as_str) == Some("Committed")
+                        && body["DropReport"]["participant"].as_u64() == Some(fault.ack_participant as u64) {
+                        fault.dropped_ack.push(packet);
+                        continue;
+                    }
                     if fault.commit_enabled && fault.dropped_commit.is_empty() && sender == 0 && recipient == 1 && body.contains_key("DropCommit") {
                         fault.dropped_commit.push(packet);
                         continue;
@@ -108,7 +116,7 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
@@ -133,7 +141,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         buffers.push(queue);
     }
     let mut control = Vec::new();
-    let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ..Default::default() };
+    let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots, ..Default::default() };
     settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     for session in &mut sessions {
         if format!("{:?}", session.current_state()) != "Running" { return Err("bootstrap".into()); }
@@ -190,9 +198,10 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         survivors.push(json!({"peer":peer,"current_frame":sessions[peer].current_frame().as_i32(),
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
-    Ok(json!({"format":3,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
+    Ok(json!({"format":4,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
         "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
-        "lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"controls":control,"received_controls":received_controls,"survivors":survivors}))
+        "lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
+        "controls":control,"received_controls":received_controls,"survivors":survivors}))
 }
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -200,11 +209,12 @@ fn main() {
     let multi = arguments.contains(&"--multi-row-history".into());
     let grouped = arguments.contains(&"--multiple-target-slots".into());
     let commit_loss = arguments.contains(&"--drop-first-commit".into());
+    let ack_loss = arguments.contains(&"--drop-first-ack".into());
     let unequal = arguments.contains(&"--unequal-exposure".into());
-    if arguments.len() != usize::from(commit_loss) + usize::from(unequal) + usize::from(loss) + usize::from(multi) + usize::from(grouped) {
+    if arguments.len() != usize::from(ack_loss) + usize::from(commit_loss) + usize::from(unequal) + usize::from(loss) + usize::from(multi) + usize::from(grouped) {
         eprintln!("drop history: unexpected argument"); std::process::exit(2);
     }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss) {
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }

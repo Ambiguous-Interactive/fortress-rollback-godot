@@ -9,13 +9,14 @@ func _initialize() -> void:
 	var context: RefCounted = Context.new(1701)
 	var status_control: int = -1
 	var arguments: PackedStringArray = OS.get_cmdline_user_args()
+	var ack_loss: bool = arguments.has("--drop-first-ack")
 	var commit_loss: bool = arguments.has("--drop-first-commit")
 	var loss: bool = arguments.has("--drop-first-history")
 	var corrupt: bool = arguments.has("--corrupt-interior-history")
 	var multi: bool = arguments.has("--multi-row-history")
 	var grouped: bool = arguments.has("--multiple-target-slots")
 	var unequal: bool = arguments.has("--unequal-exposure")
-	if (corrupt and not multi) or arguments.size() != int(commit_loss) + int(loss) + int(multi) + int(corrupt) + int(grouped) + int(unequal):
+	if (corrupt and not multi) or arguments.size() != int(ack_loss) + int(commit_loss) + int(loss) + int(multi) + int(corrupt) + int(grouped) + int(unequal):
 		if arguments.size() != 2 or arguments[0] != "--observer-status" or arguments[1] not in ["none", "predicted", "unknown"]:
 			printerr("drop history: unknown observer control")
 			quit(2)
@@ -27,6 +28,6 @@ func _initialize() -> void:
 				status_control = Queue.Status.PREDICTED
 			"unknown":
 				status_control = 42
-	var result: Dictionary = Fixture.new().observe(context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1, unequal, commit_loss)
+	var result: Dictionary = Fixture.new().observe(context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1, unequal, commit_loss, ack_loss)
 	print("FORTRESS_DROP_HISTORY_RESULT " + JSON.stringify(result))
 	quit(0 if context.failures.is_empty() else 1)

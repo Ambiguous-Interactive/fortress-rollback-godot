@@ -90,6 +90,23 @@ class SpectatorControlTests(unittest.TestCase):
         self.assertEqual(self.request('/done', body={'complete': True})[0], 200)
         self.assertEqual(self.request('/done', 'host'), (200, {'complete': True}))
 
+    def test_paused_departure_barrier_is_role_and_lifetime_bound(self):
+        paused = {'frame': 8, 'buffered_rows': 3}
+        self.assertEqual(self.request('/paused', 'host'), (202, {'pending': True}))
+        self.assertEqual(self.request('/paused', body=paused)[0], 403)
+        self.assertEqual(self.request('/admit', 'host', self.admission)[0], 200)
+        self.assertEqual(self.request('/accept', body=self.accept)[0], 200)
+        self.assertEqual(self.request('/paused', 'host', paused)[0], 403)
+        for invalid in [{}, {**paused, 'frame': True}, {**paused, 'buffered_rows': 2.0},
+                        {**paused, 'frame': 48}, {**paused, 'buffered_rows': 65}, {**paused, 'unknown': 0}]:
+            with self.subTest(invalid=invalid):
+                self.assertEqual(self.request('/paused', body=invalid)[0], 400)
+        self.assertEqual(self.request('/paused', body=paused)[0], 200)
+        self.assertEqual(self.request('/paused', body=paused)[0], 200)
+        self.assertEqual(self.request('/paused', body={**paused, 'frame': 9})[0], 409)
+        self.assertEqual(self.request('/paused', 'host'), (200, paused))
+        self.assertEqual(self.request('/paused')[0], 403)
+
     def cors_request(self, method, path='/admission', origin='http://127.0.0.1:8123', headers=None, body=None):
         peer = http.client.HTTPConnection('127.0.0.1', self.control.server.server_port, timeout=3)
         self.addCleanup(peer.close)

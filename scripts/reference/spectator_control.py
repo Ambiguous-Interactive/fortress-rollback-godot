@@ -53,6 +53,7 @@ class Control:
         self.room = None
         self.viewer = None
         self.done = None
+        self.paused = None
         self.accepted_once = False
         self.received = 0
         self.rejected = 0
@@ -107,7 +108,7 @@ class Control:
                     self.respond(403, {'error': 'wrong_origin'})
                     return
                 host_role = (self.path in ['/admit', '/take'] or (self.path == '/room' and self.command == 'POST')
-                             or (self.path in ['/viewer', '/done'] and self.command == 'GET'))
+                             or (self.path in ['/viewer', '/done', '/paused'] and self.command == 'GET'))
                 role = 'host' if host_role else 'viewer'
                 expected = 'Bearer ' + (state.host_token if role == 'host' else state.viewer_token)
                 supplied = self.headers.get('Authorization', '')
@@ -152,6 +153,19 @@ class Control:
                         return 400, {'error': 'invalid_viewer'}
                     state.viewer = body.copy()
                     return 200, {'registered': True}
+                if self.path == '/paused':
+                    if self.command == 'GET':
+                        return (200, state.paused.copy()) if state.paused else (202, {'pending': True})
+                    if not state.accepted_once or state.done is not None:
+                        return 403, {'error': 'wrong_lifetime'}
+                    if (type(body) is not dict or set(body) != {'frame', 'buffered_rows'}
+                            or type(body['frame']) is not int or not 8 <= body['frame'] < 48
+                            or type(body['buffered_rows']) is not int or not 2 <= body['buffered_rows'] <= 64):
+                        return 400, {'error': 'invalid_pause'}
+                    if state.paused is not None and state.paused != body:
+                        return 409, {'error': 'occupied'}
+                    state.paused = body.copy()
+                    return 200, {'paused': True}
                 if self.path == '/done':
                     if self.command == 'GET':
                         return (200, state.done.copy()) if state.done else (202, {'pending': True})

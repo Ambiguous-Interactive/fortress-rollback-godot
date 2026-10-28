@@ -51,6 +51,10 @@ verify the old frame tag is overwritten, and require the retained journal's exac
 For injected packet loss, retain emission identities and reconcile emitted minus discarded packets with actual receipts.
 A later equal payload cannot prove the first emission was lost. Reject a clean trace relabeled as loss and a restored discarded receipt.
 Validate the complete operation identity against the agreed operation before comparing retry payloads; matching malformed identities are insufficient.
+When control packets forward another participant’s certificate, sender direction cannot identify its owner.
+Select acknowledgement-loss faults by the actual participant certificate too, and retain emission/delivery order
+to distinguish a response to a repeated commit from an independently retried acknowledgement.
+Require the earliest eligible delivered response to satisfy the ordering; a later valid retry cannot excuse an earlier invalid one.
 Validate each packet’s actual ordered target handles and generations against its digest; an expected digest cannot certify an unchecked target list.
 If a global floor prevents the proposed eviction, preserve that control and report the bound;
 changing its inventory cannot establish that the physical fault occurred.

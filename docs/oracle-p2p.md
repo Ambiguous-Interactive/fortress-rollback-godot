@@ -298,7 +298,7 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
 executes one-row and four-row single-target cases plus four-row two-target cases,
 each with clean and lost-first-backfill delivery, twice in fresh processes. Four additional grouped four-row cases use unequal exposed confirmation,
-including first-COMMIT loss alone and combined with first-backfill loss. It records the pinned
+including first-COMMIT loss alone and combined with first-backfill loss. Two further unequal grouped cases lose the first follower ACK, alone and after both earlier losses. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
@@ -328,7 +328,14 @@ paired control with identical canonical input history. The lost-COMMIT cases dis
 irreversible COMMIT before socket delivery. Each runtime must deliver a later exact retry,
 freeze both target slots at eleven and preserve every original canonical prefix. Combined
 loss separately withholds the first donor packet before dropping the first COMMIT.
-Trace version 3 retains separate loss banks and Godot COMMIT emissions/receipts;
+Trace version 4 retains separate loss banks and Godot COMMIT/ACK emissions/receipts.
+ACK loss selects the follower's own COMMITTED participant report; the pinned source can forward other participants' certificates.
+The source must resend the same follower certificate through its retained journal. Godot must receive an exact COMMIT retry after the lost ACK,
+then deliver the same ACK bytes. Its global observed control order distinguishes those operations from an invented early response.
+Both ACK cases preserve the same twenty original canonical boundaries. Missing retry receipts, fabricated loss on a clean trace,
+restored discarded ACKs and ACK receipt before the repeated COMMIT all fail independent controls;
+the parser reconstructs the complete certified Godot ACK independently.
+For COMMIT loss,
 the parser reconstructs the complete certified Godot COMMIT independently.
 Delivered discarded COMMITs, missing loss evidence and changed encoded cuts must fail.
 The four-row case also changes actual
@@ -367,7 +374,7 @@ export to NONE/PREDICTED/unknown status 42 at the observation boundary and requi
 refusal, without changing game state or application callback records.
 
 This establishes single-target and grouped two-target missing-history donor scenarios
-with clean delivery and one lost original historical backfill. The two implementations
+with clean delivery, one lost original historical backfill, and unequal grouped COMMIT/ACK loss alone or combined. The two implementations
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all

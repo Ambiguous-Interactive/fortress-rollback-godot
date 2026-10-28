@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from spectator_browser import validate, validate_fault, validate_departure
+from spectator_browser import validate, validate_fault, validate_departure, validate_host_departure
 
 
 class SpectatorBrowserTests(unittest.TestCase):
@@ -146,6 +146,29 @@ assert.equal(errors.length,3,'deliberate close must not invent a request failure
         for changes in [{'departureClosed': False}, {'errors': ['late failure']}]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 validate_departure(host, {**browser, **changes})
+
+    def test_host_departure_requires_remote_event_before_any_poll(self):
+        host = {'passed': True, 'departure': 'host', 'frames': 20, 'confirmed': 19, 'host_rollbacks': 18,
+                'socket_closed': True, 'remote_host_departure_observed': True, 'publication_stopped': True, 'viewer_paused_frame': 8}
+        browser = {'browser': 'Chromium', 'version': '156.0', 'errors': [], 'departureClosed': False, 'result': {
+            'passed': True, 'departure': 'host', 'socket_departed': False, 'playback_stopped': True, 'viewer_seated': False,
+            'selected_host_departed': True, 'viewer_binary_receives': 15, 'frame': 8, 'compared': 8,
+            'buffered_rows': 3, 'simulations_before': 8, 'simulations_after': 8}}
+        validate_host_departure(host, browser)
+        for section, row in [('host', host), ('result', browser['result'])]:
+            for field, value in row.items():
+                for bad in [None, True if type(value) is int else 1, float(value) if type(value) is int else 'foreign']:
+                    first, second = copy.deepcopy((host, browser))
+                    (first if section == 'host' else second['result'])[field] = bad
+                    with self.subTest(section=section, field=field, bad=bad), self.assertRaises(ValueError):
+                        validate_host_departure(first, second)
+        for changes in [{'selected_host_departed': False}, {'frame': 20}, {'compared': 7}, {'buffered_rows': 1},
+                        {'simulations_after': 9}, {'socket_departed': True}, {'viewer_binary_receives': 0}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_host_departure(host, {**browser, 'result': {**browser['result'], **changes}})
+        for changes in [{'departureClosed': True}, {'errors': ['late failure']}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_host_departure(host, {**browser, **changes})
 
 
 if __name__ == '__main__':

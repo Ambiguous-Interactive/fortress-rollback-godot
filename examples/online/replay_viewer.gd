@@ -315,6 +315,7 @@ func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: 
 	if not comparison.is_empty():
 		var labels: Dictionary = {
 			"input_digest": "Recorded input digest mismatch.",
+			"input_digest_missing": "Recorded input digest is missing or incomplete.",
 			"state_checksum": "Recorded state checksum mismatch.",
 			"checkpoint_checksum": "Restored checkpoint checksum mismatch.",
 			"checkpoint_bytes": "Restored checkpoint bytes mismatch.",

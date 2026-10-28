@@ -148,7 +148,9 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
     if host.returncode != 0 or 'ERROR:' in native or len(rows) != 1:
         raise ValueError('native browser-host witness failed; inspect native.log')
     result = json.loads(browser_output)
-    if fault == 'viewer-departure':
+    if fault == 'host-departure':
+        validate_host_departure(rows[0], result)
+    elif fault == 'viewer-departure':
         validate_departure(rows[0], result)
     else:
         validate(rows[0], result)
@@ -194,3 +196,27 @@ def validate_departure(host, browser):
             or browser.get('departureClosed') is not True or browser.get('browser') != 'Chromium'
             or type(browser.get('version')) is not str or not browser['version'] or browser.get('errors') != []):
         raise ValueError('exported physical departure lacks paused history or canonical continuation')
+
+
+def validate_host_departure(host, browser):
+    if type(host) is not dict or type(browser) is not dict or type(browser.get('result')) is not dict:
+        raise ValueError('missing exported selected-host departure evidence')
+    viewer = browser['result']
+    expected_host = {'passed': True, 'departure': 'host', 'frames': 20, 'confirmed': 19, 'socket_closed': True,
+                     'remote_host_departure_observed': True, 'publication_stopped': True}
+    expected_viewer = {'passed': True, 'departure': 'host', 'socket_departed': False, 'selected_host_departed': True,
+                       'playback_stopped': True, 'viewer_seated': False}
+    for row, expected in [(host, expected_host), (viewer, expected_viewer)]:
+        for key, value in expected.items():
+            if type(row.get(key)) is not type(value) or row[key] != value:
+                raise ValueError('incomplete exported selected-host departure evidence: ' + key)
+    for key in ['frame', 'compared', 'buffered_rows', 'simulations_before', 'simulations_after', 'viewer_binary_receives']:
+        if type(viewer.get(key)) is not int:
+            raise ValueError('invalid exported selected-host departure observation: ' + key)
+    if (type(host.get('viewer_paused_frame')) is not int or host['viewer_paused_frame'] != viewer['frame']
+            or not 8 <= viewer['frame'] < 20 or viewer['compared'] != viewer['frame'] or viewer['buffered_rows'] < 2
+            or viewer['simulations_before'] != viewer['frame'] or viewer['simulations_after'] != viewer['simulations_before']
+            or viewer['viewer_binary_receives'] < 1 or type(host.get('host_rollbacks')) is not int or host['host_rollbacks'] < 1
+            or browser.get('departureClosed') is not False or browser.get('browser') != 'Chromium'
+            or type(browser.get('version')) is not str or not browser['version'] or browser.get('errors') != []):
+        raise ValueError('exported selected-host departure lacks buffered canonical history or independent socket evidence')

@@ -32,6 +32,7 @@ var paused_frame: int = -1
 var paused_rows: int = 0
 var departure_started: bool = false
 var socket_departed: bool = false
+var selected_host_departed: bool = false
 
 
 func _ready() -> void:
@@ -57,6 +58,10 @@ func _run() -> void:
 	config.auto_poll = false
 	client.protocol_info.connect(func(info: RefCounted) -> void: protocol = info)
 	client.spectator_joined.connect(func(info: RefCounted) -> void: viewer_uuid = info.spectator_id)
+	client.player_left.connect(func(id: String) -> void:
+		if departure_started and id == admission.host:
+			selected_host_departed = true
+	)
 	client.disconnected.connect(func(_code: int, _reason: String) -> void: socket_departed = true)
 	client.game_data_binary_received.connect(func(_sender: String, _encoding: int, _bytes: PackedByteArray) -> void: receives += 1)
 	for name: String in [
@@ -138,7 +143,7 @@ func _run() -> void:
 		if polled.code not in [T.Code.OK, T.Code.BACKPRESSURE]:
 			_fail("browser relay poll")
 			return
-		if runtime.get("browser_fault") == "viewer-departure" and game.frame >= 8:
+		if runtime.get("browser_fault") in ["viewer-departure", "host-departure"] and game.frame >= 8:
 			paused_rows = stream.playback_session().host_frontier() - game.frame + 1
 			if paused_rows >= 2:
 				await _depart_buffered_viewer()
@@ -311,7 +316,7 @@ func _error(reason: String) -> void:
 		errors.append(reason)
 
 
-# The controller closes the actual browser WebSocket only after this buffered pause.
+# Physical socket loss starts only after the viewer proves a canonical buffered pause.
 func _depart_buffered_viewer() -> void:
 	departure_started = true
 	var before: PackedByteArray = game.canonical_bytes()
@@ -320,13 +325,22 @@ func _depart_buffered_viewer() -> void:
 	if before != _expected(frame) or compared != frame:
 		_fail("browser departure original prefix")
 		return
-	JavaScriptBridge.eval("window.fortressSpectatorDepartureReady=true")
-	if not await _wait(func() -> bool: return socket_departed):
+	var lost_host: bool = runtime.get("browser_fault") == "host-departure"
+	if lost_host:
+		var paused: Dictionary = await _http("/paused", {"frame": frame, "buffered_rows": paused_rows})
+		if paused.status != 200:
+			_fail("browser host-departure pause acknowledgment")
+			return
+	else:
+		JavaScriptBridge.eval("window.fortressSpectatorDepartureReady=true")
+	if not await _wait(func() -> bool: return selected_host_departed if lost_host else socket_departed):
 		return
 	var empty: Array[Driver.LocalInput] = []
 	var stopped: RefCounted = driver.step(_now(), empty)
 	if (stopped.code != S.Code.TERMINATED or game.canonical_bytes() != before or game.frame != frame
-		or game.simulation_calls != simulations or relay.status().received_packets != 0 or not errors.is_empty()):
+		or game.simulation_calls != simulations or relay.status().received_packets != 0 or not errors.is_empty()
+		or stream.playback_session().status().reason != S.Code.PROTOCOL_FAILED
+		or (lost_host and (socket_departed or client.get_connection_state() != Relay.CONNECTED))):
 		_fail("browser disconnect callback allowed buffered playback")
 		return
 	var polled: RefCounted = relay.poll(_now())
@@ -343,7 +357,8 @@ func _depart_buffered_viewer() -> void:
 		return
 	completed = true
 	JavaScriptBridge.eval("window.fortressSpectatorResult=" + JSON.stringify({
-		"passed": true, "departure": "viewer", "socket_departed": socket_departed,
+		"passed": true, "departure": "host" if lost_host else "viewer", "socket_departed": socket_departed,
+		"selected_host_departed": selected_host_departed, "viewer_binary_receives": receives,
 		"frame": frame, "compared": compared, "buffered_rows": paused_rows,
 		"simulations_before": simulations, "simulations_after": game.simulation_calls,
 		"playback_stopped": stopped.code == S.Code.TERMINATED, "viewer_seated": false

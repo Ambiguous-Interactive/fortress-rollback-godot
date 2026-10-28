@@ -413,7 +413,8 @@ Replay viewers report recorded and actually checked checksum coverage separately
 Replay configuration validates mutable recording structure before ownership. Portable export rejects malformed
 metadata/storage and incomplete input digests while preserving stored comparison evidence. Invalid replacements preserve existing playback and validation coverage;
 Optional replay compatibility checks accept FortressConfig instances/subclasses and refuse foreign objects before accessing their properties.
-Safe missing-digest and content comparisons remain at their owning playback boundary.
+Safe missing-digest and content comparisons remain at their owning playback boundary. Missing or incomplete
+recorded digests preserve their distinct first-cause label and computed row evidence through callback and expert playback.
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
 and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4, 5 and 6. The pinned upstream
 replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
@@ -532,9 +533,11 @@ receives original state/configuration through a role-separated cross-origin auth
 and consumes real relay OFFER/rows/END while comparing 48 independent canonical boundaries.
 Pause/catch-up, clean completion and altered initial-state rejection are qualified for this viewer/native-host slice.
 Physical exported-viewer departure also stops paused buffered playback while the native host preserves canonical seated gameplay.
+Physical selected-host departure stops the exported viewer before adapter polling can consume buffered rows;
+its own socket remains connected, and an independent seated SDK client confirms the exact host departure.
 The development bearer service is not a production identity provider; seated remote inputs remain an injected schedule.
 [Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245)
-retains exported host/seated transport, physical departure/replacement, pressure and remaining browser lifecycle cells.
+retains exported host/seated transport, replacement, pressure and remaining browser lifecycle cells.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
@@ -576,6 +579,8 @@ retains expanded source and live missing-history acceptance. A scoped
 now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
 Grouped four-row cases also create unequal public exposed frontiers four/five through a real coordinator advance; complete source inventories and negative controls bind that evidence.
 The unequal grouped schedule also loses the first irreversible COMMIT, alone and after donor-history loss, and requires its exact retry before continued original-history agreement.
+Follower-acknowledgement loss additionally requires exact certificate redelivery. Godot observes the repeated COMMIT
+before the matching ACK response; the pinned source retains its independent certificate journal policy.
 Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission

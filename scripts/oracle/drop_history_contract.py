@@ -181,9 +181,10 @@ def check_godot_packet(raw, missing_rows, target_slots):
             'Godot history packet original bytes')
 
 
-def check_godot_commit(packet, missing_rows, target_slots):
-    fields(packet, 'from to packet emission', 'Godot commit')
-    require(same(packet['from'], 0) and same(packet['to'], 1), 'Godot commit sender')
+def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False):
+    fields(packet, 'from to packet emission order', 'Godot commit')
+    integer(packet['order'], 1, 4096, 'Godot commit order')
+    require(same(packet['from'], int(acknowledgement)) and same(packet['to'], int(not acknowledgement)), 'Godot commit sender')
     raw = packet['packet']
     require(type(raw) is str and len(raw) == 196 + target_slots * 6
             and all(character in '0123456789abcdef' for character in raw), 'Godot commit bytes')
@@ -196,11 +197,11 @@ def check_godot_commit(packet, missing_rows, target_slots):
             value = ((value ^ byte) * 1099511628211) & 0x3fffffffffffffff
         return value or 1
     value = bytes((cut * 11 + slot * 7 + index) % 251 for slot in range(2 * target_slots, 3 * target_slots) for index in range(4))
-    expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([1]) + bytes(7) + bytes([21]) + bytes(7)
-                + struct.pack('<I4BHHIQiiiQHHHI', 54 + len(targets), 4, 0, 0, 0, 0, 21 << 8,
-                              target_era + 1, digest(targets), cut, 0, 7, digest(value), 0, 0, 0, len(targets))
+    expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2 if acknowledgement else 1]) + bytes(7) + bytes([22 if acknowledgement else 21]) + bytes(7)
+                + struct.pack('<I4BHHIQiiiQHHHI', 54 + len(targets), 2 if acknowledgement else 4, 3 if acknowledgement else 0, 0, 0, 0, 21 << 8,
+                              target_era + 1, digest(targets), cut, 0, cut if acknowledgement else 7, digest(value), 0, 0, 0, len(targets))
                 + targets + struct.pack('<I', 0))
-    require(bytes.fromhex(raw) == expected, 'Godot exact certified commit')
+    require(bytes.fromhex(raw) == expected, 'Godot exact certified acknowledgement' if acknowledgement else 'Godot exact certified commit')
 
 
 def check_delivery(emissions, lost, receipts, label, grouped=False):
@@ -214,19 +215,19 @@ def check_delivery(emissions, lost, receipts, label, grouped=False):
 
 
 def payload(packet):
-    return {key: value for key, value in packet.items() if key != 'emission'}
+    return {key: value for key, value in packet.items() if key not in ('emission', 'order')}
 
 
-def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False):
+def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False):
     require(type(missing_rows) is int and missing_rows in (1, 4), 'scenario missing rows')
     require(type(target_slots) is int and target_slots in (1, 2), 'scenario target slots')
     cut = 7 + missing_rows
     fields(source, 'format complete missing_rows target_slots upstream_revision before dropped controls '
-           'received_controls survivors lost_history lost_commit', 'source')
+           'received_controls survivors lost_history lost_commit lost_ack', 'source')
     fields(godot, 'format complete missing_rows target_slots before cuts history_packets donors history_emissions history_receipts '
-           'survivors failures lost_history lost_commit commit_emissions commit_receipts', 'Godot')
+           'survivors failures lost_history lost_commit commit_emissions commit_receipts lost_ack ack_emissions ack_receipts', 'Godot')
     for label, value in [('source', source), ('Godot', godot)]:
-        require(same(value['format'], 3) and value['complete'] is True, label + ' completion')
+        require(same(value['format'], 4) and value['complete'] is True, label + ' completion')
         require(same(value['missing_rows'], missing_rows), label + ' missing rows')
         require(same(value['target_slots'], target_slots), label + ' target slots')
         check_before(value['before'], label, missing_rows, target_slots, unequal)
@@ -249,12 +250,37 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
     require(type(godot['lost_history']) is list and len(godot['lost_history']) == int(loss), 'Godot loss count')
     require(type(source['lost_commit']) is list and len(source['lost_commit']) == int(commit_loss), 'source commit loss count')
     require(type(godot['lost_commit']) is list and len(godot['lost_commit']) == int(commit_loss), 'Godot commit loss count')
-    check_delivery(source['controls'], source['lost_history'] + source['lost_commit'], source['received_controls'], 'source', grouped=True)
+    require(type(source['lost_ack']) is list and len(source['lost_ack']) == int(ack_loss), 'source acknowledgement loss count')
+    require(type(godot['lost_ack']) is list and len(godot['lost_ack']) == int(ack_loss), 'Godot acknowledgement loss count')
+    check_delivery(source['controls'], source['lost_history'] + source['lost_commit'] + source['lost_ack'], source['received_controls'], 'source', grouped=True)
     check_delivery(godot['history_emissions'], godot['lost_history'], receipts, 'Godot')
     require(type(godot['commit_emissions']) is list and 1 <= len(godot['commit_emissions']) <= 4096, 'Godot commit emissions')
     for packet in godot['commit_emissions']:
         check_godot_commit(packet, missing_rows, target_slots)
     check_delivery(godot['commit_emissions'], godot['lost_commit'], godot['commit_receipts'], 'Godot commit')
+    require(type(godot['ack_emissions']) is list and 1 <= len(godot['ack_emissions']) <= 4096, 'Godot acknowledgement emissions')
+    for packet in godot['ack_emissions']:
+        check_godot_commit(packet, missing_rows, target_slots, acknowledgement=True)
+    check_delivery(godot['ack_emissions'], godot['lost_ack'], godot['ack_receipts'], 'Godot acknowledgement')
+    if ack_loss:
+        first = next(packet for packet in source['controls'] if packet['from'] == 1 and packet['to'] == 0
+                     and packet['body'].get('DropReport', {}).get('stage') == 'Committed'
+                     and same(packet['body']['DropReport']['participant'], target_slots))
+        require(same(source['lost_ack'][0], first), 'source first acknowledgement emission lost')
+        require(first['from'] == 1 and first['to'] == 0, 'source lost follower acknowledgement')
+        require(any(same(payload(packet), payload(first)) and packet['emission'] > first['emission']
+                    for packet in source['received_controls']), 'source exact acknowledgement retry receipt')
+        first = godot['ack_emissions'][0]
+        require(same(godot['lost_ack'][0], first), 'Godot first acknowledgement emission lost')
+        require(any(same(payload(packet), payload(first)) and packet['emission'] > first['emission']
+                    for packet in godot['ack_receipts']), 'Godot exact acknowledgement retry receipt')
+        require(len(godot['commit_receipts']) >= 2
+                and same(payload(godot['commit_receipts'][0]), payload(godot['commit_receipts'][1])),
+                'Godot acknowledgement requires repeated commit receipt')
+        commits = godot['commit_receipts']
+        require(commits[0]['order'] < first['order'] < commits[1]['order']
+                and min(packet['order'] for packet in godot['ack_receipts']) > commits[1]['order'],
+                'Godot acknowledgement follows repeated commit receipt')
     if commit_loss:
         first = next(packet for packet in source['controls'] if 'DropCommit' in packet['body'])
         require(same(source['lost_commit'][0], first), 'source first commit emission lost')
@@ -280,11 +306,11 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
                     for packet in receipts), 'Godot exact donor retry receipt')
     return {'cut': cut, 'unequal_exposure': unequal, 'missing_rows': missing_rows, 'target_slots': target_slots,
             'compared_frames': 20, 'survivors': 2, 'original_history_validated': True,
-            'lost_first_history_recovered': loss, 'lost_first_commit_recovered': commit_loss,
+            'lost_first_history_recovered': loss, 'lost_first_commit_recovered': commit_loss, 'lost_first_acknowledgement_recovered': ack_loss,
             'source_donor_emission_and_receipt': True, 'Godot_donor_receipt': True}
 
 
-def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False):
+def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False):
     def shared_wrong_history(source, godot):
         for trace in (source, godot):
             trace['survivors'][0]['rows'][8]['inputs'][2] = '00000000'
@@ -332,7 +358,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
                 frame_count=1, bytes=[102, 103, 104, 105]))
 
     def source_content_mutation(source, godot, kind, mutate):
-        for bank in ('controls', 'lost_history', 'lost_commit', 'received_controls'):
+        for bank in ('controls', 'lost_history', 'lost_commit', 'lost_ack', 'received_controls'):
             for packet in source[bank]:
                 if kind in packet['body']:
                     mutate(packet['body'][kind])
@@ -352,7 +378,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
             source_content_mutation(s, g, kind, lambda content: content.update(extra=0)))
 
     def source_operation_mutation(source, godot, field, value):
-        for bank in ('controls', 'lost_history', 'lost_commit', 'received_controls'):
+        for bank in ('controls', 'lost_history', 'lost_commit', 'lost_ack', 'received_controls'):
             for packet in source[bank]:
                 if 'DropBackfill' in packet['body']:
                     content = packet['body']['DropBackfill']
@@ -409,11 +435,22 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
             g['commit_receipts'].insert(0, copy.deepcopy(g['lost_commit'][0])))
         mutations['delivered_lost_source_commit'] = ('source emission/loss/receipt accounting', lambda s, g:
             s['received_controls'].insert(0, copy.deepcopy(s['lost_commit'][0])))
+    mutations['malformed_source_acknowledgement_loss'] = ('source acknowledgement loss count', lambda s, g: s.update(lost_ack=None))
+    mutations['malformed_Godot_acknowledgement_emissions'] = ('Godot acknowledgement emissions', lambda s, g: g.update(ack_emissions=None))
+    mutations['corrupt_Godot_acknowledgement'] = ('Godot exact certified acknowledgement', lambda s, g: g['ack_emissions'][0].update(
+        packet=g['ack_emissions'][0]['packet'][:128] + '00' + g['ack_emissions'][0]['packet'][130:]))
+    if ack_loss:
+        mutations['missing_source_acknowledgement_loss'] = ('source acknowledgement loss count', lambda s, g: s.update(lost_ack=[]))
+        mutations['missing_Godot_acknowledgement_loss'] = ('Godot acknowledgement loss count', lambda s, g: g.update(lost_ack=[]))
+        mutations['delivered_lost_Godot_acknowledgement'] = ('Godot acknowledgement emission/loss/receipt accounting', lambda s, g:
+            g['ack_receipts'].insert(0, copy.deepcopy(g['lost_ack'][0])))
+        mutations['delivered_lost_source_acknowledgement'] = ('source emission/loss/receipt accounting', lambda s, g:
+            s['received_controls'].insert(0, copy.deepcopy(s['lost_ack'][0])))
     for name, (diagnostic, mutate) in mutations.items():
         candidate_source, candidate_godot = copy.deepcopy(source), copy.deepcopy(godot)
         mutate(candidate_source, candidate_godot)
         try:
-            compare(candidate_source, candidate_godot, loss, missing_rows, target_slots, unequal, commit_loss)
+            compare(candidate_source, candidate_godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss)
         except ValueError as error:
             require(str(error) == 'drop history: ' + diagnostic, name + ' unrelated failure: ' + str(error))
         else:
