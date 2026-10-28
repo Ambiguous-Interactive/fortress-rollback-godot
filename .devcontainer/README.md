@@ -36,7 +36,7 @@ npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-containe
 | Tool | Version policy | Purpose |
 | --- | --- | --- |
 | Godot | pinned `4.7.2-stable` (build arg) | Headless import/tests, LSP, engine determinism |
-| Node.js | pinned `22.x` (Dockerfile arg) | MCP server runtime |
+| Node.js | pinned `26.12.1` (Dockerfile arg) | MCP server runtime |
 | Claude Code CLI | latest at build | Anthropic coding agent |
 | OpenCode | **v2** latest at build (npm `@opencode/cli`) | Vendor-neutral coding agent |
 | Codex CLI | latest at build (npm `@openai/codex`) | OpenAI coding agent (reads `AGENTS.md`, `.agents/skills/`) |
