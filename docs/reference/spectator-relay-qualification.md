@@ -6,6 +6,7 @@ The historical experiment below qualifies the SDK's normal native relay path onl
 The [Fortress native witness](#fortress-native-witness) now exercises the production
 Fortress adapters with a separate authenticated loopback control fixture. Neither
 experiment qualifies exported spectator games or the complete lifecycle matrix.
+The [exported Chromium viewer](#exported-chromium-viewer) below separately qualifies viewing with a native host on both engine pins.
 
 ## Executed sources and results
 
@@ -265,6 +266,8 @@ its viewer capability. Authenticated cross-origin HTTP requests provision the
 room, selected spectator identity and original state, and carry ACCEPT back to
 the native publisher. OFFER, original confirmed rows and END use actual SignalFish
 binary relay. The viewer never receives a seated player identity.
+Pending control resources return authenticated HTTP 202, with bounded polling delays;
+denied capabilities and unknown paths retain error responses and rejection accounting.
 
 Success requires 48 independent canonical boundary comparisons, actual host
 rollback, viewer-specific binary receipts, a paused buffered tail, bounded

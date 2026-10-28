@@ -121,6 +121,7 @@ mesh generation, changed offerer roles, room or membership changes, SDK reconnec
 and incarnation changes remain fenced. These require a new supported transport
 or rollback lifetime; the coordinator never fabricates SDK plans or resets history.
 A receive overflow, peer failure or terminal direct SDK error is terminal.
+Configuration rejects an already failed direct adapter, even if its unsent queue was reclaimed.
 A refused direct send (`ERR_BUSY`) remains retryable; other direct socket errors preserve their original failure and fence relay publication. An invalid direct transport
 lifetime under an unchanged mesh plan is also terminal; it cannot authorize
 relay fallback. An accepted relay plan explicitly permits direct teardown. During callbacks, detach fails

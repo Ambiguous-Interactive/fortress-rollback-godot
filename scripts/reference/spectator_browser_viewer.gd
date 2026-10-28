@@ -221,9 +221,9 @@ func _until(path: String) -> Dictionary:
 		var response: Dictionary = await _http(path)
 		if response.status == 200:
 			return response
-		if response.status != 404:
+		if response.status != 202:
 			break
-		await get_tree().process_frame
+		await get_tree().create_timer(0.1).timeout
 	_fail("browser provisioning deadline " + path)
 	return {"status": 0}
 

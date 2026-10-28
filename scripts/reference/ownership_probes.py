@@ -174,7 +174,8 @@ EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence'
 EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards'}
 for _suite in ['host', 'relay']:
     EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
-EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {'send_failure', 'receive_failure', 'latched_failure', 'busy_control'}
+EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
+    'send_failure', 'receive_failure', 'latched_failure', 'busy_control', 'failed_configuration', 'healthy_configuration'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',

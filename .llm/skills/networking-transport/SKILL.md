@@ -100,7 +100,7 @@ capture sender/channel/mode before get_packet advances to the next packet.
 Inspect actual browser data channels, not just Godot option dictionaries.
 Composed path switching preserves terminal SDK failures and lifetime fences before transferring output,
 including zero or due fallback grace. Relay availability cannot validate a replaced or failed direct adapter.
-Test send/read and prelatched errors through status, enqueue and polling, separately from retryable busy sends.
+Test send/read and prelatched errors through configuration, status, enqueue and polling, separately from retryable busy sends.
 Clear a pre-fallback unavailability timer on demonstrated direct recovery, and
 observe restoration readiness even during polls without outgoing packets.
 Arm refusal timers from the actual refused destination, not an aggregate poll

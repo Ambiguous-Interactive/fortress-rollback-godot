@@ -7,10 +7,14 @@ const M = U.M
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["send_failure", "receive_failure", "latched_failure", "busy_control"])
+	return PackedStringArray(["send_failure", "receive_failure", "latched_failure", "busy_control", "failed_configuration", "healthy_configuration"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name in ["failed_configuration", "healthy_configuration"]:
+		_configuration(context, name == "failed_configuration")
+		context.finish()
+		return
 	var fixture: Dictionary = U.new().build(context, true, 0, 2)
 	var transport: FailedTransport = FailedTransport.new()
 	fixture.direct.detach()
@@ -44,6 +48,33 @@ func run_case(name: String, context: RefCounted) -> void:
 		context.equal((fixture.fallback as F).enqueue_batch([U.new().packet(fixture, 33)]), F.Code.SDK_FAILURE, "terminal failure rejects new work")
 	U.new().destroy(fixture)
 	context.finish()
+
+
+func _configuration(context: RefCounted, failed: bool) -> void:
+	var fixture: Dictionary = U.new().build(context)
+	fixture.fallback.detach()
+	fixture.direct.detach()
+	var transport: FailedTransport = FailedTransport.new()
+	fixture.mesh.transport = transport
+	context.equal(fixture.direct.configure(fixture.mesh, fixture.membership, fixture.adapter, fixture.peer), F.Code.OK, "prepare direct before composition")
+	transport.send_error = ERR_CONNECTION_ERROR if failed else ERR_BUSY
+	context.equal((fixture.direct as U.Direct).enqueue_batch([U.new().packet(fixture, 22)]), F.Code.OK, "direct owns its preconfiguration packet")
+	context.equal(fixture.direct.poll(0).code, F.Code.SDK_FAILURE if failed else F.Code.BACKPRESSURE, "exercise actual socket before composition")
+	fixture.direct.reclaim_pending()
+	var candidate: F = F.new()
+	var expected: int = F.Code.WRONG_STATE if failed else F.Code.OK
+	context.equal(candidate.configure(fixture.direct, fixture.relay, fixture.membership, fixture.adapter, fixture.peer), expected, "refuse terminal direct at composition")
+	var plan: M.Plan = M.Plan.new()
+	plan.data.topology = "relay"
+	plan.data.transport = "relay"
+	plan.data.peers.clear()
+	fixture.client.session_plan.emit(plan)
+	context.equal(candidate.status().code, expected, "relay plan cannot authorize a failed configuration")
+	context.equal(candidate.enqueue_batch([U.new().packet(fixture, 11)]), expected, "relay plan cannot hide failed configuration from enqueue")
+	context.equal(candidate.poll(1).code, expected, "poll preserves configuration disposition")
+	context.equal(fixture.client.sent.size(), 0 if failed else 1, "only healthy composition publishes relay traffic")
+	candidate.detach()
+	U.new().destroy(fixture)
 
 
 class FailedTransport:

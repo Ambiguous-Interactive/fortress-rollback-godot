@@ -134,7 +134,7 @@ class Control:
             def apply(self, body):
                 if self.path == '/room':
                     if self.command == 'GET':
-                        return (200, state.room.copy()) if state.room else (404, {'error': 'not_ready'})
+                        return (200, state.room.copy()) if state.room else (202, {'pending': True})
                     if state.room is not None:
                         return 409, {'error': 'occupied'}
                     if (not isinstance(body, dict) or set(body) != {'code', 'game'}
@@ -144,7 +144,7 @@ class Control:
                     return 200, {'ready': True}
                 if self.path == '/viewer':
                     if self.command == 'GET':
-                        return (200, state.viewer.copy()) if state.viewer else (404, {'error': 'not_ready'})
+                        return (200, state.viewer.copy()) if state.viewer else (202, {'pending': True})
                     if state.viewer is not None:
                         return 409, {'error': 'occupied'}
                     if (state.room is None or not isinstance(body, dict) or set(body) != {'viewer'}
@@ -154,7 +154,7 @@ class Control:
                     return 200, {'registered': True}
                 if self.path == '/done':
                     if self.command == 'GET':
-                        return (200, state.done.copy()) if state.done else (404, {'error': 'not_ready'})
+                        return (200, state.done.copy()) if state.done else (202, {'pending': True})
                     if not state.accepted_once or type(body) is not dict or set(body) != {'complete'} or body['complete'] is not True:
                         return 403, {'error': 'wrong_lifetime'}
                     state.done = body.copy()
@@ -171,7 +171,7 @@ class Control:
                     state.admission = body.copy()
                     return 200, {'admitted': body['viewer']}
                 if self.command == 'GET' and self.path == '/admission':
-                    return (200, state.admission.copy()) if state.admission else (404, {'error': 'not_admitted'})
+                    return (200, state.admission.copy()) if state.admission else (202, {'pending': True})
                 if self.command == 'POST' and self.path == '/accept':
                     if (not isinstance(body, dict) or set(body) != {'viewer', 'room', 'identity', 'packet'} or state.admission is None
                             or any(body.get(key) != state.admission[key] for key in ['viewer', 'room', 'identity'])

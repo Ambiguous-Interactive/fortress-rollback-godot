@@ -19,9 +19,26 @@ those extraction roots fixed staging without weakening the addon/SDK inventory.
 Fresh review checked the resolved Node invocation and Playwright/browser/template
 inventories. Repeated final runs replace earlier receipts invalidated by edits.
 
+Automatic PR review then found a missing construction boundary: a previously failed
+adapter with reclaimed output could configure successfully, and an arriving relay
+plan hid its error until polling. The new valid-ownership configuration regression
+fails on the first candidate while the healthy busy control passes. Configuration
+now rejects that adapter before taking ownership. A fresh delta review ran clean.
+The existing networking guidance now names configuration alongside status/enqueue/poll.
+
+Provisioning polls now wait briefly after not-ready responses, preserving existing
+deadlines while reducing development control-service polling. The final browser
+rerun exposed an expected HTTP 404 as a browser console error despite all 48
+canonical comparisons passing. A table-driven red test proves all four pending
+resources were counted as rejections. They now return authenticated HTTP 202;
+unknown paths and denied capabilities retain their error responses. Browser
+integration guidance records the distinction without suppressing real errors.
+All four final browser cells and both native healthy cells pass after these changes. The earlier live ownership run correctly
+rejected the changed source inventory; its partial rounds are not final evidence.
+
 ## Verification
 
-- Both pinned engines pass all 22 fallback/mixed cases, repeated in fresh processes.
+- Both pinned engines pass all 24 fallback/mixed cases, repeated in fresh processes.
 - Both pinned engines pass eight source-comparison scenarios twice with 347 negative controls.
 - Both engine pins pass actual exported Chromium viewing and altered initial-state rejection.
   Healthy viewers compare 48 canonical boundaries, pause with retained rows, catch up and finish cleanly.

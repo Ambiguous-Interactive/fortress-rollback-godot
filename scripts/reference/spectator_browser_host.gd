@@ -47,7 +47,8 @@ func _run() -> void:
 		response = await _http("/viewer", runtime.host_token)
 		if response.status == 200:
 			viewer_uuid = response.body.viewer
-		await process_frame
+		else:
+			await create_timer(0.1).timeout
 	if viewer_uuid.is_empty():
 		_fail("browser viewer registration")
 		return
