@@ -45,6 +45,12 @@ canonical game bytes. Existing browser guidance now requires those independent
 negative observations. Ownership inputs are disjoint from this fixture-only delta;
 all four completed rounds still match every current source hash.
 
+Final review identified missing browser request-failure events. A Node event-driven
+regression is red without the handler and green with it; ordinary page/console
+errors retain their existing behavior. Request failures are ignored only after
+deliberate watchdog/finally teardown begins. Browser runtime cells are refreshed
+for the observer change; no native or ownership input changed.
+
 ## Verification
 
 - Both pinned engines pass all 24 fallback/mixed cases, repeated in fresh processes.

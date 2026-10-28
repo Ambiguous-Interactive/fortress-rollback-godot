@@ -1,12 +1,38 @@
 """Value: reject exported qualification receipts without complete physical and canonical evidence."""
 import copy
 import unittest
+import subprocess
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 from spectator_browser import validate, validate_fault
 
 
 class SpectatorBrowserTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for browser event controls')
+    def test_request_failures_are_fatal_until_deliberate_teardown(self):
+        source = Path(__file__).parent / 'browser/spectator.cjs'
+        script = """
+const assert=require('node:assert/strict');
+const {EventEmitter}=require('node:events');
+const {observeErrors}=require(process.argv[1]);
+const page=new EventEmitter(), errors=[];
+let closing=false;
+observeErrors(page,errors,()=>closing);
+page.emit('pageerror',new Error('page failure'));
+page.emit('console',{type:()=> 'log',text:()=> 'ignored'});
+page.emit('console',{type:()=> 'error',text:()=> 'console failure'});
+assert.deepEqual(errors,['page failure','console failure']);
+page.emit('requestfailed',{});
+assert.equal(errors.length,3,'active request failure must be captured');
+closing=true;
+page.emit('requestfailed',{});
+assert.equal(errors.length,3,'deliberate close must not invent a request failure');
+"""
+        result = subprocess.run(['node', '-e', script, str(source.resolve())], capture_output=True, encoding='utf-8', timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_fault_requires_no_acceptance_completion_or_playback(self):
         browser = {'browser': 'Chromium', 'version': '156.0', 'errors': [],
                    'result': {'passed': False, 'reason': 'browser original-state or membership binding', 'errors': []},
