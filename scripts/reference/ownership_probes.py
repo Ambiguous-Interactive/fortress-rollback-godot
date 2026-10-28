@@ -76,7 +76,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
-        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates', 'initial_state_agreement'},
+        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates', 'initial_state_agreement', 'obsolete_rows'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
@@ -84,7 +84,7 @@ EXPECTED.update({
     'res://tests/unit/test_spectator_policy.gd': {
         'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status', 'gapped_end'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
-    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step'},
+    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls'},
 })
 EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
     'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum', 'client_history'}
@@ -119,7 +119,7 @@ EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
 EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
     'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
 EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
-EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls', 'partial_publication'}
+EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls', 'partial_publication', 'retained_retry'}
 EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
     'remote_donor', 'loss_reorder', 'conflicting_duplicate', 'malformed_chunk', 'wrong_donor', 'lost_history_timeout',
     'resource_limit', 'multiple_target_slots', 'no_donor', 'conflicting_overlap'}

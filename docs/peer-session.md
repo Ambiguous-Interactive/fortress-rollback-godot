@@ -25,7 +25,7 @@ remains permitted. This restriction counts endpoint identities, not player slots
 | `poll(now_us, tokens = [])` | Service every endpoint with current receipt gossip; supply fresh retry tokens during synchronization. |
 | `receive(packet, attributed_sender, now_us, next_token = null)` | Route actual bytes using independently attributed sender identity. |
 | `receive_and_poll(packet, attributed_sender, now_us, next_token = null, tokens = [])` | Receive and service timers using the receipt gossip from the start of the operation. |
-| `step(now_us, local_inputs)` | Existing driver `StepResult`; submit every local slot at the current sample frame. |
+| `step(now_us, local_inputs)` | Existing driver `StepResult`; submit unstaged local slots at the current sample frame. |
 | `scheduled_local_input(player)` | Owned current staged sample, including across prediction stalls and partial network publication. |
 | `close(now_us, reason = 0)` | Queue redundant goodbye packets and halt the fixed-membership game. |
 | `status()` | Existing core status, including frame, confirmation and termination reason. |
@@ -47,12 +47,15 @@ and retries after synchronization. Malformed bytes, wrong session/sender, known
 connection mismatch and inputs claiming another player's slot remain errors.
 This permits independent handshake completion over unordered delivery.
 
-`step` requires the complete local sample set and validates it before submission.
+`step` requires a current sample for every local slot that is not already staged.
+An empty list retries all staged slots; a partial list may omit retained slots.
+It validates the complete effective local set before submitting any new sample.
 It transmits the actual delayed frame returned by the core, retaining the packed
 sample in every endpoint before advancing the game. `NOT_SYNCHRONIZED` means the
 handshake gate remains closed. `NETWORK_BACKPRESSURE` preserves the current game
 frame and accepted sample; drain queues or recover ACKs, then retry identical
-inputs. `PREDICTION_STALL` preserves the current frame but can still repair old
+inputs, or pass an empty list once every local slot is staged.
+`PREDICTION_STALL` preserves the current frame but can still repair old
 predictions and save that boundary. Save/load callbacks must therefore tolerate
 repeated frames. Changing an already submitted sample is rejected.
 
@@ -67,8 +70,8 @@ unconfigured peer returns `NOT_CONFIGURED`.
 
 ```gdscript
 var retained: Types.InputResult = peer.scheduled_local_input(player)
-var bytes: PackedByteArray = read_buttons() if retained.code == Types.Code.MISSING_LOCAL_INPUT else retained.bytes
-samples.append(Driver.LocalInput.new(player, peer.status().current_frame, bytes))
+if retained.code == Types.Code.MISSING_LOCAL_INPUT:
+	samples.append(Driver.LocalInput.new(player, peer.status().current_frame, read_buttons()))
 ```
 
 Use this loop only for configured local slots, after checking the peer is

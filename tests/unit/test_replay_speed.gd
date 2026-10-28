@@ -9,7 +9,7 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step"])
+	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -17,6 +17,8 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.equal(viewer.has_method("set_playback_speed"), true, "playback speed can be selected")
 	if viewer.has_method("set_playback_speed"):
 		match name:
+			"keyboard_controls":
+				_keyboard_controls(context)
 			"cadence":
 				_cadence(context)
 			"controls":
@@ -250,3 +252,66 @@ func _scene_backward_step(context: RefCounted) -> void:
 		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()
+
+
+# Value: protects=keyboard inspection shares visible playback and navigation gates; fails_when=keys bypass checks or repeat unexpectedly;
+# why_new=button tests do not dispatch keyboard input; seam=none
+func _keyboard_controls(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.has_method("_unhandled_key_input"), true, "viewer offers keyboard inspection")
+	if not node.has_method("_unhandled_key_input"):
+		node._exit_tree()
+		node.free()
+		return
+	_key(node, KEY_P)
+	context.equal(node.viewer.is_playing, false, "empty viewer cannot play from keyboard")
+	node.viewer.open_bytes(Fixture.recording(900).to_bytes())
+	node._refresh()
+	_key(node, KEY_P)
+	context.equal(node.viewer.is_playing, true, "P starts playback")
+	for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
+		_key(node, KEY_P, modified)
+		context.equal(node.viewer.is_playing, true, "ignore " + modified + " shortcut")
+	_key(node, KEY_N)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [1, false], "N pauses and inspects exactly one next frame")
+	_key(node, KEY_B)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [0, false], "B restores preceding frame paused")
+	_key(node, KEY_B)
+	context.equal(node.viewer.current_frame(), 0, "initial frame cannot move backward")
+	node.viewer.seek(900)
+	node._physics_process(0.0)
+	var reached: int = node.viewer.current_frame()
+	_key(node, KEY_N)
+	_key(node, KEY_B)
+	_key(node, KEY_P)
+	context.equal([node.viewer.current_frame(), node.viewer.is_seeking()], [reached, true], "seeking disables play and step shortcuts")
+	_key(node, KEY_ESCAPE)
+	context.equal([node.viewer.current_frame(), node.viewer.is_seeking(), node.viewer.is_playing], [reached, false, false], "Escape cancels seek at reached boundary")
+	_key(node, KEY_R)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [0, false], "R restarts paused")
+	var corrupt: RefCounted = Fixture.recording()
+	corrupt._inputs[2] ^= 1
+	node.viewer.open_bytes(corrupt.to_bytes())
+	node._refresh()
+	_key(node, KEY_N)
+	_key(node, KEY_N)
+	context.equal(node.viewer.has_failure(), true, "keyboard inspection checks input integrity")
+	_key(node, KEY_P)
+	_key(node, KEY_N)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [1, false], "failed replay cannot advance through shortcuts")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+func _key(node: Node, code: int, modified: String = "") -> void:
+	var event: InputEventKey = InputEventKey.new()
+	event.keycode = code
+	event.pressed = modified != "released"
+	event.echo = modified == "echo"
+	event.ctrl_pressed = modified == "ctrl"
+	event.alt_pressed = modified == "alt"
+	event.meta_pressed = modified == "meta"
+	event.shift_pressed = modified == "shift"
+	node.call("_unhandled_key_input", event)

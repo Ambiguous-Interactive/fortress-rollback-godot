@@ -559,6 +559,8 @@ Driver delay changes return `BUSY` inside callbacks and completion handlers.
 
 After a stalled step, `driver.scheduled_local_input(player)` returns an owned retained sample, or `MISSING_LOCAL_INPUT` when none is staged.
 Its `frame` includes input delay; it is not the next `LocalInput.sample_frame`. Retry with an empty input list when all local samples are already staged.
+Peer `step()` and expert `begin_step()` accept the same empty retry. Partial lists may omit retained local slots;
+every unstaged local slot still needs a sample, and an incomplete effective list stages nothing.
 Successful advancement releases those samples. Keep sampling a new local input only when the retained sample is absent.
 
 Change delay between steps or while stalled, never from a game callback. Each added frame repeats the

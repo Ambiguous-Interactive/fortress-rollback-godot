@@ -174,6 +174,7 @@ func encode_accept() -> PackedByteArray:
 ## No receive queue is retained. Backpressure/BUSY leave this packet caller-owned for retry.
 ## Foreign identity, foreign configuration and forged packets are inert. Conflicting accepted history is terminal.
 ## Closing input preserves idempotent controls and retained rows until buffered playback actually terminates.
+## Authenticated obsolete rows outside retained history are inert and do not renew host liveness.
 func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 	if _session == null:
 		return Code.NOT_CONFIGURED
@@ -234,6 +235,9 @@ func receive_packet(packet: PackedByteArray, now_us: int) -> int:
 			var start: int = HEADER_BYTES + player * _config.input_width
 			row.append(packet.slice(start, start + _config.input_width))
 		code = _session.receive_host_frame(frame, row, statuses).code
+		if code in [Code.INVALID_FRAME, Code.TERMINATED] and frame < _session.status().current_frame:
+			# Evicted history cannot be compared or repaired, and retries must not renew host liveness.
+			return Code.OK
 		if code == Code.INPUT_ALREADY_SUBMITTED:
 			return _fail()
 		if code != Code.OK:

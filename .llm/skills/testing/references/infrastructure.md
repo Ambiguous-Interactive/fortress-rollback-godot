@@ -84,6 +84,12 @@ a missing-file test can observe a peer's recreated or truncated file instead.
 `OS.get_process_id()` is unavailable on Web; use it only in native branches.
 Web fixtures use the page's isolated filesystem and keep equivalent assertion counts.
 
+The native unit runner executes suites during `SceneTree._initialize()`, before
+nodes acquire live GUI focus. Direct handler calls can verify action gates, but
+cannot prove viewport routing, editable focus or popup consumption. Exercise those
+contracts in a deferred live scene with real input events; inspect rendering after
+layout settles. Keep native/Web assertion inventories equal when platform UI differs.
+
 ## Faster local iteration
 
 `make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;
