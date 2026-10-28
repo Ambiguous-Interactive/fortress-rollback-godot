@@ -218,3 +218,39 @@ schedule, while spectator data and acceptance use real sockets. The exported
 browser witness, replacement and remaining loss matrix, production admission
 service and full upstream semantic acceptance remain in #131 and #47.
 [Issue #245](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) specifies the next exported-browser witness.
+
+## Browser admission control boundary
+
+`Control(allowed_origin="http://127.0.0.1:PORT")` enables one exact browser
+origin for the development admission fixture. Supply the actual served page's
+origin, including its port. The default refuses browser-origin requests and
+preserves the native originless HTTP flow.
+
+A valid browser preflight permits GET/POST with Authorization and Content-Type.
+Foreign, opaque (`null`) and duplicate origins are refused; no wildcard origin
+or ambient credential access is enabled. Origin permission does not grant a
+role: the host and viewer still need their separate bearer capabilities.
+
+Run the ordinary bounded HTTP controls with:
+
+```sh
+python3 -m unittest discover -s scripts/reference -p test_spectator_control.py
+```
+
+The actual Chromium fetch test runs when both explicit tool paths are supplied:
+
+```sh
+FORTRESS_PLAYWRIGHT_PACKAGE=/absolute/path/to/node_modules/@playwright/test \
+FORTRESS_CHROMIUM_EXECUTABLE=/absolute/path/to/pinned/chrome \
+python3 -m unittest discover -s scripts/reference -p test_spectator_control.py
+```
+
+It serves two local origins and exercises authenticated admission, ACCEPT and
+host retrieval through real browser preflights. It also verifies wrong-role,
+foreign-origin and unapproved-header rejection. Without both tool paths, this
+browser case is explicitly skipped; the HTTP controls still run.
+
+This qualifies the fixture's browser HTTP boundary only. It does not execute an
+exported Godot game, establish independent host/viewer browser lifetimes or
+qualify SignalFish browser spectator routing. Those requirements remain in #245.
+The fixture continues to leave production identity policy to the application.

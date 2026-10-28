@@ -526,7 +526,9 @@ original canonical agreement and a bounded authenticated loopback admission/acce
 Native physical host/viewer socket departures stop paused buffered viewing; viewer loss
 also preserves the seated host's canonical continuation. Exported lifetimes remain unqualified.
 Production application admission and the full lifecycle matrix remain part of #131.
-[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) owns the next browser witness.
+[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) owns the next browser witness. The development control service now accepts one explicit
+browser origin with role-separated bearer access and real Chromium preflight/fetch controls.
+This HTTP boundary does not qualify exported Godot spectator routing or independent browser lifetimes.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so

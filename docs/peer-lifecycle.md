@@ -165,7 +165,9 @@ nor acknowledgements freeze the slot again or repeat `peer_dropped`.
 
 The barrier refuses a stale operation, a prepare of another connected era, a
 duplicated certificate and a commit that arrives without the local
-certificate. The survivor set is fixed when a local barrier opens. If a member
+certificate. An identical READY retry remains idempotent; a repeated certificate
+that changes its cut or value digest ends the pending operation with `conflicting_history`.
+The survivor set is fixed when a local barrier opens. If a member
 of that set disappears before commit, the barrier reports
 `peer_drop_unconfirmed` with `participant_lost` and ends the match. It cannot
 reduce the certificate requirement by omitting that survivor. A departure

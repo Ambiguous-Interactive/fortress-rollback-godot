@@ -88,6 +88,9 @@ EXPECTED.update({
 })
 EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
     'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum', 'client_history'}
+EXPECTED['res://tests/unit/test_peer_drop_commit.gd'] = {
+    'clean_ack_quiescence', 'lost_first_ack_recommits', 'malformed_committed_ack', 'malformed_duplicate_commit',
+    'early_committed_ack', 'wrong_sender_commit', 'commit_deadline', 'duplicate_ready_control', 'contradictory_ready_cut', 'contradictory_ready_digest'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
@@ -303,6 +306,7 @@ const DropPlanFairness = preload("res://tests/unit/test_peer_drop_plan_fairness.
 const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressure.gd")
 const DropRemoteDonorPressure = preload("res://tests/unit/test_peer_drop_remote_donor_pressure.gd")
 const DropLateAck = preload("res://tests/unit/test_peer_drop_late_ack.gd")
+const DropCommit = preload("res://tests/unit/test_peer_drop_commit.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -319,7 +323,7 @@ func _ready() -> void:
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
-		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck,
+		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

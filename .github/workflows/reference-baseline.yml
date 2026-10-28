@@ -145,6 +145,13 @@ jobs:
             --firefox .cache/reference/ownership-firefox/x86_64/firefox/firefox \
             --work-dir .cache/scratch/firefox-shutdown-control \
             --output .cache/reference/results/firefox-shutdown-control
+      - name: Verify spectator browser control origins
+        if: matrix.browser == 'chromium' && matrix.version == '4.3'
+        env:
+          PYTHONPATH: scripts/reference
+          FORTRESS_PLAYWRIGHT_PACKAGE: ${{ github.workspace }}/.cache/reference/browser/node_modules/@playwright/test
+          FORTRESS_CHROMIUM_EXECUTABLE: ${{ github.workspace }}/.cache/reference/ownership-chromium/x86_64/chrome-linux64/chrome
+        run: python3 -m unittest test_spectator_control.SpectatorControlTests.test_actual_browser_preflight_and_capability_separation
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:

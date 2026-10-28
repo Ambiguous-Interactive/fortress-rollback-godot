@@ -20,7 +20,8 @@ strings cannot expose this boundary. Decoding failures must report sanitized
 errors without revealing captured CLI output or credentials.
 
 Invalidate a prior success report before starting a new attempt, clear only the
-runner-owned logs, and preserve partial stdout/stderr on timeout. Capture
+runner-owned logs, and preserve partial stdout/stderr on timeout. Identify the failed
+command with a fixed phase label; dumping arbitrary arguments or environment can expose credentials. Capture
 bounded in-loop state snapshots before the outer watchdog when
 the inner timeout can occur later: include pending work and receipt/status
 gossip needed to distinguish throughput from confirmation stalls. Local passes

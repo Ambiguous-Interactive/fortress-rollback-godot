@@ -5,11 +5,27 @@ const SCENARIOS: Dictionary = {"clean_ack_quiescence": false, "lost_first_ack_re
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(SCENARIOS.keys() + ["malformed_committed_ack", "malformed_duplicate_commit", "early_committed_ack", "wrong_sender_commit", "commit_deadline"])
+	return PackedStringArray(
+		(
+			SCENARIOS.keys()
+			+ [
+				"malformed_committed_ack",
+				"malformed_duplicate_commit",
+				"early_committed_ack",
+				"wrong_sender_commit",
+				"commit_deadline",
+				"duplicate_ready_control",
+				"contradictory_ready_cut",
+				"contradictory_ready_digest",
+			]
+		)
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"duplicate_ready_control", "contradictory_ready_cut", "contradictory_ready_digest":
+			_duplicate_ready(context, name)
 		"malformed_committed_ack":
 			_malformed_committed(context, true)
 		"malformed_duplicate_commit":
@@ -271,7 +287,7 @@ func _held_fixture(context: RefCounted, phase: int, stage: int, recipient: int, 
 	return mesh
 
 
-func _receive_copy(context: RefCounted, mesh: Dictionary, packet: Dictionary, fields: Dictionary, sender: int = -1) -> void:
+func _receive_copy(context: RefCounted, mesh: Dictionary, packet: Dictionary, fields: Dictionary, sender: int = -1, allow_terminal: bool = false) -> void:
 	var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 	context.equal(decoded.code, T.Code.OK, "decode the held original")
 	for field: String in fields:
@@ -283,7 +299,7 @@ func _receive_copy(context: RefCounted, mesh: Dictionary, packet: Dictionary, fi
 	context.equal(encoded.code, T.Code.OK, "mutation remains a valid encoded packet")
 	context.equal(mesh.peers[packet.to].receive(encoded.bytes, _id(sender if sender >= 0 else int(packet.from)), mesh.now), I.Code.OK, "receive the mutated packet")
 	for round_trip: int in range(6):
-		_deliver(context, mesh, _drain(mesh))
+		_deliver(context, mesh, _drain(mesh), allow_terminal)
 
 
 func _committed_mutations(message: T.Message) -> Array[Dictionary]:
@@ -389,3 +405,78 @@ func _wrong_sender_commit(context: RefCounted) -> void:
 	for survivor: int in [0, 1, 3]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "each survivor remains healthy after sender rejection")
 	context.equal(mesh.unconfirmed, 0, "wrong-sender rejection does not trigger fallback")
+
+
+# Value: protects=one survivor cannot replace its certificate while another is pending; fails_when=changed duplicate READY is ignored;
+# why_new=existing conflicting certificates compare different survivors only; seam=none
+func _duplicate_ready(context: RefCounted, name: String) -> void:
+	var mesh: Dictionary = _held_fixture(context, Drop.Phase.REPORT, Drop.Stage.READY, 0, 4)
+	if mesh.held.is_empty():
+		return
+	var ready: Dictionary = mesh.held[0]
+	var proposer: Drop.Barrier = _barrier(mesh)
+	var untouched: Dictionary = {}
+	for slot: int in range(4):
+		untouched[slot] = mesh.peers[0]._core.retained_input(slot, 5)
+	_release_original(context, mesh, ready)
+	context.equal(proposer.certificates.size(), 1, "one original certificate is accepted before another survivor answers")
+	context.equal(proposer.state, Drop.PENDING, "the other survivor still prevents irreversible commit")
+	var fields: Dictionary = {}
+	if name == "contradictory_ready_cut":
+		fields.cut = int(ready.message.cut) + 1
+	elif name == "contradictory_ready_digest":
+		fields.cut_digest = int(ready.message.cut_digest) ^ 1
+	var conflicting: bool = not fields.is_empty()
+	_receive_copy(context, mesh, ready, fields, -1, conflicting)
+	context.equal(proposer.state, Drop.FAILED if conflicting else Drop.PENDING, "only a contradictory repeated certificate aborts the original agreement")
+	context.equal(
+		mesh.peers[0].status().lifecycle,
+		Types.Lifecycle.TERMINATED if conflicting else Types.Lifecycle.RUNNING,
+		"an identical retry is idempotent; a contradictory retry fails closed"
+	)
+	context.equal(proposer.certificates.size(), 1, "a duplicate never contributes another participant certificate")
+	context.equal(mesh.peers[0]._core.frozen_frame(2), -1, "neither repeated certificate alone can freeze the target")
+	if conflicting:
+		context.equal(mesh.reasons.has("conflicting_history"), true, "a changed certificate publishes its specific failure reason")
+		for slot: int in range(4):
+			context.equal(mesh.peers[0]._core.retained_input(slot, 5), untouched[slot], "certificate contradiction preserves every retained original prefix")
+		context.equal(mesh.drop_events.get(0, []), [], "a contradictory retry produces no misleading local drop event")
+		return
+	# Hold until both other survivors have published their original READY.
+	for turn: int in range(20):
+		_service_commit(context, mesh)
+		var senders: Dictionary = {}
+		for packet: Dictionary in mesh.held:
+			senders[packet.from] = true
+		if senders.size() == 2:
+			break
+	var certificates: Array = mesh.held.duplicate()
+	mesh.hold_phase = -1
+	for packet: Dictionary in certificates:
+		_release_original(context, mesh, packet)
+	for turn: int in range(6):
+		_deliver(context, mesh, _drain(mesh))
+	context.equal(proposer.state, Drop.COMMITTED, "the remaining original certificate completes the unchanged operation")
+	for survivor: int in [0, 1, 3]:
+		context.equal(mesh.drop_events.get(survivor, []), [ready.message.cut], "identical retries preserve one freeze notification per survivor")
+	_play(context, mesh, 6, true, [0, 1, 3], 2)
+	var through: int = 2147483647
+	for survivor: int in [0, 1, 3]:
+		through = mini(through, mesh.peers[survivor].status().confirmed_frame - 1)
+	context.equal(through > int(ready.message.cut), true, "the idempotent retry control confirms gameplay beyond the original cut")
+	var reference: RefCounted = preload("res://tests/oracle/reference_game.gd").new(4, 2)
+	var expected: Dictionary = {}
+	for frame: int in range(through + 1):
+		var row: Array[Dictionary] = []
+		for slot: int in range(4):
+			var frozen: bool = slot == 2 and frame > int(ready.message.cut)
+			row.append({"player": slot, "bytes": _sample(slot, int(ready.message.cut) if frozen else frame).hex_encode(), "status": "disconnected" if frozen else "confirmed"})
+		context.equal(reference.advance(row), "", "the original canonical input history advances independently")
+		expected[frame] = reference.bytes().hex_encode()
+	for survivor: int in [0, 1, 3]:
+		var actual: Dictionary = {}
+		for request: Dictionary in mesh.games[survivor].requests:
+			if request.kind == "advance":
+				actual[request.frame] = request.state_bytes
+		for frame: int in range(through + 1):
+			context.equal(actual.get(frame, ""), expected[frame], "identical certificate retries preserve independent canonical history")

@@ -2,6 +2,9 @@
 
 Use for actual SDK, exported-browser, lifecycle, scheduling and watchdog witnesses.
 
+Qualify cross-origin control services with actual browser preflight and authenticated fetch.
+Native HTTP success does not exercise browser origin enforcement; keep origin permission separate from role capabilities.
+
 Integration witnesses must capture every applicable SDK failure signal and
 recheck latched errors after the final event drain and before publishing success.
 Inject each actual failure signal at that last boundary and require nonzero exit
