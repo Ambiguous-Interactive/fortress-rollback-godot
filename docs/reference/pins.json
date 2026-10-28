@@ -1,36 +1,36 @@
 {
   "schema_version": 1,
-  "verified_on": "2026-10-10",
+  "verified_on": "2026-10-28",
   "sources": {
     "fortress": {
       "repository": "https://github.com/wallstop/fortress-rollback",
-      "revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+      "revision": "d124c89080004d96971a629bb0427056ee1805e3",
       "archive": {
-        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/f13cd5c0f2815926785a395947e18da0dbea0dd8",
-        "digest": "d788b0dc86defaa53f92ca0cda454e72845663e47ba8d0f39f82a32d1cda827d",
+        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/d124c89080004d96971a629bb0427056ee1805e3",
+        "digest": "7dfed1139a25123e47d4895b4eb5f470cadc099efff20a54b2f19418eb05e2a4",
         "algorithm": "sha256"
       },
-      "root": "fortress-rollback-f13cd5c0f2815926785a395947e18da0dbea0dd8"
+      "root": "fortress-rollback-d124c89080004d96971a629bb0427056ee1805e3"
     },
     "sdk": {
       "repository": "https://github.com/Ambiguous-Interactive/signal-fish-client-godot",
-      "revision": "db7d30f228d8d564adcb2eb38d5983bf6b9877ac",
+      "revision": "8e1475ed12a618fb41660bd1c8a1b0c934dee77f",
       "archive": {
-        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/db7d30f228d8d564adcb2eb38d5983bf6b9877ac",
-        "digest": "0854f8c778a118defe95bd8887e227c8bc8c194c54d2e501c6d74094fa43ec12",
+        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-client-godot/tar.gz/8e1475ed12a618fb41660bd1c8a1b0c934dee77f",
+        "digest": "8d12230afbce797186872dd30114452154e0b1c5b5bca19eb14e4baad145f46e",
         "algorithm": "sha256"
       },
-      "root": "signal-fish-client-godot-db7d30f228d8d564adcb2eb38d5983bf6b9877ac"
+      "root": "signal-fish-client-godot-8e1475ed12a618fb41660bd1c8a1b0c934dee77f"
     },
     "server": {
       "repository": "https://github.com/Ambiguous-Interactive/signal-fish-server",
-      "revision": "9c2fb8fa635a69241b8ccf38be651d561fef7434",
+      "revision": "8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560",
       "archive": {
-        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/9c2fb8fa635a69241b8ccf38be651d561fef7434",
-        "digest": "1c618785dd93e1a69f27687f1f8f75fbfb15e49f3a3a0f130aa3ee17af40a076",
+        "url": "https://codeload.github.com/Ambiguous-Interactive/signal-fish-server/tar.gz/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560",
+        "digest": "c3b3bdbfba6812327550e037f24045cb77fdd29eaaea047b9f89606c10263c11",
         "algorithm": "sha256"
       },
-      "root": "signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434"
+      "root": "signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560"
     }
   },
   "artifacts": {
@@ -65,18 +65,13 @@
       "algorithm": "sha256"
     },
     "rustup-init-aarch64": {
-      "url": "https://static.rust-lang.org/rustup/archive/1.29.1/aarch64-unknown-linux-gnu/rustup-init",
-      "digest": "15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433",
+      "url": "https://static.rust-lang.org/rustup/archive/1.29.2/aarch64-unknown-linux-gnu/rustup-init",
+      "digest": "a9c168dbea81a84671c6b7a5c1795cb0eb699020110d107ddfca427bd797e697",
       "algorithm": "sha256"
     },
     "rustup-init-x86_64": {
-      "url": "https://static.rust-lang.org/rustup/archive/1.29.1/x86_64-unknown-linux-gnu/rustup-init",
-      "digest": "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71",
-      "algorithm": "sha256"
-    },
-    "rust-channel-1.94.0": {
-      "url": "https://static.rust-lang.org/dist/channel-rust-1.94.0.toml",
-      "digest": "aaa177def36e01d539bee6bde95295230b9ce378f81057845db8d0ebe97898ee",
+      "url": "https://static.rust-lang.org/rustup/archive/1.29.2/x86_64-unknown-linux-gnu/rustup-init",
+      "digest": "5be191e8c70a5007074254cb74d78dbfdd25cd5a61c27de7b8e5410122ec24f4",
       "algorithm": "sha256"
     },
     "tla2tools-1.8.0.jar": {
@@ -85,52 +80,61 @@
       "digest": "7beec0f04818732a62fa193731711a99aa4f11279499b2360a7d156c519ea78d",
       "algorithm": "sha256"
     },
-    "chromium-1194-arm64.zip": {
-      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1194/chromium-linux-arm64.zip",
-      "digest": "54685f7ce2045e91f07b7fa4cab0ca3390b12773eae4777ca4ae676d3e9d4ef2",
+    "chromium-1248-arm64.zip": {
+      "url": "https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux-arm64/chrome-linux-arm64.zip",
+      "digest": "910a12fff6170202195f72ef3d353801c7063d301ab80b1f51b77d791fda60ce",
       "algorithm": "sha256"
     },
-    "chromium-1194-x86_64.zip": {
-      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/chromium/1194/chromium-linux.zip",
-      "digest": "5ad70cf662e7090354edbe84e1a01ac531fd217f37f5001f0d2efbe0d152b396",
+    "chromium-1248-x86_64.zip": {
+      "url": "https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-linux64.zip",
+      "digest": "43fd31766c7533a02dda2ded5ad50c2f861cd5400be7509c0abad71129f79d79",
       "algorithm": "sha256"
     },
-    "firefox-1495-ubuntu24.04-arm64.zip": {
-      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1495/firefox-ubuntu-24.04-arm64.zip",
-      "digest": "1032e82ec99f8327d571494e24f88fd1069e106eed6c15ddb0a3ea224fd4d87a",
+    "firefox-1555-ubuntu24.04-arm64.zip": {
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1555/firefox-ubuntu-24.04-arm64.zip",
+      "digest": "fe2e1fd49048866e9b9249d1b9394b4989f58f589a35b19edcbce8aab1501f8c",
       "algorithm": "sha256"
     },
-    "firefox-1495-ubuntu24.04-x86_64.zip": {
-      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1495/firefox-ubuntu-24.04.zip",
-      "digest": "b4b37ec057c56b8d26a3374a106fc994eb85621b32b93a006661a18d096bce60",
+    "firefox-1555-ubuntu24.04-x86_64.zip": {
+      "url": "https://cdn.playwright.dev/dbazure/download/playwright/builds/firefox/1555/firefox-ubuntu-24.04.zip",
+      "digest": "564f74fa3c46cb83c6252145cf1569c95236c8c404d6a5a80cc736cf32265f0c",
+      "algorithm": "sha256"
+    },
+    "rust-channel-1.99.1": {
+      "url": "https://static.rust-lang.org/dist/channel-rust-1.99.1.toml",
+      "digest": "fb152be80975c194aa5fc684b2aec3a6e14e2b855efe2faa4e5f8ae6e590f463",
       "algorithm": "sha256"
     }
   },
   "rust": {
-    "version": "1.94.0",
+    "version": "1.99.1",
     "profile": "minimal",
     "features": [],
     "default_features": false,
-    "lockfile_sha256": "1ff03f231c91778ad6b7f8e244670af9acabec52ddd3a5c010b501cc760defbb",
-    "rustup_version": "1.29.1"
+    "lockfile_sha256": "7ca0a14b1c9ba068b72f02324f28d3a07df8fb464258a7b9bc3eada53ee57679",
+    "rustup_version": "1.29.2"
   },
   "godot": {
     "minimum": "4.3",
     "current_stable": "4.7.2",
-    "release_observed_on": "2026-10-10"
+    "release_observed_on": "2026-10-28"
   },
   "browser": {
     "package": "@playwright/test",
-    "version": "1.56.1",
-    "npm_integrity": "sha512-vSMYtL/zOcFpvJCW71Q/OEGQb7KYBPAdKh35WNSkaZA75JlAO8ED8UN6GUNTm3drWomcbcqRPFqQbLae8yBTdg==",
+    "version": "1.64.1",
+    "npm_integrity": "sha512-IaYGml/nSOiZWROfPtuIL7neuu9qDOZ3TNvNljUIrhDMxiGTgPjzj/g9p9RxpS2tSepPDRY+UwAaEeiKtUvIAg==",
     "status": "Chromium and Firefox pinned for Linux Ubuntu 24.04 arm64/x86_64; WebKit execution pending",
-    "chromium_revision": "1194",
-    "chromium_version": "141.0.7390.37",
-    "firefox_revision": "1495",
-    "webkit_revision": "2215",
-    "node_version": "22.23.3",
-    "browser_registry_sha256": "1387ec667390e31e49040aa2c81d27720b38d32c7892d1a50c7f85b187e926c1",
-    "firefox_version": "142.0.1"
+    "chromium_revision": "1248",
+    "chromium_version": "156.0.8078.4",
+    "firefox_revision": "1555",
+    "webkit_revision": "2370",
+    "node_version": "26.12.1",
+    "browser_registry_sha256": "2cfd419f71ac6475d81e1301fa86c34cf2a2a6bae2a0da4b5a2b18310216b6bf",
+    "firefox_version": "157.0",
+    "chromium_executables": {
+      "arm64": "chrome-linux-arm64/chrome",
+      "x86_64": "chrome-linux64/chrome"
+    }
   },
   "formal": {
     "tlc_version": "1.8.0",

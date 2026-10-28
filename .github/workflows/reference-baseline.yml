@@ -44,10 +44,10 @@ jobs:
     # Both full suites took over ten minutes together; reserve setup and teardown time.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.15.2"
       - run: make test-reference
       - run: make test-oracle
 
@@ -56,12 +56,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.15.2"
       - name: Restore pinned Rust downloads and crates
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             .cache/reference/downloads
@@ -78,7 +78,7 @@ jobs:
         run: python3 scripts/reference/check_integer_vectors.py --check
       - name: Verify source inventory against the pinned extraction
         run: python3 scripts/reference/inventory.py
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: rust-reference-results
@@ -104,15 +104,15 @@ jobs:
           - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
           - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v5
+          python-version: "3.15.2"
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: "22.23.3"
+          node-version: "26.12.1"
       - name: Restore verified reference downloads
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: .cache/reference/downloads
           key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
@@ -145,7 +145,7 @@ jobs:
             --firefox .cache/reference/ownership-firefox/x86_64/firefox/firefox \
             --work-dir .cache/scratch/firefox-shutdown-control \
             --output .cache/reference/results/firefox-shutdown-control
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && format('-firefox-{0}', matrix.phase) || '' }}${{ matrix.part_suffix }}
@@ -163,13 +163,13 @@ jobs:
         # Suites and oracle launchers share no state, so they run as parallel jobs.
         part: [suites, oracles]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v5
+          python-version: "3.15.2"
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: "22.23.3"
+          node-version: "26.12.1"
       - name: Select Ubuntu HTTPS mirror alternatives
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Select Java 17 for scoped model checking
@@ -192,7 +192,7 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
           echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
       - name: Restore verified reference downloads and crates
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             .cache/reference/downloads
@@ -249,7 +249,7 @@ jobs:
           version="${{ matrix.version }}"
           editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
           python3 scripts/oracle/spectator_launch.py --godot "$editor" --output ".cache/reference/results/spectator-model-$version"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: godot-browser-reference-results-${{ matrix.version }}-${{ matrix.part }}
@@ -271,15 +271,15 @@ jobs:
         # runs with the direct labels so both jobs take about as long.
         part: [direct, mixed, online]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@v5
+          python-version: "3.15.2"
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: "22.23.3"
+          node-version: "26.12.1"
       - name: Restore verified transport downloads and crates
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             .cache/reference/downloads
@@ -302,7 +302,7 @@ jobs:
           digest="$(sha256sum .cache/reference/signal-fish-server-*/Cargo.lock scripts/reference/signalfish_build_server.py | sha256sum | cut -d' ' -f1)"
           echo "build=$digest" >> "$GITHUB_OUTPUT"
       - name: Restore the shared relay server build tree
-        uses: actions/cache@v5
+        uses: actions/cache@v6.1.0
         with:
           path: |
             .cache/reference/server-target
@@ -326,10 +326,10 @@ jobs:
           manifest = load_manifest()
           setup_rust(manifest, False)
           PY
-          cargo="$(RUSTUP_HOME="$PWD/.cache/reference/rustup" .cache/reference/cargo/bin/rustup which --toolchain 1.94.0 cargo)"
+          cargo="$(RUSTUP_HOME="$PWD/.cache/reference/rustup" .cache/reference/cargo/bin/rustup which --toolchain 1.99.1 cargo)"
           python3 scripts/reference/signalfish_build_server.py \
             --cargo "$cargo" \
-            --source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+            --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
             --output .cache/reference/results/signalfish-server-build
       - name: Verify real browser WebRTC on the pinned engine
         if: matrix.part == 'direct' || matrix.part == 'mixed'
@@ -340,7 +340,7 @@ jobs:
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-            --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+            --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/signalfish-webrtc
       - name: Play the shipped online example in two independent browsers
@@ -349,7 +349,7 @@ jobs:
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --online-example --version "${{ matrix.version }}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-            --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+            --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
             --output .cache/reference/results/online-example
       - name: Verify native relay and late-event controls
@@ -360,11 +360,25 @@ jobs:
             python3 scripts/reference/signalfish_live_probe.py \
               --godot "$editor" \
               --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-              --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
               --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
               --output ".cache/reference/results/signalfish-live-$version"
+            python3 scripts/reference/signalfish_spectator_live.py \
+              --godot "$editor" \
+              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+              --output ".cache/reference/results/spectator-live-$version"
+            for late_signal in spectator_join_failed spectator_left spectator_disconnected; do
+              python3 scripts/reference/signalfish_spectator_live.py \
+                --godot "$editor" --late-signal "$late_signal" \
+                --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+                --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+                --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+                --output ".cache/reference/results/spectator-live-$version-$late_signal"
+            done
           done
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
           name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}

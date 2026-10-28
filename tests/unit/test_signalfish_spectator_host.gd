@@ -61,6 +61,7 @@ func cases() -> PackedStringArray:
 			"pressure",
 			"lifetimes",
 			"configuration",
+			"sdk_numbers",
 			"reentry",
 			"history_loss",
 			"player_coexistence",
@@ -233,6 +234,24 @@ func _lifetimes(context: RefCounted) -> void:
 		context.equal(fixture.client.sent.is_empty(), true, "no bytes leave invalid lifetime")
 		context.equal(fixture.host.status().lifecycle, S.Lifecycle.RUNNING, "publication failure does not terminate player gameplay")
 		_stop(fixture)
+
+
+# Value: protects=real SDK protocol metadata configures publication; fails_when=raw JSON floats replace authoritative typed properties; seam=public SDK shape
+func _sdk_numbers(context: RefCounted) -> void:
+	for field: String in ["protocol_version", "max_outbound_message_size"]:
+		var values: Array = [3, 2, 3.5, false, "3", NAN, INF] if field == "protocol_version" else [4096, 256, 255, 4096.5, false, "4096", NAN, INF]
+		for value: Variant in values:
+			var fixture: Dictionary = _fixture(context, false)
+			fixture.relay.detach()
+			var info: Viewer.JSONInfo = Viewer.JSONInfo.new()
+			info.set(field, value)
+			var allowed: bool = value is int and value >= (3 if field == "protocol_version" else 256)
+			var code: int = fixture.relay.configure(
+				fixture.client, fixture.config, info, fixture.host, VIEWER, fixture.helper._identity(), fixture.helper._key(), fixture.helper._digest(), fixture.options
+			)
+			var rejected: int = HostRelay.Code.INCOMPATIBLE_MODE if field == "protocol_version" else HostRelay.Code.TOO_LARGE
+			context.equal(code, HostRelay.Code.OK if allowed else rejected, "typed SDK property controls publication: " + field)
+			_stop(fixture)
 
 
 func _configuration(context: RefCounted) -> void:

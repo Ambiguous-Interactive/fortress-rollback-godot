@@ -15,16 +15,22 @@ from fetch import MANIFEST, ROOT, digest, load_manifest
 from ownership_probes import tool_inventory
 
 LIMIT = 65536
-MARKER = 'FORTRESS_LATE_MUTEX '
+MARKER = 'FORTRESS_LATE_PROFILE_LOCK '
 SCRIPT = '''
 Services.prefs.setIntPref("toolkit.shutdown.fastShutdownStage", arguments[0]);
-const mutex = Cc["@mozilla.org/updates/update-mutex;1"].getService(Ci.nsIUpdateMutex);
-const aus = Cc["@mozilla.org/updates/update-service;1"].getService(Ci.nsIApplicationUpdateService);
-Services.obs.addObserver(function lateReacquire() {
-  Services.obs.removeObserver(lateReacquire, "profile-before-change");
-  const before = mutex.isLocked();
-  const acquired = aus.canCheckForUpdates;
-  dump("FORTRESS_LATE_MUTEX " + JSON.stringify({before, acquired, after:mutex.isLocked(),
+const profiles = Cc["@mozilla.org/toolkit/profile-service;1"].getService(Ci.nsIToolkitProfileService);
+const profile = profiles.createProfile(Services.dirsvc.get("ProfD", Ci.nsIFile), "fortress-shutdown-control", "control");
+profile.rootDir = Services.dirsvc.get("GreD", Ci.nsIFile);
+const marker = profile.rootDir.clone();
+marker.append("lock");
+Services.obs.addObserver(function lateLock() {
+  Services.obs.removeObserver(lateLock, "profile-before-change");
+  let before = false;
+  try { before = marker.isSymlink(); }
+  catch (error) { if (error.result !== Cr.NS_ERROR_FILE_NOT_FOUND) throw error; }
+  globalThis.__fortressLateLock = profile.lock({});
+  const acquired = globalThis.__fortressLateLock.directory.equals(profile.rootDir);
+  dump("FORTRESS_LATE_PROFILE_LOCK " + JSON.stringify({before, acquired, after:marker.isSymlink(),
     stage:Services.prefs.getIntPref("toolkit.shutdown.fastShutdownStage")}) + "\\n");
 }, "profile-before-change");
 return Services.prefs.getIntPref("toolkit.shutdown.fastShutdownStage");
@@ -93,7 +99,7 @@ class Marionette:
         response = self.receive()
         require(isinstance(response, list) and len(response) == 4 and all(type(value) is int for value in response[:2]) and
                 response[:2] == [1, self.sequence], 'unexpected Marionette response')
-        require(response[2] is None, 'Marionette command failed: ' + command)
+        require(response[2] is None, 'Marionette command failed: ' + command + ': ' + json.dumps(response[2], ensure_ascii=True)[:400])
         return response[3]
 
 
@@ -166,7 +172,7 @@ def run_stage(source, output, work_dir, stage, expected_version, frozen, origina
         port = reservation.getsockname()[1]
     prefs = {'marionette.port': port, 'browser.startup.homepage': 'about:blank', 'app.update.auto': False}
     (profile / 'user.js').write_text(''.join(f'user_pref({json.dumps(k)}, {json.dumps(v)});\n' for k, v in prefs.items()), encoding='utf-8')
-    receipt = {'stage': stage, 'profile_preferences': prefs, 'runtime_preferences': {'toolkit.shutdown.fastShutdownStage': stage}}
+    receipt = {'lock_mechanism': 'nsIToolkitProfile.lock', 'stage': stage, 'profile_preferences': prefs, 'runtime_preferences': {'toolkit.shutdown.fastShutdownStage': stage}}
     process = None
     try:
         with (owned / 'browser.log').open('wb') as log:
@@ -190,9 +196,9 @@ def run_stage(source, output, work_dir, stage, expected_version, frozen, origina
             require(process.wait(timeout=max(.001, min(15, deadline - time.monotonic()))) == 0, 'Firefox did not exit normally')
             require(wait_group(process, deadline), 'Firefox descendants outlived normal shutdown')
         callbacks = [json.loads(line[len(MARKER):]) for line in (owned / 'browser.log').read_text(encoding='utf-8').splitlines() if line.startswith(MARKER)]
-        require(callbacks == [{'before': False, 'acquired': True, 'after': True, 'stage': stage}], 'late updater mutex was not exercised')
+        require(callbacks == [{'before': False, 'acquired': True, 'after': True, 'stage': stage}], 'late native profile lock was not exercised')
         require(all(type(callbacks[0][key]) is bool for key in ('before', 'acquired', 'after')) and type(callbacks[0]['stage']) is int,
-                'invalid late updater mutex observation')
+                'invalid late native profile lock observation')
         after = inventory(runtime)
         save(owned / 'after.json', after)
         if stage == 1:

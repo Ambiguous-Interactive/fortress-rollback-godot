@@ -181,7 +181,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize) -> Result<Value, Stri
         survivors.push(json!({"peer":peer,"current_frame":sessions[peer].current_frame().as_i32(),
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
-    Ok(json!({"format":2,"complete":true,"upstream_revision":"f13cd5c0f2815926785a395947e18da0dbea0dd8",
+    Ok(json!({"format":2,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
         "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
         "lost_history":fault.dropped,"controls":control,"received_controls":received_controls,"survivors":survivors}))
 }

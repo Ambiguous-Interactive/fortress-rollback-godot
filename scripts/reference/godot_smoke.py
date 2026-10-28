@@ -96,12 +96,12 @@ def main():
             export.mkdir(parents=True)
             run(base + ['--export-release', 'Web', str(export / 'index.html')], environment, results / f'godot-{version}-export.log')
             environment['FORTRESS_PLAYWRIGHT_PACKAGE'] = str(CACHE / 'browser/node_modules/@playwright/test')
-            browser_name = f'chromium-1194-{arch}.zip'
+            browser_name = f"chromium-{data['browser']['chromium_revision']}-{arch}.zip"
             browser_zip = fetch(data['artifacts'][browser_name], browser_name, args.offline)
             browser_dir = CACHE / 'verified-browser' / arch
             browser_dir.mkdir(parents=True, exist_ok=True)
             prepare_zip(browser_zip, browser_dir)
-            environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(browser_dir / 'chrome-linux/chrome')
+            environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(browser_dir / data['browser']['chromium_executables'][arch])
             registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'
             if digest(registry) != data['browser']['browser_registry_sha256']:
                 raise ValueError('Playwright browser registry differs from pin')

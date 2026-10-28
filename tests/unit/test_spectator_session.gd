@@ -297,7 +297,7 @@ func _identity(value: int, width: int) -> PackedByteArray:
 	return bytes
 
 
-# Value: protects=terminal frame/token exhaustion while input-idle; fails_when=spectator delay masks shared-core fatal limits; why_new=core tests bypass override; seam=none
+# Value: protects=frame/token exhaustion and clean tails; fails_when=completion allocates another frame; why_new=core tests bypass spectator completion; seam=counter seeding
 func _exhaustion(context: RefCounted) -> void:
 	for frame_limit: bool in [true, false]:
 		var spectator: RefCounted = _spectator(context)
@@ -312,6 +312,23 @@ func _exhaustion(context: RefCounted) -> void:
 		context.equal(spectator.status().lifecycle, Types.Lifecycle.TERMINATED, "exhaustion is terminal")
 		context.equal(spectator.status().reason, Types.Code.FRAME_EXHAUSTED, "terminal cause retained")
 		context.equal(game.trace.is_empty(), true, "exhaustion runs no game callback")
+	for frame_limit: bool in [true, false]:
+		for expert: bool in [true, false]:
+			for at_limit: bool in [false, true]:
+				var spectator: RefCounted = _spectator(context)
+				var game: RefCounted = Fixture.Game.new()
+				# Seed a reachable completed prefix instead of executing billions of frames.
+				if frame_limit:
+					spectator._current = 2147483647 if at_limit else 2147483646
+					spectator._host_frontier = spectator._current - 1
+				else:
+					spectator._batch_id = 9223372036854775807 if at_limit else 9223372036854775806
+				context.equal(spectator.finish_host(), Types.Code.OK, "host cleanly closes its fully played prefix near the counter limit")
+				var code: int = spectator.begin_advance().code if expert else Driver.new(spectator, game).step(0, _empty()).code
+				context.equal(code, Types.Code.TERMINATED, "clean completion needs no further frame or batch token")
+				context.equal(spectator.is_complete(), true, "counter limit preserves clean playback authority")
+				context.equal(spectator.status().reason, Types.Code.TERMINATED, "clean tail does not report exhausted playback")
+				context.equal(game.trace.is_empty(), true, "completion runs no game callback")
 
 
 # Value: protects=every supported roster and maximum input width; fails_when=staging uses a two-player or byte-sized stride; why_new=other cases use two bytes; seam=none

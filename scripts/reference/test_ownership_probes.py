@@ -661,6 +661,7 @@ class OwnershipRejectionTests(unittest.TestCase):
                               'Godot_v4.7.2-stable_export_templates.tpz': {},
                               'chromium-1194-x86_64.zip': {}, 'firefox-1495-ubuntu24.04-x86_64.zip': {}},
                 'browser': {'browser_registry_sha256': probes.digest(registry), 'chromium_revision': '1194', 'chromium_version': 'fixture',
+                            'chromium_executables': {'x86_64': 'chrome-linux/chrome'},
                             'firefox_revision': '1495', 'firefox_version': 'fixture'}}
         def prepare_firefox(_pins, _arch, _offline, sources, environment, installation=None):
             self.assertEqual(installation, cache / 'ownership-firefox/x86_64')

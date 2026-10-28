@@ -118,5 +118,5 @@ fn main() {
         records.push(json!({"operation":index,"transitions":collect(&session,&mut cursor),
         "packets":packets,"events":events(&mut session)}));
     }
-    println!("{}",json!({"format":1,"complete":true,"upstream_revision":"f13cd5c0f2815926785a395947e18da0dbea0dd8","records":records}));
+    println!("{}",json!({"format":1,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3","records":records}));
 }

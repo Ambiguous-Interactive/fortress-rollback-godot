@@ -2,9 +2,9 @@
 
 [B1](https://github.com/wallstop/fortress-rollback-godot/issues/12) establishes
 an executable research baseline before the GDScript port. [pins.json](pins.json)
-is the machine-readable source/tool manifest. These pins remain the research
-revisions in PLAN.md; no source revision was advanced. Godot current stable was
-checked against the upstream release API on 2026-10-10 and is pinned to 4.7.2.
+is the machine-readable source/tool manifest. The source and tool revisions were refreshed on 2026-10-28.
+Godot current stable was checked against the upstream release API and remains 4.7.2.
+Frozen historical receipts and golden files retain their original provenance.
 
 The contract is that an unavailable source, corrupt archive, missing tool,
 unavailable feature, empty/partial test run or browser script error fails
@@ -34,7 +34,7 @@ passing test identities/counts, and stores JSON and raw logs in
 `.cache/reference/results`. Each invocation deletes its prior report and owned
 logs before loading pins or tools. A failed run leaves no successful report;
 partial timeout output is saved with an explicit `TIMEOUT` diagnostic. Artifacts
-from the other runner are preserved. It uses Rust 1.94.0, the upstream checked-in lockfile,
+from the other runner are preserved. It uses Rust 1.99.1, the upstream checked-in lockfile,
 `--locked --no-default-features`, no optional features, one test thread,
 `PROPTEST_RNG_SEED=1` and `PROPTEST_RNG_ALGORITHM=xs`. The network smoke uses
 upstream's fixed seeds `1,2,3,5,8,13,21,34` for 2, 3 and 4 players.
@@ -52,7 +52,8 @@ cannot establish byte/state/trace identity. The planted state-divergence test
 verifies that the upstream oracle and in-band detector reject that fault.
 
 For an actual web export and Chromium run, install the locked Playwright package
-in the cache. Node 22.23.3 was used for the recorded baseline. `npm ci` verifies
+in the cache. Current probes select Node 26.12.1 and Playwright 1.64.1.
+Chromium executable paths are pinned per architecture because archive layouts differ. `npm ci` verifies
 all package tarball integrity from the checked-in lockfile. Chromium downloads
 are separately verified against the SHA256 manifest and their installed members;
 the Playwright browser registry must also match its pinned digest.

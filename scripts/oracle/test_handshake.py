@@ -64,7 +64,7 @@ class HandshakeContractTests(unittest.TestCase):
                      'outstanding': 0, 'remote_connection': None, 'timeout_sent': False, 'mismatch': {}, 'elapsed_ms': -1}
         begin = dict(activated, action='begin', state='synchronizing')
         send = dict(begin, action='send_request', token='2a000000000000000000000000000000', disposition='fresh', outstanding=1)
-        return {'format': 1, 'complete': True, 'upstream_revision': 'f13cd5c0f2815926785a395947e18da0dbea0dd8', 'records': [
+        return {'format': 1, 'complete': True, 'upstream_revision': 'd124c89080004d96971a629bb0427056ee1805e3', 'records': [
             {'operation': None, 'packets': [packet_value], 'transitions': [activated, begin, send], 'events': []},
             {'operation': 0, 'packets': [], 'transitions': [], 'events': []}]}
 

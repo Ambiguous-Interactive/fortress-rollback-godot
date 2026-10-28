@@ -236,7 +236,7 @@ class ReferenceContracts(unittest.TestCase):
                             cargo = cache / 'cargo/bin/cargo'
                             if stage == 'later':
                                 cargo.parent.mkdir(parents=True)
-                                cargo.write_text('#!/bin/sh\ncase "$*" in *--version*) echo "cargo 1.94.0";; *) echo "INJECTED_TOOL_FAILURE"; exit 7;; esac\n')
+                                cargo.write_text('#!/bin/sh\ncase "$*" in *--version*) echo "cargo 1.99.1";; *) echo "INJECTED_TOOL_FAILURE"; exit 7;; esac\n')
                                 cargo.chmod(0o755)
                             with patch.object(module, 'sources', return_value={'fortress': cache}):
                                 with self.assertRaises(RuntimeError if stage == 'later' else FileNotFoundError):

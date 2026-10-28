@@ -51,6 +51,18 @@ class ShutdownFramingTests(unittest.TestCase):
                 with self.subTest(value=value), self.assertRaises(ValueError):
                     peer.call('test', {})
 
+    def test_command_failure_preserves_bounded_ascii_diagnostics(self):
+        error = {'error': 'javascript error', 'message': 'removed interface \x1b[31mé ' + 'x' * 1000}
+        payload = json.dumps([1, 1, error, None]).encode('utf-8')
+        peer = self.peer(str(len(payload)).encode() + b':' + payload)
+        with self.assertRaisesRegex(ValueError, 'removed interface') as failure:
+            peer.call('WebDriver:ExecuteScript', {})
+        message = str(failure.exception)
+        self.assertLessEqual(len(message), 500)
+        self.assertNotIn('\x1b', message)
+        self.assertIn('\\u001b', message)
+        self.assertIn('\\u00e9', message)
+
     def test_oversized_requests_fail_before_sending(self):
         peer = self.peer(b'')
         with self.assertRaisesRegex(ValueError, 'request too large'):

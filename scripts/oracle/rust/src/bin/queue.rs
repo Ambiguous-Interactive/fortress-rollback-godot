@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, Read};
 
-const REVISION: &str = "f13cd5c0f2815926785a395947e18da0dbea0dd8";
+const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
 #[derive(Debug)]
 struct QueueConfig;
 impl Config for QueueConfig {

@@ -3,7 +3,7 @@ extends SceneTree
 # gdlint: disable=max-returns
 
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
-const REVISION: String = "f13cd5c0f2815926785a395947e18da0dbea0dd8"
+const REVISION: String = "d124c89080004d96971a629bb0427056ee1805e3"
 const PREFIX: String = "FORTRESS_QUEUE_RESULT "
 
 

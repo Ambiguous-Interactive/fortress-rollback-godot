@@ -39,6 +39,8 @@ inventories into declared partitions while retaining cases, assertions and repea
 Include cold tool/OS preparation in the outer job budget; a warm setup duration cannot reserve a valid verification window.
 Localize stalled package acquisition before changing budgets again; preserve repository signature and checksum authentication when selecting mirror alternatives.
 Size harness command envelopes after encoding and serialization; a binary payload cap does not include hex expansion or JSON overhead.
+Dependency-only baseline refreshes must preserve readable recordings from known compatible source revisions.
+Exercise original provenance metadata as well as newly generated fixtures; regenerated fixtures alone hide rejection regressions.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
 Shared-host runs keep one worker and known slow-case isolation; serialization must

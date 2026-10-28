@@ -218,7 +218,7 @@ func _records_metadata(context: RefCounted) -> void:
 	var info: Dictionary = Engine.get_version_info()
 	context.equal(replay.engine_version(), "%d.%d.%d.%s %s" % [info.major, info.minor, info.patch, info.status, info.hash], "records the engine build")
 	context.equal(replay.addon_version(), ProjectSettings.get_setting("application/config/version"), "addon version matches the project version")
-	context.equal(replay.upstream_revision(), "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8", "records the pinned upstream")
+	context.equal(replay.upstream_revision(), "fortress-rollback d124c89080004d96971a629bb0427056ee1805e3", "records the pinned upstream")
 	context.equal([replay.game_seed(), replay.game_version()], ["1701", "replay-test v1"], "records the game seed and version")
 	context.equal([replay.input_delay(), replay.max_prediction_frames(), replay.sync_test()], [2, 8, false], "records the session configuration")
 	context.equal(replay.neutral_input(), PackedByteArray([0]), "records the neutral input")

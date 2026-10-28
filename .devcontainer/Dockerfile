@@ -10,7 +10,7 @@ ARG BASE_IMAGE=mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 # uv is pinned; it is infrastructure, not a fast-moving agent CLI.
 # BuildKit does not expand ARGs in `COPY --from`, so the uv image is pulled in
 # through a dedicated stage below.
-ARG UV_VERSION=0.13.0
+ARG UV_VERSION=0.13.6
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv-bin
 
@@ -21,10 +21,10 @@ FROM ${BASE_IMAGE}
 ARG GODOT_VERSION=4.7.2-stable
 # BuildKit predefined arg; must be (re)declared to be visible in RUN.
 ARG TARGETARCH
-# Node LTS, pinned: it runs the MCP servers, so its presence must not depend
+# Node stable, pinned: it runs the MCP servers, so its presence must not depend
 # on feature ordering. Installed before features run (the claude-code feature
 # detects and reuses it).
-ARG NODE_VERSION=22.23.3
+ARG NODE_VERSION=26.12.1
 
 # Modern CLI tooling for humans and agents, in a single layer. Ubuntu ships
 # fd and bat under different names; symlinks restore the conventional ones.

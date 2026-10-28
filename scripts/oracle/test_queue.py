@@ -10,7 +10,7 @@ from queue_contract import validate_bundle, compare
 
 class QueueContractTests(unittest.TestCase):
     def test_bundle_mutations(self):
-        valid = {'format': 1, 'upstream_revision': 'f13cd5c0f2815926785a395947e18da0dbea0dd8', 'cases': [
+        valid = {'format': 1, 'upstream_revision': 'd124c89080004d96971a629bb0427056ee1805e3', 'cases': [
             {'name': 'small', 'capacity': 2, 'input_width': 1, 'player': 0, 'operations': [{'kind': 'add', 'frame': 0, 'bytes': '01'}]}]}
         self.assertEqual(validate_bundle(valid), valid)
         mutations = [('format', True), ('format', 2), ('upstream_revision', 'stale'), ('cases', []), ('unknown', 1)]
@@ -65,7 +65,7 @@ class QueueContractTests(unittest.TestCase):
     def test_first_divergence_and_complete_consumption(self):
         record = {'index': 0, 'kind': 'read', 'accepted': True, 'frame': 0, 'bytes': '01',
                   'status': 'predicted', 'first_incorrect': -1, 'delay': 0}
-        trace = {'format': 1, 'upstream_revision': 'f13cd5c0f2815926785a395947e18da0dbea0dd8',
+        trace = {'format': 1, 'upstream_revision': 'd124c89080004d96971a629bb0427056ee1805e3',
                  'complete': True, 'cases': [{'name': 'small', 'records': [record]}]}
         compare(trace, copy.deepcopy(trace), ['small'], [1])
         for key, value in [('frame', 1), ('bytes', '02'), ('status', 'confirmed'), ('first_incorrect', 0),

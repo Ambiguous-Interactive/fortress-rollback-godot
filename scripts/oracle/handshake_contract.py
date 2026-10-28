@@ -48,7 +48,7 @@ def packet(raw, sender='0100000000000000'):
 def project(raw, scenario):
     fields(raw, 'format complete upstream_revision records', 'upstream result')
     integer(raw['format'], 1, 1, 'upstream format')
-    if raw['format'] != 1 or raw['complete'] is not True or raw['upstream_revision'] != 'f13cd5c0f2815926785a395947e18da0dbea0dd8':
+    if raw['format'] != 1 or raw['complete'] is not True or raw['upstream_revision'] != 'd124c89080004d96971a629bb0427056ee1805e3':
         raise ValueError('upstream identity/completion')
     if len(raw['records']) != len(scenario['operations']) + 1:
         raise ValueError('partial upstream operations')

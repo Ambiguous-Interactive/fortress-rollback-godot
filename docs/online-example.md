@@ -201,6 +201,10 @@ pauses at the last validated boundary. Navigation finishes paused at the request
 Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
 The display shows the current frame and stops at the first failed recorded checksum.
 The selected-state line separately identifies a matching, unchecked or absent recorded state checksum.
+The next-input line shows each player's recorded directions and confirmed or disconnected status
+at the displayed frame. Combined directions remain visible, including opposing buttons.
+It checks the row's stored input digest before showing controls, and hides mismatching values.
+The final state has no next input; moving backward restores the selected row's display.
 Advancing an input does not check its resulting state until you pause, step or finish a seek.
 Input digests and cached snapshots do not count as recorded state checksums.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
@@ -227,6 +231,7 @@ The viewer accepts complete recordings of this online integer game with seed 170
 two players and one-byte inputs, up to 36,000 frames. The file-size limit includes
 every checksum and the maximum metadata header for that full ten-minute recording.
 Other games, unknown game/addon/upstream versions, missing-input rows and invalid button bytes are rejected.
+Recordings from the original Fortress baseline remain compatible after dependency-only baseline refreshes.
 A failed import keeps the previous recording. Engine versions may differ; available
 recorded checksums still must match. Checksums are not an authenticity guarantee.
 For other games, use `FortressReplay.decode()` and `FortressReplayPlayer` with your

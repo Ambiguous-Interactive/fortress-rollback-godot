@@ -25,13 +25,14 @@ for capability gaps; follow [GitHub operations](.llm/skills/github-operations/SK
 Local development contracts and evidence entry points:
 
 - [Pinned reference setup, run instructions and evidence](docs/reference/README.md).
+  Source and tool pins were refreshed on 2026-10-28; historical receipts retain their original revisions.
 - [Session/driver/state/transport interface ADR](docs/contracts.md).
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
-- [Online match recording, downloads and offline replay viewer with backward inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
+- [Online match recording, downloads and offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
 - [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
@@ -116,9 +117,9 @@ Research inspected these exact revisions:
 
 | Project | Research baseline |
 | --- | --- |
-| Fortress Rollback | `f13cd5c0f2815926785a395947e18da0dbea0dd8` |
-| SignalFish Godot SDK | `db7d30f228d8d564adcb2eb38d5983bf6b9877ac` |
-| SignalFish server | `9c2fb8fa635a69241b8ccf38be651d561fef7434` |
+| Fortress Rollback | `d124c89080004d96971a629bb0427056ee1805e3` |
+| SignalFish Godot SDK | `8e1475ed12a618fb41660bd1c8a1b0c934dee77f` |
+| SignalFish server | `8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560` |
 
 These are inputs to baseline reproduction, not claims that all upstream suites
 were executed during planning. B1 records actual results and intentional updates.
@@ -516,8 +517,12 @@ Keepalive priority yields to queued row work so repeated host heartbeats cannot 
 Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
 differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
 [qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
-SDK delivery from the remaining exported Fortress witness. Reviewing dependency drift,
-restoring candidate server CI and upgrading the reviewed pins remain part of #131.
+SDK delivery from the remaining exported Fortress witness. The reviewed SDK/server pins now include
+the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
+The native Fortress witness now requires actual SDK/server publication and viewer receipt,
+original canonical agreement and a bounded authenticated loopback admission/acceptance path.
+Production application admission and the full lifecycle matrix remain part of #131.
+[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) owns the next browser witness.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
@@ -536,6 +541,7 @@ fenced by the complete locally derived operation identity and sender role.
 Refused control sends remain immediately retryable after output drains; accepted survivor links keep their own retry intervals under partial pressure, including READY certificates.
 Historical donor plans apply the same per-survivor acceptance clocks, leaving healthy output capacity available for retained history chunks.
 Bounded donor chunk service rotates across survivors so refused links cannot starve later healthy links.
+Remote donors also yield accepted certificate turns to history retries while another certificate destination refuses.
 A survivor lost before commit aborts the local attempt with `participant_lost`
 and ends the match; committed decisions remain irreversible. A certificate
 that names another value ends the match with a recorded reason
@@ -544,7 +550,7 @@ and a barrier that cannot agree ends the match with a recorded reason.
 A freeze refuses a cut below the protected confirmed frontier before changing history. Three real peer sessions now run that barrier end to end:
 one peer stops answering, the two survivors agree one frame, keep one
 confirmed history and keep playing, and a second departure leaves one
-survivor that preserves every retained original target input before freezing its slots at the receipt-raised cut. The pinned prepare,
+survivor that preserves every retained original target input before freezing its slots at the receipt-raised cut. The reviewed prepare,
 backfill, certificate and commit barrier is ported: the Godot tier agrees the
 frame and the pinned tier certifies the frozen value. The retained-history tier negotiates its feature before gameplay, raises the cut to
 cover exposed frontiers and target receipts, and certifies complete retained actual
@@ -641,12 +647,12 @@ are 180 characters; `make lint-source` checks every tracked source file.
 
 ## Primary references
 
-- [Pinned Fortress source](https://github.com/wallstop/fortress-rollback/tree/f13cd5c0f2815926785a395947e18da0dbea0dd8)
-- [Upstream session interface](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/sessions/session_trait.rs)
-- [Confirmed-state simulation oracle](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/tests/simulation/harness/oracle.rs)
-- [Handshake runtime-to-model trace contract](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/specs/tla/traces/sync-handshake-v1/README.md)
-- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/db7d30f228d8d564adcb2eb38d5983bf6b9877ac)
-- [SignalFish transport fallback contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/9c2fb8fa635a69241b8ccf38be651d561fef7434/docs/architecture/transport-fallback.md)
-- [SignalFish delivery and incarnation contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/9c2fb8fa635a69241b8ccf38be651d561fef7434/docs/adr/0006-protocol-v3-delivery-reliability.md)
+- [Pinned Fortress source](https://github.com/wallstop/fortress-rollback/tree/d124c89080004d96971a629bb0427056ee1805e3)
+- [Upstream session interface](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/session_trait.rs)
+- [Confirmed-state simulation oracle](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/tests/simulation/harness/oracle.rs)
+- [Handshake runtime-to-model trace contract](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/specs/tla/traces/sync-handshake-v1/README.md)
+- [Pinned SignalFish Godot SDK](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/tree/8e1475ed12a618fb41660bd1c8a1b0c934dee77f)
+- [SignalFish transport fallback contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/architecture/transport-fallback.md)
+- [SignalFish delivery and incarnation contract](https://github.com/Ambiguous-Interactive/signal-fish-server/blob/8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560/docs/adr/0006-protocol-v3-delivery-reliability.md)
 - [Godot packed-array ownership](https://docs.godotengine.org/en/4.3/classes/class_packedbytearray.html)
 - [Godot web export constraints](https://docs.godotengine.org/en/4.3/tutorials/export/exporting_for_web.html)

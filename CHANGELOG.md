@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add replay input inspection showing the selected frame's recorded directions and confirmed or disconnected player statuses. Corrupt input rows are identified without displaying their values.
+
 - Add keyboard replay inspection: P plays or pauses, N/B step forward/backward, R restarts, and Esc cancels a seek. Text entry and file chooser input remain available.
 
 - Add empty and partial peer input retries using retained local samples. Callback and expert clients can resume stalled publication without rebuilding submitted inputs.
@@ -200,6 +202,12 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix SignalFish spectator startup rejecting real SDK protocol metadata. Host and viewer bridges read the SDK's typed version and size limits.
+
+- Fix remote peer-drop donors stalling healthy history recovery when another survivor refuses a certificate packet.
+
+- Fix clean spectator completion at the frame and request-token limits. Fully played host tails report completion without requesting another frame.
 
 - Fix spectator host sends during an expert request opened by an SDK getter. Publication retains the original packet until the request finishes.
 

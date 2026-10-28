@@ -147,7 +147,7 @@ def validate_replay_download(value, expected_engine, round_record):
         texts.append(field.decode('ascii'))
         cursor += 1 + size
     if (not isinstance(expected_engine, str) or not expected_engine or texts[0] != expected_engine or texts[1:] != ['0.1.0',
-            'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8', '1701', 'fortress-online-integer-v1']):
+            'fortress-rollback d124c89080004d96971a629bb0427056ee1805e3', '1701', 'fortress-online-integer-v1']):
         raise ValueError('online replay lost its engine or game metadata')
     peers = value.get('peers')
     if (not isinstance(peers, list) or len(peers) != 2 or any(not isinstance(peer, dict) or type(peer.get('slot')) is not int for peer in peers)

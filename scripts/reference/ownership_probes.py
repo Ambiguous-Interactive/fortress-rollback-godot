@@ -136,9 +136,10 @@ EXPECTED['res://tests/unit/test_peer_drop_plan_fairness.gd'] = {
     'refused_plan_preserves_healthy_data', 'complete_plan_data_control', 'half_retry_lost_chunk',
     'half_retry_lost_chunk_control', 'equal_retry_lost_chunk', 'equal_retry_lost_chunk_control'}
 EXPECTED['res://tests/unit/test_peer_drop_ready_pressure.gd'] = {'partial_ready_retry', 'staggered_ready_retry', 'complete_ready_control'}
+EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused_ready_preserves_remote_donor', 'remote_donor_ready_control'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
-EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal'})
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
@@ -167,6 +168,8 @@ EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback',
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
 EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries', 'incomplete_prefix_digests', 'incomplete_prefix_storage'}
 EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards'}
+for _suite in ['host', 'relay']:
+    EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -216,7 +219,7 @@ FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_externa
 FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_plan_fairness.gd']
-FILES += ['tests/unit/test_peer_drop_ready_pressure.gd']
+FILES += ['tests/unit/test_peer_drop_ready_pressure.gd', 'tests/unit/test_peer_drop_remote_donor_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
@@ -296,6 +299,7 @@ const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pre
 const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairness.gd")
 const DropPlanFairness = preload("res://tests/unit/test_peer_drop_plan_fairness.gd")
 const DropReadyPressure = preload("res://tests/unit/test_peer_drop_ready_pressure.gd")
+const DropRemoteDonorPressure = preload("res://tests/unit/test_peer_drop_remote_donor_pressure.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -312,7 +316,7 @@ func _ready() -> void:
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
-		DropPlanFairness, DropReadyPressure,
+		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.
@@ -686,8 +690,8 @@ def prepare_browser(data, arch, offline, environment, selected):
         if installation.exists():
             shutil.rmtree(installation)
         installation.mkdir(parents=True)
-        prepare_zip(archive, installation, executable_members=('chrome-linux/chrome',))
-        executable = installation / 'chrome-linux/chrome'
+        prepare_zip(archive, installation, executable_members=(data['browser']['chromium_executables'][arch],))
+        executable = installation / data['browser']['chromium_executables'][arch]
         paths.update(browser_archive=archive, browser_installation=installation, browser_executable=executable)
         environment['FORTRESS_CHROMIUM_EXECUTABLE'] = str(executable)
     if not executable.is_file() or not os.access(executable, os.X_OK):

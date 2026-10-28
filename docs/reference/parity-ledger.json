@@ -1213,14 +1213,20 @@
     },
     "fortress:specs/tla/SpectatorSession.cfg": {
       "applicability": "unknown",
-      "port_test_ids": ["scripts/oracle/spectator_runtime.py::check", "scripts/oracle/test_spectator_runtime.py"],
+      "port_test_ids": [
+        "scripts/oracle/spectator_runtime.py::check",
+        "scripts/oracle/test_spectator_runtime.py"
+      ],
       "rationale": "Scoped startup relation audited in #203: actual pinned Rust/Godot delivery, backlog and catch-up cycles agree for capacities 2/3 and speeds 1/2. Original NULL-frame model counterexample retained; two anchored predicates repaired only in a derived model. Whole-family semantic audit remains pending; see docs/spectators.md.",
       "review": null,
       "status": "pending"
     },
     "fortress:specs/tla/SpectatorSession.tla": {
       "applicability": "unknown",
-      "port_test_ids": ["scripts/oracle/spectator_runtime.py::check", "scripts/oracle/test_spectator_runtime.py"],
+      "port_test_ids": [
+        "scripts/oracle/spectator_runtime.py::check",
+        "scripts/oracle/test_spectator_runtime.py"
+      ],
       "rationale": "Scoped startup relation audited in #203: actual pinned Rust/Godot delivery, backlog and catch-up cycles agree for capacities 2/3 and speeds 1/2. Original NULL-frame model counterexample retained; two anchored predicates repaired only in a derived model. Whole-family semantic audit remains pending; see docs/spectators.md.",
       "review": null,
       "status": "pending"
@@ -1606,7 +1612,10 @@
     },
     "fortress:src/sessions/p2p_spectator_session.rs": {
       "applicability": "unknown",
-      "port_test_ids": ["scripts/oracle/spectator_runtime.py::check", "scripts/oracle/test_spectator_runtime.py"],
+      "port_test_ids": [
+        "scripts/oracle/spectator_runtime.py::check",
+        "scripts/oracle/test_spectator_runtime.py"
+      ],
       "rationale": "Scoped startup relation audited in #203: actual pinned Rust/Godot delivery, backlog and catch-up cycles agree for capacities 2/3 and speeds 1/2. Original NULL-frame model counterexample retained; two anchored predicates repaired only in a derived model. Whole-family semantic audit remains pending; see docs/spectators.md.",
       "review": null,
       "status": "pending"
@@ -2549,7 +2558,7 @@
       "AGENTS.md": "c60eddce6f5bda9d1705dc15a3d3b6dda6245a47803783802849bde6c148f632",
       "CHANGELOG.md": "5fa0bd5c5687cb8c05cbd8311bafe29d32fb9e9672a355d36294f8a85cdd551b",
       "CLAUDE.md": "57a87640a47647eef98e837061913679a43cd768b36cd6c04df7b3d97097fa5d",
-      "Cargo.lock": "1ff03f231c91778ad6b7f8e244670af9acabec52ddd3a5c010b501cc760defbb",
+      "Cargo.lock": "7ca0a14b1c9ba068b72f02324f28d3a07df8fb464258a7b9bc3eada53ee57679",
       "Cargo.toml": "cb127fc3812b50637599ad259a99016468f038e10c0af9e90818253d3b42f40d",
       "Cross.toml": "8f6c8cfae1b4a45fb449c51efe9dfcd265db1ee787d2a9e0f7ba1dc06128f75b",
       "LICENSE": "c13655e7cc46e72d27a90a1c8682a7893df64ba34d3a301e99733443c3f52ac4",
@@ -2608,7 +2617,7 @@
       "examples/request_handling.rs": "d2411bb15c22aef5a701a4b9a040a19bc8f4d72df3e729f0cd8b6a66ef72a252",
       "examples/sync_test.rs": "3327e6870d92b8f0e805a0d307a19a63cbf7c7aab5f73b0f1b551594a06b5999",
       "fuzz/.gitignore": "a24ed50fc1f28dcafa5d4f9eac712faf4b1ffd7910177f5ce30289197a7a2484",
-      "fuzz/Cargo.lock": "1ecb5a0984b73b45080c1ebe2b4d0f297597dfe1ebbbd79322838a8c866a7187",
+      "fuzz/Cargo.lock": "2e1c209750e6f6523f8ca86a1e51234dee8d854f5004ad7054f1c9a0baf2e6e4",
       "fuzz/Cargo.toml": "0e1ea10fdf27a2c130ebc849df09146a56c0a67d8b01e9959bf394d7eba7a1b2",
       "fuzz/fuzz_targets/fuzz_compression.rs": "b8c33b65312cb599045cdbb3abf07b0c5c57c0dacf43bea3bfe2c1c778517d20",
       "fuzz/fuzz_targets/fuzz_input_queue.rs": "7b62a3da6211a4ebd58080c8e30f1b17c083a5e660b826cdb812ba583584a394",
@@ -2634,7 +2643,7 @@
       "proptest-regressions/rle.txt": "5074101ac79827a40a3ae1fc3bb3982e1de3c59dbd5b671559b98e17db7504f6",
       "proptest-regressions/rng.txt": "01f4dd4aa96bda32bdc84af34b389236f8f0d57f5b64f0c6da252755fc723722",
       "release-state.json": "51d99002a01cc7f77348dae7e07245ae1ae50b68569bd43a4d29201bfa19c161",
-      "requirements-docs.txt": "ab26592db70c89b44220e9c19c1bfc34ac32817e71d3abc44fa73836cac2a7c4",
+      "requirements-docs.txt": "dca1150f974b42f0e9176729f5d4496009f6b7daad74e574ac5119a853a14633",
       "ruff.toml": "6089b7eb214b3952b79b7cfd4bcb111e12ab0485ebe72be4e3c93fd8ef6d0ee6",
       "rustfmt.toml": "52e3e42f3d7d145c84c4f85209efe06626a2fc890d4cd6ca8eda03cebb85cdd7",
       "scripts/api/public_api_census.py": "196b60ca2ed9ada86296d02a78154b50840540600e3e1f3bf96492932f5a7bc3",
@@ -3059,7 +3068,7 @@
         },
         "path": ".agents/skills/adversarial-handoff/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "865f80a32f7a1ffc81cd987d44b7c2cd107ebb4eb9d34d49021f71920164dda3"
       },
       {
@@ -3096,7 +3105,7 @@
         },
         "path": ".agents/skills/adversarial-review/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ed3157c3b279c439cba27253ac363bf8f5f2d5fc7dade1b27a52ce5f9b1c5ea4"
       },
       {
@@ -3133,7 +3142,7 @@
         },
         "path": ".agents/skills/api-design/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8254641f5c3bf2bb24430b7ee163bc3ac8ba2644e7a85f092a1968f8010df7e7"
       },
       {
@@ -3161,7 +3170,7 @@
         },
         "path": ".agents/skills/async-rust/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a9b5d0a55cbffd47408ee5ae46e0bbba3a66195ea32237ebe5c7d8f979d60e89"
       },
       {
@@ -3193,7 +3202,7 @@
         },
         "path": ".agents/skills/binary-size/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cd74d52a77d6dadec2926a0d2541dcfcce7e3992eec18416fde7914968b700c9"
       },
       {
@@ -3235,7 +3244,7 @@
         },
         "path": ".agents/skills/changelog/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "653766afa4169e2f8cc0bfbe790a337660e53519afe76f091622c39250c0100b"
       },
       {
@@ -3272,7 +3281,7 @@
         },
         "path": ".agents/skills/ci-debugging/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9e196e5b6570374768dfc155fd5766de382624de90b7ed94a31c667a7ace0faa"
       },
       {
@@ -3311,7 +3320,7 @@
         },
         "path": ".agents/skills/clippy/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "90bcdd95f63f4e2014f9d6ea6de86b8a9e6a1752c62c9dd263b51535faabb03e"
       },
       {
@@ -3346,7 +3355,7 @@
         },
         "path": ".agents/skills/code-review/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "aaf0ae4126fc47813f0a4133387f36c83e2d59945d70f4968a4e701d10869adb"
       },
       {
@@ -3374,7 +3383,7 @@
         },
         "path": ".agents/skills/concurrency/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c6ad9c5bd805d992048f3b1dda8a2b503bc51e12bab906a567f6adcd395bceb7"
       },
       {
@@ -3432,7 +3441,7 @@
         },
         "path": ".agents/skills/cross-platform/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a0aa94a091d1acd76cf7ca8c9d47eb57732c0d317c31caee4103c9a92bf1940d"
       },
       {
@@ -3485,7 +3494,7 @@
         },
         "path": ".agents/skills/defensive-programming/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b0496f83370266cca0a44539b920407f62e98814b1b3b6eadf21349fb998751a"
       },
       {
@@ -3531,7 +3540,7 @@
         },
         "path": ".agents/skills/dependency-management/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "79eeb4a2b8bb696f2d877ebc23386cff0fe4b9090e58511e979d3f6db8b4d119"
       },
       {
@@ -3555,7 +3564,7 @@
         },
         "path": ".agents/skills/design-decisions/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1fd7aa4d0c3267e68dd9a7ff1d909a0b8b256db0e20ba0cc6487c4d597de11c3"
       },
       {
@@ -3575,7 +3584,7 @@
         },
         "path": ".agents/skills/design-decisions/references/index.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9572d442689f1e836d42c42c6de3b9b3ce8cdf0b73f5206c320792c82566fbc5"
       },
       {
@@ -3594,7 +3603,7 @@
         },
         "path": ".agents/skills/design-decisions/references/network.txt",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8e2b1323214a7a98b9216023738d0faf0bf6304a6a620646682a6bec42af3c7a"
       },
       {
@@ -3615,7 +3624,7 @@
         },
         "path": ".agents/skills/design-decisions/references/serialization.txt",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "513d8cf6fb42b246443259630ec3ababe482bbef4f9dd1e080c24b262986ab54"
       },
       {
@@ -3657,7 +3666,7 @@
         },
         "path": ".agents/skills/determinism/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2719957a2ee9a462202c0526c3d8489283b1022eee41c1716f20f62b9ad18488"
       },
       {
@@ -3683,7 +3692,7 @@
         },
         "path": ".agents/skills/dev-pipeline/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "057163688655d4b7a355b8e5bd883aec5d18c4b1027e1b9baa25fe1913d050d1"
       },
       {
@@ -3737,7 +3746,7 @@
         },
         "path": ".agents/skills/doc-code-sync/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "54f49daaf103278f82d2afe218fb5feba48ab8499327e1726333e9f2844dbed8"
       },
       {
@@ -3782,7 +3791,7 @@
         },
         "path": ".agents/skills/dst/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d7dacf9d38375a20719b19b0cae657ff2216df5fb069218afc24e04623826e21"
       },
       {
@@ -3822,7 +3831,7 @@
         },
         "path": ".agents/skills/ffi/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "abe6d025a92d7850104fbb9e0d6fdd33a89931837efc2d40c70aa28e82f544b1"
       },
       {
@@ -3860,7 +3869,7 @@
         },
         "path": ".agents/skills/fortress-development/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "856adae02fdbbd748f351f58bb04cba5c30e4b8499bcad54e9bc728c05f82a6e"
       },
       {
@@ -3914,7 +3923,7 @@
         },
         "path": ".agents/skills/fuzzing/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ccf777340d8c4928ec662111ae078e7d362b42cdba31a30cce7cac5329fa556e"
       },
       {
@@ -3959,7 +3968,7 @@
         },
         "path": ".agents/skills/github-actions/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4b1b12862b0abfc670b294db6724d2142d8bbfcc634a0a154afffc4147ef5c5d"
       },
       {
@@ -3991,7 +4000,7 @@
         },
         "path": ".agents/skills/investigation/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7289d188bf61d155c28fe4a62cda7722577f4a47489025da6982eea1aeaa8edd"
       },
       {
@@ -4078,7 +4087,7 @@
         },
         "path": ".agents/skills/kani/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "def3bb1df25e801c30c9bfa99559e5e741b0eb3ed9b0f7aaeac1b748baebcaa0"
       },
       {
@@ -4162,7 +4171,7 @@
         },
         "path": ".agents/skills/loom/SKILL.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3d5a73ca11c235aea5db714745b1e87dd597582ec8d0985f77e69d0f9397a929"
       },
       {
@@ -4190,7 +4199,7 @@
         },
         "path": ".agents/skills/markdown/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2b026b28a18dd3579c63edce405883d1692bb17cda3351bd744f593e9c08f987"
       },
       {
@@ -4238,7 +4247,7 @@
         },
         "path": ".agents/skills/miri/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9ca5c7ca411cd14d3ea8a09a98c4e5bfcc6267306bfc80d4da80962a1af9ce5f"
       },
       {
@@ -4274,7 +4283,7 @@
         },
         "path": ".agents/skills/mutation-testing/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5943dba1f1a323d9792074509905161a5f4d71de11473914d97f7d7ded293485"
       },
       {
@@ -4304,7 +4313,7 @@
         },
         "path": ".agents/skills/network-chaos-testing/SKILL.md",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9c67e04062f1d18febe6ff0b6018a8683e10aaf727dee5a2e3f11d0f79486852"
       },
       {
@@ -4354,7 +4363,7 @@
         },
         "path": ".agents/skills/no-std/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5dee0c880dcc10da1cb71de4ce4129ce375bc248989fbc319bc38717c88adbf5"
       },
       {
@@ -4418,7 +4427,7 @@
         },
         "path": ".agents/skills/performance/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "773bfe5016d0e2ce09339ab3a8d3d27049c0e9db9b95525da8dbc1995b5b9413"
       },
       {
@@ -4467,7 +4476,7 @@
         },
         "path": ".agents/skills/property-testing/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d6499ff6ab6a1a67867abd9b19242d18791170dbb87110378698dea519c707f9"
       },
       {
@@ -4515,7 +4524,7 @@
         },
         "path": ".agents/skills/publishing/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7a80b6eb027ad8a953f8b81af023f5c607d388c05917b670ea7576bc3af784ae"
       },
       {
@@ -4535,7 +4544,7 @@
         },
         "path": ".agents/skills/refactoring/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b81ce2aa15b4c42b4936dc40ad2114fe8537f6ce95bc21bd2f20b73e4a64431f"
       },
       {
@@ -4557,7 +4566,7 @@
         },
         "path": ".agents/skills/review-readiness/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ccf37a17fa5e7cbef9cc1f8f6aa987411a7b618358035e64f21ea6879402f13a"
       },
       {
@@ -4599,7 +4608,7 @@
         },
         "path": ".agents/skills/rollback/SKILL.md",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9c34a737864baf3ce37777948f1bb705d95662db063fb525ff4487c487ac9523"
       },
       {
@@ -4642,7 +4651,7 @@
         },
         "path": ".agents/skills/rust-design-patterns/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f9a864fb91446b1659556fa88f2b3578cdc36a490da0fc7044ecf3fe220d41da"
       },
       {
@@ -4687,7 +4696,7 @@
         },
         "path": ".agents/skills/rust-idioms/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "fda7995fd6817e2895802da664fa190594fa7760fa744c269cdfc8bd5e2c72d8"
       },
       {
@@ -4717,7 +4726,7 @@
         },
         "path": ".agents/skills/rust-pitfalls/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "87dc18b088a7e6eb8f88b7d86b302f5d696153b3eea1a04f108659c577e1e29a"
       },
       {
@@ -4763,7 +4772,7 @@
         },
         "path": ".agents/skills/scripting/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "64a6b6f1a5ac5e5fa0ecf2b8d5338a9c3c5f9accd5352aed55dddd8db79796aa"
       },
       {
@@ -4814,7 +4823,7 @@
         },
         "path": ".agents/skills/testing/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "04843348e8918b2e5b22167b0928795bde9f4d437641640f4918fe2e9b4c212f"
       },
       {
@@ -4848,7 +4857,7 @@
         },
         "path": ".agents/skills/text-parsing/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c440f4bfc15bbd9a59d35478488d4074e6da4334829c829bd84b1a1b116fd4f4"
       },
       {
@@ -4894,7 +4903,7 @@
         },
         "path": ".agents/skills/type-driven-design/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "300745682455d6fbfb2f163a49b94fb70f055e639b4928e4d04274b08bcb4674"
       },
       {
@@ -4918,7 +4927,7 @@
         },
         "path": ".agents/skills/user-facing-docs/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "57d34ae44553af7276bd4fcdb192a1f89d40301c837d12130cbc6da390676f56"
       },
       {
@@ -4967,7 +4976,7 @@
         },
         "path": ".agents/skills/verification/SKILL.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f05f189cba6ffb3f31bb1ae6c095e7c4a5c09e79d9bd5661811276c4f44521d8"
       },
       {
@@ -5036,7 +5045,7 @@
         },
         "path": ".agents/skills/wasm/SKILL.md",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6c1a92fc5d72fc49a541ffa023dd1137aa563d0bfb3a58672c6ae0e89a8679a2"
       },
       {
@@ -5076,7 +5085,7 @@
         },
         "path": ".agents/skills/wiki-sync/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "96613f98d0355141ba83b9ebe068b220cf784764e676d7053f5e4d005ac48a90"
       },
       {
@@ -5138,7 +5147,7 @@
         },
         "path": ".agents/skills/workspace/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8115164a58cb101ddcee6018e09128f9c72c26729d0741950cb540e418ddeb6e"
       },
       {
@@ -5190,7 +5199,7 @@
         },
         "path": ".agents/skills/zero-copy/SKILL.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c47dd4832acb187eb06f15e8ef5569217f64442bc28dd4c9c2f7c89163ce8626"
       },
       {
@@ -5239,7 +5248,7 @@
         },
         "path": ".devcontainer/README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "615aa832d015eff73f843176b6b1075891793cd9fd9ea9d6e2d1d14f84ba5b47"
       },
       {
@@ -5261,7 +5270,7 @@
         },
         "path": ".github/actions/setup-rust-cache/README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "24fcf8a54efb0d2454dd57e21e26e297eda33cffca201480e8cfa832576d3061"
       },
       {
@@ -5278,7 +5287,7 @@
         },
         "path": ".typos.toml",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "aa578f446c5b90acde384b9abc72a05893967400affa9e93f965ed6f40b93757"
       },
       {
@@ -5295,7 +5304,7 @@
         },
         "path": ".vale/styles/config/vocabularies/Fortress/accept.txt",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d068fa17403d3abe5da2a831fd66b93b4ecfc29d78651f875061696cfa666d8d"
       },
       {
@@ -5315,7 +5324,7 @@
         },
         "path": ".vale/styles/write-good/README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8826e2193035d98c38a7ef1560f1677ce7e9c305e2de48d469276e877b2d42f7"
       },
       {
@@ -5382,7 +5391,7 @@
         },
         "path": "CHANGELOG.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5fa0bd5c5687cb8c05cbd8311bafe29d32fb9e9672a355d36294f8a85cdd551b"
       },
       {
@@ -5399,7 +5408,7 @@
         },
         "path": "CLAUDE.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "57a87640a47647eef98e837061913679a43cd768b36cd6c04df7b3d97097fa5d"
       },
       {
@@ -5423,7 +5432,7 @@
         },
         "path": "Cargo.toml",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cb127fc3812b50637599ad259a99016468f038e10c0af9e90818253d3b42f40d"
       },
       {
@@ -5445,7 +5454,7 @@
         },
         "path": "README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "416975e838fc42fd9941935658fddf6aa662ec680dfb4f985e8cef37d3033907"
       },
       {
@@ -5473,7 +5482,7 @@
         },
         "path": "benches/compression.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cd266c8849e6c57a353a4ac3c1fb91798d6570f0f52f6fde44023ea752f2f2c8"
       },
       {
@@ -5500,7 +5509,7 @@
         },
         "path": "benches/h16p_mesh.rs",
         "protected_behavior": "Bounded allocations and measured native/browser costs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "445b2c26a03912bbbdc0735daae6469a46a30eb27610eff85b62bd6104776d56"
       },
       {
@@ -5520,7 +5529,7 @@
         },
         "path": "benches/input_queue.rs",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7c28277601944c9d0bbe12a7a2992d755139b12e5fc39ac032eb760dc59f2f6e"
       },
       {
@@ -5542,7 +5551,7 @@
         },
         "path": "benches/p2p_all_local.rs",
         "protected_behavior": "Bounded allocations and measured native/browser costs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "002be49cabc6c12241b6e5b3cc7f7f9c874c784a86f8b537dcda9e5eeb912fdf"
       },
       {
@@ -5570,7 +5579,7 @@
         },
         "path": "benches/p2p_session.rs",
         "protected_behavior": "Bounded allocations and measured native/browser costs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c270c8d245da48b94ebe6ed7a0fdba72d96cdc14a37078863f548b7a0a58b322"
       },
       {
@@ -5589,7 +5598,7 @@
         },
         "path": "benches/sync_layer.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0fd40dfc12b52ee7eafc016eb7d7f64131a4e5fea7a8f59e9bd9530e92b6e4fa"
       },
       {
@@ -5609,7 +5618,7 @@
         },
         "path": "clippy.toml",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "e8160284ce4745fb22788c4f7f8d3d6f58dcad1fbbc675e76c4a1bd5fb53b9f3"
       },
       {
@@ -5639,7 +5648,7 @@
         },
         "path": "docker/README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c97305ab51ac3f43d019b4b4a90f72e2dfc87283c27741fa65474514a765e2a2"
       },
       {
@@ -5658,7 +5667,7 @@
         },
         "path": "docs/README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a8189a532518472bdb27644ae201b8718ff12bb0d0415a321b4a068948969278"
       },
       {
@@ -5680,7 +5689,7 @@
         },
         "path": "docs/api/public-api-census.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "73896f521d9384270ae8aaeaa9f611b427442ab207d4b8fc6dcc2a1089e1c1c2"
       },
       {
@@ -5796,7 +5805,7 @@
         },
         "path": "docs/architecture.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4441819326c93cac38a7a95e0e056b0244cc0f96f47f5112515beed4bd71f960"
       },
       {
@@ -5822,7 +5831,7 @@
         },
         "path": "docs/contributing.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "25c05781837b1ade9bb732ffd8b10d1b64b698c887f961bb71f535b120d76549"
       },
       {
@@ -5844,7 +5853,7 @@
         },
         "path": "docs/desync-playbook.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "86dd281dc6083778b1f06e240b9e75baa2aa1d691639a457ada1f57f23651740"
       },
       {
@@ -5907,7 +5916,7 @@
         },
         "path": "docs/fortress-vs-ggrs.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b3c1b9a564baf085b2ab34049be441851ddf7c43247b7d0ea517a0273a38bf46"
       },
       {
@@ -5931,7 +5940,7 @@
         },
         "path": "docs/getting-started.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "67df73eda278a285ab25699a77caeaac93318316cc0e0fb9bac3533d16206eac"
       },
       {
@@ -6043,7 +6052,7 @@
         },
         "path": "docs/migration.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "83bd8ac05725c7413352233bfc67e11958ee68fedd783f927a6ed811f5ff0800"
       },
       {
@@ -6075,7 +6084,7 @@
         },
         "path": "docs/replay.md",
         "protected_behavior": "Deterministic recording, replay and malformed replay rejection",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a298e64c31a13d39b93c03250b1ae1baee80fb6f87b442177f1527fd05d91344"
       },
       {
@@ -6181,7 +6190,7 @@
         },
         "path": "docs/specs/api-contracts.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "fb45d8d830f3847af2f589d251007f4ffe32d22a6c43c90899fb468603bd84f8"
       },
       {
@@ -6255,7 +6264,7 @@
         },
         "path": "docs/specs/determinism-model.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f14cdf31770102e2716ff40344b33bd988b32e678a14d9b02d3d2df27adce157"
       },
       {
@@ -6385,7 +6394,7 @@
         },
         "path": "docs/specs/formal-spec.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6fb6d84115271d5b5da9203b577d0bfaa5c1c1e38c5c11f39ad3aa080190f64b"
       },
       {
@@ -6425,7 +6434,7 @@
         },
         "path": "docs/telemetry.md",
         "protected_behavior": "Bounded diagnostics and observability",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "634eed98d45472aea8a07dceadcb80c15552c0996e6ff259ac1f77fd5ce33fb3"
       },
       {
@@ -6451,7 +6460,7 @@
         },
         "path": "docs/threat-model.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7ef9f26e3ba0ed28092c47f36bb62a761331ae348d0f6d7f0a2ba103206deaed"
       },
       {
@@ -6493,7 +6502,7 @@
         },
         "path": "docs/tlaplus-tooling-research.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "85d2798d8ad6bc185dd0fb4d7a522fc694d6e57bb5ad1cffdb44ebeec2663f43"
       },
       {
@@ -6760,7 +6769,7 @@
         },
         "path": "docs/user-guide.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "e54626933323ff011763b530c9e03d94dbc1363b10bdfa38040867e4c846e10f"
       },
       {
@@ -6789,7 +6798,7 @@
         },
         "path": "examples/README.md",
         "protected_behavior": "Reproducible client integration and examples",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d210822f45229545b9bb81a99647e025946e99d03b6482ad9a2d92262f230f73"
       },
       {
@@ -6821,7 +6830,7 @@
         },
         "path": "examples/configuration.rs",
         "protected_behavior": "Reproducible client integration and examples",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "61bd281c9184bbe565e314fb04cc6c7a91ce6e73d3ae3f334a98fe4cd7a7071e"
       },
       {
@@ -6881,7 +6890,7 @@
         },
         "path": "examples/custom_socket.rs",
         "protected_behavior": "Reproducible client integration and examples",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3670d1d6a39a454fe965203fb61f74b55027cfa1d36f5e8e26a7036bf8bdb270"
       },
       {
@@ -6909,7 +6918,7 @@
         },
         "path": "examples/error_handling.rs",
         "protected_behavior": "Reproducible client integration and examples",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cd4410f85a55d6a71961e6ee7987611e84cb17b039aefa59b8cf99c7d481b3f9"
       },
       {
@@ -6932,7 +6941,7 @@
         },
         "path": "examples/request_handling.rs",
         "protected_behavior": "Reproducible client integration and examples",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d2411bb15c22aef5a701a4b9a040a19bc8f4d72df3e729f0cd8b6a66ef72a252"
       },
       {
@@ -6956,7 +6965,7 @@
         },
         "path": "examples/sync_test.rs",
         "protected_behavior": "Sync-test determinism and checksum validation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3327e6870d92b8f0e805a0d307a19a63cbf7c7aab5f73b0f1b551594a06b5999"
       },
       {
@@ -6973,7 +6982,7 @@
         },
         "path": "fuzz/.gitignore",
         "protected_behavior": "Regression corpus preservation and deterministic scenario shrinking",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a24ed50fc1f28dcafa5d4f9eac712faf4b1ffd7910177f5ce30289197a7a2484"
       },
       {
@@ -6990,8 +6999,8 @@
         },
         "path": "fuzz/Cargo.lock",
         "protected_behavior": "Regression corpus preservation and deterministic scenario shrinking",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
-        "source_sha256": "1ecb5a0984b73b45080c1ebe2b4d0f297597dfe1ebbbd79322838a8c866a7187"
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
+        "source_sha256": "2e1c209750e6f6523f8ca86a1e51234dee8d854f5004ad7054f1c9a0baf2e6e4"
       },
       {
         "families": [
@@ -7008,7 +7017,7 @@
         },
         "path": "fuzz/Cargo.toml",
         "protected_behavior": "Regression corpus preservation and deterministic scenario shrinking",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0e1ea10fdf27a2c130ebc849df09146a56c0a67d8b01e9959bf394d7eba7a1b2"
       },
       {
@@ -7031,7 +7040,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_compression.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b8c33b65312cb599045cdbb3abf07b0c5c57c0dacf43bea3bfe2c1c778517d20"
       },
       {
@@ -7050,7 +7059,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_input_queue.rs",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7b62a3da6211a4ebd58080c8e30f1b17c083a5e660b826cdb812ba583584a394"
       },
       {
@@ -7069,7 +7078,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_input_queue_direct.rs",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4efdda2bb82e3be43f6cc9b11e6112b59c4b1eb4bff716c9aa2b72bb68f52584"
       },
       {
@@ -7090,7 +7099,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_message_parsing.rs",
         "protected_behavior": "Regression corpus preservation and deterministic scenario shrinking",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a793a6f93e62ca9b2b8c1a8d4da8664ea4f317f57b2b6512ebc56a3739505030"
       },
       {
@@ -7109,7 +7118,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_protocol_input_packet.rs",
         "protected_behavior": "Regression corpus preservation and deterministic scenario shrinking",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9706860cb94fdef74b0aa6f08d6a522406541c16f1662518f8b0288a4fe3b849"
       },
       {
@@ -7131,7 +7140,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_replay_decode.rs",
         "protected_behavior": "Deterministic recording, replay and malformed replay rejection",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9946f0ae8a9d8302a71be6e6316831b17be5ae16aaf0127e1ce38b0cd1fe83f5"
       },
       {
@@ -7158,7 +7167,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_rle.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0f4c49ebed59934dde29663f3bcf61ae2d2de903f931e8053f7759c4797a615f"
       },
       {
@@ -7177,7 +7186,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_session_config.rs",
         "protected_behavior": "Regression corpus preservation and deterministic scenario shrinking",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "606bc54e1a73341a7ff38abddbb7c0396fb49da7718098e8b628c046f43bbc3e"
       },
       {
@@ -7196,7 +7205,7 @@
         },
         "path": "fuzz/fuzz_targets/fuzz_sync_layer_direct.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "547b4cbbe8a880b5982c33197490ebb885505f176de1b37edff283b5d9324718"
       },
       {
@@ -7213,7 +7222,7 @@
         },
         "path": "loom-tests/Cargo.lock",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b8059f822f4cf4c1f92a71321c771e1e6b4eab9d8c39e85b271e2373c58adf4c"
       },
       {
@@ -7231,7 +7240,7 @@
         },
         "path": "loom-tests/Cargo.toml",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3c4a3d25e2b035fcd6b1849e496b7155374f1ffecdd98c2b92b04b96a65cf0df"
       },
       {
@@ -7254,7 +7263,7 @@
         },
         "path": "loom-tests/README.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "bcc937c684224aa9fdc873b0720ccdfb5346f3c78ebe30c540cfc5afbbd67475"
       },
       {
@@ -7291,7 +7300,7 @@
         },
         "path": "loom-tests/tests/loom_game_state_cell.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "62cb1778efef8dbad1e379b8870e478157784218bfdb74097db9a77a63af349f"
       },
       {
@@ -7328,7 +7337,7 @@
         },
         "path": "loom-tests/tests/loom_saved_states.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7eb078fd7ab1edb87326f25c182c0990e59edbff275969c38a8b7c6894115bb1"
       },
       {
@@ -7379,7 +7388,7 @@
         },
         "path": "loom-tests/tests/loom_telemetry.rs",
         "protected_behavior": "Bounded diagnostics and observability",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c3b219fd5720ab261058d55a439a6ab75642d0538d5a168abe2af0ac007e5288"
       },
       {
@@ -7398,7 +7407,7 @@
         },
         "path": "progress/session-177-z3-021-verification-refresh.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "51bcb335e2d23e44fb9e2266702869710afc426a92c1e0b4a48652db438751fe"
       },
       {
@@ -7416,7 +7425,7 @@
         },
         "path": "proptest-regressions/input_queue.txt",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "806a07cff0dbab91b82fd3dd07d063cedad797cee75780c07acc83f9bbe6dd85"
       },
       {
@@ -7434,7 +7443,7 @@
         },
         "path": "proptest-regressions/network/protocol/mod.txt",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "e16ba6a416f6a8280f9c2762d25fb4693bcad24e478a5bc276b3b54c1a390aff"
       },
       {
@@ -7452,7 +7461,7 @@
         },
         "path": "proptest-regressions/rle.txt",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5074101ac79827a40a3ae1fc3bb3982e1de3c59dbd5b671559b98e17db7504f6"
       },
       {
@@ -7470,7 +7479,7 @@
         },
         "path": "proptest-regressions/rng.txt",
         "protected_behavior": "Deterministic numeric, checksum and portable representation semantics",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "01f4dd4aa96bda32bdc84af34b389236f8f0d57f5b64f0c6da252755fc723722"
       },
       {
@@ -7487,7 +7496,7 @@
         },
         "path": "ruff.toml",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6089b7eb214b3952b79b7cfd4bcb111e12ab0485ebe72be4e3c93fd8ef6d0ee6"
       },
       {
@@ -7504,7 +7513,7 @@
         },
         "path": "scripts/hooks/check-wire-golden-immutable.py",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "fdb34b70aa6c8202dba7d509a18fd3c26c4007c34a59b0a7b4e9389c50373e81"
       },
       {
@@ -7521,7 +7530,7 @@
         },
         "path": "scripts/tests/test_check_wire_golden_immutable.py",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "396cdb439aa8164f36241dec7dfae9f99cb440146d2265a9e55b58881472f548"
       },
       {
@@ -7545,7 +7554,7 @@
         },
         "path": "specs/tla/ChecksumExchange.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4749e9070b09ef3eecf83749596200b2d2fc92bd679ed06951aeb7306dbfd4bb"
       },
       {
@@ -7562,7 +7571,7 @@
         },
         "path": "specs/tla/ChecksumExchange.tla",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "aeb983eb4278223a562e340775047f0aac0dea7da2fb57d91ccec8da8ef17f8b"
       },
       {
@@ -7582,7 +7591,7 @@
         },
         "path": "specs/tla/Concurrency.cfg",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "429269ed90f6e48ac93ff131063974cb4882ec45754af30eebe5ebe09cb70554"
       },
       {
@@ -7601,7 +7610,7 @@
         },
         "path": "specs/tla/Concurrency.tla",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5019f63eb85b0073b020b87fcca43fb7a4756fda859b9a2d60b3dfe4d4e095f4"
       },
       {
@@ -7624,7 +7633,7 @@
         },
         "path": "specs/tla/CoordinatedPeerDrop.cfg",
         "protected_behavior": "Confirmed-history protection during coordinated drops",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "bcbbb2c0ff8e9019bc111acf8b4f065c9f38a70ac5976bd97de89b57fdf71d1b"
       },
       {
@@ -7641,7 +7650,7 @@
         },
         "path": "specs/tla/CoordinatedPeerDrop.tla",
         "protected_behavior": "Confirmed-history protection during coordinated drops",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cca838449111ea27284122e733e8495a1c460779fde04596ff949f6c774e8b90"
       },
       {
@@ -7661,7 +7670,7 @@
         },
         "path": "specs/tla/CoordinatedPeerDrop_Fair.cfg",
         "protected_behavior": "Confirmed-history protection during coordinated drops",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2391a49752346f9ef34efca8362637c4f047bfce70d7874093f11675ffd63e87"
       },
       {
@@ -7681,7 +7690,7 @@
         },
         "path": "specs/tla/CoordinatedPeerDrop_Faults.cfg",
         "protected_behavior": "Confirmed-history protection during coordinated drops",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5c3af7756d49cbf04d56ee61ecac784e799d797766b1165794b338819531c756"
       },
       {
@@ -7702,7 +7711,7 @@
         },
         "path": "specs/tla/CoordinatedPeerDrop_ImmediateMin.cfg",
         "protected_behavior": "Confirmed-history protection during coordinated drops",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3e2ab646bc4532f5ab84fee470f6ba6370d50c0c739cce1670105f0259d604f3"
       },
       {
@@ -7726,7 +7735,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4217ea564e7d0c15000e8ea7721f6e2812fe000846ebf9081f80e3a9596040b1"
       },
       {
@@ -7743,7 +7752,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay.tla",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6065bec8ca19e04cca00927097a8ca33e982b13e23a8e1da8bbbddc68f9fcdf7"
       },
       {
@@ -7767,7 +7776,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckGossip.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c70593344e7955e65a427361ef812463928840d8d126571d6b1d3eb76b502ccb"
       },
       {
@@ -7791,7 +7800,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSound.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3c423e3bb1a146ae5cbbd288f2a51b65fa3e2eab77aaebb86d373ba8023b9e73"
       },
       {
@@ -7815,7 +7824,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundEpoch_Reorder.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5a69d9bad1d3b9b67e5cb8ed4f60918d2db7ac76d715ef49bfa1fd64b24c32fe"
       },
       {
@@ -7839,7 +7848,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundFresh_Cold.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "34361f5f239a7a69b0151dcc4ace8c2c530e6aa35cb81492399693406ee0f487"
       },
       {
@@ -7860,7 +7869,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundFresh_Cold_Witness.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ca0b17da4b7df729555a90f67f9f859725bd8e385e6063b21671f773339095fa"
       },
       {
@@ -7884,7 +7893,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundFresh_Live.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "88f05d2f786841dc50a4546dba2d3318783bbb55686a8967edcaf8fd7e7e380f"
       },
       {
@@ -7908,7 +7917,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundFresh_Reorder.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2ee452165336b930ce02e40e30b432a3bc15a87b5cb6db73110ef74d0cdf69d6"
       },
       {
@@ -7932,7 +7941,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundRoundSeq_Reorder.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0966cd1c070c207c9a63209690603ed0bb9c8b117c0da116bd282198561d46a0"
       },
       {
@@ -7956,7 +7965,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundRoundSeq_Reorder_Live.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "22978a80fd482bdaa9779df746021e7596ff19609c7aa7e6f510f35a1c234bd6"
       },
       {
@@ -7977,7 +7986,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundRoundSeq_Reorder_Witness.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "19f48f0a950d688a3c3be29728fcf53669583f842bf30c0c08efdd6e0da3c180"
       },
       {
@@ -8001,7 +8010,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundRound_Reorder.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "02e4d70f83904fd59f15d811454e4f8c7e4ea986df99d9f72efca4c910861f75"
       },
       {
@@ -8025,7 +8034,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundRound_Reorder_Live.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d9e1e55b93365bac2948ad69f1ba59fbcc0e53dd87beb78082e8aa6a361ae384"
       },
       {
@@ -8046,7 +8055,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSoundRound_Reorder_Witness.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8cac3a62e74787e118c5c3774923f04604041fb3196bf6de70188c3593d866f0"
       },
       {
@@ -8070,7 +8079,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSound_Cold.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2562ac92f861d55dfaa3ebf9fbc2b09f73333e9a9e4018eab7b9d16a987d49ec"
       },
       {
@@ -8091,7 +8100,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckSound_Witness.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8a786041f14e40cee60d5f77ae824e84de9521ba4254cb710935592a09c33f0e"
       },
       {
@@ -8115,7 +8124,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckStale.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "80473ac46a523016c2fae27083ba53487c6751eade2f892a9fa8bcd137a395e1"
       },
       {
@@ -8139,7 +8148,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_AsyncAckTwoPhase.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "779abaf0428c679259e90bfa5e447bd16746b6236738356ce426c9e34444f263"
       },
       {
@@ -8163,7 +8172,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_Baseline.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1282732df5324029a80ae195f04a31ae8c095271c10180cda4cf612d58b40c8a"
       },
       {
@@ -8187,7 +8196,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_InheritedFloor.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "fa71ba24e82c5cd065b843db484d91d141312352c568a5ff4765b91bc08e4f1c"
       },
       {
@@ -8211,7 +8220,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_Tombstone.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5de74ddc9c85f26109403ce0c9cccd4a1aed19aff24dce06fe4898e821c5af61"
       },
       {
@@ -8232,7 +8241,7 @@
         },
         "path": "specs/tla/DoubleFailureRelay_Witness.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "09cf56e270f26ee4522ccf7c7fd89232814138a1f58c065715b688e8a54762f7"
       },
       {
@@ -8258,7 +8267,7 @@
         },
         "path": "specs/tla/FrameAdvantageAggregation.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f3b73763c993ace329992dc1bfd0246dabb18133152b0aeb6546f22dcafa8d3c"
       },
       {
@@ -8275,7 +8284,7 @@
         },
         "path": "specs/tla/FrameAdvantageAggregation.tla",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4b0541d78472ee70959ee31d5c138def300c8b9fa7b3cc4d79764450b721f8c6"
       },
       {
@@ -8298,7 +8307,7 @@
         },
         "path": "specs/tla/FreezeConvergence.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ef9db7ddb857aa02c4852559ac578f88aedec1ecc17add4ed92db8bc2b5b20dd"
       },
       {
@@ -8315,7 +8324,7 @@
         },
         "path": "specs/tla/FreezeConvergence.tla",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5e6a9adc95267f3cfe0f7916a42b14a0ff89bdd3208525686f20d5572f3dc5ea"
       },
       {
@@ -8335,7 +8344,7 @@
         },
         "path": "specs/tla/InputQueue.cfg",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "dc5e74b521ad02ca2b7680922d07cb12f54ea82d7eb9c73248b4a6f6c3a8cd79"
       },
       {
@@ -8352,7 +8361,7 @@
         },
         "path": "specs/tla/InputQueue.tla",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c31cd28c08707e2d657361baa48ee6163d8ec9fcb66ec21a4ee4600cc6485507"
       },
       {
@@ -8378,7 +8387,7 @@
         },
         "path": "specs/tla/NPeerReactivation.cfg",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ad97bcc86ceb074bb6e62bbdc8757862ec6e95054b3d8cd4b2bb0580fdc34d32"
       },
       {
@@ -8395,7 +8404,7 @@
         },
         "path": "specs/tla/NPeerReactivation.tla",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "aa7920f763d865eec123f6a3a4934759aca445425f5618e0d8243a84230333e6"
       },
       {
@@ -8416,7 +8425,7 @@
         },
         "path": "specs/tla/NPeerReactivation_NoPA.cfg",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8a96c95c80197e40023b2853d59b7175428bb525389b065da312563a7c09f1b9"
       },
       {
@@ -8440,7 +8449,7 @@
         },
         "path": "specs/tla/NPeerServeFreezeConvergence.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cdf057196d823f3ad00a3e12a091bf499c4b706c8a61ac097a64bc71818a1377"
       },
       {
@@ -8457,7 +8466,7 @@
         },
         "path": "specs/tla/NPeerServeFreezeConvergence.tla",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7d8dae024cf26fc3c6cd2a414cdf210d2ab270170dcc57fe0db6f2e69d4d43e1"
       },
       {
@@ -8480,7 +8489,7 @@
         },
         "path": "specs/tla/NPeerServeFreezeConvergence_GateBlind.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2620eb8d2ea53683f2c4e383ef1c5fcd3b8336c6c48d0b5b3e96f26f0b390788"
       },
       {
@@ -8500,7 +8509,7 @@
         },
         "path": "specs/tla/NPeerServeFreezeConvergence_Witness.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d6bddc6d6fe82a353d2dffa3e7ed8c5fc5e3db53bde27cfaecf80a6f1638fb1d"
       },
       {
@@ -8525,7 +8534,7 @@
         },
         "path": "specs/tla/PeerDrop.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0bdd7085440c9d2ece615a833821539949e8b2eec080984b8705d154b186b4db"
       },
       {
@@ -8542,7 +8551,7 @@
         },
         "path": "specs/tla/PeerDrop.tla",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ba577efe564afab9fdeb5a8edb5fbd9d3c3d66cdf736db0e568f362399578b66"
       },
       {
@@ -8575,7 +8584,7 @@
         },
         "path": "specs/tla/README.md",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9736aa9b244bcc18ef975d58b7d19fa282363b2fc6e7c13776d50a0189d80684"
       },
       {
@@ -8595,7 +8604,7 @@
         },
         "path": "specs/tla/Rollback.cfg",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7977b162532a75e5135c8e824fdca3464745a46f233206e67c76501d1dca892e"
       },
       {
@@ -8612,7 +8621,7 @@
         },
         "path": "specs/tla/Rollback.tla",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1ea59ea35714294fc65fb0094a5adcee58e1a780e31bd16dd0098e81dbae38b2"
       },
       {
@@ -8636,7 +8645,7 @@
         },
         "path": "specs/tla/SpectatorFailover.cfg",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "60065867026cde3f579cf9399d3b35f48acf2b006502dedb05710535c5bb2882"
       },
       {
@@ -8653,7 +8662,7 @@
         },
         "path": "specs/tla/SpectatorFailover.tla",
         "protected_behavior": "Spectator host failover safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "461235eb78327937dd42b8c2a72a1847f8a4a0a256ab7d7d77e3fd0531fd5719"
       },
       {
@@ -8677,7 +8686,7 @@
         },
         "path": "specs/tla/SpectatorReactivationEpoch.cfg",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a5788ad01f8946285bfcdab376c33401a4b67104347d1c9ee4b05308265f1f08"
       },
       {
@@ -8694,7 +8703,7 @@
         },
         "path": "specs/tla/SpectatorReactivationEpoch.tla",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0eb6e2c311552b1dc555bf8c782a5462a65bc6fceee69b0ce6747a4f9f9854ba"
       },
       {
@@ -8718,7 +8727,7 @@
         },
         "path": "specs/tla/SpectatorReactivationEpoch_EpochBlind.cfg",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "debf5ec92ad82d0a9922e38400554382442a8dab3cab5f50f34de05aca2237d2"
       },
       {
@@ -8742,7 +8751,7 @@
         },
         "path": "specs/tla/SpectatorReactivationEpoch_EpochProvOnly.cfg",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7bd4b376894a07c77d5a0f90db1a7366dbe1284bcc6ecf6ec8783cf3c4e9af61"
       },
       {
@@ -8766,7 +8775,7 @@
         },
         "path": "specs/tla/SpectatorSession.cfg",
         "protected_behavior": "Spectator session lifecycle and confirmed input delivery",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "76652f90f39829e1a0c3859a170ffec8f0ea596f01e524cdcf81e082d776abcc"
       },
       {
@@ -8783,7 +8792,7 @@
         },
         "path": "specs/tla/SpectatorSession.tla",
         "protected_behavior": "Spectator session lifecycle and confirmed input delivery",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "bb3c9a9d6a3b45177a1a526975fed8562e3152f6e0b0449ef3458f03ae623e4a"
       },
       {
@@ -8810,7 +8819,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1.cfg",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "da5c9ef81273b84f0244c531e6bea185916268537bee43356486247dfd97aa69"
       },
       {
@@ -8827,7 +8836,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1.tla",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "fc870bf4f9413ce4adb87abeb116c171b8efd3b74f55ba3aed0e6a608bb06c64"
       },
       {
@@ -8853,7 +8862,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1Fair.cfg",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "013661b4b015328e6a3c6707e93b696ce52eed373dabedd7093d5fab9c83401c"
       },
       {
@@ -8870,7 +8879,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1Fair.tla",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2b40c32808e2b680da43fc2010ea7cb654edd5a77fe02164c6e417896b83ae98"
       },
       {
@@ -8895,7 +8904,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1Mismatch.cfg",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "e29aa55b70a94c22e4fffe9cd2549fdace1a4e0b598a3ec8b0d34dae991b34f5"
       },
       {
@@ -8912,7 +8921,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1Mismatch.tla",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0f94e7a9f1199bf9867c938b5735dc8b9dd88dd361a6791cd8b84e368ea0b4e8"
       },
       {
@@ -8929,7 +8938,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1Trace.tla",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0d6cbdec55a8cb2a042c4d35f69e11bd44574dcaa636ff45d4bb32a519e4900d"
       },
       {
@@ -8951,7 +8960,7 @@
         },
         "path": "specs/tla/SyncHandshakeV1_HandlersDisabled.cfg",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "466f82c70ae37b6ac2fa4b5a98b435426ef54d2ca8d1a7291092e71411bc0f2f"
       },
       {
@@ -8975,7 +8984,7 @@
         },
         "path": "specs/tla/TimeSync.cfg",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "539df30360f9e40f18ef1356909f85ea8f3e73362d19a313bf813a965a1116cd"
       },
       {
@@ -8992,7 +9001,7 @@
         },
         "path": "specs/tla/TimeSync.tla",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ec3b7b76ebf21abd01c1f1d7f32bde80ff3cf86ea0fed9f1be5a1fb4a9fa78f9"
       },
       {
@@ -9013,7 +9022,7 @@
         },
         "path": "specs/tla/traces/sync-handshake-v1/README.md",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "40f41611aa2e34cfdd03764bfef38a52e27a8c06da75ea096c8753aed5eb89fb"
       },
       {
@@ -9030,7 +9039,7 @@
         },
         "path": "specs/tla/traces/sync-handshake-v1/duplicate-reply-decrement.ndjson",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c8ad45657b0f9a469f3c59280b085128c45952d1ef5d12dbcc85d1ef051aed8e"
       },
       {
@@ -9047,7 +9056,7 @@
         },
         "path": "specs/tla/traces/sync-handshake-v1/matching.ndjson",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a9027c0b4cbf3540274a378c6764e0aa1b44011aa09fdb0e2c5f96e2bfe863c7"
       },
       {
@@ -9064,7 +9073,7 @@
         },
         "path": "specs/tla/traces/sync-handshake-v1/mismatch.ndjson",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "24cd21481a457571f975da27f6a710f74ffb730e8a1be3fe1e87e922d8339a3d"
       },
       {
@@ -9081,7 +9090,7 @@
         },
         "path": "specs/tla/traces/sync-handshake-v1/timeout.ndjson",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2c7d3ed59513d8e031ccd6f9a4060a5a5c37ede224bb49ab4c5a2b4dc91496e2"
       },
       {
@@ -9182,7 +9191,7 @@
         },
         "path": "src/checksum.rs",
         "protected_behavior": "Deterministic numeric, checksum and portable representation semantics",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1f878fb8e5c0c861a055f53f071c62a0d202b0fa6198200768997e0dc65d85d1"
       },
       {
@@ -9489,7 +9498,7 @@
         },
         "path": "src/error.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c157f602678b05e2638de48c325dde4b8ee9122b51dc852b7a1693719c534222"
       },
       {
@@ -9582,7 +9591,7 @@
         },
         "path": "src/frame_info.rs",
         "protected_behavior": "Deterministic numeric, checksum and portable representation semantics",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "038821be4ce3df3b74ee5bb6769a3e4931b80b86520640cd321ca52593d12cd8"
       },
       {
@@ -9662,7 +9671,7 @@
         },
         "path": "src/hash.rs",
         "protected_behavior": "Deterministic numeric, checksum and portable representation semantics",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "77c173f1e29e6022262ddc2325604adec806392ea7b5d84d4e32eb789fc03bfe"
       },
       {
@@ -10075,7 +10084,7 @@
         },
         "path": "src/input_queue/mod.rs",
         "protected_behavior": "Bounded queue ordering, capacity and delayed inputs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "537ae9aab97af4cdfb7b0d84b738f56879ee387136c073b40eba1ff476f4a776"
       },
       {
@@ -10126,7 +10135,7 @@
         },
         "path": "src/input_queue/prediction.rs",
         "protected_behavior": "Prediction, confirmation and first incorrect frame",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0711bff8dd43fb6f2ca45c98e50dc1d45627044c32fae5f593db690a21dc39ac"
       },
       {
@@ -10172,7 +10181,7 @@
         },
         "path": "src/json.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "acaa799f74469cfd795c5839d8c7219b7ec897be34cd47520eb03deca725f877"
       },
       {
@@ -10810,7 +10819,7 @@
         },
         "path": "src/lib.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "fbef49cf724dd6cf4b62d8f842158a264ae34044b7afd1eb323fb0dcabf758d7"
       },
       {
@@ -11006,7 +11015,7 @@
         },
         "path": "src/metrics.rs",
         "protected_behavior": "Bounded diagnostics and observability",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f08fa00c9bcecd85b46ad9e326fbb8d328d482d9bcd05de6682f2698e0d231c7"
       },
       {
@@ -11043,7 +11052,7 @@
         },
         "path": "src/network/buffer.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "55176647c3530c80251532a295b40f29ef769242e43c97e30c6f2b9876787d33"
       },
       {
@@ -11274,7 +11283,7 @@
         },
         "path": "src/network/chaos_socket.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4aa517d44e4ec4c5941cf3a781a9c0d6b193df919f0891631f82b53eca70f2ae"
       },
       {
@@ -11642,7 +11651,7 @@
         },
         "path": "src/network/codec.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "41ff7da933ffadba7956b61fe57371e71aadec46052cdabbe199962017a40180"
       },
       {
@@ -11722,7 +11731,7 @@
         },
         "path": "src/network/codec_depth.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a2c33df1a307dfa10990f01dbbc2a40f860a75c2de3f4613501aae3fceb00eb1"
       },
       {
@@ -11876,7 +11885,7 @@
         },
         "path": "src/network/compression.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a8e0c1d55f3a193d2314bef73e1d9b60c3d8da32fd85e531cba71d43069ca3cf"
       },
       {
@@ -12007,7 +12016,7 @@
         },
         "path": "src/network/messages.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c8fd5d21737d219d9931f36f4bea949d806cb8f65baa407b0e00ad9f422e8997"
       },
       {
@@ -12051,7 +12060,7 @@
         },
         "path": "src/network/network_stats.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "745779f084a8b1e6d6f71eafac24bfcb57de684e19b4ed61dd4bbeb9d4540de9"
       },
       {
@@ -12197,7 +12206,7 @@
         },
         "path": "src/network/protocol/event.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "87331a1335039c619014fa6c8df660139698726743ded7cf3b0c1c9b8d0b8684"
       },
       {
@@ -12236,7 +12245,7 @@
         },
         "path": "src/network/protocol/handshake_trace.rs",
         "protected_behavior": "Handshake state transitions, duplicate handling and timeout boundaries",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b76c8ebbdc6e676907f294c4a16830f46133f6f6c71e0756655bb7dfd677df45"
       },
       {
@@ -12389,7 +12398,7 @@
         },
         "path": "src/network/protocol/input_bytes.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1089891d65ad68107c80fea6834ef41d5a1b6eb499de7001b800b1999011e04d"
       },
       {
@@ -13315,7 +13324,7 @@
         },
         "path": "src/network/protocol/mod.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f22f8648d20d4abd6aa70eae90231b7c7e7a0d8af2211985206c1821736b67cf"
       },
       {
@@ -13397,7 +13406,7 @@
         },
         "path": "src/network/protocol/state.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "45b511e30788f2d21642af95eaf1ded724b694fbbe95ea28ebe8641066f2e960"
       },
       {
@@ -13426,7 +13435,7 @@
         },
         "path": "src/network/socket_receive.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6e16e39446c1991fe27c89e735bcbd4aea605ddeb21a9fc616dac35a8172a69b"
       },
       {
@@ -13535,7 +13544,7 @@
         },
         "path": "src/network/tokio_socket.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "002fc47d0f70f3b5bece997278745ae8ad72ed4c8cee09304dda4c34e69ebf3b"
       },
       {
@@ -13647,7 +13656,7 @@
         },
         "path": "src/network/udp_socket.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1a385167ec393424cef7bb812967556c1fe80ea6e44edba8ed3aa88f8687ccdd"
       },
       {
@@ -13679,7 +13688,7 @@
         },
         "path": "src/network/wire_golden_legacy_0_9.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "731e821f9f4047ed9103967ba656609027f25c62c5ad0ce5dde18a6a5a367173"
       },
       {
@@ -13711,7 +13720,7 @@
         },
         "path": "src/network/wire_golden_v1.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f0ebbd0096ced3fdb383ab31d50e47f204f0d2aa3a253a24f66850ecb170cd79"
       },
       {
@@ -13743,7 +13752,7 @@
         },
         "path": "src/network/wire_golden_v2.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "32c0d57b62295524837d3b3158128f04bfe580a6f8477efa7a63283cd06dd9bc"
       },
       {
@@ -13788,7 +13797,7 @@
         },
         "path": "src/prelude.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "988e37a6b761b5e14c5fef96e38068a3b78b033d38cef77f059b731f0a60b036"
       },
       {
@@ -13844,7 +13853,7 @@
         },
         "path": "src/proof_vec.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5e5261fe55b55b9cb4359b366b006b93d8a4ee8837b3b642bdffc9f5e05eae8e"
       },
       {
@@ -14002,7 +14011,7 @@
         },
         "path": "src/replay.rs",
         "protected_behavior": "Deterministic recording, replay and malformed replay rejection",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9f39733c5648386676c35a46c9aefdd32f9528c9504f53ceb6a4a513cda9c00b"
       },
       {
@@ -14252,7 +14261,7 @@
         },
         "path": "src/rle.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4e732995ae60b3f233d75d23cf3d09644c2049217947190fd7d218756b4ca63f"
       },
       {
@@ -14417,7 +14426,7 @@
         },
         "path": "src/rng.rs",
         "protected_behavior": "Deterministic numeric, checksum and portable representation semantics",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "66f8a39da14853751ef5af07a4ca650d5991ee296c0d65e0022c14ce816cebbd"
       },
       {
@@ -14457,7 +14466,7 @@
         },
         "path": "src/serialization_golden_bincode_2_0_1.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6657c44efd755a72be1eb0ef9dbe208dbf1e8cdf7ca4fc98aacf767769981abe"
       },
       {
@@ -14852,7 +14861,7 @@
         },
         "path": "src/sessions/builder.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2c3de1246173745a45e8becf083c80e27eb9ed64c2ad9e1539fa4aefb70ff9c3"
       },
       {
@@ -15202,7 +15211,7 @@
         },
         "path": "src/sessions/config.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4c22a58ae1baa06527380dbb7a553d142a69ee0078d8c48a5f96cd1cfe4a4552"
       },
       {
@@ -15279,7 +15288,7 @@
         },
         "path": "src/sessions/event_drain.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5893c0a9d4642eb9fbb84b2cc1f33f04eb65573c6a917d34d97bc96d3ef267e3"
       },
       {
@@ -15425,7 +15434,7 @@
         },
         "path": "src/sessions/hot_join.rs",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b1b2d74c3f5ca04ee9a2947eff8a6463ae585b6fa54cca4da0c90aebbd8952c8"
       },
       {
@@ -16532,7 +16541,7 @@
         },
         "path": "src/sessions/p2p_session.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "08c0fca863f0e3a0ddd19aae285eaee427fb614f0ccab5b7e95fe42fe92abc2d"
       },
       {
@@ -16872,7 +16881,7 @@
         },
         "path": "src/sessions/p2p_spectator_session.rs",
         "protected_behavior": "Spectator session lifecycle and confirmed input delivery",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "348bfb170f775c89b39156c8c4e4ec21e6ac1a812465b793ae4e2bd4ed823c7c"
       },
       {
@@ -17039,7 +17048,7 @@
         },
         "path": "src/sessions/player_registry.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a73a0a2e7ccf948b32ad07e55fe3d03bd8c2002fe55c9e8b8c0040d9ebc08a8f"
       },
       {
@@ -17186,7 +17195,7 @@
         },
         "path": "src/sessions/replay_session.rs",
         "protected_behavior": "Deterministic recording, replay and malformed replay rejection",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "da29793a60673ebaa886b1c98fd115b1605493fa0048acfd1940fbbc7b4a6db5"
       },
       {
@@ -17216,7 +17225,7 @@
         },
         "path": "src/sessions/session_trait.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7c0a5c0cd11c64136562e3e6ed03e3e19358fc8faafbca7eefdfad9053c63f6c"
       },
       {
@@ -17261,7 +17270,7 @@
         },
         "path": "src/sessions/sync_health.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3e2853f330e8a596d06262f74de4e00e936f9ccf5c2c350d4706b2b221741577"
       },
       {
@@ -17438,7 +17447,7 @@
         },
         "path": "src/sessions/sync_test_session.rs",
         "protected_behavior": "Sync-test determinism and checksum validation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b8e16e2eab2b1d830f185689c679803d1aac9cac54ff45285edd9508da0fa18c"
       },
       {
@@ -17507,7 +17516,7 @@
         },
         "path": "src/sync.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b13c0e0a03d768d858e52aa784d9afc284ea39b7f9232fb60076985c807c4743"
       },
       {
@@ -17702,7 +17711,7 @@
         },
         "path": "src/sync_layer/game_state_cell.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1dc98ec0081f59544ff88cf1881ee0e57370165adc7ea1432839f642d105013b"
       },
       {
@@ -18058,7 +18067,7 @@
         },
         "path": "src/sync_layer/mod.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c873b725dd249cf46f77492233518d531fc1af5fe8b2d5ddb618bd6f51129104"
       },
       {
@@ -18126,7 +18135,7 @@
         },
         "path": "src/sync_layer/saved_states.rs",
         "protected_behavior": "Complete snapshot restore and ordered rollback resimulation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "e44f4e535081db8117bb6d69a193b9057f03d59305d0f4980b1b2958ed763bf8"
       },
       {
@@ -18598,7 +18607,7 @@
         },
         "path": "src/telemetry.rs",
         "protected_behavior": "Bounded diagnostics and observability",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b754d4175495a0d94514b60f435cd88bba58134cdf468fbeb6abee54068d8735"
       },
       {
@@ -18632,7 +18641,7 @@
         },
         "path": "src/test_config.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6303cfae7eeca0e7ef23056e47aac9ccfcce50fe3d54bc4a15cae0acb6114192"
       },
       {
@@ -18799,7 +18808,7 @@
         },
         "path": "src/time_sync.rs",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c3204bb10fd70cb3ca9c536d70bd47b7fcb926578e5b055953b297f1142bdefd"
       },
       {
@@ -18816,7 +18825,7 @@
         },
         "path": "supply-chain/config.toml",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5487b014a1d300367ddd9345866b09539c924dedd62646cb428073e378292c34"
       },
       {
@@ -18866,7 +18875,7 @@
         },
         "path": "tests/README.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0db3205375bf50980e45ff5ecbdcf945ec140ec28f72113d041cea3f4962a35f"
       },
       {
@@ -18951,7 +18960,7 @@
         },
         "path": "tests/allocation_contract.rs",
         "protected_behavior": "Bounded allocations and measured native/browser costs",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "be65b60d036e0ba30c1d90b845c138d24f4afdb87a165f3ef5865d60d23a7851"
       },
       {
@@ -18987,7 +18996,7 @@
         },
         "path": "tests/common/bus_socket.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "c958faf95d1ec9efc14b5efd27503f0933c9c01b8a6bd4ac702d8e320eae6476"
       },
       {
@@ -19053,7 +19062,7 @@
         },
         "path": "tests/common/channel_socket.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "82b23febe56eaba2c02fe59ec56ab1085a40160db4990dc3491317e9c17df03c"
       },
       {
@@ -19098,7 +19107,7 @@
         },
         "path": "tests/common/filter_socket.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "00d52c5099c92587ed3b347053a00400cbc38725774e9aecfc9113ab71d1f72c"
       },
       {
@@ -19135,7 +19144,7 @@
         },
         "path": "tests/common/mod.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ce3b6de7f4ab65ea4a50b30c14aba8e3b6075f2e4d8db9f3467d6a646083c14a"
       },
       {
@@ -19167,7 +19176,7 @@
         },
         "path": "tests/common/reorder_socket.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "16e703b30f723e0385dcebc48f75b9e1388ccba5801b8bceb1415d35e0285932"
       },
       {
@@ -19417,7 +19426,7 @@
         },
         "path": "tests/common/sim_net.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9f6dc3dde4a1e7380b84dbbecfe7a3bf9c9870fd235c2cbf7361f1c718a73f94"
       },
       {
@@ -19499,7 +19508,7 @@
         },
         "path": "tests/common/stubs.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ee4e70ef7159e6202641f9102c9b477b82bfa9ac280093a492d65c94834e64c5"
       },
       {
@@ -19539,7 +19548,7 @@
         },
         "path": "tests/common/stubs_enum.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "333dbea53d335a5702ad58f920e265e642e7ef59b89e57cbfe800903a9990c1c"
       },
       {
@@ -19608,7 +19617,7 @@
         },
         "path": "tests/common/test_clock.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "255622eac42b3c6c2b8db90583cc6b7e4ed45ac0ec23785d7238a09b91731768"
       },
       {
@@ -19764,7 +19773,7 @@
         },
         "path": "tests/common/test_utils.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a168465d003846ae1aedbf7da6bf17e5bbb8c5f8aba57b057e0d7317930e5a08"
       },
       {
@@ -19838,7 +19847,7 @@
         },
         "path": "tests/config.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1ecf913e61c1d9fed09bb6176320e5d69241f66dd70579f099b0f7eec7ab94a4"
       },
       {
@@ -19855,7 +19864,7 @@
         },
         "path": "tests/godot-emscripten/.cargo/config.toml",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "05d142e39ca906b78b8a58db4103e70fbb5cd61f29051e595fb1817938e98c4a"
       },
       {
@@ -19872,7 +19881,7 @@
         },
         "path": "tests/godot-emscripten/.gitignore",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "121181222775d2167cdd49976e629fc1efe5fd2fab28e6ef6322373507abebcf"
       },
       {
@@ -19889,7 +19898,7 @@
         },
         "path": "tests/godot-emscripten/Cargo.lock",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "5f1e5dd33890ccb6facd47a6b45ee7795e5e282c59d89fa02c94ac001ebde593"
       },
       {
@@ -19907,7 +19916,7 @@
         },
         "path": "tests/godot-emscripten/Cargo.toml",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "824c5f327eb6f459d0c674d1570df0d462e67aafd45755eefe635e748c8e1265"
       },
       {
@@ -19924,7 +19933,7 @@
         },
         "path": "tests/godot-emscripten/browser.spec.mjs",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "18783c520e0c2f5c86f41cf4df062fd0ae81a88cffbd4491560247de7d3c0078"
       },
       {
@@ -19941,7 +19950,7 @@
         },
         "path": "tests/godot-emscripten/godot/export_presets.cfg",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ab3756806541ffe1a5b1847815256740f3b5ba161ac0f879cac716e5c61ba4d6"
       },
       {
@@ -19958,7 +19967,7 @@
         },
         "path": "tests/godot-emscripten/godot/main.gd",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "097688d5c19d385d63d4f3d522ddaeb6b10bd3e0cf7a9fd2d5b8575d740215b8"
       },
       {
@@ -19975,7 +19984,7 @@
         },
         "path": "tests/godot-emscripten/godot/main.gd.uid",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "24f62e26eaeaf829324aaa90d8a3b6a1cf07b1aa0fa537a51739b801d9bebd71"
       },
       {
@@ -19992,7 +20001,7 @@
         },
         "path": "tests/godot-emscripten/godot/main.tscn",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3fe1d9e40e1c783051376c60a04281a0f0e2b7688c3de5b0b8696d36ce56ee73"
       },
       {
@@ -20009,7 +20018,7 @@
         },
         "path": "tests/godot-emscripten/godot/probe.gdextension",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7d316b95c52027ee8ba4047b754fbb6daffc15bf95dce74e8efd2e4ec5fb416d"
       },
       {
@@ -20026,7 +20035,7 @@
         },
         "path": "tests/godot-emscripten/godot/probe.gdextension.uid",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f3b1ed5845ec86b9ad5157b7a745a9ec347f02cb0d955a9778354f281ff80566"
       },
       {
@@ -20043,7 +20052,7 @@
         },
         "path": "tests/godot-emscripten/godot/project.godot",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "904dde9aa470ebc03a094d797700f8b7cdef9c8bf731b63eedb8fa84c403f7e9"
       },
       {
@@ -20060,7 +20069,7 @@
         },
         "path": "tests/godot-emscripten/package-lock.json",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ae4549e1eb0b407a348942d30fe1273ee694b055b6f44b949f5586aa42622bb8"
       },
       {
@@ -20077,7 +20086,7 @@
         },
         "path": "tests/godot-emscripten/package.json",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6a36ad1f6aa9e16bda9e3e0235e5cd596c9920f9c51af91d59c80a217cf2d5c2"
       },
       {
@@ -20094,7 +20103,7 @@
         },
         "path": "tests/godot-emscripten/playwright.config.mjs",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "121fd56053fd0d55973210ddf3c043dad2f42dde0dc56570cc90f33f9c19fbb5"
       },
       {
@@ -20111,7 +20120,7 @@
         },
         "path": "tests/godot-emscripten/run.sh",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a64c5a25d1a44f3d3a1f38dd6920568e48b5c9509198cc252d2050d96040216f"
       },
       {
@@ -20128,7 +20137,7 @@
         },
         "path": "tests/godot-emscripten/rust-toolchain.toml",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "bf687f1a9c956040b86ee7989b69e794e6920093122515d419d664a13077526a"
       },
       {
@@ -20158,7 +20167,7 @@
         },
         "path": "tests/godot-emscripten/src/lib.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b70d9b4b67688e92645355aec975bf5285168651107e009d9748e7baed49bef8"
       },
       {
@@ -20194,7 +20203,7 @@
         },
         "path": "tests/loom_concurrency.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2784fc627b576fa5feb72a593cad77321675fc9dfbb0537b8d401c2517b32427"
       },
       {
@@ -20218,7 +20227,7 @@
         },
         "path": "tests/network/deterministic_ping.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ab85ccedd73f2fd17e255abb8f6412b0ab10d79be80191fb878374d4e2ea1816"
       },
       {
@@ -20280,7 +20289,7 @@
         },
         "path": "tests/network/in_process_chaos.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "567cbf6517f88c9707378c530f040e815e9bfc926fb3e789cdaded39b545d268"
       },
       {
@@ -20600,7 +20609,7 @@
         },
         "path": "tests/network/multi_process.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4dcdde813d860183ce9022121415fe5122cfb184059f45b45c7a7181254093e5"
       },
       {
@@ -20626,7 +20635,7 @@
         },
         "path": "tests/network/peer_metrics.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "44cf11108eb2e37c4648f47fdd96c3ff2a06e9d54d087f7d7dbfab17c991761b"
       },
       {
@@ -20652,7 +20661,7 @@
         },
         "path": "tests/network/protocol_version.rs",
         "protected_behavior": "Bounded input exchange, acknowledgements and retransmission",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "948b54b549c11f9169e27220151551e0669c2ba979eac71b33cbbd72825674d9"
       },
       {
@@ -20777,7 +20786,7 @@
         },
         "path": "tests/network/resilience.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b4c18b4a008fc95cb26aa17d04ea37e2e77ffa160d6c4a8b21abe7a792b74838"
       },
       {
@@ -20839,7 +20848,7 @@
         },
         "path": "tests/network/soak.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a5a11f0f8402ff3fffcd9c34312bfec2aae9576d197efa604f8855a360886a38"
       },
       {
@@ -20859,7 +20868,7 @@
         },
         "path": "tests/network/wire_golden_legacy_0_9.rs",
         "protected_behavior": "Bounded binary codec, wire compatibility and malformed packet handling",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "da9e6011eb09595cc676cba840004aaa886ea7dc3ae7cb768e5bb842ee174bc4"
       },
       {
@@ -20877,7 +20886,7 @@
         },
         "path": "tests/network-peer/Cargo.toml",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f2c81ca301a7b7093fa26d9d363e9f825e9e636ceaabac715605786d84f974f7"
       },
       {
@@ -20967,7 +20976,7 @@
         },
         "path": "tests/network-peer/src/main.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7e688d50c499a5023c58eca7da2be4651837d0002ff1c6055c392bae9c7fb325"
       },
       {
@@ -20993,7 +21002,7 @@
         },
         "path": "tests/network.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "60299b553bd62382f2ebb0ef511255d60e1927b13faeeb5d88fa3263d1cf03f9"
       },
       {
@@ -21017,7 +21026,7 @@
         },
         "path": "tests/sessions/compat.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7661c11fdfd6ecfebe9d3f03c57cb2103f407dec867df943d0ad307a1df6b1e4"
       },
       {
@@ -21071,7 +21080,7 @@
         },
         "path": "tests/sessions/desync_harvest.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3637043db7235a28bea19a038b60c10cabc78060fff14734550e51966fd48a8e"
       },
       {
@@ -21181,7 +21190,7 @@
         },
         "path": "tests/sessions/hot_join.rs",
         "protected_behavior": "Reserved-slot/reactivation safety",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1873dd3bcbed5db0f44bcc1865a32105d11bd9c016916760d25a2c81caab8796"
       },
       {
@@ -21225,7 +21234,7 @@
         },
         "path": "tests/sessions/input_delay.rs",
         "protected_behavior": "Exact input-delay transition frame semantics",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "96a5b97a476e54ee66070395a0f17255293fffaa5ee572d0124a97d9330a94ca"
       },
       {
@@ -21264,7 +21273,7 @@
         },
         "path": "tests/sessions/macro_tests.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ba8d5b9ec2a222bc37da61d4ec0c426684b8c23329a377c477174ec6ddda5222"
       },
       {
@@ -21330,7 +21339,7 @@
         },
         "path": "tests/sessions/p2p.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ff072bff09869e6955be962a2f255eedd7225bd7bf072e6c7591f9efc4614a66"
       },
       {
@@ -21351,7 +21360,7 @@
         },
         "path": "tests/sessions/p2p_enum.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "dfc2c868a21e048c518146b2be1ca843feb4fc31119d59b8ad7dae0e1a47e202"
       },
       {
@@ -21493,7 +21502,7 @@
         },
         "path": "tests/sessions/peer_drop.rs",
         "protected_behavior": "Pacing, checksums, disconnects and confirmed history",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "1220b4db8fe8c61cd1629732f29680a79373f528d86adf95869ce474ed1e377e"
       },
       {
@@ -21536,7 +21545,7 @@
         },
         "path": "tests/sessions/session_trait.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2042fe135df9465da371b2798c045a784de400df0ae52e994648782cfb9e7ffa"
       },
       {
@@ -21638,7 +21647,7 @@
         },
         "path": "tests/sessions/spectator.rs",
         "protected_behavior": "Spectator session lifecycle and confirmed input delivery",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "d0d16b8ff26446eb40fc64901d681d8904bc5af4de461b84957adc9fed272d1d"
       },
       {
@@ -21673,7 +21682,7 @@
         },
         "path": "tests/sessions/synctest.rs",
         "protected_behavior": "Sync-test determinism and checksum validation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a53313ac86a74c0738a57da54525afa54b3cdb77b08b330bf742ad9710a56a4c"
       },
       {
@@ -21694,7 +21703,7 @@
         },
         "path": "tests/sessions/synctest_enum.rs",
         "protected_behavior": "Sync-test determinism and checksum validation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b12b6810ac939b9d8d95f879af6b8266863a9d3e20989035a617a1c2488a0cc2"
       },
       {
@@ -21725,7 +21734,7 @@
         },
         "path": "tests/sessions.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a07b5bef083d0764edb33ffe7282847c47531c501db3328988a3bcd5419d1d50"
       },
       {
@@ -21773,7 +21782,7 @@
         },
         "path": "tests/simulation/baseline_sweep.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f18971c34448a02c34b4d22c8b15e8a3ea3d73a8b29ca4dfc093784408d427ed"
       },
       {
@@ -21790,7 +21799,7 @@
         },
         "path": "tests/simulation/baselines/sweep-v3.json",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7f6d36a444c35485f254265b127bf275167086783d1d8407aae05552ddce915b"
       },
       {
@@ -21883,7 +21892,7 @@
         },
         "path": "tests/simulation/census.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "44c2d0c1225559f0789d686fc04b68296a3647999c4d85e6584e44076ca8c7b8"
       },
       {
@@ -21900,7 +21909,7 @@
         },
         "path": "tests/simulation/corpus/001-d8-cold-start-gossip-stall.json",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a5ff735f8ad24fd6e7f8544e957c1e98760cf6750e3c7d272a06bcfe1c95dae6"
       },
       {
@@ -21960,7 +21969,7 @@
         },
         "path": "tests/simulation/corpus_replay.rs",
         "protected_behavior": "Deterministic recording, replay and malformed replay rejection",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "71e29ba9a5918b047aaec7e2a4b74e3b55fc7eb354794789a178b12376b735c6"
       },
       {
@@ -22191,7 +22200,7 @@
         },
         "path": "tests/simulation/fleet.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "df564082d66d8ba38002be36372d88bce10b4eaf3ebbb90c16a28b6ac0d79e2d"
       },
       {
@@ -22278,7 +22287,7 @@
         },
         "path": "tests/simulation/harness/artifact.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b93e795bc53f5f764394be5caddbd13847e3744a7fe3f5a7ecd7b776a82dc87c"
       },
       {
@@ -22520,7 +22529,7 @@
         },
         "path": "tests/simulation/harness/mod.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "bac0a63e51ec8e1b45d5aebfec3fd3e662189b35d5094cd7a3ad269bfa9ad97c"
       },
       {
@@ -22699,7 +22708,7 @@
         },
         "path": "tests/simulation/harness/oracle.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "29f463f2c1daf231fd97263e5749216c10a59c5c124fb87376aca67a6004a864"
       },
       {
@@ -22870,7 +22879,7 @@
         },
         "path": "tests/simulation/harness/schedule.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "7cde6df329cb370190b9370f00ce63e39cdbd3128f878dc3ea70416e95d5d4ae"
       },
       {
@@ -22979,7 +22988,7 @@
         },
         "path": "tests/simulation/harness/shrink.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "277ab821c66b5d8ca39556e991de9ca80ea8b74cab1d0d94b5b40a82e9c047b7"
       },
       {
@@ -22996,7 +23005,7 @@
         },
         "path": "tests/simulation/known_failures/d14-lossy-graceful-remove.json",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3747fe56eeaea5bed83d2e9491a39724765ea7f5a3991817006f898845d05106"
       },
       {
@@ -23127,7 +23136,7 @@
         },
         "path": "tests/simulation/sometimes_state.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a96f8af479031ff0a8958c8c8c8b85540b3bf00c7dc2a03112201d6aae08cc41"
       },
       {
@@ -23165,7 +23174,7 @@
         },
         "path": "tests/simulation/trace_validation.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3ddc7b57aa952437baacad059a78a31512df26617f9c776a6b7918130c132b70"
       },
       {
@@ -23191,7 +23200,7 @@
         },
         "path": "tests/simulation.rs",
         "protected_behavior": "Multi-peer network correctness under deterministic faults",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "714d0b4c1874d0d73507cb8f847c0c13a646f1a14de16617b77f91273e1e4491"
       },
       {
@@ -23220,7 +23229,7 @@
         },
         "path": "tests/tokio_session.rs",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "73f1b8befb85ab4ca61a69cd9ecd287d5ebae13137b7683d968d295e4b91d0c5"
       },
       {
@@ -23252,7 +23261,7 @@
         },
         "path": "tests/verification/determinism.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "6e209b20598d8f11b219421c411b7f6e7effd54d50da7b77419fb64a37df0013"
       },
       {
@@ -23369,7 +23378,7 @@
         },
         "path": "tests/verification/invariants.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "aaa718350836751d1615c446fe4c6f52664ecb88756a73a6049a2885aaf02d76"
       },
       {
@@ -23451,7 +23460,7 @@
         },
         "path": "tests/verification/metamorphic.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "2ff44ed210b7f68ed9e90243a83960cf7649c5bb963ab175d1753ddbc37d4d80"
       },
       {
@@ -23572,7 +23581,7 @@
         },
         "path": "tests/verification/property.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "50ecda818bd3392c037fededc967a95d1e51806709f711595c20b1c0420e5b13"
       },
       {
@@ -23757,7 +23766,7 @@
         },
         "path": "tests/verification/z3.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "541eb8cf8a00dc4dc598e0c7ecc2f9b43e5ff021dfd6dae3bd9fc339677429c6"
       },
       {
@@ -23781,7 +23790,7 @@
         },
         "path": "tests/verification.rs",
         "protected_behavior": "Reusable formal/property invariants and counterexample preservation",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "4aaf174cbcdd9dc4ec94bfe2aa4ef761c9433a22a0849075a52ddda1804357bc"
       },
       {
@@ -23799,7 +23808,7 @@
         },
         "path": "tests/wasm-browser-smoke/Cargo.toml",
         "protected_behavior": "Exported-browser integration and compatibility",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9fed817e495629b9572d100a99d7992e9ce12baca7d96af11d83e120a35d104a"
       },
       {
@@ -23829,7 +23838,7 @@
         },
         "path": "tests/wasm-browser-smoke/src/lib.rs",
         "protected_behavior": "Expert session API, configuration, requests, events and lifecycle errors",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "f449e79fbba3e967f374bc8e0bea6a0f8d4662fb1c6842534560771e7430ce9e"
       },
       {
@@ -23935,7 +23944,7 @@
         },
         "path": "wiki/API-Contracts.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9de79ca001b1943a85e16cf89b21e5725f0ff607d260acad73b1af3119467ac6"
       },
       {
@@ -24051,7 +24060,7 @@
         },
         "path": "wiki/Architecture.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8e9d4d88cadfd2e365f7ea60cde11bbdc185157f9cd82a9882b3d742909703e3"
       },
       {
@@ -24077,7 +24086,7 @@
         },
         "path": "wiki/Contributing.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "73efc5f253a689955ec860a2438482053b1a7de5f4e67501491bab5c3ff31171"
       },
       {
@@ -24099,7 +24108,7 @@
         },
         "path": "wiki/Desync-Playbook.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "8a88d341c610da8874fbedba28c79a950ca9f148895a0c2dcf261ecefc1dbf28"
       },
       {
@@ -24173,7 +24182,7 @@
         },
         "path": "wiki/Determinism-Model.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "b9eaa20098854ae1625e64eee329a836cb11793f9af49f7c279cc2116226c892"
       },
       {
@@ -24303,7 +24312,7 @@
         },
         "path": "wiki/Formal-Specification.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "0fb896f53e7593ded62c799e3dfcff77a79303a50eaf7fb01ac313bef489c660"
       },
       {
@@ -24366,7 +24375,7 @@
         },
         "path": "wiki/Fortress-vs-GGRS.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "e695b30c6a8b17fe03d73d14ef4933037d0cc4af48300102b4efadcfeccb907e"
       },
       {
@@ -24390,7 +24399,7 @@
         },
         "path": "wiki/Getting-Started.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "38ba098727fcd824329012c8708101fa354912fa6faeb6fe657a29704ce08793"
       },
       {
@@ -24502,7 +24511,7 @@
         },
         "path": "wiki/Migration.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "ba69d8cd01a5e8800a5f02916a2be2c2bd812bd5b593f9b635bb9280f1bb76cd"
       },
       {
@@ -24524,7 +24533,7 @@
         },
         "path": "wiki/Public-API-Census.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "3dc067e8d75089a9c41312db6882da5d81b41bf160a89cf26ea557a85d963af3"
       },
       {
@@ -24556,7 +24565,7 @@
         },
         "path": "wiki/Replay.md",
         "protected_behavior": "Deterministic recording, replay and malformed replay rejection",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "36740bfbd09693c061d4c442bc0383270ddb2b63ae8cba2000271dc04759fa51"
       },
       {
@@ -24598,7 +24607,7 @@
         },
         "path": "wiki/TLAplus-Tooling-Research.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "9b4b74af3fe00e5acc0e666619f6fcd5717e3a7524752d1ab6a2b6a20d54f9c5"
       },
       {
@@ -24638,7 +24647,7 @@
         },
         "path": "wiki/Telemetry.md",
         "protected_behavior": "Bounded diagnostics and observability",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "44004357365e4330013bd3842daf9b8baf0cd9858b4d90dd1e59ad847d5281f1"
       },
       {
@@ -24664,7 +24673,7 @@
         },
         "path": "wiki/Threat-Model.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "a43aa0c1b1874a1a86a1581236d96392298ad38de4460776d38e28a102046175"
       },
       {
@@ -24931,18 +24940,18 @@
         },
         "path": "wiki/User-Guide.md",
         "protected_behavior": "Unknown: semantic behavior and applicability require source audit",
-        "source_revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8",
+        "source_revision": "d124c89080004d96971a629bb0427056ee1805e3",
         "source_sha256": "cd1dd80458e2552edad315da7ef2e116d3eec2504536199d0cc374d944a633ce"
       }
     ],
     "source": {
       "archive": {
         "algorithm": "sha256",
-        "digest": "d788b0dc86defaa53f92ca0cda454e72845663e47ba8d0f39f82a32d1cda827d",
-        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/f13cd5c0f2815926785a395947e18da0dbea0dd8"
+        "digest": "7dfed1139a25123e47d4895b4eb5f470cadc099efff20a54b2f19418eb05e2a4",
+        "url": "https://codeload.github.com/wallstop/fortress-rollback/tar.gz/d124c89080004d96971a629bb0427056ee1805e3"
       },
       "repository": "https://github.com/wallstop/fortress-rollback",
-      "revision": "f13cd5c0f2815926785a395947e18da0dbea0dd8"
+      "revision": "d124c89080004d96971a629bb0427056ee1805e3"
     }
   },
   "schema_version": 1,

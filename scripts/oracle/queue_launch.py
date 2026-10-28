@@ -50,7 +50,7 @@ def observation_source(tree):
     adapter = workspace / 'adapter'
     original_manifest = ROOT / 'scripts/oracle/rust/Cargo.toml'
     manifest = original_manifest.read_text()
-    old = '../../../.cache/reference/fortress-rollback-' + 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
+    old = '../../../.cache/reference/fortress-rollback-' + 'd124c89080004d96971a629bb0427056ee1805e3'
     if manifest.count(old) != 1:
         raise ValueError('queue adapter dependency anchor changed')
     manifest = manifest.replace(old, str(upstream))
@@ -82,7 +82,7 @@ def parse_godot(stdout, stderr):
 
 
 def startup_divergence(binary, game_command, output):
-    value = {'format': 1, 'upstream_revision': 'f13cd5c0f2815926785a395947e18da0dbea0dd8', 'cases': [
+    value = {'format': 1, 'upstream_revision': 'd124c89080004d96971a629bb0427056ee1805e3', 'cases': [
         {'name': 'atomic-startup', 'capacity': 2, 'input_width': 1, 'player': 0, 'operations': [
             {'kind': 'add', 'frame': 3, 'bytes': '09'}, {'kind': 'confirmed', 'frame': 0},
             {'kind': 'confirmed', 'frame': 1}, {'kind': 'confirmed', 'frame': 2},

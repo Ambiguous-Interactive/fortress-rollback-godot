@@ -432,6 +432,9 @@ the configured viewing delay, plays the full retained tail and then terminates.
 Continue servicing `recommended_steps()`
 after finishing the host, including its final terminal call. This reports
 `TERMINATED`, runs no game callback, and then recommends zero further work.
+The final call also completes cleanly at the frame or request-token limit;
+it does not allocate another frame or request batch. Unfinished playback at
+either limit still terminates with `FRAME_EXHAUSTED`.
 
 On host loss, malformed authenticated transport or an unrecoverable history gap,
 call `terminate(reason)`. This stops immediately, including buffered playback.
@@ -479,8 +482,8 @@ delivery, and network lifecycle validation remain required. The existing player
 mesh roster must not be extended to admit spectators without those contracts.
 
 The [native SDK spectator relay qualification](reference/spectator-relay-qualification.md)
-records the newer dependency drill on both engine pins. It does not qualify an
-exported Fortress spectator or advance this repository's reviewed dependency pins.
+records the historical dependency drill and the current native Fortress witness.
+Exported Fortress spectator games retain their separate acceptance gate.
 
 ## SignalFish viewer ingress
 
@@ -537,7 +540,9 @@ var code: int = relay.configure(client, sdk_config, protocol_info, stream, agree
 
 This boundary has deterministic public-interface doubles, including
 canonical playback, strict deadline equality, bounded pressure and stale lifetimes.
-It does not yet have a real SDK/server or exported-browser Fortress witness.
+The [native Fortress witness](reference/spectator-relay-qualification.md#fortress-native-witness)
+executes this bridge through real SDK/server sockets and a separate authenticated
+loopback acceptance service. Exported-browser Fortress acceptance remains open.
 
 Spectator relay is read-only. The qualified SDK refuses spectator
 `send_game_data_binary` calls. Receiving an authenticated OFFER stages one
@@ -561,9 +566,9 @@ deliver the authenticated bytes to `publisher.receive_accept()` before that
 publisher emits rows. If an accepted packet is lost afterward, retransmit the
 host's OFFER: each repeated valid OFFER stages the same acceptance again.
 The adapter never sends through the SDK spectator role or assumes host agreement.
-An actual control service, initial-state agreement, real SDK/server relay acceptance
-and source/model comparison remain in #131 and #47.
-The native dependency qualification does not establish those missing boundaries.
+The native witness provisions initial state and returns acceptance through a bounded
+loopback control fixture. Production application admission, exported-browser relay
+acceptance and complete source/model comparison remain in #131 and #47.
 
 ## SignalFish host publication
 
@@ -618,9 +623,10 @@ Detach and explicitly configure a fresh publication to recover. Rejected setup a
 `detach()` leave player gameplay running.
 
 Deterministic SDK doubles cover canonical playback through ring reuse, bounded
-pressure, explicit receipt, clean end and shared player traffic. Actual SDK/server
-execution and exported Fortress games remain unqualified in #131; this API does
-not extend the browser support claim or advance reviewed dependency pins.
+pressure, explicit receipt, clean end and shared player traffic. The native witness
+adds actual SDK/server publication, receipt and authenticated control delivery.
+Exported Fortress games and the complete lifecycle matrix remain unqualified in #131;
+this API does not extend the browser support claim.
 
 ## Check playback against the pinned spectator model
 

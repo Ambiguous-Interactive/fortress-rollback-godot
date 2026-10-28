@@ -2,9 +2,10 @@
 
 Issue [#131](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/131)
 requires an exported Fortress spectator game over SignalFish.
-The experiment below qualifies the SDK's normal native relay path only.
-It does not advance reviewed pins, establish the Fortress witness, or qualify
-pressure, concurrent publication, room replacement, or browser behavior.
+The historical experiment below qualifies the SDK's normal native relay path only.
+The [Fortress native witness](#fortress-native-witness) now exercises the production
+Fortress adapters with a separate authenticated loopback control fixture. Neither
+experiment qualifies exported spectator games or the complete lifecycle matrix.
 
 ## Executed sources and results
 
@@ -116,7 +117,7 @@ to this measured deployment; v2 alone cannot advertise that capability.
 The Direct case separately verifies endpoint refresh, host succession, Relay
 reset, and subsequent gameplay. It supplies no spectator rollback evidence.
 
-## Pin review and remaining acceptance
+## Historical pin review and remaining acceptance
 
 [SDK PR #373](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/pull/373)
 is merged. SDK main Runtime CI [39993743131](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/actions/runs/39993743131),
@@ -157,3 +158,54 @@ server. It does not close #131 or advertise live Fortress spectator support.
 
 [drill]: https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/dc5302b43053e6439d4d89cb89a9666111510936/tests/smoke/run_live_server_acceptance.gd
 [instructions]: https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/dc5302b43053e6439d4d89cb89a9666111510936/docs/testing.md#live-server-acceptance-opt-in
+
+## Fortress native witness
+
+Run `scripts/reference/signalfish_spectator_live.py` after building the current
+pinned server. Supply the build receipt, source tree and verified editor used by
+that build's integration run:
+
+```sh
+python3 scripts/reference/signalfish_spectator_live.py \
+  --godot godot \
+  --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+  --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+  --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+  --output .cache/reference/results/spectator-live
+```
+
+Repeat with each pinned engine. The launcher matches the supplied editor bytes
+against its verified release archive. It verifies the server build provenance,
+SDK archive, authored helpers and copied sources before execution, then rechecks
+those identities after stopping the owned server and control service.
+A failed run cannot leave a successful `spectator-live.json` receipt.
+
+The native process opens two seated SDK sockets and one separate read-only
+spectator socket. The production `FortressSignalFishSpectatorHost` sends OFFER,
+confirmed rows and END through the real SignalFish server. The production viewer
+relay receives the actual SDK-attributed bytes. The viewer never obtains a seat.
+
+A bounded loopback HTTP fixture uses fresh host and viewer bearer capabilities.
+The host binds admission to the SDK's actual spectator roster. The viewer obtains
+the original state, neutral input, dimensions, seed, rules, stream identity and
+key through its authenticated admission response. ACCEPT returns through that
+separate authenticated service, then reaches the production publisher's
+`receive_accept()` boundary. Foreign capabilities and another viewer identity
+must receive HTTP 403. Altered state, seed, rules, neutral input, dimensions and
+digest must fail the viewer's configuration checks before playback.
+
+Success requires all 48 original canonical boundaries, actual host rollback,
+viewer-specific physical binary receipts, eight paused host frames, bounded
+catch-up and clean final completion. The independent expected-state calculation
+uses the original scripted input transcript. The seated host's confirmed frontier
+must finish at frame 47 and its SDK roster must remain two players.
+The same native flow runs three final-drain failure controls with `--late-signal`:
+`spectator_join_failed`, `spectator_left` and selected `spectator_disconnected`.
+Each must exit at the expected late failure without printing a success marker.
+
+This fixture is development tooling, not a production identity provider. Both
+SDK roles run in one native process; seated remote input uses an injected
+schedule, while spectator data and acceptance use real sockets. The exported
+browser witness, physical loss/replacement matrix, production admission service
+and full upstream semantic acceptance remain in #131 and #47.
+[Issue #245](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) specifies the next exported-browser witness.
