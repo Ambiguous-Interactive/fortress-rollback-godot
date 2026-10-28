@@ -332,6 +332,7 @@ func _player_coexistence(context: RefCounted) -> void:
 
 # Value: protects=host request guard; fails_when=outstanding requests permit SDK sends; why_new=core tests omit SDK order; seam=SDK API
 func _active_requests(context: RefCounted) -> void:
+	_getter_requests(context)
 	var fixture: Dictionary = _fixture(context)
 	fixture.helper._step(context, fixture.driver, 0)
 	for player: int in range(2):
@@ -346,6 +347,46 @@ func _active_requests(context: RefCounted) -> void:
 	context.equal(fixture.host.complete_request(request.batch_id, request.request_id, true).code, S.Code.OK, "release host request")
 	context.equal(fixture.relay.poll(1).sent, 2, "original rows publish after request completes")
 	_stop(fixture)
+
+
+# Value: protects=SDK getters cannot send through newly active host requests; fails_when=BUSY is ignored after callbacks;
+# why_new=preexisting active requests do not cross a getter; seam=public SDK callback
+func _getter_requests(context: RefCounted) -> void:
+	for kind: int in [Stream.OFFER, Stream.ROW, Stream.END]:
+		for open_request: bool in [false, true]:
+			var fixture: Dictionary = _fixture(context, kind != Stream.OFFER, 1)
+			if kind == Stream.ROW:
+				fixture.helper._step(context, fixture.driver, 0)
+			elif kind == Stream.END:
+				context.equal(fixture.relay.finish_host().code, HostRelay.Code.OK, "close empty original host")
+			var next_frame: int = fixture.host.status().current_frame
+			var expected: PackedByteArray = (
+				Stream.encode_offer(fixture.helper._identity(), fixture.helper._digest(), 2, 1, fixture.helper._key())
+				if kind == Stream.OFFER
+				else fixture.viewer.stream.encode_row(0, Fixture.new()._row(0))
+			)
+			for player: int in range(2):
+				context.equal(fixture.host.submit_local_input(player, next_frame, Fixture.new()._row(next_frame)[player]).code, S.Code.OK, "stage real next host input")
+			var batches: Array[RefCounted] = []
+			fixture.client.on_buffered = func() -> void:
+				if open_request and batches.is_empty():
+					var batch: S.Result = fixture.host.begin_advance()
+					context.equal(batch.code, S.Code.READY, "SDK getter opens real host expert request")
+					batches.append(batch.batch)
+			var before: int = fixture.client.attempted.size()
+			var result: RefCounted = fixture.relay.poll(1)
+			context.equal(result.code, HostRelay.Code.BACKPRESSURE if open_request else HostRelay.Code.OK, "getter pressure stays retryable")
+			context.equal(fixture.client.attempted.size() - before, 0 if open_request else 1, "SDK send waits for newly opened host request")
+			context.equal(result.sent, 0 if open_request else 1, "publication reports actual accepted sends")
+			if open_request:
+				context.equal(fixture.relay.status().next_frame, 0, "busy getter cannot consume original packet")
+				fixture.client.on_buffered = Callable()
+				var request: S.Request = batches[0].next_request()
+				context.equal(fixture.host.complete_request(request.batch_id, request.request_id, true).code, S.Code.OK, "release original host batch")
+				if kind != Stream.END:
+					context.equal(fixture.relay.poll(1).sent, 1, "original pending packet retries at the same time")
+					context.equal(fixture.client.sent[-1], expected, "retry retains exact original packet bytes")
+			_stop(fixture)
 
 
 # Value: protects=final-tail liveness with one send slot; fails_when=refused rows or END starve pulses; why_new=pressure covers two-slot row only; seam=SDK API

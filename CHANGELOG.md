@@ -201,6 +201,8 @@
 
 ### Fixed
 
+- Fix spectator host sends during an expert request opened by an SDK getter. Publication retains the original packet until the request finishes.
+
 - Fix custom spectator byte transports rejecting authenticated rows after playback history expires. Obsolete rows preserve playback and cannot renew host liveness.
 
 - Fix SignalFish transport cleanup requested from callbacks. Direct, relay and fallback queues and relay observers are released when the active poll returns.

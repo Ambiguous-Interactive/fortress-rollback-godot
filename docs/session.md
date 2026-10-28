@@ -67,6 +67,22 @@ Both paths share peer preparation, input publication and completion controls.
 This native comparison does not establish browser/release support.
 See [manual peer requests](peer-expert.md) for setup, acknowledgements and cancellation.
 
+The coordinated-departure comparison uses three encoded peers and two survivors.
+It covers departure after a finalized prefix and after three predicted frames.
+Callback and manual clients agree on barrier traffic, the certified cut, ordered
+repair, lifecycle events, completion notifications and portable recordings.
+Each survivor retains the same committed operation, cut at frame 5 and original
+frozen sample. The comparison checks remote participant membership, the
+coordinator's survivor certificate and the follower's certification record in
+both APIs. Withholding actual READY packets prevents either survivor from
+freezing; releasing those bytes commits the agreement. Removing retained
+certification evidence also fails the corresponding assertion.
+Survivors continue beyond two prediction windows. Every corrected state prefix
+matches an independent frozen-input history; recorded statuses distinguish original
+inputs from disconnected slots. Omitting the manual LOAD fails at its actual
+acknowledgement. This compares the two Godot APIs; it does not establish pinned
+upstream drop parity or physical browser departure acceptance.
+
 `driver.scheduled_local_input(player)` returns an owned sample retained by a stalled step.
 The driver also exposes local `input_delay` and `set_input_delay` for standalone sessions;
 networked callers use the peer session's setter to publish added inputs.

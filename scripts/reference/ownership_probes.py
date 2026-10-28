@@ -120,6 +120,8 @@ EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
     'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
 EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
 EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls', 'partial_publication', 'retained_retry'}
+EXPECTED['res://tests/unit/test_driver_drop_parity.gd'] = {
+    'confirmed_departure', 'predicted_departure', 'repair_control', 'certification_control', 'withheld_certificate'}
 EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {
     'remote_donor', 'loss_reorder', 'conflicting_duplicate', 'malformed_chunk', 'wrong_donor', 'lost_history_timeout',
     'resource_limit', 'multiple_target_slots', 'no_donor', 'conflicting_overlap'}
@@ -218,6 +220,7 @@ FILES += ['tests/unit/test_peer_drop_ready_pressure.gd']
 FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_driver_peer_parity.gd']
+FILES += ['tests/unit/test_driver_drop_parity.gd']
 FILES += ['tests/unit/test_peer_notifications.gd']
 FILES += ['tests/unit/test_replay_configuration.gd']
 FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd']
@@ -297,6 +300,7 @@ const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd"
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 const DriverPeerParity = preload("res://tests/unit/test_driver_peer_parity.gd")
+const DriverDropParity = preload("res://tests/unit/test_driver_drop_parity.gd")
 const SpectatorRelay = preload("res://tests/unit/test_signalfish_spectator_relay.gd")
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
 func _ready() -> void:
@@ -307,7 +311,8 @@ func _ready() -> void:
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
-		HistoryBackfill, DriverParity, DriverPeerParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness, DropPlanFairness, DropReadyPressure,
+		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
+		DropPlanFairness, DropReadyPressure,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

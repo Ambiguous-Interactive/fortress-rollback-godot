@@ -593,7 +593,9 @@ sends game data.
 Call `publication.poll(now_us)` with monotonic microseconds. Each poll bounds SDK
 send attempts and socket buffering. Refused rows retain their exact bytes until
 transport acceptance; missing overwritten history reports `HISTORY_UNAVAILABLE`
-in `peer_code`. Due keepalives take turns with refused ROW or END packets, including with one
+in `peer_code`. An SDK buffer getter that opens a host request defers publication
+with `BACKPRESSURE`; complete the request, then retry at the same clock time.
+No OFFER, row or END is sent during that request. Due keepalives take turns with refused ROW or END packets, including with one
 send attempt per poll. A refused heartbeat yields the next attempt to the payload.
 Stop advancing the host, call `finish_host()`, then continue polling to publish the
 remaining confirmed prefix and END. An unconfirmed tail or pending correction returns
@@ -646,6 +648,18 @@ Controls reject bypassed delay, catch-up based on the raw backlog, and reordered
 callback inputs. An executed control swaps the first two delivered input samples;
 it preserves their total but must fail the original ordered transcript comparison.
 
+Another 56 source workloads exercise every roster size from two through eight
+with a different changing byte stream in every slot. Capacities four and five,
+delays one and capacity minus one, and catch-up speeds one and two cross repeated
+ring reuse. Every received row, individual Godot request, complete service cycle
+and ordered callback row is checked against independently generated original inputs;
+the service observations and callbacks must also match actual pinned Rust sessions,
+twice. An executed player-order control swaps the last two slots before delivery,
+preserves each row's sum, and must fail the original ordered callback comparison.
+Missing eight-player work, corrupted last-slot input and numeric type changes are
+separate rejected controls. These workloads extend confirmed-input source coverage;
+they do not extend the binary two-player formal projection.
+
 The original pinned model remains unchanged. Its `ReceiveInput` action forces
 `framesBehind = 0` while `currentFrame = NULL_FRAME`; actual Rust and Godot both
 report backlog one after the first row. The original preplay traces must still
@@ -668,9 +682,10 @@ or shorten the first catch-up batch, requiring the corresponding field diagnosti
 Raw original observations, generated models, TLC logs, source/tool identities,
 Rust binary hashes and all control results remain in the receipt directory.
 
-This scope uses two-player binary input for one active slot, neutral input for
-the other, and in-order host delivery. Formal projection still covers only zero
-stream delay; the separate source comparison covers the delays above. The port exposes the next
+The formal scope uses two-player binary input for one active slot, neutral input
+for the other, zero delay and in-order host delivery. The separate source comparison
+covers every two-to-eight-player roster, changing inputs in all slots and the delays above.
+The port exposes the next
 frame; Rust and the model expose the last played frame, so projection subtracts
 one. Handshake/event/timeout parity, disconnected statuses, arbitrary delivery
 and live SignalFish acceptance remain in #47 and #131. This fixes the scoped

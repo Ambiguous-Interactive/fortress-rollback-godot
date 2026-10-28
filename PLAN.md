@@ -403,6 +403,8 @@ Callback and manual peers share input publication and completion controls; pendi
 Encoded P2P acceptance compares both public interfaces under delayed,
 lost and duplicated traffic, including multiple local slots and queue reuse. Independent original
 input history remains the state oracle; this local comparison does not qualify browser transport.
+Coordinated-departure acceptance also compares callback and expert traffic, retained certification,
+frozen statuses, predicted-suffix repair and every corrected canonical prefix through continuing gameplay.
 Peer callback and completion guards protect the shared engine across facades; terminal handler cancellation preserves its first cause and closes peer links.
 
 Replay viewers report recorded and actually checked checksum coverage separately; checksum-free playback cannot establish validated history.
@@ -413,6 +415,9 @@ Safe missing-digest and content comparisons remain at their owning playback boun
 Pinned replay comparison covers every supported player count from two through eight, sparse checksums
 and an interior mismatch after unchecked frames through both playback interfaces and supported portable versions 4 and 5. The pinned upstream
 replay stores inputs without player statuses, so disconnected-status recording remains a Godot extension.
+Actual all-local source recording/export now runs every roster size two through eight with
+input delays zero/two and prediction window two. Each runtime round-trips and plays its own format;
+source export timing and checksum differences remain explicit in the [recording comparison](docs/oracle-replay.md#actual-recording-applicability).
 Pausing or stepping a replay validates the displayed boundary and its selected input digest before allowing further playback.
 Expert replay clients can validate that same paused boundary through a save-only request batch without consuming input.
 Expert checkpoint navigation now shares callback restoration through ordered load/save requests, with exact snapshot validation before committing the selected frame.
@@ -489,6 +494,8 @@ catch-up speeds one/two and exact input transcripts through ring reuse. The scop
 An anchored runtime-aligned model checks every observed state while preserving the original pinned
 startup counterexample and explicit synthetic synchronization setup. Separate actual-source traces compare
 delay one and capacity-minus-one through ring reuse, including exact catch-up service cycles.
+The source comparison also exercises every roster size two through eight with changing input in
+every slot, complete ordered ring observations and a player-order mutation that preserves row sums.
 Broader delay and tail policies, event/status,
 arbitrary-delivery and live acceptance remain in #47 and #131.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
@@ -500,6 +507,7 @@ The receive-only SignalFish spectator adapter bounds authenticated host ingress,
 Selected-host departure or reconnection stops buffered viewing immediately; admitted-viewer departure stops publication without changing seated gameplay.
 Unrelated participant roster events preserve ongoing streams, and setup callbacks use the same participant lifetime fences.
 The host SDK bridge publishes one pre-admitted viewer from frame zero with bounded exact-byte retries; separate authenticated acceptance remains caller-owned.
+SDK getters cannot publish through a host request they open synchronously; the exact packet remains retryable after request completion.
 Spectator relay retains authenticated startup acceptance for a caller-supplied control sender, independently of row pressure.
 Its bounded receive scan admits earlier gap rows behind refused future rows while retaining exact packet ownership.
 Runtime SDK receive limits must still fit the agreed spectator packets; shrinking them retires queued playback before delivery.

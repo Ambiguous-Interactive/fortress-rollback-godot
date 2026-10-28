@@ -29,7 +29,8 @@ def expected_rust(traces):
     return {'format': 1, 'traces': [
         {'capacity': trace['capacity'], 'preplay': trace['preplay'], 'speed': trace['speed'],
          'observations': trace['service_observations'], 'cycles': trace['cycles'], 'transcript': trace['transcript'],
-         **({'delay': trace['delay']} if 'delay' in trace else {})}
+         **({'delay': trace['delay']} if 'delay' in trace else {}),
+         **({'players': trace['players']} if 'players' in trace else {})}
         for trace in traces]}
 
 
@@ -57,7 +58,7 @@ def negative_controls(observed, expected):
     return evidence
 
 
-def check_rust(traces, output, delayed=False):
+def check_rust(traces, output, delayed=False, roster=False):
     manifest = load_manifest()
     cargo, _ = setup_rust(manifest, False)
     execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--bin', 'spectator',
@@ -67,7 +68,7 @@ def check_rust(traces, output, delayed=False):
     expected = expected_rust(traces)
     observations = []
     for repetition in range(2):
-        stdout, stderr = execute([str(binary), *(['--delayed'] if delayed else [])], output / f'rust-{repetition}.log', timeout=60)
+        stdout, stderr = execute([str(binary), *(['--roster'] if roster else (['--delayed'] if delayed else []))], output / f'rust-{repetition}.log', timeout=60)
         if stderr.strip():
             raise ValueError('pinned spectator runtime emitted unexpected stderr')
         actual = json.loads(stdout)
@@ -77,9 +78,14 @@ def check_rust(traces, output, delayed=False):
     if digest(binary) != fingerprint:
         raise ValueError('pinned spectator oracle changed during observation')
     (output / 'rust-observed.json').write_text(json.dumps(observations[0], indent=2) + '\n')
+    if roster:
+        from spectator_roster import controls
+        negative = controls(observations[0], expected)
+    else:
+        negative = delay_controls(observations[0], expected) if delayed else negative_controls(observations[0], expected)
     return {'complete': True, 'binary_sha256': fingerprint, 'workloads': len(traces), 'repetitions': 2,
             'observations_sha256': digest(output / 'rust-observed.json'),
-            'negative_controls': delay_controls(observations[0], expected) if delayed else negative_controls(observations[0], expected)}
+            'negative_controls': negative}
 
 
 def delay_controls(observed, expected):
@@ -175,11 +181,11 @@ def validate_delay_bundle(traces, mutate_input=False):
     return traces
 
 
-def _delay_history(capacity, speed, delay, mutate_input):
+def _delay_history(capacity, speed, delay, mutate_input, players=2, row_for_frame=None):
     """Independent delivery schedule: retain every receive, advance microstep and refused advance."""
     current = -1
     tags = [-1] * capacity
-    rows = [[0, 0] for _ in range(capacity)]
+    rows = [[0] * players for _ in range(capacity)]
 
     def snapshot(received):
         backlog = received - current
@@ -195,7 +201,7 @@ def _delay_history(capacity, speed, delay, mutate_input):
     for received in range(12):
         tags[received % capacity] = received
         value = 1 - received % 2 if mutate_input and received < 2 else received % 2
-        rows[received % capacity] = [value, 0]
+        rows[received % capacity] = row_for_frame(received) if row_for_frame is not None else [value, 0]
         observations.append(snapshot(received))
         services.append(policy(received))
         if received - current == capacity or received == 11:

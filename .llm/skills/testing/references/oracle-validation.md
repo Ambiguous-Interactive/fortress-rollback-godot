@@ -33,6 +33,9 @@ their confirmed prefix against originals, then reproduce captured applied inputs
 for speculative playback; retain both confirmed-mismatch and viewer-state controls.
 
 Validate original numeric tokens when parsing erases integer versus float syntax.
+Check the complete integer grammar, including leading zeros, and preserve unsigned
+field policy before negative zero normalizes. Reject duplicate decoded object keys,
+including escaped equivalent spellings, before parsing overwrites their values.
 
 Godot JSON parsers expose numeric fields as floats. After validating integrality
 and bounds, reconstruct scenario records with explicit integers before emitting
@@ -61,6 +64,10 @@ shortened corpus that never reaches its named event must fail those gates.
 For sparse or optional validation, independently require the exact validation
 request schedule. Workload names and advance counts can stay green when validation
 is disabled or every frame is checked; neither executes sparse validation.
+Recording parity must exercise the source session's actual recording/export API;
+constructing a replay directly proves playback only. Compare exported rows and
+checksum presence against original delayed inputs and observed SAVE requests,
+then round-trip each runtime's own format without implying file interchangeability.
 Legacy format acceptance must observe the decoder's actual version, not only a workload name.
 Run independently packed files through each playback interface, then replace legacy bytes
 with a valid current file and require rejection at the format identity boundary.

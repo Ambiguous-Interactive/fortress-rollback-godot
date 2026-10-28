@@ -307,6 +307,8 @@ func _send(packet: PackedByteArray) -> int:
 	gate = _gate()
 	if gate != Code.OK:
 		return gate
+	if _host._mutation_code() == S.Code.BUSY:
+		return Code.BACKPRESSURE
 	if not buffered is int or buffered < 0:
 		return Code.SDK_FAILURE
 	if buffered > _options.max_socket_buffered_bytes - packet.size():
