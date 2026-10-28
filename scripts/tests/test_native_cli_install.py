@@ -1,6 +1,9 @@
 """Value: protects=latest native CLI installation; fails_when=publication races abort or downgrade;
 why_new=tool probes run after installation; seam=fake npm and CLI processes on PATH.
 """
+import contextlib
+import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -8,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +68,50 @@ else:
 
 
 class NativeCliInstallTests(unittest.TestCase):
+    def test_command_failures_identify_phase_and_preserve_partial_output(self):
+        # Value: distinguishes hung commands without registry timing or leaking caller environment.
+        spec = importlib.util.spec_from_file_location('native_cli_installer', HELPER)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        for phase in ('wrapper metadata', 'native metadata', 'global installation', 'global root lookup', 'runtime version'):
+            for timeout in (True, False):
+                with self.subTest(phase=phase, timeout=timeout):
+                    calls = []
+
+                    def run(command, **options):
+                        if command[0] == 'opencode':
+                            current = 'runtime version'
+                        elif command[1] == 'view':
+                            current = 'wrapper metadata' if command[2].endswith('@latest') else 'native metadata'
+                        else:
+                            current = {'install': 'global installation', 'root': 'global root lookup'}[command[1]]
+                        calls.append(current)
+                        self.assertEqual(options['timeout'], 120)
+                        if current == phase:
+                            if timeout:
+                                raise subprocess.TimeoutExpired(command, 120, output=b'partial stdout\n', stderr=b'partial stderr\n')
+                            return subprocess.CompletedProcess(command, 42, 'partial stdout\n', 'partial stderr\n')
+                        output = '/fake/root'
+                        if current == 'wrapper metadata':
+                            output = json.dumps({'version': '2.0.30', 'optionalDependencies': {
+                                '@opencode/cli-linux-arm64': '2.0.30'}})
+                        elif current == 'native metadata':
+                            output = json.dumps({'version': '2.0.30'})
+                        return subprocess.CompletedProcess(command, 0, output, '')
+
+                    args = SimpleNamespace(timeout=600, package='@opencode/cli', arch='arm64', attempts=3, interval=0)
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with patch.object(helper.time, 'monotonic', return_value=10), patch.object(helper.subprocess, 'run', side_effect=run), \
+                            patch.object(helper.Path, 'read_text', return_value='{"version":"2.0.30"}'), \
+                            contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                        with self.assertRaisesRegex(ValueError, phase):
+                            helper.Installer(args).install()
+                    self.assertEqual(calls.count(phase), 1)
+                    self.assertIn('partial stdout', stderr.getvalue())
+                    self.assertIn('partial stderr', stderr.getvalue())
+                    self.assertNotIn('installed @', stdout.getvalue())
+                    self.assertNotIn('retry 2/3', stderr.getvalue())
+
     def invoke(self, package='@opencode/cli', arch='amd64', **scenario):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
