@@ -50,6 +50,11 @@ regression is red without the handler and green with it; ordinary page/console
 errors retain their existing behavior. Request failures are ignored only after
 deliberate watchdog/finally teardown begins. Browser runtime cells are refreshed
 for the observer change; no native or ownership input changed.
+The process-level regression also executes the controller's real entry point with
+a stub Chromium module. Its healthy control exits zero; an active request failure
+is recorded and exits nonzero. Independent missing-wiring and missing-exit mutants
+both fail the intended process-status assertion. This closes the helper-only
+coverage gap without adding a production test flag.
 
 ## Verification
 

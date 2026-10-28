@@ -3,6 +3,9 @@ import copy
 import unittest
 import subprocess
 import shutil
+import json
+import os
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +13,39 @@ from spectator_browser import validate, validate_fault
 
 
 class SpectatorBrowserTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for browser process controls')
+    def test_runner_process_rejects_active_request_failure(self):
+        source = Path(__file__).parent / 'browser/spectator.cjs'
+        scratch = Path(__file__).resolve().parents[2] / '.cache/scratch'
+        scratch.mkdir(parents=True, exist_ok=True)
+        stub = """
+const {EventEmitter}=require('node:events');
+const page=new EventEmitter();
+page.addInitScript=async()=>{};
+page.goto=async()=>{if(process.env.FORTRESS_TEST_REQUEST_FAILURE==='1')page.emit('requestfailed',{});};
+page.waitForFunction=async()=>{};
+let reads=0;
+page.evaluate=async()=>++reads===1?{passed:true}:undefined;
+const browser={newContext:async()=>({newPage:async()=>page}),version:()=> 'stub',close:async()=>page.emit('requestfailed',{})};
+module.exports={chromium:{launch:async()=>browser}};
+"""
+        with tempfile.TemporaryDirectory(prefix='spectator-request-', dir=scratch) as folder:
+            directory = Path(folder)
+            package = directory / 'playwright.cjs'
+            package.write_text(stub, encoding='utf-8')
+            runtime = directory / 'runtime.json'
+            runtime.write_text('{}', encoding='utf-8')
+            for failure in [False, True]:
+                environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_TEST_REQUEST_FAILURE': '1' if failure else '0'}
+                result = subprocess.run(['node', str(source.resolve()), 'http://fixture.invalid', str(runtime)], env=environment,
+                                        capture_output=True, encoding='utf-8', timeout=10)
+                with self.subTest(failure=failure):
+                    self.assertEqual(result.stderr, '')
+                    self.assertEqual(result.returncode, 1 if failure else 0)
+                    report = json.loads(result.stdout)
+                    self.assertIs(report['result']['passed'], True)
+                    self.assertEqual(report['errors'], ['browser request failed'] if failure else [])
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for browser event controls')
     def test_request_failures_are_fatal_until_deliberate_teardown(self):
         source = Path(__file__).parent / 'browser/spectator.cjs'
