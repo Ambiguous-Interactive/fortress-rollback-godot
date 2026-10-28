@@ -36,7 +36,7 @@ class SpectatorControlTests(unittest.TestCase):
         return result.status, json.loads(result.read())
 
     def test_capabilities_are_role_bound_and_nonascii_is_denied(self):
-        self.assertEqual(self.request('/admission')[0], 404)
+        self.assertEqual(self.request('/admission')[0], 202)
         self.assertEqual(self.request('/admit', body=self.admission)[0], 403)
         self.assertEqual(self.request('/admission', headers={'Authorization': 'Bearer foreign'})[0], 403)
         self.assertEqual(self.request('/admission', headers={'Authorization': 'Bearer \xe9'})[0], 403)
@@ -59,6 +59,36 @@ class SpectatorControlTests(unittest.TestCase):
         self.assertEqual(self.request('/take', 'host'), (200, self.accept))
         self.assertEqual(self.request('/take', 'host'), (200, {}))
         self.assertEqual(self.control.received, 2)
+
+    def test_pending_resources_do_not_count_as_rejections(self):
+        before = self.control.rejected
+        for path, role in [('/room', 'viewer'), ('/viewer', 'host'), ('/admission', 'viewer'), ('/done', 'host')]:
+            with self.subTest(path=path):
+                self.assertEqual(self.request(path, role), (202, {'pending': True}))
+                self.assertEqual(self.control.rejected, before)
+        self.assertEqual(self.request('/unknown')[0], 404)
+        self.assertEqual(self.control.rejected, before + 1)
+
+    def test_independent_viewer_provisioning_is_role_and_lifetime_bound(self):
+        room = {'code': 'ROOM', 'game': 'fortress-spectator-browser'}
+        self.assertEqual(self.request('/room')[0], 202)
+        self.assertEqual(self.request('/room', body=room)[0], 403)
+        self.assertEqual(self.request('/room', 'host', room)[0], 200)
+        self.assertEqual(self.request('/room'), (200, room))
+        self.assertEqual(self.request('/room', 'host', room)[0], 409)
+        self.assertEqual(self.request('/viewer', 'host')[0], 202)
+        self.assertEqual(self.request('/viewer', body={'viewer': 'viewer'})[0], 200)
+        self.assertEqual(self.request('/viewer', 'host'), (200, {'viewer': 'viewer'}))
+        self.assertEqual(self.request('/viewer')[0], 403)
+        self.assertEqual(self.request('/viewer', body={'viewer': 'replacement'})[0], 409)
+        self.assertEqual(self.request('/done', body={'complete': True})[0], 403)
+        self.assertEqual(self.request('/admit', 'host', {**self.admission, 'viewer': 'foreign'})[0], 400)
+        self.assertEqual(self.request('/admit', 'host', self.admission)[0], 200)
+        self.assertEqual(self.request('/done', 'host')[0], 202)
+        self.assertEqual(self.request('/done', body={'complete': True})[0], 403)
+        self.assertEqual(self.request('/accept', body=self.accept)[0], 200)
+        self.assertEqual(self.request('/done', body={'complete': True})[0], 200)
+        self.assertEqual(self.request('/done', 'host'), (200, {'complete': True}))
 
     def cors_request(self, method, path='/admission', origin='http://127.0.0.1:8123', headers=None, body=None):
         peer = http.client.HTTPConnection('127.0.0.1', self.control.server.server_port, timeout=3)
@@ -166,7 +196,7 @@ const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
         return {status:response.status, body:await response.json()};
       };
       const expect = (actual, wanted) => {if(actual !== wanted) throw Error('unexpected browser control status');};
-      expect((await request('/admission','viewer')).status,404);
+      expect((await request('/admission','viewer')).status,202);
       expect((await request('/admit','viewer',data.admission)).status,403);
       expect((await request('/admit','host',data.admission)).status,200);
       expect((await request('/admission','host')).status,403);

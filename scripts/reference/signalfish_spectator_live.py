@@ -21,6 +21,8 @@ from signalfish_live_probe import (build_cargo, extract, source_inventory, valid
 from spectator_control import Control
 import host_capacity
 import local_ownership
+import spectator_browser
+from browser.webrtc_import import freeze_after_import
 
 FILES = ['signalfish_spectator_live.gd', 'spectator_live_game.gd']
 MARKER = 'FORTRESS_LIVE_SPECTATOR_RESULT '
@@ -96,7 +98,11 @@ def main():
     scenario = parser.add_mutually_exclusive_group()
     scenario.add_argument('--late-signal', choices=LATE_SIGNALS)
     scenario.add_argument('--departure', choices=['host', 'viewer'])
+    scenario.add_argument('--browser-viewer', action='store_true')
+    parser.add_argument('--browser-fault', choices=['initial-state'])
     args = parser.parse_args()
+    if args.browser_fault and not args.browser_viewer:
+        parser.error('--browser-fault requires --browser-viewer')
     args.output.mkdir(parents=True, exist_ok=True)
     with local_ownership.claim('spectator-live', directory=args.output):
         try:
@@ -134,6 +140,12 @@ def run(args):
                'python': Path(sys.executable).resolve(), 'build_receipt': args.build_receipt, 'build_log': args.build_receipt.parent / 'build.log',
                'host_capacity': ROOT / 'scripts/host_capacity.py'}
     sources.update({'build_' + name: path for name, path in builder_files.items()})
+    if args.browser_viewer:
+        sources.update({name: ROOT / 'scripts/reference' / name for name in spectator_browser.FILES})
+        sources['browser_launcher'] = ROOT / 'scripts/reference/spectator_browser.py'
+        sources['browser_controller'] = ROOT / 'scripts/reference/browser/spectator.cjs'
+        sources['import_freezer'] = ROOT / 'scripts/reference/browser/webrtc_import.py'
+        sources['godot_smoke'] = ROOT / 'scripts/reference/godot_smoke.py'
     for helper in ['engine_path.py', 'local_ownership.py', 'receipt_arguments.py', 'signalfish_live_probe.py', 'signalfish_probe.py', 'run.py']:
         sources['helper/' + helper] = ROOT / 'scripts/reference' / helper
     sources.update({name: ROOT / 'scripts/reference' / name for name in FILES})
@@ -148,7 +160,7 @@ def run(args):
             raise ValueError('server source differs from verified archive')
         shutil.copytree(ROOT / 'addons/fortress_rollback', project / 'addons/fortress_rollback')
         shutil.copytree(sdk_source / 'addons/signal_fish', project / 'addons/signal_fish')
-        for name in FILES:
+        for name in FILES + (spectator_browser.FILES if args.browser_viewer else []):
             shutil.copyfile(sources[name], project / name)
         (project / 'project.godot').write_text('config_version=5\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
         config = json.loads((server_source / 'config.example.json').read_text())
@@ -161,50 +173,80 @@ def run(args):
                                                    rate_limit_per_minute=100000)
         server_config = project / 'server-config.json'
         server_config.write_text(json.dumps(config))
-        control = Control()
+        authored_paths = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
+                          **{name: project / name for name in FILES + (spectator_browser.FILES if args.browser_viewer else [])}}
+        staged_authored = inventory(authored_paths)
+        for name, value in staged_authored.items():
+            if name.startswith('addon/') or name in FILES + spectator_browser.FILES:
+                if before.get(name) != value:
+                    raise ValueError('copied witness source differs before import')
+        if inventory({'sdk': sdk_source / 'addons/signal_fish'}) != {
+                name: value for name, value in staged_authored.items() if name.startswith('sdk/')}:
+            raise ValueError('copied SDK source differs before import')
+        export_server = None
+        browser_environment = None
+        if args.browser_viewer:
+            arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}[platform.machine()]
+            exported, browser_environment, browser_sources = spectator_browser.prepare(
+                project, engine, engine_version, data, arch, args.offline, args.output, authored_paths, staged_authored)
+            sources.update(browser_sources)
+            expanded = inventory(sources)
+            if any(expanded.get(name) != value for name, value in before.items()):
+                raise ValueError('spectator witness inputs changed during browser preparation')
+            before = expanded
+            export_server = spectator_browser.ExportServer(exported)
+            export_server.start()
+        control = Control(allowed_origin=export_server.url if export_server else None)
         try:
             url = control.start()
             runtime = {'endpoint': f'ws://127.0.0.1:{port}/v3/ws', 'control': url, 'host_token': control.host_token,
-                       'viewer_token': control.viewer_token, 'identity': secrets.token_hex(32), 'key': secrets.token_hex(32)}
+                       'viewer_token': control.viewer_token, 'identity': secrets.token_hex(32), 'key': secrets.token_hex(32), 'browser_fault': args.browser_fault}
             runtime_path = project / 'runtime.json'
             runtime_path.write_text(json.dumps(runtime))
             runtime_path.chmod(0o600)
             executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
-                        **{name: project / name for name in FILES}, 'project': project / 'project.godot', 'runtime': runtime_path, 'server_config': server_config}
+                        **{name: project / name for name in FILES + (spectator_browser.FILES if args.browser_viewer else [])},
+                        'project': project / 'project.godot', 'runtime': runtime_path, 'server_config': server_config}
+            if args.browser_viewer:
+                executed.update({'web_export': exported, 'scene': project / 'main.tscn', 'export_preset': project / 'export_presets.cfg'})
             frozen = inventory(executed)
-            for name, value in frozen.items():
-                if name.startswith('addon/') or name in FILES:
-                    if before.get(name) != value:
-                        raise ValueError('copied witness source differs')
-            if inventory({'sdk': sdk_source / 'addons/signal_fish'}) != {
-                    name: value for name, value in frozen.items() if name.startswith('sdk/')}:
-                raise ValueError('copied SDK source differs')
+            if args.browser_viewer:
+                freeze_after_import(authored_paths, staged_authored)
+            elif inventory(authored_paths) != staged_authored:
+                raise ValueError('staged native sources changed')
             environment = {'PATH': os.environ.get('PATH', ''), 'SIGNAL_FISH_CONFIG_JSON': json.dumps(config), 'RUST_LOG': 'error'}
             with (args.output / 'server.log').open('wb') as server_log:
                 server = subprocess.Popen([str(server_binary)], env=environment, stdout=server_log, stderr=subprocess.STDOUT)
                 try:
                     wait_ready(server, port)
-                    command = [str(engine), '--headless', '--path', str(project), '--script', 'res://signalfish_spectator_live.gd', '--', str(runtime_path)]
-                    if args.late_signal:
-                        command.append(args.late_signal)
-                    elif args.departure:
-                        command.append(args.departure)
-                    try:
-                        process = subprocess.run(command, capture_output=True, timeout=75)
-                    except subprocess.TimeoutExpired as failure:
-                        (args.output / 'native.log').write_bytes((failure.stdout or b'') + (failure.stderr or b''))
-                        raise ValueError('live spectator process deadline') from failure
+                    if args.browser_viewer:
+                        result = spectator_browser.execute(engine, project, runtime_path, export_server.url, browser_environment, args.output, control, args.browser_fault)
+                        if not args.browser_fault and (control.received < 1 or control.done is None):
+                            raise ValueError('browser authenticated acceptance or completion missing')
+                    else:
+                        command = [str(engine), '--headless', '--path', str(project), '--script', 'res://signalfish_spectator_live.gd', '--', str(runtime_path)]
+                        if args.late_signal:
+                            command.append(args.late_signal)
+                        elif args.departure:
+                            command.append(args.departure)
+                        try:
+                            process = subprocess.run(command, capture_output=True, timeout=75)
+                        except subprocess.TimeoutExpired as failure:
+                            (args.output / 'native.log').write_bytes((failure.stdout or b'') + (failure.stderr or b''))
+                            raise ValueError('live spectator process deadline') from failure
+                        if server.poll() is not None:
+                            raise ValueError('owned server exited during spectator witness')
+                        output = process.stdout + process.stderr
+                        (args.output / 'native.log').write_bytes(output)
+                        text = output.decode('utf-8')
+                        if args.departure:
+                            result = validate_departure(process.returncode, text, args.departure)
+                        else:
+                            result = validate_late_failure(process.returncode, text, args.late_signal) if args.late_signal else validate_result(process.returncode, text)
+                        if control.received < 1 or control.rejected < 2:
+                            raise ValueError('authenticated control or rejection controls missing')
                     if server.poll() is not None:
                         raise ValueError('owned server exited during spectator witness')
-                    output = process.stdout + process.stderr
-                    (args.output / 'native.log').write_bytes(output)
-                    text = output.decode('utf-8')
-                    if args.departure:
-                        result = validate_departure(process.returncode, text, args.departure)
-                    else:
-                        result = validate_late_failure(process.returncode, text, args.late_signal) if args.late_signal else validate_result(process.returncode, text)
-                    if control.received < 1 or control.rejected < 2:
-                        raise ValueError('authenticated control or rejection controls missing')
                     if before != inventory(sources) or frozen != inventory(executed) or source_inventory(args.server_source) != server_before:
                         raise ValueError('live witness sources or runtime changed')
                 finally:
@@ -216,15 +258,22 @@ def run(args):
                         server.wait(timeout=5)
         finally:
             control.close()
+            if export_server:
+                export_server.close()
+        if args.browser_fault:
+            spectator_browser.validate_no_acceptance(control)
         if before != inventory(sources) or frozen != inventory(executed) or source_inventory(args.server_source) != server_before:
             raise ValueError('live witness inputs changed before publication')
         receipt.write_text(json.dumps({'passed': True, 'schema_version': 1, 'result': result, 'sources': before,
                                       'executed': frozen, 'server_source': server_before, 'sdk_revision': sdk['revision'], 'server_revision': server_pin['revision'],
                                       'engine_version': engine_version, 'python_version': sys.version, 'negative_control': args.late_signal, 'departure': args.departure,
+                                      'browser_viewer': args.browser_viewer, 'browser_fault': args.browser_fault,
                                       'control_accepts': control.received, 'control_rejections': control.rejected,
                                       'limitations': ['Loopback test admission uses per-run bearer capabilities, not a production identity provider.',
                                                       'Seated remote inputs use an injected deterministic schedule; spectator bytes use real sockets.',
-                                                      'Native single-process host/viewer; exported browsers and remaining lifecycle matrix remain unqualified.'
+                                                      ('Exported Chromium viewer with native host/seated fixture; exported host and remaining matrix remain unqualified.'
+                                                       if args.browser_viewer else
+                                                       'Native single-process host/viewer; exported browsers and remaining lifecycle matrix remain unqualified.')
                                                       ]}, indent=2) + '\n')
         print(json.dumps({'passed': True, 'receipt': str(receipt), 'result': result}))
 

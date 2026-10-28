@@ -50,6 +50,10 @@ class Control:
         self.lock = threading.Lock()
         self.admission = None
         self.accept = None
+        self.room = None
+        self.viewer = None
+        self.done = None
+        self.accepted_once = False
         self.received = 0
         self.rejected = 0
         self.server = DeadlineServer(('127.0.0.1', 0), self.handler())
@@ -102,7 +106,9 @@ class Control:
                 if self.headers.get_all('Origin', []) and not self.allowed_origin():
                     self.respond(403, {'error': 'wrong_origin'})
                     return
-                role = 'host' if self.path in ['/admit', '/take'] else 'viewer'
+                host_role = (self.path in ['/admit', '/take'] or (self.path == '/room' and self.command == 'POST')
+                             or (self.path in ['/viewer', '/done'] and self.command == 'GET'))
+                role = 'host' if host_role else 'viewer'
                 expected = 'Bearer ' + (state.host_token if role == 'host' else state.viewer_token)
                 supplied = self.headers.get('Authorization', '')
                 if not hmac.compare_digest(supplied.encode('utf-8'), expected.encode('ascii')):
@@ -126,9 +132,37 @@ class Control:
                 self.respond(code, result)
 
             def apply(self, body):
+                if self.path == '/room':
+                    if self.command == 'GET':
+                        return (200, state.room.copy()) if state.room else (202, {'pending': True})
+                    if state.room is not None:
+                        return 409, {'error': 'occupied'}
+                    if (not isinstance(body, dict) or set(body) != {'code', 'game'}
+                            or any(type(value) is not str or not 1 <= len(value) <= 128 for value in body.values())):
+                        return 400, {'error': 'invalid_room'}
+                    state.room = body.copy()
+                    return 200, {'ready': True}
+                if self.path == '/viewer':
+                    if self.command == 'GET':
+                        return (200, state.viewer.copy()) if state.viewer else (202, {'pending': True})
+                    if state.viewer is not None:
+                        return 409, {'error': 'occupied'}
+                    if (state.room is None or not isinstance(body, dict) or set(body) != {'viewer'}
+                            or type(body['viewer']) is not str or not 1 <= len(body['viewer']) <= 128):
+                        return 400, {'error': 'invalid_viewer'}
+                    state.viewer = body.copy()
+                    return 200, {'registered': True}
+                if self.path == '/done':
+                    if self.command == 'GET':
+                        return (200, state.done.copy()) if state.done else (202, {'pending': True})
+                    if not state.accepted_once or type(body) is not dict or set(body) != {'complete'} or body['complete'] is not True:
+                        return 403, {'error': 'wrong_lifetime'}
+                    state.done = body.copy()
+                    return 200, {'complete': True}
                 if self.command == 'POST' and self.path == '/admit':
                     required = {'viewer', 'room', 'host', 'identity', 'key', 'digest', 'initial_state', 'players', 'width', 'neutral', 'seed', 'rules'}
                     if (state.admission is not None or not isinstance(body, dict) or set(body) != required
+                            or (state.viewer is not None and body.get('viewer') != state.viewer['viewer'])
                             or any(type(body[key]) is not str or not body[key] for key in required - {'players', 'width'})
                             or type(body['players']) is not int or body['players'] != 2 or type(body['width']) is not int or body['width'] != 1
                             or any(len(body[key]) != size or any(c not in '0123456789abcdef' for c in body[key])
@@ -137,7 +171,7 @@ class Control:
                     state.admission = body.copy()
                     return 200, {'admitted': body['viewer']}
                 if self.command == 'GET' and self.path == '/admission':
-                    return (200, state.admission.copy()) if state.admission else (404, {'error': 'not_admitted'})
+                    return (200, state.admission.copy()) if state.admission else (202, {'pending': True})
                 if self.command == 'POST' and self.path == '/accept':
                     if (not isinstance(body, dict) or set(body) != {'viewer', 'room', 'identity', 'packet'} or state.admission is None
                             or any(body.get(key) != state.admission[key] for key in ['viewer', 'room', 'identity'])
@@ -147,6 +181,7 @@ class Control:
                     if state.accept is not None and state.accept != body:
                         return 409, {'error': 'occupied'}
                     state.accept = body.copy()
+                    state.accepted_once = True
                     state.received += 1
                     return 200, {'accepted': True}
                 if self.command == 'GET' and self.path == '/take':

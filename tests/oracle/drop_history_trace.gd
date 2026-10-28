@@ -13,7 +13,8 @@ func _initialize() -> void:
 	var corrupt: bool = arguments.has("--corrupt-interior-history")
 	var multi: bool = arguments.has("--multi-row-history")
 	var grouped: bool = arguments.has("--multiple-target-slots")
-	if (corrupt and not multi) or arguments.size() != int(loss) + int(multi) + int(corrupt) + int(grouped):
+	var unequal: bool = arguments.has("--unequal-exposure")
+	if (corrupt and not multi) or arguments.size() != int(loss) + int(multi) + int(corrupt) + int(grouped) + int(unequal):
 		if arguments.size() != 2 or arguments[0] != "--observer-status" or arguments[1] not in ["none", "predicted", "unknown"]:
 			printerr("drop history: unknown observer control")
 			quit(2)
@@ -25,6 +26,6 @@ func _initialize() -> void:
 				status_control = Queue.Status.PREDICTED
 			"unknown":
 				status_control = 42
-	var result: Dictionary = Fixture.new().observe(context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1)
+	var result: Dictionary = Fixture.new().observe(context, status_control, loss, 4 if multi else 1, corrupt, 2 if grouped else 1, unequal)
 	print("FORTRESS_DROP_HISTORY_RESULT " + JSON.stringify(result))
 	quit(0 if context.failures.is_empty() else 1)

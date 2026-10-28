@@ -326,6 +326,7 @@ records its loss regression and delivery gate.
 The bounded fallback coordinator routes individual unready links through relay
 and restores ready direct channels in the same rollback session. Injected
 three-peer tests cover overlapping delivery and corrected canonical game history.
+Terminal direct SDK errors fence composed relay publication; ordinary send pressure remains recoverable.
 Transport polls report the traffic they moved, refused packets included, so a
 bounded service batch can stop on an idle route without leaving valid bytes
 queued behind refused traffic.
@@ -516,19 +517,21 @@ Its bounded receive scan admits earlier gap rows behind refused future rows whil
 Runtime SDK receive limits must still fit the agreed spectator packets; shrinking them retires queued playback before delivery.
 Caller-owned startup acceptance refuses terminated or actively serviced viewers; an idle retry preserves the agreed bytes.
 Keepalive priority yields to queued row work so repeated host heartbeats cannot starve confirmed playback under a one-packet receive budget.
-Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
-differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
-[qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
-SDK delivery from the remaining exported Fortress witness. The reviewed SDK/server pins now include
-the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
-The native Fortress witness now requires actual SDK/server publication and viewer receipt,
+Transport acceptance does not establish host receipt. Production application admission and broader
+upstream spectator differential/model acceptance remain open in #131 and #47. The reviewed SDK/server
+pins include the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
+The [spectator qualification evidence](docs/reference/spectator-relay-qualification.md) records the qualified scope.
+The native Fortress witness requires actual SDK/server publication and viewer receipt,
 original canonical agreement and a bounded authenticated loopback admission/acceptance path.
 Native physical host/viewer socket departures stop paused buffered viewing; viewer loss
-also preserves the seated host's canonical continuation. Exported lifetimes remain unqualified.
-Production application admission and the full lifecycle matrix remain part of #131.
-[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) owns the next browser witness. The development control service now accepts one explicit
-browser origin with role-separated bearer access and real Chromium preflight/fetch controls.
-This HTTP boundary does not qualify exported Godot spectator routing or independent browser lifetimes.
+also preserves the seated host's canonical continuation.
+The exported Chromium viewer now runs in an independent browser context on both engine pins,
+receives original state/configuration through a role-separated cross-origin authenticated control boundary,
+and consumes real relay OFFER/rows/END while comparing 48 independent canonical boundaries.
+Pause/catch-up, clean completion and altered initial-state rejection are qualified for this viewer/native-host slice.
+The development bearer service is not a production identity provider; seated remote inputs remain an injected schedule.
+[Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245)
+retains exported host/seated transport, physical departure/replacement, pressure and remaining browser lifecycle cells.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
@@ -568,6 +571,7 @@ including when the donor differs from the coordinator. [#188](https://github.com
 retains expanded source and live missing-history acceptance. A scoped
 [actual-source comparison](docs/oracle-p2p.md#scoped-coordinated-drop-history-comparison)
 now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
+Grouped four-row cases also create unequal public exposed frontiers four/five through a real coordinator advance; complete source inventories and negative controls bind that evidence.
 Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.
 The pinned source's
 wire participant list, its coordinator-local sequence, its retransmission

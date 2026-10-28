@@ -6,6 +6,7 @@ The historical experiment below qualifies the SDK's normal native relay path onl
 The [Fortress native witness](#fortress-native-witness) now exercises the production
 Fortress adapters with a separate authenticated loopback control fixture. Neither
 experiment qualifies exported spectator games or the complete lifecycle matrix.
+The [exported Chromium viewer](#exported-chromium-viewer) below separately qualifies viewing with a native host on both engine pins.
 
 ## Executed sources and results
 
@@ -254,3 +255,37 @@ This qualifies the fixture's browser HTTP boundary only. It does not execute an
 exported Godot game, establish independent host/viewer browser lifetimes or
 qualify SignalFish browser spectator routing. Those requirements remain in #245.
 The fixture continues to leave production identity policy to the application.
+
+## Exported Chromium viewer
+
+`signalfish_spectator_live.py --browser-viewer` runs the production viewer stream,
+SDK relay adapter and game driver in an actual release Web export. The selected
+viewer owns a separate Chromium context and SDK socket; the native host and
+second seated SDK client run in a separate process. The browser receives only
+its viewer capability. Authenticated cross-origin HTTP requests provision the
+room, selected spectator identity and original state, and carry ACCEPT back to
+the native publisher. OFFER, original confirmed rows and END use actual SignalFish
+binary relay. The viewer never receives a seated player identity.
+Pending control resources return authenticated HTTP 202, with bounded polling delays;
+denied capabilities and unknown paths retain error responses and rejection accounting.
+
+Success requires 48 independent canonical boundary comparisons, actual host
+rollback, viewer-specific binary receipts, a paused buffered tail, bounded
+catch-up and clean END. The native host independently checks its repaired final
+state, confirmation 47 and unchanged two-player roster. Both processes and the
+server have deadlines; browser socket closure and owned process teardown precede
+receipt publication. Sources, copied scripts, imported metadata, exported files,
+pinned engine/templates/browser and SDK/server identities bind the receipt.
+
+Add `--browser-fault initial-state` for a controlled altered admission state.
+It must reach the exported viewer's original-state rejection before ACCEPT or
+playback. Independent control state remains unaccepted before host teardown and
+after HTTP shutdown; typed viewer observations prove zero simulation callbacks,
+including rejected attempts. A healthy control must complete all canonical comparisons. CI runs
+both cells on Godot 4.3 and 4.7.2 with pinned Chromium.
+
+This is viewer browser acceptance, not the complete #245 witness. The host and
+second seated client remain native; remote seated game inputs still use an
+injected schedule. Exported host gameplay, actual remote seated input transport,
+replacement/loss and additional browsers remain unqualified. The loopback bearer
+fixture remains development tooling; applications own production identity policy.
