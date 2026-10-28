@@ -5,21 +5,11 @@ const SCENARIOS: Dictionary = {"clean_ack_quiescence": false, "lost_first_ack_re
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(
-		(
-			SCENARIOS.keys()
-			+ [
-				"malformed_committed_ack",
-				"malformed_duplicate_commit",
-				"early_committed_ack",
-				"wrong_sender_commit",
-				"commit_deadline",
-				"duplicate_ready_control",
-				"contradictory_ready_cut",
-				"contradictory_ready_digest",
-			]
-		)
-	)
+	return PackedStringArray([
+		"clean_ack_quiescence", "lost_first_ack_recommits", "malformed_committed_ack", "malformed_duplicate_commit",
+		"early_committed_ack", "wrong_sender_commit", "commit_deadline",
+		"duplicate_ready_control", "contradictory_ready_cut", "contradictory_ready_digest",
+	])
 
 
 func run_case(name: String, context: RefCounted) -> void:
