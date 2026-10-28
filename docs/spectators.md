@@ -432,6 +432,9 @@ the configured viewing delay, plays the full retained tail and then terminates.
 Continue servicing `recommended_steps()`
 after finishing the host, including its final terminal call. This reports
 `TERMINATED`, runs no game callback, and then recommends zero further work.
+The final call also completes cleanly at the frame or request-token limit;
+it does not allocate another frame or request batch. Unfinished playback at
+either limit still terminates with `FRAME_EXHAUSTED`.
 
 On host loss, malformed authenticated transport or an unrecoverable history gap,
 call `terminate(reason)`. This stops immediately, including buffered playback.

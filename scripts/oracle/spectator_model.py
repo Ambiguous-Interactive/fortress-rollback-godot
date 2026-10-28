@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / 'scripts/reference'))
 
 from fetch import CACHE, digest, load_manifest  # noqa: E402
 
-REVISION = 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
+REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 UPSTREAM = CACHE / ('fortress-rollback-' + REVISION)
 SPEC = Path('specs/tla/SpectatorSession.tla')
 CONFIG = Path('specs/tla/SpectatorSession.cfg')

@@ -42,7 +42,7 @@ npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-containe
 | Codex CLI | latest at build (npm `@openai/codex`) | OpenAI coding agent (reads `AGENTS.md`, `.agents/skills/`) |
 | godot-mcp server | pinned `0.1.1` (npm global) | `godot` MCP server; no npm dependency at runtime |
 | gh | latest | GitHub CLI (reads `GITHUB_TOKEN`) |
-| uv | pinned `0.13.0` | Python tooling; installs `gdtoolkit` |
+| uv | pinned `0.13.6` | Python tooling; installs `gdtoolkit` |
 | gdformat / gdlint | pinned `4.5.0` | GDScript formatter/linter (via `uv tool`) |
 | ripgrep, fd, bat, fzf, jq | apt, Ubuntu 24.04 | Fast search/navigation for humans and agents |
 

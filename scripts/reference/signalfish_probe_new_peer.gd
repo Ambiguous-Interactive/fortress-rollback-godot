@@ -68,11 +68,15 @@ class ConnectionStub:
 
 class MultiplayerStub:
 	extends RefCounted
+	var peers: Array[int] = []
 	func create_mesh(_id: int) -> Error:
 		return OK
-	func add_peer(_connection: Object, _id: int) -> Error:
+	func add_peer(_connection: Object, id: int) -> Error:
+		peers.append(id)
 		return OK
-	func remove_peer(_id: int) -> void:
-		pass
+	func has_peer(id: int) -> bool:
+		return id in peers
+	func remove_peer(id: int) -> void:
+		peers.erase(id)
 	func close() -> void:
-		pass
+		peers.clear()

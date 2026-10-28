@@ -333,8 +333,7 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 	if barrier.certified:
 		# The certificate is retried until the proposer commits it.
 		if publication_due(host, barrier, Phase.REPORT, Stage.READY):
-			if _send(host, barrier, Phase.REPORT, Stage.READY, 0, true):
-				barrier.history.plan_turn = false
+			_send(host, barrier, Phase.REPORT, Stage.READY, 0, true)
 		return
 	if not Inventory.covers(Inventory.capture(host._core, barrier.slots), barrier.slots, barrier.lower, barrier.cut):
 		# A final candidate can overtake the donor plan; incomplete history never certifies.
@@ -357,8 +356,7 @@ func _drive_follower(host: Variant, barrier: Barrier, now_us: int) -> void:
 	barrier.digest = digest
 	barrier.ready_receipts = Inventory.capture(host._core, barrier.slots)
 	barrier.certified = true
-	if _send(host, barrier, Phase.REPORT, Stage.READY, 0, true):
-		barrier.history.plan_turn = false
+	_send(host, barrier, Phase.REPORT, Stage.READY, 0, true)
 
 
 ## The proposer opened the operation and named the frame it proposes.
@@ -680,6 +678,9 @@ func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE,
 			sent = false
 		else:
 			barrier.sent_to[index] = {"phase": phase, "stage": stage, "digest": payload.cut_digest, "at": host._now}
+			if phase == Phase.REPORT and stage == Stage.READY:
+				# An accepted certificate yields to donor data despite another refused link.
+				barrier.history.plan_turn = false
 	return sent
 
 

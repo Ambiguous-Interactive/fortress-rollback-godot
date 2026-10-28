@@ -77,7 +77,7 @@ def validate_replay_download(value):
 def replay_download(histories):
     frames = 110
     states = expected_states([history[:frames] + [0] for history in histories], frames + 1)
-    texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8',
+    texts = ['4.3.0.stable 77dcf97d8', '0.1.0', 'fortress-rollback d124c89080004d96971a629bb0427056ee1805e3',
              '1701', 'fortress-online-integer-v1']
     raw = b'FRRP' + struct.pack('<HBIIIHBB', 6, 2, 1, frames, 0, 2, 8, 0) + bytes(1)
     raw += b''.join(bytes([len(text)]) + text.encode('ascii') for text in texts)

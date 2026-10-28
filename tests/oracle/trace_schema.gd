@@ -4,7 +4,7 @@ extends RefCounted
 # Variant is intentional at each untrusted JSON boundary. Godot 4.3 has no
 # typed dictionaries and parses JSON integers as floating-point values.
 const Game = preload("res://tests/oracle/reference_game.gd")
-const REVISION: String = "f13cd5c0f2815926785a395947e18da0dbea0dd8"
+const REVISION: String = "d124c89080004d96971a629bb0427056ee1805e3"
 const FRAME_MAX: int = 2147483647
 
 

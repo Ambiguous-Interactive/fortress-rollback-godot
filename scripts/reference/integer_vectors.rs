@@ -1,4 +1,4 @@
-//! Independent development-only oracle. Compile with pinned rustc 1.94.0.
+//! Independent development-only oracle. Compile with pinned rustc 1.99.1.
 //! Integer values are JSON strings: neither Godot JSON nor browsers may round them.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()

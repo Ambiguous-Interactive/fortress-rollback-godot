@@ -8,16 +8,29 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["controls", "rejects_incompatible", "stops_at_divergence", "scene_controls", "navigation", "navigation_boundaries", "full_length_recording", "empty_terminal"]
+		[
+			"controls",
+			"rejects_incompatible",
+			"stops_at_divergence",
+			"scene_controls",
+			"navigation",
+			"navigation_boundaries",
+			"full_length_recording",
+			"empty_terminal",
+			"input_inspection"
+		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"input_inspection":
+			_input_inspection(context)
 		"empty_terminal":
 			_empty_terminal(context)
 		"full_length_recording":
@@ -35,6 +48,77 @@ func run_case(name: String, context: RefCounted) -> void:
 		"stops_at_divergence":
 			_stops_at_divergence(context)
 	context.finish()
+
+
+# Value: protects=paused inspection names the selected recorded controls and finalized status; fails_when=inputs are hidden, stale or corrupt;
+# why_new=scene status tests cover state checksums only; seam=none
+func _input_inspection(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.viewer.has_method("input_summary"), true, "viewer exposes recorded input inspection")
+	if not node.viewer.has_method("input_summary"):
+		node._exit_tree()
+		node.free()
+		return
+	context.equal(node.viewer.input_summary(), "No recording loaded.", "empty viewer has no input")
+	var names: PackedStringArray = PackedStringArray(
+		[
+			"Neutral",
+			"Left",
+			"Right",
+			"Left+Right",
+			"Up",
+			"Left+Up",
+			"Right+Up",
+			"Left+Right+Up",
+			"Down",
+			"Left+Down",
+			"Right+Down",
+			"Left+Right+Down",
+			"Up+Down",
+			"Left+Up+Down",
+			"Right+Up+Down",
+			"Left+Right+Up+Down"
+		]
+	)
+	for buttons: int in 16:
+		for disconnected: bool in [false, true]:
+			var replay: Replay = recording(3)
+			replay._inputs[0] = buttons
+			replay._statuses[0] = Queue.Status.DISCONNECTED if disconnected else Queue.Status.CONFIRMED
+			var digest: PackedByteArray = replay.computed_input_digest(0)
+			for index: int in Replay.DIGEST_BYTES:
+				replay._digests[index] = digest[index]
+			context.equal(node.viewer.open_bytes(replay.to_bytes()), true, "complete recorded input imports")
+			var expected: String = "Next input at frame 0: P1 %s (%s) | P2 Left (confirmed)." % [names[buttons], "disconnected" if disconnected else "confirmed"]
+			context.equal(node.viewer.input_summary(), expected, "inspection decodes every button mask and recorded player status")
+			node._refresh()
+			context.equal(node._status.text.contains(expected), true, "scene shows selected input without advancing or validating state")
+			context.equal(node.viewer.checked_checksum_count(), 0, "reading input does not claim state validation")
+	var replay: Replay = recording(3)
+	context.equal(node.viewer.open_bytes(replay.to_bytes()), true, "navigation input fixture imports")
+	node.viewer.step()
+	context.equal(node.viewer.input_summary(), "Next input at frame 1: P1 Right (confirmed) | P2 Up (confirmed).", "stepping inspects the next unapplied row")
+	node.viewer.seek(3)
+	node.viewer.tick()
+	context.equal(node.viewer.input_summary(), "No recorded input at final frame 3.", "final boundary does not reuse the last input")
+	node.viewer.seek(0)
+	node.viewer.tick()
+	context.equal(node.viewer.input_summary(), "Next input at frame 0: P1 Right (confirmed) | P2 Left (confirmed).", "backward navigation restores the selected input")
+	for fault: String in ["input", "digest"]:
+		var corrupt: Replay = recording(3)
+		if fault == "input":
+			corrupt._inputs[0] ^= 1
+		else:
+			corrupt._digests[0] ^= 1
+		context.equal(node.viewer.open_bytes(corrupt.to_bytes()), true, "input corruption remains a playback comparison")
+		context.equal(node.viewer.input_summary(), "Recorded input at frame 0 is unavailable: input digest mismatch.", "unverified corrupt values are never displayed as controls")
+		context.equal(node.viewer.has_failure(), false, "inspection alone does not change playback lifetime")
+		node.viewer.step()
+		context.equal(node.viewer.has_failure(), true, "playback independently refuses corrupt input")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
 
 
 # Value: protects=initial-state-only downloads reopen and validate; fails_when=zero rows imply no file;
@@ -170,6 +254,9 @@ func _controls(context: RefCounted) -> void:
 
 func _rejects_incompatible(context: RefCounted) -> void:
 	var viewer: Viewer = Viewer.new()
+	var original: Replay = recording()
+	original._text[2] = "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"
+	context.equal(viewer.open_bytes(original.to_bytes()), true, "dependency refresh preserves original-baseline recordings")
 	context.equal(viewer.open_bytes(recording().to_bytes()), true, "healthy control")
 	viewer.step()
 	viewer.toggle_play()

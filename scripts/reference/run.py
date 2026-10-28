@@ -82,7 +82,7 @@ def setup_rust(data, offline):
     if arch is None or platform.system() != 'Linux':
         raise ValueError('bootstrap supports Linux aarch64/x86_64 only')
     # Pin the distribution metadata in addition to rustup integrity checking components.
-    fetch(data['artifacts']['rust-channel-1.94.0'], 'rust-channel-1.94.0', offline)
+    fetch(data['artifacts']['rust-channel-1.99.1'], 'rust-channel-1.99.1', offline)
     installer = fetch(data['artifacts']['rustup-init-' + arch], 'rustup-init-' + arch, offline)
     installer.chmod(0o755)
     environment = rust_environment()

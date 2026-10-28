@@ -3,7 +3,7 @@ import copy
 import json
 import struct
 
-REVISION = 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
+REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 
 
 def require(condition, label):

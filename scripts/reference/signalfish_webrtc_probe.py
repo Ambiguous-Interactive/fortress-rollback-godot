@@ -454,14 +454,14 @@ def main():
             raise ValueError('executed browser module is symlinked')
         if module.is_file():
             sources['browser_package/' + str(relative)] = module
-    browser_name = f'chromium-1194-{arch}.zip'
+    browser_name = f"chromium-{pins['browser']['chromium_revision']}-{arch}.zip"
     browser_archive = fetch(pins['artifacts'][browser_name], browser_name, args.offline)
     browser_root = CACHE / 'webrtc-browser' / arch
     browser_root.mkdir(parents=True, exist_ok=True)
     prepare_zip(browser_archive, browser_root)
     sources['browser_installation'] = browser_root
     sources['browser_archive'] = browser_archive
-    sources['browser_executable'] = browser_root / 'chrome-linux/chrome'
+    sources['browser_executable'] = browser_root / pins['browser']['chromium_executables'][arch]
     sources['browser_registry'] = CACHE / 'browser/node_modules/playwright-core/browsers.json'
     if digest(sources['browser_registry']) != pins['browser']['browser_registry_sha256']:
         raise ValueError('browser registry differs from pin')

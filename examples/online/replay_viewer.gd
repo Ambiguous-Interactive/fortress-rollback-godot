@@ -5,6 +5,7 @@ const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const MAX_FRAMES: int = 36000
 # Include every row and terminal checksum and the largest supported metadata header.
 const MAX_BYTES: int = (
@@ -69,7 +70,9 @@ func _compatible(recording: Replay) -> bool:
 		return false
 	if recording.frame_count() == 0 and recording.checksum(0).is_empty():
 		return false
-	if recording.game_version() != GAME_VERSION or recording.addon_version() != Replay.ADDON_VERSION or recording.upstream_revision() != Replay.UPSTREAM_REVISION:
+	if recording.game_version() != GAME_VERSION or recording.addon_version() != Replay.ADDON_VERSION:
+		return false
+	if recording.upstream_revision() not in [Replay.UPSTREAM_REVISION, "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"]:
 		return false
 	if recording.game_seed() != "1701" or recording.neutral_input() != PackedByteArray([0]) or recording.skipped_frames() != 0:
 		return false
@@ -199,6 +202,30 @@ func current_state_coverage_message() -> String:
 
 func current_frame() -> int:
 	return _player.current_frame()
+
+
+## The selected frame's recorded controls and finalized statuses, before applying its input.
+## Verify its stored input digest before presenting values; inspection does not advance playback.
+func input_summary() -> String:
+	if _recording == null:
+		return "No recording loaded."
+	var frame: int = current_frame()
+	if frame >= frame_count():
+		return "No recorded input at final frame %d." % frame
+	if _recording.computed_input_digest(frame) != _recording.input_digest(frame):
+		return "Recorded input at frame %d is unavailable: input digest mismatch." % frame
+	var inputs: Types.FrameInputs = _recording.inputs(frame)
+	var players: PackedStringArray = PackedStringArray()
+	for slot: int in inputs.player_count():
+		var sample: Types.InputResult = inputs.read(slot)
+		var directions: PackedStringArray = PackedStringArray()
+		for bit: int in 4:
+			if sample.bytes[0] & (1 << bit):
+				directions.append(["Left", "Right", "Up", "Down"][bit])
+		var controls: String = "Neutral" if directions.is_empty() else "+".join(directions)
+		var status: String = "disconnected" if sample.status == Queue.Status.DISCONNECTED else "confirmed"
+		players.append("P%d %s (%s)" % [slot + 1, controls, status])
+	return "Next input at frame %d: %s." % [frame, " | ".join(players)]
 
 
 ## Whether another recorded frame can advance, including while paused.

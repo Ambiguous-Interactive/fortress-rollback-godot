@@ -2,7 +2,9 @@
 
 This GDScript addon implements rollback behavior from
 [Fortress Rollback](https://github.com/wallstop/fortress-rollback), a fork of GGRS,
-at revision `f13cd5c0f2815926785a395947e18da0dbea0dd8`.
+at reviewed revision `d124c89080004d96971a629bb0427056ee1805e3`.
+The original algorithm port used `f13cd5c0f2815926785a395947e18da0dbea0dd8`;
+the intervening changes update dependency and documentation lockfiles.
 Queue and session algorithms were adapted to owned fixed-width bytes, bounded
 snapshot callbacks and explicit request completion in Godot. The addon contains
 no upstream Rust source or binary dependency.

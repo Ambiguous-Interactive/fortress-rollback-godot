@@ -190,16 +190,25 @@ func finish_host() -> int:
 	return Code.OK
 
 
+func _check_advance_limits() -> int:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return code
+	if _host_finished and _host_frontier < _current:
+		return Code.OK
+	return super._check_advance_limits()
+
+
 func begin_advance() -> Types.Result:
 	var code: int = _mutation_code()
 	if code != Code.OK:
 		return Types.Result.new(code)
-	if _current == Queue.FRAME_MAX or _batch_id == 9223372036854775807:
-		return super.begin_advance()
 	if _host_finished and _host_frontier < _current:
 		_playback_complete = true
 		terminate(Code.TERMINATED)
 		return Types.Result.new(Code.TERMINATED)
+	if _current == Queue.FRAME_MAX or _batch_id == 9223372036854775807:
+		return super.begin_advance()
 	if recommended_steps() == 0:
 		return Types.Result.new(Code.PREDICTION_STALL)
 	var index: int = _current % _host_tags.size()

@@ -3,7 +3,7 @@ from copy import deepcopy
 import p2p_lifecycle as lifecycle
 from contract import fields, integer, hex_bytes, checksum, initial_game_state, advance_game_state
 
-REVISION = 'f13cd5c0f2815926785a395947e18da0dbea0dd8'
+REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 # Source delay refusals and the matching production Godot codes.
 DELAY_ERRORS = {'InputDelayDecreaseUnsupported': 'UNSUPPORTED', 'FrameDelayTooLarge': 'INVALID_CONFIGURATION',
                 'ConfigValueOutOfRange': 'INVALID_CONFIGURATION'}
