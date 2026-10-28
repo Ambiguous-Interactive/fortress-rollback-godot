@@ -517,8 +517,9 @@ Keepalive priority yields to queued row work so repeated host heartbeats cannot 
 Transport acceptance does not establish host receipt. The deployed authenticated control path, real exported routing and upstream spectator
 differential/model acceptance remain open in #131 and #47. The upstream SDK and server now have a native spectator relay drill; its
 [qualification evidence](docs/reference/spectator-relay-qualification.md) separates successful
-SDK delivery from the remaining exported Fortress witness. Reviewing dependency drift,
-restoring candidate server CI and upgrading the reviewed pins remain part of #131.
+SDK delivery from the remaining exported Fortress witness. The reviewed SDK/server pins now include
+the current upstream work; native relay and exported Chromium WebRTC qualify the upgraded integration.
+The deployed spectator control path and exported spectator witness remain part of #131.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
