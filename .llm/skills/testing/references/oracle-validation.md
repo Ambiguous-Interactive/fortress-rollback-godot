@@ -70,6 +70,9 @@ Recording parity must exercise the source session's actual recording/export API;
 constructing a replay directly proves playback only. Compare exported rows and
 checksum presence against original delayed inputs and observed SAVE requests,
 then round-trip each runtime's own format without implying file interchangeability.
+For mid-session extraction, retain the actual decoded early export through continued gameplay,
+then play that retained object. Observe subsequent extraction success or refusal and later recording
+contents independently; regenerating the early export after continuation cannot prove its ownership.
 Legacy format acceptance must observe the decoder's actual version, not only a workload name.
 Run independently packed files through each playback interface, then replace legacy bytes
 with a valid current file and require rejection at the format identity boundary.

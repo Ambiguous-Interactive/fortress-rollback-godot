@@ -297,7 +297,8 @@ python3 scripts/oracle/drop_history_launch.py --godot godot
 
 Both pinned engines run this gate in the existing oracle CI leg. The launcher
 executes one-row and four-row single-target cases plus four-row two-target cases,
-each with clean and lost-first-backfill delivery, twice in fresh processes. Two additional grouped four-row cases use unequal exposed confirmation. It records the pinned
+each with clean and lost-first-backfill delivery, twice in fresh processes. Four additional grouped four-row cases use unequal exposed confirmation,
+including first-COMMIT loss alone and combined with first-backfill loss. It records the pinned
 archive, complete upstream source inventory, local sources and project settings,
 resolved pinned cargo/rustc identities, engine/oracle identities and comparison bytes. Sources and executables must remain unchanged
 until the receipt commits.
@@ -315,7 +316,7 @@ source inventories retain floors three and two. Each process must report those e
 frontiers and inventory payloads; replacing either higher exposed frontier with four
 fails an independent negative control. Coordinator zero reaches frame twenty-three
 while survivor one reaches twenty-two, preserving the same twenty original canonical
-prefixes. Both clean and lost-first-history cases exercise this schedule.
+prefixes. Clean, lost-first-history, lost-first-COMMIT and combined-loss cases exercise this schedule.
 The source then explicitly removes the target. Godot detects its elapsed timeout.
 
 Each implementation must transfer every original missing row from donor one to
@@ -323,7 +324,14 @@ coordinator zero, commit cut eight or eleven, and continue to frame twenty-two. 
 scenario discards the first actual historical backfill packet before socket delivery.
 Both implementations must resend its exact original range, operation identity and
 bytes, and the recipient must receive that retry. The clean scenario remains a
-paired control with identical canonical input history. The four-row case also changes actual
+paired control with identical canonical input history. The lost-COMMIT cases discard the coordinator's first
+irreversible COMMIT before socket delivery. Each runtime must deliver a later exact retry,
+freeze both target slots at eleven and preserve every original canonical prefix. Combined
+loss separately withholds the first donor packet before dropping the first COMMIT.
+Trace version 3 retains separate loss banks and Godot COMMIT emissions/receipts;
+the parser reconstructs the complete certified Godot COMMIT independently.
+Delivered discarded COMMITs, missing loss evidence and changed encoded cuts must fail.
+The four-row case also changes actual
 encoded interior donor bytes before delivery. Swapping two interior bytes preserves both
 endpoint rows, every player's final accumulator and the final canonical state; the independent prefix comparison
 must still reject the altered intermediate history.

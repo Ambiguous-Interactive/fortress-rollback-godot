@@ -104,5 +104,24 @@ class RecordingAcceptanceTest(unittest.TestCase):
                 recording.acceptance(self.observed(cases))
 
 
+class ContinuingExtractionTest(unittest.TestCase):
+    # Value: protects=continued gameplay and owned extraction evidence; fails_when=source extraction consumes gameplay or rewrites old exports; seam=none
+    def test_complete_extraction_and_controls(self):
+        observed = {runtime: dict(format=1, cases=[recording.extraction_expected(case, runtime == 'rust')
+                                                 for case in recording.extraction_corpus()]) for runtime in ('rust', 'godot')}
+        self.assertEqual(len(recording.extraction_acceptance(observed)), 56)
+        self.assertEqual(len(recording.extraction_controls(observed)), 12)
+        for runtime in ('rust', 'godot'):
+            for field, value in [('format', True), ('format', 1.0), ('format', 2), ('extra', None)]:
+                changed = copy.deepcopy(observed)
+                changed[runtime][field] = value
+                with self.assertRaises(ValueError):
+                    recording.extraction_acceptance(changed)
+            changed = copy.deepcopy(observed)
+            changed[runtime]['cases'].pop()
+            with self.assertRaisesRegex(ValueError, 'incomplete continuing extraction inventory'):
+                recording.extraction_acceptance(changed)
+
+
 if __name__ == '__main__':
     unittest.main()

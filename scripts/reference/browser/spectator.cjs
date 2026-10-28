@@ -25,13 +25,23 @@ async function run() {
         const socket=Reflect.construct(target,args,newTarget); window.fortressSpectatorSockets.push(socket); return socket;
       }});
     },
-      {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token});
+      {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault});
     await page.goto(process.argv[2] + '/index.html');
+    let departureClosed=false;
+    if (runtime.browser_fault==='viewer-departure') {
+      await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true,null,{timeout:45000});
+      departureClosed=await page.evaluate(() => {
+        const sockets=window.fortressSpectatorSockets;
+        if(sockets.length!==1 || sockets[0].readyState!==1) return false;
+        sockets[0].close(1000,'physical viewer departure'); return true;
+      });
+      if(!departureClosed) throw new Error('no live viewer socket at buffered departure');
+    }
     await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
     const result = await page.evaluate(() => window.fortressSpectatorResult);
     const state = await page.evaluate(() => window.fortressSpectatorState);
     await page.waitForFunction(() => window.fortressSpectatorSockets.length>0 && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000});
-    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,state,errors}));
+    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,state,errors,departureClosed}));
     if (errors.length || result.passed !== true) process.exitCode=1;
   } finally {clearTimeout(watchdog);tearingDown=true;await browser.close();}
 }

@@ -99,7 +99,7 @@ def main():
     scenario.add_argument('--late-signal', choices=LATE_SIGNALS)
     scenario.add_argument('--departure', choices=['host', 'viewer'])
     scenario.add_argument('--browser-viewer', action='store_true')
-    parser.add_argument('--browser-fault', choices=['initial-state'])
+    parser.add_argument('--browser-fault', choices=['initial-state', 'viewer-departure'])
     args = parser.parse_args()
     if args.browser_fault and not args.browser_viewer:
         parser.error('--browser-fault requires --browser-viewer')
@@ -221,7 +221,7 @@ def run(args):
                     wait_ready(server, port)
                     if args.browser_viewer:
                         result = spectator_browser.execute(engine, project, runtime_path, export_server.url, browser_environment, args.output, control, args.browser_fault)
-                        if not args.browser_fault and (control.received < 1 or control.done is None):
+                        if args.browser_fault != 'initial-state' and (control.received < 1 or control.done is None):
                             raise ValueError('browser authenticated acceptance or completion missing')
                     else:
                         command = [str(engine), '--headless', '--path', str(project), '--script', 'res://signalfish_spectator_live.gd', '--', str(runtime_path)]
@@ -260,7 +260,7 @@ def run(args):
             control.close()
             if export_server:
                 export_server.close()
-        if args.browser_fault:
+        if args.browser_fault == 'initial-state':
             spectator_browser.validate_no_acceptance(control)
         if before != inventory(sources) or frozen != inventory(executed) or source_inventory(args.server_source) != server_before:
             raise ValueError('live witness inputs changed before publication')

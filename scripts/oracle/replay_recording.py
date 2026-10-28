@@ -101,7 +101,8 @@ def observe(binary, engine, root, output, execute):
     negative = controls(observations[0])
     rejections = standalone_controls(binary, command, output, execute)
     return dict(workloads=workloads, cases_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
-                negative_controls=negative, standalone_rejections=rejections, observations=observations[0])
+                negative_controls=negative, standalone_rejections=rejections, observations=observations[0],
+                extraction=observe_extraction(binary, command, output, execute))
 
 
 def standalone_controls(binary, command, output, execute):
@@ -254,3 +255,121 @@ def controls(observed):
                 else:
                     raise ValueError(f'{runtime}-delay{delay}-{fault}: lockstep recording mutation accepted')
     return results
+
+
+
+def extraction_corpus():
+    return [dict(name=f'extract-{players}p-{count}-delay{delay}-prediction{prediction}',
+                 players=players, count=count, delay=delay, prediction=prediction, seed=0xffffffff)
+            for players in range(2, 9) for count in (7, 64) for delay in (0, 2) for prediction in (0, 2)]
+
+
+def extraction_expected(case, rust):
+    full = expected(case, rust)
+    boundary = max(1, case['count'] // 2)
+    prefix = expected(dict(case, count=boundary), rust)
+    for field in ('frames', 'checksums', 'skipped', 'total_frames', 'playback'):
+        full[field] = prefix[field]
+    later = expected(case, False)
+    full['extraction'] = dict(at=boundary, final_frame=case['count'], early_unchanged=True,
+                              second_extraction_refused=rust, later_frames=-1 if rust else case['count'],
+                              later_rows=[] if rust else later['frames'], later_checksums=[] if rust else later['checksums'],
+                              later_playback=None if rust else later['playback'])
+    return full
+
+
+def extraction_acceptance(observed):
+    names = [f'extract-{players}p-{count}-delay{delay}-prediction{prediction}'
+             for players in range(2, 9) for count in (7, 64) for delay in (0, 2) for prediction in (0, 2)]
+    for runtime in ('rust', 'godot'):
+        result = observed[runtime]
+        if type(result) is not dict or set(result) != {'format', 'cases'}:
+            raise ValueError(f'extraction.{runtime}: field mismatch')
+        compare(result['format'], 1, f'extraction.{runtime}.format')
+        cases = result['cases']
+        if type(cases) is not list or sorted(case['name'] for case in cases) != sorted(names):
+            raise ValueError(f'{runtime}: incomplete continuing extraction inventory')
+        for case in cases:
+            _, roster, count, delay, prediction = case['name'].split('-')
+            specification = dict(name=case['name'], players=int(roster[:-1]), count=int(count),
+                                 delay=int(delay[5:]), prediction=int(prediction[10:]), seed=0xffffffff)
+            compare(case, extraction_expected(specification, runtime == 'rust'), f'extraction.{runtime}.{case["name"]}')
+    return names
+
+
+def extraction_controls(observed):
+    results = []
+    for runtime in ('rust', 'godot'):
+        for fault in ('continuation', 'snapshot-mutated', 'second-extraction', 'prefix-input', 'saved-state'):
+            changed = copy.deepcopy(observed)
+            case = next(row for row in changed[runtime]['cases'] if row['name'] == 'extract-5p-64-delay2-prediction2')
+            field = {'continuation': 'extraction.final_frame', 'snapshot-mutated': 'extraction.early_unchanged',
+                     'second-extraction': 'extraction.second_extraction_refused', 'prefix-input': 'frames[15][2]'}.get(fault)
+            if fault == 'continuation':
+                case['extraction']['final_frame'] -= 1
+            elif fault == 'snapshot-mutated':
+                case['extraction']['early_unchanged'] = False
+            elif fault == 'second-extraction':
+                case['extraction']['second_extraction_refused'] = not case['extraction']['second_extraction_refused']
+            elif fault == 'prefix-input':
+                case['frames'][15][2] ^= 1
+            else:
+                index = next(index for index, row in enumerate(case['records']) if row['kind'] == 'save' and row['frame'] == 63)
+                case['records'][index]['bytes'] = '00' * 16
+                field = f'records[{index}].bytes'
+            try:
+                extraction_acceptance(changed)
+            except ValueError as error:
+                if not str(error).startswith(f'extraction.{runtime}.{case["name"]}.{field}:'):
+                    raise ValueError(f'{fault}: wrong extraction rejection') from error
+                results.append(f'{runtime}-{fault}')
+            else:
+                raise ValueError(f'{runtime}-{fault}: continuing extraction mutation accepted')
+        if runtime == 'godot':
+            for fault in ('later-input', 'later-playback'):
+                changed = copy.deepcopy(observed)
+                case = next(row for row in changed[runtime]['cases'] if row['name'] == 'extract-5p-64-delay2-prediction2')
+                if fault == 'later-input':
+                    case['extraction']['later_rows'][40][2] ^= 1
+                    field = 'extraction.later_rows[40][2]'
+                else:
+                    records = case['extraction']['later_playback']['records']
+                    index = next(index for index, row in enumerate(records) if row['kind'] == 'advance' and row['frame'] == 40)
+                    records[index]['bytes'] = '00' * 16
+                    field = f'extraction.later_playback.records[{index}].bytes'
+                try:
+                    extraction_acceptance(changed)
+                except ValueError as error:
+                    if not str(error).startswith(f'extraction.{runtime}.{case["name"]}.{field}:'):
+                        raise ValueError('wrong later recording rejection') from error
+                    results.append('godot-' + fault)
+                else:
+                    raise ValueError('later recording mutation accepted')
+    return results
+
+
+def observe_extraction(binary, command, output, execute):
+    cases = extraction_corpus()
+    text = json.dumps(cases, indent=2) + '\n'
+    fixture = output / 'recording-extraction-cases.json'
+    fixture.write_text(text)
+    observations = []
+    for repeat in (1, 2):
+        combined = {}
+        for runtime in ('rust', 'godot'):
+            invocation = [str(binary), '--recording-extraction'] if runtime == 'rust' else command[:-2] + ['--recording-extraction', str(fixture.resolve())]
+            stdout, stderr = execute(invocation, output / f'recording-extraction-{runtime}-{repeat}.log', text if runtime == 'rust' else None)
+            if runtime == 'godot':
+                lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines() if line.startswith('FORTRESS_REPLAY_RESULT ')]
+                if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
+                    raise ValueError('invalid continuing extraction completion')
+                stdout = lines[0]
+            elif stderr.strip():
+                raise ValueError('Rust continuing extraction stderr')
+            combined[runtime] = json.loads(stdout)
+        extraction_acceptance(combined)
+        observations.append(combined)
+    compare(observations[0], observations[1])
+    return dict(workloads=extraction_acceptance(observations[0]), repeat_equal=True,
+                cases_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
+                negative_controls=extraction_controls(observations[0]), observations=observations[0])

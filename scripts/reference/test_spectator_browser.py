@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from spectator_browser import validate, validate_fault
+from spectator_browser import validate, validate_fault, validate_departure
 
 
 class SpectatorBrowserTests(unittest.TestCase):
@@ -121,6 +121,31 @@ assert.equal(errors.length,3,'deliberate close must not invent a request failure
         for first, second in [(None, browser), (host, None), ({}, {}), (host, {'result': []})]:
             with self.subTest(first=first, second=second), self.assertRaises(ValueError):
                 validate(first, second)
+
+
+    def test_departure_requires_physical_pause_and_host_continuation(self):
+        host = {'passed': True, 'frames': 48, 'seated_players': 2, 'confirmed': 47, 'host_rollbacks': 46,
+                'viewer_departure_observed': True, 'publication_stopped': True, 'host_frame_at_departure': 16, 'host_resumed_frame': 20}
+        browser = {'browser': 'Chromium', 'version': '156.0', 'errors': [], 'departureClosed': True, 'result': {
+            'passed': True, 'departure': 'viewer', 'socket_departed': True, 'playback_stopped': True, 'viewer_seated': False,
+            'frame': 8, 'compared': 8, 'buffered_rows': 3, 'simulations_before': 8, 'simulations_after': 8}}
+        validate_departure(host, browser)
+        for section in ['host', 'result']:
+            row = host if section == 'host' else browser['result']
+            for field, value in row.items():
+                alternatives = [None, float(value), True] if type(value) is int else [None, False if value is True else True]
+                for bad in alternatives:
+                    first, second = copy.deepcopy((host, browser))
+                    target = first if section == 'host' else second['result']
+                    target[field] = bad
+                    with self.subTest(section=section, field=field, bad=bad), self.assertRaises(ValueError):
+                        validate_departure(first, second)
+        for changes in [{'frame': 20}, {'compared': 7}, {'buffered_rows': 1}, {'simulations_after': 9}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_departure(host, {**browser, 'result': {**browser['result'], **changes}})
+        for changes in [{'departureClosed': False}, {'errors': ['late failure']}]:
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                validate_departure(host, {**browser, **changes})
 
 
 if __name__ == '__main__':

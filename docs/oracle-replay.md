@@ -224,6 +224,40 @@ source/tool identity and minimum/current engine gates.
 
 This qualifies all-local recording and sequential playback at prediction windows
 zero and two. Remote confirmation, rollback/drop recording, recording
-extraction that continues a source session, browser source comparison and the
+browser source comparison and the
 remaining cross-platform release gates retain separate acceptance. It does not
 claim complete upstream recording parity or file interchangeability.
+
+
+## Extract a recording while gameplay continues
+
+The same source-bound gate also invokes `P2PSession::take_replay()` midway through
+56 all-local workloads. Every roster from two through eight players runs seven
+and 64 advances, input delays zero and two, and prediction windows zero and two.
+Extraction occurs after three or 32 completed advances. Gameplay then continues
+to the original target with every original callback and canonical state compared
+against independently calculated delayed inputs. The observer retains empty
+lockstep service attempts too; a reported final frame alone cannot qualify.
+
+The pinned source explicitly disables recording after `take_replay()`
+(`p2p_session.rs`, lines 8398–8427). A second extraction must return the structured
+`NotSupported` error. Godot's `Session.replay()` deliberately returns an owned
+snapshot without disabling recording. A later Godot export must contain the
+complete finalized simulated history, serialize/decode successfully, and replay
+through the actual callback player against every independently computed state.
+The initial export retains each runtime's recording-frontier and checksum rules
+from the table above; their different extraction policies are not projected away.
+
+Both observers decode the early recording immediately, retain both the original
+export and that decoded object while gameplay continues, and compare their bytes
+again afterward. Playback uses that retained decoded recording. The gate checks
+every input, checksum presence, save/advance record and state boundary, not just
+a successful extraction or final checksum. Both engine pins run twice in fresh
+processes. Twelve paired negative controls alter continuation, retained-byte
+stability, second-extraction behavior, early input, later original save state,
+later Godot input and later Godot playback. Missing workloads and malformed
+result versions fail separate acceptance tests.
+
+This qualifies continuing all-local extraction and its explicit source/product
+difference. Remote confirmation, correction/drop recording, browser source
+comparison and the remaining release matrix remain open in #45.

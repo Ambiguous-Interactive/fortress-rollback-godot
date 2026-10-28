@@ -128,7 +128,7 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
                 raise ValueError('exported spectator browser process deadline') from error
             (output / 'browser.log').write_text(process.stdout + process.stderr)
             browser_output = process.stdout
-            if fault:
+            if fault == 'initial-state':
                 browser = json.loads(browser_output)
                 validate_fault(process.returncode, browser, host.poll() is None, control, process.stderr)
                 return {'fault': fault, 'rejected': True, 'viewer': browser}
@@ -148,7 +148,10 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
     if host.returncode != 0 or 'ERROR:' in native or len(rows) != 1:
         raise ValueError('native browser-host witness failed; inspect native.log')
     result = json.loads(browser_output)
-    validate(rows[0], result)
+    if fault == 'viewer-departure':
+        validate_departure(rows[0], result)
+    else:
+        validate(rows[0], result)
     return {'host': rows[0], 'viewer': result}
 
 
@@ -168,3 +171,26 @@ def validate(host, browser):
             or type(viewer.get('catchup_steps')) is not int or not 2 <= viewer['catchup_steps'] <= 4
             or browser.get('browser') != 'Chromium' or type(browser.get('version')) is not str or not browser['version'] or browser.get('errors') != []):
         raise ValueError('missing physical browser playback evidence')
+
+
+def validate_departure(host, browser):
+    if type(host) is not dict or type(browser) is not dict or type(browser.get('result')) is not dict:
+        raise ValueError('missing exported physical departure evidence')
+    viewer = browser['result']
+    expected_host = {'passed': True, 'frames': 48, 'seated_players': 2, 'confirmed': 47,
+                     'viewer_departure_observed': True, 'publication_stopped': True, 'host_resumed_frame': 20}
+    expected_viewer = {'passed': True, 'departure': 'viewer', 'socket_departed': True, 'playback_stopped': True, 'viewer_seated': False}
+    for row, expected in [(host, expected_host), (viewer, expected_viewer)]:
+        for key, value in expected.items():
+            if type(row.get(key)) is not type(value) or row[key] != value:
+                raise ValueError('incomplete exported physical departure evidence: ' + key)
+    for key in ['frame', 'compared', 'buffered_rows', 'simulations_before', 'simulations_after']:
+        if type(viewer.get(key)) is not int:
+            raise ValueError('invalid exported physical departure observation: ' + key)
+    if (type(host.get('host_frame_at_departure')) is not int or not 8 <= host['host_frame_at_departure'] <= 20
+            or not 8 <= viewer['frame'] < 20 or viewer['compared'] != viewer['frame'] or viewer['buffered_rows'] < 2
+            or viewer['simulations_before'] != viewer['frame'] or viewer['simulations_after'] != viewer['simulations_before']
+            or type(host.get('host_rollbacks')) is not int or host['host_rollbacks'] < 1
+            or browser.get('departureClosed') is not True or browser.get('browser') != 'Chromium'
+            or type(browser.get('version')) is not str or not browser['version'] or browser.get('errors') != []):
+        raise ValueError('exported physical departure lacks paused history or canonical continuation')
