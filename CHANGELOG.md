@@ -203,6 +203,8 @@
 
 ### Fixed
 
+- Fix lost peer-drop acknowledgements stopping commit recovery at the negotiation deadline. Committed survivors retry until every live survivor acknowledges.
+
 - Fix SignalFish spectator startup rejecting real SDK protocol metadata. Host and viewer bridges read the SDK's typed version and size limits.
 
 - Fix remote peer-drop donors stalling healthy history recovery when another survivor refuses a certificate packet.

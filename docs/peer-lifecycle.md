@@ -154,8 +154,10 @@ is irreversible and freezes the departed slot at the certified frame, so the
 survivors keep one confirmed history and one frozen value instead of splitting
 at their own frontiers.
 
-The proposer retries COMMIT every 50 milliseconds while its original barrier
-deadline has not expired and a live survivor has not acknowledged. A survivor
+The proposer retries COMMIT every 50 milliseconds while a live survivor has
+not acknowledged. The negotiation deadline only expires pending agreements;
+an irreversible commit remains retryable after that deadline. Each acknowledged
+survivor stops receiving retries while other acknowledgements remain missing. A survivor
 repeats its acknowledgement for a matching duplicate commit, including after
 its slot freeze. Acknowledgements must match the certified frame and value;
 once every live survivor acknowledges, commit retries stop. Neither duplicates

@@ -203,9 +203,18 @@ The same native flow runs three final-drain failure controls with `--late-signal
 `spectator_join_failed`, `spectator_left` and selected `spectator_disconnected`.
 Each must exit at the expected late failure without printing a success marker.
 
+Use `--departure host` or `--departure viewer` for physical socket-loss cells.
+At host frame 20 the viewer is paused with at least two actual buffered rows.
+The selected SDK client closes its socket. The surviving remote SDK must report
+that exact host or viewer departure through the real server before success.
+Both cells require terminated playback with unchanged canonical bytes and a
+stopped publisher. Viewer departure additionally requires the seated host to
+repair its original inputs and advance through canonical boundary 21.
+These cells and the final-drain controls run on both pinned native engines in CI.
+
 This fixture is development tooling, not a production identity provider. Both
 SDK roles run in one native process; seated remote input uses an injected
 schedule, while spectator data and acceptance use real sockets. The exported
-browser witness, physical loss/replacement matrix, production admission service
-and full upstream semantic acceptance remain in #131 and #47.
+browser witness, replacement and remaining loss matrix, production admission
+service and full upstream semantic acceptance remain in #131 and #47.
 [Issue #245](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245) specifies the next exported-browser witness.

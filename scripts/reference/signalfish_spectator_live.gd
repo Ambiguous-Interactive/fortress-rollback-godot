@@ -41,6 +41,9 @@ var provisioning_controls: int = 0
 var compared: int = 0
 var completed: bool = false
 var late_signal: String = ""
+var departure: String = ""
+var departure_started: bool = false
+var departure_observed: bool = false
 
 
 func _initialize() -> void:
@@ -62,8 +65,11 @@ func _run() -> void:
 		_fail("missing private runtime configuration")
 		return
 	if args.size() == 2:
-		late_signal = args[1]
-		if late_signal not in ["spectator_join_failed", "spectator_left", "spectator_disconnected"]:
+		if args[1] in ["host", "viewer"]:
+			departure = args[1]
+		else:
+			late_signal = args[1]
+		if departure.is_empty() and late_signal not in ["spectator_join_failed", "spectator_left", "spectator_disconnected"]:
 			_fail("unknown late failure control")
 			return
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(args[0]))
@@ -101,16 +107,24 @@ func _run() -> void:
 			"going_away",
 			"room_left",
 			"reconnected",
-			"player_left",
 			"player_reconnected",
 			"spectator_join_failed",
 			"spectator_left"
 		]:
-			client.connect(signal_name, func(_a: Variant = null, _b: Variant = null, _c: Variant = null, _d: Variant = null) -> void: _error(signal_name))
+			client.connect(signal_name, func(_a: Variant = null, _b: Variant = null, _c: Variant = null, _d: Variant = null) -> void: _error(signal_name, index))
 		client.spectator_disconnected.connect(
 			func(id: String, _reason: int, _spectators: Array) -> void:
 				if id == viewer_uuid:
-					_error("spectator_disconnected")
+					if departure_started and departure == "viewer" and index == 0:
+						departure_observed = true
+					_error("spectator_disconnected", index)
+		)
+		client.player_left.connect(
+			func(id: String) -> void:
+				if departure_started and departure == "host" and index in [1, 2] and id == admission.host:
+					departure_observed = departure_observed or index == 2
+				else:
+					_error("player_left", index)
 		)
 		client.game_data_binary_received.connect(
 			func(_sender: String, _encoding: int, _bytes: PackedByteArray) -> void:
@@ -184,6 +198,9 @@ func _run() -> void:
 		if frame == 20 and viewer_game.frame != paused_frame:
 			_fail("paused viewer advanced buffered rows")
 			return
+		if frame == 20 and not departure.is_empty():
+			await _depart()
+			return
 		if frame >= 3:
 			host_session.receive_input(1, frame - 3, _input(frame - 3, 1))
 		var inputs: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, _input(frame, 0))]
@@ -256,6 +273,72 @@ func _run() -> void:
 				"catchup_steps": catchup_steps,
 				"paused_frames": 8,
 				"provisioning_controls": provisioning_controls
+			}
+		)
+	)
+	_cleanup()
+	quit(0)
+
+
+func _depart() -> void:
+	var viewer: RefCounted = stream.playback_session()
+	var before: PackedByteArray = viewer_game.canonical_bytes()
+	var boundary: int = viewer_game.frame
+	var buffered: int = viewer.host_frontier() - boundary + 1
+	if buffered < 2 or boundary < 1 or before != _expected(boundary):
+		_fail("departure needs real paused canonical buffered history")
+		return
+	departure_started = true
+	var selected: int = 0 if departure == "host" else 2
+	clients[selected].close()
+	if not await _wait(func() -> bool: return departure_observed, "physical selected participant departure"):
+		return
+	if clients[selected].get_connection_state() == Relay.CONNECTED:
+		_fail("selected socket stayed connected")
+		return
+	var observed: RefCounted = relay.poll(_now())
+	var empty: Array[Driver.LocalInput] = []
+	var stopped: RefCounted = viewer_driver.step(_now(), empty)
+	if (
+		observed.code != Transport.Code.WRONG_STATE
+		or viewer.status().lifecycle != S.Lifecycle.TERMINATED
+		or viewer.status().reason != S.Code.PROTOCOL_FAILED
+		or stopped.code != S.Code.TERMINATED
+		or viewer_game.canonical_bytes() != before
+		or viewer.status().current_frame != boundary
+		or publication.status().code != Transport.Code.WRONG_STATE
+		or not errors.is_empty()
+	):
+		_fail("physical departure allowed buffered playback or publication")
+		return
+	if departure == "viewer":
+		for frame: int in range(17, 20):
+			host_session.receive_input(1, frame, _input(frame, 1))
+		host_session.receive_input(1, 20, _input(20, 1))
+		var inputs: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, 20, _input(20, 0))]
+		if host_driver.step(_now(), inputs).code != S.Code.OK or host_game.canonical_bytes() != _expected(21):
+			_fail("viewer departure interrupted original host gameplay")
+			return
+	for _drain: int in 3:
+		await process_frame
+	if not errors.is_empty() or viewer_game.canonical_bytes() != before or (departure == "viewer" and clients[0].get_players().size() != 2):
+		_fail("late SDK failure after physical departure")
+		return
+	completed = true
+	print(
+		"FORTRESS_LIVE_SPECTATOR_DEPARTURE ",
+		JSON.stringify(
+			{
+				"passed": true,
+				"departure": departure,
+				"remote_departure": departure_observed,
+				"socket_closed": clients[selected].get_connection_state() != Relay.CONNECTED,
+				"buffered_rows": buffered,
+				"viewer_frame": boundary,
+				"compared": compared,
+				"host_frame": host_game.frame,
+				"host_continued": departure == "viewer",
+				"viewer_binary_receives": viewer_receives
 			}
 		)
 	)
@@ -471,7 +554,12 @@ func _observe(value: Dictionary) -> void:
 		_error("SDK event inventory overflow")
 
 
-func _error(reason: String) -> void:
+func _error(reason: String, index: int = -1) -> void:
+	if departure_started:
+		if reason == "disconnected" and index == (0 if departure == "host" else 2):
+			return
+		if departure == "viewer" and reason == "spectator_disconnected" and index in [0, 1]:
+			return
 	if not completed and errors.size() < 8:
 		errors.append(reason)
 

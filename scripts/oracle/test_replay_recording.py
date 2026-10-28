@@ -14,10 +14,31 @@ class RecordingAcceptanceTest(unittest.TestCase):
 
     def test_complete_recordings_and_paired_controls(self):
         observed = self.observed()
-        self.assertEqual(len(recording.acceptance(observed)), 56)
-        self.assertEqual(len(recording.controls(observed)), 22)
+        self.assertEqual(len(recording.acceptance(observed)), 112)
+        self.assertEqual(len(recording.controls(observed)), 40)
 
     # Value: protects=original request evidence; fails_when=status/order/saved state is discarded; why_new=exported rows do not prove callbacks; seam=none
+    def test_lockstep_workloads_and_service_schedule_are_independent(self):
+        observed = self.observed()
+        for runtime in ('rust', 'godot'):
+            lockstep = [case for case in observed[runtime]['cases'] if case['name'].endswith('-prediction0')]
+            self.assertEqual(len(lockstep), 56)
+            for delay in (0, 2):
+                case = next(case for case in lockstep if case['name'] == f'record-5p-64-delay{delay}-prediction0')
+                self.assertEqual(case['saves'], [])
+                self.assertTrue(all(checksum is None for checksum in case['checksums']))
+                self.assertEqual(len(case['advances']), 64)
+                self.assertEqual(len(case['services']), (128 if delay == 0 else 65) if runtime == 'rust' else 64)
+                changed = copy.deepcopy(observed)
+                target = next(row for row in changed[runtime]['cases'] if row['name'] == case['name'])
+                target['services'].pop(0)
+                with self.assertRaisesRegex(ValueError, r'\.services:'):
+                    recording.acceptance(changed)
+            changed = copy.deepcopy(observed)
+            changed[runtime]['cases'] = [case for case in changed[runtime]['cases'] if not case['name'].endswith('-prediction0')]
+            with self.assertRaisesRegex(ValueError, 'incomplete recording workload inventory'):
+                recording.acceptance(changed)
+
     def test_original_request_mutations_reject_at_the_changed_boundary(self):
         for runtime in ('rust', 'godot'):
             for fault in ('status', 'value', 'save-state', 'order', 'missing-save'):

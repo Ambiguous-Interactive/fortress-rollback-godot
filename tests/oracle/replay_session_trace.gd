@@ -29,12 +29,13 @@ class Game:
 		writer.write_bytes(bytes())
 		return Driver.SaveResult.new(true, bytes())
 
-	func load_state(_frame: int, reader: Reader) -> bool:
+	func load_state(frame: int, reader: Reader) -> bool:
 		var loaded: Reader.ReadResult = reader.read_bytes(16)
 		if loaded.code != Reader.Code.OK:
 			return false
 		for index: int in 4:
 			state[index] = loaded.bytes.decode_u32(index * 4)
+		records.append({"kind": "load", "frame": frame, "bytes": bytes().hex_encode(), "inputs": []})
 		return true
 
 	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
@@ -226,7 +227,9 @@ func _record(value: Dictionary) -> Dictionary:
 	game.state[1] = int(value.seed)
 	game.state[2] = int(value.seed)
 	var driver: Driver = Driver.new(session, game)
+	var services: Array[Dictionary] = []
 	for frame: int in int(value.count):
+		var first_record: int = game.records.size()
 		var samples: Array[Driver.LocalInput] = []
 		for slot: int in config.player_count:
 			var bytes: PackedByteArray = PackedByteArray([0, 0, 0, 0])
@@ -234,6 +237,10 @@ func _record(value: Dictionary) -> Dictionary:
 			samples.append(Driver.LocalInput.new(slot, frame, bytes))
 		if driver.step(frame, samples).code != Types.Code.OK:
 			return {}
+		var requests: Array[String] = []
+		for index: int in range(first_record, game.records.size()):
+			requests.append(game.records[index].kind)
+		services.append({"before": frame, "after": int(game.state[0]), "requests": requests})
 	var replay: Replay = session.replay()
 	var decoded: Replay = Replay.new()
 	if decoded.decode(replay.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != replay.to_bytes():
@@ -261,4 +268,5 @@ func _record(value: Dictionary) -> Dictionary:
 	var played: Dictionary = _play(decoded, int(value.seed), true, false)
 	played.name = value.name
 	return {"name": value.name, "frames": rows, "checksums": checksums, "skipped": decoded.skipped_frames(),
-		"players": decoded.player_count(), "total_frames": decoded.frame_count(), "records": game.records, "advances": advances, "saves": saves, "playback": played}
+		"players": decoded.player_count(), "total_frames": decoded.frame_count(), "records": game.records,
+		"advances": advances, "saves": saves, "services": services, "playback": played}

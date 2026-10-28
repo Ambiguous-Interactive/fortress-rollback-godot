@@ -406,7 +406,7 @@ def main():
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
         standalone_rejections=rejected, observations=observations[0], recording=recording,
-        limitations=['Recording covers all-local P2PSession at prediction window 2; remote confirmation/drop recording remains separate.',
+        limitations=['Recording covers all-local P2PSession at prediction windows 0 and 2; remote confirmation/drop recording remains separate.',
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')

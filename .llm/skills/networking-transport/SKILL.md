@@ -209,8 +209,8 @@ timeout diagnostics independent of unsent retry state under token or packet pres
 Cross pressure with full diagnostic banks and an overdue later roster link.
 Keep committed operation control separate from the target's gameplay lifetime:
 freezing a slot must not discard duplicate commits or their acknowledgements.
-Test actual retry packets, lost acknowledgements and quiescence before timeout;
-match the full operation identity and certified value before counting completion.
+Irreversible commit retries outlive negotiation expiry until live survivors acknowledge.
+Test lost ACKs across that deadline and quiescence after ACK; match the complete certified operation.
 Validate a proposed cut against each receiver's captured receipt inventory, not only its
 exposed frontier; a correct proposer algorithm does not validate a broken proposer's candidate.
 Freeze the participant set when a local agreement opens. A lost participant before

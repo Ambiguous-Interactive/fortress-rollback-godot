@@ -5,9 +5,9 @@ Rust `ReplaySession` and both shipped `FortressReplayPlayer` interfaces.
 CI runs both engine pins. The receipt and raw logs go to `.cache/reference/results/replay/`.
 
 The probe invokes public APIs from unchanged fortress-rollback revision
-`f13cd5c0f2815926785a395947e18da0dbea0dd8`. Relevant upstream source:
-[`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/sessions/replay_session.rs)
-and [`src/replay.rs`](https://github.com/wallstop/fortress-rollback/blob/f13cd5c0f2815926785a395947e18da0dbea0dd8/src/replay.rs).
+`d124c89080004d96971a629bb0427056ee1805e3`. Relevant upstream source:
+[`src/sessions/replay_session.rs`](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/sessions/replay_session.rs)
+and [`src/replay.rs`](https://github.com/wallstop/fortress-rollback/blob/d124c89080004d96971a629bb0427056ee1805e3/src/replay.rs).
 This is gameplay replay applicability, separate from network fault-trace replay.
 
 ## Observed contract
@@ -154,7 +154,9 @@ The same `make replay-probes` gate now calls the unchanged pinned
 `SessionBuilder::with_recording(true)` and `P2PSession::into_replay()` APIs.
 An all-local roster removes transport timing from this recording comparison.
 Every supported roster from two through eight players runs zero, one, seven and
-64 advances, with input delays zero and two and prediction window two: 56 cases.
+64 advances, with input delays zero and two and prediction windows zero and two: 112 cases.
+The original 56 prediction-window-two workloads remain unchanged. Two explicit
+56-case process partitions preserve the standalone executables' 64-case limit.
 The same original samples drive a production Godot `Session` through its driver.
 Both implementations serialize and decode their own resulting recordings, then
 play those decoded histories through the actual replay sessions. Files remain
@@ -168,12 +170,15 @@ It compares exact observations without excluding the source/product differences:
 
 | Recording boundary | Pinned Rust | Godot |
 | --- | --- | --- |
-| Before two advances | Empty recording | All completed, finalized inputs |
-| After N advances, delay zero | N−1 recorded inputs | N recorded inputs |
-| After N≥2 advances, delay two | N+1 recorded inputs, including future input | N simulated, finalized inputs |
-| Delay-zero state checksums | Every exported pre-input boundary | Every exported pre-input boundary |
-| Delay-two state checksums | Initial boundary only in this workload | Every exported pre-input boundary |
-| First save request | Two saves of boundary zero | One save of boundary zero |
+| Prediction two, before two advances | Empty recording | All completed, finalized inputs |
+| Prediction two, after N advances, delay zero | N−1 recorded inputs | N recorded inputs |
+| Prediction two, N≥2 advances, delay two | N+1 recorded inputs, including future input | N simulated, finalized inputs |
+| Prediction two, delay-zero state checksums | Every exported pre-input boundary | Every exported pre-input boundary |
+| Prediction two, delay-two state checksums | Initial boundary only in this workload | Every exported pre-input boundary |
+| Prediction two, first save request | Two saves of boundary zero | One save of boundary zero |
+| Lockstep, saves and recording checksums | No original SAVE; no recorded checksums | Same |
+| Lockstep, N advances, delay zero | N recorded inputs | N recorded inputs |
+| Lockstep, N≥1 advances, delay two | max(3,N+1) recorded inputs | N simulated, finalized inputs |
 
 The source records confirmation before adding the current local samples and
 before application save requests execute (`p2p_session.rs`, lines 3089–3134
@@ -185,11 +190,27 @@ checksum is treated as evidence of validation. The complete decoded recording is
 replayed, including the source's future rows, against independently computed
 states; every callback, event, completion and failure observation is compared.
 
-The receipt retains these recording observations, the 56-workload inventory and
-22 paired controls. The controls remove a player, reorder inputs, change checksum
+Lockstep exercises a separate source scheduling boundary: confirmation is read
+before local input insertion. With delay zero, each source frame requires one empty
+attempt followed by its ADVANCE. With delay two, only the first attempt is empty.
+Godot advances each all-local frame immediately. The adapter retains each frame's
+original sample across empty source attempts, limits attempts to twice the target
+advance count, and fails unless the target state is reached. Every attempt records
+the actual before/after frame and ordered request kinds; empty batches cannot be
+discarded or mistaken for completed gameplay. Both original gameplay histories and
+their decoded replay histories match independent delayed-input states. Lockstep's
+checksum-free recordings make no state-verification claim.
+
+The receipt retains these recording observations, the 112-workload inventory and
+40 paired controls. The controls remove a player, reorder inputs, change checksum
 availability, shorten history and corrupt intermediate original/playback state. Additional original-request
 controls change an applied input or status, corrupt saved canonical bytes, reorder SAVE/ADVANCE
-and omit a SAVE while leaving exported playback untouched.
+and omit a SAVE while leaving exported playback untouched. Unexpected LOAD callbacks
+remain in the observed request stream, including a restore that preserves canonical state.
+Lockstep controls separately omit a service attempt, invent a recorded checksum,
+alter an original input and claim a premature final service boundary, on both
+runtimes with each delay. An independently required workload inventory rejects
+removing the entire lockstep partition even if generated expectations agree.
 Standalone Rust and Godot processes reject an oversized recording workload and decimal, exponent
 and boolean tokens in every integer field, beside valid integer-token recording controls.
 They also reject duplicate literal and escaped spellings of every recording field. Valid escaped
@@ -201,8 +222,8 @@ number spelling at the observer boundary; it does not claim a separate strict JS
 Both runtime observations run twice in fresh processes under the existing
 source/tool identity and minimum/current engine gates.
 
-This qualifies all-local recording and sequential playback at prediction window
-two. Remote confirmation, rollback/drop recording, zero-window recording, recording
+This qualifies all-local recording and sequential playback at prediction windows
+zero and two. Remote confirmation, rollback/drop recording, recording
 extraction that continues a source session, browser source comparison and the
 remaining cross-platform release gates retain separate acceptance. It does not
 claim complete upstream recording parity or file interchangeability.

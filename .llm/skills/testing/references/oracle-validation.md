@@ -23,6 +23,8 @@ Label synthetic bootstrap separately, retain startup counterexamples, and requir
 transition-control rejection inside the actual observed suffix, not only its setup.
 When a detailed observation stream accompanies a smaller comparison projection, validate its complete
 delivery and microstep inventory too. Repeating valid startup records must not replace exercised history.
+Count completed ADVANCE requests separately from service attempts, retaining bounded empty attempts with their original samples.
+Record unexpected callback kinds too; a redundant LOAD can preserve canonical state while violating request order.
 
 Compare intermediate canonical prefixes against original submitted histories.
 A final checksum or accumulator sum can match after reordered inputs; replaying
