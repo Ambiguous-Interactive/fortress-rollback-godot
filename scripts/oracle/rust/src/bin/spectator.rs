@@ -25,9 +25,9 @@ fn transfer(queues: &[Arc<Mutex<Queue>>]) {
         }
     }
 }
-fn builder(seed: u64) -> SessionBuilder<Profile> {
+fn builder(seed: u64, players: usize) -> SessionBuilder<Profile> {
     let origin = web_time::Instant::now();
-    SessionBuilder::new().with_num_players(2).unwrap().with_max_prediction_window(0)
+    SessionBuilder::new().with_num_players(players).unwrap().with_max_prediction_window(0)
         .with_protocol_config(ProtocolConfig { clock: Some(Arc::new(move || origin)), protocol_rng_seed: Some(seed),
             quality_report_interval: Duration::from_secs(100), ..Default::default() })
         .with_sync_config(SyncConfig { num_sync_packets: 1, keepalive_interval: Duration::from_secs(100), ..Default::default() })
@@ -37,13 +37,13 @@ fn observe(viewer: &fortress_rollback::SpectatorSession<Profile>, speed: usize, 
     json!({"current": viewer.current_frame().as_i32(), "backlog": backlog,
         "advice": std::cmp::min(backlog.saturating_sub(delay), if backlog.saturating_sub(delay) > 1 { speed } else { 1 }), "catchup": backlog.saturating_sub(delay) > 1})
 }
-fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool) -> Result<Value, String> {
+fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool, players: usize, roster: bool) -> Result<Value, String> {
     let queues = vec![Arc::new(Mutex::new(Queue::default())), Arc::new(Mutex::new(Queue::default()))];
-    let mut host = builder(1701).add_player(PlayerType::Local, 0.into()).unwrap()
-        .add_player(PlayerType::Local, 1.into()).unwrap()
-        .add_player(PlayerType::Spectator("1".into()), 2.into()).unwrap()
+    let mut host_builder = builder(1701, players);
+    for player in 0..players { host_builder = host_builder.add_player(PlayerType::Local, player.into()).unwrap(); }
+    let mut host = host_builder.add_player(PlayerType::Spectator("1".into()), players.into()).unwrap()
         .start_p2p_session(Socket(queues[0].clone())).unwrap();
-    let mut viewer = builder(1702).with_spectator_config(SpectatorConfig {
+    let mut viewer = builder(1702, players).with_spectator_config(SpectatorConfig {
         buffer_size: capacity, catchup_speed: speed, max_frames_behind: 1, stream_delay: delay, ..Default::default() })
         .try_start_spectator_session("0".into(), Socket(queues[1].clone())).unwrap();
     for _ in 0..8 { host.poll_remote_clients(); viewer.poll_remote_clients(); transfer(&queues); }
@@ -55,8 +55,11 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
         for attempt in 0..3 {
             if host.current_frame().as_i32() == frame as i32 + 1 { break; }
             if attempt == 2 { return Err("host failed to advance within bounded local-input retries".into()); }
-            host.add_local_input(0.into(), (frame % 2) as u8).map_err(|e| format!("{e:?}"))?;
-            host.add_local_input(1.into(), 0).map_err(|e| format!("{e:?}"))?;
+            for player in 0..players {
+                let input = if roster { ((frame * 17 + player * 31 + frame * player) % 256) as u8 }
+                    else if player == 0 { (frame % 2) as u8 } else { 0 };
+                host.add_local_input(player.into(), input).map_err(|e| format!("{e:?}"))?;
+            }
             for request in host.advance_frame().map_err(|e| format!("{e:?}"))? {
                 if !matches!(request, FortressRequest::AdvanceFrame { .. }) { return Err("unexpected host snapshot".into()); }
             }
@@ -90,16 +93,19 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
     let mut result = json!({"capacity": capacity, "preplay": preplay, "speed": speed,
         "observations": observations, "cycles": cycles, "transcript": transcript});
     if delayed { result["delay"] = json!(delay); }
+    if roster { result["players"] = json!(players); }
     Ok(result)
 }
 fn main() {
     let result = (|| -> Result<Vec<Value>, String> {
         let mut traces = Vec::new();
-        let delayed = std::env::args().any(|argument| argument == "--delayed");
+        let roster = std::env::args().any(|argument| argument == "--roster");
+        let delayed = roster || std::env::args().any(|argument| argument == "--delayed");
+        for players in if roster { (2..=8).collect::<Vec<_>>() } else { vec![2] } {
         for preplay in [true, false] { for capacity in if delayed { [4, 5] } else { [2, 3] } { for speed in [1, 2] {
             let delay = if delayed { if preplay { 1 } else { capacity - 1 } } else { 0 };
-            traces.push(run(capacity, preplay, speed, delay, delayed)?);
-        } } }
+            traces.push(run(capacity, preplay, speed, delay, delayed, players, roster)?);
+        } } } }
         Ok(traces)
     })();
     match result { Ok(value) => println!("{}", json!({"format": 1, "traces": value})),

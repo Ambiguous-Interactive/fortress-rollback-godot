@@ -396,6 +396,8 @@ def main():
     negative = controls(observations[0]['rust'], wanted)
     negative += expert_controls(observations[0]['godot'], godot_expected(cases))
     rejected = rejection_controls(binary, engine, cases, args.output)
+    from replay_recording import observe as observe_recording
+    recording = observe_recording(binary, engine, ROOT, args.output, execute)
     if fingerprints() != frozen or digest(engine) != engine_hash or digest(binary) != binary_hash:
         raise ValueError('source or tool changed during replay observation')
     receipt.write_text(json.dumps(dict(format=1, passed=True, repeat_equal=True, engine=version,
@@ -403,8 +405,8 @@ def main():
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
-        standalone_rejections=rejected, observations=observations[0],
-        limitations=['ReplaySession playback only; recording applicability is audited separately.',
+        standalone_rejections=rejected, observations=observations[0], recording=recording,
+        limitations=['Recording covers all-local P2PSession at prediction window 2; remote confirmation/drop recording remains separate.',
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')

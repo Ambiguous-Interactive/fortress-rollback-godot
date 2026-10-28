@@ -1,10 +1,14 @@
 extends SceneTree
 
+const Tokens = preload("res://tests/oracle/replay_json_tokens.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
+const Config = preload("res://addons/fortress_rollback/core/config.gd")
+const Session = preload("res://addons/fortress_rollback/core/session.gd")
+const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
 
 
@@ -25,6 +29,14 @@ class Game:
 		writer.write_bytes(bytes())
 		return Driver.SaveResult.new(true, bytes())
 
+	func load_state(_frame: int, reader: Reader) -> bool:
+		var loaded: Reader.ReadResult = reader.read_bytes(16)
+		if loaded.code != Reader.Code.OK:
+			return false
+		for index: int in 4:
+			state[index] = loaded.bytes.decode_u32(index * 4)
+		return true
+
 	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
 		if frame != state[0]:
 			return false
@@ -34,7 +46,15 @@ class Game:
 			if input.code != Types.Code.OK or input.bytes.size() != 4:
 				return false
 			var value: int = input.bytes.decode_u32(0)
-			observed.append({"value": value, "status": "confirmed" if input.status == Queue.Status.CONFIRMED else "unexpected"})
+			var status: String = "unknown:%d" % input.status
+			match input.status:
+				Queue.Status.CONFIRMED:
+					status = "confirmed"
+				Queue.Status.PREDICTED:
+					status = "predicted"
+				Queue.Status.DISCONNECTED:
+					status = "disconnected"
+			observed.append({"value": value, "status": status})
 			state[1] = (state[1] * 33 + value + slot) & 0xffffffff
 			state[2] = (state[2] * 1664525 + 1013904223) & 0xffffffff
 			state[3] = ((state[3] + state[1]) & 0xffffffff) ^ state[2]
@@ -45,16 +65,35 @@ class Game:
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
-	if args.size() != 2 or args[0] != "--bundle":
+	if args.size() != 2 or args[0] not in ["--bundle", "--recording"]:
 		_fail("expected --bundle PATH")
 		return
 	var file: FileAccess = FileAccess.open(args[1], FileAccess.READ)
 	if file == null or file.get_length() > 2097152:
 		_fail("invalid bundle file")
 		return
+	var bundle_text: String = file.get_as_text()
+	var token_error: String = Tokens.validate(bundle_text, true)
+	if not token_error.is_empty():
+		_fail(token_error)
+		return
 	var parser: JSON = JSON.new()
-	if parser.parse(file.get_as_text()) != OK or not parser.data is Array or parser.data.is_empty() or parser.data.size() > 64:
+	if parser.parse(bundle_text) != OK or not parser.data is Array or parser.data.is_empty() or parser.data.size() > 64:
 		_fail("invalid bundle")
+		return
+	if args[0] == "--recording":
+		var recorded: Array[Dictionary] = []
+		for value: Variant in parser.data:  # Checked recording-only schema precedes every conversion.
+			if not _valid_recording_case(value):
+				_fail("invalid recording case")
+				return
+			var result: Dictionary = _record(value)
+			if result.is_empty():
+				_fail("recording failed")
+				return
+			recorded.append(result)
+		print("FORTRESS_REPLAY_RESULT " + JSON.stringify({"format": 1, "cases": recorded}))
+		quit(0)
 		return
 	var results: Array[Dictionary] = []
 	for value: Variant in parser.data:  # JSON input is checked before constructing production objects.
@@ -149,3 +188,77 @@ func _expert_step(player: Player, game: Game) -> int:
 func _fail(message: String) -> void:
 	printerr(message)
 	quit(1)
+
+
+func _valid_recording_case(value: Variant) -> bool:  # External JSON can contain arbitrary types.
+	if not value is Dictionary or value.size() != 6 or not value.get("name") is String:
+		return false
+	for field: String in ["players", "count", "delay", "prediction", "seed"]:
+		if not value.get(field) is float or value[field] != floor(value[field]):
+			return false
+	return (
+		value.players >= 2 and value.players <= 8 and value.count >= 0 and value.count <= 64
+		and value.delay >= 0 and value.delay <= 2 and value.prediction in [0.0, 2.0] and value.seed >= 0 and value.seed <= 0xffffffff
+	)
+
+
+func _record(value: Dictionary) -> Dictionary:
+	var config: Config = Config.new()
+	config.player_count = int(value.players)
+	config.input_width = 4
+	config.neutral_input = PackedByteArray([0, 0, 0, 0])
+	config.sync_test = false
+	config.check_distance = 0
+	config.input_delay = int(value.delay)
+	config.max_prediction_frames = int(value.prediction)
+	config.max_snapshot_bytes = 16
+	config.replay_max_frames = 66
+	config.diagnostic_seed = str(int(value.seed))
+	config.diagnostic_version = "recording-parity-v1"
+	config.local_players.clear()
+	for slot: int in config.player_count:
+		config.local_players.append(slot)
+	config.storage_budget_bytes = config.required_storage_bytes()
+	var session: Session = Session.new()
+	if session.configure(config) != Types.Code.OK:
+		return {}
+	var game: Game = Game.new()
+	game.state[1] = int(value.seed)
+	game.state[2] = int(value.seed)
+	var driver: Driver = Driver.new(session, game)
+	for frame: int in int(value.count):
+		var samples: Array[Driver.LocalInput] = []
+		for slot: int in config.player_count:
+			var bytes: PackedByteArray = PackedByteArray([0, 0, 0, 0])
+			bytes.encode_u32(0, (int(value.seed) + frame * 1234567 + slot * 0x1020304) & 0xffffffff)
+			samples.append(Driver.LocalInput.new(slot, frame, bytes))
+		if driver.step(frame, samples).code != Types.Code.OK:
+			return {}
+	var replay: Replay = session.replay()
+	var decoded: Replay = Replay.new()
+	if decoded.decode(replay.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != replay.to_bytes():
+		return {}
+	var rows: Array[Array] = []
+	var checksums: Array = []  # JSON checksum evidence is null or a hexadecimal string.
+	for frame: int in decoded.frame_count():
+		var row: Array[int] = []
+		var inputs: Types.FrameInputs = decoded.inputs(frame)
+		for slot: int in decoded.player_count():
+			var input: Types.InputResult = inputs.read(slot)
+			if input.status != Queue.Status.CONFIRMED:
+				return {}
+			row.append(input.bytes.decode_u32(0))
+		rows.append(row)
+		var checksum: PackedByteArray = decoded.checksum(frame)
+		checksums.append(null if checksum.is_empty() else checksum.hex_encode())
+	var advances: Array[String] = []
+	var saves: Array[int] = []
+	for record: Dictionary in game.records:
+		if record.kind == "save":
+			saves.append(int(record.frame))
+		else:
+			advances.append(record.bytes)
+	var played: Dictionary = _play(decoded, int(value.seed), true, false)
+	played.name = value.name
+	return {"name": value.name, "frames": rows, "checksums": checksums, "skipped": decoded.skipped_frames(),
+		"players": decoded.player_count(), "total_frames": decoded.frame_count(), "records": game.records, "advances": advances, "saves": saves, "playback": played}

@@ -108,8 +108,9 @@ scenario files and the pinned source/lockfile identities. Source and tool hashes
 must remain unchanged throughout execution. A failed attempt removes its prior
 success receipt and retains raw logs.
 
-This does not establish upstream recording parity, file interchangeability,
-snapshot seek acceleration or network-fault replay.
+This playback corpus does not establish recording parity; the separate
+[recording comparison](#actual-recording-applicability) qualifies all-local exports.
+Neither comparison establishes file interchangeability, snapshot seek acceleration or network-fault replay.
 Native/browser gameplay replay evidence remains in the
 [ownership experiment](experiments/buffer-ownership.md) and
 [online example](online-example.md#record-and-download-a-replay).
@@ -146,3 +147,62 @@ validation recheck the boundary without advancing input or duplicating checksum 
 Capture at the recording cap preserves that original prefix; a later live state cannot replace it.
 The API deliberately refuses capture until the entire simulated prefix is finalized, and does not
 capture stopped peers or invent missing state. See the [capture contract](integration.md#capture-the-final-replay-state).
+
+## Actual recording applicability
+
+The same `make replay-probes` gate now calls the unchanged pinned
+`SessionBuilder::with_recording(true)` and `P2PSession::into_replay()` APIs.
+An all-local roster removes transport timing from this recording comparison.
+Every supported roster from two through eight players runs zero, one, seven and
+64 advances, with input delays zero and two and prediction window two: 56 cases.
+The same original samples drive a production Godot `Session` through its driver.
+Both implementations serialize and decode their own resulting recordings, then
+play those decoded histories through the actual replay sessions. Files remain
+format-specific; the test does not convert Rust files into FRRP.
+
+Python independently computes all original delayed rows, every canonical state,
+the complete ordered original SAVE/ADVANCE request stream, exported metadata counts and checksum availability.
+Original records retain every applied input value and status, every saved canonical state and
+every post-advance state. Separate save and advance summaries cannot replace this ordered evidence.
+It compares exact observations without excluding the source/product differences:
+
+| Recording boundary | Pinned Rust | Godot |
+| --- | --- | --- |
+| Before two advances | Empty recording | All completed, finalized inputs |
+| After N advances, delay zero | N−1 recorded inputs | N recorded inputs |
+| After N≥2 advances, delay two | N+1 recorded inputs, including future input | N simulated, finalized inputs |
+| Delay-zero state checksums | Every exported pre-input boundary | Every exported pre-input boundary |
+| Delay-two state checksums | Initial boundary only in this workload | Every exported pre-input boundary |
+| First save request | Two saves of boundary zero | One save of boundary zero |
+
+The source records confirmation before adding the current local samples and
+before application save requests execute (`p2p_session.rs`, lines 3089–3134
+and 3151–3175). Its receipt frontier can include delayed inputs beyond the
+simulated state. Newly recorded future rows consequently have no saved checksum;
+recording does not retroactively fill it. Godot exports only finalized simulated
+history and captures completed-save checksums. Neither implementation's missing
+checksum is treated as evidence of validation. The complete decoded recording is
+replayed, including the source's future rows, against independently computed
+states; every callback, event, completion and failure observation is compared.
+
+The receipt retains these recording observations, the 56-workload inventory and
+22 paired controls. The controls remove a player, reorder inputs, change checksum
+availability, shorten history and corrupt intermediate original/playback state. Additional original-request
+controls change an applied input or status, corrupt saved canonical bytes, reorder SAVE/ADVANCE
+and omit a SAVE while leaving exported playback untouched.
+Standalone Rust and Godot processes reject an oversized recording workload and decimal, exponent
+and boolean tokens in every integer field, beside valid integer-token recording controls.
+They also reject duplicate literal and escaped spellings of every recording field. Valid escaped
+keys, spacing and punctuation inside string values remain accepted. The standalone inventory
+contains 108 rejection controls across Rust and Godot. Number controls also reject leading zeros,
+positive signs, negative values and negative zero in unsigned fields, plus malformed integer/decimal/exponent
+spellings. Ordinary zero and bounded integer controls remain accepted. This validates key identity and
+number spelling at the observer boundary; it does not claim a separate strict JSON parser.
+Both runtime observations run twice in fresh processes under the existing
+source/tool identity and minimum/current engine gates.
+
+This qualifies all-local recording and sequential playback at prediction window
+two. Remote confirmation, rollback/drop recording, zero-window recording, recording
+extraction that continues a source session, browser source comparison and the
+remaining cross-platform release gates retain separate acceptance. It does not
+claim complete upstream recording parity or file interchangeability.

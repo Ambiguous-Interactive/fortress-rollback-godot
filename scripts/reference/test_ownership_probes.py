@@ -763,7 +763,9 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     # Value: protects=divergent case pages cannot publish or leave a running round; fails_when=assembly trusts repeats only; why_new=suite-level failures; seam=mocked browser
     def test_case_page_divergence_keeps_a_failed_round_and_no_receipt(self):
-        results = self.scenario(expected=ValueError, selected='firefox', version='4.3', phase='positive', suite_part='1', browser_fault='case_assertions')
+        suite = 'res://tests/unit/test_driver_peer_parity.gd'
+        part = next(part for part in ('1', '2') if suite in probes.select_suites(part))
+        results = self.scenario(expected=ValueError, selected='firefox', version='4.3', phase='positive', suite_part=part, browser_fault='case_assertions')
         self.assertFalse((results / 'ownership.json').exists())
         self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
         self.assertEqual(self.rounds(results)[0]['errors'], ['incomplete or divergent ownership case pages'])

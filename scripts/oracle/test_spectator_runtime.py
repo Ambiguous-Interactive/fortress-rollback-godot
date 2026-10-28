@@ -308,5 +308,33 @@ class SpectatorDelayTests(unittest.TestCase):
                 'transcript': [], 'service_observations': [], 'cycles': []}
 
 
+class SpectatorRosterTests(unittest.TestCase):
+    # Value: protects=all changing roster slots and every service boundary; fails_when=corpus loses eight-player or reordered rows;
+    # why_new=source corpus previously exercised one active slot only; seam=none
+    def test_roster_inventory_original_inputs_and_controls(self):
+        from spectator_roster import expected_bundle, validate_bundle, controls
+        from spectator_startup import expected_rust
+        value = expected_bundle()
+        validate_bundle(value)
+        self.assertEqual(len(value), 56)
+        self.assertEqual({trace['players'] for trace in value}, set(range(2, 9)))
+        evidence = controls(expected_rust(value), expected_rust(value))
+        self.assertEqual([item['name'] for item in evidence],
+                         ['missing-eight-player', 'last-player-input', 'last-player-type'])
+        for field in ('observations', 'service_observations', 'cycles', 'transcript'):
+            mutant = deepcopy(value)
+            mutant[-1][field].pop()
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                validate_bundle(mutant)
+        mutant = expected_bundle(swapped=True)
+        validate_bundle(mutant, swapped=True)
+        for trace, swapped in zip(value, mutant):
+            for original_row, swapped_row in zip(trace['transcript'], swapped['transcript']):
+                self.assertEqual(sum(original_row), sum(swapped_row))
+                self.assertNotEqual(original_row, swapped_row)
+        with self.assertRaisesRegex(ValueError, r'roster\[0\].observations\[1\].inputs\[0\]\[0\]: value mismatch'):
+            validate_bundle(mutant)
+
+
 if __name__ == '__main__':
     unittest.main()
