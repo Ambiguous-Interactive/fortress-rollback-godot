@@ -12,6 +12,7 @@ web-time = "=1.1.0"
 
 [features]
 handshake-oracle = ["fortress-rollback/trace-validation"]
+spectator-status = ["fortress-rollback/hot-join"]
 
 [[bin]]
 name = "handshake"

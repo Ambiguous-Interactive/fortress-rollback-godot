@@ -9,6 +9,8 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 class Game:
 	extends RefCounted
 	var transcript: Array[Array] = []
+	var records_statuses: bool = false
+	var state: int = 0
 
 	func save_state(_frame: int, _writer: RefCounted) -> Driver.SaveResult:
 		return Driver.SaveResult.new(false)
@@ -22,16 +24,26 @@ class Game:
 			return false
 		for player: int in range(inputs.size().value):
 			var input: Types.InputResult = inputs.read(player)
-			if input.code != Types.Code.OK or input.bytes.size() != 1 or input.status != Spectator.Queue.Status.CONFIRMED:
+			if input.code != Types.Code.OK or input.bytes.size() != 1:
+				return false
+			if input.status not in [Spectator.Queue.Status.CONFIRMED, Spectator.Queue.Status.DISCONNECTED]:
+				return false
+			if not records_statuses and input.status != Spectator.Queue.Status.CONFIRMED:
 				return false
 			row.append(input.bytes[0])
+			if records_statuses:
+				row.append(input.status)
+				state = (state * 17 + input.bytes[0] + input.status * 31 + frame) % 1000000007
+		if records_statuses:
+			row.append(state)
 		transcript.append(row)
 		return true
 
 
 func _initialize() -> void:
 	var traces: Array[Dictionary] = []
-	var roster: bool = "--roster" in OS.get_cmdline_user_args()
+	var statuses: bool = "--statuses" in OS.get_cmdline_user_args()
+	var roster: bool = statuses or "--roster" in OS.get_cmdline_user_args()
 	var delayed: bool = roster or "--delayed" in OS.get_cmdline_user_args()
 	var mutate_input: bool = "--mutate-input" in OS.get_cmdline_user_args()
 	for case_id: int in range(56 if roster else 8):
@@ -57,6 +69,7 @@ func _initialize() -> void:
 			quit(2)
 			return
 		var game: Game = Game.new()
+		game.records_statuses = statuses
 		var driver: Driver = Driver.new(viewer, game)
 		var observations: Array[Dictionary] = [_observe(viewer)]
 		var service_observations: Array[Dictionary] = [_policy(viewer)]
@@ -71,7 +84,20 @@ func _initialize() -> void:
 				var held: PackedByteArray = row[players - 1]
 				row[players - 1] = row[players - 2]
 				row[players - 2] = held
-			if viewer.receive_host_frame(frame, row).code != Types.Code.OK:
+			var row_statuses: PackedByteArray = PackedByteArray()
+			if statuses:
+				row[players - 1] = PackedByteArray([0])
+				row_statuses.resize(players)
+				row_statuses.fill(Spectator.Queue.Status.CONFIRMED)
+				row_statuses[players - 1] = Spectator.Queue.Status.CONFIRMED if "--mutate-status" in OS.get_cmdline_user_args() else Spectator.Queue.Status.DISCONNECTED
+			if statuses and frame == 1:
+				var first_row: Array[PackedByteArray] = []
+				for player: int in range(players):
+					first_row.append(PackedByteArray([0 if player == players - 1 else player * 31]))
+				if viewer.receive_host_frame(0, first_row, row_statuses).code != Types.Code.OK:
+					quit(2)
+					return
+			if (not statuses or frame > 0) and viewer.receive_host_frame(frame, row, row_statuses).code != Types.Code.OK:
 				quit(2)
 				return
 			observations.append(_observe(viewer))

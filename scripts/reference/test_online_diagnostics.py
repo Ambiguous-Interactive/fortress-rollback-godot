@@ -9,7 +9,7 @@ def diagnostic_download():
     return {'filename': 'fortress-diagnostics.json', 'before': {'restores': 1, 'frame': 110},
             'after': {'restores': 1, 'frame': 110, 'storage_calls': 0}, 'report': {
                 'schema': 'fortress-peer-diagnostics-v1', 'engine': '4.3.stable',
-                'current_frame': 110, 'confirmed_frame': 108, 'lifecycle': 0, 'reason': 0, 'failure_frame': -1,
+                'current_frame': 110, 'confirmed_frame': 108, 'lifecycle': 0, 'reason': 0, 'failure_frame': -1, 'failure_kind': -1,
                 'pending_rollback_frame': -1, 'frames_ahead': 0,
                 'statistics': {'rollback_count': 1, 'resimulated_frames': 2, 'advanced_frames': 110,
                                'prediction_stalls': 3, 'last_rollback_depth': 2, 'max_rollback_depth': 2},
@@ -100,6 +100,28 @@ class DiagnosticDownloadTests(unittest.TestCase):
                 value['report']['statistics'][field] = invalid
                 with self.assertRaises(ValueError):
                     validate_download(value)
+
+    def test_callback_failure_kind_is_bounded_and_explicit(self):
+        for frame in (-1, 0, 2**31 - 1):
+            legacy = diagnostic_download()
+            legacy['report'].pop('failure_kind')
+            legacy['report']['failure_frame'] = frame
+            validate_download(legacy)
+        for kind in (-1, 0, 1, 2):
+            for frame in (-2**31, -2, -1, 0, 2**31 - 1):
+                value = diagnostic_download()
+                value['report'].update(failure_kind=kind, failure_frame=frame)
+                with self.subTest(kind=kind, frame=frame):
+                    if kind >= 0 and frame < 0:
+                        with self.assertRaisesRegex(ValueError, 'callback failure frame missing'):
+                            validate_download(value)
+                    else:
+                        validate_download(value)
+        for kind in (None, True, -2, 3, 1.0, 'save'):
+            value = diagnostic_download()
+            value['report']['failure_kind'] = kind
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                validate_download(value)
 
     def test_rejects_missing_download_and_storage_use(self):
         for mutate in (lambda v: v.update(filename='other.json'), lambda v: v['after'].update(storage_calls=1),

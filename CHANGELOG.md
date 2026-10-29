@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add failed callback names and frames to diagnostic downloads and the offline viewer.
+
 - Add replay input inspection showing the selected frame's recorded directions and confirmed or disconnected player statuses. Corrupt input rows are identified without displaying their values.
 
 - Add keyboard replay inspection: P plays or pauses, N/B step forward/backward, R restarts, and Esc cancels a seek. Text entry and file chooser input remain available.

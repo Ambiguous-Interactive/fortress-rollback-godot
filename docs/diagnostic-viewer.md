@@ -30,9 +30,11 @@ integer. The simulation restores the captured RNG state rather than starting
 again from that seed. Before the first Step, the game display shows its default
 state; it becomes the restored captured execution when playback begins.
 
-The capture's reported failure and the viewer's playback comparison failure are
-shown separately. A state failure reports the first compared frame and differing
-byte offset; checksum failures show expected and actual values. Callback or
+The session's reported callback failure, the capture's reported divergence and
+the viewer's playback comparison failure are shown separately. New diagnostic
+reports name `save_state`, `load_state` or `simulate_frame` and the failed request
+frame. Historical reports without callback metadata remain readable. A state
+failure reports the first compared frame and differing byte offset; checksum failures show expected and actual values. Callback or
 snapshot failures are separate errors. A failing row's inputs are not applied.
 State at boundary F precedes input F.
 

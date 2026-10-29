@@ -8,6 +8,8 @@ use fortress_rollback::{FortressError, InvalidRequestKind};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::io::{self, Read};
+#[path = "replay/remote.rs"]
+mod remote;
 
 #[derive(Debug)]
 struct Cfg;
@@ -195,10 +197,14 @@ fn recording(case: RecordingCase, extract: bool) -> Result<Value, String> {
 }
 
 fn main() -> Result<(), String> {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments.len() == 1 && ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral"].contains(&arguments[0].as_str()) {
+        println!("{}", remote::run(&arguments[0])?);
+        return Ok(());
+    }
     let mut input = String::new();
     io::stdin().take(2_097_153).read_to_string(&mut input).map_err(|e| e.to_string())?;
     if input.len() > 2_097_152 { return Err("bundle exceeds byte limit".into()); }
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
     let extract = arguments == ["--recording-extraction"];
     if arguments == ["--recording"] || extract {
         let cases: Vec<RecordingCase> = serde_json::from_str(&input).map_err(|e| e.to_string())?;

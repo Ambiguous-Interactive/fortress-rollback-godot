@@ -141,11 +141,21 @@ func _physics_process(_delta: float) -> void:
 
 func _refresh() -> void:
 	var status: Dictionary = viewer.status()
-	_status.text = "%s\nVersion: %s | captured seed: %s\nRetained boundaries: %d–%d | rows: %d / %d | next: %d" % [
-		viewer.message, status.application_version, status.seed, status.first_boundary, status.last_boundary,
-		status.rows_consumed, status.row_count, status.next_boundary,
-	]
+	_status.text = (
+		"%s\nVersion: %s | captured seed: %s\nRetained boundaries: %d–%d | rows: %d / %d | next: %d"
+		% [
+			viewer.message,
+			status.application_version,
+			status.seed,
+			status.first_boundary,
+			status.last_boundary,
+			status.rows_consumed,
+			status.row_count,
+			status.next_boundary,
+		]
+	)
 	_status.text += "\nValidated states: %d | applied advances: %d | game frame: %d" % [status.validated_states, status.advanced_frames, status.game_frame]
+	_status.text += "\nSession callback failure: " + JSON.stringify(status.session_failure)
 	_status.text += "\nCapture's reported failure: " + JSON.stringify(status.capture_failure)
 	_status.text += "\nPlayback comparison failure: " + JSON.stringify(status.failure)
 	_status.text += "\nRestores captured RNG state. A matching window does not prove remote agreement or validate the original seed."

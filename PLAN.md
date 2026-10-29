@@ -35,7 +35,7 @@ Local development contracts and evidence entry points:
 - [Online match recording, downloads and offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
-- [Native/browser diagnostic file viewer](docs/diagnostic-viewer.md).
+- [Native/browser diagnostic file viewer, including saved callback failure names and frames](docs/diagnostic-viewer.md).
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).
@@ -106,6 +106,9 @@ Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4
 Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.
 Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
 Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
+A separate source comparison checks one initially disconnected reserved slot across all supported rosters, delay and ring reuse.
+Remote recording compares one two-peer late-correction schedule with independent canonical histories;
+[pinned speculative-checksum discrepancies](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253) remain explicit.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
