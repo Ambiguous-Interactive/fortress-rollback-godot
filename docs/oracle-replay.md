@@ -223,7 +223,7 @@ Both runtime observations run twice in fresh processes under the existing
 source/tool identity and minimum/current engine gates.
 
 This qualifies all-local recording and sequential playback at prediction windows
-zero and two. Remote confirmation, rollback/drop recording, recording
+zero and two. Broader remote confirmation, rollback/drop recording, recording
 browser source comparison and the
 remaining cross-platform release gates retain separate acceptance. It does not
 claim complete upstream recording parity or file interchangeability.
@@ -259,5 +259,47 @@ later Godot input and later Godot playback. Missing workloads and malformed
 result versions fail separate acceptance tests.
 
 This qualifies continuing all-local extraction and its explicit source/product
-difference. Remote confirmation, correction/drop recording, browser source
+difference. Broader remote confirmation, correction/drop recording, browser source
 comparison and the remaining release matrix remain open in #45.
+
+## Remote confirmation and corrected recordings
+
+The source-bound `replay-probes` gate also runs two actual pinned P2P sessions
+through owned in-memory protocol-message sockets. Both players submit changing unsigned
+32-bit inputs, advance nine frames, and deliver accumulated traffic after
+rounds 1, 3, 5 and 7. Each endpoint must execute LOAD at boundaries 0, 2, 4 and
+6, replay both corrected inputs, and continue with its next original sample.
+The Godot observer uses the production raw `Session.receive_input` boundary;
+it does not claim a second wire-protocol comparison. It injects the same
+original remote rows at the same declared rounds.
+
+Independent Python expectations calculate every original SAVE/LOAD/ADVANCE,
+applied value/status, canonical snapshot and post-advance boundary. Both
+runtimes export eight finalized rows, serialize and decode their own formats,
+and play the decoded object through the real replay API. The ninth speculative
+input stays outside the recording. Both engine pins run each workload twice in
+fresh processes. A paired neutral-input workload keeps the same delivery
+schedule but causes no misprediction: it must have no LOAD and no source replay
+events. Withholding all receipts must fail at the prediction bound rather than
+publish a success receipt. Twelve additional controls reject omitted correction,
+altered original input/state, altered recorded rows/checksums and corrupt playback.
+
+This experiment exposes a pinned-source difference. The Rust recording retains
+the first, speculative checksum at odd boundaries 1, 3, 5 and 7. Those rows later
+carry corrected actual inputs, so actual source playback emits `ReplayDesync`
+at each odd boundary and continues. Expected and actual checksum bytes remain
+in the source observation; the comparison requires these events rather than
+normalizing or hiding them. Godot records the repaired checksums and its decoded
+playback validates every boundary cleanly. Both original corrected histories
+match the independently calculated canonical prefix.
+
+At the pinned revision, `P2PSession::advance_frame` assembles correction requests
+and then calls `record_confirmed_inputs` before the application executes those
+requests (`src/sessions/p2p_session.rs`, lines 3090–3134).
+`record_confirmed_inputs` reads the existing saved-cell checksum and advances
+`last_recorded_frame` (lines 8433–8491); later correction SAVE callbacks do not
+replace the already exported checksum. The neutral control isolates this
+ordering from the serializer or replay comparator. This is a named source
+recording discrepancy tracked in [#253](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253),
+not proof of a Godot replay mismatch or complete remote recording parity. Longer/asymmetric delivery, peer drop, exported-browser source
+comparison and the remaining release matrix stay open under #45.

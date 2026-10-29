@@ -280,9 +280,10 @@ def reject_mutations(observed, wanted, mutations):
 
 def fingerprints():
     paths = [*Path(ROOT / 'scripts/oracle').glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/replay.rs',
+             ROOT / 'scripts/oracle/rust/src/bin/replay/remote.rs',
              ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock',
              ROOT / 'docs/reference/pins.json']
-    pending = [ROOT / 'tests/oracle/replay_session_trace.gd']
+    pending = [ROOT / 'tests/oracle/replay_session_trace.gd', ROOT / 'tests/oracle/replay_remote_trace.gd']
     scripts = set()
     while pending:
         path = pending.pop()
@@ -401,6 +402,8 @@ def main():
     rejected = rejection_controls(binary, engine, cases, args.output)
     from replay_recording import observe as observe_recording
     recording = observe_recording(binary, engine, ROOT, args.output, execute)
+    from replay_remote import observe as observe_remote
+    remote_recording = observe_remote(binary, engine, ROOT, args.output, execute)
     if fingerprints() != frozen or digest(engine) != engine_hash or digest(binary) != binary_hash:
         raise ValueError('source or tool changed during replay observation')
     receipt.write_text(json.dumps(dict(format=1, passed=True, repeat_equal=True, engine=version,
@@ -408,8 +411,8 @@ def main():
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
-        standalone_rejections=rejected, observations=observations[0], recording=recording,
-        limitations=['Recording and continuing extraction cover all-local P2PSession at prediction windows 0 and 2; remote confirmation/drop remains separate.',
+        standalone_rejections=rejected, observations=observations[0], recording=recording, remote_recording=remote_recording,
+        limitations=['All-local recording and one two-peer late-correction recording schedule; broader remote and drop acceptance remains separate.',
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')
