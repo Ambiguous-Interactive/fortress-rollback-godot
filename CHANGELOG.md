@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add spectator missing-frame and pending-input observations. Buffering feedback names the gap and later rows already received.
+
 - Add Previous/Next input change replay controls, including confirmed or disconnected status changes, with verified navigation.
 
 - Add owned spectator playback status separating missing input, viewing delay, final tails and completed or stopped playback.

@@ -76,6 +76,9 @@ func _update_label() -> void:
 			state = "BUFFERING | waiting for confirmed input"
 		elif playback.state == Spectator.PlaybackState.DELAYED:
 			state = ("BUFFERING" if demo.game.frame == 0 else "WATCHING") + " | viewing delay (%d confirmed frames buffered)" % playback.buffered_frames
+		if playback.missing_frame >= 0 and playback.playable_frames == 0:
+			var later: int = playback.pending_frames - playback.buffered_frames
+			state = "BUFFERING | waiting for confirmed frame %d (%d later frame%s received)" % [playback.missing_frame, later, "" if later == 1 else "s"]
 	if demo.is_finishing:
 		state = "CONFIRMING FINAL INPUTS"
 		if demo.is_host_finished:
