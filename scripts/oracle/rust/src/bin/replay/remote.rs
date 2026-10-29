@@ -34,7 +34,8 @@ pub fn run(mode: &str) -> Result<Value, String> {
     let seed = u32::MAX;
     let withhold = mode == "--remote-recording-withhold";
     let neutral = mode.contains("neutral");
-    let asymmetric = mode.contains("asymmetric");
+    let asymmetric = mode.contains("asymmetric") || mode.contains("pressure");
+    let pressure = mode.contains("pressure");
     let rounds = if mode.ends_with("-long") || asymmetric { 257 } else { 9 };
     let clock = Arc::new(Mutex::new(0u64));
     let origin = web_time::Instant::now();
@@ -64,9 +65,12 @@ pub fn run(mode: &str) -> Result<Value, String> {
     let mut records = [Vec::new(), Vec::new()];
     let mut services = [Vec::new(), Vec::new()];
     let mut deliveries = Vec::new();
-    for round in 0..rounds {
-        *clock.lock().unwrap() = (round + 1) * 1000;
+    for turn in 0..if pressure { 400 } else { rounds } {
+        if pressure && states.iter().all(|state| state[0] == rounds as u32) { break; }
+        *clock.lock().unwrap() = (turn + 1) * 1000;
         for peer in 0..2 {
+            if pressure && states[peer][0] == rounds as u32 { continue; }
+            let round = if pressure { states[peer][0] as u64 } else { turn };
             let before = states[peer][0];
             let first = records[peer].len();
             let value = if neutral { 0 } else { seed.wrapping_add((round as u32).wrapping_mul(1234567)).wrapping_add((peer as u32).wrapping_mul(0x1020304)) };
@@ -96,7 +100,10 @@ pub fn run(mode: &str) -> Result<Value, String> {
                     }
                 }
             }
-            if states[peer][0] != round as u32 + 1 {
+            if pressure && mode.ends_with("-withhold") && states[peer][0] == before {
+                return Err(format!("pressure prediction-window stall: peer={peer} turn={turn} frames=[{},{}]", states[0][0], states[1][0]));
+            }
+            if states[peer][0] != round as u32 + 1 && !pressure {
                 if round == 4 && before == 4 && states[peer][0] == 4 && sessions[peer].metrics().stall_count == 1
                     && records[peer][first..].iter().all(|row| row["kind"] == "save") {
                     if asymmetric {
@@ -106,18 +113,20 @@ pub fn run(mode: &str) -> Result<Value, String> {
                 }
                 return Err("unexpected remote nonadvancing batch".into());
             }
-            services[peer].push(json!({"round":round, "before":before, "after":states[peer][0],
+            services[peer].push(json!({"round":if pressure { turn } else { round }, "before":before, "after":states[peer][0],
                 "requests":records[peer][first..].iter().map(|row| row["kind"].clone()).collect::<Vec<_>>()}));
         }
-        let eligible = if asymmetric { [round % 2 == 1, round % 3 == 2 && !mode.ends_with("-withhold")] } else { [round % 2 == 1; 2] };
+        let eligible = if pressure { [turn % 2 == 1, turn % 5 == 4 && !mode.ends_with("-withhold")] }
+            else if asymmetric { [turn % 2 == 1, turn % 3 == 2 && !mode.ends_with("-withhold")] } else { [turn % 2 == 1; 2] };
         if eligible.iter().any(|value| *value) && !withhold {
             let mut delivered = 0;
             for _ in 0..4 { delivered += exchange_selected(&buffers, &eligible); for session in &mut sessions { session.poll_remote_clients(); } }
-            let mut observation = json!({"round":round,"messages":delivered});
+            let mut observation = json!({"round":turn,"messages":delivered});
             if asymmetric { observation["eligible"] = json!(eligible); }
             deliveries.push(observation);
         }
     }
+    if pressure && states.iter().any(|state| state[0] != rounds as u32) { return Err("pressure service bound exhausted".into()); }
     let mut recovery = Vec::new();
     if asymmetric {
         let mut delivered = 0;

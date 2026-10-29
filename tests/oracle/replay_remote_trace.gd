@@ -8,6 +8,9 @@ func _initialize() -> void:
 		or (
 			args[0]
 			not in [
+				"--remote-recording-pressure",
+				"--remote-recording-pressure-neutral",
+				"--remote-recording-pressure-withhold",
 				"--remote-recording-asymmetric",
 				"--remote-recording-asymmetric-neutral",
 				"--remote-recording-asymmetric-withhold",
@@ -27,7 +30,8 @@ func _initialize() -> void:
 	var services: Array[Array] = [[], []]
 	var deliveries: Array[Dictionary] = []
 	var neutral: bool = args[0].contains("neutral")
-	var asymmetric: bool = args[0].contains("asymmetric")
+	var asymmetric: bool = args[0].contains("asymmetric") or args[0].contains("pressure")
+	var pressure: bool = args[0].contains("pressure")
 	var received: Array[int] = [-1, -1]
 	var rounds: int = 257 if args[0].ends_with("-long") or asymmetric else 9
 	for peer: int in 2:
@@ -51,13 +55,24 @@ func _initialize() -> void:
 		sessions.append(session)
 		games.append(game)
 		drivers.append(Driver.new(session, game))
-	for round: int in rounds:
+	for turn: int in 400 if pressure else rounds:
+		if pressure and games[0].state[0] == rounds and games[1].state[0] == rounds:
+			break
 		for peer: int in 2:
+			if pressure and games[peer].state[0] == rounds:
+				continue
+			var round: int = games[peer].state[0] if pressure else turn
 			var first: int = games[peer].records.size()
 			var before: int = games[peer].state[0]
 			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(peer, round, _sample(peer, round, neutral))]
 			var step_code: int = drivers[peer].step(round, samples).code
-			if step_code != Types.Code.OK:
+			if pressure and args[0].ends_with("-withhold") and step_code == Types.Code.PREDICTION_STALL:
+				_fail("pressure prediction-window stall: peer=%d turn=%d frames=[%d,%d]" % [peer, turn, games[0].state[0], games[1].state[0]])
+				return
+			if step_code != Types.Code.OK and not (pressure and step_code == Types.Code.PREDICTION_STALL):
+				if pressure:
+					_fail("pressure retry failed: peer=%d turn=%d frame=%d code=%d" % [peer, turn, before, step_code])
+					return
 				if step_code == Types.Code.PREDICTION_STALL and round == 4 and games[peer].state[0] == 4:
 					if asymmetric:
 						_fail("asymmetric prediction-window stall: peer=%d round=4 frames=[%d,%d]" % [peer, games[0].state[0], games[1].state[0]])
@@ -69,29 +84,33 @@ func _initialize() -> void:
 			var requests: Array[String] = []
 			for index: int in range(first, games[peer].records.size()):
 				requests.append(games[peer].records[index].kind)
-			services[peer].append({"round": round, "before": before, "after": int(games[peer].state[0]), "requests": requests})
+			services[peer].append({"round": turn, "before": before, "after": int(games[peer].state[0]), "requests": requests})
 		if asymmetric:
 			for peer: int in 2:
-				if round % (peer + 2) != peer + 1 or (peer == 1 and args[0].ends_with("-withhold")):
+				var period: int = 5 if pressure and peer == 1 else peer + 2
+				if turn % period != period - 1 or (peer == 1 and args[0].ends_with("-withhold")):
 					continue
 				var count: int = 0
-				for frame: int in range(received[peer] + 1, round + 1):
+				for frame: int in range(received[peer] + 1, int(games[1 - peer].state[0]) if pressure else turn + 1):
 					if sessions[peer].receive_input(1 - peer, frame, _sample(1 - peer, frame, neutral)).code != Types.Code.OK:
 						_fail("asymmetric receipt failed")
 						return
 					count += 1
-				received[peer] = round
-				deliveries.append({"round": round, "peer": peer, "rows": count})
+				received[peer] = int(games[1 - peer].state[0]) - 1 if pressure else turn
+				deliveries.append({"round": turn, "peer": peer, "rows": count})
 			continue
-		if round % 2 == 1 and args[0] != "--remote-recording-withhold":
+		if turn % 2 == 1 and args[0] != "--remote-recording-withhold":
 			var delivered_rows: int = 0
 			for peer: int in 2:
-				for frame: int in range(round - 1, round + 1):
+				for frame: int in range(turn - 1, turn + 1):
 					if sessions[peer].receive_input(1 - peer, frame, _sample(1 - peer, frame, neutral)).code != Types.Code.OK:
 						_fail("remote receipt failed")
 						return
 					delivered_rows += 1
-			deliveries.append({"round": round, "rows": delivered_rows})
+			deliveries.append({"round": turn, "rows": delivered_rows})
+	if pressure and (games[0].state[0] != rounds or games[1].state[0] != rounds):
+		_fail("pressure service bound exhausted")
+		return
 	var recovery: Array[Dictionary] = []
 	if asymmetric:
 		for peer: int in 2:
