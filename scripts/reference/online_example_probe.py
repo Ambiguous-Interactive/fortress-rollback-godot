@@ -676,7 +676,7 @@ def validate_diagnostic_viewer(value, trace, histories):
             raise ValueError('diagnostic viewer lost captured metadata or boundaries')
     initial = {'loaded': True, 'playing': False, 'code': 0, 'first_boundary': rows[0]['frame'], 'last_boundary': rows[-1]['frame'],
                'next_boundary': rows[0]['frame'], 'rows_consumed': 0, 'row_count': len(rows), 'game_frame': 0,
-               'seed': trace['seed'], 'application_version': trace['application_version'], 'capture_failure': trace['first_divergence'],
+               'seed': trace['seed'], 'application_version': trace['application_version'], 'capture_failure': trace['first_divergence'], 'session_failure': {},
                'complete': False, 'validated_states': 0, 'advanced_frames': 0, 'failure': {}}
     stepped = dict(initial, rows_consumed=1, validated_states=1, advanced_frames=1,
                    next_boundary=rows[1]['frame'], game_frame=rows[0]['frame'] + 1)

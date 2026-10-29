@@ -96,7 +96,7 @@ def diagnostic_viewer_evidence(trace, histories):
     states = expected_states(histories, rows[-1]['frame'] + 2)
     status = {'loaded': True, 'playing': False, 'code': 0, 'first_boundary': rows[0]['frame'], 'last_boundary': rows[-1]['frame'],
               'next_boundary': rows[0]['frame'], 'rows_consumed': 0, 'row_count': len(rows), 'game_frame': 0,
-              'seed': trace['seed'], 'application_version': trace['application_version'], 'capture_failure': {},
+              'seed': trace['seed'], 'application_version': trace['application_version'], 'capture_failure': {}, 'session_failure': {},
               'complete': False, 'validated_states': 0, 'advanced_frames': 0, 'failure': {}}
     initial = {'status': status, 'state': states[0], 'message': 'Ready.'}
     value = {label: copy.deepcopy(initial) for label in ('initial', 'stepped', 'restarted', 'rejected', 'completed', 'diverged')}
@@ -278,7 +278,8 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
                      ('rejected', 'row_count', 0), ('completed', 'complete', False), ('completed', 'advanced_frames', True),
                      ('completed', 'seed', 'other'), ('diverged', 'failure', {}), ('diverged', 'playing', True),
                      ('stepped', 'game_frame', 999999), ('stepped', 'next_boundary', -1), ('stepped', 'complete', True),
-                     ('stepped', 'failure', {'frame': 0}), ('diverged', 'rows_consumed', 0), ('diverged', 'validated_states', -1),
+                     ('stepped', 'failure', {'frame': 0}), ('initial', 'session_failure', {'callback': 'save_state', 'frame': 0}),
+                     ('restarted', 'session_failure', None), ('diverged', 'rows_consumed', 0), ('diverged', 'validated_states', -1),
                      ('diverged', 'advanced_frames', -1), ('diverged', 'next_boundary', -1)]
         for label, field, invalid in mutations:
             changed = copy.deepcopy(original)

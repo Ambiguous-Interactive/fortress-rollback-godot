@@ -14,10 +14,11 @@ witnesses. Each workstream receives a fresh adversarial review.
 | Live callback metadata can disappear from saved diagnostic reports. | `PeerSession.diagnostics()` omitted `failure_kind`; the expanded real-peer SAVE/LOAD/ADVANCE matrix has nine missing-field failures on the original code. | Export the first failed callback kind and display its name/frame separately from capture and playback comparisons. Keep historical reports readable. |
 | Corrected actual input rows do not imply corrected recorded checksums in the pinned source. | The remote source witness executes LOAD at 0/2/4/6, then decoded playback reports `ReplayDesync` at 1/3/5/7. Neutral inputs under identical delivery have neither LOAD nor mismatch. | Preserve exact source events and checksum pairs, document the recording-order discrepancy in `docs/oracle-replay.md`, and track reviewed resolution in #253. |
 | Equal input bytes cannot establish finalized status preservation. | The reserved-slot source witness changes only DISCONNECTED to CONFIRMED; both the status transcript and independently calculated canonical state reject it. | Qualify initially reserved-slot status delivery across 2–8 players, delay, catch-up and ring reuse; retain mid-match drop and live-routing limits. |
+| Synthetic browser fixtures can agree with an obsolete status shape. | The first online CI job rejected the new `session_failure` field in `validate_diagnostic_viewer`; native tests and the old synthetic fixture passed. | Update the exact browser expectation and fixture, add the captured-result regression, and extend the existing browser testing reference. |
 
 The existing testing and networking skills already require paired controls,
 status-sensitive games, original canonical histories and explicit source differences.
-No duplicate skill or new general rule was needed. Durable source-specific findings
+No duplicate skill was needed. Durable source-specific findings
 live in the owning replay and spectator guides.
 
 ## Verification
@@ -42,7 +43,7 @@ not establish exported-browser source parity or complete issue closure.
   qualified cases from remaining asymmetric delivery, mid-match drop and live work.
 - Kept historical source observations and old report compatibility intact.
 - Existing testing/networking guidance already covers the reusable techniques;
-  considered and rejected duplicate knowledge entries.
+  extended its browser-consumer check and rejected duplicate knowledge entries.
 
 ## Outcome
 
