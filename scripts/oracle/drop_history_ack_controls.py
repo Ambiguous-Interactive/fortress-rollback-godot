@@ -20,17 +20,20 @@ def remove_source_ack_retries(source):
 
 
 def insert_godot_ack_retry(godot, before_repeated_commit):
-    for bank in ('commit_emissions', 'lost_commit', 'commit_receipts', 'ack_emissions', 'lost_ack', 'ack_receipts'):
+    for bank in ('inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
+                 'ack_emissions', 'lost_ack', 'ack_receipts'):
         for packet in godot[bank]:
-            packet['order'] *= 2
+            packet['order'] *= 4
     retry = copy.deepcopy(godot['ack_emissions'][0])
-    retry.update(emission=1, order=godot['commit_receipts'][1]['order'] + (-1 if before_repeated_commit else 1))
+    retry.update(emission=1, order=godot['commit_receipts'][1]['order'] + (-2 if before_repeated_commit else 1))
     for bank in ('ack_emissions', 'ack_receipts'):
         for packet in godot[bank]:
             if packet['emission'] >= 1:
                 packet['emission'] += 1
     godot['ack_emissions'].insert(1, retry)
-    godot['ack_receipts'].insert(0, copy.deepcopy(retry))
+    received = copy.deepcopy(retry)
+    received['order'] += 1
+    godot['ack_receipts'].insert(0, received)
 
 
 def controls(clean, lost):
@@ -63,7 +66,7 @@ def controls(clean, lost):
              ('missing_source_ack_retry', no_source_retry, 'source exact acknowledgement retry receipt'),
              ('missing_Godot_ack_retry', no_godot_retry, 'Godot exact acknowledgement retry receipt'),
              ('missing_Godot_repeated_commit', no_repeat_commit, 'Godot acknowledgement requires repeated commit receipt'),
-             ('Godot_ack_before_repeated_commit', bad_order, 'Godot acknowledgement follows repeated commit receipt'),
+             ('Godot_ack_before_repeated_commit', bad_order, 'Godot unique observation order'),
              ('Godot_first_ack_early_with_later_retry', early_extra_retry, 'Godot acknowledgement follows repeated commit receipt')]
     for name, candidate, diagnostic in cases:
         try:
