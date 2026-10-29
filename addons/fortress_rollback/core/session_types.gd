@@ -1,6 +1,8 @@
 class_name FortressSessionTypes
 extends RefCounted
 
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
+
 enum Code {
 	OK,
 	READY,
@@ -97,7 +99,7 @@ class FrameInputs:
 		return _bytes.size() if _live else -1
 
 	## Applied input status without copying sample bytes or allocating a result wrapper.
-	## Returns -1 for an expired view, invalid player or inconsistent status storage.
+	## Returns -1 for an expired view, invalid player or invalid status row.
 	func input_status(player: int) -> int:
 		return _statuses[player] if _read_code(player) == Code.OK else -1
 
@@ -119,7 +121,12 @@ class FrameInputs:
 			return Code.EXPIRED_VIEW
 		if player < 0 or player >= _bytes.size():
 			return Code.INVALID_PLAYER
-		return Code.OK if _statuses.size() == _bytes.size() else Code.INVALID_CONFIGURATION
+		if _statuses.size() != _bytes.size():
+			return Code.INVALID_CONFIGURATION
+		for status: int in _statuses:
+			if status < Queue.Status.NONE or status > Queue.Status.DISCONNECTED:
+				return Code.INVALID_CONFIGURATION
+		return Code.OK
 
 	func size() -> Result:
 		var result: Result = Result.new(Code.OK if _live else Code.EXPIRED_VIEW)

@@ -62,6 +62,7 @@ Validate bounded view status separately from callback success and capture it bef
 expiration. A matching checksum cannot make a failed snapshot write successful.
 Public view constructors also need backing-array shape checks before indexing metadata or copying caller buffers;
 ordinary engine-created views can hide malformed-constructor failures. Preserve destinations on rejection.
+Validate value domains too when scalar reads reserve error sentinels; successful owned and scalar reads must agree.
 Validate callback checksum width before encoding diagnostics; a typed `SaveResult`
 does not constrain its contained byte array.
 Check callback argument counts at configuration before replacing an active game.

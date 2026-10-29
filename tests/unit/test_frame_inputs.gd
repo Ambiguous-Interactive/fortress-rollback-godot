@@ -183,15 +183,20 @@ func _status_driver(context: RefCounted) -> void:
 	context.equal("load:1" in games[1].trace, true, "repair invokes real load callback")
 
 
-# Value: protects=constructed views reject incomplete statuses; fails_when=read indexes past metadata;
+# Value: protects=constructed views reject invalid statuses; fails_when=read publishes missing or unknown metadata;
 # why_new=session views always have complete statuses; seam=none
 func _malformed_statuses(context: RefCounted) -> void:
-	for statuses: PackedInt32Array in [PackedInt32Array(), PackedInt32Array([1, 2, 3])]:
+	var malformed: Array[PackedInt32Array] = [PackedInt32Array(), PackedInt32Array([1, 2, 3])]
+	for status: int in [-2147483648, -1, 4, 2147483647]:
+		malformed.append(PackedInt32Array([status, Queue.Status.CONFIRMED]))
+		malformed.append(PackedInt32Array([Queue.Status.CONFIRMED, status]))
+	for statuses: PackedInt32Array in malformed:
 		var view: RefCounted = Types.FrameInputs.new([PackedByteArray([1]), PackedByteArray([2])], statuses)
 		for player: int in range(2):
 			var read: Types.InputResult = view.read(player)
-			context.equal(read.code, Types.Code.INVALID_CONFIGURATION, "inconsistent status storage is rejected")
+			context.equal(read.code, Types.Code.INVALID_CONFIGURATION, "invalid status row is rejected")
 			context.equal(read.bytes.is_empty(), true, "rejected owned read publishes no bytes")
+			context.equal(view.input_status(player), -1, "invalid row cannot return any applied status")
 			var destination: PackedByteArray = PackedByteArray([99])
 			context.equal(view.read_into(player, destination), Types.Code.INVALID_CONFIGURATION, "reusable reads share shape validation")
 			context.equal(destination, PackedByteArray([99]), "malformed view preserves destination")
