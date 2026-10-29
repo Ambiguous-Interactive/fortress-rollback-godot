@@ -21,6 +21,8 @@ in ignored root `progress/`.
 No skill or knowledge file retired. Existing independent-history and verified-navigation
 rules remain accurate; only the missing mid-match feedback instruction was added.
 No duplicated skill or new procedure was needed. Source/tool pins are unchanged.
+Automatic review found that the intentional-delay label lacked an exact scene assertion;
+the existing feedback case now checks its state, twelve-row buffer and full first line.
 
 ## Outcome
 
