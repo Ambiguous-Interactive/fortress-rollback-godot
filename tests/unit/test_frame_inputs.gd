@@ -148,6 +148,7 @@ func _status_driver(context: RefCounted) -> void:
 		config.local_players = PackedInt32Array([0])
 		config.check_distance = 0
 		config.max_prediction_frames = 4
+		config.queue_capacity = 6
 		config.history_slots = 5
 		config.max_snapshot_bytes = 8
 		config.storage_budget_bytes = config.required_storage_bytes()
