@@ -60,6 +60,8 @@ Owned `RefCounted` callback graphs must not keep strong back-references. Use a
 Engine resource-leak errors fail verification even if structured assertions pass.
 Validate bounded view status separately from callback success and capture it before
 expiration. A matching checksum cannot make a failed snapshot write successful.
+Public view constructors also need backing-array shape checks before indexing metadata or copying caller buffers;
+ordinary engine-created views can hide malformed-constructor failures. Preserve destinations on rejection.
 Validate callback checksum width before encoding diagnostics; a typed `SaveResult`
 does not constrain its contained byte array.
 Check callback argument counts at configuration before replacing an active game.

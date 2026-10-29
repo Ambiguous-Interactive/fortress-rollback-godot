@@ -628,6 +628,16 @@ adds actual SDK/server publication, receipt and authenticated control delivery.
 Exported Fortress games and the complete lifecycle matrix remain unqualified in #131;
 this API does not extend the browser support claim.
 
+The scripted SDK case `corrected_drop_history` crosses both production adapters
+with a status-sensitive game. The host repairs a predicted tail after freezing a
+departed slot, then continues while the SDK refuses publication. The exact signed
+row survives eviction from the host's input ring. A delayed viewer resumes through
+seven independently calculated canonical boundaries, preserving finalized statuses
+and seated confirmation, then consumes the complete clean tail. An executed
+control that changes disconnected statuses to confirmed statuses fails the canonical
+and exported-status checks while preserving input bytes. This case uses SDK
+doubles; it does not establish socket, server or exported-browser drop acceptance.
+
 ## Check playback against the pinned spectator model
 
 `make spectator-model` records actual production viewer rings, input tags, host

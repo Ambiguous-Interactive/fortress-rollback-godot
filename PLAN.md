@@ -96,6 +96,7 @@ Issue creation does not establish implementation, test success or feature parity
 The game owns deterministic simulation and complete serialization.
 The library supplies orchestration, validation and sync-test tooling.
 Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
+The scalar applied-status read preserves predicted and disconnected semantics alongside reusable input buffers.
 Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
 Peer clients can read owned staged local samples to retry stalled steps without resampling.
 Callback and expert peer steps can omit retained local slots while requiring every unstaged slot before mutation.
@@ -107,7 +108,7 @@ Owned replay prefixes only trim existing storage; they cannot pad missing gamepl
 Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
 Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
 A separate source comparison checks one initially disconnected reserved slot across all supported rosters, delay and ring reuse.
-Remote recording compares one two-peer late-correction schedule with independent canonical histories;
+Remote recording compares one two-peer late-correction schedule through default queue reuse with independent canonical histories;
 [pinned speculative-checksum discrepancies](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253) remain explicit.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
@@ -511,6 +512,8 @@ arbitrary-delivery and live acceptance remain in #47 and #131.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated
 version 3 delivery, playback requests and confirmed exports. Byte-only callers default to
 all-confirmed; dropped matches must supply statuses. Frozen versions 1 and 2 are refused at startup.
+Scripted SDK adapter tests preserve corrected status-sensitive history through refused publication,
+source-ring eviction, delayed catch-up and clean completion; this does not qualify live drop delivery.
 Spectator playback rejects player-freeze operations; complete host rows remain the sole input authority.
 Authenticated startup offers share row delivery’s deadline, callback and terminal-lifetime fences.
 The receive-only SignalFish spectator adapter bounds authenticated host ingress, SDK lifetimes and elapsed expiry without seating viewers.

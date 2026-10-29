@@ -11,8 +11,9 @@ def sample(slot, frame, neutral=False):
     return 0 if neutral else (0xffffffff + frame * 1234567 + slot * 0x1020304) & 0xffffffff
 
 
-def expected(rust, neutral=False):
-    rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(9)]
+def expected(rust, neutral=False, long=False):
+    rounds = 257 if long else 9
+    rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(rounds)]
     initial = (0, 0xffffffff, 0xffffffff, 0)
     canonical = [initial]
     for row in rows:
@@ -34,7 +35,7 @@ def expected(rust, neutral=False):
             state = advance(state, [value['value'] for value in applied])
             records.append(dict(kind='advance', frame=frame, bytes=state_bytes(state).hex(), inputs=applied))
 
-        for turn in range(9):
+        for turn in range(rounds):
             first = len(records)
             if turn >= 2 and turn % 2 == 0 and not neutral:
                 state = canonical[turn - 2]
@@ -48,22 +49,30 @@ def expected(rust, neutral=False):
             simulate(turn, False)
             services.append(dict(round=turn, before=turn, after=turn + 1, requests=[row['kind'] for row in records[first:]]))
         # Source records newly confirmed rows before executing the correction's returned SAVE requests.
-        checksums = [first_saved[frame] if rust else state_bytes(canonical[frame]).hex() for frame in range(8)]
+        checksums = [first_saved[frame] if rust else state_bytes(canonical[frame]).hex() for frame in range(rounds - 1)]
         playback = playback_expected(dict(name=f'remote-{peer}', players=2, seed=0xffffffff, validate=True,
-                                          frames=rows[:8], checksums=checksums), rust)
-        peers.append(dict(peer=peer, current_frame=9, bytes=state_bytes(state).hex(), records=records,
-                          services=services, frames=rows[:8], checksums=checksums, skipped=0, playback=playback))
-    return dict(format=1, peers=peers, deliveries=[dict(round=turn, **({'messages': 8} if rust else {'rows': 4})) for turn in (1, 3, 5, 7)])
+                                          frames=rows[:-1], checksums=checksums), rust)
+        peers.append(dict(peer=peer, current_frame=rounds, bytes=state_bytes(state).hex(), records=records,
+                          services=services, frames=rows[:-1], checksums=checksums, skipped=0, playback=playback))
+    # Default source desync detection sends one report per endpoint every 60 confirmed frames.
+    # A boundary 60*k becomes eligible on turn 60*k+2 and is delivered on the next odd turn.
+    deliveries = [dict(round=turn, **({'messages': 8 + (2 if turn >= 63 and turn % 60 == 3 else 0)} if rust else {'rows': 4}))
+                  for turn in range(1, rounds, 2)]
+    return dict(format=1, peers=peers, deliveries=deliveries)
 
 
-def validate(actual, rust, neutral=False):
-    compare(actual, expected(rust, neutral), 'remote.' + ('rust' if rust else 'godot'))
+def validate(actual, rust, neutral=False, long=False):
+    compare(actual, expected(rust, neutral, long), 'remote.' + ('rust' if rust else 'godot'))
     # Keep the exercised correction boundary independent of the generated complete expectation.
     for peer in actual['peers']:
+        if long:
+            compare(peer['current_frame'], 257, 'remote.required_long_boundary')
+            compare(len(peer['frames']), 256, 'remote.required_long_recording')
+            compare(len(peer['services']), 257, 'remote.required_long_services')
         loads = [record['frame'] for record in peer['records'] if record['kind'] == 'load']
-        compare(loads, [] if neutral else [0, 2, 4, 6], 'remote.required_loads')
+        compare(loads, [] if neutral else list(range(0, 256 if long else 8, 2)), 'remote.required_loads')
         if rust:
-            compare([event['frame'] for event in peer['playback']['events']], [] if neutral else [1, 3, 5, 7], 'remote.source_checksum_events')
+            compare([event['frame'] for event in peer['playback']['events']], [] if neutral else list(range(1, 256 if long else 8, 2)), 'remote.source_checksum_events')
         else:
             compare(peer['playback']['failure_frame'], -1, 'remote.godot_playback_healthy')
 
@@ -104,6 +113,44 @@ def controls(observed):
     return names
 
 
+def long_controls(observed):
+    """The second ring's original history, corrections, export and playback are independently required."""
+    names = []
+    for runtime in ('rust', 'godot'):
+        for fault in ('post-wrap-load', 'post-wrap-input', 'post-wrap-export', 'post-wrap-playback', 'post-wrap-delivery'):
+            changed = copy.deepcopy(observed[runtime])
+            peer = changed['peers'][0]
+            if fault == 'post-wrap-load':
+                peer['records'] = [row for row in peer['records'] if not (row['kind'] == 'load' and row['frame'] == 128)]
+                field = 'records'
+            elif fault == 'post-wrap-input':
+                index = next(i for i, row in enumerate(peer['records']) if row['kind'] == 'advance' and row['frame'] == 129)
+                peer['records'][index]['inputs'][1]['value'] ^= 1
+                field = f'records[{index}].inputs[1].value'
+            elif fault == 'post-wrap-export':
+                peer['frames'][129][1] ^= 1
+                field = 'frames[129][1]'
+            elif fault == 'post-wrap-playback':
+                index = next(i for i, row in enumerate(peer['playback']['records']) if row['kind'] == 'advance' and row['frame'] == 129)
+                peer['playback']['records'][index]['bytes'] = '00' * 16
+                field = f'playback.records[{index}].bytes'
+            else:
+                key = 'messages' if runtime == 'rust' else 'rows'
+                changed['deliveries'][91][key] += 1
+                field = f'deliveries[91].{key}'
+            if fault != 'post-wrap-delivery':
+                field = 'peers[0].' + field
+            try:
+                validate(changed, runtime == 'rust', long=True)
+            except ValueError as error:
+                if not str(error).startswith(f'remote.{runtime}.{field}'):
+                    raise ValueError(f'{fault}: wrong long remote rejection: {error}') from error
+            else:
+                raise ValueError(f'{runtime}-{fault}: long remote mutation accepted')
+            names.append(f'{runtime}-{fault}')
+    return names
+
+
 
 def delivery_control(engine, root, output, execute):
     """Duplicate actual idempotent receipts without changing gameplay; the measured inventory must reject them."""
@@ -139,8 +186,8 @@ def delivery_control(engine, root, output, execute):
 
 def observe(binary, engine, root, output, execute):
     combined = {}
-    for neutral in (False, True):
-        mode = '--remote-recording-neutral' if neutral else '--remote-recording'
+    for neutral, long in ((False, False), (True, False), (False, True), (True, True)):
+        mode = ('--remote-recording-neutral' if neutral else '--remote-recording') + ('-long' if long else '')
         rounds = []
         for repeat in (1, 2):
             result = {}
@@ -156,10 +203,10 @@ def observe(binary, engine, root, output, execute):
                 elif stderr.strip():
                     raise ValueError('unexpected remote source stderr')
                 result[runtime] = json.loads(stdout)
-                validate(result[runtime], runtime == 'rust', neutral)
+                validate(result[runtime], runtime == 'rust', neutral, long)
             rounds.append(result)
         compare(rounds[0], rounds[1], 'remote.repeat')
-        combined['neutral' if neutral else 'corrected'] = rounds[0]
+        combined[('neutral' if neutral else 'corrected') + ('_long' if long else '')] = rounds[0]
     refused = []
     for runtime in ('rust', 'godot'):
         command = [str(binary), '--remote-recording-withhold'] if runtime == 'rust' else [str(engine), '--headless', '--path', str(root),
@@ -176,5 +223,6 @@ def observe(binary, engine, root, output, execute):
             refused.append(runtime + '-withheld-receipts')
         else:
             raise ValueError(f'{runtime}: missing remote receipts did not stop gameplay')
-    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused,
+    return dict(repeat_equal=True, observations=combined,
+                negative_controls=controls(combined['corrected']) + long_controls(combined['corrected_long']), standalone_rejections=refused,
                 delivery_controls=delivery_control(engine, root, output, execute))

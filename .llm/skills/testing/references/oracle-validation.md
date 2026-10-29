@@ -47,6 +47,8 @@ session oracle's canonical scenario conversion protects this boundary.
 
 Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
 Measure delivery counts at successful operations, rather than emitting the expected inventory.
+Longer workloads can cross periodic protocol boundaries despite unchanged input cadence;
+derive the full control-message schedule from source instead of repeating short-run totals.
 Before accepting a mutation's named rejection, validate its exact changed value and type alongside unchanged state;
 an incorrect count or wrong type can reach the same error path as the intended fault.
 Distinguish a fabricated missing-history inventory from physical eviction. Advance real queues,

@@ -7,6 +7,7 @@ const Fixture = preload("res://tests/unit/test_spectator_session.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const GameFixture = preload("res://tests/unit/test_driver.gd")
+const StatusFixture = preload("res://tests/unit/test_spectator_status.gd")
 const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const HOST: String = Viewer.HOST
@@ -58,6 +59,7 @@ func cases() -> PackedStringArray:
 		[
 			"startup",
 			"canonical_playback",
+			"corrected_drop_history",
 			"pressure",
 			"lifetimes",
 			"configuration",
@@ -181,6 +183,73 @@ func _canonical_playback(context: RefCounted) -> void:
 	context.equal(fixture.viewer.driver.step(12, Viewer.new()._empty()).code, S.Code.TERMINATED, "viewer drains exact final tail")
 	context.equal(fixture.relay.poll(100).sent, 0, "accepted END stops liveness")
 	_stop(fixture)
+
+
+# Value: protects=corrected disconnected history across both SDK bridges; fails_when=statuses disappear under retained-row pressure;
+# why_new=SDK playback ignores statuses and core drop playback bypasses SDK pressure; seam=public SDK API
+func _corrected_drop_history(context: RefCounted) -> void:
+	var fixture: Dictionary = _fixture(context, true, 1, true)
+	var host_game: RefCounted = StatusFixture.Game.new()
+	fixture.driver = Driver.new(fixture.host, host_game)
+	fixture.viewer.game = StatusFixture.Game.new()
+	fixture.viewer.driver = Driver.new(fixture.viewer.stream.playback_session(), fixture.viewer.game)
+	var viewer: RefCounted = fixture.viewer.stream.playback_session()
+	context.equal(viewer.set_playback(1, 1, 2), S.Code.OK, "hold one confirmed row while viewing")
+	context.equal(fixture.host.receive_input(1, 0, PackedByteArray([7])).code, S.Code.OK, "original remote input before departure")
+	for frame: int in range(2):
+		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([frame + 1]))]
+		context.equal(fixture.driver.step(frame, samples).code, S.Code.OK, "host predicts original remote tail")
+	context.equal(fixture.relay.poll(2).sent, 1, "only finalized prefix reaches spectator SDK")
+	_deliver(fixture)
+	context.equal(fixture.viewer.relay.poll(3).received, 1, "viewer buffers original pre-drop prefix")
+	context.equal(viewer.recommended_steps(), 0, "delay preserves paused prefix")
+	context.equal(fixture.host.freeze_player(1, 0), S.Code.OK, "freeze departed input at original cut")
+	context.equal(fixture.driver.recover(2).code, S.Code.OK, "repair predicted status without another sample")
+	context.equal(fixture.host.statistics().rollback_count > 0, true, "host actually restores corrected history")
+	fixture.client.outcome = ERR_BUSY
+	context.equal(fixture.relay.poll(4).code, HostRelay.Code.BACKPRESSURE, "corrected status row meets real SDK refusal")
+	var retained: PackedByteArray = fixture.client.attempted[-1].duplicate()
+	context.equal(retained[5], Stream.ROW, "refused bytes are gameplay history")
+	context.equal(retained.slice(Stream.HEADER_BYTES), PackedByteArray([2, 7, 1, 3]), "signed retained row includes disconnected status")
+	for frame: int in range(2, 7):
+		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([frame + 1]))]
+		context.equal(fixture.driver.step(frame, samples).code, S.Code.OK, "seated host continues while spectator transport refuses")
+	context.equal(fixture.host.confirmed_inputs(1), null, "original prepared row is physically evicted")
+	context.equal(fixture.relay.status().next_frame, 1, "refusal preserves exact publication cursor")
+	context.equal(viewer.status().current_frame, 0, "buffered viewer never advances itself")
+	fixture.client.outcome = OK
+	var expected: int = 0
+	for frame: int in range(1, 7):
+		var confirmed: int = fixture.host.status().confirmed_frame
+		context.equal(fixture.relay.poll(4 + frame).sent, 1, "one retained original row accepted within send budget")
+		if frame == 1:
+			context.equal(fixture.client.sent[0], retained, "exact signed row survives source ring reuse")
+		_deliver(fixture)
+		context.equal(fixture.viewer.relay.poll(5 + frame).received, 1, "viewer bridge receives finalized original row")
+		context.equal(viewer.recommended_steps(), 1, "delayed viewer advances one available original frame")
+		context.equal(fixture.viewer.driver.step(frame, Viewer.new()._empty()).code, S.Code.OK, "viewer consumes corrected status history")
+		expected = _drop_boundary(expected, frame - 1)
+		context.equal(fixture.viewer.game.value, expected, "independent status-sensitive canonical boundary")
+		var exported: S.FrameInputs = viewer.confirmed_inputs(frame - 1)
+		context.equal(exported.read(1).status, 1 if frame == 1 else 3, "viewed exports preserve pre/post-drop status")
+		context.equal(fixture.host.status().confirmed_frame, confirmed, "spectator receipt leaves seated confirmation unchanged")
+	context.equal(fixture.relay.finish_host().code, HostRelay.Code.OK, "freeze continued fully confirmed host ending")
+	context.equal(fixture.relay.poll(11).sent, 1, "END follows every original row")
+	_deliver(fixture)
+	context.equal(fixture.viewer.relay.poll(12).received, 1, "authenticated END releases remaining delayed row")
+	context.equal(fixture.viewer.driver.step(7, Viewer.new()._empty()).code, S.Code.OK, "consume complete corrected final tail")
+	expected = _drop_boundary(expected, 6)
+	context.equal(fixture.viewer.game.value, expected, "viewer reaches independently calculated original final state")
+	context.equal(host_game.value, expected, "repaired player host agrees with original final state")
+	context.equal(fixture.viewer.driver.step(8, Viewer.new()._empty()).code, S.Code.TERMINATED, "normal service completes clean corrected match")
+	context.equal(viewer.is_complete(), true, "input closure and actual completion remain distinct")
+	context.equal(fixture.viewer.relay.status().received_bytes, 0, "all owned ingress bytes release after completion")
+	_stop(fixture)
+
+
+func _drop_boundary(previous: int, frame: int) -> int:
+	var value: int = (previous * 17 + frame + 1 + 31 + frame) % 1000000007
+	return (value * 17 + 7 + (1 if frame == 0 else 3) * 31 + frame) % 1000000007
 
 
 # Value: protects=refused rows and liveness; fails_when=pressure loses history or suppresses pulse; why_new=core tests omit SDK policy; seam=SDK API

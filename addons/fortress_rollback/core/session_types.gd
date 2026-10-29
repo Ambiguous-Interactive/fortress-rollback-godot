@@ -86,11 +86,8 @@ class FrameInputs:
 
 	func read(player: int) -> InputResult:
 		var result: InputResult = InputResult.new()
-		if not _live:
-			result.code = Code.EXPIRED_VIEW
-		elif player < 0 or player >= _bytes.size():
-			result.code = Code.INVALID_PLAYER
-		else:
+		result.code = _read_code(player)
+		if result.code == Code.OK:
 			result.bytes = _bytes[player].duplicate()
 			result.status = _statuses[player]
 		return result
@@ -99,19 +96,30 @@ class FrameInputs:
 	func player_count() -> int:
 		return _bytes.size() if _live else -1
 
+	## Applied input status without copying sample bytes or allocating a result wrapper.
+	## Returns -1 for an expired view, invalid player or inconsistent status storage.
+	func input_status(player: int) -> int:
+		return _statuses[player] if _read_code(player) == Code.OK else -1
+
 	## Copy one fixed-width sample into caller-owned storage, without allocating a result wrapper.
-	## Rejection preserves destination. Use read() when the applied input status is needed.
+	## Rejection preserves destination. Use input_status() for the applied status.
 	func read_into(player: int, destination: PackedByteArray) -> int:
-		if not _live:
-			return Code.EXPIRED_VIEW
-		if player < 0 or player >= _bytes.size():
-			return Code.INVALID_PLAYER
+		var code: int = _read_code(player)
+		if code != Code.OK:
+			return code
 		var sample: PackedByteArray = _bytes[player]
 		if destination.size() != sample.size():
 			return Code.INPUT_WIDTH
 		for index: int in destination.size():
 			destination[index] = sample[index]
 		return Code.OK
+
+	func _read_code(player: int) -> int:
+		if not _live:
+			return Code.EXPIRED_VIEW
+		if player < 0 or player >= _bytes.size():
+			return Code.INVALID_PLAYER
+		return Code.OK if _statuses.size() == _bytes.size() else Code.INVALID_CONFIGURATION
 
 	func size() -> Result:
 		var result: Result = Result.new(Code.OK if _live else Code.EXPIRED_VIEW)

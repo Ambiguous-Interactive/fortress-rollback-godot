@@ -103,10 +103,16 @@ func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
 
 `player_count()` returns the live slot count, or `-1` after the request expires.
 `read_into(player, destination)` requires the exact configured width. It returns
-`OK`, `EXPIRED_VIEW`, `INVALID_PLAYER` or `INPUT_WIDTH`; rejection preserves the destination.
+`OK`, `EXPIRED_VIEW`, `INVALID_PLAYER`, `INPUT_WIDTH` or `INVALID_CONFIGURATION`; rejection preserves the destination.
 The destination belongs to your game, and changing it cannot modify recorded inputs.
 Reuse only scratch storage that is overwritten before use; authoritative state still belongs in snapshots.
-Use `read(player)` when you need its `status` or an owned result. Both APIs preserve request lifetimes.
+Use `input_status(player)` alongside `read_into` when simulation depends on confirmed,
+predicted or disconnected status. It returns the same applied status as `read(player).status`,
+without copying sample bytes or creating a result wrapper. A value of `-1` means the player
+is invalid, the view expired or its status storage is inconsistent; it is never an input status.
+Use `read(player)` when you need an owned result. All input access preserves request lifetimes.
+Constructed `FrameInputs` require exactly one status per sample; inconsistent storage returns
+`INVALID_CONFIGURATION` from either read API and preserves a reusable destination.
 The reusable path avoids result wrappers and copies bytes in GDScript. It helps small inputs;
 wide samples can be faster with `read()`. This is not a whole-frame allocation guarantee.
 

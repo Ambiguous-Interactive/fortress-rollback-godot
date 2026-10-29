@@ -3,11 +3,37 @@ import copy
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 import replay_remote
 
 
 class RemoteRecordingTest(unittest.TestCase):
+    def test_long_remote_history_requires_post_wrap_corrections_and_playback(self):
+        observed = {runtime: replay_remote.expected(runtime == 'rust', long=True) for runtime in ('rust', 'godot')}
+        for runtime in ('rust', 'godot'):
+            replay_remote.validate(observed[runtime], runtime == 'rust', long=True)
+            replay_remote.validate(replay_remote.expected(runtime == 'rust', True, long=True), runtime == 'rust', True, long=True)
+            with self.assertRaises(ValueError):
+                replay_remote.validate(replay_remote.expected(runtime == 'rust'), runtime == 'rust', long=True)
+        self.assertEqual(len(replay_remote.long_controls(observed)), 10)
+        for runtime in ('rust', 'godot'):
+            short = replay_remote.expected(runtime == 'rust')
+            with patch.object(replay_remote, 'expected', return_value=short):
+                with self.assertRaisesRegex(ValueError, 'remote.required_long_boundary:'):
+                    replay_remote.validate(short, runtime == 'rust', long=True)
+
+    def test_long_source_delivery_counts_keep_periodic_checksum_reports(self):
+        for neutral in (False, True):
+            actual = replay_remote.expected(True, neutral, long=True)
+            self.assertEqual([row['round'] for row in actual['deliveries'] if row['messages'] == 10], [63, 123, 183, 243])
+            self.assertEqual([row['messages'] for row in actual['deliveries']].count(8), 124)
+            for count in (8, 9, 11, 10.0, True):
+                changed = copy.deepcopy(actual)
+                changed['deliveries'][31]['messages'] = count
+                with self.assertRaisesRegex(ValueError, r'remote.rust.deliveries\[31\].messages:'):
+                    replay_remote.validate(changed, True, neutral, long=True)
+
     def test_complete_expected_histories_and_controls(self):
         observed = {runtime: replay_remote.expected(runtime == 'rust') for runtime in ('rust', 'godot')}
         self.assertEqual(len(replay_remote.controls(observed)), 12)
