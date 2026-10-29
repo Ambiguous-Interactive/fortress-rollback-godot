@@ -229,7 +229,7 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 		for player: int in range(_sample_indices.size()):
 			if _sample_indices[player] != -1 or _session.input_delay(player) < 0:
 				continue
-			if _session.scheduled_local_input(player).code == Types.Code.MISSING_LOCAL_INPUT:
+			if _session._scheduled_local_input_code(player) == Types.Code.MISSING_LOCAL_INPUT:
 				# No batch can open without this sample. Let the engine prioritize terminal exhaustion.
 				return _finish(_session.begin_advance().code, before)
 		for index: int in _sample_indices:

@@ -676,8 +676,8 @@ Missing eight-player work, corrupted last-slot input and numeric type changes ar
 separate rejected controls. These workloads extend confirmed-input source coverage;
 they do not extend the binary two-player formal projection.
 
-A separate 56-workload comparison keeps the last slot reserved in the pinned
-Rust host. The actual source builder freezes that slot at its default input zero
+A separate 280-workload comparison reserves each slot position in turn in the pinned
+Rust host. Each trace names its reserved slot; every roster keeps the original last-slot controls. The actual source builder freezes that slot at its default input zero
 and supplies `Disconnected` status from frame zero. Other slots keep their changing
 original inputs. Godot receives those same complete finalized rows. Every callback
 records each input and status plus an independently reconstructed, status-sensitive
@@ -693,7 +693,11 @@ mid-match coordinated-drop or hot-join admission evidence.
 An executed Godot control changes the disconnected status to confirmed while
 preserving every input byte. Both the ordered status transcript and the first
 canonical state must disagree with the source. Separate controls reject a changed
-frozen input, changed canonical boundary and malformed numeric status types.
+frozen input, changed canonical boundary, omitted slot workloads and malformed numeric status types.
+An executed shifted-status control moves `Disconnected` to the adjacent slot while
+preserving input bytes and each row's status sum; exact per-slot comparison rejects it.
+Another control retains the original canonical states and final state while swapping
+two statuses in the first callback; the first ordered status comparison still rejects it.
 These workloads do not extend the binary two-player formal projection.
 
 The original pinned model remains unchanged. Its `ReceiveInput` action forces

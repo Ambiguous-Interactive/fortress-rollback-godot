@@ -46,8 +46,15 @@ func _initialize() -> void:
 	var roster: bool = statuses or "--roster" in OS.get_cmdline_user_args()
 	var delayed: bool = roster or "--delayed" in OS.get_cmdline_user_args()
 	var mutate_input: bool = "--mutate-input" in OS.get_cmdline_user_args()
-	for case_id: int in range(56 if roster else 8):
-		var players: int = 2 + case_id / 8 if roster else 2
+	var configurations: Array[Vector2i] = []
+	for players: int in range(2, 9) if roster else range(2, 3):
+		configurations.append(Vector2i(players, players - 1))
+		if statuses:
+			for reserved_slot: int in range(players - 1):
+				configurations.append(Vector2i(players, reserved_slot))
+	for case_id: int in range(configurations.size() * 8):
+		var players: int = configurations[case_id / 8].x
+		var reserved_slot: int = configurations[case_id / 8].y
 		var workload: int = case_id % 8
 		var capacity: int = (4 if delayed else 2) + (workload / 2) % 2
 		var preplay: bool = workload < 4
@@ -86,14 +93,17 @@ func _initialize() -> void:
 				row[players - 2] = held
 			var row_statuses: PackedByteArray = PackedByteArray()
 			if statuses:
-				row[players - 1] = PackedByteArray([0])
+				row[reserved_slot] = PackedByteArray([0])
 				row_statuses.resize(players)
 				row_statuses.fill(Spectator.Queue.Status.CONFIRMED)
-				row_statuses[players - 1] = Spectator.Queue.Status.CONFIRMED if "--mutate-status" in OS.get_cmdline_user_args() else Spectator.Queue.Status.DISCONNECTED
+				row_statuses[reserved_slot] = Spectator.Queue.Status.CONFIRMED if "--mutate-status" in OS.get_cmdline_user_args() else Spectator.Queue.Status.DISCONNECTED
+				if "--mutate-status-slot" in OS.get_cmdline_user_args():
+					row_statuses[reserved_slot] = Spectator.Queue.Status.CONFIRMED
+					row_statuses[(reserved_slot + 1) % players] = Spectator.Queue.Status.DISCONNECTED
 			if statuses and frame == 1:
 				var first_row: Array[PackedByteArray] = []
 				for player: int in range(players):
-					first_row.append(PackedByteArray([0 if player == players - 1 else player * 31]))
+					first_row.append(PackedByteArray([0 if player == reserved_slot else player * 31]))
 				if viewer.receive_host_frame(0, first_row, row_statuses).code != Types.Code.OK:
 					quit(2)
 					return
@@ -135,6 +145,8 @@ func _initialize() -> void:
 			traces[-1]["delay"] = delay
 		if roster:
 			traces[-1]["players"] = players
+		if statuses:
+			traces[-1]["reserved_slot"] = reserved_slot
 	print("FORTRESS_SPECTATOR_TRACE " + JSON.stringify(traces))
 	quit(0)
 

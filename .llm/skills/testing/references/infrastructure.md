@@ -102,6 +102,16 @@ The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
 Concurrent native launchers must use distinct `--results` paths: a focused review
 can overwrite the default `latest.json` receipt from a full-suite run.
+Keep a subagent's verification turn active until its child processes finish.
+Parent agents may not be able to poll child-owned tool sessions; hand back
+completed receipts instead of assuming session IDs transfer. The handoff must
+identify the full selected inventory, engine, phase and source/tool identities,
+include source hashes, and record the child's terminal exit status. Attach that
+status separately when the receipt schema does not store it. Partial inventories
+or missing exit status do not qualify as completed verification.
+For reproducible oracle commands and receipt provenance, see
+[replay probes](../../../../docs/oracle-replay.md) and
+[spectator probes](../../../../docs/spectators.md).
 Clear owned success receipts on parse and execution-option rejection, including
 malformed worker values; real subprocess controls verify mode isolation and help.
 

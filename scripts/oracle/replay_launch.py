@@ -412,7 +412,7 @@ def main():
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
         acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
         standalone_rejections=rejected, observations=observations[0], recording=recording, remote_recording=remote_recording,
-        limitations=['All-local recording and one two-peer late-correction recording schedule; broader remote and drop acceptance remains separate.',
+        limitations=['All-local and two-peer symmetric/asymmetric recording; pinned source cannot repair/export final rows without new local input.',
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',
                      'Godot callback and expert playback check only present checksums and stop before mismatching advances.',
                      'No snapshot seek acceleration or network-fault replay.']), indent=2) + '\n')

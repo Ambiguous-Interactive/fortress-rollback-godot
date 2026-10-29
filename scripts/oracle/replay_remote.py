@@ -223,6 +223,8 @@ def observe(binary, engine, root, output, execute):
             refused.append(runtime + '-withheld-receipts')
         else:
             raise ValueError(f'{runtime}: missing remote receipts did not stop gameplay')
-    return dict(repeat_equal=True, observations=combined,
+    from replay_asymmetric import observe as observe_asymmetric
+    asymmetric = observe_asymmetric(binary, engine, root, output, execute)
+    return dict(repeat_equal=True, observations=combined, asymmetric=asymmetric,
                 negative_controls=controls(combined['corrected']) + long_controls(combined['corrected_long']), standalone_rejections=refused,
                 delivery_controls=delivery_control(engine, root, output, execute))

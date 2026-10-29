@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import replay_remote
+import replay_asymmetric
 
 
 class RemoteRecordingTest(unittest.TestCase):
@@ -97,6 +98,45 @@ class RemoteRecordingTest(unittest.TestCase):
             self.assertFalse(any(row['kind'] == 'load' for peer in neutral['peers'] for row in peer['records']))
             with self.assertRaises(ValueError):
                 replay_remote.validate(copy.deepcopy(neutral), runtime == 'rust')
+
+
+class AsymmetricRecordingTest(unittest.TestCase):
+    # Value: protects=asymmetric correction and recovery evidence; fails_when=one symmetric history or incomplete export qualifies;
+    # why_new=existing remote cases deliver to both endpoints together; seam=none
+    def test_distinct_histories_recovery_and_mutation_diagnostics(self):
+        observed = {runtime: replay_asymmetric.expected(runtime == 'rust') for runtime in ('rust', 'godot')}
+        self.assertEqual(len(replay_asymmetric.controls(observed)), 10)
+        for runtime in ('rust', 'godot'):
+            actual = observed[runtime]
+            replay_asymmetric.validate(actual, runtime == 'rust')
+            neutral = replay_asymmetric.expected(runtime == 'rust', True)
+            replay_asymmetric.validate(neutral, runtime == 'rust', True)
+            with self.assertRaises(ValueError):
+                replay_asymmetric.validate(neutral, runtime == 'rust')
+            histories = [[row['frame'] for row in peer['records'] if row['kind'] == 'load'] for peer in actual['peers']]
+            self.assertNotEqual(histories[0], histories[1])
+            if runtime == 'godot':
+                self.assertEqual([row['rows'] for row in actual['recovery']], [1, 2])
+                self.assertTrue(all(row['before'] == row['after'] == 257 for row in actual['recovery']))
+                self.assertEqual([len(peer['frames']) for peer in actual['peers']], [257, 257])
+            else:
+                self.assertEqual([len(peer['frames']) for peer in actual['peers']], [256, 255])
+                self.assertEqual([len(peer['playback']['events']) for peer in actual['peers']], [128, 170])
+                self.assertEqual([row['round'] for row in actual['deliveries'] if row['messages'] == 14], [65, 125, 185, 245])
+
+    # Value: protects=workload reduction cannot self-certify; fails_when=changed expectation removes actual exercised boundaries;
+    # why_new=trace equality alone can agree with a shortened corpus; seam=none
+    def test_independent_inventory_rejects_reduced_work(self):
+        for runtime in ('rust', 'godot'):
+            for field, diagnostic in [('current_frame', 'boundary'), ('services', 'services'), ('frames', 'export')]:
+                actual = replay_asymmetric.expected(runtime == 'rust')
+                if field == 'current_frame':
+                    actual['peers'][0][field] = 256
+                else:
+                    actual['peers'][0][field].pop()
+                with patch.object(replay_asymmetric, 'expected', return_value=actual):
+                    with self.assertRaisesRegex(ValueError, 'asymmetric.required_' + diagnostic + ':'):
+                        replay_asymmetric.validate(actual, runtime == 'rust')
 
 
 if __name__ == '__main__':
