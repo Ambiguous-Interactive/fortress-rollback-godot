@@ -2,6 +2,7 @@ extends RefCounted
 
 # Value: protects=delayed viewer follows corrected original game; fails_when=predictions stream or spectator stalls host; why_new=playable host/export composition; seam=none
 const Scene = preload("res://examples/spectator/spectator.gd")
+const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Demo = preload("res://examples/spectator/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -547,6 +548,20 @@ func _playback_feedback(context: RefCounted) -> void:
 	scene._update_label()
 	context.equal(scene.demo.game.frame > 0, true, "control reaches actual viewing")
 	context.equal(scene._label.text.contains("WATCHING"), true, "eligible live input shows normal watching")
+	context.equal(scene.demo.viewer.playback_status().state, Spectator.PlaybackState.DELAYED, "unpaused viewer retains deliberate delay")
+	context.equal(scene.demo.viewer.playback_status().buffered_frames, 12, "the ordinary viewing policy holds twelve confirmed rows")
+	context.equal(
+		scene._label.text.get_slice("\n", 0), "Delayed spectator | WATCHING | viewing delay (12 confirmed frames buffered)",
+		"delayed feedback names its reason and exact buffered count"
+	)
+	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release viewing delay for input-gap observation")
+	while scene.demo.viewer.recommended_steps() > 0:
+		context.equal(scene.demo.step_viewer(), Types.Code.OK, "consume existing contiguous host prefix")
+	scene.demo.is_paused = false
+	scene._update_label()
+	context.equal(scene._label.text.contains("BUFFERING"), true, "mid-match host gap must not claim active watching")
+	context.equal(scene._label.text.contains("confirmed input"), true, "mid-match wait identifies missing host input")
+	context.equal(scene.demo.viewer.set_playback(12, 4, 4), Types.Code.OK, "restore ordinary viewing policy")
 	scene.demo.is_paused = true
 	for tick: int in range(20):
 		scene.demo.tick(Game.LEFT)

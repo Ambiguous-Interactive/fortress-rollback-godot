@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add Previous/Next input change replay controls, including confirmed or disconnected status changes, with verified navigation.
+
+- Add owned spectator playback status separating missing input, viewing delay, final tails and completed or stopped playback.
+
 - Add `FrameInputs.input_status(player)` to read applied player status alongside reusable input buffers without creating an owned result.
 
 - Add failed callback names and frames to diagnostic downloads and the offline viewer.
@@ -206,6 +210,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator feedback showing active watching while waiting for new confirmed inputs mid-match.
 
 - Fix spectator publication rejecting valid service times after a poll was deferred by an active host request.
 

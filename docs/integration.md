@@ -570,6 +570,10 @@ var code: int = session.set_input_delay(player, session.input_delay(player) + 1)
 Standalone driver integrations can use `driver.input_delay(player)` and `driver.set_input_delay(player, delay)`.
 Networked integrations must use `peer.set_input_delay(player, delay)` so the peer publishes the additional inputs.
 Driver delay changes return `BUSY` inside callbacks and completion handlers.
+Standalone sessions can raise each local slot independently, including when that slot already holds a stalled sample.
+The retained sample keeps its buttons; its reported scheduled frame moves by the delay increase.
+The [driver/expert comparison](../tests/unit/test_driver_external_parity.gd) checks distinct local delays through stalls,
+late-input repair and queue reuse against original per-slot input histories. Networked sessions retain the multiple-local-player restriction below.
 
 After a stalled step, `driver.scheduled_local_input(player)` returns an owned retained sample, or `MISSING_LOCAL_INPUT` when none is staged.
 Its `frame` includes input delay; it is not the next `LocalInput.sample_frame`. Retry with an empty input list when all local samples are already staged.

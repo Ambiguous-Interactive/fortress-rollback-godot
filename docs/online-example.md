@@ -189,6 +189,12 @@ Pause, stepping, seeking and speed changes clear any partial
 slow-motion frame; restart and new imports keep your selected speed.
 Press **Back one frame** to inspect the preceding state, including after completion or a checksum failure.
 It pauses playback and uses the same bounded navigation as **Go**; **Cancel seek** can interrupt a long restore.
+Use **Previous input change** and **Next input change** to inspect when either player's
+recorded controls or confirmed/disconnected status changes. Each action selects a boundary
+strictly before or after the displayed frame and finishes paused. The first input starts
+at frame zero; the final state has no input. These actions use the same bounded,
+verified navigation as **Go** and cannot skip corrupt history. Failed playback requires
+**Restart** or an explicit **Go** before input-change navigation becomes available again.
 Use **Previous checkpoint** and **Next checkpoint** to jump between retained, validated five-second boundaries.
 When a recording includes a validated final-state checksum, its ending is also
 retained within the checkpoint budget. **Next checkpoint** can return to that

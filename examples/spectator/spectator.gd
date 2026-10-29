@@ -2,6 +2,7 @@ extends Node2D
 
 const Demo = preload("res://examples/spectator/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
+const Spectator = preload("res://addons/fortress_rollback/core/spectator_session.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE]
 
@@ -69,8 +70,12 @@ func _update_label() -> void:
 		_label.text = "Could not start: code %d" % _code
 		return
 	var state: String = "PAUSED" if demo.is_paused else "WATCHING"
-	if not demo.is_paused and demo.game.frame == 0 and demo.viewer.recommended_steps() == 0:
-		state = "BUFFERING | waiting for confirmed input"
+	var playback: Dictionary = demo.viewer.playback_status()
+	if not demo.is_paused:
+		if playback.state == Spectator.PlaybackState.WAITING_FOR_INPUT:
+			state = "BUFFERING | waiting for confirmed input"
+		elif playback.state == Spectator.PlaybackState.DELAYED:
+			state = ("BUFFERING" if demo.game.frame == 0 else "WATCHING") + " | viewing delay (%d confirmed frames buffered)" % playback.buffered_frames
 	if demo.is_finishing:
 		state = "CONFIRMING FINAL INPUTS"
 		if demo.is_host_finished:

@@ -26,7 +26,7 @@ class Game:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["rows", "wire_status", "host_drop"])
+	return PackedStringArray(["rows", "wire_status", "host_drop", "playback_observation"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -67,8 +67,7 @@ func _rows(context: RefCounted) -> void:
 		context.equal(session.host_frontier(), 11, "invalid status is atomic")
 		context.equal(session.receive_host_frame(12, Fixture.new()._row(12)).code, Code.OK, "byte-only call defaults to confirmed")
 		context.equal(
-			session.receive_host_frame(12, Fixture.new()._row(12), PackedByteArray([1, 3])).code,
-			Code.INPUT_ALREADY_SUBMITTED, "same bytes with conflicting status are refused"
+			session.receive_host_frame(12, Fixture.new()._row(12), PackedByteArray([1, 3])).code, Code.INPUT_ALREADY_SUBMITTED, "same bytes with conflicting status are refused"
 		)
 		context.equal(driver.step(12, _empty()).code, Code.OK, "default row still playable")
 		context.equal(session.confirmed_inputs(12).read(1).status, Queue.Status.CONFIRMED, "old API keeps confirmed default")
@@ -86,8 +85,9 @@ func _wire_status(context: RefCounted) -> void:
 		"independent Python struct and HMAC v3 status golden"
 	)
 	var legacy: PackedByteArray = (
-		"465247530201020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b04030201731411334fcded23e53b538704c81eba0001"
-	).hex_decode()
+		("465247530201020001000000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1fd2deccf9f3deb3d06e7cc546fabec43b04030201731411334fcded23e53b538704c81eba0001")
+		. hex_decode()
+	)
 	context.equal(stream.receive_packet(legacy, 0), Code.PROTOCOL_FAILED, "frozen v2 byte-only packet is incompatible")
 	var old: RefCounted = Stream.new()
 	context.equal(old.configure(Fixture.new()._config(), wire._identity(), wire._key(), wire._digest(), 0, 100, 128), Code.OK, "fresh viewer for v2 startup")
@@ -159,3 +159,77 @@ func _host_drop(context: RefCounted) -> void:
 
 func _empty() -> Array[Driver.LocalInput]:
 	return []
+
+
+# Value: protects=owned viewer buffering and final-tail observations; fails_when=gaps look playable or stopped tails complete;
+# why_new=policy tests inspect pacing without a structured client observation; seam=none
+func _playback_observation(context: RefCounted) -> void:
+	for terminal: int in [Code.TERMINATED, Code.PROTOCOL_FAILED]:
+		var viewer: Spectator = Spectator.new()
+		context.equal(viewer.playback_status().code, Code.NOT_CONFIGURED, "unconfigured observation reports readiness")
+		context.equal(viewer.playback_status().state, Spectator.PlaybackState.STOPPED, "unconfigured viewer cannot play")
+		viewer.configure(Fixture.new()._config())
+		context.equal(viewer.set_playback(2, 1, 3), Code.OK, "delay separates received and playable prefixes")
+		_check_observation(context, viewer, Spectator.PlaybackState.WAITING_FOR_INPUT, 0, 0, 0)
+		viewer.receive_host_frame(1, Fixture.new()._row(1))
+		_check_observation(context, viewer, Spectator.PlaybackState.WAITING_FOR_INPUT, 0, 0, 0)
+		viewer.receive_host_frame(0, Fixture.new()._row(0))
+		_check_observation(context, viewer, Spectator.PlaybackState.DELAYED, 2, 0, 0)
+		viewer.receive_host_frame(2, Fixture.new()._row(2))
+		_check_observation(context, viewer, Spectator.PlaybackState.PLAYABLE, 3, 1, 1)
+		var initial: Dictionary = viewer.playback_status()
+		initial.state = Spectator.PlaybackState.COMPLETE
+		initial.buffered_frames = 999
+		context.equal(viewer.playback_status().buffered_frames, 3, "caller mutations cannot change retained rows")
+		var driver: Driver = Driver.new(viewer, GameFixture.Game.new())
+		context.equal(driver.step(0, _empty()).code, Code.OK, "play exactly the delay-eligible row")
+		_check_observation(context, viewer, Spectator.PlaybackState.DELAYED, 2, 0, 0)
+		context.equal(initial.current_frame, 0, "prior observation remains a snapshot after playback")
+		context.equal(viewer.finish_host(), Code.OK, "closed input releases the paused tail")
+		_check_observation(context, viewer, Spectator.PlaybackState.FINAL_TAIL, 2, 2, 2)
+		context.equal(viewer.playback_status().input_closed, true, "closure is independent of playback completion")
+		context.equal(viewer.is_complete(), false, "a paused closed tail is not complete")
+		for frame: int in [1, 2]:
+			context.equal(driver.step(frame, _empty()).code, Code.OK, "consume original final row")
+		_check_observation(context, viewer, Spectator.PlaybackState.FINAL_TAIL, 0, 0, 1)
+		viewer.terminate(terminal)
+		_check_observation(context, viewer, Spectator.PlaybackState.STOPPED, 0, 0, 0)
+		context.equal(viewer.playback_status().reason, terminal, "cancellation retains its exact cause")
+		context.equal(viewer.playback_status().code, Code.TERMINATED, "terminal readiness is distinct from terminal cause")
+		context.equal(viewer.configure(Fixture.new()._config()), Code.OK, "replace stopped lifetime")
+		_check_observation(context, viewer, Spectator.PlaybackState.WAITING_FOR_INPUT, 0, 0, 0)
+		context.equal(viewer.playback_status().input_closed, false, "replacement clears prior closure")
+		context.equal(viewer.playback_status().reason, Code.OK, "replacement clears prior failure")
+		viewer.finish_host()
+		context.equal(driver.step(3, _empty()).code, Code.TERMINATED, "empty clean stream completes by ordinary service")
+		_check_observation(context, viewer, Spectator.PlaybackState.COMPLETE, 0, 0, 0)
+		context.equal(viewer.playback_status().reason, Code.TERMINATED, "completion preserves ordinary terminal reason")
+		var invalid: RefCounted = Fixture.new()._config()
+		invalid.queue_capacity = 0
+		context.equal(viewer.configure(invalid), Code.INVALID_CONFIGURATION, "invalid replacement rejected")
+		_check_observation(context, viewer, Spectator.PlaybackState.COMPLETE, 0, 0, 0)
+	var stopped: Spectator = Spectator.new()
+	stopped.configure(Fixture.new()._config())
+	stopped.receive_host_frame(0, Fixture.new()._row(0))
+	stopped.terminate(Code.PROTOCOL_FAILED)
+	_check_observation(context, stopped, Spectator.PlaybackState.STOPPED, 1, 0, 0)
+	var busy: Spectator = Spectator.new()
+	busy.configure(Fixture.new()._config())
+	busy.receive_host_frame(0, Fixture.new()._row(0))
+	var batch: Types.Result = busy.begin_advance()
+	context.equal(batch.code, Code.READY, "expert request owns current playback")
+	context.equal(busy.playback_status().code, Code.BUSY, "observation exposes active request readiness")
+	_check_observation(context, busy, Spectator.PlaybackState.PLAYABLE, 1, 1, 1)
+	context.equal(busy.drain_events().size(), 0, "observation cannot release the active batch or its events")
+	busy.terminate(Code.CALLBACK_FAILED)
+	context.equal(busy.drain_events().size(), 3, "observation did not consume lifecycle events")
+
+
+func _check_observation(context: RefCounted, viewer: Spectator, state: int, buffered: int, playable: int, steps: int) -> void:
+	var observed: Dictionary = viewer.playback_status()
+	context.equal(observed.state, state, "playback state separates input wait, delay, tail and termination")
+	context.equal(observed.buffered_frames, buffered, "only contiguous rows count as buffered playback")
+	context.equal(observed.playable_frames, playable, "playable count applies delay until host closure")
+	context.equal(observed.recommended_steps, steps, "observation preserves bounded service advice")
+	context.equal(observed.current_frame, viewer.status().current_frame, "observed current boundary agrees with shared session")
+	context.equal(observed.host_frontier, viewer.host_frontier(), "observation preserves original host frontier")

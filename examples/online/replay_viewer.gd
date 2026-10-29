@@ -24,6 +24,7 @@ var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
 var _recorded_checksum_count: int = 0
+var _input_changes: PackedInt64Array = PackedInt64Array()
 var _recording_sha256: String = ""
 var _recording_bytes: int = 0
 var _recording: Replay
@@ -37,7 +38,8 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	if code != Replay.DecodeCode.OK:
 		message = _open_failure_message(code)
 		return false
-	if not _compatible(recording):
+	var changes: Array[int] = []
+	if not _compatible(recording, changes):
 		message = "This viewer needs a complete online integer game recording (up to ten minutes)."
 		return false
 	var hash: HashingContext = HashingContext.new()
@@ -46,6 +48,7 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	_recording_sha256 = hash.finish().hex_encode()
 	_recording_bytes = bytes.size()
 	_recording = recording
+	_input_changes = PackedInt64Array(changes)
 	_recorded_checksum_count = 0
 	for frame: int in range(recording.frame_count() + 1):
 		if not recording.checksum(frame).is_empty():
@@ -65,7 +68,7 @@ func _open_failure_message(code: int) -> String:
 			return "Could not open replay: this file is malformed or incomplete."
 
 
-func _compatible(recording: Replay) -> bool:
+func _compatible(recording: Replay, changes: Array[int]) -> bool:
 	if recording.player_count() != 2 or recording.input_width() != 1 or recording.frame_count() > MAX_FRAMES:
 		return false
 	if recording.frame_count() == 0 and recording.checksum(0).is_empty():
@@ -76,11 +79,20 @@ func _compatible(recording: Replay) -> bool:
 		return false
 	if recording.game_seed() != "1701" or recording.neutral_input() != PackedByteArray([0]) or recording.skipped_frames() != 0:
 		return false
+	var previous: Types.FrameInputs
 	for frame: int in range(recording.frame_count()):
 		var inputs: Types.FrameInputs = recording.inputs(frame)
+		var changed: bool = frame == 0
 		for slot: int in 2:
-			if inputs.read(slot).bytes[0] > 15:
+			var sample: Types.InputResult = inputs.read(slot)
+			if sample.bytes[0] > 15:
 				return false
+			if previous != null:
+				var prior: Types.InputResult = previous.read(slot)
+				changed = changed or sample.bytes != prior.bytes or sample.status != prior.status
+		if changed:
+			changes.append(frame)
+		previous = inputs
 	return true
 
 
@@ -272,6 +284,25 @@ func checkpoint_target(forward: bool) -> int:
 		if not forward and frame < current_frame():
 			target = frame
 	return target
+
+
+## Nearest earlier/later input change, including finalized-status changes; frame zero starts the first input.
+## The index is built during bounded file import. Lookup is logarithmic and does not claim input verification.
+## The final state has no input. Active seeks and failures expose no input-change destination.
+func input_change_target(forward: bool) -> int:
+	if is_seeking() or has_failure() or _input_changes.is_empty():
+		return -1
+	var index: int = _input_changes.bsearch(current_frame(), not forward)
+	if not forward:
+		index -= 1
+	return _input_changes[index] if index >= 0 and index < _input_changes.size() else -1
+
+
+## Inspect the nearest input change through normal verified navigation, finishing paused.
+## A first visit still checks the entire preceding input history within tick's seek budget.
+func seek_input_change(forward: bool) -> bool:
+	var target: int = input_change_target(forward)
+	return target >= 0 and seek(target)
 
 
 func seek_checkpoint(forward: bool) -> bool:
