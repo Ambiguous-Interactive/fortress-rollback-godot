@@ -666,6 +666,26 @@ Missing eight-player work, corrupted last-slot input and numeric type changes ar
 separate rejected controls. These workloads extend confirmed-input source coverage;
 they do not extend the binary two-player formal projection.
 
+A separate 56-workload comparison keeps the last slot reserved in the pinned
+Rust host. The actual source builder freezes that slot at its default input zero
+and supplies `Disconnected` status from frame zero. Other slots keep their changing
+original inputs. Godot receives those same complete finalized rows. Every callback
+records each input and status plus an independently reconstructed, status-sensitive
+canonical state. The same roster, ring, delay, catch-up and repeatability matrix applies.
+
+This source profile enables the upstream `hot-join` feature and uses prediction
+window one on both source handshake endpoints, as required for reserved slots.
+The viewer still consumes only finalized rows. The source host's initial publication
+waits one advance, then delivers its first two rows together; that exact startup
+schedule is independently checked. This is reserved-slot playback evidence, not
+mid-match coordinated-drop or hot-join admission evidence.
+
+An executed Godot control changes the disconnected status to confirmed while
+preserving every input byte. Both the ordered status transcript and the first
+canonical state must disagree with the source. Separate controls reject a changed
+frozen input, changed canonical boundary and malformed numeric status types.
+These workloads do not extend the binary two-player formal projection.
+
 The original pinned model remains unchanged. Its `ReceiveInput` action forces
 `framesBehind = 0` while `currentFrame = NULL_FRAME`; actual Rust and Godot both
 report backlog one after the first row. The original preplay traces must still
@@ -693,7 +713,7 @@ for the other, zero delay and in-order host delivery. The separate source compar
 covers every two-to-eight-player roster, changing inputs in all slots and the delays above.
 The port exposes the next
 frame; Rust and the model expose the last played frame, so projection subtracts
-one. Handshake/event/timeout parity, disconnected statuses, arbitrary delivery
+one. Handshake/event/timeout parity, mid-match disconnected-status transitions, arbitrary delivery
 and live SignalFish acceptance remain in #47 and #131. This fixes the scoped
 startup relation in [#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203)
 without changing reviewed pins or production playback. Omit `--godot` from the

@@ -195,6 +195,8 @@ def check(engine, output, jar, root):
     delayed = check_delay(engine, output / 'delayed')
     from spectator_roster import check as check_roster
     roster = check_roster(engine, output / 'roster')
+    from spectator_status import check as check_status
+    statuses = check_status(engine, output / 'statuses')
     evidence = []
     for trace in traces[0]:
         label = ('preplay-' if trace['preplay'] else 'started-') + str(trace['capacity']) + '-speed-' + str(trace['speed'])
@@ -222,10 +224,10 @@ def check(engine, output, jar, root):
         evidence.append(item)
     if digest(Path(engine)) != engine_hash:
         raise ValueError('spectator engine changed during observation')
-    return {'complete': True, 'traces': evidence, 'rust': rust, 'delayed': delayed, 'roster': roster, 'repetitions': 2, 'engine_version': version,
+    return {'complete': True, 'traces': evidence, 'rust': rust, 'delayed': delayed, 'roster': roster, 'statuses': statuses, 'repetitions': 2, 'engine_version': version,
             'engine_sha256': engine_hash, 'observations_sha256': digest(output / 'observed.json'),
             'pinned_runtime_sha256': digest(UPSTREAM / 'src/sessions/p2p_spectator_session.rs'),
             'limitations': ['Preplay backlog diverges from the pinned model at its NULL frame sentinel; see issue #203.',
                             'The runtime-aligned model changes two NULL-frame backlog predicates and checks one-request microsteps.',
                             'Formal playback projection covers two-player binary input; source service cycles also cover changing 2–8-player rows.',
-                            'Delivery is in order; disconnected statuses, handshake events and live SignalFish routing are not compared.']}
+                            'In-order reserved-slot disconnected statuses are compared separately; mid-match drop, handshake events and live routing are not compared.']}

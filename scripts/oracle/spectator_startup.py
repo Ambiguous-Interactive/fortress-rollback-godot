@@ -58,17 +58,18 @@ def negative_controls(observed, expected):
     return evidence
 
 
-def check_rust(traces, output, delayed=False, roster=False):
+def check_rust(traces, output, delayed=False, roster=False, statuses=False):
     manifest = load_manifest()
     cargo, _ = setup_rust(manifest, False)
-    execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', '--bin', 'spectator',
+    execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', *(['--features', 'spectator-status'] if statuses else []), '--bin', 'spectator',
              '--manifest-path', str(ROOT / 'scripts/oracle/rust/Cargo.toml')], output / 'rust-build.log', timeout=600)
     binary = CACHE / 'target/debug/spectator'
     fingerprint = digest(binary)
     expected = expected_rust(traces)
     observations = []
+    arguments = ['--statuses'] if statuses else (['--roster'] if roster else (['--delayed'] if delayed else []))
     for repetition in range(2):
-        stdout, stderr = execute([str(binary), *(['--roster'] if roster else (['--delayed'] if delayed else []))], output / f'rust-{repetition}.log', timeout=60)
+        stdout, stderr = execute([str(binary), *arguments], output / f'rust-{repetition}.log', timeout=60)
         if stderr.strip():
             raise ValueError('pinned spectator runtime emitted unexpected stderr')
         actual = json.loads(stdout)
@@ -78,7 +79,10 @@ def check_rust(traces, output, delayed=False, roster=False):
     if digest(binary) != fingerprint:
         raise ValueError('pinned spectator oracle changed during observation')
     (output / 'rust-observed.json').write_text(json.dumps(observations[0], indent=2) + '\n')
-    if roster:
+    if statuses:
+        from spectator_status import controls
+        negative = controls(observations[0], expected)
+    elif roster:
         from spectator_roster import controls
         negative = controls(observations[0], expected)
     else:
