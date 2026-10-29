@@ -44,7 +44,8 @@ def validate_download(value, trace_enabled=False):
         raise ValueError('missing real diagnostic download')
     report = value.get('report')
     fields = REPORT_FIELDS | ({'trace'} if trace_enabled else set())
-    if not isinstance(report, dict) or report.keys() != fields or report['schema'] != 'fortress-peer-diagnostics-v1':
+    if (not isinstance(report, dict) or report.keys() not in (fields, fields | {'failure_kind'})
+            or report['schema'] != 'fortress-peer-diagnostics-v1'):
         raise ValueError('diagnostic schema or privacy fields differ')
     if len(json.dumps(report).encode('utf-8')) > 32768 + (198752 if trace_enabled else 0):
         raise ValueError('diagnostic download exceeds byte bound')
@@ -52,6 +53,7 @@ def validate_download(value, trace_enabled=False):
         raise ValueError('diagnostic engine identity missing')
     for field in ('current_frame', 'confirmed_frame', 'failure_frame', 'pending_rollback_frame', 'frames_ahead'):
         integer(report[field], -2**31, 2**31 - 1)
+    integer(report.get('failure_kind', -1), -1, 2)
     for field in ('lifecycle', 'reason'):
         integer(report[field], 0, 255)
     counts = report['statistics']

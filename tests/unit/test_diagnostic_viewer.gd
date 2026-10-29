@@ -10,6 +10,7 @@ const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Game = preload("res://examples/offline/simulation.gd")
 
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(["imports", "controls", "divergence", "scene_controls"])
 
@@ -39,11 +40,33 @@ func _imports(context: RefCounted) -> void:
 	context.equal(viewer.status().seed, "9223372036854775808", "preserves wide seed as descriptive text")
 	context.equal(viewer.status().application_version, Viewer.GAME_VERSION, "identifies application build")
 	context.equal(viewer.status().capture_failure, JSON.parse_string(JSON.stringify(trace.first_divergence)), "shows captured failure independently of reproduction")
+	context.equal(viewer.status().session_failure, {}, "historical reports remain readable without callback metadata")
+	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
+		var report: Dictionary = {"trace": trace, "failure_kind": kind, "failure_frame": 4}
+		context.equal(viewer.open_bytes(encoded(report)), true, "opens callback-failure report")
+		var expected_failure: Dictionary = {"callback": ["save_state", "load_state", "simulate_frame"][kind], "frame": 4}
+		context.equal(viewer.status().session_failure, expected_failure, "shows session callback separately from trace divergence")
+		var owned: Dictionary = viewer.status().session_failure
+		owned.callback = "edited"
+		context.equal(viewer.status().session_failure, expected_failure, "session callback summary is owned")
+	for invalid: Dictionary in [
+		{"failure_kind": true, "failure_frame": 4},
+		{"failure_kind": 3, "failure_frame": 4},
+		{"failure_kind": 0.5, "failure_frame": 4},
+		{"failure_kind": Types.Kind.SAVE, "failure_frame": {}},
+		{"failure_kind": Types.Kind.SAVE, "failure_frame": 4.5},
+	]:
+		invalid["trace"] = trace
+		context.equal(viewer.open_bytes(encoded(invalid)), true, "invalid descriptive callback metadata does not reject valid playback")
+		context.equal(viewer.status().session_failure, {}, "invalid callback metadata is omitted")
 	viewer.step()
 	viewer.toggle_play()
 	var expected: PackedByteArray = viewer.game.canonical_bytes()
 	var mutations: Array[Dictionary] = [
-		{}, {"trace": []}, {"trace": null}, {"application_version": "other-game"},
+		{},
+		{"trace": []},
+		{"trace": null},
+		{"application_version": "other-game"},
 	]
 	var input_only: Dictionary = trace.duplicate(true)
 	input_only.frames[0].state_available = false

@@ -82,9 +82,10 @@ func _local(context: RefCounted, malformed: bool, terminating: bool) -> void:
 			var notices: Array[int] = []
 			var recursive: Array[RefCounted] = []
 			var owner: WeakRef = weakref(driver)
-			driver.step_completed.connect(func(code: int, _before: int, _after: int) -> void:
-				notices.append(code)
-				recursive.append(owner.get_ref().recover(frame))
+			driver.step_completed.connect(
+				func(code: int, _before: int, _after: int) -> void:
+					notices.append(code)
+					recursive.append(owner.get_ref().recover(frame))
 			)
 			var count_before: int = game.callbacks
 			var result: Driver.StepResult = driver.step(frame, fixture._samples(frame))
@@ -117,26 +118,52 @@ func _local(context: RefCounted, malformed: bool, terminating: bool) -> void:
 				context.equal(driver.configure(fixture._session(), Fixture.Game.new()), Types.Code.OK, "driver guard released")
 
 
+# Value: protects=downloaded callback identity; fails_when=diagnostics drop failure_kind;
+# why_new=step metadata is transient and does not validate saved reports; seam=encoded two-peer traffic
 func _peer_failure(context: RefCounted) -> void:
+	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
+		_peer_callback_failure(context, kind)
+
+
+func _peer_callback_failure(context: RefCounted, kind: int) -> void:
 	var fixture: RefCounted = PeerFixture.new()
 	var game: DynamicGame = DynamicGame.new()
 	game.game = PeerGame.new(2)
-	game.fail_kind = Types.Kind.ADVANCE
-	game.bad_result = 1
 	var controls: L.Options = L.Options.new()
 	var mesh: Dictionary = fixture._build(context, 2, 0, false, 128, true, false, 8, controls, 60, 0, game)
+	context.equal(mesh.peers[0].diagnostics().get("failure_kind"), -1, "healthy report has no failed callback")
+	if kind == Types.Kind.LOAD:
+		mesh.now = 1
+		for index: int in range(2):
+			context.equal(mesh.peers[index].step(1, fixture._inputs(mesh, index)).code, Types.Code.OK, "initial peer frame predicts missing remote input")
+		fixture._deliver(context, mesh, fixture._drain(mesh))
+		fixture._deliver(context, mesh, fixture._drain(mesh))
+		context.equal(mesh.peers[0].status().pending_rollback_frame, 0, "late real remote input opens correction")
+	game.fail_kind = kind
+	game.bad_result = 1
 	var notices: Array[int] = []
 	mesh.peers[0].step_completed.connect(func(code: int, _before: int, _after: int) -> void: notices.append(code))
-	var result: Driver.StepResult = mesh.peers[0].step(1, fixture._inputs(mesh, 0))
+	var before: int = mesh.peers[0].status().current_frame
+	var result: Driver.StepResult = mesh.peers[0].recover(2) if kind == Types.Kind.LOAD else mesh.peers[0].step(2, fixture._inputs(mesh, 0))
 	context.equal(result.code, Types.Code.CALLBACK_FAILED, "peer reports malformed callback")
-	context.equal(result.get("failure_kind"), Types.Kind.ADVANCE, "peer identifies the failed callback")
-	context.equal(result.frame_after, 0, "peer does not publish failed advance")
+	context.equal(result.get("failure_kind"), kind, "peer identifies the failed callback")
+	context.equal(result.frame_after, before, "peer does not publish failed advance")
 	context.equal(mesh.peers[0].network_status().state, "terminated", "peer halts")
 	context.equal(notices, [Types.Code.CALLBACK_FAILED], "peer emits final failure")
-	context.equal(mesh.peers[0].recover(2).get("failure_kind"), Types.Kind.ADVANCE, "peer recovery retains callback identity")
-	context.equal(game.retained_view.size().code, Types.Code.EXPIRED_VIEW, "callback input expires")
+	context.equal(mesh.peers[0].recover(3).get("failure_kind"), kind, "peer recovery retains callback identity")
+	var report: Dictionary = mesh.peers[0].diagnostics()
+	context.equal(report.get("failure_kind"), kind, "downloaded diagnostic identifies failed callback")
+	context.equal(report.reason, Types.Code.CALLBACK_FAILED, "downloaded diagnostic preserves terminal cause")
+	context.equal(report.failure_frame, 0, "downloaded diagnostic identifies actual failed request frame")
+	report["failure_kind"] = -1
+	mesh.peers[0].drain_events()
+	context.equal(mesh.peers[0].diagnostics().get("failure_kind"), kind, "owned report and event drains preserve first callback failure")
+	if kind == Types.Kind.ADVANCE:
+		context.equal(game.retained_view.size().code, Types.Code.EXPIRED_VIEW, "callback input expires")
+	else:
+		context.equal(game.retained_view.status(), SnapshotStatus.Code.EXPIRED_VIEW, "callback snapshot view expires")
 	for packet: Dictionary in fixture._drain(mesh):
-		var delivered: int = mesh.peers[packet.to].receive(packet.bytes, fixture._id(packet.from), 1)
+		var delivered: int = mesh.peers[packet.to].receive(packet.bytes, fixture._id(packet.from), 2)
 		context.equal(delivered in [I.Code.OK, I.Code.TERMINATED], true, "terminal exchange remains bounded")
 	context.equal(mesh.peers[1].network_status().state, "terminated", "goodbye stops remote match")
-	context.equal(mesh.peers[0].poll(2), I.Code.TERMINATED, "callback failure remains terminal")
+	context.equal(mesh.peers[0].poll(3), I.Code.TERMINATED, "callback failure remains terminal")

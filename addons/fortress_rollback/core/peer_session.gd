@@ -634,6 +634,7 @@ func diagnostics() -> Dictionary:
 		"lifecycle": observed.lifecycle,
 		"reason": observed.reason,
 		"failure_frame": observed.failure_frame,
+		"failure_kind": observed.failure_kind,
 		"pending_rollback_frame": observed.pending_rollback_frame,
 		"frames_ahead": _frames_ahead,
 		"statistics":

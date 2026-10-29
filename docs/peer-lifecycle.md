@@ -265,10 +265,14 @@ departure remain under
 
 `peer.diagnostics()` returns a fresh JSON-compatible dictionary with schema
 `fortress-peer-diagnostics-v1`. It includes current/confirmed frames, lifecycle,
-terminal reason, pending correction, the shared engine's
+terminal reason, failed request frame and `failure_kind`, pending correction, and
+the shared engine's
 [completed work statistics](session.md#completed-work-statistics), per-link retained
 input backlog, RTT and pacing. Links use stable indices in `peer_ids()` order;
 the report contains no transport identities or handshake tokens.
+
+`failure_kind` identifies the first failed `SessionTypes.Kind.SAVE`, `LOAD` or `ADVANCE` callback;
+-1 means no callback failed. It survives event drains and later rejected calls.
 
 A terminal diagnostic retains its cause and both checksum hex strings on a real
 desync. Event drains do not erase that diagnostic, and modifying a returned report
