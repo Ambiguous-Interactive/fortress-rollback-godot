@@ -349,3 +349,36 @@ frame five while endpoint one stalls at its four-frame prediction bound. Both en
 run each changing/neutral workload twice with source/tool fingerprints and bounded
 processes. This advances #256 without qualifying source recovery-only recording,
 coordinated drop, browser transports or the complete #45 release gate.
+
+
+### Repeated prediction stalls and resumed recording
+
+The remote gate also repeats changing and neutral 257-frame histories while endpoint
+zero receives every two service turns and endpoint one receives every five. Both
+endpoints reach their four-frame prediction bound repeatedly: 285 versus 286 service
+attempts include exactly 28 versus 29 stalls and 257 actual forward advances each.
+Samples follow the simulation frame, so retrying a stalled frame preserves its original
+input instead of substituting the later service turn's input.
+
+The independent model retains every empty/stalled attempt, ordered callback, applied
+input/status, original canonical boundary, receipt and exported row through more than
+two default queue capacities. Rust sends a newly queued local input even on its first
+stalled call; the Godot injected-input fixture delivers completed original rows.
+The model preserves these different receipt policies and Rust's extra stalled SAVE
+requests. It derives actual source INPUT/ACK/checksum traffic from the serviced frames
+and prior confirmation; it does not repeat the earlier fixed-cadence message totals.
+
+Changing histories require corrections at both endpoints after queue reuse. Godot's
+final recovery stays at boundary 257 and its decoded recordings validate all 257 rows.
+The unchanged source exports 255 versus 256 original rows and retains its observed
+speculative recording checksums under #253, including 113 versus 144 replay mismatch
+events. No new local sample is supplied to repair those source recordings.
+
+Eight mutations reject omitted stalled attempts, resampled originals, changed post-wrap
+exports and delivery counts at their declared diagnostics. Actual withheld-delivery
+processes stop endpoint one at frame four while endpoint zero reaches five. A separate
+copied Godot observer deliberately resamples by service turn and must refuse the changed
+retry; the unchanged frame-based workload is its green control. Each workload runs twice
+on both engine pins. This advances #256's stalled/resumed recording evidence; transport
+send refusal, source recovery-only recording, coordinated drop and browser acceptance
+remain outside this witness.

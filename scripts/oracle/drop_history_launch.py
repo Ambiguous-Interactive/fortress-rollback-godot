@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare original-history recovery through donor-data and commit loss twice per engine."""
+"""Compare original-history recovery through inventory, donor-data and commit loss twice per engine."""
 import copy
 import json
 from pathlib import Path
@@ -16,6 +16,7 @@ from p2p_launch import source_files, upstream_inventory, executable_identity, re
 from drop_history_contract import history_bytes, compare, negative_controls, loss_evidence_controls, commit_loss_evidence_controls, require, REVISION
 
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
+from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
 
 PREFIX = 'FORTRESS_DROP_HISTORY_RESULT '
 
@@ -169,15 +170,19 @@ def main():
     controls = []
     for repeat in (1, 2):
         scenarios = {}
-        for name, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss in [
-                ('clean', False, 1, 1, False, False, False), ('lost-history', True, 1, 1, False, False, False),
-                ('multi-clean', False, 4, 1, False, False, False), ('multi-lost-history', True, 4, 1, False, False, False),
-                ('grouped-clean', False, 4, 2, False, False, False), ('grouped-lost-history', True, 4, 2, False, False, False),
-                ('unequal-clean', False, 4, 2, True, False, False), ('unequal-lost-history', True, 4, 2, True, False, False),
-                ('unequal-lost-commit', False, 4, 2, True, True, False), ('unequal-lost-history-and-commit', True, 4, 2, True, True, False),
-                ('unequal-lost-ack', False, 4, 2, True, False, True),
-                ('unequal-lost-history-commit-and-ack', True, 4, 2, True, True, True)]:
+        for name, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss in [
+                ('clean', False, 1, 1, False, False, False, False), ('lost-history', True, 1, 1, False, False, False, False),
+                ('multi-clean', False, 4, 1, False, False, False, False), ('multi-lost-history', True, 4, 1, False, False, False, False),
+                ('grouped-clean', False, 4, 2, False, False, False, False), ('grouped-lost-history', True, 4, 2, False, False, False, False),
+                ('unequal-clean', False, 4, 2, True, False, False, False), ('unequal-lost-history', True, 4, 2, True, False, False, False),
+                ('unequal-lost-commit', False, 4, 2, True, True, False, False), ('unequal-lost-history-and-commit', True, 4, 2, True, True, False, False),
+                ('unequal-lost-ack', False, 4, 2, True, False, True, False),
+                ('unequal-lost-history-commit-and-ack', True, 4, 2, True, True, True, False),
+                ('unequal-lost-inventory', False, 4, 2, True, False, False, True),
+                ('unequal-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True)]:
             fault_args = ['--drop-first-history'] if loss else []
+            if inventory_loss:
+                fault_args.append('--drop-first-inventory')
             if ack_loss:
                 fault_args.append('--drop-first-ack')
             if commit_loss:
@@ -196,8 +201,8 @@ def main():
                                       'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
                                       args.output / f'godot-{name}-{repeat}.log')
             godot = parse_godot(stdout, stderr)
-            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss)
-            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss))
+            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss)
+            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss))
             scenarios[name] = {'source': source, 'godot': godot}
         controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
         controls.extend('multi:' + control for control in loss_evidence_controls(scenarios['multi-clean'], scenarios['multi-lost-history'], 4))
@@ -207,6 +212,7 @@ def main():
             scenarios['unequal-clean'], scenarios['unequal-lost-history'], 4, 2, True))
         controls.extend(commit_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-commit']))
         controls.extend(ack_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-ack']))
+        controls.extend(inventory_loss_evidence_controls(scenarios['unequal-clean'], scenarios['unequal-lost-inventory']))
         observed.append(scenarios)
     if observed[0] != observed[1]:
         raise ValueError('drop history: fresh-process repeat mismatch')
@@ -231,10 +237,10 @@ def main():
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),
         'evidence': evidence, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
-                  'Godot elapsed timeout; equal and unequal exposed frontiers; first-COMMIT/ACK loss alone and combined with donor-data loss; '
+                  'Godot elapsed timeout; equal and unequal exposed frontiers; first-inventory/COMMIT/ACK loss alone and combined with donor-data loss; '
                   'distinct non-interoperable wires.')}, indent=2) + '\n')
     print('drop history: two survivors preserve twenty original canonical prefixes and statuses through '
-          'one/four-row single/two-target donor recovery and lost irreversible commits/acknowledgements, twice', flush=True)
+          'one/four-row single/two-target donor recovery and lost inventory/commits/acknowledgements, twice', flush=True)
 
 
 if __name__ == '__main__':

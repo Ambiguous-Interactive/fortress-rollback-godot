@@ -539,6 +539,7 @@ func _service_observation(demo: RefCounted) -> Array:
 # Value: protects=viewer explains buffering, paused final tail and lost history; fails_when=idle viewing claims active playback;
 # why_new=demo lifecycle tests inspect codes without user guidance; seam=scene labels
 func _playback_feedback(context: RefCounted) -> void:
+	_gap_feedback(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	context.equal(scene._label.text.contains("BUFFERING"), true, "startup explains why viewer has not advanced")
@@ -551,7 +552,8 @@ func _playback_feedback(context: RefCounted) -> void:
 	context.equal(scene.demo.viewer.playback_status().state, Spectator.PlaybackState.DELAYED, "unpaused viewer retains deliberate delay")
 	context.equal(scene.demo.viewer.playback_status().buffered_frames, 12, "the ordinary viewing policy holds twelve confirmed rows")
 	context.equal(
-		scene._label.text.get_slice("\n", 0), "Delayed spectator | WATCHING | viewing delay (12 confirmed frames buffered)",
+		scene._label.text.get_slice("\n", 0),
+		"Delayed spectator | WATCHING | viewing delay (12 confirmed frames buffered)",
 		"delayed feedback names its reason and exact buffered count"
 	)
 	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release viewing delay for input-gap observation")
@@ -651,3 +653,54 @@ func _terminal_feedback(context: RefCounted) -> void:
 			context.equal(scene.demo.start(), Types.Code.OK, "restart clears failed lifetime")
 			context.equal(scene.demo.viewer_code, Types.Code.OK, "new viewer reports a fresh lifetime")
 			scene.free()
+
+
+# Value: protects=visible input-gap recovery guidance; fails_when=later received rows look like an idle host;
+# why_new=ordinary demo publisher delivers rows in order; seam=public authenticated stream and scene label
+func _gap_feedback(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release intentional delay for gap feedback")
+	var row: Array[PackedByteArray] = [PackedByteArray([0]), PackedByteArray([0])]
+	for frame: int in [1, 3]:
+		context.equal(scene.demo.stream.receive_packet(scene.demo.stream.encode_row(frame, row), 0), Types.Code.OK, "accept authenticated reordered input")
+	scene.demo.is_paused = false
+	scene._update_label()
+	context.equal(
+		scene._label.text.get_slice("\n", 0),
+		"Delayed spectator | BUFFERING | waiting for confirmed frame 0 (2 later frames received)",
+		"gap feedback names the exact missing frame and retained later rows"
+	)
+	context.equal(scene.demo.stream.receive_packet(scene.demo.stream.encode_row(0, row), 0), Types.Code.OK, "first gap receives its original input")
+	context.equal(scene.demo.viewer.set_playback(2, 4, 4), Types.Code.OK, "delay needs contiguous input beyond the next gap")
+	scene._update_label()
+	context.equal(
+		scene._label.text.get_slice("\n", 0),
+		"Delayed spectator | BUFFERING | waiting for confirmed frame 2 (1 later frame received)",
+		"known missing input explains why viewing delay cannot release buffered rows"
+	)
+	scene.demo.is_paused = true
+	scene._update_label()
+	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | PAUSED", "caller pause remains distinct from a network input gap")
+	scene.demo.is_paused = false
+	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release delay to consume recovered prefix")
+	for frame: int in 2:
+		context.equal(scene.demo.step_viewer(), Types.Code.OK, "play newly contiguous original prefix")
+	scene.demo.is_paused = false
+	scene._update_label()
+	context.equal(
+		scene._label.text.get_slice("\n", 0),
+		"Delayed spectator | BUFFERING | waiting for confirmed frame 2 (1 later frame received)",
+		"feedback follows the remaining gap after playback"
+	)
+	context.equal(scene.demo.stream.receive_packet(scene.demo.stream.encode_row(2, row), 0), Types.Code.OK, "last missing original row recovers viewing")
+	scene.demo.is_paused = false
+	scene._update_label()
+	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | WATCHING", "contiguous recovery restores normal watching")
+	for frame: int in 2:
+		context.equal(scene.demo.step_viewer(), Types.Code.OK, "recovered rows remain playable")
+	context.equal(scene.demo.game.frame, 4, "healthy continuation consumes every original row once")
+	scene.demo.is_paused = false
+	scene._update_label()
+	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | BUFFERING | waiting for confirmed input", "drained healthy stream waits for host progress")
+	scene.free()

@@ -20,17 +20,32 @@ def remove_source_ack_retries(source):
 
 
 def insert_godot_ack_retry(godot, before_repeated_commit):
-    for bank in ('commit_emissions', 'lost_commit', 'commit_receipts', 'ack_emissions', 'lost_ack', 'ack_receipts'):
+    for bank in ('inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
+                 'ack_emissions', 'lost_ack', 'ack_receipts'):
         for packet in godot[bank]:
-            packet['order'] *= 2
+            packet['order'] *= 4
     retry = copy.deepcopy(godot['ack_emissions'][0])
-    retry.update(emission=1, order=godot['commit_receipts'][1]['order'] + (-1 if before_repeated_commit else 1))
+    retry.update(emission=1, order=godot['commit_receipts'][1]['order'] + (-2 if before_repeated_commit else 1))
     for bank in ('ack_emissions', 'ack_receipts'):
         for packet in godot[bank]:
             if packet['emission'] >= 1:
                 packet['emission'] += 1
     godot['ack_emissions'].insert(1, retry)
-    godot['ack_receipts'].insert(0, copy.deepcopy(retry))
+    received = copy.deepcopy(retry)
+    received['order'] += 1
+    godot['ack_receipts'].insert(0, received)
+
+
+
+def retime_godot_ack_retry(godot, before_repeated_commit):
+    for bank in ('inventory_emissions', 'lost_inventory', 'inventory_receipts', 'commit_emissions', 'lost_commit', 'commit_receipts',
+                 'ack_emissions', 'lost_ack', 'ack_receipts'):
+        for packet in godot[bank]:
+            packet['order'] *= 4
+    retry = godot['ack_emissions'][1]
+    retry['order'] = godot['commit_receipts'][1]['order'] + (-2 if before_repeated_commit else 1)
+    received = next(packet for packet in godot['ack_receipts'] if packet['emission'] == retry['emission'])
+    received['order'] = retry['order'] + 1
 
 
 def controls(clean, lost):
@@ -47,11 +62,18 @@ def controls(clean, lost):
     no_repeat_commit = copy.deepcopy(lost)
     no_repeat_commit['godot'].update(commit_emissions=no_repeat_commit['godot']['commit_emissions'][:1],
                                     commit_receipts=no_repeat_commit['godot']['commit_receipts'][:1])
-    bad_order = copy.deepcopy(lost)
+    duplicate_order = copy.deepcopy(lost)
     for bank in ('ack_emissions', 'ack_receipts'):
-        for packet in bad_order['godot'][bank]:
+        for packet in duplicate_order['godot'][bank]:
             if packet['emission'] > 0:
-                packet['order'] = bad_order['godot']['ack_emissions'][0]['order']
+                packet['order'] = duplicate_order['godot']['ack_emissions'][0]['order']
+    valid_retimed_retry = copy.deepcopy(lost)
+    retime_godot_ack_retry(valid_retimed_retry['godot'], False)
+    compare(valid_retimed_retry['source'], valid_retimed_retry['godot'], False, 4, 2, True, False, True)
+    ack_before_commit = copy.deepcopy(lost)
+    retime_godot_ack_retry(ack_before_commit['godot'], True)
+    from drop_history_inventory_controls import check_godot_observation_order
+    check_godot_observation_order(ack_before_commit['godot'])
     # Value: protects=first delivered ACK follows repeated COMMIT; fails_when=later retry masks early delivery; why_new=all-early mutation misses this; seam=none
     valid_extra_retry = copy.deepcopy(lost)
     insert_godot_ack_retry(valid_extra_retry['godot'], False)
@@ -63,7 +85,8 @@ def controls(clean, lost):
              ('missing_source_ack_retry', no_source_retry, 'source exact acknowledgement retry receipt'),
              ('missing_Godot_ack_retry', no_godot_retry, 'Godot exact acknowledgement retry receipt'),
              ('missing_Godot_repeated_commit', no_repeat_commit, 'Godot acknowledgement requires repeated commit receipt'),
-             ('Godot_ack_before_repeated_commit', bad_order, 'Godot acknowledgement follows repeated commit receipt'),
+             ('Godot_duplicate_ack_observation_order', duplicate_order, 'Godot unique observation order'),
+             ('Godot_ack_before_repeated_commit', ack_before_commit, 'Godot acknowledgement follows repeated commit receipt'),
              ('Godot_first_ack_early_with_later_retry', early_extra_retry, 'Godot acknowledgement follows repeated commit receipt')]
     for name, candidate, diagnostic in cases:
         try:

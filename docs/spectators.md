@@ -102,9 +102,16 @@ var driver: Driver = Driver.new(viewer, Game.new())
 
 `viewer.playback_status()` returns an owned observation without consuming input,
 advancing clocks or draining lifecycle events. It includes `current_frame`,
-`host_frontier`, `buffered_frames`, `playable_frames`, `recommended_steps`,
-`input_closed`, `state`, `code` and `reason`. The frame counts describe only the
-contiguous prefix at the playback boundary; a later row beyond a gap does not count.
+`host_frontier`, `buffered_frames`, `playable_frames`, `pending_frames`,
+`missing_frame`, `recommended_steps`, `input_closed`, `state`, `code` and `reason`.
+Buffered and playable counts describe only the contiguous prefix at the playback boundary.
+`pending_frames` counts all accepted unplayed rows, including later rows beyond gaps.
+`missing_frame` identifies the first gap before those accepted rows, or `-1` when no gap is known.
+An empty pending buffer means the viewer is waiting for new host progress, rather than a known missing row.
+The local example names the missing frame and later-row count while it buffers.
+These observations do not request retransmission or establish host liveness.
+
+![Viewer waiting for a missing frame while retaining later input](images/spectator-gap.png)
 
 `PlaybackState.WAITING_FOR_INPUT` means no contiguous row is available.
 `DELAYED` means received rows are held by the viewing delay; `PLAYABLE` means

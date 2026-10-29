@@ -171,10 +171,15 @@ func recommended_steps() -> int:
 
 ## Owned playback observation; reading never drains events, moves time or consumes input.
 ## Buffered/playable counts include only contiguous rows from current_frame, excluding future rows beyond a gap.
+## pending_frames also counts unplayed accepted rows beyond gaps; missing_frame is the first known gap, or -1.
 ## FINAL_TAIL includes its final notification call when both counts are zero. Pause remains caller-owned.
 ## Stopped viewers expose retained buffered rows but no playable frames; BUSY keeps potential counts unchanged.
 ## code reports current mutation readiness; reason preserves the committed terminal cause independently.
 func playback_status() -> Dictionary:
+	var pending: int = 0
+	for frame: int in _host_tags:
+		if frame >= _current:
+			pending += 1
 	var buffered: int = maxi(0, _host_frontier - _current + 1)
 	var playable: int = maxi(0, buffered - (0 if _host_finished else _stream_delay))
 	var state: int = PlaybackState.WAITING_FOR_INPUT
@@ -193,6 +198,8 @@ func playback_status() -> Dictionary:
 		"current_frame": _current,
 		"host_frontier": _host_frontier,
 		"buffered_frames": buffered,
+		"pending_frames": pending,
+		"missing_frame": _host_frontier + 1 if pending > buffered else -1,
 		"playable_frames": playable,
 		"recommended_steps": recommended_steps(),
 		"input_closed": _host_finished,

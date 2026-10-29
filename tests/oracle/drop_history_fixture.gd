@@ -1,11 +1,16 @@
 extends "res://tests/unit/test_peer_drop_backfill.gd"
 
+var _inventory_emissions: Array[Dictionary] = []
+var _inventory_receipts: Array[Dictionary] = []
+var _lost_inventory: Array[Dictionary] = []
+var _drop_first_inventory: bool = false
 var _history_receipts: Array[Dictionary] = []
 var _history_emissions: Array[Dictionary] = []
 var _lost_history: Array[Dictionary] = []
 var _commit_emissions: Array[Dictionary] = []
 var _commit_receipts: Array[Dictionary] = []
-var _control_order: int = 0
+const Observation = preload("res://tests/oracle/drop_history_observer.gd")
+var _observation: Observation = Observation.new()
 var _ack_emissions: Array[Dictionary] = []
 var _ack_receipts: Array[Dictionary] = []
 var _lost_ack: Array[Dictionary] = []
@@ -51,9 +56,18 @@ class ObservedGame:
 
 
 func observe(
-	context: RefCounted, status_control: int = -1, drop_first_history: bool = false, missing_rows: int = 1,
-	corrupt_interior: bool = false, target_slots: int = 1, unequal: bool = false, drop_first_commit: bool = false, drop_first_ack: bool = false
+	context: RefCounted,
+	status_control: int = -1,
+	drop_first_history: bool = false,
+	missing_rows: int = 1,
+	corrupt_interior: bool = false,
+	target_slots: int = 1,
+	unequal: bool = false,
+	drop_first_commit: bool = false,
+	drop_first_ack: bool = false,
+	drop_first_inventory: bool = false
 ) -> Dictionary:
+	_drop_first_inventory = drop_first_inventory
 	_drop_first_ack = drop_first_ack
 	_drop_first_commit = drop_first_commit
 	_drop_first_history = drop_first_history
@@ -67,6 +81,7 @@ func observe(
 	_donor_sources.clear()
 	var mesh: Dictionary = _wide_mesh(context)
 	for peer: int in range(3):
+		_observation.install(mesh.peers[peer], peer)
 		var game: ObservedGame = ObservedGame.new(3 * _slots)
 		context.equal(mesh.peers[peer]._driver.configure(mesh.peers[peer]._core, game), Types.Code.OK, "install actual request observer")
 		mesh.games[peer] = game
@@ -111,8 +126,9 @@ func observe(
 				{"frame": frame, "inputs": inputs, "state": {"frame": frame, "bytes": mesh.games[peer].states[frame].hex_encode(), "inputs": mesh.games[peer].applied[frame]}}
 			)
 		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame, "confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
+	context.equal(_observation.publications.is_empty(), true, "every accepted observed control reaches owned routing")
 	return {
-		"format": 4,
+		"format": 6,
 		"complete": true,
 		"missing_rows": missing_rows,
 		"target_slots": _slots,
@@ -120,6 +136,9 @@ func observe(
 		"cuts": cuts,
 		"history_packets": _seen,
 		"donors": _donor_sources.keys(),
+		"inventory_emissions": _inventory_emissions,
+		"inventory_receipts": _inventory_receipts,
+		"lost_inventory": _lost_inventory,
 		"lost_history": _lost_history,
 		"lost_commit": _lost_commit,
 		"lost_ack": _lost_ack,
@@ -140,22 +159,34 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT and packet.from == 2 and packet.to == 0:
 			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
 				continue
+		var inventory_emission: Dictionary = {}
 		var history_emission: Dictionary = {}
 		var commit_emission: Dictionary = {}
 		var ack_emission: Dictionary = {}
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
-			_control_order += 1
+			var publication_order: int = -1
+			if decoded.message.phase == Drop.Phase.COMMIT or (decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage in [Drop.Stage.INVENTORY, Drop.Stage.COMMITTED]):
+				publication_order = _observation.take(packet.from, packet.to, packet.bytes)
+				context.equal(publication_order > 0, true, "match actual accepted barrier publication before routing")
+			if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.INVENTORY:
+				inventory_emission = {
+					"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _inventory_emissions.size(), "order": publication_order
+				}
+				_inventory_emissions.append(inventory_emission)
 			if decoded.message.phase == Drop.Phase.REPORT and decoded.message.stage == Drop.Stage.COMMITTED:
-				ack_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _ack_emissions.size(), "order": _control_order}
+				ack_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _ack_emissions.size(), "order": publication_order}
 				_ack_emissions.append(ack_emission)
 			if decoded.message.phase == Drop.Phase.COMMIT:
-				commit_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _commit_emissions.size(), "order": _control_order}
+				commit_emission = {"from": packet.from, "to": packet.to, "packet": packet.bytes.hex_encode(), "emission": _commit_emissions.size(), "order": publication_order}
 				_commit_emissions.append(commit_emission)
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				history_emission = {
 					"from": packet.from, "to": packet.to, "bytes": decoded.message.bytes.hex_encode(), "packet": packet.bytes.hex_encode(), "emission": _history_emissions.size()
 				}
 				_history_emissions.append(history_emission)
+		if _drop_first_inventory and _lost_inventory.is_empty() and not inventory_emission.is_empty():
+			_lost_inventory.append(inventory_emission)
+			continue
 		if _drop_first_ack and _lost_ack.is_empty() and not ack_emission.is_empty():
 			_lost_ack.append(ack_emission)
 			continue
@@ -177,16 +208,27 @@ func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary],
 			history_emission = history_emission.duplicate(true)
 			history_emission.bytes = decoded.message.bytes.hex_encode()
 			history_emission.packet = packet.bytes.hex_encode()
+		var receipt_order: int = -1
+		if not inventory_emission.is_empty() or not commit_emission.is_empty() or not ack_emission.is_empty():
+			receipt_order = _observation.next_order()
 		var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
 		if terminated and code == I.Code.TERMINATED:
 			continue
 		context.equal(code, I.Code.OK, "deliver actual encoded packet")
+		if code == I.Code.OK and not inventory_emission.is_empty():
+			_inventory_receipts.append(_received(inventory_emission, receipt_order))
 		if code == I.Code.OK and not ack_emission.is_empty():
-			_ack_receipts.append(ack_emission)
+			_ack_receipts.append(_received(ack_emission, receipt_order))
 		if code == I.Code.OK and not commit_emission.is_empty():
-			_commit_receipts.append(commit_emission)
+			_commit_receipts.append(_received(commit_emission, receipt_order))
 		if code == I.Code.OK and decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
 			if decoded.message.phase == Drop.Phase.BACKFILL and decoded.message.stage == Drop.Stage.HISTORY:
 				_seen += 1
 				_donor_sources[packet.from] = true
 				_history_receipts.append(history_emission)
+
+
+func _received(emission: Dictionary, order: int) -> Dictionary:
+	var result: Dictionary = emission.duplicate(true)
+	result.order = order
+	return result

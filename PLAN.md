@@ -112,7 +112,8 @@ Owned replay prefixes only trim existing storage; they cannot pad missing gamepl
 Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.
 Spectator startup traces compare actual pinned Rust and Godot execution against a scoped runtime-aligned model relation.
 A separate source comparison checks each initially disconnected reserved-slot position across all supported rosters, delay and ring reuse.
-Remote recording compares symmetric and asymmetric two-peer late corrections through default queue reuse with independent canonical histories;
+Remote recording compares symmetric and asymmetric late corrections, repeated prediction stalls and resumed retained samples
+through default queue reuse with independent canonical histories;
 [pinned speculative-checksum discrepancies](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253) remain explicit.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
@@ -502,6 +503,7 @@ The host publisher retains one exact refused packet, advances only on transport 
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
+Owned playback observations distinguish contiguous playable input from retained rows beyond a gap; the example names the first missing frame and later-row count.
 These local events do not establish host authentication or a network handshake.
 `is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
 The spectator relay uses that completion authority even when cancellation occurs exactly at an authenticated final boundary or inside acceptance delivery.
@@ -591,6 +593,7 @@ retains expanded source and live missing-history acceptance. A scoped
 now checks clean and lost-first-history remote-donor recovery against independent original canonical prefixes and finalized statuses.
 Grouped four-row cases also create unequal public exposed frontiers four/five through a real coordinator advance; complete source inventories and negative controls bind that evidence.
 The unequal grouped schedule also loses the first irreversible COMMIT, alone and after donor-history loss, and requires its exact retry before continued original-history agreement.
+The same scope loses the first follower inventory answer, alone and with history/COMMIT/ACK loss, requiring its exact received retry before irreversible commit.
 Follower-acknowledgement loss additionally requires exact certificate redelivery. Godot observes the repeated COMMIT
 before the matching ACK response; the pinned source retains its independent certificate journal policy.
 Its one/four-row missing suffix cases do not establish complete barrier parity or the remaining fault matrix.

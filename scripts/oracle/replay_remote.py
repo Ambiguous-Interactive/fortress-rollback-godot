@@ -155,14 +155,14 @@ def long_controls(observed):
 def delivery_control(engine, root, output, execute):
     """Duplicate actual idempotent receipts without changing gameplay; the measured inventory must reject them."""
     original = (root / 'tests/oracle/replay_remote_trace.gd').read_text()
-    loop = 'for frame: int in range(round - 1, round + 1):'
+    loop = 'for frame: int in range(turn - 1, turn + 1):'
     if original.count(loop) != 1:
         raise ValueError('remote delivery control loop missing or ambiguous')
     scratch_root = root / '.cache/scratch'
     scratch_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='replay-remote-delivery-', dir=scratch_root) as directory:
         scratch = Path(directory) / 'control.gd'
-        scratch.write_text(original.replace(loop, 'for frame: int in [round - 1, round, round]:'))
+        scratch.write_text(original.replace(loop, 'for frame: int in [turn - 1, turn, turn]:'))
         command = [str(engine), '--headless', '--path', str(root), '--script', 'res://' + scratch.relative_to(root).as_posix(),
                    '--', '--remote-recording-neutral']
         stdout, stderr = execute(command, output / 'remote-duplicate-delivery-godot.log')
@@ -223,8 +223,10 @@ def observe(binary, engine, root, output, execute):
             refused.append(runtime + '-withheld-receipts')
         else:
             raise ValueError(f'{runtime}: missing remote receipts did not stop gameplay')
+    from replay_pressure import observe as observe_pressure
+    pressure = observe_pressure(binary, engine, root, output, execute)
     from replay_asymmetric import observe as observe_asymmetric
     asymmetric = observe_asymmetric(binary, engine, root, output, execute)
-    return dict(repeat_equal=True, observations=combined, asymmetric=asymmetric,
+    return dict(repeat_equal=True, observations=combined, asymmetric=asymmetric, pressure=pressure,
                 negative_controls=controls(combined['corrected']) + long_controls(combined['corrected_long']), standalone_rejections=refused,
                 delivery_controls=delivery_control(engine, root, output, execute))

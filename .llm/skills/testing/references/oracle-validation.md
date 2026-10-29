@@ -12,6 +12,7 @@ Preserve decoded wire fields instead of substituting scenario expectations.
 Preserve request and export statuses separately; unknown or predicted status must not normalize to confirmed.
 Fault observers must check read success before interpreting returned bytes or default status fields.
 If stronger validation rejects an injected fault earlier, require that exact typed rejection rather than a derivative status mismatch.
+Keep that structural rejection separate; rebuild semantic mutants with valid structure so they still reach the invariant they claim to test.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Test omitted and explicit-null optional
@@ -57,6 +58,8 @@ Distinguish a fabricated missing-history inventory from physical eviction. Advan
 verify the old frame tag is overwritten, and require the retained journal's exact original bytes.
 For injected packet loss, retain emission identities and reconcile emitted minus discarded packets with actual receipts.
 A later equal payload cannot prove the first emission was lost. Reject a clean trace relabeled as loss and a restored discarded receipt.
+Require prerequisite receipts before the decisions they enable in every compared runtime; a retry received only after COMMIT cannot prove recovery.
+Capture action order at actual publication and receive callbacks; later queue draining or reused emission counters cannot establish consumption order.
 Validate the complete operation identity against the agreed operation before comparing retry payloads; matching malformed identities are insufficient.
 When control packets forward another participant’s certificate, sender direction cannot identify its owner.
 Select acknowledgement-loss faults by the actual participant certificate too, and retain emission/delivery order

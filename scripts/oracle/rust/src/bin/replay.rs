@@ -200,6 +200,7 @@ fn main() -> Result<(), String> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if arguments.len() == 1 && ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral",
         "--remote-recording-long", "--remote-recording-neutral-long", "--remote-recording-asymmetric",
+        "--remote-recording-pressure", "--remote-recording-pressure-neutral", "--remote-recording-pressure-withhold",
         "--remote-recording-asymmetric-neutral", "--remote-recording-asymmetric-withhold"].contains(&arguments[0].as_str()) {
         println!("{}", remote::run(&arguments[0])?);
         return Ok(());

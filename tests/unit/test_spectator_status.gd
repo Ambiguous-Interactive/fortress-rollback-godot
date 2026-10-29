@@ -164,6 +164,7 @@ func _empty() -> Array[Driver.LocalInput]:
 # Value: protects=owned viewer buffering and final-tail observations; fails_when=gaps look playable or stopped tails complete;
 # why_new=policy tests inspect pacing without a structured client observation; seam=none
 func _playback_observation(context: RefCounted) -> void:
+	_gap_observation(context)
 	for terminal: int in [Code.TERMINATED, Code.PROTOCOL_FAILED]:
 		var viewer: Spectator = Spectator.new()
 		context.equal(viewer.playback_status().code, Code.NOT_CONFIGURED, "unconfigured observation reports readiness")
@@ -233,3 +234,55 @@ func _check_observation(context: RefCounted, viewer: Spectator, state: int, buff
 	context.equal(observed.recommended_steps, steps, "observation preserves bounded service advice")
 	context.equal(observed.current_frame, viewer.status().current_frame, "observed current boundary agrees with shared session")
 	context.equal(observed.host_frontier, viewer.host_frontier(), "observation preserves original host frontier")
+
+
+# Value: protects=received rows beyond a gap remain visible; fails_when=waiting hides retained future input;
+# why_new=contiguous buffering observations deliberately exclude future rows; seam=none
+func _gap_observation(context: RefCounted) -> void:
+	for start: int in [0, 8]:
+		var viewer: Spectator = Spectator.new()
+		context.equal(viewer.playback_status().get("pending_frames", -1), 0, "unconfigured viewer retains no pending row")
+		viewer.configure(Fixture.new()._config())
+		var driver: Driver = Driver.new(viewer, GameFixture.Game.new())
+		for frame: int in start:
+			viewer.receive_host_frame(frame, Fixture.new()._row(frame))
+			context.equal(driver.step(frame, _empty()).code, Code.OK, "play prefix through ring reuse")
+		for offset: int in [1, 3]:
+			context.equal(viewer.receive_host_frame(start + offset, Fixture.new()._row(start + offset)).code, Code.OK, "retain later host row")
+		var observed: Dictionary = viewer.playback_status()
+		context.equal(observed.get("pending_frames", -1), 2, "pending count includes accepted future rows")
+		context.equal(observed.get("missing_frame", -2), start, "first missing row explains input wait")
+		context.equal(observed.buffered_frames, 0, "future rows are not a contiguous playable prefix")
+		context.equal(viewer.receive_host_frame(start + 1, Fixture.new()._row(start + 1)).code, Code.OK, "duplicate future receipt remains idempotent")
+		context.equal(viewer.playback_status().get("pending_frames", -1), 2, "duplicates do not inflate pending count")
+		var changed: Dictionary = viewer.playback_status()
+		changed.pending_frames = 999
+		changed.missing_frame = 999
+		context.equal(viewer.playback_status().get("pending_frames", -1), 2, "caller mutation cannot alter pending observations")
+		context.equal(viewer.playback_status().get("missing_frame", -2), start, "caller mutation cannot alter gap observations")
+		context.equal(viewer.receive_host_frame(start + 5, Fixture.new()._row(start + 5)).code, Code.NETWORK_BACKPRESSURE, "out-of-window future row is refused")
+		context.equal(viewer.playback_status().get("pending_frames", -1), 2, "refusal cannot fabricate pending history")
+		viewer.receive_host_frame(start, Fixture.new()._row(start))
+		context.equal(viewer.playback_status().get("missing_frame", -2), start + 2, "filling first gap reveals the next gap")
+		context.equal(viewer.playback_status().get("pending_frames", -1), 3, "contiguous and future accepted rows both remain pending")
+		for frame: int in range(start, start + 2):
+			context.equal(driver.step(frame, _empty()).code, Code.OK, "play prefix up to next gap")
+		context.equal(viewer.playback_status().get("pending_frames", -1), 1, "played rows leave pending count without losing future row")
+		context.equal(observed.get("pending_frames", -1), 2, "prior gap observation remains owned")
+		viewer.receive_host_frame(start + 2, Fixture.new()._row(start + 2))
+		context.equal(viewer.playback_status().get("missing_frame", -2), -1, "complete prefix reports no known gap")
+		context.equal(viewer.finish_host(), Code.OK, "complete tail closes")
+		context.equal(viewer.playback_status().get("pending_frames", -1), 2, "clean closure preserves unplayed rows")
+		viewer.terminate(Code.PROTOCOL_FAILED)
+		context.equal(viewer.playback_status().get("pending_frames", -1), 2, "stopped observation preserves retained input evidence")
+		viewer.configure(Fixture.new()._config())
+		context.equal(viewer.playback_status().get("pending_frames", -1), 0, "replacement clears pending input")
+		context.equal(viewer.playback_status().get("missing_frame", -2), -1, "replacement has no known gap")
+
+	var stopped: Spectator = Spectator.new()
+	stopped.configure(Fixture.new()._config())
+	stopped.receive_host_frame(1, Fixture.new()._row(1))
+	stopped.terminate(Code.PROTOCOL_FAILED)
+	context.equal(stopped.playback_status().get("pending_frames", -1), 1, "stopped viewer retains future-row observation")
+	context.equal(stopped.playback_status().get("missing_frame", -2), 0, "stopped gap evidence does not disappear")
+	context.equal(stopped.playback_status().playable_frames, 0, "retained terminal gap never grants playback")

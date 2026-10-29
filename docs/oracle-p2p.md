@@ -328,13 +328,33 @@ paired control with identical canonical input history. The lost-COMMIT cases dis
 irreversible COMMIT before socket delivery. Each runtime must deliver a later exact retry,
 freeze both target slots at eleven and preserve every original canonical prefix. Combined
 loss separately withholds the first donor packet before dropping the first COMMIT.
-Trace version 4 retains separate loss banks and Godot COMMIT/ACK emissions/receipts.
+Source and Godot trace version 6 retain separate loss banks and inventory/COMMIT/ACK emissions/receipts.
 ACK loss selects the follower's own COMMITTED participant report; the pinned source can forward other participants' certificates.
 The source must resend the same follower certificate through its retained journal. Godot must receive an exact COMMIT retry after the lost ACK,
 then deliver the same ACK bytes. Its global observed control order distinguishes those operations from an invented early response.
 Both ACK cases preserve the same twenty original canonical boundaries. Missing retry receipts, fabricated loss on a clean trace,
 restored discarded ACKs and ACK receipt before the repeated COMMIT all fail independent controls;
 the parser reconstructs the complete certified Godot ACK independently.
+Two further unequal grouped cases omit the follower's first actual INVENTORY answer,
+alone and combined with first-history/COMMIT/ACK loss. Each runtime must deliver a later exact
+retry of that same participant's original retained intervals. The Godot parser independently reconstructs
+the complete encoded inventory, including the participant/session identity, exposed frontier, ordered
+target eras and every original interval. Emission identities reconcile discarded versus delivered answers;
+the received retry must precede COMMIT. Relabeling a clean trace as answer loss, removing either
+runtime's retries or changing the Godot inventory bytes fails the corresponding exact diagnostic.
+The source socket shares one bounded observation counter across all endpoints. It records control
+emission inside `send_to` and receipt inside `receive_all_messages`, independently of later outbox
+routing and recipient-grouped result collection. The parser checks order domains, global uniqueness,
+per-participant order and receipt after its actual emission, then requires inventory consumption
+before the first COMMIT emission. Controls separately move inventory emissions and only their
+consumption after COMMIT; unchanged payloads and delivery identities cannot conceal either error.
+The Godot fixture also separates accepted production publication from receive entry. A test-only
+drop subclass observes exact packets newly appended by the synchronous production send; per-packet
+FIFO observations survive later routing and deliberate loss. Receive order is captured before calling
+`peer.receive`, so a COMMIT published inside that call follows input handoff. Only successful receives
+are retained. Inventory, COMMIT and ACK action orders share one bounded counter; duplicate orders,
+receipt before publication and COMMIT before inventory consumption each fail explicit controls.
+Both cases preserve all twenty independent canonical boundaries, finalized inputs and statuses.
 For COMMIT loss,
 the parser reconstructs the complete certified Godot COMMIT independently.
 Delivered discarded COMMITs, missing loss evidence and changed encoded cuts must fail.
@@ -374,7 +394,7 @@ export to NONE/PREDICTED/unknown status 42 at the observation boundary and requi
 refusal, without changing game state or application callback records.
 
 This establishes single-target and grouped two-target missing-history donor scenarios
-with clean delivery, one lost original historical backfill, and unequal grouped COMMIT/ACK loss alone or combined. The two implementations
+with clean delivery, one lost original historical backfill, and unequal grouped inventory/COMMIT/ACK loss alone or combined. The two implementations
 use distinct wire formats and different departure triggers. Their retained
 history floors also differ before the drop. This gate does not establish wire
 interoperability, complete barrier participant/sequence/journal parity, all

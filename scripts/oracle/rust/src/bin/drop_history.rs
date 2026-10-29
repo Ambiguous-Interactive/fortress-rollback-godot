@@ -18,17 +18,32 @@ impl Game {
 struct Profile;
 impl Config for Profile { type Input = [u8; 4]; type State = Game; type Address = String; }
 #[derive(Default)]
-struct Buffers { incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message)>, received: Vec<Value> }
+struct Buffers {
+    incoming: Vec<(String, Message, Option<Value>)>, outgoing: Vec<(String, Message, Option<usize>)>,
+    received: Vec<Value>, order: Arc<Mutex<usize>>
+}
+fn next_order(order: &Arc<Mutex<usize>>) -> usize {
+    let mut value = order.lock().unwrap();
+    assert!(*value < 8192, "bounded control observation order");
+    *value += 1;
+    *value
+}
 struct Socket(Arc<Mutex<Buffers>>);
 impl NonBlockingSocket<String> for Socket {
     fn send_to(&mut self, message: &Message, address: &String) {
-        self.0.lock().unwrap().outgoing.push((address.clone(), message.clone()));
+        let mut queue = self.0.lock().unwrap();
+        let raw = serde_json::to_value(message).unwrap();
+        let control = raw["body"].as_object().is_some_and(|body| body.keys().any(|kind| kind.starts_with("Drop")));
+        let order = control.then(|| next_order(&queue.order));
+        queue.outgoing.push((address.clone(), message.clone(), order));
     }
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> {
         let mut queue = self.0.lock().unwrap();
         let messages = std::mem::take(&mut queue.incoming);
+        let order = queue.order.clone();
         queue.received.extend(messages.iter().filter_map(|(_, message, control)| control.as_ref().map(|record| {
             let mut received = record.clone();
+            received["order"] = json!(next_order(&order));
             received["body"] = serde_json::to_value(message).unwrap()["body"].clone();
             received
         })));
@@ -71,21 +86,28 @@ fn advance(session: &mut P2PSession<Profile>, game: &mut Game, player: usize,
 }
 #[derive(Default)]
 struct Fault {
-    enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize, dropped_ack: Vec<Value>
+    enabled: bool, dropped: Vec<Value>, commit_enabled: bool, dropped_commit: Vec<Value>, ack_enabled: bool, ack_participant: usize,
+    dropped_ack: Vec<Value>, inventory_enabled: bool, dropped_inventory: Vec<Value>
 }
 fn route(buffers: &[Arc<Mutex<Buffers>>], missing: bool, silent: bool, control: &mut Vec<Value>, fault: &mut Fault) -> Result<bool, String> {
     let mut delivered = false;
     for (sender, queue) in buffers.iter().enumerate() {
-        for (address, message) in std::mem::take(&mut queue.lock().unwrap().outgoing) {
+        for (address, message, order) in std::mem::take(&mut queue.lock().unwrap().outgoing) {
             let recipient = address.parse::<usize>().map_err(|_| "address")?;
             if (missing && sender == 2 && recipient == 0) || (silent && (sender == 2 || recipient == 2)) { continue; }
             let raw = serde_json::to_value(&message).map_err(|error| error.to_string())?;
             let mut emitted_control = None;
             if let Some(body) = raw["body"].as_object() {
                 if body.keys().any(|kind| kind.starts_with("Drop")) {
-                    let packet = json!({"from":sender,"to":recipient,"body":body,"emission":control.len()});
+                    let packet = json!({"from":sender,"to":recipient,"body":body,"emission":control.len(),"order":order.ok_or("missing control emission order")?});
                     emitted_control = Some(packet.clone());
                     control.push(packet.clone());
+                    if fault.inventory_enabled && fault.dropped_inventory.is_empty() && sender == 1 && recipient == 0
+                        && body.get("DropReport").and_then(|value| value.get("stage")).and_then(Value::as_str) == Some("Inventory")
+                        && body["DropReport"]["participant"].as_u64() == Some(fault.ack_participant as u64) {
+                        fault.dropped_inventory.push(packet);
+                        continue;
+                    }
                     if fault.ack_enabled && fault.dropped_ack.is_empty() && sender == 1 && recipient == 0
                         && body.get("DropReport").and_then(|value| value.get("stage")).and_then(Value::as_str) == Some("Committed")
                         && body["DropReport"]["participant"].as_u64() == Some(fault.ack_participant as u64) {
@@ -116,9 +138,10 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
+    let order = Arc::new(Mutex::new(0_usize));
     let mut sessions = Vec::new();
     let mut buffers = Vec::new();
     let mut games = vec![Game { frame: 0, values: vec![0; 3 * target_slots] }; 3];
@@ -136,12 +159,13 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
             let kind = if slot / target_slots == peer { PlayerType::Local } else { PlayerType::Remote((slot / target_slots).to_string()) };
             builder = builder.add_player(kind, PlayerHandle::new(slot)).map_err(|error| format!("{error:?}"))?;
         }
-        let queue = Arc::new(Mutex::new(Buffers::default()));
+        let queue = Arc::new(Mutex::new(Buffers { order: order.clone(), ..Default::default() }));
         sessions.push(builder.start_p2p_session(Socket(queue.clone())).map_err(|error| format!("{error:?}"))?);
         buffers.push(queue);
     }
     let mut control = Vec::new();
-    let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots, ..Default::default() };
+    let mut fault = Fault { enabled: loss, commit_enabled: commit_loss, ack_enabled: ack_loss, ack_participant: target_slots,
+        inventory_enabled: inventory_loss, ..Default::default() };
     settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     for session in &mut sessions {
         if format!("{:?}", session.current_state()) != "Running" { return Err("bootstrap".into()); }
@@ -198,9 +222,9 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         survivors.push(json!({"peer":peer,"current_frame":sessions[peer].current_frame().as_i32(),
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
-    Ok(json!({"format":4,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
+    Ok(json!({"format":6,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
         "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
-        "lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
+        "lost_inventory":fault.dropped_inventory,"lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
         "controls":control,"received_controls":received_controls,"survivors":survivors}))
 }
 fn main() {
@@ -209,12 +233,14 @@ fn main() {
     let multi = arguments.contains(&"--multi-row-history".into());
     let grouped = arguments.contains(&"--multiple-target-slots".into());
     let commit_loss = arguments.contains(&"--drop-first-commit".into());
+    let inventory_loss = arguments.contains(&"--drop-first-inventory".into());
     let ack_loss = arguments.contains(&"--drop-first-ack".into());
     let unequal = arguments.contains(&"--unequal-exposure".into());
-    if arguments.len() != usize::from(ack_loss) + usize::from(commit_loss) + usize::from(unequal) + usize::from(loss) + usize::from(multi) + usize::from(grouped) {
+    if arguments.len() != usize::from(inventory_loss) + usize::from(ack_loss) + usize::from(commit_loss) + usize::from(unequal)
+        + usize::from(loss) + usize::from(multi) + usize::from(grouped) {
         eprintln!("drop history: unexpected argument"); std::process::exit(2);
     }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss) {
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }
