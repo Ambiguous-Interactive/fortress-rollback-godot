@@ -547,6 +547,14 @@ func _playback_feedback(context: RefCounted) -> void:
 	scene._update_label()
 	context.equal(scene.demo.game.frame > 0, true, "control reaches actual viewing")
 	context.equal(scene._label.text.contains("WATCHING"), true, "eligible live input shows normal watching")
+	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release viewing delay for input-gap observation")
+	while scene.demo.viewer.recommended_steps() > 0:
+		context.equal(scene.demo.step_viewer(), Types.Code.OK, "consume existing contiguous host prefix")
+	scene.demo.is_paused = false
+	scene._update_label()
+	context.equal(scene._label.text.contains("BUFFERING"), true, "mid-match host gap must not claim active watching")
+	context.equal(scene._label.text.contains("confirmed input"), true, "mid-match wait identifies missing host input")
+	context.equal(scene.demo.viewer.set_playback(12, 4, 4), Types.Code.OK, "restore ordinary viewing policy")
 	scene.demo.is_paused = true
 	for tick: int in range(20):
 		scene.demo.tick(Game.LEFT)

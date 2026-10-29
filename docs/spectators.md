@@ -100,6 +100,27 @@ code = viewer.set_playback(12, 4, 4)
 var driver: Driver = Driver.new(viewer, Game.new())
 ```
 
+`viewer.playback_status()` returns an owned observation without consuming input,
+advancing clocks or draining lifecycle events. It includes `current_frame`,
+`host_frontier`, `buffered_frames`, `playable_frames`, `recommended_steps`,
+`input_closed`, `state`, `code` and `reason`. The frame counts describe only the
+contiguous prefix at the playback boundary; a later row beyond a gap does not count.
+
+`PlaybackState.WAITING_FOR_INPUT` means no contiguous row is available.
+`DELAYED` means received rows are held by the viewing delay; `PLAYABLE` means
+at least one row passes that delay. `FINAL_TAIL` means clean input closure released
+the delay. Its zero-frame state still needs the recommended terminal service call.
+`COMPLETE` requires that call; `STOPPED` also covers cancellation, failure and an
+unconfigured viewer. Stopped viewers report zero playable frames, even when
+retained buffered rows remain. `code` reports readiness, including `BUSY` during
+an active request and `NOT_CONFIGURED` before startup; `reason` preserves the
+committed cause independently. Reading during `BUSY` retains potential frame counts
+without granting permission to step. Pause remains application-owned, so a paused
+`FINAL_TAIL` can show resume controls without claiming playback has completed.
+Rejected reconfiguration preserves the observation; successful configuration starts
+a new lifetime. The local example uses this API to distinguish a mid-match input
+wait from ordinary viewing delay.
+
 The configuration requires zero input delay, zero prediction and no local players.
 `queue_capacity` bounds both the per-player core queues and the extra host row
 ring. The storage reservation includes both payloads and their tags; engine object

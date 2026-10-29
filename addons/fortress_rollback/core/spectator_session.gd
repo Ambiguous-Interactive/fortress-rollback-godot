@@ -8,6 +8,7 @@ extends "res://addons/fortress_rollback/core/session.gd"
 ## Start from the host's initial game state; admission at a later frame requires separate state transfer.
 
 enum EventKind { WAITING_FOR_HOST, SYNCHRONIZED, HOST_FINISHED, TERMINATED }
+enum PlaybackState { WAITING_FOR_INPUT, DELAYED, PLAYABLE, FINAL_TAIL, COMPLETE, STOPPED }
 
 
 class Event:
@@ -166,6 +167,37 @@ func recommended_steps() -> int:
 	if available <= 0:
 		return 1 if _host_finished else 0
 	return mini(available, _catchup_speed if available > _max_frames_behind else 1)
+
+
+## Owned playback observation; reading never drains events, moves time or consumes input.
+## Buffered/playable counts include only contiguous rows from current_frame, excluding future rows beyond a gap.
+## FINAL_TAIL includes its final notification call when both counts are zero. Pause remains caller-owned.
+## Stopped viewers expose retained buffered rows but no playable frames; BUSY keeps potential counts unchanged.
+## code reports current mutation readiness; reason preserves the committed terminal cause independently.
+func playback_status() -> Dictionary:
+	var buffered: int = maxi(0, _host_frontier - _current + 1)
+	var playable: int = maxi(0, buffered - (0 if _host_finished else _stream_delay))
+	var state: int = PlaybackState.WAITING_FOR_INPUT
+	if _config == null or _reason != Code.OK:
+		state = PlaybackState.COMPLETE if _playback_complete else PlaybackState.STOPPED
+		playable = 0
+	elif _host_finished:
+		state = PlaybackState.FINAL_TAIL
+	elif playable > 0:
+		state = PlaybackState.PLAYABLE
+	elif buffered > 0:
+		state = PlaybackState.DELAYED
+	return {
+		"code": _mutation_code(),
+		"state": state,
+		"current_frame": _current,
+		"host_frontier": _host_frontier,
+		"buffered_frames": buffered,
+		"playable_frames": playable,
+		"recommended_steps": recommended_steps(),
+		"input_closed": _host_finished,
+		"reason": _reason
+	}
 
 
 ## True only after ordinary playback consumes the clean host tail and publishes completion.

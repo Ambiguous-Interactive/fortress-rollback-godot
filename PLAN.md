@@ -103,6 +103,9 @@ Callback and expert peer steps can omit retained local slots while requiring eve
 Internal readiness checks avoid owned sample copies; public retained-input reads remain isolated.
 They can also export owned finalized input rows for confirmed effects and spectator publication without recording.
 Replay failure evidence identifies the first failed game request and comparison domain.
+The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
+Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
+Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
 Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.

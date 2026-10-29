@@ -187,6 +187,7 @@ func _full_length_recording(context: RefCounted) -> void:
 	node._native_file(path)
 	context.equal(node.viewer.frame_count(), Viewer.MAX_FRAMES, "native file chooser accepts all ten recorded minutes")
 	context.equal(node.viewer.recorded_checksum_count(), Viewer.MAX_FRAMES, "full-length import preserves every recorded checksum")
+	context.equal(node.viewer.input_change_target(true), 1, "full-rate maximum-length input changes remain navigable")
 	node.viewer.step()
 	context.equal(node.viewer.current_frame(), 1, "full-length recording starts normal validated playback")
 	bytes.resize(Viewer.MAX_BYTES + 1)

@@ -29,6 +29,7 @@ frontier and nested failure integer, rejecting Python bool/float equality lookal
 Replay coverage reports distinguish recorded checksums from comparisons that actually passed.
 Exercise absent, sparse and complete checksums, repeated navigation, failed comparisons and restart;
 checksum-free playback must never imply verification. Separate host input closure from completed spectator playback.
+Exercise missing-input feedback after actual playback as well as at startup; distinguish contiguous gaps from deliberate viewing delay.
 To qualify immediate disconnect callbacks, attempt buffered gameplay before explicit adapter polling;
 polling can repair a missing callback and hide the lifetime defect. Disable that callback alone as a control.
 

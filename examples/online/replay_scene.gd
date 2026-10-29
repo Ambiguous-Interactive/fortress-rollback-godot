@@ -42,6 +42,8 @@ var _step_button: Button
 var _back_button: Button
 var _previous_checkpoint: Button
 var _next_checkpoint: Button
+var _previous_input_change: Button
+var _next_input_change: Button
 var _failure_download: Button
 var _failure_notice: String = ""
 var _restart_button: Button
@@ -100,6 +102,10 @@ func _ready() -> void:
 	_previous_checkpoint = _button(checkpoints, "Previous checkpoint", _jump_checkpoint.bind(false))
 	_next_checkpoint = _button(checkpoints, "Next checkpoint", _jump_checkpoint.bind(true))
 	_failure_download = _button(checkpoints, "Download failure", _download_failure)
+	var changes: HBoxContainer = HBoxContainer.new()
+	panel.add_child(changes)
+	_previous_input_change = _button(changes, "Previous input change", _jump_input_change.bind(false))
+	_next_input_change = _button(changes, "Next input change", _jump_input_change.bind(true))
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -189,6 +195,11 @@ func _jump_checkpoint(forward: bool) -> void:
 	_refresh()
 
 
+func _jump_input_change(forward: bool) -> void:
+	viewer.seek_input_change(forward)
+	_refresh()
+
+
 func _restart() -> void:
 	viewer.restart()
 	_refresh()
@@ -258,6 +269,8 @@ func _refresh() -> void:
 	_cancel_button.disabled = not viewer.is_seeking()
 	_previous_checkpoint.disabled = viewer.checkpoint_target(false) < 0
 	_next_checkpoint.disabled = viewer.checkpoint_target(true) < 0
+	_previous_input_change.disabled = viewer.input_change_target(false) < 0
+	_next_input_change.disabled = viewer.input_change_target(true) < 0
 	queue_redraw()
 
 
