@@ -12,6 +12,7 @@ Preserve decoded wire fields instead of substituting scenario expectations.
 Preserve request and export statuses separately; unknown or predicted status must not normalize to confirmed.
 Fault observers must check read success before interpreting returned bytes or default status fields.
 If stronger validation rejects an injected fault earlier, require that exact typed rejection rather than a derivative status mismatch.
+Keep that structural rejection separate; rebuild semantic mutants with valid structure so they still reach the invariant they claim to test.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Test omitted and explicit-null optional
