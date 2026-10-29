@@ -307,7 +307,7 @@ Each must fail at its named observation; the short corpus cannot satisfy the lon
 The unchanged source's default 60-frame checksum schedule contributes two additional reports at delivery
 rounds 63, 123, 183 and 243. Exact delivery counts retain that traffic; it is not disabled or ignored.
 Both pins run every mode twice in fresh processes. This extends the existing two-peer delivery cadence;
-it does not qualify asymmetric delivery, coordinated-drop recording or browser source comparison.
+it does not qualify coordinated-drop recording or browser source comparison.
 
 At the pinned revision, `P2PSession::advance_frame` assembles correction requests
 and then calls `record_confirmed_inputs` before the application executes those
@@ -317,5 +317,35 @@ requests (`src/sessions/p2p_session.rs`, lines 3090–3134).
 replace the already exported checksum. The neutral control isolates this
 ordering from the serializer or replay comparator. This is a named source
 recording discrepancy tracked in [#253](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253),
-not proof of a Godot replay mismatch or complete remote recording parity. Asymmetric delivery, peer drop, exported-browser source
+not proof of a Godot replay mismatch or complete remote recording parity. Peer drop, exported-browser source
 comparison and the remaining release matrix stay open under #45.
+
+### Asymmetric delivery and final recovery
+
+The gate also runs changing and neutral 257-turn histories with different remote
+prefixes: endpoint zero receives every two turns, while endpoint one receives every
+three. This requires 128 versus 85 forward-step corrections. The independent history
+checks every original callback, applied status, saved byte and exported row across two
+default queue capacities. Socket delivery counts include actual INPUT, ACK and periodic
+checksum traffic; checksum reports reach both endpoints at turns 65, 125, 185 and 245.
+
+After turn 256, the fixture delivers the final missing originals without submitting
+another local sample. Godot's actual `Driver.recover()` repairs one versus two pending
+frames, stays at boundary 257, and exports all 257 canonical rows. Each decoded export
+then validates through production playback. The neutral control has no correction.
+
+The unchanged source has no equivalent public recovery-only entry point. Its final
+poll receives the original inputs, but `advance_frame()` without a new local sample
+returns `MissingLocalInput` before repair or recording. Actual `into_replay()` exports
+the previously recorded 256 versus 255 rows. Their corrected original inputs remain
+exact; speculative saved checksums still produce 128 versus 170 `ReplayDesync` events
+under #253. Neither final polling nor export repairs the original speculative game state.
+These source outcomes remain explicit observations, rather than normalized parity.
+
+Ten mutations reject a symmetric history relabeled as asymmetric, omitted corrections,
+missing final delivery, altered post-wrap exports and corrupted decoded playback at
+specific diagnostics. An actual withheld-receipt control lets endpoint zero advance to
+frame five while endpoint one stalls at its four-frame prediction bound. Both engines
+run each changing/neutral workload twice with source/tool fingerprints and bounded
+processes. This advances #256 without qualifying source recovery-only recording,
+coordinated drop, browser transports or the complete #45 release gate.

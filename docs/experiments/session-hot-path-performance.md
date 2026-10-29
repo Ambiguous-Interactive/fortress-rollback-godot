@@ -240,3 +240,34 @@ show a consistent timing improvement; the four-player median increased.
 The removed allocation and queue scan are deterministic work reductions,
 not a promise of faster frames on every host. These measurements cover native
 steady steps, not browser performance, rollback bursts or total allocation counts.
+
+## Local sample preflight
+
+Peer preflight now validates supplied samples through the shared session validator.
+It no longer creates an owned `InputResult` and copies retained bytes just to compare
+them. Missing-slot checks in both driver paths use a private readiness code. Public
+`scheduled_local_input()` results still own their bytes and survive later operations.
+The peer also omits the status snapshot previously used only to validate sample frames.
+
+Run `godot --headless --path . --script scripts/benchmark_session_hot_path.gd` on each
+pinned engine. The `local_preflight` workload compares owned reads with scalar readiness
+in the same process, for 2/4/8 local slots. Five samples each read every slot 10,000 times,
+first before submission, then after actual session submission. Every returned code and
+the declared work counts must match; missing retention and skipped reads fail the benchmark. These
+measurements compare the two current read paths, not a whole-frame baseline.
+
+On the shared Linux ARM64 host on 2026-10-29, eight-slot p50 microseconds per read were:
+
+| Engine | Sample state | Owned read | Scalar readiness |
+| --- | --- | --- | --- |
+| 4.3 | Missing | 1.117 | 0.234 |
+| 4.3 | Retained | 1.219 | 0.235 |
+| 4.7.2 | Missing | 0.935 | 0.203 |
+| 4.7.2 | Retained | 1.055 | 0.216 |
+
+All three roster sizes show lower readiness cost on both pins. This measures only
+availability checks; it does not establish whole-frame, network or browser speedups,
+or total allocation counts. The existing driver/expert partial-publication and retained
+retry cases separately compare encoded traffic, callbacks, original inputs and canonical
+state through incomplete lists, conflicts, pressure and recovery. Ordinary driver
+benchmark checksums remain equal to the published expert baseline.

@@ -13,12 +13,18 @@ impl NonBlockingSocket<String> for Socket {
     fn receive_all_messages(&mut self) -> Vec<(String, Message)> { std::mem::take(&mut self.0.lock().unwrap().incoming) }
 }
 
-fn exchange(buffers: &[Arc<Mutex<Buffers>>]) -> usize {
+fn exchange(buffers: &[Arc<Mutex<Buffers>>]) -> usize { exchange_selected(buffers, &[true, true]) }
+
+fn exchange_selected(buffers: &[Arc<Mutex<Buffers>>], eligible: &[bool; 2]) -> usize {
     let mut count = 0;
     for (sender, buffer) in buffers.iter().enumerate() {
-        for (destination, message) in std::mem::take(&mut buffer.lock().unwrap().outgoing) {
-            buffers[destination.parse::<usize>().unwrap()].lock().unwrap().incoming.push((sender.to_string(), message));
-            count += 1;
+        let outgoing = std::mem::take(&mut buffer.lock().unwrap().outgoing);
+        for (destination, message) in outgoing {
+            let target = destination.parse::<usize>().unwrap();
+            if eligible[target] {
+                buffers[target].lock().unwrap().incoming.push((sender.to_string(), message));
+                count += 1;
+            } else { buffer.lock().unwrap().outgoing.push((destination, message)); }
         }
     }
     count
@@ -27,8 +33,9 @@ fn exchange(buffers: &[Arc<Mutex<Buffers>>]) -> usize {
 pub fn run(mode: &str) -> Result<Value, String> {
     let seed = u32::MAX;
     let withhold = mode == "--remote-recording-withhold";
-    let neutral = mode.starts_with("--remote-recording-neutral");
-    let rounds = if mode.ends_with("-long") { 257 } else { 9 };
+    let neutral = mode.contains("neutral");
+    let asymmetric = mode.contains("asymmetric");
+    let rounds = if mode.ends_with("-long") || asymmetric { 257 } else { 9 };
     let clock = Arc::new(Mutex::new(0u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
@@ -92,6 +99,9 @@ pub fn run(mode: &str) -> Result<Value, String> {
             if states[peer][0] != round as u32 + 1 {
                 if round == 4 && before == 4 && states[peer][0] == 4 && sessions[peer].metrics().stall_count == 1
                     && records[peer][first..].iter().all(|row| row["kind"] == "save") {
+                    if asymmetric {
+                        return Err(format!("asymmetric prediction-window stall: peer={peer} round=4 frames=[{},{}]", states[0][0], states[1][0]));
+                    }
                     return Err("remote prediction-window stall: round=4 before=4 after=4 stall_count=1".into());
                 }
                 return Err("unexpected remote nonadvancing batch".into());
@@ -99,11 +109,25 @@ pub fn run(mode: &str) -> Result<Value, String> {
             services[peer].push(json!({"round":round, "before":before, "after":states[peer][0],
                 "requests":records[peer][first..].iter().map(|row| row["kind"].clone()).collect::<Vec<_>>()}));
         }
-        if round % 2 == 1 && !withhold {
+        let eligible = if asymmetric { [round % 2 == 1, round % 3 == 2 && !mode.ends_with("-withhold")] } else { [round % 2 == 1; 2] };
+        if eligible.iter().any(|value| *value) && !withhold {
             let mut delivered = 0;
-            for _ in 0..4 { delivered += exchange(&buffers); for session in &mut sessions { session.poll_remote_clients(); } }
-            deliveries.push(json!({"round":round,"messages":delivered}));
+            for _ in 0..4 { delivered += exchange_selected(&buffers, &eligible); for session in &mut sessions { session.poll_remote_clients(); } }
+            let mut observation = json!({"round":round,"messages":delivered});
+            if asymmetric { observation["eligible"] = json!(eligible); }
+            deliveries.push(observation);
         }
+    }
+    let mut recovery = Vec::new();
+    if asymmetric {
+        let mut delivered = 0;
+        for _ in 0..4 { delivered += exchange(&buffers); for session in &mut sessions { session.poll_remote_clients(); } }
+        let mut errors = Vec::new();
+        for session in &mut sessions {
+            let error = session.advance_frame().err().ok_or("source unexpectedly allowed recovery without a local sample")?;
+            errors.push(error.to_string());
+        }
+        recovery.push(json!({"messages":delivered,"frames":states.iter().map(|state|state[0]).collect::<Vec<_>>(), "errors":errors }));
     }
     let mut peers = Vec::new();
     for (peer, session) in sessions.into_iter().enumerate() {
@@ -117,5 +141,7 @@ pub fn run(mode: &str) -> Result<Value, String> {
             "checksums":decoded.checksums.iter().map(|n|n.map(|v|hex(&v.to_le_bytes()))).collect::<Vec<_>>(),
             "skipped":decoded.metadata.skipped_frames,"playback":played}));
     }
-    Ok(json!({"format":1,"peers":peers,"deliveries":deliveries}))
+    let mut result = json!({"format":1,"peers":peers,"deliveries":deliveries});
+    if asymmetric { result["recovery"] = json!(recovery); }
+    Ok(result)
 }

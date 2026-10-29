@@ -434,7 +434,6 @@ func _prepare_recovery(now_us: Variant) -> Types.Result:
 
 ## Every endpoint retains the scheduled sample before requests become available.
 func _prepare_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
-	var before: int = status().current_frame
 	var gate: int = _gate(now_us)
 	if gate != I.Code.OK:
 		return Types.Result.new(_step_code(gate))
@@ -446,7 +445,7 @@ func _prepare_step(now_us: Variant, local_inputs: Variant) -> Types.Result:
 			_now = now_us
 			_terminate_links()
 		return Types.Result.new(limit)
-	var code: int = _samples_code(local_inputs, before)
+	var code: int = _samples_code(local_inputs)
 	if code != Types.Code.OK:
 		return Types.Result.new(code)
 	_now = now_us
@@ -872,23 +871,19 @@ func _running() -> bool:
 	return true
 
 
-func _samples_code(samples: Variant, frame: int) -> int:
+func _samples_code(samples: Variant) -> int:
 	if not samples is Array or samples.size() > _config.local_players.size():
 		return Types.Code.MISSING_LOCAL_INPUT
 	var seen: Dictionary = {}
 	for sample: Variant in samples:
 		if not sample is Driver.LocalInput or not _config.local_players.has(sample.player) or seen.has(sample.player):
 			return Types.Code.INVALID_PLAYER
-		if sample.sample_frame != frame:
-			return Types.Code.INVALID_FRAME
-		if sample.bytes.size() != _config.input_width:
-			return Types.Code.INPUT_WIDTH
-		var previous: Types.InputResult = _core.scheduled_local_input(sample.player)
-		if previous.code == Types.Code.OK and previous.bytes != sample.bytes:
-			return Types.Code.INPUT_ALREADY_SUBMITTED
+		var code: int = _core.validate_local_input(sample.player, sample.sample_frame, sample.bytes)
+		if code != Types.Code.OK:
+			return code
 		seen[sample.player] = true
 	for player: int in _config.local_players:
-		if not seen.has(player) and _core.scheduled_local_input(player).code != Types.Code.OK:
+		if not seen.has(player) and _core._scheduled_local_input_code(player) != Types.Code.OK:
 			return Types.Code.MISSING_LOCAL_INPUT
 	return Types.Code.OK
 

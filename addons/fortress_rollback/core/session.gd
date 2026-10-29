@@ -218,17 +218,20 @@ func install_missing_backfill(player: int, start: int, inputs: Array[PackedByteA
 ## Owned current submitted sample, available until its successful advance completes.
 func scheduled_local_input(player: int) -> Types.InputResult:
 	var result: Types.InputResult = Types.InputResult.new()
-	if _config == null:
-		result.code = Code.NOT_CONFIGURED
-	elif player < 0 or player >= _queues.size() or player not in _config.local_players:
-		result.code = Code.INVALID_PLAYER
-	elif _samples[player].is_empty():
-		result.code = Code.MISSING_LOCAL_INPUT
-	else:
+	result.code = _scheduled_local_input_code(player)
+	if result.code == Code.OK:
 		result.frame = _received[player]
 		result.bytes = _samples[player].duplicate()
 		result.status = Queue.Status.CONFIRMED
 	return result
+
+
+func _scheduled_local_input_code(player: int) -> int:
+	if _config == null:
+		return Code.NOT_CONFIGURED
+	if player < 0 or player >= _queues.size() or player not in _config.local_players:
+		return Code.INVALID_PLAYER
+	return Code.MISSING_LOCAL_INPUT if _samples[player].is_empty() else Code.OK
 
 
 ## Local delay now in effect, or -1 for an unconfigured session or a slot that is not local.

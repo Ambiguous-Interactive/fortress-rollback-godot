@@ -98,15 +98,22 @@ func _initialize() -> void:
 	var snapshot: Dictionary = _snapshot()
 	var reports: Array[Dictionary] = []
 	for players: int in PLAYER_COUNTS:
-		reports.append({
-			"players": players,
-			"steady": _steady(players),
-			"driver": _driver(players),
-			"rollback": _rollback(players),
-			"codec": _codec(players),
-		})
-	var report: Dictionary = {"engine": Engine.get_version_info().string, "state_bytes": STATE_BYTES,
-		"frames": FRAMES, "samples": SAMPLES, "window": WINDOW, "snapshot": snapshot, "reports": reports}
+		(
+			reports
+			. append(
+				{
+					"players": players,
+					"steady": _steady(players),
+					"driver": _driver(players),
+					"local_preflight": _local_preflight(players),
+					"rollback": _rollback(players),
+					"codec": _codec(players),
+				}
+			)
+		)
+	var report: Dictionary = {
+		"engine": Engine.get_version_info().string, "state_bytes": STATE_BYTES, "frames": FRAMES, "samples": SAMPLES, "window": WINDOW, "snapshot": snapshot, "reports": reports
+	}
 	if not _matches_baseline(report):
 		push_error("the measured result differs from the published baseline")
 		print(JSON.stringify(report))
@@ -153,6 +160,50 @@ func _driver(players: int) -> Dictionary:
 			_fail("driver state differs from the expert workload")
 			return {}
 	return _summary(samples, checksum, FRAMES)
+
+
+# Measures sample preflight separately from networking and complete frame cost.
+func _local_preflight(players: int) -> Dictionary:
+	var config: Config = Config.new()
+	config.player_count = players
+	config.max_snapshot_bytes = STATE_BYTES
+	config.storage_budget_bytes = 16 * 1024 * 1024
+	config.local_players.clear()
+	for player: int in players:
+		config.local_players.append(player)
+	var session: Session = Session.new()
+	if session.configure(config) != Types.Code.OK:
+		_fail("local preflight session configuration failed")
+		return {}
+	var bytes: PackedByteArray = PackedByteArray([7])
+	var result: Dictionary = {}
+	var iterations: int = 10000
+	for staged: bool in [false, true]:
+		if staged:
+			for player: int in players:
+				if session.submit_local_input(player, 0, bytes).code != Types.Code.OK:
+					_fail("local preflight sample not retained")
+					return {}
+		var expected: int = Types.Code.OK if staged else Types.Code.MISSING_LOCAL_INPUT
+		var measurements: Dictionary = {}
+		for owned: bool in [true, false]:
+			var samples: Array[int] = []
+			for sample: int in 5:
+				var codes: PackedInt32Array = PackedInt32Array()
+				codes.resize(iterations * players)
+				codes.fill(-1)
+				var start: int = Time.get_ticks_usec()
+				for iteration: int in iterations:
+					for player: int in players:
+						codes[iteration * players + player] = (session.scheduled_local_input(player).code if owned else session._scheduled_local_input_code(player))
+				samples.append(Time.get_ticks_usec() - start)
+				for code: int in codes:
+					if code != expected:
+						_fail("local preflight observed incorrect sample readiness")
+						return {}
+			measurements["owned" if owned else "scalar"] = _summary(samples, expected * iterations * players, iterations * players)
+		result["retained" if staged else "missing"] = measurements
+	return result
 
 
 # The maximum rollback: the remote inputs arrive one window late, so every
@@ -415,6 +466,16 @@ func _matches_baseline(report: Dictionary) -> bool:
 		return false
 	for entry: Dictionary in report["reports"]:
 		var players: int = entry["players"]
+		for state: String in ["missing", "retained"]:
+			if not entry.local_preflight.has(state):
+				return false
+			for path: String in ["owned", "scalar"]:
+				if not entry.local_preflight[state].has(path):
+					return false
+				var measurement: Dictionary = entry.local_preflight[state][path]
+				var expected: int = Types.Code.MISSING_LOCAL_INPUT if state == "missing" else Types.Code.OK
+				if measurement.iterations != 10000 * players or measurement.checksum != expected * 10000 * players:
+					return false
 		if entry["driver"]["checksum"] != BASELINE["steady"][players]:
 			return false
 		for name: String in ["steady", "rollback", "codec"]:

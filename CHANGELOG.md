@@ -404,6 +404,8 @@
 
 ### Improved
 
+- Improve local-input preflight by avoiding copied retained samples during driver and peer validation. Public sample reads keep their ownership guarantees.
+
 - Improve driver step and recovery allocation by reusing the completed request batch's status snapshot.
 
 - Improve multi-peer input processing by reading receipt frames without copying retained packet history. Public status snapshots keep their ownership guarantees.

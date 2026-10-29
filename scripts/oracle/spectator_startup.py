@@ -30,7 +30,8 @@ def expected_rust(traces):
         {'capacity': trace['capacity'], 'preplay': trace['preplay'], 'speed': trace['speed'],
          'observations': trace['service_observations'], 'cycles': trace['cycles'], 'transcript': trace['transcript'],
          **({'delay': trace['delay']} if 'delay' in trace else {}),
-         **({'players': trace['players']} if 'players' in trace else {})}
+         **({'players': trace['players']} if 'players' in trace else {}),
+         **({'reserved_slot': trace['reserved_slot']} if 'reserved_slot' in trace else {})}
         for trace in traces]}
 
 

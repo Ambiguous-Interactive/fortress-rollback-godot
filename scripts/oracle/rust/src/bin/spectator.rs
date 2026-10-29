@@ -37,12 +37,12 @@ fn observe(viewer: &fortress_rollback::SpectatorSession<Profile>, speed: usize, 
     json!({"current": viewer.current_frame().as_i32(), "backlog": backlog,
         "advice": std::cmp::min(backlog.saturating_sub(delay), if backlog.saturating_sub(delay) > 1 { speed } else { 1 }), "catchup": backlog.saturating_sub(delay) > 1})
 }
-fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool, players: usize, roster: bool, statuses: bool) -> Result<Value, String> {
+fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool, players: usize, roster: bool, statuses: bool, reserved_slot: usize) -> Result<Value, String> {
     let queues = (0..(if statuses { 3 } else { 2 })).map(|_| Arc::new(Mutex::new(Queue::default()))).collect::<Vec<_>>();
     let mut host_builder = builder(1701, players);
     if statuses { host_builder = host_builder.with_max_prediction_window(1); }
     for player in 0..players {
-        if statuses && player == players - 1 {
+        if statuses && player == reserved_slot {
             #[cfg(feature = "spectator-status")]
             { host_builder = host_builder.add_reserved_player("2".into(), player.into()).unwrap(); }
             #[cfg(not(feature = "spectator-status"))]
@@ -70,7 +70,7 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
             if host.current_frame().as_i32() == frame as i32 + 1 { break; }
             if attempt == 2 { return Err("host failed to advance within bounded local-input retries".into()); }
             for player in 0..players {
-                if statuses && player == players - 1 { continue; }
+                if statuses && player == reserved_slot { continue; }
                 let input = if roster { ((frame * 17 + player * 31 + frame * player) % 256) as u8 }
                     else if player == 0 { (frame % 2) as u8 } else { 0 };
                 host.add_local_input(player.into(), input).map_err(|e| format!("{e:?}"))?;
@@ -98,7 +98,7 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
                     if let FortressRequest::AdvanceFrame { inputs } = request {
                         let mut row = vec![transcript.len() as i32];
                         for (player, (input, status)) in inputs.into_iter().enumerate() {
-                            let expected = if statuses && player == players - 1 { InputStatus::Disconnected } else { InputStatus::Confirmed };
+                            let expected = if statuses && player == reserved_slot { InputStatus::Disconnected } else { InputStatus::Confirmed };
                             if status != expected { return Err(format!("unexpected spectator status at slot {player}: {status:?}")); }
                             row.push(i32::from(input));
                             if statuses {
@@ -122,6 +122,7 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
         "observations": observations, "cycles": cycles, "transcript": transcript});
     if delayed { result["delay"] = json!(delay); }
     if roster { result["players"] = json!(players); }
+    if statuses { result["reserved_slot"] = json!(reserved_slot); }
     Ok(result)
 }
 fn main() {
@@ -131,10 +132,11 @@ fn main() {
         let roster = statuses || std::env::args().any(|argument| argument == "--roster");
         let delayed = roster || std::env::args().any(|argument| argument == "--delayed");
         for players in if roster { (2..=8).collect::<Vec<_>>() } else { vec![2] } {
+        for reserved_slot in if statuses { std::iter::once(players - 1).chain(0..players - 1).collect::<Vec<_>>() } else { vec![players - 1] } {
         for preplay in [true, false] { for capacity in if delayed { [4, 5] } else { [2, 3] } { for speed in [1, 2] {
             let delay = if delayed { if preplay { 1 } else { capacity - 1 } } else { 0 };
-            traces.push(run(capacity, preplay, speed, delay, delayed, players, roster, statuses)?);
-        } } } }
+            traces.push(run(capacity, preplay, speed, delay, delayed, players, roster, statuses, reserved_slot)?);
+        } } } } }
         Ok(traces)
     })();
     match result { Ok(value) => println!("{}", json!({"format": 1, "traces": value})),

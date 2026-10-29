@@ -3,9 +3,22 @@ extends "res://tests/oracle/replay_session_trace.gd"
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
-	if args.size() != 1 or args[0] not in [
-		"--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral", "--remote-recording-long", "--remote-recording-neutral-long"
-	]:
+	if (
+		args.size() != 1
+		or (
+			args[0]
+			not in [
+				"--remote-recording-asymmetric",
+				"--remote-recording-asymmetric-neutral",
+				"--remote-recording-asymmetric-withhold",
+				"--remote-recording",
+				"--remote-recording-withhold",
+				"--remote-recording-neutral",
+				"--remote-recording-long",
+				"--remote-recording-neutral-long"
+			]
+		)
+	):
 		_fail("expected remote recording mode")
 		return
 	var sessions: Array[Session] = []
@@ -13,8 +26,10 @@ func _initialize() -> void:
 	var drivers: Array[Driver] = []
 	var services: Array[Array] = [[], []]
 	var deliveries: Array[Dictionary] = []
-	var neutral: bool = args[0].begins_with("--remote-recording-neutral")
-	var rounds: int = 257 if args[0].ends_with("-long") else 9
+	var neutral: bool = args[0].contains("neutral")
+	var asymmetric: bool = args[0].contains("asymmetric")
+	var received: Array[int] = [-1, -1]
+	var rounds: int = 257 if args[0].ends_with("-long") or asymmetric else 9
 	for peer: int in 2:
 		var config: Config = Config.new()
 		config.input_width = 4
@@ -44,7 +59,10 @@ func _initialize() -> void:
 			var step_code: int = drivers[peer].step(round, samples).code
 			if step_code != Types.Code.OK:
 				if step_code == Types.Code.PREDICTION_STALL and round == 4 and games[peer].state[0] == 4:
-					_fail("remote prediction-window stall: round=4 code=PREDICTION_STALL(3) frame=4")
+					if asymmetric:
+						_fail("asymmetric prediction-window stall: peer=%d round=4 frames=[%d,%d]" % [peer, games[0].state[0], games[1].state[0]])
+					else:
+						_fail("remote prediction-window stall: round=4 code=PREDICTION_STALL(3) frame=4")
 				else:
 					_fail("unexpected remote advance failure: %d" % step_code)
 				return
@@ -52,6 +70,19 @@ func _initialize() -> void:
 			for index: int in range(first, games[peer].records.size()):
 				requests.append(games[peer].records[index].kind)
 			services[peer].append({"round": round, "before": before, "after": int(games[peer].state[0]), "requests": requests})
+		if asymmetric:
+			for peer: int in 2:
+				if round % (peer + 2) != peer + 1 or (peer == 1 and args[0].ends_with("-withhold")):
+					continue
+				var count: int = 0
+				for frame: int in range(received[peer] + 1, round + 1):
+					if sessions[peer].receive_input(1 - peer, frame, _sample(1 - peer, frame, neutral)).code != Types.Code.OK:
+						_fail("asymmetric receipt failed")
+						return
+					count += 1
+				received[peer] = round
+				deliveries.append({"round": round, "peer": peer, "rows": count})
+			continue
 		if round % 2 == 1 and args[0] != "--remote-recording-withhold":
 			var delivered_rows: int = 0
 			for peer: int in 2:
@@ -61,6 +92,24 @@ func _initialize() -> void:
 						return
 					delivered_rows += 1
 			deliveries.append({"round": round, "rows": delivered_rows})
+	var recovery: Array[Dictionary] = []
+	if asymmetric:
+		for peer: int in 2:
+			var count: int = 0
+			for frame: int in range(received[peer] + 1, rounds):
+				if sessions[peer].receive_input(1 - peer, frame, _sample(1 - peer, frame, neutral)).code != Types.Code.OK:
+					_fail("asymmetric final receipt failed")
+					return
+				count += 1
+			var first: int = games[peer].records.size()
+			var code: int = drivers[peer].recover(rounds).code
+			if code != Types.Code.OK:
+				_fail("asymmetric recovery failed: %d" % code)
+				return
+			var requests: Array[String] = []
+			for index: int in range(first, games[peer].records.size()):
+				requests.append(games[peer].records[index].kind)
+			recovery.append({"peer": peer, "rows": count, "before": rounds, "after": int(games[peer].state[0]), "requests": requests})
 	var peers: Array[Dictionary] = []
 	for peer: int in 2:
 		var recording: Replay = sessions[peer].replay()
@@ -96,7 +145,10 @@ func _initialize() -> void:
 				"playback": playback
 			}
 		)
-	print("FORTRESS_REPLAY_RESULT " + JSON.stringify({"format": 1, "peers": peers, "deliveries": deliveries}))
+	var result: Dictionary = {"format": 1, "peers": peers, "deliveries": deliveries}
+	if asymmetric:
+		result.recovery = recovery
+	print("FORTRESS_REPLAY_RESULT " + JSON.stringify(result))
 	quit(0)
 
 

@@ -115,6 +115,8 @@ A benchmark is a test of a measurement, and it fails like a test.
    exercising the path still reports a number. Assert the state the workload
    must reach, such as the last frame or the correction count, and exit
    non-zero when it does not get there.
+   Initialize observation buffers with a value outside the success domain;
+   zero-filled slots can hide skipped operations when zero means success.
 3. **Compare the result with a published baseline.** The canonical checksum
    is the equivalence proof: it must be identical before and after the
    change, on every pinned engine.
