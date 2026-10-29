@@ -26,10 +26,29 @@ Historical source discrepancy evidence remains valid and is not retired.
 
 ## Verification
 
-Focused engine, source and mutation evidence is recorded in the ignored session
-logs. Final source-bound probes, full suites, fresh adversarial reviews and CI
-must pass before delivery. Harness regeneration and integrity checks accompany
-this change; no generated files are hand-edited.
+Focused engine, source and mutation checks in ignored session logs are local-only
+observations, not shared delivery evidence. Final source-bound probes, full suites,
+fresh adversarial reviews and current-head CI remain pending delivery validation.
+
+Reproduce the source-bound gates with each pinned engine from `docs/reference/pins.json`:
+
+```sh
+make replay-probes GODOT=/path/to/pinned/godot
+make spectator-model GODOT=/path/to/pinned/godot
+```
+
+The [replay guide](../../docs/oracle-replay.md) describes the receipt at
+`.cache/reference/results/replay/replay.json`. Its `source_sha256`, engine and
+binary hashes, upstream revision and lockfile hash bind the executed sources and tools.
+The [spectator guide](../../docs/spectators.md) describes the gate producing
+`.cache/reference/results/spectator-model/receipt.json`. Its `source_sha256` and
+`runtime` engine hash, workload observations and Rust binary hashes bind that witness.
+These commands generate local receipts; completed CI artifacts must establish delivery
+validation. A verification handoff must also retain the selected inventory, phase
+and terminal child exit status, as required by the
+[infrastructure guidance](../skills/testing/references/infrastructure.md).
+Harness regeneration and integrity checks must pass before delivery; no generated
+files are hand-edited.
 
 ## Outcome
 
