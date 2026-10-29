@@ -219,6 +219,8 @@ Keep engine-version-specific syntax out of the Godot 4.3-compatible core.
 | `FortressTransport` | Bounded nonblocking send/receive with identity and backpressure |
 
 Driver and expert API must never implement separate rollback algorithms.
+Compare their ordered callbacks, notifications and canonical history through
+partial publication, retained-input retries and runtime input-delay changes.
 Represent save/load/advance requests and player input statuses explicitly.
 Use typed statuses to distinguish prediction stalls/not-ready from fatal errors.
 Document frame conventions and request completion before implementing storage.

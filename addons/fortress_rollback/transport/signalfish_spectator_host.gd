@@ -192,10 +192,10 @@ func poll(now_us: int) -> Types.Result:
 	if _busy or now_us < 0 or now_us < _last_poll:
 		result.code = Code.INVALID_ARGUMENT
 		return result
-	_last_poll = now_us
 	if _host._mutation_code() == S.Code.BUSY:
 		result.code = Code.BACKPRESSURE
 		return result
+	_last_poll = now_us
 	var revision: int = _revision
 	_busy = true
 	var blocked: bool = false

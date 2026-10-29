@@ -207,6 +207,10 @@
 
 ### Fixed
 
+- Fix spectator publication rejecting valid service times after a poll was deferred by an active host request.
+
+- Fix replay prefix arithmetic and checksum reads trusting invalid recording dimensions. Malformed recordings remain unavailable for export.
+
 - Fix input reads with missing or unknown status metadata. Malformed constructed views now return `INVALID_CONFIGURATION` and preserve caller buffers.
 
 - Fix replay failure diagnostics for missing or incomplete input digests. Playback and paused inspection identify absent evidence and preserve the computed row digest.

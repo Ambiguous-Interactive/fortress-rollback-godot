@@ -598,7 +598,9 @@ sends game data.
 Call `publication.poll(now_us)` with monotonic microseconds. Each poll bounds SDK
 send attempts and socket buffering. Refused rows retain their exact bytes until
 transport acceptance; missing overwritten history reports `HISTORY_UNAVAILABLE`
-in `peer_code`. An SDK buffer getter that opens a host request defers publication
+in `peer_code`. A host request already active at entry returns `BACKPRESSURE`
+without accepting the supplied clock; complete it and resume from the last accepted service time.
+An SDK buffer getter that opens a host request defers publication
 with `BACKPRESSURE`; complete the request, then retry at the same clock time.
 No OFFER, row or END is sent during that request. Due keepalives take turns with refused ROW or END packets, including with one
 send attempt per poll. A refused heartbeat yields the next attempt to the payload.

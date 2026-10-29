@@ -322,11 +322,13 @@ func inputs(frame: int) -> Types.FrameInputs:
 	return Types.FrameInputs.new(bytes, statuses)
 
 
-## Empty when no state checksum was recorded at this boundary. Version 6 also permits frame_count().
+## Empty for invalid dimensions or when no state checksum was recorded. Version 6 also permits frame_count().
 func checksum(frame: int) -> PackedByteArray:
+	if frame < 0 or _format_version not in [4, FORMAT_VERSION, TERMINAL_VERSION] or not valid_shape(_players, _width, _frames, _format_version):
+		return PackedByteArray()
 	if frame == _frames:
 		return _terminal_checksum.duplicate() if _format_version == TERMINAL_VERSION and _terminal_checksum.size() == CHECKSUM_BYTES else PackedByteArray()
-	if frame < 0 or frame >= _frames or frame >= _flags.size() or _flags[frame] != FLAG_CHECKSUM:
+	if frame >= _frames or frame >= _flags.size() or _flags[frame] != FLAG_CHECKSUM:
 		return PackedByteArray()
 	if _checksums.size() < (frame + 1) * CHECKSUM_BYTES:
 		return PackedByteArray()
@@ -425,8 +427,11 @@ func owned_copy() -> RefCounted:
 ## Trimming a captured v6 recording retains a recorded checksum at the new final boundary,
 ## when present. Historical versions and absent boundary evidence retain their original limits.
 ## Missing backing bytes remain missing; a prefix cannot fabricate gameplay or validation evidence.
+## Invalid dimensions or formats return an unchanged owned copy, which remains invalid for playback/export.
 func owned_prefix(frames: int) -> RefCounted:
 	var copy: RefCounted = owned_copy()
+	if _format_version not in [4, FORMAT_VERSION, TERMINAL_VERSION] or not valid_shape(_players, _width, _frames, _format_version):
+		return copy
 	copy._frames = clampi(frames, 0, _frames)
 	copy._inputs.resize(mini(copy._inputs.size(), copy._frames * _players * _width))
 	copy._statuses.resize(mini(copy._statuses.size(), copy._frames * _players))

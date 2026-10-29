@@ -18,6 +18,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		_captured_prefix_evidence(context)
 	elif name == "incomplete_prefix_storage":
 		_incomplete_prefix_storage(context)
+		_invalid_prefix_dimensions(context)
 	elif name == "incomplete_prefix_digests":
 		_incomplete_prefix_digests(context)
 	else:
@@ -196,3 +197,26 @@ func _incomplete_terminal_evidence(context: RefCounted) -> void:
 				var valid: bool = available if version == Replay.TERMINAL_VERSION else retained_bytes == 0
 				context.equal(source.is_valid(), valid, "source validity still rejects malformed terminal storage")
 				context.equal(not prefix.to_bytes().is_empty(), valid, "full prefix cannot export malformed terminal storage")
+
+
+# Value: protects=malformed dimensions cannot overflow prefix arithmetic or publish invalid boundary evidence;
+# fails_when=copying a mutable recording trusts dimensions before multiplication; why_new=truncation tests use valid dimensions; seam=none
+func _invalid_prefix_dimensions(context: RefCounted) -> void:
+	for field: String in ["_players", "_width", "_frames", "_format_version"]:
+		for value: int in [-1, 0, 9223372036854775807]:
+			if field == "_frames" and value == 0:
+				continue
+			var source: Replay = Fixture.new()._recording(4, true)
+			source.set(field, value)
+			var inputs: PackedByteArray = source._inputs.duplicate()
+			var terminal: PackedByteArray = source._terminal_checksum.duplicate()
+			for frame: int in [-1, 0, source.frame_count()]:
+				context.equal(source.checksum(frame), PackedByteArray(), "invalid dimensions or format cannot claim a state boundary")
+			for boundary: int in [0, 1, 4, 9223372036854775807]:
+				var prefix: Replay = source.owned_prefix(boundary)
+				context.equal(prefix.is_valid(), false, "prefix cannot repair malformed source dimensions")
+				context.equal(prefix.to_bytes(), PackedByteArray(), "malformed dimensions cannot export a prefix")
+				context.equal(prefix.get(field), value, "rejected trim preserves invalid dimensions for validation")
+				context.equal(prefix._inputs, inputs, "rejected trim preserves original bounded input bytes")
+				context.equal(prefix._terminal_checksum, terminal, "rejected trim preserves original terminal storage without publishing it")
+			context.equal(source._inputs, inputs, "rejected prefix leaves original input storage unchanged")

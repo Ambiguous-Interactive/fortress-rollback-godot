@@ -15,10 +15,19 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["two_peers", "multiple_local_slots", "eight_peers", "observer_controls", "partial_publication", "retained_retry"])
+	return PackedStringArray(["two_peers", "multiple_local_slots", "eight_peers", "observer_controls", "partial_publication", "retained_retry", "runtime_delay"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "runtime_delay":
+		_partial_publication(context, false, true, false, true)
+		var collector: RefCounted = Collector.new(context.seed)
+		_partial_publication(collector, false, true, false, true, true)
+		context.equal(collector.failures.is_empty(), false, "omitted delayed ADVANCE is detected")
+		if not collector.failures.is_empty():
+			context.equal(collector.failures[0].label, "same callbacks through runtime delay correction", "omitted delayed ADVANCE fails at ordered dispatch")
+		context.finish()
+		return
 	if name == "retained_retry":
 		_partial_publication(context, false, true)
 		_partial_publication(context, false, true, true)
@@ -315,7 +324,9 @@ func _manual(peer: Peer, game: RefCounted, now_us: int, samples: Array[Driver.Lo
 
 # Value: protects=expert/driver parity after one link accepts a sample; fails_when=refusal loses or republishes it;
 # why_new=delivery-loss parity never fills publication capacity; seam=none
-func _partial_publication(context: RefCounted, skip_advance: bool = false, retained: bool = false, multiple: bool = false) -> void:
+func _partial_publication(
+	context: RefCounted, skip_advance: bool = false, retained: bool = false, multiple: bool = false, runtime_delay: bool = false, skip_delay_advance: bool = false
+) -> void:
 	var fixture: RefCounted = Fixture.new()
 	var count: int = 6 if multiple else 3
 	var driven: Dictionary = fixture._build(context, count, 0, multiple, 1)
@@ -357,6 +368,11 @@ func _partial_publication(context: RefCounted, skip_advance: bool = false, retai
 		context.equal(driven.games[0].game.frame, 1, "refused publication invokes no new game callback")
 		context.bytes_equal(driven.peers[0].scheduled_local_input(0).bytes, _sample(0, 1), 1, "driver retains original partially published sample")
 		context.bytes_equal(expert.peers[0].scheduled_local_input(0).bytes, _sample(0, 1), 1, "expert retains original partially published sample")
+		if runtime_delay:
+			for mesh: Dictionary in [driven, expert]:
+				context.equal(mesh.peers[0].set_input_delay(0, 1), Types.Code.NETWORK_BACKPRESSURE, "partial publication refuses a delay raise")
+				context.equal(mesh.peers[0].input_delay(0), 0, "refused raise preserves scheduling")
+				context.bytes_equal(mesh.peers[0].scheduled_local_input(0).bytes, _sample(0, 1), 1, "refused raise preserves staged sample")
 		var published: Array[Dictionary] = fixture._drain(driven)
 		context.equal(published, fixture._drain(expert), "same partial publication packet bytes and destinations")
 		context.equal(published.size(), 1 if attempt == 0 else 0, "accepted link publishes once across retries")
@@ -434,6 +450,9 @@ func _partial_publication(context: RefCounted, skip_advance: bool = false, retai
 		)
 	)
 
+	if runtime_delay:
+		_runtime_delay(context, fixture, driven, expert, completed, skip_delay_advance)
+
 
 func _partial_publication_control(context: RefCounted) -> void:
 	var collector: RefCounted = Collector.new(context.seed)
@@ -447,3 +466,82 @@ func _partial_publication_control(context: RefCounted) -> void:
 		["same complete callbacks and canonical states", "same continuing canonical state", "expert retry matches independent input history"],
 		"only intended partial-publication comparisons fail"
 	)
+
+
+# Value: protects=driver/expert scheduling after a refused raise; fails_when=retained sample moves twice;
+# why_new=fixed-delay parity never changes scheduling while publication is partial; seam=none
+func _runtime_delay(context: RefCounted, fixture: RefCounted, driven: Dictionary, expert: Dictionary, completed: Array[Dictionary], skip_advance: bool = false) -> void:
+	var pending: Array[Dictionary] = completed.duplicate()
+	for mesh: Dictionary in [driven, expert]:
+		mesh.now = 101
+	_deliver(context, fixture, driven, expert, pending, false)
+	# Finish the other endpoints' frame one and release their last pending publications.
+	for index: int in range(1, 3):
+		context.equal(driven.peers[index].step(101, _inputs(driven, index)).code, Types.Code.OK, "remaining driver endpoint advances")
+		context.equal(_manual(expert.peers[index], expert.games[index], 101, _inputs(expert, index), true).code, Types.Code.OK, "remaining expert endpoint advances")
+	for round: int in range(3):
+		_collect(context, fixture, driven, expert, pending)
+		_deliver(context, fixture, driven, expert, pending, false)
+	_recover(context, driven, expert)
+	var prior_rollbacks: Array[int] = []
+	for peer: Peer in driven.peers:
+		prior_rollbacks.append(peer.statistics().rollback_count)
+	for mesh: Dictionary in [driven, expert]:
+		context.equal(mesh.peers[0].set_input_delay(0, 1), Types.Code.OK, "raise accepted after publication pressure drains")
+		context.equal(mesh.peers[0].input_delay(0), 1, "one accepted raise changes delay once")
+		context.equal(mesh.peers[0].scheduled_local_input(0).code, Types.Code.MISSING_LOCAL_INPUT, "raise needs no fabricated local sample")
+	_collect(context, fixture, driven, expert, pending)
+	context.equal(pending.size(), 2, "one raise packet per remote")
+	var limits: Protocol.Limits = Protocol.Limits.new()
+	limits.player_count = 3
+	limits.input_width = 4
+	for packet: Dictionary in pending:
+		var decoded: Protocol.Result = Codec.decode(packet.bytes, limits)
+		context.equal(decoded.code, Protocol.Code.OK, "delay raise packet decodes")
+		if decoded.code == Protocol.Code.OK:
+			context.equal([decoded.message.start_frame, decoded.message.frame_count], [2, 1], "raise adds exactly the next scheduled row")
+			context.bytes_equal(decoded.message.data, _sample(0, 1), 2, "raise repeats retained original input exactly")
+	_deliver(context, fixture, driven, expert, pending, false)
+	for round: int in range(2):
+		_collect(context, fixture, driven, expert, pending)
+		_deliver(context, fixture, driven, expert, pending, false)
+	var original: RefCounted = Reference.new(3, 2)
+	for frame: int in range(4):
+		var row: Array[Dictionary] = []
+		for player: int in range(3):
+			var sample_frame: int = frame if player != 0 or frame < 2 else frame - 1
+			row.append({"player": player, "bytes": _sample(player, sample_frame).hex_encode(), "status": "confirmed"})
+		context.equal(original.advance(row), "", "independent raised-delay original history")
+		if frame < 2:
+			continue
+		for mesh: Dictionary in [driven, expert]:
+			mesh.now += 200000
+		for index: int in range(3):
+			context.equal(driven.peers[index].step(driven.now, _inputs(driven, index)).code, Types.Code.OK, "driver continues after accepted raise")
+			context.equal(
+				_manual(expert.peers[index], expert.games[index], expert.now, _inputs(expert, index), true, false, skip_advance and frame == 2).code,
+				Types.Code.OK,
+				"expert continues after accepted raise"
+			)
+		for round: int in range(3):
+			_collect(context, fixture, driven, expert, pending)
+			_deliver(context, fixture, driven, expert, pending, false)
+		_recover(context, driven, expert)
+		for round: int in range(2):
+			for mesh: Dictionary in [driven, expert]:
+				mesh.now += 200000
+			_recover(context, driven, expert)
+			_collect(context, fixture, driven, expert, pending)
+			_deliver(context, fixture, driven, expert, pending, false)
+			_recover(context, driven, expert)
+		for index: int in range(3):
+			context.equal(driven.peers[index].status().confirmed_frame >= frame, true, "changed-delay frame actually mesh-confirms")
+			context.equal(driven.peers[index].status().pending_rollback_frame, -1, "changed-delay frame finishes correction")
+			context.equal(driven.games[index].requests, expert.games[index].requests, "same callbacks through runtime delay correction")
+			context.bytes_equal(driven.games[index].game.bytes(), original.bytes(), frame + 1, "driver raised-delay canonical boundary")
+			context.bytes_equal(expert.games[index].game.bytes(), original.bytes(), frame + 1, "expert raised-delay canonical boundary")
+			context.equal(driven.peers[index].drain_events(), expert.peers[index].drain_events(), "same events after runtime delay correction")
+			context.equal(driven.peers[index].drain_transitions(), expert.peers[index].drain_transitions(), "same transitions after runtime delay correction")
+	for index: int in range(3):
+		context.equal(driven.peers[index].statistics().rollback_count > prior_rollbacks[index], true, "every endpoint actually corrects after the delay raise")
+	context.equal(driven.notices, expert.notices, "same completion notifications through runtime delay correction")
