@@ -122,7 +122,8 @@ EXPECTED['res://tests/unit/test_peer_drop_history.gd'] = {
 EXPECTED['res://tests/unit/test_history_backfill.gd'] = {
     'overlap_suffix', 'atomic_refusal', 'wrap_floor', 'prediction', 'session_fences', 'session_repair'}
 EXPECTED['res://tests/unit/test_driver_external_parity.gd'] = {'immediate', 'delayed_bursts'}
-EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls', 'partial_publication', 'retained_retry'}
+EXPECTED['res://tests/unit/test_driver_peer_parity.gd'] = {
+    'two_peers', 'multiple_local_slots', 'eight_peers', 'observer_controls', 'partial_publication', 'retained_retry', 'runtime_delay'}
 EXPECTED['res://tests/unit/test_driver_drop_parity.gd'] = {
     'confirmed_departure', 'predicted_departure', 'repair_control', 'certification_control', 'withheld_certificate'}
 EXPECTED['res://tests/unit/test_peer_drop_backfill.gd'] = {

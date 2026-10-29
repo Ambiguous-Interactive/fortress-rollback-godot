@@ -346,6 +346,7 @@ finalization to verify the new endpoint. A shorter owned prefix of a captured v6
 pre-input checksum at its new endpoint as terminal evidence. Without that checksum it falls back to v5;
 the original later endpoint's checksum never moves to another frame.
 Prefixes only trim retained input, status, flag, checksum and digest bytes; missing storage is never padded.
+Invalid recording dimensions or versions leave prefix copies invalid and expose no state checksum.
 Incomplete input, status, flag or checksum storage prevents export and playback configuration. Missing input
 digests prevent portable export; playback stops at the first incomplete digest row. A captured prefix uses
 its endpoint checksum only when the complete original checksum remains present.

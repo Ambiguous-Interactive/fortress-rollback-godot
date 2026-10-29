@@ -418,23 +418,27 @@ func _player_coexistence(context: RefCounted) -> void:
 	_stop(fixture)
 
 
-# Value: protects=host request guard; fails_when=outstanding requests permit SDK sends; why_new=core tests omit SDK order; seam=SDK API
+# Value: protects=host request guard and retry clocks; fails_when=refused requests send or consume time; why_new=core tests omit SDK order; seam=SDK API
 func _active_requests(context: RefCounted) -> void:
 	_getter_requests(context)
-	var fixture: Dictionary = _fixture(context)
-	fixture.helper._step(context, fixture.driver, 0)
-	for player: int in range(2):
-		fixture.host.submit_local_input(player, 1, Fixture.new()._row(1)[player])
-	var batch: S.Result = fixture.host.begin_advance()
-	context.equal(batch.code, S.Code.READY, "host has an outstanding expert request")
-	var attempts: int = fixture.client.attempted.size()
-	context.equal(fixture.relay.poll(1).code, HostRelay.Code.BACKPRESSURE, "outstanding host requests defer SDK sends")
-	context.equal(fixture.client.attempted.size(), attempts, "active host cannot enter SDK callback")
-	context.equal(fixture.relay.finish_host().code, HostRelay.Code.BACKPRESSURE, "active host cannot freeze publication")
-	var request: S.Request = batch.batch.next_request()
-	context.equal(fixture.host.complete_request(request.batch_id, request.request_id, true).code, S.Code.OK, "release host request")
-	context.equal(fixture.relay.poll(1).sent, 2, "original rows publish after request completes")
-	_stop(fixture)
+	for newer_clock: bool in [false, true]:
+		var fixture: Dictionary = _fixture(context)
+		fixture.helper._step(context, fixture.driver, 0)
+		for player: int in range(2):
+			fixture.host.submit_local_input(player, 1, Fixture.new()._row(1)[player])
+		var batch: S.Result = fixture.host.begin_advance()
+		context.equal(batch.code, S.Code.READY, "host has an outstanding expert request")
+		var attempts: int = fixture.client.attempted.size()
+		context.equal(fixture.relay.poll(100 if newer_clock else 1).code, HostRelay.Code.BACKPRESSURE, "outstanding host requests defer SDK sends without accepting the clock")
+		context.equal(fixture.client.attempted.size(), attempts, "active host cannot enter SDK callback")
+		context.equal(fixture.relay.finish_host().code, HostRelay.Code.BACKPRESSURE, "active host cannot freeze publication")
+		var request: S.Request = batch.batch.next_request()
+		context.equal(fixture.host.complete_request(request.batch_id, request.request_id, true).code, S.Code.OK, "release host request")
+		var resumed: RefCounted = fixture.relay.poll(1)
+		context.equal(resumed.code, HostRelay.Code.OK, "refused request service preserves the last accepted clock")
+		context.equal(resumed.sent, 2, "original rows publish after request completes")
+		context.equal(fixture.relay.poll(0).code, HostRelay.Code.INVALID_ARGUMENT, "successful service still enforces monotonic clocks")
+		_stop(fixture)
 
 
 # Value: protects=SDK getters cannot send through newly active host requests; fails_when=BUSY is ignored after callbacks;
