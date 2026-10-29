@@ -283,6 +283,8 @@ schedule but causes no misprediction: it must have no LOAD and no source replay
 events. Withholding all receipts must fail at the prediction bound rather than
 publish a success receipt. Twelve additional controls reject omitted correction,
 altered original input/state, altered recorded rows/checksums and corrupt playback.
+A duplicate-receipt control preserves all neutral gameplay evidence while requiring
+the measured delivery count to reject the extra successful calls.
 
 This experiment exposes a pinned-source difference. The Rust recording retains
 the first, speculative checksum at odd boundaries 1, 3, 5 and 7. Those rows later

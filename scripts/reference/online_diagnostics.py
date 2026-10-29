@@ -53,7 +53,10 @@ def validate_download(value, trace_enabled=False):
         raise ValueError('diagnostic engine identity missing')
     for field in ('current_frame', 'confirmed_frame', 'failure_frame', 'pending_rollback_frame', 'frames_ahead'):
         integer(report[field], -2**31, 2**31 - 1)
-    integer(report.get('failure_kind', -1), -1, 2)
+    failure_kind = report.get('failure_kind', -1)
+    integer(failure_kind, -1, 2)
+    if failure_kind >= 0 and report['failure_frame'] < 0:
+        raise ValueError('diagnostic callback failure frame missing')
     for field in ('lifecycle', 'reason'):
         integer(report[field], 0, 255)
     counts = report['statistics']

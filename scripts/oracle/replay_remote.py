@@ -1,6 +1,8 @@
 """Source-bound remote recording with real late corrections and an unchanged-input control."""
 import copy
 import json
+import tempfile
+from pathlib import Path
 
 from replay_launch import advance, compare, expected as playback_expected, state_bytes
 
@@ -102,6 +104,39 @@ def controls(observed):
     return names
 
 
+
+def delivery_control(engine, root, output, execute):
+    """Duplicate actual idempotent receipts without changing gameplay; the measured inventory must reject them."""
+    original = (root / 'tests/oracle/replay_remote_trace.gd').read_text()
+    loop = 'for frame: int in range(round - 1, round + 1):'
+    if original.count(loop) != 1:
+        raise ValueError('remote delivery control loop missing or ambiguous')
+    scratch_root = root / '.cache/scratch'
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='replay-remote-delivery-', dir=scratch_root) as directory:
+        scratch = Path(directory) / 'control.gd'
+        scratch.write_text(original.replace(loop, 'for frame: int in [round - 1, round, round]:'))
+        command = [str(engine), '--headless', '--path', str(root), '--script', 'res://' + scratch.relative_to(root).as_posix(),
+                   '--', '--remote-recording-neutral']
+        stdout, stderr = execute(command, output / 'remote-duplicate-delivery-godot.log')
+        lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines() if line.startswith('FORTRESS_REPLAY_RESULT ')]
+        if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
+            raise ValueError('invalid duplicate-delivery control completion')
+        actual = json.loads(lines[0])
+        wanted = expected(False, True)
+        for delivery in wanted['deliveries']:
+            delivery['rows'] = 6
+        compare(actual, wanted, 'remote.duplicate.observed')
+        try:
+            validate(actual, False, True)
+        except ValueError as error:
+            if not str(error).startswith('remote.godot.deliveries[0].rows:'):
+                raise ValueError(f'wrong duplicate-delivery rejection: {error}') from error
+        else:
+            raise ValueError('duplicate delivery observer accepted')
+    return ['godot-measured-duplicate-delivery']
+
+
 def observe(binary, engine, root, output, execute):
     combined = {}
     for neutral in (False, True):
@@ -141,4 +176,5 @@ def observe(binary, engine, root, output, execute):
             refused.append(runtime + '-withheld-receipts')
         else:
             raise ValueError(f'{runtime}: missing remote receipts did not stop gameplay')
-    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused)
+    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused,
+                delivery_controls=delivery_control(engine, root, output, execute))

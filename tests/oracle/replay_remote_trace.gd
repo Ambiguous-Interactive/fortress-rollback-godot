@@ -50,12 +50,14 @@ func _initialize() -> void:
 				requests.append(games[peer].records[index].kind)
 			services[peer].append({"round": round, "before": before, "after": int(games[peer].state[0]), "requests": requests})
 		if round % 2 == 1 and args[0] != "--remote-recording-withhold":
+			var delivered_rows: int = 0
 			for peer: int in 2:
 				for frame: int in range(round - 1, round + 1):
 					if sessions[peer].receive_input(1 - peer, frame, _sample(1 - peer, frame, neutral)).code != Types.Code.OK:
 						_fail("remote receipt failed")
 						return
-			deliveries.append({"round": round, "rows": 4})
+					delivered_rows += 1
+			deliveries.append({"round": round, "rows": delivered_rows})
 	var peers: Array[Dictionary] = []
 	for peer: int in 2:
 		var recording: Replay = sessions[peer].replay()

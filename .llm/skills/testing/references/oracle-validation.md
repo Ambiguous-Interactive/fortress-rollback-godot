@@ -46,6 +46,9 @@ differently; never weaken the Python integer schema to compensate. The productio
 session oracle's canonical scenario conversion protects this boundary.
 
 Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
+Measure delivery counts at successful operations, rather than emitting the expected inventory.
+Before accepting a mutation's named rejection, validate its exact changed value and type alongside unchanged state;
+an incorrect count or wrong type can reach the same error path as the intended fault.
 Distinguish a fabricated missing-history inventory from physical eviction. Advance real queues,
 verify the old frame tag is overwritten, and require the retained journal's exact original bytes.
 For injected packet loss, retain emission identities and reconcile emitted minus discarded packets with actual receipts.

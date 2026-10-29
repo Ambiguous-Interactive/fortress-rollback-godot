@@ -102,13 +102,21 @@ class DiagnosticDownloadTests(unittest.TestCase):
                     validate_download(value)
 
     def test_callback_failure_kind_is_bounded_and_explicit(self):
-        legacy = diagnostic_download()
-        legacy['report'].pop('failure_kind')
-        validate_download(legacy)
+        for frame in (-1, 0, 2**31 - 1):
+            legacy = diagnostic_download()
+            legacy['report'].pop('failure_kind')
+            legacy['report']['failure_frame'] = frame
+            validate_download(legacy)
         for kind in (-1, 0, 1, 2):
-            value = diagnostic_download()
-            value['report']['failure_kind'] = kind
-            validate_download(value)
+            for frame in (-2**31, -2, -1, 0, 2**31 - 1):
+                value = diagnostic_download()
+                value['report'].update(failure_kind=kind, failure_frame=frame)
+                with self.subTest(kind=kind, frame=frame):
+                    if kind >= 0 and frame < 0:
+                        with self.assertRaisesRegex(ValueError, 'callback failure frame missing'):
+                            validate_download(value)
+                    else:
+                        validate_download(value)
         for kind in (None, True, -2, 3, 1.0, 'save'):
             value = diagnostic_download()
             value['report']['failure_kind'] = kind
