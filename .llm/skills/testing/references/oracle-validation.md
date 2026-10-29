@@ -57,6 +57,8 @@ Distinguish a fabricated missing-history inventory from physical eviction. Advan
 verify the old frame tag is overwritten, and require the retained journal's exact original bytes.
 For injected packet loss, retain emission identities and reconcile emitted minus discarded packets with actual receipts.
 A later equal payload cannot prove the first emission was lost. Reject a clean trace relabeled as loss and a restored discarded receipt.
+Require prerequisite receipts before the decisions they enable in every compared runtime; a retry received only after COMMIT cannot prove recovery.
+Capture action order at actual publication and receive callbacks; later queue draining or reused emission counters cannot establish consumption order.
 Validate the complete operation identity against the agreed operation before comparing retry payloads; matching malformed identities are insufficient.
 When control packets forward another participant’s certificate, sender direction cannot identify its owner.
 Select acknowledgement-loss faults by the actual participant certificate too, and retain emission/delivery order
