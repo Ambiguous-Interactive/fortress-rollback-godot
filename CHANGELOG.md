@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `FrameInputs.input_status(player)` to read applied player status alongside reusable input buffers without creating an owned result.
+
 - Add failed callback names and frames to diagnostic downloads and the offline viewer.
 
 - Add replay input inspection showing the selected frame's recorded directions and confirmed or disconnected player statuses. Corrupt input rows are identified without displaying their values.
@@ -204,6 +206,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix input reads with missing or unknown status metadata. Malformed constructed views now return `INVALID_CONFIGURATION` and preserve caller buffers.
 
 - Fix replay failure diagnostics for missing or incomplete input digests. Playback and paused inspection identify absent evidence and preserve the computed row digest.
 

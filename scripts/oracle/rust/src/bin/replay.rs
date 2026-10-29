@@ -198,7 +198,8 @@ fn recording(case: RecordingCase, extract: bool) -> Result<Value, String> {
 
 fn main() -> Result<(), String> {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
-    if arguments.len() == 1 && ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral"].contains(&arguments[0].as_str()) {
+    if arguments.len() == 1 && ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral",
+        "--remote-recording-long", "--remote-recording-neutral-long"].contains(&arguments[0].as_str()) {
         println!("{}", remote::run(&arguments[0])?);
         return Ok(());
     }

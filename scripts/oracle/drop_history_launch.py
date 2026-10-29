@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare original-history recovery through donor-data and commit loss twice per engine."""
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -37,19 +38,30 @@ def parse_godot(stdout, stderr):
 
 def observation_controls(engine, output, source):
     controls = []
-    for status, observed_status in [('none', 'none'), ('predicted', 'predicted'), ('unknown', 'unknown:42')]:
+    for status, observed_status in [('none', 'none'), ('predicted', 'predicted'), ('unknown', None)]:
         result = subprocess.run([str(engine), '--headless', '--path', str(ROOT), '--script',
             'res://tests/oracle/drop_history_trace.gd', '--', '--observer-status', status],
             cwd=ROOT, env=rust_environment(), capture_output=True, text=True, encoding='utf-8', timeout=120)
         (output / f'observer-{status}.log').write_text(result.stdout + result.stderr)
         require(result.returncode == 1, 'observer control must refuse exported ' + status)
         godot = parse_godot(result.stdout, result.stderr)
-        require(godot['failures'] == [{'kind': 'equality', 'label': 'observed finalized export status',
-                                     'expected': 'confirmed', 'actual': observed_status}], 'observer control exact status diagnostic')
+        failure = {'kind': 'equality', 'label': 'observed finalized export status', 'expected': 'confirmed', 'actual': observed_status}
+        comparison_failure = 'drop history: Godot assertion failures'
+        if status == 'unknown':
+            # FrameInputs refuses the malformed row with INVALID_CONFIGURATION before exposing bytes or status.
+            failure = {'kind': 'equality', 'label': 'export actual finalized original input', 'expected': '0', 'actual': '6'}
+            comparison_failure = 'drop history: Godot original rows, statuses or canonical states'
+        require(godot['failures'] == [failure], 'observer control exact status diagnostic')
+        unaffected = copy.deepcopy(godot)
+        unaffected['failures'] = []
+        if status == 'unknown':
+            require(godot['survivors'][0]['rows'][0]['inputs'] == [], 'observer malformed row must not expose input bytes')
+            unaffected['survivors'][0]['rows'][0]['inputs'] = source['survivors'][0]['rows'][0]['inputs']
+        compare(source, unaffected)
         try:
             compare(source, godot)
         except ValueError as error:
-            require(str(error) == 'drop history: Godot assertion failures', 'observer control unrelated comparison failure')
+            require(str(error) == comparison_failure, 'observer control unrelated comparison failure')
         else:
             raise ValueError('drop history: observer control survived: ' + status)
         controls.append('observed_export_' + status)

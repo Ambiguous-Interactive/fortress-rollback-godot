@@ -3,7 +3,9 @@ extends "res://tests/oracle/replay_session_trace.gd"
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
-	if args.size() != 1 or args[0] not in ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral"]:
+	if args.size() != 1 or args[0] not in [
+		"--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral", "--remote-recording-long", "--remote-recording-neutral-long"
+	]:
 		_fail("expected remote recording mode")
 		return
 	var sessions: Array[Session] = []
@@ -11,7 +13,8 @@ func _initialize() -> void:
 	var drivers: Array[Driver] = []
 	var services: Array[Array] = [[], []]
 	var deliveries: Array[Dictionary] = []
-	var neutral: bool = args[0] == "--remote-recording-neutral"
+	var neutral: bool = args[0].begins_with("--remote-recording-neutral")
+	var rounds: int = 257 if args[0].ends_with("-long") else 9
 	for peer: int in 2:
 		var config: Config = Config.new()
 		config.input_width = 4
@@ -20,7 +23,7 @@ func _initialize() -> void:
 		config.check_distance = 0
 		config.max_prediction_frames = 4
 		config.max_snapshot_bytes = 16
-		config.replay_max_frames = 16
+		config.replay_max_frames = rounds
 		config.local_players = PackedInt32Array([peer])
 		config.storage_budget_bytes = config.required_storage_bytes()
 		var session: Session = Session.new()
@@ -33,7 +36,7 @@ func _initialize() -> void:
 		sessions.append(session)
 		games.append(game)
 		drivers.append(Driver.new(session, game))
-	for round: int in 9:
+	for round: int in rounds:
 		for peer: int in 2:
 			var first: int = games[peer].records.size()
 			var before: int = games[peer].state[0]

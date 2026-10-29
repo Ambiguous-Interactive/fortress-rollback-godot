@@ -100,7 +100,7 @@ EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'stepped_boundaries', 'paused_boundaries'})
 EXPECTED['res://tests/unit/test_spectator_model.gd'] = {
     'bounded_delivery_model', 'loss_and_conflict_model', 'transcript_mutation_control', 'caller_bounded_catchup_model'}
-EXPECTED['res://tests/unit/test_frame_inputs.gd'] = {'copy', 'validation', 'driver_parity'}
+EXPECTED['res://tests/unit/test_frame_inputs.gd'] = {'copy', 'validation', 'driver_parity', 'status', 'status_driver', 'malformed_statuses'}
 EXPECTED['res://tests/unit/test_input_queue.gd'] = {'delay', 'prediction', 'ring', 'validation', 'ownership', 'reclaim', 'reclaim_delay'}
 EXPECTED['res://tests/unit/test_spectator_status.gd'] = {'rows', 'wire_status', 'host_drop'}
 EXPECTED['res://tests/unit/test_replay_drop.gd'] = {
@@ -150,7 +150,7 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'control_lifetime', 'control_expiry', 'control_busy', 'control_row_pressure', 'reordered_recovery',
     'heartbeat_fairness', 'clean_tail_retries', 'post_completion', 'terminal_failures', 'getter_lifetime', 'configure_lifetime', 'obsolete_rows'}
 EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
-    'startup', 'canonical_playback', 'pressure', 'lifetimes', 'configuration', 'reentry', 'history_loss', 'player_coexistence', 'active_requests',
+    'startup', 'canonical_playback', 'corrected_drop_history', 'pressure', 'lifetimes', 'configuration', 'reentry', 'history_loss', 'player_coexistence', 'active_requests',
     'fair_liveness', 'finish_retry', 'callback_lifetimes', 'setup_callbacks'}
 EXPECTED['res://tests/unit/test_peer_session.gd'].add('scheduled_inputs')
 EXPECTED['res://tests/unit/test_replay_callbacks.gd'].add('failure_kinds')

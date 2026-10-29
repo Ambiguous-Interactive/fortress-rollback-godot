@@ -295,6 +295,20 @@ normalizing or hiding them. Godot records the repaired checksums and its decoded
 playback validates every boundary cleanly. Both original corrected histories
 match the independently calculated canonical prefix.
 
+The same gate retains those nine-frame cases and adds paired 257-frame changing-input
+and neutral-input runs. Each endpoint advances beyond two default 128-row queue capacities,
+executes every declared service turn, and exports exactly 256 finalized rows. The final speculative
+row remains private. Changing inputs require all 128 corrections at even boundaries 0 through 254;
+the neutral control requires no correction. Both decoded exports then run through actual replay.
+Every original request, input/status, saved byte and resulting state remains independently compared,
+including the history on both sides of queue reuse. Ten additional controls remove the correction
+at boundary 128 or change the original input, exported input, playback state or delivered count after reuse.
+Each must fail at its named observation; the short corpus cannot satisfy the long-run acceptance gate.
+The unchanged source's default 60-frame checksum schedule contributes two additional reports at delivery
+rounds 63, 123, 183 and 243. Exact delivery counts retain that traffic; it is not disabled or ignored.
+Both pins run every mode twice in fresh processes. This extends the existing two-peer delivery cadence;
+it does not qualify asymmetric delivery, coordinated-drop recording or browser source comparison.
+
 At the pinned revision, `P2PSession::advance_frame` assembles correction requests
 and then calls `record_confirmed_inputs` before the application executes those
 requests (`src/sessions/p2p_session.rs`, lines 3090–3134).
@@ -303,5 +317,5 @@ requests (`src/sessions/p2p_session.rs`, lines 3090–3134).
 replace the already exported checksum. The neutral control isolates this
 ordering from the serializer or replay comparator. This is a named source
 recording discrepancy tracked in [#253](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253),
-not proof of a Godot replay mismatch or complete remote recording parity. Longer/asymmetric delivery, peer drop, exported-browser source
+not proof of a Godot replay mismatch or complete remote recording parity. Asymmetric delivery, peer drop, exported-browser source
 comparison and the remaining release matrix stay open under #45.

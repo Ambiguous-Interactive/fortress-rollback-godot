@@ -41,6 +41,8 @@ class ObservedGame:
 		var row: Array[Dictionary] = []
 		for player: int in range(values.size()):
 			var input: S.InputResult = inputs.read(player)
+			if input.code != S.Code.OK:
+				return false
 			row.append({"bytes": input.bytes.hex_encode(), "status": status_name(input.status)})
 		if not super.simulate_frame(at, inputs):
 			return false
@@ -100,6 +102,8 @@ func observe(
 			for player: int in range(3 * _slots):
 				var input: Types.InputResult = row.read(player)
 				context.equal(input.code, Types.Code.OK, "export actual finalized original input")
+				if input.code != Types.Code.OK:
+					break
 				inputs.append(input.bytes.hex_encode())
 				var expected: int = Queue.Status.DISCONNECTED if player >= 2 * _slots and frame > 7 + missing_rows else Queue.Status.CONFIRMED
 				context.equal(ObservedGame.status_name(input.status), ObservedGame.status_name(expected), "observed finalized export status")

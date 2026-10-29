@@ -27,7 +27,8 @@ fn exchange(buffers: &[Arc<Mutex<Buffers>>]) -> usize {
 pub fn run(mode: &str) -> Result<Value, String> {
     let seed = u32::MAX;
     let withhold = mode == "--remote-recording-withhold";
-    let neutral = mode == "--remote-recording-neutral";
+    let neutral = mode.starts_with("--remote-recording-neutral");
+    let rounds = if mode.ends_with("-long") { 257 } else { 9 };
     let clock = Arc::new(Mutex::new(0u64));
     let origin = web_time::Instant::now();
     let mut sessions = Vec::new();
@@ -56,7 +57,7 @@ pub fn run(mode: &str) -> Result<Value, String> {
     let mut records = [Vec::new(), Vec::new()];
     let mut services = [Vec::new(), Vec::new()];
     let mut deliveries = Vec::new();
-    for round in 0..9 {
+    for round in 0..rounds {
         *clock.lock().unwrap() = (round + 1) * 1000;
         for peer in 0..2 {
             let before = states[peer][0];

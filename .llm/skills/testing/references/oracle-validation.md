@@ -10,6 +10,8 @@ integers as equal; it is not schema validation. Standalone executables also need
 their own complete schema and nonempty-work boundary.
 Preserve decoded wire fields instead of substituting scenario expectations.
 Preserve request and export statuses separately; unknown or predicted status must not normalize to confirmed.
+Fault observers must check read success before interpreting returned bytes or default status fields.
+If stronger validation rejects an injected fault earlier, require that exact typed rejection rather than a derivative status mismatch.
 Mutate actual encoded bytes before observation to test the observer itself.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Test omitted and explicit-null optional
@@ -47,6 +49,8 @@ session oracle's canonical scenario conversion protects this boundary.
 
 Mutations must fail at the intended diagnostic and consumed-record position; unrelated failures do not count.
 Measure delivery counts at successful operations, rather than emitting the expected inventory.
+Longer workloads can cross periodic protocol boundaries despite unchanged input cadence;
+derive the full control-message schedule from source instead of repeating short-run totals.
 Before accepting a mutation's named rejection, validate its exact changed value and type alongside unchanged state;
 an incorrect count or wrong type can reach the same error path as the intended fault.
 Distinguish a fabricated missing-history inventory from physical eviction. Advance real queues,
