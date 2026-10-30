@@ -4,6 +4,7 @@ import copy
 import inspect
 import hashlib
 import json
+import re
 import struct
 import tempfile
 from pathlib import Path
@@ -11,7 +12,7 @@ from unittest.mock import patch
 import unittest
 
 from browser import webrtc_runner
-from online_example_probe import (StepTimings, browser_step_durations, expected_states, run_online,
+from online_example_probe import (StepTimings, browser_step_durations, expected_states, run_online, run_clean_install,
                                   validate_result as observe_result,
                                   validate_replay_download as observe_replay, validate_viewer, validate_diagnostic_playback, validate_diagnostic_viewer)
 from online_diagnostics import game_checksum, validate_trace_history
@@ -511,7 +512,9 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             expected = {}
             for directory in ('addons/fortress_rollback', 'examples/offline', 'examples/online'):
                 expected.update(inventory({directory: ROOT / directory}))
-            expected.update(inventory({'LICENSE': ROOT / 'LICENSE'}))
+            expected.update(inventory({'examples/integration/game.gd': ROOT / 'examples/integration/game.gd',
+                                       'examples/integration/game.gd.uid': ROOT / 'examples/integration/game.gd.uid',
+                                       'LICENSE': ROOT / 'LICENSE'}))
             actual = inventory({'project': project})
             self.assertEqual(set(actual), {'project/' + name for name in expected} | {'project/project.godot', 'project/export_presets.cfg'})
             for name, value in expected.items():
@@ -524,6 +527,43 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'incomplete'):
                 install_sdk(project, Path(temporary) / 'absent')
             self.assertFalse((project / 'addons/signal_fish').exists())
+
+    # Value: protects=installed scene preload closure; fails_when=shared example dependencies are omitted; why_new=inventory mirrored old directories; seam=none
+    def test_clean_installer_includes_every_static_runtime_resource(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary) / 'game'
+            create_project(project)
+            missing = []
+            for path in sorted(project.rglob('*')):
+                if path.suffix not in {'.gd', '.tscn'}:
+                    continue
+                text = path.read_text(encoding='utf-8')
+                references = re.findall(r"""\bpreload\s*\(\s*['"]res://([^'"\n]+)['"]""", text)
+                references += re.findall(r"""^\s*extends\s+['"]res://([^'"\n]+)['"]""", text, re.MULTILINE)
+                if path.suffix == '.tscn':
+                    references += re.findall(r'path="res://([^"\n]+)"', text)
+                for resource in references:
+                    if not (project / resource).is_file():
+                        missing.append((path.relative_to(project).as_posix(), resource))
+            self.assertEqual(missing, [], 'clean installation must contain every static scene/script resource')
+
+    # Value: protects=bounded complete startup; fails_when=errors linger or early quits pass; why_new=replay ready can abort; seam=process capture
+    def test_clean_install_startup_is_bounded_and_requires_one_complete_result(self):
+        command = ['godot', '--headless', '--path', 'game', '--script', 'check.gd']
+        report = {'offline_frame': 24, 'offline_state': expected_states([[0] * 25, [0] * 25], 25)[24],
+                  'missing_sdk_message': 'SignalFish SDK is missing'}
+        marker = 'FORTRESS_CLEAN_INSTALL:' + json.dumps(report)
+        with patch('godot_smoke.capture', return_value=(0, marker)) as capture:
+            executed, observed = run_clean_install(command, {}, Path('owned.log'))
+            self.assertEqual(observed, report)
+            self.assertEqual(executed, command + ['--quit-after', '60'])
+            capture.assert_called_once_with(executed, {}, Path('owned.log'), timeout=30)
+        for label, output, expected_error in [('early clean quit', '', ValueError),
+                                              ('duplicate result', marker + '\n' + marker, ValueError),
+                                              ('script failure', 'SCRIPT ERROR: ready failed\n' + marker, RuntimeError)]:
+            with self.subTest(label=label), patch('godot_smoke.capture', return_value=(0, output)):
+                with self.assertRaises(expected_error):
+                    run_clean_install(command, {}, Path('owned.log'))
 
     def test_local_server_configuration_matches_the_online_application_and_has_no_external_ice(self):
         with tempfile.TemporaryDirectory() as temporary:

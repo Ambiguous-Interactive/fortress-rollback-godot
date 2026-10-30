@@ -714,6 +714,22 @@ def validate_diagnostic_playback(output, trace):
     return report
 
 
+def run_clean_install(command, environment, log):
+    """Bound startup and require its completed native witness before accepting installation."""
+    command = command + ['--quit-after', '60']
+    no_sdk = run(command, environment, log, timeout=30)
+    markers = [line.removeprefix('FORTRESS_CLEAN_INSTALL:') for line in no_sdk.splitlines() if line.startswith('FORTRESS_CLEAN_INSTALL:')]
+    if len(markers) != 1:
+        raise ValueError('clean install did not complete missing-SDK and offline checks')
+    no_sdk = json.loads(markers[0])
+    if (no_sdk.get('offline_frame') != 24 or type(no_sdk.get('offline_frame')) is not int
+            or no_sdk.get('offline_state') != expected_states([[0] * 25, [0] * 25], 25)[24]
+            or not isinstance(no_sdk.get('missing_sdk_message'), str)
+            or 'SignalFish SDK is missing' not in no_sdk['missing_sdk_message']):
+        raise ValueError('clean install local game differs from the independent canonical replay')
+    return command, no_sdk
+
+
 def run_online(root, version, engine, sdk, sources, environment, output, certificate, private_key, port, server):
     # The browser witness needs a responsive host. It waits for a local probe to finish and then holds
     # the host, so a native suite that starts meanwhile runs its wave serially instead of starving it.
@@ -743,18 +759,9 @@ def run_online(root, version, engine, sdk, sources, environment, output, certifi
     with timings.measure('no_sdk_import'):
         run(command + ['--editor', '--quit'], environment, output / f'{version}-no-sdk-import.log')
     installed_frozen = freeze_after_import(installed, installed_inventory)
-    no_sdk_command = command + ['--script', str(sources['online_install_check'])]
     with timings.measure('no_sdk_check'):
-        no_sdk = run(no_sdk_command, environment, output / f'{version}-no-sdk.log')
-    markers = [line.removeprefix('FORTRESS_CLEAN_INSTALL:') for line in no_sdk.splitlines() if line.startswith('FORTRESS_CLEAN_INSTALL:')]
-    if len(markers) != 1:
-        raise ValueError('clean install did not complete missing-SDK and offline checks')
-    no_sdk = json.loads(markers[0])
-    if (no_sdk.get('offline_frame') != 24 or type(no_sdk.get('offline_frame')) is not int
-            or no_sdk.get('offline_state') != expected_states([[0] * 25, [0] * 25], 25)[24]
-            or not isinstance(no_sdk.get('missing_sdk_message'), str)
-            or 'SignalFish SDK is missing' not in no_sdk['missing_sdk_message']):
-        raise ValueError('clean install local game differs from the independent canonical replay')
+        no_sdk_command, no_sdk = run_clean_install(command + ['--script', str(sources['online_install_check'])],
+                                                environment, output / f'{version}-no-sdk.log')
     if inventory(installed) != installed_frozen:
         raise ValueError('clean install runtime sources changed during missing-SDK checks')
     sdk_command = install_command + ['--sdk', str(sdk)]

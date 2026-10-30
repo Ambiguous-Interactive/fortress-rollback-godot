@@ -45,6 +45,12 @@ def create_project(project, source=ROOT):
     project.mkdir(parents=True, exist_ok=True)
     for directory in ('addons/fortress_rollback', 'examples/offline', 'examples/online'):
         shutil.copytree(source / directory, project / directory)
+    game = Path('examples/integration/game.gd')
+    (project / game).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source / game, project / game)
+    game_uid = game.with_suffix('.gd.uid')
+    if (source / game_uid).is_file():
+        shutil.copyfile(source / game_uid, project / game_uid)
     shutil.copyfile(source / 'LICENSE', project / 'LICENSE')
     (project / 'project.godot').write_text(PROJECT, encoding='utf-8')
     (project / 'export_presets.cfg').write_text(PRESET, encoding='utf-8')
