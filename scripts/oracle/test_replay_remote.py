@@ -157,16 +157,20 @@ class SerializedRemoteRecordingTest(unittest.TestCase):
             header += bytes([len(text)]) + text.encode('ascii')
         before = bytes(header) + before[cursor:]
         cursor = len(header)
-        for fault in ('input', 'checksum'):
+        for fault in ('input', 'checksum', 'status'):
             changed = copy.deepcopy(healthy)
-            offset = cursor + 129 * 43 + (11 if fault == 'checksum' else 0)
+            offset = cursor + 129 * 43 + {'input': 0, 'checksum': 11, 'status': 8}[fault]
             after = bytearray(before)
-            after[offset] ^= 1
+            after[offset] ^= 2 if fault == 'status' else 1
             changed['serialized_control'] = dict(before=before.hex(), after=after.hex())
+            if fault == 'status':
+                statuses = [[1, 1] for _ in range(257)]
+                statuses[129][0] = 3
+                changed['serialized_control']['statuses'] = statuses
             target = changed['peers'][1]
             if fault == 'input':
                 target['frames'][129][0] ^= 1
-            else:
+            elif fault == 'checksum':
                 checksum = bytearray.fromhex(target['checksums'][129])
                 checksum[0] ^= 1
                 target['checksums'][129] = checksum.hex()
@@ -178,7 +182,9 @@ class SerializedRemoteRecordingTest(unittest.TestCase):
             replay_corruption.validate(changed, healthy, fault, 'oracle')
             for forgery, diagnostic in [('no-mutation', 'exact_mutation'), ('extra-mutation', 'exact_mutation'),
                                         ('original-row', 'original'), ('playback-continues', 'observed'),
-                                        ('wrong-frame', 'observed'), ('missing-bytes', 'missing byte evidence')] + [
+                                        ('wrong-frame', 'observed'), ('missing-bytes', 'missing byte evidence')] + (
+                                            [('hidden-status', 'decoded_statuses'), ('extra-status', 'decoded_statuses')]
+                                            if fault == 'status' else []) + [
                                             ('header-%d' % index, 'original_file') for index in range(15, cursor)]:
                 bad = copy.deepcopy(changed)
                 if forgery == 'no-mutation':
@@ -195,6 +201,10 @@ class SerializedRemoteRecordingTest(unittest.TestCase):
                     bad['peers'][1]['playback'] = copy.deepcopy(healthy['peers'][1]['playback'])
                 elif forgery == 'wrong-frame':
                     bad['peers'][1]['playback']['failure_frame'] = 130
+                elif forgery == 'hidden-status':
+                    bad['serialized_control']['statuses'][129][0] = 1
+                elif forgery == 'extra-status':
+                    bad['serialized_control']['statuses'][130][0] = 3
                 elif forgery.startswith('header-'):
                     index = int(forgery.removeprefix('header-'))
                     for key in ('before', 'after'):

@@ -17,6 +17,19 @@ New capabilities and an evidence-validator repair require this retrospective.
 | A complete ownership-probe project does not prove the separately installed online example includes a new preload dependency. | Both online CI exports fail on missing `examples/integration/game.gd`; the new viewer adds that dependency. | Add the dependency to installation and original-source fingerprint inventories, and verify the actual clean installed export. Guard partial replay startup and bound the checker before requiring its unique success marker. Existing staging and process-bound guidance already requires these boundaries. |
 | The driver's existing lifecycle tests already cover the suspected gaps. | The #40 audit found no reproducible contract violation in configuration, callback returns, recovery, staged samples or shared notifications. | Leave production code unchanged for that audit and spend implementation effort on a demonstrated user workflow gap. |
 
+A post-green submitted review contained an outside-diff finding despite empty inline
+threads and approval: the new spectator producer/viewer round trip omitted its
+advertised 36,000-frame maximum. Extend that actual producer case and service seeking
+through its normal per-tick budget. The existing maximum-output and four-surface
+review rules already require these checks; no duplicate guidance is needed.
+
+The continuation also makes paused spectator backlog visible using existing owned
+observations, with actual gap/recovery controls and a rendered screenshot. Encoded
+post-wrap status corruption now retains its original digest, exposes the complete
+decoded status matrix and fails before the affected SAVE or ADVANCE. Existing
+original-byte binding and finalized-status guidance covers this case; no new rule
+or stale guidance was identified.
+
 ## Prune ledger
 
 Updated the existing [infrastructure evidence](../skills/testing/references/infrastructure.md)
@@ -37,8 +50,8 @@ import reviews are clean. The encoded-control review finding was reproduced by a
 separate evaluator, repaired, and re-reviewed without remaining findings.
 Both complete pinned-source replay gates pass with unchanged source/tool inventories;
 actual corruptions stop at canonical boundary 129 through the production player.
-Native, exported ownership, harness and final delivery gates are recorded in the
-session log and linked issue updates. The source and platform scope remains the
+The session log and linked issue updates distinguish completed native, exported
+ownership and harness checks from pending final delivery gates. The source and platform scope remains the
 original issues' scope; this work makes no complete-parity or browser-release claim.
 
 ## Outcome

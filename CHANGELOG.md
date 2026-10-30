@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add spectator backlog feedback during pause and playback. Show contiguous buffered input separately from later rows waiting beyond gaps.
+
 - Add saved spectator-example playback in the replay viewer, including checksum validation, Fire input inspection and backward navigation. New exports identify their game; older unnamed exports remain refused.
 
 - Add comma/period spectator catch-up controls. Adjust the bounded frames-per-tick limit while preserving viewing delay and pause.

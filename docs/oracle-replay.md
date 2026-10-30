@@ -351,10 +351,12 @@ processes. This advances #256 without qualifying source recovery-only recording,
 coordinated drop, browser transports or the complete #45 release gate.
 
 
-The asymmetric gate also copies the actual Godot observer twice and changes one
+The asymmetric gate also copies the actual Godot observer three times and changes one
 serialized byte at frame 129 before production decoding. An altered input keeps its
-original digest and stops playback before that frame's SAVE or ADVANCE; an altered
-recorded checksum reaches SAVE and then stops before ADVANCE. Both must report DESYNC
+original digest and stops playback before that frame's SAVE or ADVANCE. Changing one
+finalized status from confirmed to disconnected also retains the original digest;
+the complete decoded status matrix must show exactly that change, and playback stops
+before SAVE or ADVANCE. An altered recorded checksum reaches SAVE and then stops before ADVANCE. All three report DESYNC
 at boundary 129, retaining the exact original canonical state. The validator checks
 the complete original file, including configuration, neutral input, every metadata field,
 rows, statuses, checksums and input digests. Engine metadata comes from an independent

@@ -7,6 +7,7 @@ const Viewer = preload("res://examples/online/replay_viewer.gd")
 const Scene = preload("res://examples/online/replay_scene.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const OnlineFixture = preload("res://tests/unit/test_replay_viewer.gd")
 
 
@@ -22,20 +23,33 @@ func run_case(name: String, context: RefCounted) -> void:
 func _recording(context: RefCounted, count: int = 42) -> Dictionary:
 	var demo: Demo = Demo.new()
 	context.equal(demo.start(), Types.Code.OK, "start actual spectator export")
+	var reference: Game = Game.new()
 	for tick: int in count:
 		var buttons: int = Game.RIGHT | (Game.FIRE if tick % 8 < 4 else Game.LEFT)
 		context.equal(demo.tick(buttons), Types.Code.OK, "play original host inputs")
+		var rows: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(tick)])]
+		var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+		context.equal(reference.simulate_frame(tick, Types.FrameInputs.new(rows, statuses)), true, "independent original-input history")
 	context.equal(demo.finish_host(), Types.Code.OK, "finish original host")
 	for tick: int in range(80):
 		context.equal(demo.tick(0) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "drain original confirmed tail")
 	context.equal(demo.viewer.is_complete(), true, "exported viewing completed cleanly")
 	var bytes: PackedByteArray = demo.replay_bytes()
 	context.equal(bytes.is_empty(), false, "real spectator replay download exists")
-	return {"bytes": bytes, "canonical": demo.game.canonical_bytes(), "frame": demo.game.frame}
+	context.equal(demo.game.frame, count, "producer exports the exact requested confirmed prefix")
+	context.bytes_equal(demo.game.canonical_bytes(), reference.canonical_bytes(), count, "producer viewing matches independent original inputs")
+	var recording: Replay = Replay.new()
+	context.equal(recording.decode(bytes), Replay.DecodeCode.OK, "decode actual producer export")
+	context.equal(recording.frame_count(), count, "export retains every requested input through its advertised limit")
+	var checksum: HashingContext = HashingContext.new()
+	checksum.start(HashingContext.HASH_MD5)
+	checksum.update(reference.canonical_bytes())
+	context.bytes_equal(recording.checksum(count), checksum.finish(), count, "export captures the exact independent final state checksum")
+	return {"bytes": bytes, "canonical": reference.canonical_bytes(), "frame": demo.game.frame}
 
 
 func _round_trip(context: RefCounted) -> void:
-	for count: int in [0, 42]:
+	for count: int in [0, 42, Demo.REPLAY_FRAMES]:
 		var original: Dictionary = _recording(context, count)
 		var viewer: RefCounted = Viewer.new()
 		var opened: bool = viewer.open_bytes(original.bytes)
@@ -43,6 +57,7 @@ func _round_trip(context: RefCounted) -> void:
 		if not opened:
 			continue
 		context.equal(viewer.game is Game, true, "explicit game identity selects spectator callbacks")
+		context.equal(viewer.frame_count(), count, "viewer imports the complete advertised producer output")
 		if count > 0:
 			context.equal(viewer.input_summary().contains("Right+Fire"), true, "spectator input names firing")
 			context.equal(viewer.input_summary().contains("Up"), false, "spectator fire is never shown as online movement")
@@ -55,7 +70,14 @@ func _round_trip(context: RefCounted) -> void:
 			viewer.step()
 			context.bytes_equal(viewer.game.canonical_bytes(), first, 1, "repeat input reproduces movement and shots")
 		context.equal(viewer.seek(count), true, "seek complete spectator prefix")
-		viewer.tick()
+		for tick: int in range(ceili(float(count) / Viewer.SEEK_FRAMES_PER_TICK) + 1):
+			if not viewer.is_seeking():
+				break
+			var before: int = viewer.current_frame()
+			viewer.tick()
+			context.equal(viewer.current_frame() - before <= Viewer.SEEK_FRAMES_PER_TICK, true, "seeking respects its per-tick work bound")
+		context.equal(viewer.is_seeking(), false, "bounded seek reaches the complete producer prefix")
+		context.equal(viewer.current_frame(), count, "seek ends at the exact final recorded boundary")
 		context.equal(viewer.has_failure(), false, "spectator original checksums all match")
 		context.bytes_equal(viewer.game.canonical_bytes(), original.canonical, count, "offline replay equals original corrected viewing")
 		context.equal(viewer.message.contains("including the final state"), true, "completion verifies exact exported final boundary")

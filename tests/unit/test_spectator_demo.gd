@@ -614,6 +614,11 @@ func _playback_feedback(context: RefCounted) -> void:
 		scene.demo.tick(Game.LEFT)
 	scene._update_label()
 	context.equal(scene._label.text.contains("PAUSED"), true, "ordinary pause stays visible")
+	context.equal(
+		scene._label.text.contains("Buffered %d confirmed frames | Later rows 0" % scene.demo.viewer.playback_status().buffered_frames),
+		true,
+		"paused backlog remains visible as host continues"
+	)
 	context.equal(scene.demo.finish_host(), Types.Code.OK, "stop host while viewer is paused")
 	for tick: int in range(20):
 		scene.demo.tick(0)
@@ -727,6 +732,7 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene.demo.is_paused = true
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | PAUSED", "caller pause remains distinct from a network input gap")
+	context.equal(scene._label.text.contains("Buffered 2 confirmed frames | Later rows 1"), true, "paused feedback separates contiguous input from retained rows beyond a gap")
 	scene.demo.is_paused = false
 	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release delay to consume recovered prefix")
 	for frame: int in 2:
@@ -742,6 +748,7 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene.demo.is_paused = false
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | WATCHING", "contiguous recovery restores normal watching")
+	context.equal(scene._label.text.contains("Buffered 2 confirmed frames | Later rows 0"), true, "feedback moves recovered rows into the playable backlog")
 	for frame: int in 2:
 		context.equal(scene.demo.step_viewer(), Types.Code.OK, "recovered rows remain playable")
 	context.equal(scene.demo.game.frame, 4, "healthy continuation consumes every original row once")

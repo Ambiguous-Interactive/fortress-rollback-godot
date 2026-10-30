@@ -499,6 +499,7 @@ Completion notifications guard the shared session, so another driver or expert f
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
 or forward frame. The local spectator example exposes bounded catch-up rate controls independently of viewing delay.
 Its identified saved recordings open in the shared replay viewer with their own game callbacks and control labels.
+The actual 36,000-frame spectator export round-trips through bounded seeking and complete playback against independently simulated original inputs.
 The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
 Authenticated retries remain idempotent through that buffered tail; input closure alone does not terminate playback.
@@ -508,7 +509,7 @@ The host publisher retains one exact refused packet, advances only on transport 
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
-Owned playback observations distinguish contiguous playable input from retained rows beyond a gap; the example names the first missing frame and later-row count.
+Owned playback observations distinguish contiguous playable input from retained rows beyond a gap; the example names the first missing frame and shows both buffer counts while paused.
 These local events do not establish host authentication or a network handshake.
 `is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
 The spectator relay uses that completion authority even when cancellation occurs exactly at an authenticated final boundary or inside acceptance delivery.

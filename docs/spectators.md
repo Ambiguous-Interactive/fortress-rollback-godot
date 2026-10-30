@@ -29,6 +29,9 @@ Reducing delay catches up within that work limit; raising delay waits for
 more confirmed input without rewinding. The label shows the selected delay.
 These controls never advance or sample the host. Restart restores twelve frames of delay
 and the four-frame catch-up limit.
+The label also counts contiguous buffered confirmed frames and later rows beyond gaps,
+including while paused. Later rows become buffered only after their missing earlier inputs arrive;
+they cannot be played yet. These counts show the current backlog independently of the selected delay.
 The host continues playing during inspection. E stops the host at its current
 frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
