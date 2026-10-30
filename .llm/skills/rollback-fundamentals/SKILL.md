@@ -126,6 +126,7 @@ guard. Test valid request identities as well as terminate-then-reconfigure.
 Completion notifications need a guard on the shared session too. A facade-local flag
 cannot stop a second driver or the expert API from changing state between handlers.
 Test both access paths and cancellation; keep completed read-only exports available.
+Observe reentrant control state inside the callback; an outer reset can erase a transient mutation before the final assertion.
 Destructive event drains share that guard so one completion handler cannot consume cancellation before later handlers observe it.
 Apply callback termination checks to paused validation and checkpoint restoration too.
 Cancellation retains the exposed playback frame as its first-cause diagnostic; a failed checkpoint restore identifies the attempted cached frame.
@@ -159,6 +160,9 @@ cannot undo those effects. Nonterminal BUSY must preserve transport state.
 Validate candidate samples against the shared session's retained input before wrapper-owned caching,
 delivery or clock changes. Cross expert-staged input with a conflicting wrapper call and a corrected retry;
 checking only active batches and callbacks misses idle input ownership.
+Driver input-list and unsupported-operation preflights must precede clock commitment.
+Reject a call at a later time, retry corrected input at the last accepted time, then
+verify successful service still rejects a backward clock. Same-time retries conceal premature clock mutation.
 When callers service only a recommended number of steps, include pending lifecycle
 completion after payload drains. Test clean end through that public service loop
 with empty input, a delayed tail and a gap; direct advancement can conceal starvation.
@@ -180,7 +184,7 @@ Carry finalized statuses through spectator publication, authentication, retentio
 equal bytes do not imply equal simulation behavior. Use a status-sensitive game and independently
 calculated states to catch a byte-only bridge, and keep historical wire versions frozen.
 
-Specialized session modes must audit inherited public mutators. A confirmed-only spectator
+Specialized session modes must audit inherited public mutators and their validation-only counterparts. A confirmed-only spectator
 cannot accept player freezing or player-mesh confirmation limits: playback may succeed while exports lose
 their confirmed rows. Test public confirmation and row export alongside game state, using changing host inputs.
 N pre-input state checksums cannot verify the state after input N-1. Keep input integrity,

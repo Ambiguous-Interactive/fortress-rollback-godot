@@ -288,6 +288,10 @@ func set_input_delay(_player: int, _delay: int) -> Types.Result:
 
 
 ## Only the host's confirmed rows may determine a viewer slot's input.
+func validate_player_freeze(_player: int, _frame: int) -> int:
+	return Code.UNSUPPORTED
+
+
 func freeze_player(_player: int, _frame: int) -> int:
 	return Code.UNSUPPORTED
 

@@ -414,14 +414,19 @@ func _delay_bounds(context: RefCounted) -> void:
 # Value: protects=host rows remain authoritative after player-mesh calls; fails_when=inherited freezes replace host input;
 # why_new=configuration tests reject local input but not inherited remote-slot mutators; seam=none
 func _mesh_mutators(context: RefCounted) -> void:
-	for method: String in ["control", "freeze_player", "freeze_player_with_value"]:
+	var player_config: RefCounted = host_config()
+	player_config.local_players = PackedInt32Array([0])
+	var player_session: Session = Session.new()
+	context.equal(player_session.configure(player_config), Types.Code.OK, "configure ordinary remote slot control")
+	context.equal(player_session.validate_player_freeze(1, 0), Types.Code.OK, "ordinary player sessions may validate remote freezing")
+	for method: String in ["control", "validate_player_freeze", "freeze_player", "freeze_player_with_value"]:
 		var session: RefCounted = _spectator(context)
 		var game: RefCounted = Fixture.Game.new()
 		var driver: RefCounted = Driver.new(session, game)
 		var expected: int = 0
 		for frame: int in range(3):
 			if frame == 1 and method != "control":
-				var rejected: int = session.freeze_player(0, 0) if method == "freeze_player" else session.freeze_player_with_value(0, 0, PackedByteArray([9]))
+				var rejected: int = session.call(method, 0, 0, PackedByteArray([9])) if method == "freeze_player_with_value" else session.call(method, 0, 0)
 				context.equal(rejected, Types.Code.UNSUPPORTED, "spectators reject mesh slot freezing")
 				context.equal(session.frozen_frame(0), -1, "refusal does not freeze a host slot")
 			var row: Array[PackedByteArray] = _row(frame)

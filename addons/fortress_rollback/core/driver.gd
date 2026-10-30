@@ -117,6 +117,7 @@ static func _accepts_view_class(view_class: StringName, method: String) -> bool:
 
 
 ## Consume the session's ordered requests; simulation and recovery policy stay in session.
+## Rejected sample metadata, conflicts and incomplete lists leave the accepted poll time unchanged.
 func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
 	return _step(now_us, local_inputs, true)
 
@@ -206,7 +207,7 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 	if _session == null or _game == null:
 		return _result(Types.Code.NOT_CONFIGURED, before)
 	_is_stepping = true
-	var code: int = _session.poll(now_us).code
+	var code: int = _session._poll_code(now_us)
 	if code != Types.Code.OK:
 		return _finish(code, before)
 	if allow_advance:
@@ -232,6 +233,14 @@ func _step(now_us: int, local_inputs: Array[LocalInput], allow_advance: bool) ->
 			if _session._scheduled_local_input_code(player) == Types.Code.MISSING_LOCAL_INPUT:
 				# No batch can open without this sample. Let the engine prioritize terminal exhaustion.
 				return _finish(_session.begin_advance().code, before)
+	else:
+		code = _session._recovery_code()
+		if code != Types.Code.OK:
+			return _finish(code, before)
+	code = _session.poll(now_us).code
+	if code != Types.Code.OK:
+		return _finish(code, before)
+	if allow_advance:
 		for index: int in _sample_indices:
 			if index == -1:
 				continue

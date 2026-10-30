@@ -33,8 +33,11 @@ var _recording: Replay
 var _player: Player = Player.new()
 
 
-## Failed imports leave the current recording and playback state intact.
+## Failed or busy imports leave the current recording and playback state intact.
+## Controls cannot change playback while a game callback or manual request owns the player.
 func open_bytes(bytes: PackedByteArray) -> bool:
+	if _is_busy():
+		return false
 	var recording: Replay = Replay.new()
 	var code: int = recording.decode(bytes, MAX_BYTES)
 	if code != Replay.DecodeCode.OK:
@@ -105,11 +108,13 @@ func is_integration_game() -> bool:
 	return _recording != null and _recording.game_version() == IntegrationGame.REPLAY_VERSION
 
 
+## Restart from the initial state and retire the previous player; active game work leaves playback unchanged.
 func restart() -> void:
-	if _recording == null:
+	if _is_busy() or _recording == null:
 		return
 	_seek_target = -1
 	_playback_quarters = 0
+	_player.terminate()
 	game = IntegrationGame.new() if is_integration_game() else Simulation.new()
 	_player = Player.new()
 	var snapshot_bytes: int = IntegrationGame.SNAPSHOT_BYTES if is_integration_game() else Simulation.SNAPSHOT_BYTES
@@ -121,7 +126,7 @@ func restart() -> void:
 
 
 func toggle_play() -> void:
-	if is_seeking() or not can_step():
+	if _is_busy() or is_seeking() or not can_step():
 		return
 	_playback_quarters = 0
 	is_playing = not is_playing
@@ -136,7 +141,7 @@ func toggle_play() -> void:
 ## Quarter-speed units: 1, 2, 4, 8, 16 select ¼×, ½×, 1×, 2×, 4×.
 ## Changing speed starts a fresh cadence; invalid values preserve the current cadence.
 func set_playback_speed(quarters: int) -> bool:
-	if quarters not in [1, 2, 4, 8, 16]:
+	if _is_busy() or quarters not in [1, 2, 4, 8, 16]:
 		return false
 	if quarters != _speed_quarters:
 		_speed_quarters = quarters
@@ -150,6 +155,8 @@ func playback_speed_quarters() -> int:
 
 ## Playback advances at most four recorded frames per tick; seeking uses its own bounded batch.
 func tick() -> void:
+	if _is_busy():
+		return
 	if is_seeking():
 		for _frame: int in SEEK_FRAMES_PER_TICK:
 			if not is_seeking():
@@ -168,7 +175,7 @@ func tick() -> void:
 
 ## Pause after one input and validate the selected state boundary without consuming its input.
 func step() -> void:
-	if is_seeking() or not can_step():
+	if _is_busy() or is_seeking() or not can_step():
 		return
 	_playback_quarters = 0
 	_advance()
@@ -178,7 +185,7 @@ func step() -> void:
 ## Inspect the preceding state through validated checkpoint navigation, finishing paused.
 ## Long restores use tick's seek budget and can be canceled. A failed prefix is replayed again.
 func step_back() -> bool:
-	if is_seeking() or current_frame() == 0:
+	if _is_busy() or is_seeking() or current_frame() == 0:
 		return false
 	return seek(current_frame() - 1)
 
@@ -259,7 +266,7 @@ func can_step() -> bool:
 ## Navigate from a previously validated checkpoint, replaying the remaining inputs and checksums.
 ## Checkpoints cover five-second boundaries within this recording. Navigation always finishes paused.
 func seek(frame: int) -> bool:
-	if _recording == null or frame < 0 or frame > frame_count():
+	if _is_busy() or _recording == null or frame < 0 or frame > frame_count():
 		return false
 	_playback_quarters = 0
 	if _player.failure_frame() >= 0:
@@ -345,7 +352,7 @@ func is_seeking() -> bool:
 
 
 func cancel_seek() -> void:
-	if is_seeking():
+	if not _is_busy() and is_seeking():
 		_finish_seek()
 
 
@@ -425,3 +432,7 @@ func failure_report_bytes() -> PackedByteArray:
 
 func has_failure() -> bool:
 	return _player.failure_frame() >= 0
+
+
+func _is_busy() -> bool:
+	return _player._is_stepping or _player._batch != null

@@ -142,7 +142,7 @@ EXPECTED['res://tests/unit/test_peer_drop_plan_fairness.gd'] = {
 EXPECTED['res://tests/unit/test_peer_drop_ready_pressure.gd'] = {'partial_ready_retry', 'staggered_ready_retry', 'complete_ready_control'}
 EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused_ready_preserves_remote_donor', 'remote_donor_ready_control'}
 EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
-EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured'}
+EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
@@ -178,6 +178,7 @@ for _suite in ['host', 'relay']:
     EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
 EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
     'send_failure', 'receive_failure', 'latched_failure', 'busy_control', 'failed_configuration', 'healthy_configuration'}
+EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {'replacement', 'callback_controls', 'callback_termination', 'expert_controls'}
 EXPECTED['res://tests/unit/test_replay_input_navigation.gd'] = {'input_change_navigation', 'input_change_integrity', 'input_change_controls',
     'checksum_navigation', 'checksum_navigation_integrity', 'checksum_navigation_controls'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'catchup_control'})
@@ -224,6 +225,7 @@ FILES += ['tests/unit/test_input_queue.gd']
 FILES += ['tests/unit/test_replay_expert.gd', 'tests/unit/test_spectator_status.gd', 'tests/unit/test_replay_drop.gd']
 FILES += ['tests/unit/test_replay_validation.gd', 'tests/unit/test_replay_terminal.gd', 'tests/unit/test_replay_terminal_recovery.gd']
 FILES += ['tests/unit/test_replay_expert_navigation.gd', 'tests/unit/test_replay_final_coverage.gd']
+FILES += ['tests/unit/test_replay_viewer_lifetime.gd']
 FILES += ['tests/unit/test_replay_prefix.gd', 'tests/unit/test_replay_input_navigation.gd', 'tests/unit/test_spectator_replay_viewer.gd']
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd', 'tests/unit/test_peer_drop_multi_slot.gd']
@@ -289,6 +291,7 @@ const PeerNotifications = preload("res://tests/unit/test_peer_notifications.gd")
 const PeerExpert = preload("res://tests/unit/test_peer_expert.gd")
 const DriverRecovery = preload("res://tests/unit/test_driver_recovery.gd")
 const ReplaySpeed = preload("res://tests/unit/test_replay_speed.gd")
+const ReplayViewerLifetime = preload("res://tests/unit/test_replay_viewer_lifetime.gd")
 const ReplayInputNavigation = preload("res://tests/unit/test_replay_input_navigation.gd")
 const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
 const IntegrationControls = preload("res://tests/unit/test_integration_controls.gd")
@@ -334,7 +337,7 @@ func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
-\t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed, ReplayInputNavigation,
+\t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed, ReplayInputNavigation, ReplayViewerLifetime,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationControls, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,

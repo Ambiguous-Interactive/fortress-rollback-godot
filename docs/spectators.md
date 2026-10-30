@@ -193,6 +193,7 @@ Rows may arrive out of order within the current bounded window. No partial row
 or prediction is simulated. Rejected rows leave the accepted history unchanged.
 Local input submission, per-player `receive_input`, input-delay changes, player freezing and
 player-mesh `set_confirmation_limit` calls return `UNSUPPORTED`; use complete host rows.
+`validate_player_freeze` also returns `UNSUPPORTED`, matching the unsupported freeze operations.
 Viewer confirmation follows the host rows consumed by playback. Player confirmation
 gates cannot withhold those rows from `confirmed_inputs` or change viewer confirmation.
 

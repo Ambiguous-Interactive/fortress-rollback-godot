@@ -98,6 +98,7 @@ The library supplies orchestration, validation and sync-test tooling.
 Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
 The scalar applied-status read preserves predicted and disconnected semantics alongside reusable input buffers.
 Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
+Rejected driver sample lists preserve the accepted poll time so corrected retries remain usable.
 Peer clients can read owned staged local samples to retry stalled steps without resampling.
 Callback and expert peer steps can omit retained local slots while requiring every unstaged slot before mutation.
 Internal readiness checks avoid owned sample copies; public retained-input reads remain isolated.
@@ -109,6 +110,7 @@ Spectator playback observations distinguish contiguous input waits, deliberate d
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
+Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
 Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.

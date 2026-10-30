@@ -9,7 +9,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["stalled_retry", "delay_policy", "unconfigured"])
+	return PackedStringArray(["stalled_retry", "delay_policy", "unconfigured", "rejected_input_time"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -64,9 +64,10 @@ func _delay_policy(context: RefCounted) -> void:
 	context.equal(driver.input_delay(0), 1, "new delay visible")
 	var handler_codes: PackedInt32Array = PackedInt32Array()
 	var owner: WeakRef = weakref(driver)
-	driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
-		var target: RefCounted = owner.get_ref()
-		handler_codes.append(target.set_input_delay(0, 2).code)
+	driver.step_completed.connect(
+		func(_code: int, _before: int, _after: int) -> void:
+			var target: RefCounted = owner.get_ref()
+			handler_codes.append(target.set_input_delay(0, 2).code)
 	)
 	context.equal(driver.step(0, Fixture.new()._samples(0)).code, Types.Code.OK, "delayed driver step")
 	context.equal(handler_codes, PackedInt32Array([Types.Code.BUSY]), "completion handler cannot change scheduling")
@@ -83,3 +84,52 @@ func _unconfigured(context: RefCounted) -> void:
 	context.equal(driver.input_delay(0), -1, "unconfigured delay sentinel")
 	context.equal(driver.set_input_delay(0, 1).code, Types.Code.NOT_CONFIGURED, "unconfigured setter is explicit")
 	context.equal(driver.scheduled_local_input(0).code, Types.Code.NOT_CONFIGURED, "unconfigured sample read is explicit")
+
+
+# Value: protects=rejected local lists preserve the last accepted clock; fails_when=poll commits before validation; why_new=input retry tests reuse one time; seam=none
+func _rejected_input_time(context: RefCounted) -> void:
+	for rejection: String in ["null", "player", "frame", "width", "duplicate", "incomplete", "retained", "recovery"]:
+		var session: Session = Fixture.new()._session()
+		var game: RefCounted = Fixture.Game.new()
+		var driver: RefCounted = Driver.new(session, game)
+		context.equal(driver.step(10, Fixture.new()._samples(0)).code, Types.Code.OK, "initial accepted time: " + rejection)
+		var rejected: Array[Driver.LocalInput] = Fixture.new()._samples(1)
+		var expected: int = Types.Code.INVALID_CONFIGURATION
+		match rejection:
+			"null":
+				rejected.append(null)
+			"player":
+				rejected.append(Driver.LocalInput.new(-1, 1, PackedByteArray([1])))
+				expected = Types.Code.INVALID_PLAYER
+			"frame":
+				rejected.append(Driver.LocalInput.new(0, 0, PackedByteArray([1])))
+				expected = Types.Code.INVALID_FRAME
+			"width":
+				rejected.append(Driver.LocalInput.new(0, 1, PackedByteArray()))
+				expected = Types.Code.INPUT_WIDTH
+			"duplicate":
+				rejected.append(Driver.LocalInput.new(0, 1, PackedByteArray([99])))
+				expected = Types.Code.INPUT_ALREADY_SUBMITTED
+			"incomplete":
+				rejected.pop_back()
+				expected = Types.Code.MISSING_LOCAL_INPUT
+			"retained":
+				context.equal(session.submit_local_input(0, 1, PackedByteArray([99])).code, Types.Code.OK, "expert stages a current sample")
+				expected = Types.Code.INPUT_ALREADY_SUBMITTED
+		var before: PackedStringArray = game.trace.duplicate()
+		if rejection == "recovery":
+			context.equal(driver.recover(9).code, Types.Code.INVALID_TIME, "unsupported recovery still validates time first")
+			context.equal(driver.recover(100).code, Types.Code.UNSUPPORTED, "sync-test does not accept recovery")
+		else:
+			context.equal(driver.step(9, rejected).code, Types.Code.INVALID_TIME, "time rejection retains priority: " + rejection)
+			context.equal(driver.step(100, rejected).code, expected, "reject invalid list: " + rejection)
+		context.equal(driver.status().current_frame, 1, "rejected list does not advance: " + rejection)
+		context.equal(game.trace, before, "rejected list invokes no callbacks: " + rejection)
+		var prefix_slot: int = 0 if rejection == "incomplete" else 1
+		context.equal(driver.scheduled_local_input(prefix_slot).code, Types.Code.MISSING_LOCAL_INPUT, "rejected prefix remains unstaged: " + rejection)
+		var corrected: Array[Driver.LocalInput] = Fixture.new()._samples(1)
+		if rejection == "retained":
+			corrected[0] = Driver.LocalInput.new(0, 1, PackedByteArray([99]))
+		context.equal(driver.step(10, corrected).code, Types.Code.OK, "corrected retry retains accepted time: " + rejection)
+		context.equal(driver.step(20, Fixture.new()._samples(2)).code, Types.Code.OK, "valid input commits newer clock: " + rejection)
+		context.equal(driver.step(19, Fixture.new()._samples(3)).code, Types.Code.INVALID_TIME, "accepted clock stays monotonic: " + rejection)
