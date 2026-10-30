@@ -109,6 +109,7 @@ It also discovers preceding/following recorded checksum boundaries, including fi
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
+Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.

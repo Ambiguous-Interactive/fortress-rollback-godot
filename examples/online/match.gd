@@ -53,6 +53,7 @@ var _held: int = -1
 var _tokens: int = 0
 var _pending: Array[Peer.Packet] = []
 var _last_now: int = -1
+var _is_servicing: bool = false
 
 
 ## New rooms and sorted full UUID rosters define a fresh application match.
@@ -71,6 +72,8 @@ static func session_identity(room_id: String, roster: PackedStringArray) -> Pack
 
 
 func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray) -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	var session_id: PackedByteArray = session_identity(client.call("get_room_id"), roster)
 	if session_id.is_empty():
 		return ERR_INVALID_DATA
@@ -102,6 +105,8 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 
 
 func start_transport(client: Object, mesh: Object, sdk_config: Object, info: Object, now_us: int) -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	if has_started or adapter.status().route != "mesh":
 		return ERR_UNAVAILABLE
 	var options: Direct.Options = Direct.Options.new()
@@ -130,16 +135,29 @@ func next_token(_remote_uuid: String = "") -> PackedByteArray:
 
 ## Service elapsed protocol deadlines before SDK callbacks, without receiving bytes or advancing gameplay.
 func poll_protocol_time(now_us: int) -> bool:
+	if _is_busy():
+		return has_started and failure.is_empty()
 	if not failure.is_empty() or not has_started:
 		return false
 	if now_us < 0 or now_us < _last_now:
 		failure = "Invalid clock or input. Leave and create a new room."
 		return false
 	_last_now = now_us
-	return _poll_protocol(now_us)
+	_is_servicing = true
+	var healthy: bool = _poll_protocol(now_us)
+	_is_servicing = false
+	return healthy
 
 
 func tick(now_us: int, buttons: int) -> void:
+	if _is_busy():
+		return
+	_is_servicing = true
+	_tick(now_us, buttons)
+	_is_servicing = false
+
+
+func _tick(now_us: int, buttons: int) -> void:
 	if not failure.is_empty() or not has_started:
 		return
 	if now_us < 0 or now_us < _last_now or buttons < 0 or buttons > 15:
@@ -177,6 +195,8 @@ func tick(now_us: int, buttons: int) -> void:
 ## Stop local gameplay and request final-state evidence while game callbacks remain legal.
 ## Keep ticking until replay_captured or a non-retryable replay_capture_code; ordinary exports remain available.
 func finish_replay() -> int:
+	if _is_busy():
+		return Types.Code.BUSY
 	if not has_started or not failure.is_empty():
 		return Types.Code.NOT_SYNCHRONIZED
 	if not record_replay:
@@ -205,7 +225,7 @@ func _finish_replay_boundary(now_us: int) -> void:
 
 ## Delay this player's input by one more frame; the other player receives the added frames as ordinary input.
 func raise_input_delay() -> int:
-	if replay_finishing:
+	if _is_busy() or replay_finishing:
 		return Types.Code.BUSY
 	if not has_started or local_slot < 0:
 		return Types.Code.NOT_SYNCHRONIZED
@@ -214,7 +234,7 @@ func raise_input_delay() -> int:
 
 ## Apply the latest suggestion. The library only suggests; the game chooses whether to raise.
 func apply_suggested_delay() -> int:
-	if replay_finishing:
+	if _is_busy() or replay_finishing:
 		return Types.Code.BUSY
 	if suggested_delay < 0:
 		return Types.Code.INVALID_CONFIGURATION
@@ -279,3 +299,7 @@ func detach() -> void:
 	adapter.detach()
 	_pending.clear()
 	has_started = false
+
+
+func _is_busy() -> bool:
+	return _is_servicing or peer._has_mutation_guard() or (peer._core != null and peer._core._mutation_code() == Types.Code.BUSY)

@@ -28,10 +28,13 @@ var _deadline: int = -1
 var _epoch: int = 0
 var _last_now: int = -1
 var _connection_revision: int = 0
+var _is_servicing: bool = false
 var _callbacks: Callbacks
 
 
 func connect_room(endpoint: String, player_name: String, room: String, now_us: int) -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	if client != null:
 		return ERR_ALREADY_IN_USE
 	if now_us < 0 or not (endpoint.begins_with("ws://") or endpoint.begins_with("wss://")) or player_name.strip_edges().is_empty():
@@ -94,6 +97,8 @@ func room_code() -> String:
 
 
 func ready() -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	if state != "lobby" or has_readied or client.call("get_players").size() != 2:
 		return ERR_UNAVAILABLE
 	var roster: PackedStringArray = PackedStringArray()
@@ -119,6 +124,8 @@ func ready() -> Error:
 
 
 func start() -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	if not is_creator or not has_readied or not all_ready or state != "lobby":
 		return ERR_UNAVAILABLE
 	state = "starting"
@@ -133,6 +140,14 @@ func start() -> Error:
 
 ## Monotonic host time services networking; gameplay advances only whole fixed ticks.
 func tick(now_us: int, buttons: int) -> void:
+	if _is_busy():
+		return
+	_is_servicing = true
+	_tick(now_us, buttons)
+	_is_servicing = false
+
+
+func _tick(now_us: int, buttons: int) -> void:
 	if client == null:
 		return
 	if state == "failed":
@@ -230,8 +245,9 @@ func _connect_callbacks() -> void:
 	client.connect("room_joined", _callbacks.on_room)
 	client.connect("lobby_state_changed", _callbacks.on_lobby)
 	client.connect("protocol_error", _callbacks.on_protocol_error)
-	for signal_name: String in ["connection_failed", "authentication_error", "room_join_failed", "server_error", "reconnection_failed",
-		"disconnected", "going_away", "room_left", "reconnected"]:
+	for signal_name: String in [
+		"connection_failed", "authentication_error", "room_join_failed", "server_error", "reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"
+	]:
 		client.connect(signal_name, _callbacks.on_failure)
 
 
@@ -283,3 +299,7 @@ func _finish_cleanup() -> void:
 		# Busy adapters fence callbacks immediately and release owned queues after unwind.
 		game_match.detach()
 		_cleanup_pending = false
+
+
+func _is_busy() -> bool:
+	return _is_servicing or game_match._is_busy()
