@@ -222,6 +222,8 @@ Advancing an input does not check its resulting state until you pause, step or f
 Input digests and cached snapshots do not count as recorded state checksums.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
+Playback controls refuse changes while a game callback or manual replay request is active.
+Restarting or opening another recording terminates the previous player, including retained handles.
 Completion identifies whether the final state matched a recorded checksum. Historical recordings explicitly report
 that their final state has no recorded checksum, even when every earlier checksum matched.
 A recording with no checksums plays its inputs but explicitly reports that playback could not be verified.

@@ -223,6 +223,12 @@
 
 ### Fixed
 
+- Fix rejected driver input lists and unsupported recovery advancing the accepted session clock. Corrected calls can retry at the last accepted time.
+
+- Fix replay viewer controls changing playback during callbacks or manual requests. Restarting or importing another replay retires the previous player.
+
+- Fix spectator freeze validation to reject unsupported player-slot controls consistently with freeze operations.
+
 - Fix integration controls changing input or clocks before rejecting nested calls, sample conflicts or invalid time. Keep live matches paused during replay and allow corrected sample retries.
 
 - Fix spectator feedback showing active watching while waiting for new confirmed inputs mid-match.

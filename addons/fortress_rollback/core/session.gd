@@ -101,13 +101,19 @@ func configure(config: Config) -> int:
 
 
 func poll(now_us: int) -> Types.Result:
+	var code: int = _poll_code(now_us)
+	if code == Code.OK:
+		_time = now_us
+	return Types.Result.new(code)
+
+
+func _poll_code(now_us: int) -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
-		return Types.Result.new(code)
+		return code
 	if now_us < 0 or now_us < _time:
-		return Types.Result.new(Code.INVALID_TIME)
-	_time = now_us
-	return Types.Result.new(Code.OK)
+		return Code.INVALID_TIME
+	return Code.OK
 
 
 ## Checks local sample metadata and retained retries without changing input or receipt state.
@@ -462,12 +468,17 @@ func begin_advance() -> Types.Result:
 ## Leaves current_frame and staged local inputs unchanged. Idle recovery succeeds without callbacks.
 ## Sync-test and spectator sessions do not accept this operation.
 func begin_recovery() -> Types.Result:
+	var code: int = _recovery_code()
+	return _begin_advance(false) if code == Code.OK else Types.Result.new(code)
+
+
+func _recovery_code() -> int:
 	var code: int = _mutation_code()
 	if code != Code.OK:
-		return Types.Result.new(code)
+		return code
 	if _config.sync_test or _config.spectator:
-		return Types.Result.new(Code.UNSUPPORTED)
-	return _begin_advance(false)
+		return Code.UNSUPPORTED
+	return Code.OK
 
 
 ## Driver preflight shares terminal limits before it retains the current input samples.
