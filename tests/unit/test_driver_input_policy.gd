@@ -125,7 +125,8 @@ func _rejected_input_time(context: RefCounted) -> void:
 			context.equal(driver.step(100, rejected).code, expected, "reject invalid list: " + rejection)
 		context.equal(driver.status().current_frame, 1, "rejected list does not advance: " + rejection)
 		context.equal(game.trace, before, "rejected list invokes no callbacks: " + rejection)
-		context.equal(driver.scheduled_local_input(1).code, Types.Code.MISSING_LOCAL_INPUT, "rejected prefix remains unstaged: " + rejection)
+		var prefix_slot: int = 0 if rejection == "incomplete" else 1
+		context.equal(driver.scheduled_local_input(prefix_slot).code, Types.Code.MISSING_LOCAL_INPUT, "rejected prefix remains unstaged: " + rejection)
 		var corrected: Array[Driver.LocalInput] = Fixture.new()._samples(1)
 		if rejection == "retained":
 			corrected[0] = Driver.LocalInput.new(0, 1, PackedByteArray([99]))

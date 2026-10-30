@@ -126,6 +126,7 @@ guard. Test valid request identities as well as terminate-then-reconfigure.
 Completion notifications need a guard on the shared session too. A facade-local flag
 cannot stop a second driver or the expert API from changing state between handlers.
 Test both access paths and cancellation; keep completed read-only exports available.
+Observe reentrant control state inside the callback; an outer reset can erase a transient mutation before the final assertion.
 Destructive event drains share that guard so one completion handler cannot consume cancellation before later handlers observe it.
 Apply callback termination checks to paused validation and checkpoint restoration too.
 Cancellation retains the exposed playback frame as its first-cause diagnostic; a failed checkpoint restore identifies the attempted cached frame.

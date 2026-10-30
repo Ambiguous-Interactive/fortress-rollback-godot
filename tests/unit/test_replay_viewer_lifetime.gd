@@ -19,6 +19,7 @@ class ReentrantGame:
 	var boundary: int = -1
 	var attempts: int = 0
 	var accepted: bool = false
+	var is_playing_after_control: bool = true
 	var terminate_first: bool = false
 
 	func _attempt(kind: int) -> void:
@@ -40,6 +41,7 @@ class ReentrantGame:
 				accepted = owner.set_playback_speed(16)
 			"play":
 				owner.toggle_play()
+				is_playing_after_control = owner.is_playing
 			"step":
 				owner.step()
 			"back":
@@ -121,6 +123,8 @@ func _callback_controls(context: RefCounted) -> void:
 				viewer.tick()
 			context.equal(game.attempts, 1, "requested callback actually exercises reentrant control")
 			context.equal(game.accepted, false, "busy boolean controls refuse reentry")
+			if operation == "play":
+				context.equal(game.is_playing_after_control, false, "play control preserves paused state inside callback")
 			context.equal(viewer._player, player, "callback cannot replace owned player")
 			context.equal(viewer.game, game, "callback cannot replace game state")
 			context.equal(viewer.playback_speed_quarters(), 4, "callback cannot change playback cadence")

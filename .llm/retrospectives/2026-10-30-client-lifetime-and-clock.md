@@ -2,7 +2,7 @@
 
 ## Work under review
 
-This session addresses driver rejected-input retries (#40), replay viewer ownership
+This session addresses driver retries after rejected input (#40), replay viewer ownership
 (#45), and spectator freeze validation (#47). Trigger: three debugging repairs.
 Evidence: deterministic before/after receipts and final delivery records in the
 machine-local `progress/session-122-client-progress.md` log.
@@ -14,6 +14,7 @@ machine-local `progress/session-122-client-progress.md` log.
 | Same-time input retries conceal premature clock commitment. | `test_driver_input_policy.gd`, `rejected_input_time`: later invalid lists blocked corrected earlier accepted-time calls before repair. | Extend the rollback skill's preflight guidance with the cross-time retry and successful-service controls. |
 | Wrapper ownership checks must precede wrapper mutation. | `test_replay_viewer_lifetime.gd`: controls changed playback during callbacks/manual requests; replaced handles remained usable. | Existing callback and composed-control ownership guidance already covers this contract; retain it without duplication. |
 | Verification started before fixtures froze can mix an imported inventory with newly edited suites. | The early reference run failed its inventory check; the same check passed immediately on frozen sources. The stale process was stopped and the full chain restarted. | Reinforce the existing fixture-freeze rule in the testing infrastructure reference; no duplicate guidance. |
+| Final state can hide transient reentry, and absent-slot checks cannot prove a present prefix stayed unstaged. | CodeRabbit comments 4420706517 and 4420706529 identify these gaps in the new tests. | Inspect the present prefix and capture play state inside the callback; add guard-removal controls. Extend the existing ownership guidance. |
 | Specialized API audits need validation-only counterparts. | `test_spectator_session.gd`, `mesh_mutators`: inherited freeze validation returned OK while the operation was unsupported. | Extend the existing specialized-mode audit sentence. |
 
 ## Prune ledger
