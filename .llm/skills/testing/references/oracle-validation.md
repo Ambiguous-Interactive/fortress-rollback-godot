@@ -106,3 +106,5 @@ For deliberate gameplay divergence, retain valid serialized-state bounds. Drive
 the game to domain edges and force rollback after divergence; require a genuine
 checksum mismatch rather than accepting an unrelated callback failure.
 A corruption control may desync before capture; require its typed cause and independently verified altered bytes.
+
+Keep the observed first failure separate from later cleanup termination. A stopped counterpart cannot replace the required desync or erase canonical history.
