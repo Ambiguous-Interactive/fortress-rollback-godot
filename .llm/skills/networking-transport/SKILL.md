@@ -257,12 +257,12 @@ pressure can occur before protocol token validation; relying on that later
 validation can retain an arbitrary callback object or oversized packed array.
 Recheck lifetime gates immediately after callbacks, before validating their
 return values, so malformed output cannot overwrite a latched teardown failure.
-Terminal application failure must close signaling as well as detach game transports.
-Keep callback-owning objects alive while their callbacks execute; finish asynchronous
-close handshakes without servicing gameplay. Test physical socket closure before
-user cleanup, since a later Leave can hide a leaked connection or room membership.
-When busy adapters defer detach, complete cleanup automatically after the active operation unwinds;
-a latched fatal status does not prove queues or listeners were released. Recheck after channel/socket getters before sending.
+Terminal failure closes signaling as well as game transports; finish close handshakes without servicing gameplay.
+Keep callback owners alive while they execute. Logical Leave retires owned game work and bumps its lifetime before SDK close callbacks.
+Defer physical Node release while it emits or executes; recheck lifetime after startup polls, getters and setup before continuing.
+Test callback Leave as well as failure: cancellation stays offline, without another ADVANCE or a fabricated transport error.
+Test physical socket closure before user cleanup; a later Leave can hide leaked connections or membership.
+Deferred adapter detach must finish cleanup after unwind; latched failure alone proves no queue or listener release. Recheck channel/socket getters before sending.
 
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate

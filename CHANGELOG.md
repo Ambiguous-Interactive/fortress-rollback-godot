@@ -223,6 +223,10 @@
 
 ### Fixed
 
+- Fix leaving an online room during SDK or game callbacks. Leave stops further gameplay and setup, and releases active SDK owners after callbacks return.
+
+- Fix online service and replay-finish controls during callbacks or manual requests. Busy calls preserve clocks, transport, held input and the active match.
+
 - Fix rejected driver input lists and unsupported recovery advancing the accepted session clock. Corrected calls can retry at the last accepted time.
 
 - Fix replay viewer controls changing playback during callbacks or manual requests. Restarting or importing another replay retires the previous player.

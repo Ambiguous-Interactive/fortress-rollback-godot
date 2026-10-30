@@ -53,6 +53,7 @@ var _held: int = -1
 var _tokens: int = 0
 var _pending: Array[Peer.Packet] = []
 var _last_now: int = -1
+var _is_servicing: bool = false
 
 
 ## New rooms and sorted full UUID rosters define a fresh application match.
@@ -71,6 +72,8 @@ static func session_identity(room_id: String, roster: PackedStringArray) -> Pack
 
 
 func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray) -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	var session_id: PackedByteArray = session_identity(client.call("get_room_id"), roster)
 	if session_id.is_empty():
 		return ERR_INVALID_DATA
@@ -102,6 +105,8 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 
 
 func start_transport(client: Object, mesh: Object, sdk_config: Object, info: Object, now_us: int) -> Error:
+	if _is_busy():
+		return ERR_BUSY
 	if has_started or adapter.status().route != "mesh":
 		return ERR_UNAVAILABLE
 	var options: Direct.Options = Direct.Options.new()
@@ -130,16 +135,29 @@ func next_token(_remote_uuid: String = "") -> PackedByteArray:
 
 ## Service elapsed protocol deadlines before SDK callbacks, without receiving bytes or advancing gameplay.
 func poll_protocol_time(now_us: int) -> bool:
+	if _is_busy():
+		return has_started and failure.is_empty()
 	if not failure.is_empty() or not has_started:
 		return false
 	if now_us < 0 or now_us < _last_now:
 		failure = "Invalid clock or input. Leave and create a new room."
 		return false
 	_last_now = now_us
-	return _poll_protocol(now_us)
+	_is_servicing = true
+	var healthy: bool = _poll_protocol(now_us)
+	_is_servicing = false
+	return healthy
 
 
 func tick(now_us: int, buttons: int) -> void:
+	if _is_busy():
+		return
+	_is_servicing = true
+	_tick(now_us, buttons)
+	_is_servicing = false
+
+
+func _tick(now_us: int, buttons: int) -> void:
 	if not failure.is_empty() or not has_started:
 		return
 	if now_us < 0 or now_us < _last_now or buttons < 0 or buttons > 15:
@@ -155,6 +173,8 @@ func tick(now_us: int, buttons: int) -> void:
 		# leave the rest of the frame's budget to the browser and the game.
 		if _pending.is_empty() and fallback.idle():
 			break
+	if not has_started:
+		return
 	if failure.is_empty() and replay_finishing:
 		_finish_replay_boundary(now_us)
 	elif failure.is_empty() and peer.network_status().state == "running":
@@ -162,6 +182,8 @@ func tick(now_us: int, buttons: int) -> void:
 			_held = buttons
 		var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(local_slot, peer.status().current_frame, PackedByteArray([_held]))]
 		var result: Driver.StepResult = peer.step(now_us, samples)
+		if not has_started:
+			return
 		if result.code == Types.Code.OK:
 			_held = -1
 			has_recorded_replay = has_recorded_replay or (record_replay and peer.status().current_frame > 0 and peer.status().confirmed_frame >= 0)
@@ -171,12 +193,15 @@ func tick(now_us: int, buttons: int) -> void:
 			failure = "Game stopped (%d). Leave and create a new room." % result.code
 		if failure.is_empty():
 			_service(now_us)
-	_collect_events()
+	if has_started:
+		_collect_events()
 
 
 ## Stop local gameplay and request final-state evidence while game callbacks remain legal.
 ## Keep ticking until replay_captured or a non-retryable replay_capture_code; ordinary exports remain available.
 func finish_replay() -> int:
+	if _is_busy():
+		return Types.Code.BUSY
 	if not has_started or not failure.is_empty():
 		return Types.Code.NOT_SYNCHRONIZED
 	if not record_replay:
@@ -192,9 +217,13 @@ func _finish_replay_boundary(now_us: int) -> void:
 	if replay_captured or replay_capture_code not in [Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 		return
 	var recovered: Driver.StepResult = peer.recover(now_us)
+	if not has_started:
+		return
 	replay_capture_code = recovered.code
 	if recovered.code == Types.Code.OK:
 		replay_capture_code = peer.capture_replay_boundary().code
+		if not has_started:
+			return
 		replay_captured = replay_capture_code == Types.Code.OK
 		has_recorded_replay = has_recorded_replay or replay_captured or (peer.replay() != null and peer.replay().frame_count() > 0)
 	if peer.status().lifecycle == Types.Lifecycle.TERMINATED:
@@ -205,7 +234,7 @@ func _finish_replay_boundary(now_us: int) -> void:
 
 ## Delay this player's input by one more frame; the other player receives the added frames as ordinary input.
 func raise_input_delay() -> int:
-	if replay_finishing:
+	if _is_busy() or replay_finishing:
 		return Types.Code.BUSY
 	if not has_started or local_slot < 0:
 		return Types.Code.NOT_SYNCHRONIZED
@@ -214,7 +243,7 @@ func raise_input_delay() -> int:
 
 ## Apply the latest suggestion. The library only suggests; the game chooses whether to raise.
 func apply_suggested_delay() -> int:
-	if replay_finishing:
+	if _is_busy() or replay_finishing:
 		return Types.Code.BUSY
 	if suggested_delay < 0:
 		return Types.Code.INVALID_CONFIGURATION
@@ -227,6 +256,8 @@ func apply_suggested_delay() -> int:
 func _poll_protocol(now_us: int) -> bool:
 	for _attempt: int in 2:
 		var code: int = peer.poll(now_us, [next_token()])
+		if not has_started:
+			return false
 		if code not in [Inputs.Code.OK, Inputs.Code.BACKPRESSURE]:
 			failure = "Protocol stopped (%d). Leave and create a new room." % code
 			return false
@@ -260,12 +291,16 @@ func _service(now_us: int) -> bool:
 		_pending = peer.drain_outbox()
 	if not _pending.is_empty():
 		var accepted: int = fallback.enqueue_batch(_pending)
+		if not has_started:
+			return false
 		if accepted == Fallback.Code.OK:
 			_pending.clear()
 		elif accepted != Fallback.Code.BACKPRESSURE:
 			failure = "Transport queue stopped (%d). Leave and create a new room." % accepted
 			return false
 	var result: Fallback.Result = fallback.poll(now_us, next_token)
+	if not has_started:
+		return false
 	if result.code not in [Fallback.Code.OK, Fallback.Code.BACKPRESSURE]:
 		failure = "Transport stopped (%d). Leave and create a new room." % result.code
 		return false
@@ -273,9 +308,15 @@ func _service(now_us: int) -> bool:
 
 
 func detach() -> void:
+	has_started = false
+	if peer._core != null:
+		peer._core.terminate()
 	fallback.detach()
 	direct.detach()
 	relay.detach()
 	adapter.detach()
 	_pending.clear()
-	has_started = false
+
+
+func _is_busy() -> bool:
+	return _is_servicing or peer._has_mutation_guard() or (peer._core != null and peer._core._mutation_code() == Types.Code.BUSY)

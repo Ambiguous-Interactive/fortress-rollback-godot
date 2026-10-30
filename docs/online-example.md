@@ -167,6 +167,12 @@ input frame. Once the status says the final state was captured, download the rep
 The other player can continue sending while your final inputs settle; finishing is local,
 not an agreement to end both players at the same frame.
 
+Controller calls during a game callback, completion notification or manual request preserve the active operation.
+Tick and clock service skip reentrant work; room setup, delay changes and replay finishing return BUSY.
+Call them again after the operation completes. Busy service does not commit a new clock or stop the match.
+Explicit leave and failure cleanup remain available. Leaving cancels outstanding game work immediately;
+SDK nodes still executing a callback are released after it returns. Canceled startup cannot reopen the room.
+
 A successful capture exports FRRP v6 and checks the state after the last recorded input.
 Finishing before the first input can export the captured initial state with zero input frames.
 Waiting for confirmation or drop repair does not certify a predicted boundary. If the
