@@ -10,13 +10,19 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["input_change_navigation", "input_change_integrity", "input_change_controls"])
+	return PackedStringArray(
+		["input_change_navigation", "input_change_integrity", "input_change_controls", "checksum_navigation", "checksum_navigation_integrity", "checksum_navigation_controls"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	var viewer: Viewer = Viewer.new()
 	context.equal(viewer.has_method("input_change_target"), true, "viewer exposes input-change destinations")
-	if viewer.has_method("input_change_target"):
+	if name.begins_with("checksum_"):
+		context.equal(viewer.has_method("recorded_checksum_target"), true, "viewer exposes recorded-checksum destinations")
+		if viewer.has_method("recorded_checksum_target"):
+			call("_" + name, context)
+	elif viewer.has_method("input_change_target"):
 		call("_" + name, context)
 	context.finish()
 
@@ -132,6 +138,119 @@ func _input_change_controls(context: RefCounted) -> void:
 		context.equal(node.viewer.current_frame(), 450, "button seeks to the next control change")
 		previous.pressed.emit()
 		context.equal(node.viewer.current_frame(), 0, "button restores first input boundary")
+		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=sparse recorded state boundaries remain discoverable before they enter the cache;
+# fails_when=checksum navigation uses visited checkpoints or skips terminal checks; why_new=input changes do not identify state evidence; seam=none
+func _sparse_recording() -> Replay:
+	var replay: Replay = Fixture.recording(900)
+	for frame: int in replay.frame_count():
+		if frame not in [0, 450, 700]:
+			replay._flags[frame] = 0
+	var final: Simulation = Simulation.new()
+	for frame: int in replay.frame_count():
+		final.simulate_frame(frame, replay.inputs(frame))
+	replay._format_version = Replay.TERMINAL_VERSION
+	replay._terminal_checksum = Simulation.checksum(final.canonical_bytes())
+	return replay
+
+
+func _checksum_navigation(context: RefCounted) -> void:
+	var viewer: Viewer = Viewer.new()
+	for forward: bool in [false, true]:
+		context.equal(viewer.call("recorded_checksum_target", forward), -1, "empty viewer has no checksum boundary")
+		context.equal(viewer.call("seek_recorded_checksum", forward), false, "empty viewer refuses checksum navigation")
+	var replay: Replay = _sparse_recording()
+	context.equal(viewer.open_bytes(replay.to_bytes()), true, "sparse recorded checksums open")
+	context.equal(viewer.call("recorded_checksum_target", false), -1, "initial boundary has no preceding checksum")
+	context.equal(viewer.checked_checksum_count(), 0, "destination discovery does not validate a state")
+	for target: int in [450, 700, 900]:
+		context.equal(viewer.call("recorded_checksum_target", true), target, "destination comes from recording rather than visited cache")
+		context.equal(viewer.call("seek_recorded_checksum", true), true, "checksum navigation begins")
+		if viewer.is_seeking():
+			context.equal(viewer.call("recorded_checksum_target", false), -1, "active seek suspends checksum destinations")
+			context.equal(viewer.call("seek_recorded_checksum", true), false, "second checksum seek preserves active navigation")
+		_finish(context, viewer, replay, target)
+		context.equal(viewer.current_state_coverage_message(), "State at frame %d: recorded checksum matched." % target, "destination state was verified during this visit")
+	context.equal(viewer.call("recorded_checksum_target", true), -1, "terminal checksum has no successor")
+	context.equal(viewer.checked_checksum_count(), 4, "only four distinct recorded checksums counted")
+	for target: int in [700, 450, 0]:
+		context.equal(viewer.call("seek_recorded_checksum", false), true, "backward checksum navigation begins")
+		_finish(context, viewer, replay, target)
+	context.equal(viewer.checked_checksum_count(), 4, "revisiting checksums does not inflate coverage")
+	viewer.seek(500)
+	_finish(context, viewer, replay, 500)
+	context.equal(viewer.call("recorded_checksum_target", false), 450, "interior state finds preceding recorded checksum")
+	context.equal(viewer.call("recorded_checksum_target", true), 700, "interior state finds following recorded checksum")
+	viewer.seek(0)
+	context.equal(viewer.open_bytes(PackedByteArray([0])), false, "malformed replacement refuses")
+	context.equal(viewer.call("recorded_checksum_target", true), 450, "failed import preserves checksum index")
+	viewer.open_bytes(_recording(10).to_bytes())
+	for forward: bool in [false, true]:
+		context.equal(viewer.call("recorded_checksum_target", forward), -1, "checksum-free recording clears previous destinations")
+		context.equal(viewer.call("seek_recorded_checksum", forward), false, "checksum-free recording cannot invent evidence")
+	viewer.open_bytes(Fixture.recording(1).to_bytes())
+	context.equal(viewer.call("recorded_checksum_target", true), -1, "single initial checksum has no successor")
+	viewer.step()
+	context.equal(viewer.call("recorded_checksum_target", false), 0, "historical final state can return to its initial checksum")
+	var initial_only: Replay = Fixture.recording(0)
+	initial_only._format_version = Replay.TERMINAL_VERSION
+	initial_only._terminal_checksum = Simulation.checksum(Simulation.new().canonical_bytes())
+	viewer.open_bytes(initial_only.to_bytes())
+	for forward: bool in [false, true]:
+		context.equal(viewer.call("recorded_checksum_target", forward), -1, "initial-state-only checksum has no neighboring boundary")
+		context.equal(viewer.call("seek_recorded_checksum", forward), false, "initial-state-only navigation preserves unchecked state")
+	context.equal(viewer.checked_checksum_count(), 0, "absent destination does not validate the initial state")
+	context.state(viewer.current_frame(), viewer.game.canonical_bytes())
+
+
+func _checksum_navigation_integrity(context: RefCounted) -> void:
+	for fault: String in ["input", "checksum", "terminal"]:
+		var replay: Replay = _sparse_recording()
+		if fault == "input":
+			replay._inputs[240] ^= 1
+		elif fault == "checksum":
+			replay._checksums[450 * Replay.CHECKSUM_BYTES] ^= 1
+		else:
+			replay._terminal_checksum[0] ^= 1
+		var viewer: Viewer = Viewer.new()
+		context.equal(viewer.open_bytes(replay.to_bytes()), true, "shape-valid corruption remains playback-owned")
+		for _destination: int in 3:
+			if viewer.has_failure():
+				break
+			viewer.call("seek_recorded_checksum", true)
+			while viewer.is_seeking():
+				viewer.tick()
+		var expected: int = {"input": 120, "checksum": 450, "terminal": 900}[fault]
+		context.equal(viewer.current_frame(), expected, "checksum navigation stops at the owning corrupt boundary")
+		context.equal(viewer.has_failure(), true, "navigation cannot skip input or state evidence")
+		context.equal(viewer.call("recorded_checksum_target", false), -1, "failure hides checksum destinations")
+		context.equal(viewer.call("seek_recorded_checksum", true), false, "failed navigation requires restart")
+		context.state(viewer.current_frame(), viewer.game.canonical_bytes())
+
+
+func _checksum_navigation_controls(context: RefCounted) -> void:
+	var node: Node2D = Fixture.Scene.instantiate()
+	node._ready()
+	var previous: Button = Fixture._button(node, "Previous recorded checksum")
+	var following: Button = Fixture._button(node, "Next recorded checksum")
+	context.equal(previous != null and following != null, true, "scene exposes recorded-checksum actions")
+	if previous != null and following != null:
+		context.equal(previous.disabled and following.disabled, true, "empty scene disables checksum actions")
+		node.viewer.open_bytes(_sparse_recording().to_bytes())
+		node._refresh()
+		context.equal(previous.disabled, true, "initial checksum has no preceding boundary")
+		context.equal(following.disabled, false, "unvisited recorded checksum is navigable")
+		following.pressed.emit()
+		context.equal(previous.disabled and following.disabled, true, "ongoing seek disables both checksum actions")
+		while node.viewer.is_seeking():
+			node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 450, "button seeks to recorded boundary")
+		previous.pressed.emit()
+		context.equal(node.viewer.current_frame(), 0, "button restores initial recorded checksum")
 		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()

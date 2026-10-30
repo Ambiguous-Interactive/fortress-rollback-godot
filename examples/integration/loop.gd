@@ -48,6 +48,12 @@ func start() -> int:
 ## have corrected earlier frames. Other codes either reject this call and leave the
 ## session running, or stop it: check session.status().lifecycle.
 func tick(now_us: int, buttons: int) -> int:
+	var code: int = session._check_advance_limits()
+	if code != Types.Code.OK:
+		return code
+	code = session.poll(now_us).code
+	if code != Types.Code.OK:
+		return code
 	var frame: int = session.status().current_frame
 	# Sample once per frame. While stalled, resubmit the same bytes: new keys would
 	# be rejected with INPUT_ALREADY_SUBMITTED.
@@ -55,7 +61,7 @@ func tick(now_us: int, buttons: int) -> int:
 		_sample_frame = frame
 		_sample = PackedByteArray([buttons])
 	var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(local_player, frame, _sample)]
-	var code: int = driver.step(now_us, samples).code
+	code = driver.step(now_us, samples).code
 	if code == Types.Code.OK or code == Types.Code.PREDICTION_STALL:
 		effects.reconcile(game, session.status())
 	return code

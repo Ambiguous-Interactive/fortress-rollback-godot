@@ -145,6 +145,8 @@ func shown_game() -> Game:
 
 ## Changes lag for new samples; already queued inputs retain their delivery times.
 func set_lag(delay_ticks: int) -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
 	if delay_ticks not in [0, 3, 12]:
 		return Types.Code.INVALID_CONFIGURATION
 	lag_ticks = delay_ticks
@@ -153,9 +155,14 @@ func set_lag(delay_ticks: int) -> int:
 
 ## OK advances; PREDICTION_STALL retains the original local input for this frame.
 func tick(buttons: int) -> int:
+	if _mutation_code() == Types.Code.BUSY or replay_player != null:
+		return Types.Code.BUSY
 	if loop == null:
 		return Types.Code.INVALID_CONFIGURATION
-	var code: int = _deliver_ready()
+	var code: int = loop.session._check_advance_limits()
+	if code != Types.Code.OK:
+		return code
+	code = _deliver_ready()
 	if code != Types.Code.OK:
 		return code
 	var frame: int = loop.session.status().current_frame
@@ -179,9 +186,14 @@ func tick(buttons: int) -> int:
 ## Stop sampling, receive outstanding actual inputs and repair the final simulated state.
 ## PREDICTION_STALL waits for the existing deliveries; OK means the exact final tail is confirmed.
 func finish_tick() -> int:
+	if _mutation_code() == Types.Code.BUSY or replay_player != null:
+		return Types.Code.BUSY
 	if loop == null:
 		return Types.Code.NOT_CONFIGURED
-	var code: int = _deliver_ready()
+	var code: int = loop.session._check_advance_limits()
+	if code != Types.Code.OK:
+		return code
+	code = _deliver_ready()
 	if code != Types.Code.OK:
 		return code
 	code = loop.driver.recover(tick_count * TICK_US).code

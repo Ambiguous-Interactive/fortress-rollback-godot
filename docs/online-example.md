@@ -195,6 +195,13 @@ strictly before or after the displayed frame and finishes paused. The first inpu
 at frame zero; the final state has no input. These actions use the same bounded,
 verified navigation as **Go** and cannot skip corrupt history. Failed playback requires
 **Restart** or an explicit **Go** before input-change navigation becomes available again.
+Use **Previous recorded checksum** and **Next recorded checksum** to find the recording's
+state verification boundaries, including a recorded final state. These destinations are
+available before playback visits them, even when checksums are sparse. Each action
+validates the required input history and selected state, then finishes paused. It stops
+at corrupt input or a mismatching checksum; finding a destination alone claims no validation.
+A recording without state checksums has no such destinations. Failed playback requires
+**Restart** or an explicit **Go** before these controls become available again.
 Use **Previous checkpoint** and **Next checkpoint** to jump between retained, validated five-second boundaries.
 When a recording includes a validated final-state checksum, its ending is also
 retained within the checkpoint budget. **Next checkpoint** can return to that

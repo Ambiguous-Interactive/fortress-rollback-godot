@@ -45,6 +45,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		demo.is_paused = not demo.is_paused
 	elif event.keycode == KEY_N:
 		demo.step_viewer()
+	elif event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
+		var delay: int = demo.viewer.playback_policy()[0]
+		demo.set_viewing_delay(maxi(0, delay + (-1 if event.keycode == KEY_BRACKETLEFT else 1)))
 	elif event.keycode == KEY_L:
 		demo.lose_host_connection()
 	elif event.keycode == KEY_E:
@@ -70,6 +73,7 @@ func _update_label() -> void:
 		_label.text = "Could not start: code %d" % _code
 		return
 	var state: String = "PAUSED" if demo.is_paused else "WATCHING"
+	var policy: PackedInt64Array = demo.viewer.playback_policy()
 	var playback: Dictionary = demo.viewer.playback_status()
 	if not demo.is_paused:
 		if playback.state == Spectator.PlaybackState.WAITING_FOR_INPUT:
@@ -92,9 +96,10 @@ func _update_label() -> void:
 		state = "HOST CONNECTION LOST | R: start again"
 	_label.text = (
 		"Delayed spectator | %s\n" % state
-		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host\nL: lose host link | V: save viewed replay | R: restart\n"
+		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host\n[: less delay | ]: more delay\n"
+		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
-		+ "Viewer holds 12 confirmed frames and catches up at most 4 per tick.\n"
+		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "A long pause can exceed retained history; the host keeps playing.\n"
 		+ "Two local views. Live spectator networking is not connected."
 		+ ("\n" + _replay_notice if not _replay_notice.is_empty() else "")
