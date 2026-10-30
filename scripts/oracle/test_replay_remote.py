@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import replay_remote
 import replay_asymmetric
+import replay_corruption
+from replay_launch import encoded
 
 
 class RemoteRecordingTest(unittest.TestCase):
@@ -137,6 +139,82 @@ class AsymmetricRecordingTest(unittest.TestCase):
                 with patch.object(replay_asymmetric, 'expected', return_value=actual):
                     with self.assertRaisesRegex(ValueError, 'asymmetric.required_' + diagnostic + ':'):
                         replay_asymmetric.validate(actual, runtime == 'rust')
+
+
+class SerializedRemoteRecordingTest(unittest.TestCase):
+    # Value: protects=encoded remote corruption stops before its owning advance; fails_when=control changes another row or ignores failed playback;
+    # why_new=JSON mutations cannot establish production decoding and comparison; seam=none
+    def test_serialized_control_requires_exact_change_and_runtime_stop(self):
+        healthy = replay_asymmetric.expected(False)
+        peer = healthy['peers'][1]
+        before = encoded(dict(frames=peer['frames'], checksums=peer['checksums'], players=2, seed=0xffffffff))
+        cursor = 27
+        for _ in range(5):
+            cursor += 1 + before[cursor]
+        header = bytearray(before[:27])
+        header[21] = 4
+        for text in ('oracle', '0.1.0', 'fortress-rollback ' + replay_corruption.REVISION, '', ''):
+            header += bytes([len(text)]) + text.encode('ascii')
+        before = bytes(header) + before[cursor:]
+        cursor = len(header)
+        for fault in ('input', 'checksum', 'status'):
+            changed = copy.deepcopy(healthy)
+            offset = cursor + 129 * 43 + {'input': 0, 'checksum': 11, 'status': 8}[fault]
+            after = bytearray(before)
+            after[offset] ^= 2 if fault == 'status' else 1
+            changed['serialized_control'] = dict(before=before.hex(), after=after.hex())
+            if fault == 'status':
+                statuses = [[1, 1] for _ in range(257)]
+                statuses[129][0] = 3
+                changed['serialized_control']['statuses'] = statuses
+            target = changed['peers'][1]
+            if fault == 'input':
+                target['frames'][129][0] ^= 1
+            elif fault == 'checksum':
+                checksum = bytearray.fromhex(target['checksums'][129])
+                checksum[0] ^= 1
+                target['checksums'][129] = checksum.hex()
+            playback = target['playback']
+            boundary = next(row['bytes'] for row in playback['records'] if row['kind'] == 'save' and row['frame'] == 129)
+            playback['records'] = [row for row in playback['records'] if row['frame'] < 129 or
+                                   (fault == 'checksum' and row['frame'] == 129 and row['kind'] == 'save')]
+            playback.update(current_frame=129, complete=False, code=18, failure_frame=129, bytes=boundary)
+            replay_corruption.validate(changed, healthy, fault, 'oracle')
+            for forgery, diagnostic in [('no-mutation', 'exact_mutation'), ('extra-mutation', 'exact_mutation'),
+                                        ('original-row', 'original'), ('playback-continues', 'observed'),
+                                        ('wrong-frame', 'observed'), ('missing-bytes', 'missing byte evidence')] + (
+                                            [('hidden-status', 'decoded_statuses'), ('extra-status', 'decoded_statuses')]
+                                            if fault == 'status' else []) + [
+                                            ('header-%d' % index, 'original_file') for index in range(15, cursor)]:
+                bad = copy.deepcopy(changed)
+                if forgery == 'no-mutation':
+                    bad['serialized_control']['after'] = before.hex()
+                elif forgery == 'extra-mutation':
+                    forged = bytearray(after)
+                    forged[offset + 1] ^= 1
+                    bad['serialized_control']['after'] = forged.hex()
+                elif forgery == 'original-row':
+                    forged = bytearray(before)
+                    forged[cursor] ^= 1
+                    bad['serialized_control']['before'] = forged.hex()
+                elif forgery == 'playback-continues':
+                    bad['peers'][1]['playback'] = copy.deepcopy(healthy['peers'][1]['playback'])
+                elif forgery == 'wrong-frame':
+                    bad['peers'][1]['playback']['failure_frame'] = 130
+                elif forgery == 'hidden-status':
+                    bad['serialized_control']['statuses'][129][0] = 1
+                elif forgery == 'extra-status':
+                    bad['serialized_control']['statuses'][130][0] = 3
+                elif forgery.startswith('header-'):
+                    index = int(forgery.removeprefix('header-'))
+                    for key in ('before', 'after'):
+                        forged = bytearray.fromhex(bad['serialized_control'][key])
+                        forged[index] ^= 1
+                        bad['serialized_control'][key] = forged.hex()
+                else:
+                    del bad['serialized_control']
+                with self.subTest(fault=fault, forgery=forgery), self.assertRaisesRegex(ValueError, diagnostic):
+                    replay_corruption.validate(bad, healthy, fault, 'oracle')
 
 
 if __name__ == '__main__':

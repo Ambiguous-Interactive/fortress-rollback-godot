@@ -176,7 +176,7 @@ recorded prefix still downloads with its historical checksum coverage. There is 
 automatic extra SAVE on ordinary ticks or downloads.
 
 After leaving the room, press **Watch replay**, then **Open replay** and choose your
-`fortress-online.frrp` file. Native builds use a file dialog; browsers use a local
+`fortress-online.frrp` or `fortress-spectator.frrp` file. Native builds use a file dialog; browsers use a local
 file chooser without uploading the file or using browser storage. Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
 Keyboard controls: **P** plays or pauses, **N** steps forward, **B** steps backward,
@@ -240,8 +240,10 @@ This report has a separate versioned schema and is not an input to **Inspect dia
 
 **Back to online** returns to room setup.
 
-The viewer accepts complete recordings of this online integer game with seed 1701,
-two players and one-byte inputs, up to 36,000 frames. The file-size limit includes
+The viewer accepts complete online integer recordings with seed 1701 and explicitly
+identified local spectator-example recordings. Both use two players and one-byte
+inputs, up to 36,000 frames. The selected game determines its initial state,
+state callbacks and control names: spectator input shows Fire instead of Up. The file-size limit includes
 every checksum and the maximum metadata header for that full ten-minute recording.
 Other games, unknown game/addon/upstream versions, missing-input rows and invalid button bytes are rejected.
 Recordings from the original Fortress baseline remain compatible after dependency-only baseline refreshes.

@@ -506,7 +506,8 @@ Version 6 can still require the final state SAVE; historical versions have no fi
 Input digest, callback, snapshot and checksum failures stop playback and retain `failure_frame()` and comparison evidence.
 Input-only playback and boundaries without recorded checksums need no save unless checkpoint caching requires one.
 
-For downloaded online example recordings, use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.
+For downloaded online recordings and newly saved spectator-example recordings,
+use the [replay viewer](online-example.md#record-and-download-a-replay) without writing a playback scene.
 The [replay applicability probe](oracle-replay.md) checks sequential playback against the actual pinned upstream session and documents interface differences.
 
 ### Replay file format

@@ -3,6 +3,7 @@ extends SceneTree
 # Value: protects=clean install without SDK; fails_when=missing runtime files or hard SDK dependency; why_new=root tests have repository files; seam=none
 const Online = preload("res://examples/online/online.tscn")
 const Offline = preload("res://examples/offline/offline.tscn")
+const ReplayViewer = preload("res://examples/online/replay.tscn")
 
 
 func _initialize() -> void:
@@ -23,6 +24,14 @@ func _check() -> void:
 		_fail("Missing SDK guidance was not displayed")
 		return
 	online.free()
+	var replay: Node2D = ReplayViewer.instantiate()
+	root.add_child(replay)
+	replay.set_physics_process(false)
+	if replay.get("viewer") == null or replay.get("_status") == null or replay.viewer.frame_count() != 0 or not replay._status.text.contains("No recording loaded"):
+		replay.free()
+		_fail("Bundled replay viewer could not start without SDK")
+		return
+	replay.free()
 	var offline: Node2D = Offline.instantiate()
 	root.add_child(offline)
 	offline.set_physics_process(false)

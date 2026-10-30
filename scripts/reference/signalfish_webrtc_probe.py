@@ -423,6 +423,7 @@ def main():
                'browser_lock': ROOT / 'scripts/reference/browser/package-lock.json', 'openssl': Path(shutil.which('openssl'))}
     if args.online_example:
         sources.update(online_example=ROOT / 'examples/online', offline_example=ROOT / 'examples/offline',
+                       integration_game=ROOT / 'examples/integration/game.gd', integration_game_uid=ROOT / 'examples/integration/game.gd.uid',
                        online_launcher=ROOT / 'scripts/reference/online_example_probe.py',
                        online_diagnostics=ROOT / 'scripts/reference/online_diagnostics.py',
                        diagnostic_cli=ROOT / 'scripts/diagnose_trace.gd',

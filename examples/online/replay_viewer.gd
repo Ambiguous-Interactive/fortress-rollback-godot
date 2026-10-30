@@ -4,6 +4,7 @@ extends RefCounted
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
+const IntegrationGame = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const MAX_FRAMES: int = 36000
@@ -17,8 +18,9 @@ const COMPLETE_MESSAGE: String = "Replay complete. All available recorded checks
 const MAX_FAILURE_REPORT_BYTES: int = 16384
 const GAME_VERSION: String = "fortress-online-integer-v1"
 
-var game: Simulation = Simulation.new()
-var message: String = "Open a fortress-online.frrp recording."
+# Both supported games provide the same state callbacks and canonical byte export.
+var game: RefCounted = Simulation.new()
+var message: String = "Open an online or spectator .frrp recording."
 var is_playing: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
@@ -40,7 +42,7 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 		return false
 	var changes: Array[int] = []
 	if not _compatible(recording, changes):
-		message = "This viewer needs a complete online integer game recording (up to ten minutes)."
+		message = "This viewer needs an identified online or spectator game recording (up to ten minutes)."
 		return false
 	var hash: HashingContext = HashingContext.new()
 	hash.start(HashingContext.HASH_SHA256)
@@ -73,11 +75,13 @@ func _compatible(recording: Replay, changes: Array[int]) -> bool:
 		return false
 	if recording.frame_count() == 0 and recording.checksum(0).is_empty():
 		return false
-	if recording.game_version() != GAME_VERSION or recording.addon_version() != Replay.ADDON_VERSION:
+	if recording.game_version() not in [GAME_VERSION, IntegrationGame.REPLAY_VERSION] or recording.addon_version() != Replay.ADDON_VERSION:
 		return false
 	if recording.upstream_revision() not in [Replay.UPSTREAM_REVISION, "fortress-rollback f13cd5c0f2815926785a395947e18da0dbea0dd8"]:
 		return false
-	if recording.game_seed() != "1701" or recording.neutral_input() != PackedByteArray([0]) or recording.skipped_frames() != 0:
+	var is_integration: bool = recording.game_version() == IntegrationGame.REPLAY_VERSION
+	var seed: String = IntegrationGame.REPLAY_SEED if is_integration else "1701"
+	if recording.game_seed() != seed or recording.neutral_input() != PackedByteArray([0]) or recording.skipped_frames() != 0:
 		return false
 	var previous: Types.FrameInputs
 	for frame: int in range(recording.frame_count()):
@@ -85,7 +89,7 @@ func _compatible(recording: Replay, changes: Array[int]) -> bool:
 		var changed: bool = frame == 0
 		for slot: int in 2:
 			var sample: Types.InputResult = inputs.read(slot)
-			if sample.bytes[0] > 15:
+			if sample.bytes[0] > (7 if is_integration else 15):
 				return false
 			if previous != null:
 				var prior: Types.InputResult = previous.read(slot)
@@ -96,14 +100,20 @@ func _compatible(recording: Replay, changes: Array[int]) -> bool:
 	return true
 
 
+## The recording explicitly identifies the local movement-and-fire game; untagged files are refused.
+func is_integration_game() -> bool:
+	return _recording != null and _recording.game_version() == IntegrationGame.REPLAY_VERSION
+
+
 func restart() -> void:
 	if _recording == null:
 		return
 	_seek_target = -1
 	_playback_quarters = 0
-	game = Simulation.new()
+	game = IntegrationGame.new() if is_integration_game() else Simulation.new()
 	_player = Player.new()
-	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES, 300, 121)
+	var snapshot_bytes: int = IntegrationGame.SNAPSHOT_BYTES if is_integration_game() else Simulation.SNAPSHOT_BYTES
+	var code: int = _player.configure(_recording, game, snapshot_bytes, 300, 121)
 	is_playing = false
 	message = "Ready. Press Play; recorded checksums are validated." if code == Types.Code.OK else "Could not start playback (%d)." % code
 	if code == Types.Code.OK and _recorded_checksums.is_empty():
@@ -231,9 +241,10 @@ func input_summary() -> String:
 	for slot: int in inputs.player_count():
 		var sample: Types.InputResult = inputs.read(slot)
 		var directions: PackedStringArray = PackedStringArray()
-		for bit: int in 4:
+		var names: PackedStringArray = PackedStringArray(["Left", "Right", "Fire"] if is_integration_game() else ["Left", "Right", "Up", "Down"])
+		for bit: int in names.size():
 			if sample.bytes[0] & (1 << bit):
-				directions.append(["Left", "Right", "Up", "Down"][bit])
+				directions.append(names[bit])
 		var controls: String = "Neutral" if directions.is_empty() else "+".join(directions)
 		var status: String = "disconnected" if sample.status == Queue.Status.DISCONNECTED else "confirmed"
 		players.append("P%d %s (%s)" % [slot + 1, controls, status])

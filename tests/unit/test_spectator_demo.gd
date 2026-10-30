@@ -23,6 +23,8 @@ func cases() -> PackedStringArray:
 		[
 			"corrected_viewing",
 			"pause_and_catchup",
+			"catchup_speed",
+			"catchup_control",
 			"lost_history",
 			"idle_host_liveness",
 			"clean_host_end",
@@ -46,6 +48,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		_corrected_viewing(context)
 	elif name == "pause_and_catchup":
 		_pause_and_catchup(context)
+	elif name in ["catchup_speed", "catchup_control"]:
+		call("_" + name, context)
 	elif name == "lost_history":
 		_lost_history(context)
 	elif name == "paused_final_tail":
@@ -517,8 +521,8 @@ func _restart_busy(context: RefCounted) -> void:
 # Value: protects=active callbacks and expert batches own spectator service; fails_when=recursive controls consume time or stop viewing;
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
-	for actor: String in ["host", "viewer", "batch"]:
-		for action: String in ["tick", "step_viewer", "finish_host", "set_viewing_delay"]:
+	for actor: String in ["host", "viewer", "batch", "game_callback"]:
+		for action: String in ["tick", "step_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed"]:
 			var demo: Demo = Demo.new()
 			context.equal(demo.start(), Types.Code.OK, "start guarded service")
 			demo.is_paused = true
@@ -530,11 +534,11 @@ func _service_busy(context: RefCounted) -> void:
 				var target: RefCounted = owner.get_ref()
 				var before: Array = _service_observation(target)
 				var code: int
-				if action == "set_viewing_delay":
+				if action in ["set_viewing_delay", "set_catchup_speed"]:
 					if not target.has_method(action):
 						context.equal(false, true, "viewing delay exposes guarded adjustment")
 						return
-					code = target.call(action, 0)
+					code = target.call(action, 1)
 				else:
 					code = target.tick(Game.LEFT) if action == "tick" else target.call(action)
 				attempts.append(code)
@@ -544,6 +548,13 @@ func _service_busy(context: RefCounted) -> void:
 				context.equal(demo.viewer.begin_advance().code, Types.Code.READY, "retain ordinary viewer expert batch")
 				attempt.call()
 				demo.viewer.terminate()
+			elif actor == "game_callback":
+				var callback_game: RestartGame = RestartGame.new()
+				callback_game.on_advance = attempt
+				demo.game = callback_game
+				demo.driver = Demo.Driver.new(demo.viewer, callback_game)
+				context.equal(demo.step_viewer(), Types.Code.OK, "viewer callback completes after guarded adjustment")
+				callback_game.on_advance = Callable()
 			else:
 				var driver: RefCounted = demo.host.loop.driver if actor == "host" else demo.driver
 				driver.step_completed.connect(attempt)
@@ -603,6 +614,11 @@ func _playback_feedback(context: RefCounted) -> void:
 		scene.demo.tick(Game.LEFT)
 	scene._update_label()
 	context.equal(scene._label.text.contains("PAUSED"), true, "ordinary pause stays visible")
+	context.equal(
+		scene._label.text.contains("Buffered %d confirmed frames | Later rows 0" % scene.demo.viewer.playback_status().buffered_frames),
+		true,
+		"paused backlog remains visible as host continues"
+	)
 	context.equal(scene.demo.finish_host(), Types.Code.OK, "stop host while viewer is paused")
 	for tick: int in range(20):
 		scene.demo.tick(0)
@@ -716,6 +732,7 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene.demo.is_paused = true
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | PAUSED", "caller pause remains distinct from a network input gap")
+	context.equal(scene._label.text.contains("Buffered 2 confirmed frames | Later rows 1"), true, "paused feedback separates contiguous input from retained rows beyond a gap")
 	scene.demo.is_paused = false
 	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release delay to consume recovered prefix")
 	for frame: int in 2:
@@ -731,6 +748,7 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene.demo.is_paused = false
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | WATCHING", "contiguous recovery restores normal watching")
+	context.equal(scene._label.text.contains("Buffered 2 confirmed frames | Later rows 0"), true, "feedback moves recovered rows into the playable backlog")
 	for frame: int in 2:
 		context.equal(scene.demo.step_viewer(), Types.Code.OK, "recovered rows remain playable")
 	context.equal(scene.demo.game.frame, 4, "healthy continuation consumes every original row once")
@@ -784,3 +802,74 @@ func _viewing_delay(context: RefCounted) -> void:
 	context.equal(demo.call("set_viewing_delay", 0), Types.Code.TERMINATED, "completed viewing cannot be revived")
 	context.equal(demo.start(), Types.Code.OK, "restart fresh viewing")
 	context.equal(demo.viewer.playback_policy(), PackedInt64Array([12, 4, 4]), "restart restores default viewing delay")
+
+
+# Value: protects=caller-selected bounded catch-up preserves canonical playback; fails_when=rate is ignored; why_new=default-rate tests cannot vary service; seam=none
+func _catchup_speed(context: RefCounted) -> void:
+	var empty: Demo = Demo.new()
+	context.equal(empty.has_method("set_catchup_speed"), true, "demo exposes bounded catch-up adjustment")
+	if not empty.has_method("set_catchup_speed"):
+		return
+	context.equal(empty.call("set_catchup_speed", 1), Types.Code.NOT_CONFIGURED, "catch-up adjustment needs a viewer")
+	for speed: int in [1, 4]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "start catch-up scenario")
+		demo.is_paused = true
+		for tick: int in range(50):
+			context.equal(demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "host builds an original confirmed backlog")
+		var before: Array = _service_observation(demo)
+		context.equal(demo.call("set_catchup_speed", speed), Types.Code.OK, "select catch-up speed while paused")
+		context.equal(demo.viewer.playback_policy(), PackedInt64Array([12, 4, speed]), "catch-up adjustment preserves delay and threshold")
+		before[10] = demo.viewer.playback_policy()
+		context.equal(_service_observation(demo), before, "rate selection does not service host or viewer or change pause")
+		for invalid: int in [-1, 0, Demo.Config.new().queue_capacity + 1]:
+			context.equal(demo.call("set_catchup_speed", invalid), Types.Code.INVALID_CONFIGURATION, "invalid catch-up speed refused")
+			context.equal(_service_observation(demo), before, "invalid catch-up speed preserves policy and match")
+		context.equal(demo.tick(Game.LEFT), Types.Code.OK, "paused host still plays after adjustment")
+		context.equal(demo.game.frame, 0, "rate selection keeps viewer paused")
+		demo.is_paused = false
+		for tick: int in range(3):
+			var frame: int = demo.game.frame
+			context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "service selected catch-up rate")
+			context.equal(demo.game.frame - frame, speed, "each backlog tick obeys selected service bound")
+		var expected: Game = Game.new()
+		for frame: int in range(demo.game.frame):
+			var rows: Array[PackedByteArray] = [PackedByteArray([Game.RIGHT | Game.FIRE]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(expected.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent original-input prefix")
+		context.bytes_equal(demo.game.canonical_bytes(), expected.canonical_bytes(), demo.game.frame, "rate does not change canonical viewed history")
+		demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
+		context.equal(demo.call("set_catchup_speed", 2), Types.Code.TERMINATED, "rate selection cannot revive failed viewing")
+		context.equal(demo.start(), Types.Code.OK, "fresh restart after custom catch-up")
+		context.equal(demo.viewer.playback_policy(), PackedInt64Array([12, 4, 4]), "restart restores default catch-up rate")
+
+
+# Value: protects=playable catch-up rate keys respect bounds and pause; fails_when=keys are missing or repeat on held input; why_new=API controls bypass keyboard; seam=scene input
+func _catchup_control(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	scene.demo.is_paused = true
+	var before: Array = _service_observation(scene.demo)
+	var key: InputEventKey = InputEventKey.new()
+	key.keycode = KEY_COMMA
+	key.pressed = false
+	scene._unhandled_key_input(key)
+	key.pressed = true
+	key.echo = true
+	scene._unhandled_key_input(key)
+	context.equal(_service_observation(scene.demo), before, "release and repeat do not change catch-up rate")
+	key.echo = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy(), PackedInt64Array([12, 4, 3]), "comma lowers catch-up speed")
+	context.equal(scene._label.text.contains("at most 3 per tick"), true, "feedback shows selected rate")
+	for press: int in range(5):
+		scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[2], 1, "slower key stops at one frame per tick")
+	key.keycode = KEY_PERIOD
+	for press: int in range(140):
+		scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[2], Demo.Config.new().queue_capacity, "faster key stops at bounded ring capacity")
+	context.equal(scene._label.text.contains(",: slower catch-up | .: faster catch-up"), true, "help exposes catch-up controls")
+	before[10] = scene.demo.viewer.playback_policy()
+	context.equal(_service_observation(scene.demo), before, "catch-up keys do not service or resume viewing")
+	scene.free()

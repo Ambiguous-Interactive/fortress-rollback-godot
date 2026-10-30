@@ -74,7 +74,8 @@ Exercise serialized corruption through the installed decoder and player. A mutan
 disables a validation-status getter proves reporting only; bypass the actual comparison
 and require the corrupted-recording check to fail before claiming validation coverage.
 
-Pair file producers with every import path at the maximum advertised output size.
+Pair file producers with every advertised import path using the exact game identity and initial state,
+and compare actual playback with the original canonical state. Also exercise the maximum advertised output size.
 Include per-row checksums, statuses and maximum metadata; short fixtures can hide a smaller consumer cap.
 Share the byte limit between native and browser pickers and test rejection one byte above it before reading.
 Check the minimum valid output too: zero input rows can still carry a valid initial-state checksum.

@@ -1,6 +1,7 @@
 extends Node2D
 
 const Viewer = preload("res://examples/online/replay_viewer.gd")
+const IntegrationGame = preload("res://examples/integration/game.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE, Color.GOLD, Color.MEDIUM_SEA_GREEN]
 const FAILURE_FILENAME: String = "fortress-replay-failure.json"
@@ -65,7 +66,7 @@ func _ready() -> void:
 	panel.custom_minimum_size = Vector2(680, 0)
 	add_child(panel)
 	var title: Label = Label.new()
-	title.text = "Watch an online recording | no server required"
+	title.text = "Watch an online or spectator recording | no server required"
 	panel.add_child(title)
 	var shortcuts: Label = Label.new()
 	shortcuts.text = "P play/pause | N next frame | B back one frame | R restart | Esc cancel seek"
@@ -293,11 +294,26 @@ func _draw() -> void:
 	var fit: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
 	draw_set_transform(origin, 0.0, Vector2.ONE * fit)
 	draw_rect(Rect2(Vector2.ZERO, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
+	if viewer.is_integration_game():
+		_draw_integration_game(viewer.game)
+	else:
+		var game: Simulation = viewer.game
+		for slot: int in 2:
+			var position: Vector2 = Vector2(game.x[slot], game.y[slot])
+			var tint: Color = COLORS[game.color[slot]]
+			draw_circle(position, 12, tint)
+			draw_string(ThemeDB.fallback_font, position + Vector2(-4, 5), str(slot + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.BLACK)
+
+
+func _draw_integration_game(game: IntegrationGame) -> void:
 	for slot: int in 2:
-		var position: Vector2 = Vector2(viewer.game.x[slot], viewer.game.y[slot])
-		var tint: Color = COLORS[viewer.game.color[slot]]
-		draw_circle(position, 12, tint)
+		var position: Vector2 = Vector2(40 + game.x[slot], 100 + slot * 70)
+		draw_circle(position, 12, COLORS[slot])
 		draw_string(ThemeDB.fallback_font, position + Vector2(-4, 5), str(slot + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.BLACK)
+		for index: int in range(maxi(0, game.shot_total - IntegrationGame.SHOT_SLOTS), game.shot_total):
+			var id: int = game.shot_ids[index % IntegrationGame.SHOT_SLOTS]
+			if IntegrationGame.shot_player(id) == slot and game.frame - IntegrationGame.shot_frame(id) <= 6:
+				draw_arc(position, 21, 0, TAU, 24, COLORS[slot], 2)
 
 
 func _download_failure() -> void:
