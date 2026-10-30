@@ -217,7 +217,7 @@
 
 ### Fixed
 
-- Fix nested integration controls changing queued input or controller time before returning BUSY. Keep the live match paused while its replay is open.
+- Fix integration controls changing input or clocks before rejecting nested calls, sample conflicts or invalid time. Keep live matches paused during replay and allow corrected sample retries.
 
 - Fix spectator feedback showing active watching while waiting for new confirmed inputs mid-match.
 

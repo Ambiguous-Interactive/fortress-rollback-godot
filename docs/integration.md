@@ -26,7 +26,9 @@ This example delivers input in process and needs no server or SignalFish SDK.
 
 The controller keeps live input and final-tail recovery paused while replay mode is open.
 Its service and lag controls return `BUSY` during live callbacks, completion handlers or open expert batches,
-and during active replay callbacks or batches. Rejected calls preserve queued deliveries, clocks and sampled buttons.
+and during active replay callbacks or batches. These `BUSY` rejections preserve queued deliveries, clocks and sampled buttons.
+Local sample conflicts, incompatible player/width and invalid clocks are checked before controller staging too;
+corrected retries can supply new buttons. Once an accepted step stalls, its original sample stays fixed until advancement.
 Stopping replay inside a callback keeps that ownership until the callback returns; live play can then resume.
 
 Hollow flashes show recent shots from the current, corrected simulation. Prediction can create a flash

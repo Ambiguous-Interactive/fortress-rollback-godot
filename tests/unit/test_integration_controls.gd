@@ -55,6 +55,7 @@ func _attempt(demo: Demo, control: String) -> int:
 
 
 func _live_controls(context: RefCounted) -> void:
+	_input_rejections(context)
 	for control: String in ["tick", "finish", "lag", "loop_tick"]:
 		var demo: Demo = Demo.new()
 		context.equal(demo.start(0), Types.Code.OK, "live fixture starts")
@@ -168,3 +169,43 @@ func _stopped_controls(context: RefCounted) -> void:
 	var samples: Array[PackedByteArray] = [PackedByteArray([Game.LEFT]), PackedByteArray([0])]
 	context.equal(reference.simulate_frame(0, Types.FrameInputs.new(samples, PackedInt32Array([1, 2]))), true, "reference advances current buttons")
 	context.bytes_equal(demo.loop.game.canonical_bytes(), reference.canonical_bytes(), 1, "invalid time cannot retain stale buttons")
+
+
+func _input_rejections(context: RefCounted) -> void:
+	for facade: String in ["demo", "loop"]:
+		for rejection: String in ["conflict", "player", "width"]:
+			var demo: Demo = Demo.new()
+			demo.start(3)
+			var expected: int = Types.Code.INPUT_ALREADY_SUBMITTED
+			if rejection == "conflict":
+				context.equal(demo.loop.session.submit_local_input(0, 0, PackedByteArray([Game.LEFT])).code, Types.Code.OK, "expert stages original sample")
+			elif rejection == "player":
+				demo.loop.local_player = 1
+				expected = Types.Code.INVALID_PLAYER
+			else:
+				var config: RefCounted = demo.loop.session._config.owned_copy()
+				config.input_width = 2
+				config.neutral_input = PackedByteArray([0, 0])
+				config.storage_budget_bytes = config.required_storage_bytes()
+				context.equal(demo.loop.session.configure(config), Types.Code.OK, "expert changes sample width")
+				expected = Types.Code.INPUT_WIDTH
+			var before: Array = _snapshot(demo)
+			var code: int = demo.tick(Game.RIGHT) if facade == "demo" else demo.loop.tick(0, Game.RIGHT)
+			context.equal(code, expected, facade + " rejects " + rejection)
+			context.equal(_snapshot(demo), before, facade + " rejected input preserves controller")
+			if rejection == "player":
+				demo.loop.local_player = 0
+			elif rejection == "width":
+				context.equal(demo.loop.start(), Types.Code.OK, "restore supported sample shape")
+			code = demo.tick(Game.LEFT) if facade == "demo" else demo.loop.tick(0, Game.LEFT)
+			context.equal(code, Types.Code.OK, facade + " corrected sample retry advances")
+			context.equal(demo.loop.game.x[0], 96, facade + " retry uses corrected LEFT buttons")
+
+	for control: String in ["tick", "finish", "loop_tick"]:
+		var demo: Demo = Demo.new()
+		demo.start(3)
+		demo.tick(Game.RIGHT)
+		context.equal(demo.loop.session.poll(1000000).code, Types.Code.OK, "expert poll moves clock ahead")
+		var before: Array = _snapshot(demo)
+		context.equal(_attempt(demo, control), Types.Code.INVALID_TIME, control + " rejects stale controller time")
+		context.equal(_snapshot(demo), before, control + " invalid time preserves queued deliveries")

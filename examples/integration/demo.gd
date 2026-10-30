@@ -159,7 +159,7 @@ func tick(buttons: int) -> int:
 		return Types.Code.BUSY
 	if loop == null:
 		return Types.Code.INVALID_CONFIGURATION
-	var code: int = loop.session._check_advance_limits()
+	var code: int = loop._tick_code(tick_count * TICK_US, buttons)
 	if code != Types.Code.OK:
 		return code
 	code = _deliver_ready()
@@ -191,6 +191,9 @@ func finish_tick() -> int:
 	if loop == null:
 		return Types.Code.NOT_CONFIGURED
 	var code: int = loop.session._check_advance_limits()
+	if code != Types.Code.OK:
+		return code
+	code = loop.session.poll(tick_count * TICK_US).code
 	if code != Types.Code.OK:
 		return code
 	code = _deliver_ready()

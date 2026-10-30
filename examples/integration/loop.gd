@@ -44,19 +44,26 @@ func start() -> int:
 	return code
 
 
+## Checks ownership, sample compatibility and time before any controller sample is retained.
+func _tick_code(now_us: int, buttons: int) -> int:
+	var code: int = session._check_advance_limits()
+	if code != Types.Code.OK:
+		return code
+	var frame: int = session.status().current_frame
+	var sample: PackedByteArray = _sample if _sample_frame == frame else PackedByteArray([buttons])
+	code = session.validate_local_input(local_player, frame, sample)
+	return session.poll(now_us).code if code == Types.Code.OK else code
+
+
 ## OK advanced one frame; PREDICTION_STALL waits for remote input and may still
 ## have corrected earlier frames. Other codes either reject this call and leave the
 ## session running, or stop it: check session.status().lifecycle.
 func tick(now_us: int, buttons: int) -> int:
-	var code: int = session._check_advance_limits()
-	if code != Types.Code.OK:
-		return code
-	code = session.poll(now_us).code
+	var code: int = _tick_code(now_us, buttons)
 	if code != Types.Code.OK:
 		return code
 	var frame: int = session.status().current_frame
-	# Sample once per frame. While stalled, resubmit the same bytes: new keys would
-	# be rejected with INPUT_ALREADY_SUBMITTED.
+	# Sample once per frame; successful stalled attempts keep their original bytes.
 	if _sample_frame != frame:
 		_sample_frame = frame
 		_sample = PackedByteArray([buttons])

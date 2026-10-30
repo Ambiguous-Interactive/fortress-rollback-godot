@@ -156,6 +156,9 @@ recoverable input or delay stalls. Exercise exhausted frame and request counters
 through each wrapper while its input is unavailable. Run terminal preflight before
 wrapper-owned sample staging, endpoint polling or publication; a later driver guard
 cannot undo those effects. Nonterminal BUSY must preserve transport state.
+Validate candidate samples against the shared session's retained input before wrapper-owned caching,
+delivery or clock changes. Cross expert-staged input with a conflicting wrapper call and a corrected retry;
+checking only active batches and callbacks misses idle input ownership.
 When callers service only a recommended number of steps, include pending lifecycle
 completion after payload drains. Test clean end through that public service loop
 with empty input, a delayed tail and a gap; direct advancement can conceal starvation.

@@ -10,14 +10,15 @@ The change exceeds 300 lines and includes a reproduced input-contamination bug.
 
 | Finding | Evidence | Disposition |
 | --- | --- | --- |
-| An inner BUSY result cannot reverse an outer controller's retained input. | `tests/unit/test_integration_controls.gd:73-78` compares genuine LEFT input after a refused nested FIRE call with an untouched canonical reference. | Apply the existing composed-service ownership rule to integration controllers. |
+| An inner BUSY result cannot reverse an outer controller's retained input. | `tests/unit/test_integration_controls.gd:73-79` compares genuine LEFT input after a refused nested FIRE call with an untouched canonical reference. | Apply the existing composed-service ownership rule to integration controllers. |
+| Idle expert-staged input can reject a wrapper sample even when no callback or batch is active. | `tests/unit/test_integration_controls.gd:174-202` stages LEFT, rejects RIGHT and requires a corrected LEFT retry without changed controller state. | Validate retained input before wrapper caching, delivery and clocks. |
 | Recorded checksum destinations and visited snapshot checkpoints serve different inspection needs. | `tests/unit/test_replay_input_navigation.gd:169-183` separates discovery from validation and navigates sparse/terminal checksums; `:210-231` rejects corrupt history. | Keep discovery separate from validation and delegate navigation to the existing bounded seek. |
 | Delay changes need no new playback algorithm. | `tests/unit/test_spectator_demo.gd:757-786` exercises delay changes, bounded catch-up, pause, final-tail equality and restart through the existing viewer API. | Preserve pause, catch-up and clean-tail policy while changing only delay. |
 
 ## Actions taken
 
-Integration controllers preflight ownership and terminal limits before staging
-samples or advancing controller time. The continuation regression observes actual
+Integration controllers preflight ownership, terminal limits, retained input and
+time before staging samples or advancing controller time. The continuation regression observes actual
 canonical gameplay, in addition to unchanged controller fields.
 
 Replay navigation and spectator controls reuse existing playback contracts.
@@ -28,15 +29,18 @@ and inspected after layout.
 ## Prune ledger
 
 The existing [rollback guidance](../skills/rollback-fundamentals/SKILL.md)
-already requires composed guards before clocks and samples, and terminal
-preflight before staging. Its rule was correct; another duplicate rule would
-add no durable knowledge (lines 137-138 and 154-158).
+already required composed guards before clocks and samples, and terminal
+preflight before staging. The first repair covered active owners but missed idle
+expert-staged input. Extended that same ownership paragraph with candidate-sample
+validation and a conflicting/corrected public retry. No separate skill or duplicate
+knowledge entry was created.
+
 The existing [browser guidance](../skills/testing/references/browser-integration.md)
 already requires actual controls, selected-boundary validation and sparse/absent
-checksum evidence (lines 15-31). No guidance was retired or duplicated.
-No skill or knowledge entry changed, so verify-on-touch of stored commands is
-not applicable. Fresh-context curation inspected these owning entries before
-considering a new knowledge home; all three findings reinforce existing rules.
+checksum evidence. Those rules remain correct. Retired the overly broad rejected-call
+documentation claim in favor of specific preflight guarantees; ordinary callback
+failures preserve their established partial progress. Regeneration, harness lint,
+harness self-tests and source-width checks verify the touched guidance.
 
 ## Verification
 
@@ -48,15 +52,19 @@ Focused suites pass twice on Godot 4.3 and 4.7.2, including in-process repeats:
 10 integration cases, 22 replay cases and 25 spectator cases per fresh run.
 Commands, receipt names and rendered screenshot checks are recorded in the
 machine-local `progress/session-119-{client,replay,spectator}.md` logs.
-Complete native unit verification passes 697 cases in each of two fresh-process
-runs on both pins, with complete results and no errors. Receipts are
-`progress/session-119-final-full43.json` and `session-119-final-full472.json`.
-The clean tested candidate is `a63967487544c37dcac758c7fa41f76f73744004`.
-All 25 GitHub Actions checks at that candidate passed, including native/Chromium
-and every Firefox ownership partition. The runtime sources remain unchanged;
-this final evidence update changes only the retrospective. Final reviewed-head,
-merge and main-CI evidence belongs in the aggregate session log and linked issue
-updates. Those delivery gates remain required independently of these test results.
+A follow-up public-composition probe exposed the idle retained-input defect after
+the first BUSY repair. Its added regression fails with 14 intended assertions per
+internal live-controls iteration on the prior candidate
+(`progress/session-119-client-input-red.json`). After the shared preflight repair,
+all 10 integration cases pass twice on both pins, with internal repeats
+(`progress/session-119-client-input-green43.json` and
+`progress/session-119-client-input-green472.json`).
+No pre-regression baseline is claimed for this pre-existing defect.
+
+Complete final native and exported verification, frozen source/tool hashes,
+reviewed-head CI, feedback scans, merge and main-CI receipts belong in the aggregate
+session log and linked issue updates. These delivery gates remain independently
+required; focused results alone do not establish them.
 
 ## Outcome
 
