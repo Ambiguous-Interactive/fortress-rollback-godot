@@ -48,10 +48,15 @@ Focused suites pass twice on Godot 4.3 and 4.7.2, including in-process repeats:
 10 integration cases, 22 replay cases and 25 spectator cases per fresh run.
 Commands, receipt names and rendered screenshot checks are recorded in the
 machine-local `progress/session-119-{client,replay,spectator}.md` logs.
-Final full native, exported ownership and delivery checks remain owned by the
-session lead; their completion must be recorded in the aggregate session log
-and issue/PR evidence before delivery. Focused results alone do not establish
-those gates.
+Complete native unit verification passes 697 cases in each of two fresh-process
+runs on both pins, with complete results and no errors. Receipts are
+`progress/session-119-final-full43.json` and `session-119-final-full472.json`.
+The clean tested candidate is `a63967487544c37dcac758c7fa41f76f73744004`.
+All 25 GitHub Actions checks at that candidate passed, including native/Chromium
+and every Firefox ownership partition. The runtime sources remain unchanged;
+this final evidence update changes only the retrospective. Final reviewed-head,
+merge and main-CI evidence belongs in the aggregate session log and linked issue
+updates. Those delivery gates remain required independently of these test results.
 
 ## Outcome
 
