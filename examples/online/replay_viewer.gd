@@ -23,7 +23,7 @@ var is_playing: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
-var _recorded_checksum_count: int = 0
+var _recorded_checksums: PackedInt64Array = PackedInt64Array()
 var _input_changes: PackedInt64Array = PackedInt64Array()
 var _recording_sha256: String = ""
 var _recording_bytes: int = 0
@@ -49,10 +49,10 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	_recording_bytes = bytes.size()
 	_recording = recording
 	_input_changes = PackedInt64Array(changes)
-	_recorded_checksum_count = 0
+	_recorded_checksums.clear()
 	for frame: int in range(recording.frame_count() + 1):
 		if not recording.checksum(frame).is_empty():
-			_recorded_checksum_count += 1
+			_recorded_checksums.append(frame)
 	restart()
 	return true
 
@@ -106,7 +106,7 @@ func restart() -> void:
 	var code: int = _player.configure(_recording, game, Simulation.SNAPSHOT_BYTES, 300, 121)
 	is_playing = false
 	message = "Ready. Press Play; recorded checksums are validated." if code == Types.Code.OK else "Could not start playback (%d)." % code
-	if code == Types.Code.OK and _recorded_checksum_count == 0:
+	if code == Types.Code.OK and _recorded_checksums.is_empty():
 		message = "Ready. Press Play; this recording has no checksums."
 
 
@@ -119,7 +119,7 @@ func toggle_play() -> void:
 		_finish_seek()
 		return
 	message = "Playing; recorded checksums are validated."
-	if _recorded_checksum_count == 0:
+	if _recorded_checksums.is_empty():
 		message = "Playing inputs; this recording has no checksums."
 
 
@@ -190,7 +190,7 @@ func frame_count() -> int:
 
 
 func recorded_checksum_count() -> int:
-	return _recorded_checksum_count
+	return _recorded_checksums.size()
 
 
 func checked_checksum_count() -> int:
@@ -265,7 +265,7 @@ func seek(frame: int) -> bool:
 	_seek_target = frame if frame != current_frame() else -1
 	if is_seeking():
 		message = "Seeking to frame %d; checksums are validated." % frame
-		if _recorded_checksum_count == 0:
+		if _recorded_checksums.is_empty():
 			message = "Seeking to frame %d; this recording has no checksums." % frame
 	else:
 		_finish_seek()
@@ -305,6 +305,25 @@ func seek_input_change(forward: bool) -> bool:
 	return target >= 0 and seek(target)
 
 
+## Nearest earlier/later recorded state checksum, including a recorded final boundary, or -1.
+## Unlike cached checkpoints, destinations are available before their first verified visit.
+## Active seeks and failed playback expose no destination; discovery alone claims no validation.
+func recorded_checksum_target(forward: bool) -> int:
+	if is_seeking() or has_failure() or _recorded_checksums.is_empty():
+		return -1
+	var index: int = _recorded_checksums.bsearch(current_frame(), not forward)
+	if not forward:
+		index -= 1
+	return _recorded_checksums[index] if index >= 0 and index < _recorded_checksums.size() else -1
+
+
+## Reach a recorded checksum through ordinary bounded navigation and finish paused after validation.
+## Corrupt input or state in the required prefix stops navigation at its owning boundary.
+func seek_recorded_checksum(forward: bool) -> bool:
+	var target: int = recorded_checksum_target(forward)
+	return target >= 0 and seek(target)
+
+
 func seek_checkpoint(forward: bool) -> bool:
 	var target: int = checkpoint_target(forward)
 	return target >= 0 and seek(target)
@@ -330,7 +349,7 @@ func _finish_seek() -> void:
 
 
 func _complete_message() -> String:
-	if _recorded_checksum_count == 0:
+	if _recorded_checksums.is_empty():
 		return "Replay complete. This recording has no checksums; playback could not be verified."
 	if _player.is_final_state_validated():
 		return "Replay complete. All recorded checksums matched, including the final state."

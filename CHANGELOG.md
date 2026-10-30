@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add Previous/Next recorded checksum replay controls. Inspect sparse verification boundaries and recorded final states through verified navigation.
+
+- Add spectator viewing-delay controls with [ and ]. Adjust the confirmed-frame cushion without restarting or rewinding playback.
+
 - Add spectator missing-frame and pending-input observations. Buffering feedback names the gap and later rows already received.
 
 - Add Previous/Next input change replay controls, including confirmed or disconnected status changes, with verified navigation.
@@ -212,6 +216,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix integration controls changing input or clocks before rejecting nested calls, sample conflicts or invalid time. Keep live matches paused during replay and allow corrected sample retries.
 
 - Fix spectator feedback showing active watching while waiting for new confirmed inputs mid-match.
 

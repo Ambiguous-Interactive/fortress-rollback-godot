@@ -96,6 +96,7 @@ func _corrected_viewing(context: RefCounted) -> void:
 
 
 func _pause_and_catchup(context: RefCounted) -> void:
+	_viewing_delay(context)
 	var demo: Demo = Demo.new()
 	demo.start()
 	for tick: int in range(80):
@@ -297,6 +298,31 @@ func _single_frame_control(context: RefCounted) -> void:
 	key.keycode = KEY_P
 	scene._unhandled_key_input(key)
 	context.equal(scene.demo.is_paused, false, "P resumes playback after inspection")
+	var host_frame: int = scene.demo.host.loop.game.frame
+	frame = scene.demo.game.frame
+	key.keycode = KEY_BRACKETRIGHT
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[0], 13, "right bracket raises cushion one confirmed frame")
+	context.equal(scene._label.text.contains("Viewer holds 13 confirmed frames"), true, "delay feedback reflects selected policy")
+	context.equal(scene._label.text.contains("[: less delay | ]: more delay"), true, "help exposes delay controls")
+	key.keycode = KEY_BRACKETLEFT
+	for press: int in range(15):
+		scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[0], 0, "left bracket reaches zero without going negative")
+	context.equal(scene.demo.game.frame, frame, "delay keys never step viewer")
+	context.equal(scene.demo.host.loop.game.frame, host_frame, "delay keys never step host")
+	context.equal(scene.demo.is_paused, false, "delay keys preserve continuous viewing")
+	key.keycode = KEY_BRACKETRIGHT
+	for press: int in range(140):
+		scene._unhandled_key_input(key)
+	var maximum_delay: int = Demo.Config.new().queue_capacity - 1
+	context.equal(scene.demo.viewer.playback_policy()[0], maximum_delay, "delay key cannot exceed retained ring")
+	context.equal(scene._label.text.contains("Viewer holds %d confirmed frames" % maximum_delay), true, "upper-bound display retains accepted delay")
+	scene.demo.lose_host_connection()
+	key.keycode = KEY_BRACKETLEFT
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[0], maximum_delay, "terminal delay key leaves policy unchanged")
+	context.equal(scene._label.text.contains("HOST CONNECTION LOST"), true, "terminal refusal preserves visible cause")
 	scene.free()
 
 
@@ -492,7 +518,7 @@ func _restart_busy(context: RefCounted) -> void:
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
 	for actor: String in ["host", "viewer", "batch"]:
-		for action: String in ["tick", "step_viewer", "finish_host"]:
+		for action: String in ["tick", "step_viewer", "finish_host", "set_viewing_delay"]:
 			var demo: Demo = Demo.new()
 			context.equal(demo.start(), Types.Code.OK, "start guarded service")
 			demo.is_paused = true
@@ -503,7 +529,14 @@ func _service_busy(context: RefCounted) -> void:
 			var attempt: Callable = func(_code: int = 0, _before: int = 0, _after: int = 0) -> void:
 				var target: RefCounted = owner.get_ref()
 				var before: Array = _service_observation(target)
-				var code: int = target.tick(Game.LEFT) if action == "tick" else target.call(action)
+				var code: int
+				if action == "set_viewing_delay":
+					if not target.has_method(action):
+						context.equal(false, true, "viewing delay exposes guarded adjustment")
+						return
+					code = target.call(action, 0)
+				else:
+					code = target.tick(Game.LEFT) if action == "tick" else target.call(action)
 				attempts.append(code)
 				context.equal(code, Types.Code.BUSY, "active " + actor + " refuses " + action)
 				context.equal(_service_observation(target), before, "refused service preserves clocks, playback and host state")
@@ -532,7 +565,8 @@ func _service_observation(demo: RefCounted) -> Array:
 		demo.viewer_code,
 		demo.is_paused,
 		demo.is_finishing,
-		demo.viewer.status().reason
+		demo.viewer.status().reason,
+		demo.viewer.playback_policy()
 	]
 
 
@@ -704,3 +738,49 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | BUFFERING | waiting for confirmed input", "drained healthy stream waits for host progress")
 	scene.free()
+
+
+# Value: protects=live viewing delay changes preserve canonical progress; fails_when=adjustment rewinds or resamples;
+# why_new=policy API had no playable control; seam=none
+func _viewing_delay(context: RefCounted) -> void:
+	var demo: Demo = Demo.new()
+	context.equal(demo.has_method("set_viewing_delay"), true, "demo exposes viewing delay adjustment")
+	if not demo.has_method("set_viewing_delay"):
+		return
+	context.equal(demo.call("set_viewing_delay", 0), Types.Code.NOT_CONFIGURED, "delay needs a configured viewer")
+	context.equal(demo.start(), Types.Code.OK, "start delay adjustment")
+	for tick: int in range(60):
+		context.equal(demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "original changing host history")
+	var frame: int = demo.game.frame
+	var host_frame: int = demo.host.loop.game.frame
+	var canonical: PackedByteArray = demo.game.canonical_bytes()
+	context.equal(demo.call("set_viewing_delay", 0), Types.Code.OK, "remove viewing delay")
+	context.equal(demo.viewer.playback_policy(), PackedInt64Array([0, 4, 4]), "adjustment preserves catchup policy")
+	context.equal(demo.game.frame, frame, "adjustment does not advance viewer immediately")
+	context.equal(demo.host.loop.game.frame, host_frame, "adjustment never advances host")
+	context.bytes_equal(demo.game.canonical_bytes(), canonical, frame, "adjustment preserves displayed state")
+	context.equal(demo.tick(Game.LEFT), Types.Code.OK, "service reduced delay")
+	context.equal(demo.game.frame - frame, 4, "reduced delay catches up within ordinary work budget")
+	frame = demo.game.frame
+	context.equal(demo.call("set_viewing_delay", 30), Types.Code.OK, "increase viewing delay")
+	for tick: int in range(8):
+		context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "host keeps playing while new cushion fills")
+	context.equal(demo.game.frame, frame, "larger delay waits without rewinding")
+	demo.is_paused = true
+	context.equal(demo.call("set_viewing_delay", 1), Types.Code.OK, "delay changes while paused")
+	context.equal(demo.is_paused, true, "delay adjustment does not resume viewer")
+	for invalid: int in [-1, Demo.Config.new().queue_capacity]:
+		context.equal(demo.call("set_viewing_delay", invalid), Types.Code.INVALID_CONFIGURATION, "invalid viewing delay refused")
+		context.equal(demo.viewer.playback_policy(), PackedInt64Array([1, 4, 4]), "invalid adjustment preserves policy")
+	context.equal(demo.finish_host(), Types.Code.OK, "stop at original host boundary")
+	for tick: int in range(20):
+		demo.tick(0)
+	context.equal(demo.call("set_viewing_delay", 30), Types.Code.OK, "closed tail accepts policy without reholding rows")
+	demo.is_paused = false
+	for tick: int in range(80):
+		demo.tick(0)
+	context.equal(demo.viewer.is_complete(), true, "clean ending releases adjusted delay")
+	context.bytes_equal(demo.game.canonical_bytes(), demo.host.loop.game.canonical_bytes(), demo.game.frame, "adjusted playback equals original corrected host")
+	context.equal(demo.call("set_viewing_delay", 0), Types.Code.TERMINATED, "completed viewing cannot be revived")
+	context.equal(demo.start(), Types.Code.OK, "restart fresh viewing")
+	context.equal(demo.viewer.playback_policy(), PackedInt64Array([12, 4, 4]), "restart restores default viewing delay")

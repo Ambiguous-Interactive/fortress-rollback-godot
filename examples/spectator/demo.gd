@@ -123,6 +123,17 @@ func step_viewer() -> int:
 	return viewer_code
 
 
+## Changes the confirmed-frame cushion without stepping, rewinding or changing pause/catch-up policy.
+## Raising the delay waits for more input; clean host endings always release the complete tail.
+func set_viewing_delay(frames: int) -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	var policy: PackedInt64Array = viewer.playback_policy()
+	return viewer.set_playback(frames, policy[1], policy[2])
+
+
 ## Report a known unexpected loss of the viewer's host link, without stopping the player session.
 ## Buffered rows stop immediately; restart creates a fresh host and viewer from their initial state.
 func lose_host_connection() -> int:

@@ -104,7 +104,10 @@ Internal readiness checks avoid owned sample copies; public retained-input reads
 They can also export owned finalized input rows for confirmed effects and spectator publication without recording.
 Replay failure evidence identifies the first failed game request and comparison domain.
 The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
+It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
+The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
+Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
