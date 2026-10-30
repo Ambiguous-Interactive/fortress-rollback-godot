@@ -38,7 +38,8 @@ func _snapshot(demo: Demo) -> Array:
 		pending.append([sample.frame, sample.due_tick, sample.buttons])
 	return [demo.tick_count, demo.stall_count, demo.lag_ticks, demo._remote_sample_frame,
 		demo.loop._sample_frame, demo.loop._sample.duplicate(), pending,
-		demo.loop.session.received_frames(), demo.loop.game.canonical_bytes(), demo.effects.recent_ids.duplicate()]
+		demo.loop.session.received_frames(), demo.loop.session._time,
+		demo.loop.game.canonical_bytes(), demo.effects.recent_ids.duplicate()]
 
 
 func _attempt(demo: Demo, control: String) -> int:
