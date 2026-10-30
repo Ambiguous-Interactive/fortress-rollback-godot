@@ -22,7 +22,7 @@ results belong in the session log and linked issues.
 
 Cancellation review then reproduced SDK Leave freeing an actively emitting Node,
 which aborts cleanup with a locked-object error. Match detach during SAVE also
-allowed frame10 to advance to11 and later reported a transport failure. The
+allowed frame 10 to advance to 11 and later reported a transport failure. The
 cancellation suite records the paired idle control and exact failures. A further
 startup witness catches stale continuation after adapter status, peer getters,
 transport polling and setup returns. The initial fixture used Node's reserved
@@ -31,8 +31,8 @@ transport polling and setup returns. The initial fixture used Node's reserved
 The first complete native chain was deliberately stopped before source changes;
 its partial receipt is unqualified. Complete native and CI gates still require
 final candidate runs. The final focused receipts `session-123-online-v3-43.json`
-and `session-123-online-v3-472.json` pass all39 online cases in each fresh run,
-with zero engine errors. Harness validation passes161 self-tests.
+and `session-123-online-v3-472.json` pass all 39 online cases in each fresh run,
+with zero engine errors. Harness validation passes 161 self-tests.
 
 The initial pushed head also fails `manual_leave` with zero engine errors:
 retained work blocks fresh-room validation and failed-state SDK close polling,
