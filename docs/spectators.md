@@ -18,13 +18,17 @@ godot --path . res://examples/spectator/spectator.tscn
 The upper board is a playable host with delayed remote input and actual rollback.
 The lower board follows its corrected input history, initially twelve confirmed frames behind.
 Move with A/D or arrows and fire with Space. Press P to pause only the viewer;
-resume to catch up at most four frames per physics tick. Press N to pause and inspect
+resume to catch up at most four frames per physics tick by default. Press N to pause and inspect
 one confirmed viewer frame at a time. Each press advances at most one frame and still
 respects the viewing delay; it waits when confirmed inputs are unavailable.
 Press [ or ] to lower or raise the viewing delay by one confirmed frame, including while paused.
-Reducing delay catches up within the same four-frame work limit; raising delay waits for
+Press comma or period to lower or raise the catch-up limit by one frame per tick.
+The limit ranges from one frame through the configured queue capacity; it changes neither
+viewing delay nor pause. The label shows the selected limit.
+Reducing delay catches up within that work limit; raising delay waits for
 more confirmed input without rewinding. The label shows the selected delay.
-These controls never advance or sample the host, and restart restores twelve frames.
+These controls never advance or sample the host. Restart restores twelve frames of delay
+and the four-frame catch-up limit.
 The host continues playing during inspection. E stops the host at its current
 frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
@@ -40,7 +44,7 @@ completion message just because its next operation reports a generic stopped res
 Plain cancellation shows `STOPPED`; only fully serviced clean host endings show `COMPLETE`.
 Restart retires the prior host and viewer, including retained driver and stream handles.
 An active callback or expert request batch must finish before restart, another tick,
-single-frame inspection, viewing-delay adjustment or clean host ending can succeed. These actions return `BUSY`
+single-frame inspection, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
 without consuming time, changing playback controls or stopping the viewer.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.
@@ -67,7 +71,12 @@ driver SAVE callback. A clean ending captures that boundary before the viewer
 terminates, including a match with no input frames. Loading the bytes with
 `FortressReplay.decode()` and playing them with `FortressReplayPlayer` and the
 [example game](../examples/integration/game.gd) reproduces the viewed state.
-The online integer replay viewer uses another game and refuses these files.
+Open the saved file in the [replay viewer](online-example.md#record-and-download-a-replay),
+which selects the spectator game from its explicit recording identity. The same
+playback, input inspection, backward navigation and checksum checks apply.
+Older spectator exports without a game identity remain refused; save a new recording.
+
+![Saved spectator replay with Fire input inspection](images/spectator-replay.png)
 
 The demo's `replay_bytes()` returns owned portable bytes. It returns empty while
 callbacks or expert requests own the match, before startup, or when an empty

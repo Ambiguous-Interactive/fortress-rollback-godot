@@ -14,6 +14,8 @@ Fault observers must check read success before interpreting returned bytes or de
 If stronger validation rejects an injected fault earlier, require that exact typed rejection rather than a derivative status mismatch.
 Keep that structural rejection separate; rebuild semantic mutants with valid structure so they still reach the invariant they claim to test.
 Mutate actual encoded bytes before observation to test the observer itself.
+Bind the complete original artifact, including header and metadata, to an independent
+baseline before validating its exact changed byte. Two mutually consistent forged files are not original evidence.
 Validate nullable fields before normalization; false and empty strings cannot
 silently become the same observation. Test omitted and explicit-null optional
 objects separately through every standalone executable. Require field presence

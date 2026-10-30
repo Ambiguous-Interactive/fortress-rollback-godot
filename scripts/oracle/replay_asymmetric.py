@@ -185,4 +185,7 @@ def observe(binary, engine, root, output, execute):
             refused.append(runtime + '-asymmetric-withheld-receipts')
         else:
             raise ValueError(f'{runtime}: asymmetric missing receipts did not stop gameplay')
-    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused)
+    from replay_corruption import observe as observe_corruption
+    serialized = observe_corruption(engine, root, output, execute, combined['corrected']['godot'])
+    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']),
+                standalone_rejections=refused, serialized_controls=serialized)

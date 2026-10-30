@@ -351,6 +351,19 @@ processes. This advances #256 without qualifying source recovery-only recording,
 coordinated drop, browser transports or the complete #45 release gate.
 
 
+The asymmetric gate also copies the actual Godot observer twice and changes one
+serialized byte at frame 129 before production decoding. An altered input keeps its
+original digest and stops playback before that frame's SAVE or ADVANCE; an altered
+recorded checksum reaches SAVE and then stops before ADVANCE. Both must report DESYNC
+at boundary 129, retaining the exact original canonical state. The validator checks
+the complete original file, including configuration, neutral input, every metadata field,
+rows, statuses, checksums and input digests. Engine metadata comes from an independent
+query of the verified executable. It then checks the single-byte
+encoded difference, all decoded rows, and the complete truncated playback transcript.
+This exercises real decoding and playback; the earlier JSON mutation controls remain.
+An unchanged asymmetric recording supplies the green control. Forged byte evidence,
+extra mutations and playback that continues cannot qualify these controls.
+
 ### Repeated prediction stalls and resumed recording
 
 The remote gate also repeats changing and neutral 257-frame histories while endpoint

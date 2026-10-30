@@ -46,6 +46,8 @@ func start() -> int:
 	config.history_slots = 1
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
 	config.replay_max_frames = REPLAY_FRAMES
+	config.diagnostic_version = Game.REPLAY_VERSION
+	config.diagnostic_seed = Game.REPLAY_SEED
 	config.storage_budget_bytes = config.required_storage_bytes()
 	var next_stream: Stream = Stream.new()
 	# A local fixture identity; network integrations supply a fresh agreed lifetime.
@@ -132,6 +134,17 @@ func set_viewing_delay(frames: int) -> int:
 		return Types.Code.NOT_CONFIGURED
 	var policy: PackedInt64Array = viewer.playback_policy()
 	return viewer.set_playback(frames, policy[1], policy[2])
+
+
+## Changes the maximum playback steps per tick while preserving delay, threshold and pause.
+## The viewer rejects speeds outside one through its configured queue capacity.
+func set_catchup_speed(frames_per_tick: int) -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	var policy: PackedInt64Array = viewer.playback_policy()
+	return viewer.set_playback(policy[0], policy[1], frames_per_tick)
 
 
 ## Report a known unexpected loss of the viewer's host link, without stopping the player session.

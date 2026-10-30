@@ -32,7 +32,7 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
-- [Online match recording, downloads and offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
+- [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
 - [Native/browser diagnostic file viewer, including saved callback failure names and frames](docs/diagnostic-viewer.md).
@@ -497,7 +497,9 @@ The small driver exposes owned finalized inputs and replay exports through the e
 Driver-only clients can cancel through the same terminal lifecycle, including inside callbacks; cancellation expires active views.
 Completion notifications guard the shared session, so another driver or expert facade cannot advance or reconfigure it between handlers.
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
-or forward frame. The spectator example uses that shared operation to settle its exact final host
+or forward frame. The local spectator example exposes bounded catch-up rate controls independently of viewing delay.
+Its identified saved recordings open in the shared replay viewer with their own game callbacks and control labels.
+The spectator example uses that shared operation to settle its exact final host
 boundary before sending END; paused viewers can resume through the full clean tail.
 Authenticated retries remain idempotent through that buffered tail; input closure alone does not terminate playback.
 Direct clean closure refuses accepted rows beyond a gap without closing input; callers fill the missing rows and retry before draining the complete tail.
