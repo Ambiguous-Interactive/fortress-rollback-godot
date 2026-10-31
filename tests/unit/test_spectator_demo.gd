@@ -872,7 +872,7 @@ func _catchup_control(context: RefCounted) -> void:
 	for press: int in range(140):
 		scene._unhandled_key_input(key)
 	context.equal(scene.demo.viewer.playback_policy()[2], Demo.Config.new().queue_capacity, "faster key stops at bounded ring capacity")
-	context.equal(scene._label.text.contains(",: slower catch-up | .: faster catch-up"), true, "help exposes catch-up controls")
+	context.equal(scene._label.text.contains("Comma: slower catch-up | Period: faster catch-up"), true, "help exposes catch-up controls")
 	before[10] = scene.demo.viewer.playback_policy()
 	context.equal(_service_observation(scene.demo), before, "catch-up keys do not service or resume viewing")
 	scene.free()
@@ -970,7 +970,19 @@ func _buffer_pressure_feedback(context: RefCounted) -> void:
 		var host_frame: int = scene.demo.host.loop.game.frame
 		match action:
 			"catchup":
+				var refused_frame: int = scene.demo.next_host_frame
+				context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "host continues while the full viewer refuses publication")
+				context.equal(scene.demo.viewer_code, Types.Code.NETWORK_BACKPRESSURE, "full buffer refuses the next row")
+				context.equal(scene.demo.next_host_frame, refused_frame, "refused row leaves publication at its original frame")
+				var retained: PackedByteArray = scene.demo.publisher.prepare_packet().bytes
+				host_frame = scene.demo.host.loop.game.frame
 				context.equal(scene.demo.catch_up_viewer(), Types.Code.OK, "catch-up releases receive capacity")
+				context.equal(scene.demo.host.loop.game.frame, host_frame, "catch-up itself never samples or advances the host")
+				context.equal(scene.demo.publisher.prepare_packet().bytes, retained, "catch-up preserves the exact refused packet")
+				context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "later tick retries publication")
+				context.equal(scene.demo.viewer_code, Types.Code.OK, "publication succeeds after catch-up")
+				context.equal(scene.demo.next_host_frame > refused_frame, true, "retry advances beyond the refused row")
+				host_frame = scene.demo.host.loop.game.frame
 			"terminate":
 				scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
 			"finish":
