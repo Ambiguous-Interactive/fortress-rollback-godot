@@ -94,11 +94,13 @@ class Client:
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "idle_batch", "terminal_callbacks", "handshake_timeout",
-		"observer_history", "viewer_lifetime", "scheduling_gaps"])
+		"observer_history", "viewer_lifetime", "scheduling_gaps", "delay_actions"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"delay_actions":
+			_delay_actions(context)
 		"viewer_lifetime":
 			_viewer_lifetime(context)
 		"observer_history":
@@ -541,3 +543,68 @@ func _recording_warning(context: RefCounted, node: Node) -> void:
 		game_match.detach()
 		recorded.mesh.free()
 		recorded.client.free()
+
+
+# Value: protects=delay prompts and keys share live readiness; fails_when=retained observations enable stale actions;
+# why_new=live_driver checks match operations without scene feedback; seam=actual scene handlers and packet fixtures
+func _delay_actions(context: RefCounted) -> void:
+	for phase: String in ["live", "leave", "transport_failure", "match_failure", "finishing", "fresh_room", "stale_suggestion"]:
+		var fixtures: Array[Dictionary] = [_fixture(context, U), _fixture(context, V)]
+		for round_index: int in 100:
+			for fixture: Dictionary in fixtures:
+				fixture.driver.tick(round_index * 16667, 0)
+			_deliver(fixtures)
+		var node: Node = Scene.instantiate()
+		node.call("_ready")
+		var lobby: Lobby = node.controller
+		var game_match: Match = fixtures[0].driver
+		lobby.game_match = game_match
+		lobby.state = "playing"
+		lobby.message = "Keep the connection message."
+		game_match.suggested_delay = 4
+		game_match.suggested_frame = game_match.peer.status().current_frame
+		context.equal(game_match.peer.network_status().state, "running", "delay control has actual synchronized peers")
+		match phase:
+			"leave":
+				node.call("_leave")
+			"transport_failure":
+				lobby._on_protocol_error("connection lost")
+			"match_failure":
+				game_match.failure = "Transport stopped. Leave and create a new room."
+				lobby.message = game_match.failure
+			"finishing":
+				game_match.record_replay = true
+				context.equal(game_match.finish_replay(), Types.Code.OK, "actual finish stops new gameplay")
+			"fresh_room":
+				node.call("_leave")
+				lobby.game_match = Match.new()
+				lobby.state = "connecting"
+			"stale_suggestion":
+				game_match.suggested_delay = 2
+				game_match.tick(100 * 16667, 0)
+		var actionable: bool = phase in ["live", "stale_suggestion"]
+		node.call("_update_status")
+		context.equal(node._status.text.contains("= raises"), actionable, phase + " manual prompt readiness")
+		context.equal(node._status.text.contains("R applies"), phase == "live", phase + " suggestion prompt readiness")
+		if phase != "fresh_room":
+			context.equal(node._status.text.contains("You: player"), true, phase + " retained observations remain visible")
+		var old_message: String = lobby.message
+		var old_delay: int = game_match.peer.input_delay(game_match.local_slot)
+		for key: Key in [KEY_R, KEY_EQUAL, KEY_KP_ADD]:
+			var event: InputEventKey = InputEventKey.new()
+			event.keycode = key
+			event.pressed = true
+			node.call("_unhandled_key_input", event)
+			if not actionable:
+				context.equal(lobby.message, old_message, phase + " rejected key preserves recovery message")
+		if phase == "live":
+			context.equal(game_match.peer.input_delay(game_match.local_slot), 6, "live suggestion and both raise keys work")
+		elif phase == "stale_suggestion":
+			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay + 2, "stale suggestion does not block manual raise")
+		else:
+			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay, phase + " stale keys preserve delay")
+		node.free()
+		for fixture: Dictionary in fixtures:
+			fixture.driver.detach()
+			fixture.mesh.free()
+			fixture.client.free()

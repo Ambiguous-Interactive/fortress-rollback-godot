@@ -108,10 +108,13 @@ installed WebRTC implementation.
    Click outside text fields if a field still has keyboard focus.
 4. Move with WASD or the arrow keys. The display reports your player number,
    frame, confirmed frame, input delay, stalls, latest event and active relay links.
-5. On a laggy connection, press **=** to raise your input delay by one frame.
+5. During active gameplay, press **=** to raise your input delay by one frame.
    Moves then take effect a frame later, with fewer corrections. Raises cannot be undone in this match.
    When the measured connection needs more delay, the display shows a suggested delay.
    Press **R** to apply it.
+
+Delay shortcuts and action prompts stop after Leave, failure or Finish replay.
+Retained delay observations remain available for diagnostics.
 
 ## Diagnostics
 

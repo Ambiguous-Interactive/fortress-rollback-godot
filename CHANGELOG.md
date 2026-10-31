@@ -229,6 +229,8 @@
 
 ### Fixed
 
+- Fix online delay prompts and shortcuts after leaving, failure or replay finishing. Retain match observations and recovery instructions.
+
 - Fix driver callback replacement during unfinished expert batches so the original game state stays attached.
 
 - Fix stale spectator host deadline checks after replacing the exposed viewer.

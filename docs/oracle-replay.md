@@ -413,3 +413,12 @@ retry; the unchanged frame-based workload is its green control. Each workload ru
 on both engine pins. This advances #256's stalled/resumed recording evidence; transport
 send refusal, source recovery-only recording, coordinated drop and browser acceptance
 remain outside this witness.
+
+The pressure gate now repeats both histories with actual final-boundary capture after
+recovery. Each endpoint retains its 257 original rows, adds exactly one SAVE at
+boundary 257, and decodes its version-6 recording through final checksum validation.
+The full 285/286 service-attempt and 28/29 stall inventories remain required. Separate
+copied observers omit each endpoint's capture, or corrupt exactly one serialized
+terminal-checksum byte; all three controls reject the claimed terminal evidence.
+This combines resumed recording with final-state verification on both engine pins.
+It does not add source recovery-only recording or transport send-refusal coverage.

@@ -71,9 +71,10 @@ def validate(actual, healthy, fault, engine_metadata):
     compare(actual, wanted, 'serialized.observed')
 
 
-def observe(engine, root, output, execute, healthy, terminal=False):
+def observe(engine, root, output, execute, healthy, terminal=False, pressure=False):
     """The unchanged asymmetric workload is the green control; copied observers alter actual encoded bytes."""
     original = (root / 'tests/oracle/replay_remote_trace.gd').read_text()
+    workload = 'pressure' if pressure else 'asymmetric'
     needle = '\t\tif decoded.decode(recording.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != recording.to_bytes():'
     result_needle = '\tprint("FORTRESS_REPLAY_RESULT " + JSON.stringify(result))'
     if original.count(needle) != 1 or original.count(result_needle) != 1:
@@ -86,7 +87,7 @@ def observe(engine, root, output, execute, healthy, terminal=False):
         metadata_script.write_text('extends SceneTree\nfunc _initialize() -> void:\n'
                                    '\tprint("FORTRESS_REPLAY_ENGINE " + JSON.stringify(Engine.get_version_info()))\n\tquit(0)\n')
         command = [str(engine), '--headless', '--path', str(root), '--script', 'res://' + metadata_script.relative_to(root).as_posix()]
-        stdout, stderr = execute(command, output / 'asymmetric-serialized-engine-godot.log')
+        stdout, stderr = execute(command, output / f'{workload}-serialized-engine-godot.log')
         lines = [line.removeprefix('FORTRESS_REPLAY_ENGINE ') for line in stdout.splitlines() if line.startswith('FORTRESS_REPLAY_ENGINE ')]
         if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
             raise ValueError('invalid serialized control engine observation')
@@ -127,8 +128,8 @@ def observe(engine, root, output, execute, healthy, terminal=False):
             script = Path(directory) / (fault + '.gd')
             script.write_text(altered)
             command = [str(engine), '--headless', '--path', str(root), '--script', 'res://' + script.relative_to(root).as_posix(),
-                       '--', '--remote-recording-asymmetric-terminal' if terminal else '--remote-recording-asymmetric']
-            stdout, stderr = execute(command, output / f'asymmetric-serialized-{fault}-godot.log')
+                       '--', '--remote-recording-' + workload + ('-terminal' if terminal else '')]
+            stdout, stderr = execute(command, output / f'{workload}-serialized-{fault}-godot.log')
             lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines() if line.startswith('FORTRESS_REPLAY_RESULT ')]
             if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
                 raise ValueError('invalid serialized corruption control completion')

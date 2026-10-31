@@ -6,7 +6,7 @@ from replay_launch import advance, compare, expected as playback_expected, state
 from replay_remote import sample
 
 
-def expected(rust, neutral=False):
+def expected(rust, neutral=False, terminal=False):
     rounds = 257
     rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(rounds)]
     initial = (0, 0xffffffff, 0xffffffff, 0)
@@ -109,12 +109,17 @@ def expected(rust, neutral=False):
                                  requests=[row['kind'] for row in peer['records'][first:]]))
     result = []
     for slot, peer in enumerate(peers):
+        if terminal:
+            save(peer)
         checksums = peer['checksums'] if rust else [state_bytes(state).hex() for state in canonical[:-1]]
         exported = rows[:len(checksums)]
         playback = playback_expected(dict(name=f'remote-{slot}', players=2, seed=0xffffffff, validate=True,
-                                          frames=exported, checksums=checksums), rust)
+                                          frames=exported, checksums=checksums), rust, version=6 if terminal else 5)
+        playback['name'] = f'remote-{slot}'
         result.append(dict(peer=slot, current_frame=rounds, bytes=state_bytes(peer['state']).hex(), records=peer['records'],
                            services=peer['services'], frames=copy.deepcopy(exported), checksums=checksums, skipped=0, playback=playback))
+        if terminal:
+            result[-1]['terminal_checksum'] = state_bytes(canonical[-1]).hex()
     return dict(format=1, peers=result, deliveries=deliveries, recovery=recovery)
 
 
@@ -216,4 +221,6 @@ def observe(binary, engine, root, output, execute):
         refused.append('godot-pressure-resampled-input')
     else:
         raise ValueError('pressure resampling was accepted')
-    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused)
+    from replay_asymmetric import observe_terminal
+    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused,
+                terminal=observe_terminal(engine, root, output, execute, pressure=True))
