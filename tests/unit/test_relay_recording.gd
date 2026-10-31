@@ -145,8 +145,14 @@ func _service(context: RefCounted, fixtures: Array[Dictionary], now: int, pressu
 		context.equal(fixture.peer.poll(now), 0, "poll actual byte session")
 		var packets: Array[Peer.Packet] = fixture.peer.drain_outbox()
 		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "transport owns complete peer batch")
+		var refused_before: int = client.refused
+		var pending_before: Dictionary = fixture.relay.status()
 		var result: Relay.Result = fixture.relay.poll(now)
 		context.equal(result.code in [Relay.Code.OK, Relay.Code.BACKPRESSURE], true, "bounded relay send/receive work")
+		if client.refused > refused_before:
+			context.equal(result.sent, 0, "busy SDK accepts no outgoing head")
+			context.equal(fixture.relay.status().pending_packets, pending_before.pending_packets, "refused FIFO head remains queued")
+			context.equal(fixture.relay.status().pending_bytes, pending_before.pending_bytes, "refused FIFO bytes remain owned")
 	for fixture: Dictionary in fixtures:
 		for envelope: PackedByteArray in fixture.client.sent:
 			var decoded: Envelope.Decoded = Envelope.decode(envelope, 512)

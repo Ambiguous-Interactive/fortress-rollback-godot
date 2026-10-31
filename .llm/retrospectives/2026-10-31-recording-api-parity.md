@@ -17,6 +17,7 @@ receipts, an isolated production-relay mutation and fresh adversarial review.
 | Active-pressure snapshot assertions can pass vacuously if only final recovery finds eligible rows. | Fresh review identified the missing observation gate in `tests/unit/test_relay_recording.gd`. | Added per-peer post-wrap comparison and correction assertions before releasing pressure. |
 | A broad `RefCounted` array hid the manual consumer method contract from static checking. | Automatic PR review identified `manuals` in `tests/oracle/replay_remote_trace.gd`. | Applied the existing static-typing rule with `Array[Manual]`; both pins execute the terminal-pressure history. |
 | One refusal does not prove sustained transport pressure. | A later outside-diff PR comment identified the nonzero-only `refused` assertion. | Require multiple refusals and successful retries, including refusals after queue wrap. |
+| Equal retried bytes alone do not prove that the original refused head stayed queued. | A later outside-diff PR comment identified the missing immediate occupancy assertion. | Assert stable pending packet/byte counts and zero accepted sends at each refusal. |
 | Dropping refused packets can leave plausible but incomplete replay history. | The isolated relay mutation fails exact-retry checks and exports 256 rows instead of 257. | Kept exact packet retries and finalized recording completeness as separate assertions. |
 
 ## Curation and pruning

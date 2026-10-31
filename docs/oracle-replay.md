@@ -450,6 +450,7 @@ neutral histories each advance 257 original frames, through two default input-ri
 capacities. Each endpoint must stall; only changing input may require rollback.
 
 The test requires every refused FIFO head to retry with identical envelope bytes.
+Each refusal must preserve queued packet/byte counts and accept no outgoing head.
 It compares corrected confirmed snapshots while pressure is active, then releases
 pressure and services final receipts through recovery only. Each endpoint must
 export all 257 original finalized rows, with no skipped history. Every recorded
