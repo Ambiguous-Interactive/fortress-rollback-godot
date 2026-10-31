@@ -58,6 +58,11 @@ without consuming time, changing playback controls or stopping the viewer.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.
 
+A full live input buffer shows a P/C resume-or-catch-up prompt while the viewer is paused.
+Catch-up frees receive slots; later ticks can deliver more host rows.
+
+![Paused spectator with a full input buffer and recovery controls](images/spectator-full-buffer.png)
+
 A long viewer pause can exhaust retained host history. The viewer then stops
 with `HISTORY UNAVAILABLE` and the R restart control; the host keeps playing. The example encodes and receives spectator byte packets
 in the same process, with an injected ten-second host deadline. It requires no server,
@@ -133,9 +138,11 @@ var driver: Driver = Driver.new(viewer, Game.new())
 `viewer.playback_status()` returns an owned observation without consuming input,
 advancing clocks or draining lifecycle events. It includes `current_frame`,
 `host_frontier`, `buffered_frames`, `playable_frames`, `pending_frames`,
-`missing_frame`, `recommended_steps`, `input_closed`, `state`, `code` and `reason`.
+`capacity_frames`, `available_frames`, `missing_frame`, `recommended_steps`, `input_closed`, `state`, `code` and `reason`.
 Buffered and playable counts describe only the contiguous prefix at the playback boundary.
 `pending_frames` counts all accepted unplayed rows, including later rows beyond gaps.
+`capacity_frames` is the configured row capacity; `available_frames` subtracts pending rows from it.
+Free slots do not authorize a frame outside the receive window or permit delivery after closure or failure.
 `missing_frame` identifies the first gap before those accepted rows, or `-1` when no gap is known.
 An empty pending buffer means the viewer is waiting for new host progress, rather than a known missing row.
 The local example names the missing frame and later-row count while it buffers.

@@ -32,7 +32,7 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
-- [Replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
+- [Native replay file drops, replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Online delay shortcuts and action prompts gated by live gameplay](docs/online-example.md#install-and-run).
 - [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
@@ -528,7 +528,9 @@ The host publisher retains one exact refused packet, advances only on transport 
 and fences host replacement while keeping liveness separate from row pressure.
 Stream delivery and expiry remain bound to the configured playback lifetime; direct viewer replacement requires fresh stream setup.
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
-Owned playback observations distinguish contiguous playable input from retained rows beyond a gap; the example names the first missing frame and shows both buffer counts while paused.
+Owned playback observations expose bounded row capacity and free slots alongside contiguous playable input and retained rows beyond a gap;
+paused local viewers show a resume/catch-up prompt when the live input buffer fills.
+The example names the first missing frame and shows both buffer counts while paused.
 These local events do not establish host authentication or a network handshake.
 `is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
 The spectator relay uses that completion authority even when cancellation occurs exactly at an authenticated final boundary or inside acceptance delivery.

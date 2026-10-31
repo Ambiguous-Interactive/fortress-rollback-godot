@@ -191,7 +191,9 @@ automatic extra SAVE on ordinary ticks or downloads.
 
 After leaving the room, press **Watch replay**, then **Open replay** and choose your
 `fortress-online.frrp` or `fortress-spectator.frrp` file. Native builds use a file dialog; browsers use a local
-file chooser without uploading the file or using browser storage. Playback needs
+file chooser without uploading the file or using browser storage. Native windows also accept one dropped replay file.
+Dropped files use the same size and compatibility checks; failed imports preserve the previous recording.
+Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
 Keyboard controls: **P** plays or pauses, **N** steps forward, **B** steps backward,
 **R** restarts, and **Esc** cancels a seek. Shortcuts preserve text entry and file chooser input; modified and held-key repeats are ignored.

@@ -587,6 +587,7 @@ func _service_observation(demo: RefCounted) -> Array:
 # why_new=demo lifecycle tests inspect codes without user guidance; seam=scene labels
 func _playback_feedback(context: RefCounted) -> void:
 	_gap_feedback(context)
+	_buffer_pressure_feedback(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	context.equal(scene._label.text.contains("BUFFERING"), true, "startup explains why viewer has not advanced")
@@ -871,7 +872,7 @@ func _catchup_control(context: RefCounted) -> void:
 	for press: int in range(140):
 		scene._unhandled_key_input(key)
 	context.equal(scene.demo.viewer.playback_policy()[2], Demo.Config.new().queue_capacity, "faster key stops at bounded ring capacity")
-	context.equal(scene._label.text.contains(",: slower catch-up | .: faster catch-up"), true, "help exposes catch-up controls")
+	context.equal(scene._label.text.contains("Comma: slower catch-up | Period: faster catch-up"), true, "help exposes catch-up controls")
 	before[10] = scene.demo.viewer.playback_policy()
 	context.equal(_service_observation(scene.demo), before, "catch-up keys do not service or resume viewing")
 	scene.free()
@@ -948,3 +949,58 @@ func _catchup_once_control(context: RefCounted) -> void:
 	context.equal(scene.demo.is_paused, true, "C leaves viewer paused")
 	context.equal(scene._label.text.contains("C: catch up once"), true, "help exposes one-shot catch-up")
 	scene.free()
+
+
+# Value: protects=paused viewers can act before bounded history is lost; fails_when=full buffers hide receive pressure;
+# why_new=lost-history tests only check failure after it happens; seam=actual local publication
+func _buffer_pressure_feedback(context: RefCounted) -> void:
+	for action: String in ["catchup", "terminate", "finish"]:
+		var scene: Node2D = Scene.new()
+		scene._ready()
+		scene.demo.is_paused = true
+		for tick: int in range(200):
+			if scene.demo.viewer.playback_status().pending_frames == scene.demo.viewer._host_tags.size():
+				break
+			scene.demo.tick(Game.RIGHT)
+		scene._update_label()
+		context.equal(scene.demo.viewer.playback_status().pending_frames, scene.demo.viewer._host_tags.size(), "actual publication fills paused viewer")
+		context.equal(scene.demo.viewer.status().lifecycle != Types.Lifecycle.TERMINATED, true, "full buffer is recoverable")
+		context.equal(scene._label.text.contains("Input buffer full"), true, "pressure is visible before failure")
+		context.equal(scene._label.text.contains("C: catch up"), true, "pressure names an available recovery control")
+		var host_frame: int = scene.demo.host.loop.game.frame
+		match action:
+			"catchup":
+				var refused_frame: int = scene.demo.next_host_frame
+				context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "host continues while the full viewer refuses publication")
+				context.equal(scene.demo.viewer_code, Types.Code.NETWORK_BACKPRESSURE, "full buffer refuses the next row")
+				context.equal(scene.demo.next_host_frame, refused_frame, "refused row leaves publication at its original frame")
+				var retained: PackedByteArray = scene.demo.publisher.prepare_packet().bytes
+				host_frame = scene.demo.host.loop.game.frame
+				context.equal(scene.demo.catch_up_viewer(), Types.Code.OK, "catch-up releases receive capacity")
+				context.equal(scene.demo.host.loop.game.frame, host_frame, "catch-up itself never samples or advances the host")
+				context.equal(scene.demo.publisher.prepare_packet().bytes, retained, "catch-up preserves the exact refused packet")
+				context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "later tick retries publication")
+				context.equal(scene.demo.viewer_code, Types.Code.OK, "publication succeeds after catch-up")
+				context.equal(scene.demo.next_host_frame > refused_frame, true, "retry advances beyond the refused row")
+				host_frame = scene.demo.host.loop.game.frame
+			"terminate":
+				scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
+			"finish":
+				context.equal(scene.demo.finish_host(), Types.Code.OK, "request clean completion from the host")
+				for _tick: int in 20:
+					if scene.demo.is_host_finished:
+						break
+					scene.demo.tick(Game.RIGHT)
+				context.equal(scene.demo.is_host_finished, true, "host recovery reaches a fixed final boundary")
+				context.equal(scene.demo.viewer.playback_status().input_closed, false, "full buffer holds END behind unsent final rows")
+				var final_rows: int = scene.demo.host.loop.game.frame - scene.demo.next_host_frame
+				context.equal(final_rows > 0, true, "completion still needs original host rows")
+				for _row: int in final_rows:
+					context.equal(scene.demo.step_viewer(), Types.Code.OK, "release exactly enough slots for the final rows")
+				context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "publisher and stream deliver the final rows and END")
+				context.equal(scene.demo.viewer.playback_status().input_closed, true, "authenticated END closes the complete host tail")
+				context.equal(scene.demo.viewer.playback_status().available_frames, 0, "closed-tail suppression is exercised while the buffer is still full")
+		scene._update_label()
+		context.equal(scene._label.text.contains("Input buffer full"), false, "recovered or closed playback clears receive prompt")
+		context.equal(scene.demo.host.loop.game.frame, host_frame, "viewer action does not advance host")
+		scene.free()

@@ -22,13 +22,16 @@ func cases() -> PackedStringArray:
 			"navigation_boundaries",
 			"full_length_recording",
 			"empty_terminal",
-			"input_inspection"
+			"input_inspection",
+			"dropped_file"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"dropped_file":
+			_dropped_file(context)
 		"input_inspection":
 			_input_inspection(context)
 		"empty_terminal":
@@ -197,7 +200,7 @@ func _full_length_recording(context: RefCounted) -> void:
 		file.store_buffer(bytes)
 		context.equal(file.get_error(), OK, "write oversized replay import fixture")
 		file.close()
-		node._native_file(path)
+		node._files_dropped(PackedStringArray([path]))
 		context.equal(node.viewer.message, Viewer.FILE_SIZE_MESSAGE, "native file chooser rejects one byte beyond the bound")
 		context.equal(node.viewer.current_frame(), 1, "refused oversized import preserves existing playback")
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
@@ -468,3 +471,46 @@ func _navigation_boundaries(context: RefCounted) -> void:
 	viewer.tick()
 	viewer.seek(1)
 	context.equal(viewer.message.begins_with("Replay complete."), true, "same final target preserves completion")
+
+
+# Value: protects=dropped replays use bounded validated import; fails_when=drop wiring bypasses validation or replaces busy playback;
+# why_new=file chooser tests never deliver a dropped file list; seam=real files
+func _dropped_file(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.has_method("_files_dropped"), true, "viewer accepts dropped files")
+	if not node.has_method("_files_dropped"):
+		node.free()
+		return
+	var process: int = 0 if OS.has_feature("web") else OS.get_process_id()
+	var path: String = "user://test-dropped-replay-%d.frrp" % process
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	file.store_buffer(recording(8).to_bytes())
+	file.close()
+	node._files_dropped(PackedStringArray([path]))
+	context.equal(node.viewer.frame_count(), 8, "drop opens identified recording")
+	node.viewer.step()
+	var original: PackedByteArray = node.viewer.game.canonical_bytes()
+	for paths: PackedStringArray in [PackedStringArray(), PackedStringArray([path, path]), PackedStringArray([path + ".missing"])]:
+		node._files_dropped(paths)
+		context.equal(node.viewer.current_frame(), 1, "rejected drop preserves selected frame")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), original, 1, "rejected drop preserves canonical state")
+	file = FileAccess.open(path, FileAccess.WRITE)
+	file.store_buffer(PackedByteArray([0, 1, 2]))
+	file.close()
+	node._files_dropped(PackedStringArray([path]))
+	context.equal(node.viewer.current_frame(), 1, "malformed dropped recording preserves playback")
+	context.equal(node.viewer.message.contains("malformed"), true, "drop uses decoder's failure explanation")
+	node._is_scrubbing = true
+	var message: String = node.viewer.message
+	node._files_dropped(PackedStringArray([path + ".missing"]))
+	context.equal(node.viewer.message, message, "active scrub preserves controls and message")
+	node._is_scrubbing = false
+	var pending: RefCounted = node.viewer._player.begin_advance()
+	context.equal(pending.code, Types.Code.READY, "manual request owns playback")
+	node._files_dropped(PackedStringArray([path + ".missing"]))
+	context.equal(node.viewer.message, message, "active game work preserves message")
+	node.viewer._player.terminate()
+	node._exit_tree()
+	node.free()
+	context.equal(DirAccess.remove_absolute(ProjectSettings.globalize_path(path)), OK, "remove owned drop fixture")

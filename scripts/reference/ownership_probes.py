@@ -146,7 +146,7 @@ EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused
 EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler', 'manual_configuration'}
-EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection'})
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',

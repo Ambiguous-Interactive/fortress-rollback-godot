@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add native replay file drops with bounded validation and preservation of the current recording after refused imports.
+
+- Add spectator input-buffer capacity observations and a resume/catch-up prompt when paused input fills the buffer.
+
 - Add a draggable replay timeline with elapsed and total recorded time. Selection uses bounded, verified navigation and finishes paused.
 
 - Add C to catch the local spectator up through currently buffered rows, preserving its viewing delay and normal catch-up rate.
@@ -234,6 +238,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix native replay and diagnostic imports exceeding their checked allocation size if a file grows during import.
+
+- Fix ambiguous spectator catch-up key labels by naming Comma and Period.
 
 - Fix SDK callbacks reviving canceled or expired online matches. Unsafe plan or peer-directive reentry stops the old mesh before SDK consumption and requires a fresh session.
 

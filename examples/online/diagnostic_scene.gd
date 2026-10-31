@@ -91,12 +91,13 @@ func _open() -> void:
 
 func _native_file(path: String) -> void:
 	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	var length: int = file.get_length() if file != null else 0
 	if file == null:
 		viewer.message = "Could not open the diagnostic file."
-	elif file.get_length() > Viewer.MAX_BYTES:
+	elif length > Viewer.MAX_BYTES:
 		viewer.message = "Diagnostic file exceeds the 1 MiB limit."
 	else:
-		viewer.open_bytes(file.get_buffer(file.get_length()))
+		viewer.open_bytes(file.get_buffer(length))
 	_refresh()
 
 
