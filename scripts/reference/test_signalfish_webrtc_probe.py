@@ -80,6 +80,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         original = mixed_evidence()
         self.assertEqual(probe.validate_browser(original, False, mixed=True), original)
         changes = [
+            (('result', 'records', 0, 'recording'), None),
+            (('result', 'records', 0, 'recording', 'after_frame'), 41),
             (('result', 'records', 0, 'mixed', 'switched'), False),
             (('result', 'records', 0, 'mixed', 'restored'), False),
             (('result', 'records', 0, 'mixed', 'route_budget'), True),
