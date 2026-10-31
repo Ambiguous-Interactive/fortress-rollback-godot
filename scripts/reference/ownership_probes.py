@@ -59,6 +59,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay', 'callback_arguments'},
     'res://tests/unit/test_diagnostic_player.gd': {'captured_window', 'canonical_mismatch', 'malformed', 'callbacks', 'bounds'},
     'res://tests/unit/test_diagnostic_viewer.gd': {'imports', 'controls', 'divergence', 'scene_controls'},
+    'res://tests/unit/test_diagnostic_lifetime.gd': {'viewer_callback_controls', 'player_cancellation', 'retired_playback'},
     'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls', 'navigation', 'navigation_boundaries'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit', 'refuses_foreign_recording',
@@ -208,7 +209,7 @@ FILES += ['tests/unit/test_diagnostic_trace.gd', 'tests/unit/test_peer_diagnosti
 FILES += ['tests/unit/test_replay_callbacks.gd', 'tests/unit/test_replay.gd', 'tests/fixtures/replay/golden.json', 'examples/integration/game.gd']
 FILES += ['tests/unit/test_diagnostic_player.gd', 'tests/unit/test_replay_viewer.gd',
           'examples/online/replay_viewer.gd', 'examples/online/replay_scene.gd', 'examples/online/replay.tscn', 'examples/offline/simulation.gd']
-FILES += ['tests/unit/test_diagnostic_viewer.gd', 'examples/online/diagnostic_viewer.gd',
+FILES += ['tests/unit/test_diagnostic_viewer.gd', 'tests/unit/test_diagnostic_lifetime.gd', 'examples/online/diagnostic_viewer.gd',
           'examples/online/diagnostic_scene.gd', 'examples/online/diagnostic.tscn']
 FILES += ['tests/unit/test_spectator_session.gd', 'tests/unit/test_driver_callback_results.gd']
 FILES += ['tests/unit/test_replay_checkpoints.gd', 'tests/unit/test_spectator_stream.gd']
@@ -271,6 +272,7 @@ const Replay = preload("res://tests/unit/test_replay.gd")
 const ReplayCallbacks = preload("res://tests/unit/test_replay_callbacks.gd")
 const DiagnosticPlayer = preload("res://tests/unit/test_diagnostic_player.gd")
 const DiagnosticViewer = preload("res://tests/unit/test_diagnostic_viewer.gd")
+const DiagnosticLifetime = preload("res://tests/unit/test_diagnostic_lifetime.gd")
 const ReplayViewer = preload("res://tests/unit/test_replay_viewer.gd")
 const SpectatorReplayViewer = preload("res://tests/unit/test_spectator_replay_viewer.gd")
 const Spectator = preload("res://tests/unit/test_spectator_session.gd")
@@ -335,7 +337,7 @@ const FallbackFailure = preload("res://tests/unit/test_signalfish_fallback_failu
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
-\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
+\t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, DiagnosticLifetime, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed, ReplayInputNavigation, ReplayViewerLifetime,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,

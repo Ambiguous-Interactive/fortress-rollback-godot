@@ -16,10 +16,13 @@ var _session_failure: Dictionary = {}
 var _player: Player = Player.new()
 var _index: int = 0
 var _code: int = Types.Code.NOT_CONFIGURED
+var _servicing: bool = false
 
 
 ## Invalid imports preserve the current game, position and play state.
 func open_bytes(bytes: PackedByteArray) -> bool:
+	if _is_busy():
+		return false
 	if bytes.size() > MAX_BYTES:
 		message = "Diagnostic file exceeds the 1 MiB limit."
 		return false
@@ -45,6 +48,7 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 		return false
 	_session_failure = _reported_session_failure(report)
 	_trace = trace.duplicate(true)
+	_player.terminate()
 	game = game_candidate
 	_player = candidate
 	_opened()
@@ -59,11 +63,15 @@ func _opened() -> void:
 
 
 func restart() -> void:
-	if _trace.is_empty():
+	if _is_busy() or _trace.is_empty():
 		return
-	game = Game.new()
-	_player = Player.new()
-	_player.configure(_trace, game, Game.SNAPSHOT_BYTES)
+	var candidate: Player = Player.new()
+	var game_candidate: Game = Game.new()
+	if candidate.configure(_trace, game_candidate, Game.SNAPSHOT_BYTES) != Types.Code.OK:
+		return
+	_player.terminate()
+	game = game_candidate
+	_player = candidate
 	_opened()
 
 
@@ -72,21 +80,27 @@ func can_step() -> bool:
 
 
 func toggle_play() -> void:
-	if can_step():
+	if not _is_busy() and can_step():
 		is_playing = not is_playing
 		message = "Playing captured local execution." if is_playing else "Paused."
 
 
 ## Presentation time never creates inputs: each tick consumes at most one retained row.
 func tick() -> void:
-	if is_playing:
+	if not _is_busy() and is_playing:
 		step()
 
 
 func step() -> void:
-	if not can_step():
+	if _is_busy() or not can_step():
 		return
-	_code = _player.step()
+	var player: Player = _player
+	_servicing = true
+	var code: int = player.step()
+	_servicing = false
+	if player != _player:
+		return
+	_code = code
 	if _code != Types.Code.OK:
 		is_playing = false
 		var failure: Dictionary = _player.report().failure
@@ -97,6 +111,10 @@ func step() -> void:
 		message = "Window complete. All available canonical states matched; the final advance may have no following SAVE."
 	else:
 		_index += 1
+
+
+func _is_busy() -> bool:
+	return _servicing or _player._busy
 
 
 ## Values describe retained evidence, not the original network divergence or seed correctness.
