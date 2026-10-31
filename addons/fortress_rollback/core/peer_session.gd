@@ -503,6 +503,11 @@ func replay() -> RefCounted:
 	return _core.replay() if _core != null else null
 
 
+## Owned recording capacity and finalized/pending/omitted frame counts, without copying the replay.
+func recording_status() -> Types.RecordingStatus:
+	return _core.recording_status() if _core != null else Types.RecordingStatus.new()
+
+
 ## Owned finalized inputs for a simulated, mesh-confirmed frame; null while unavailable or under correction.
 ## Read before queue history wraps. Rows remain owned across later steps and completion notifications.
 func confirmed_inputs(frame: int) -> Types.FrameInputs:

@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add recording progress through session, driver and peer APIs. The online example shows finalized, pending and omitted gameplay at the recording limit.
+
+- Add spectator host observations for liveness, remaining timeout and missing final rows, including through the SignalFish viewer adapter.
+
 - Add `DiagnosticPlayer.terminate()` to cancel captured-window playback, expire active views and preserve earlier failure evidence.
 
 - Add spectator backlog feedback during pause and playback. Show contiguous buffered input separately from later rows waiting beyond gaps.
@@ -224,6 +228,14 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix driver callback replacement during unfinished expert batches so the original game state stays attached.
+
+- Fix stale spectator host deadline checks after replacing the exposed viewer.
+
+- Fix spectator relay status attributing a replacement viewer's host activity to an earlier SDK getter call.
+
+- Fix recording-limit warnings to include pending frames and prompt finishing before the recording fills.
 
 - Fix diagnostic viewer controls replacing or advancing playback during game callbacks. Successful restart or import retires the previous player.
 

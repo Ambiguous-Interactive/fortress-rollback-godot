@@ -26,6 +26,7 @@ GitHub artifacts: authenticated MCP first, then authenticated `gh` for gaps.
 Use Simplified Technical English: common words, active voice, and one idea per sentence.
 Aim for about 15 words per sentence; keep ordinary prose sentences at 25 words or fewer.
 Keep API names exact. Remove filler and unexplained abbreviations.
+Product action text must share its control's readiness gates; retained replay data does not imply a live match.
 Explain why, how, and what in PRs and commit messages, with detail proportional to the change.
 Keep technical mechanisms and investigation evidence in commit bodies or linked issues unless needed by a required review format.
 

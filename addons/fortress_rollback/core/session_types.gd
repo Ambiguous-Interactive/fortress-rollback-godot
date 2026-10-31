@@ -57,6 +57,17 @@ class Status:
 	var pending_rollback_frame: int = -1
 
 
+## Owned recording progress. Zero capacity means recording is disabled or not configured.
+## Pending frames are simulated inputs inside the cap that are not yet safe to export.
+## Omitted frames are simulated inputs beyond the cap; gameplay continues without recording them.
+class RecordingStatus:
+	extends RefCounted
+	var capacity_frames: int = 0
+	var finalized_frames: int = 0
+	var pending_frames: int = 0
+	var omitted_frames: int = 0
+
+
 class Statistics:
 	extends RefCounted
 	var rollback_count: int = 0

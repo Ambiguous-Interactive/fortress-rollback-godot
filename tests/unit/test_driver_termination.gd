@@ -48,7 +48,7 @@ class StoppingGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["client_stop", "callbacks", "completion_handler"])
+	return PackedStringArray(["client_stop", "callbacks", "completion_handler", "manual_configuration"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -234,3 +234,45 @@ func _notification_checksums(context: RefCounted) -> void:
 	context.equal(session.confirmed_checksums(true).size(), 0, "active expert batch still withholds checksum exports")
 	session.terminate()
 	context.equal(session.confirmed_checksums(true).size(), 0, "terminal checksum protection remains")
+
+
+# Value: protects=expert callback ownership; fails_when=configure replaces callbacks after SAVE;
+# why_new=notification tests do not retain manual batches; seam=none
+func _manual_configuration(context: RefCounted) -> void:
+	for attempt: String in ["same", "source", "target", "unattached"]:
+		var session: RefCounted = Fixture.new()._session()
+		var original: RefCounted = Fixture.Game.new()
+		var independent: RefCounted = Fixture.new()._session()
+		var driver: RefCounted = Driver.new()
+		if attempt != "unattached":
+			context.equal(driver.configure(independent if attempt == "target" else session, original), Types.Code.OK, "initial callback ownership: " + attempt)
+		for sample: Driver.LocalInput in Fixture.new()._samples(0):
+			context.equal(session.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code, Types.Code.OK, "expert stages original input")
+		var opened: RefCounted = session.begin_advance()
+		context.equal(opened.code, Types.Code.READY, "expert opens ordered batch")
+		var save: RefCounted = opened.batch.next_request()
+		context.equal(save.kind, Types.Kind.SAVE, "partial batch begins with SAVE")
+		var saved: Driver.SaveResult = original.save_state(save.frame, save.writer)
+		context.equal(session.complete_request(save.batch_id, save.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "expert completes original SAVE")
+		var advance: RefCounted = opened.batch.next_request()
+		context.equal(advance.kind, Types.Kind.ADVANCE, "expert retains pending simulation view")
+		var target: RefCounted = independent if attempt == "source" else session
+		context.equal(driver.configure(target, Fixture.Game.new()), Types.Code.BUSY, "open source or target batch rejects callback replacement: " + attempt)
+		context.equal(advance.inputs.size().code, Types.Code.OK, "rejected replacement preserves active expert view")
+		context.equal(original.simulate_frame(advance.frame, advance.inputs), true, "expert finishes original game")
+		context.equal(session.complete_request(advance.batch_id, advance.request_id, true).code, Types.Code.OK, "expert finishes its own batch")
+		context.equal(opened.batch.next_request(), null, "original batch drains")
+		if attempt in ["same", "source"]:
+			context.equal(driver.status().current_frame, 1, "rejected replacement preserves source session")
+			context.equal(driver.step(1, Fixture.new()._samples(1)).code, Types.Code.OK, "original callbacks remain usable")
+			var control_session: RefCounted = Fixture.new()._session()
+			var control_game: RefCounted = Fixture.Game.new()
+			for frame: int in range(2):
+				context.equal(Fixture.new()._expert_step(control_session, control_game, frame), Types.Code.OK, "uninterrupted expert control")
+			context.equal(original.value, control_game.value, "partial batch cannot silently replace canonical game state")
+			context.equal(original.trace, control_game.trace, "original callbacks retain ordered ownership")
+		elif attempt == "unattached":
+			context.equal(driver.step(1, Fixture.new()._samples(1)).code, Types.Code.NOT_CONFIGURED, "rejected attachment remains unconfigured")
+		else:
+			context.equal(driver.status().current_frame, 0, "rejected target keeps independent source")
+		context.equal(driver.configure(session, original), Types.Code.OK, "completed manual batch permits explicit attachment")

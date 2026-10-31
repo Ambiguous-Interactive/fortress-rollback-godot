@@ -4,6 +4,7 @@ const Lobby = preload("res://examples/online/lobby.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
 const REPLAY_FILENAME: String = "fortress-online.frrp"
+const REPLAY_WARNING_FRAMES: int = 300
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE, Color.GOLD, Color.MEDIUM_SEA_GREEN]
 var controller: Lobby = Lobby.new()
 var endpoint: LineEdit
@@ -165,6 +166,10 @@ func _leave() -> void:
 
 func _update_status() -> void:
 	var connected: bool = controller.client != null
+	var game: Lobby.Match = controller.game_match
+	var can_finish_replay: bool = (
+		controller.state == "playing" and game.record_replay and not game.replay_finishing and game.has_started and game.failure.is_empty()
+	)
 	watch_button.disabled = connected
 	inspect_button.disabled = connected
 	create_button.disabled = connected
@@ -173,7 +178,7 @@ func _update_status() -> void:
 	diagnostics_button.disabled = controller.game_match.local_slot < 0
 	trace_checkbox.disabled = controller.has_readied
 	replay_checkbox.disabled = controller.has_readied
-	finish_replay_button.disabled = controller.state != "playing" or not controller.game_match.record_replay or controller.game_match.replay_finishing
+	finish_replay_button.disabled = not can_finish_replay
 	replay_button.disabled = not controller.game_match.has_recorded_replay
 	endpoint.editable = not connected
 	player_name.editable = not connected
@@ -186,7 +191,6 @@ func _update_status() -> void:
 	_status.text = "%s\n%s\nRoom: %s | players: %d / 2" % [controller.state.capitalize(), controller.message, controller.room_code(), players]
 	if not _replay_notice.is_empty():
 		_status.text += "\n" + _replay_notice
-	var game: Lobby.Match = controller.game_match
 	if game.local_slot >= 0:
 		var state: Lobby.Match.Types.Status = game.peer.status()
 		_status.text += (
@@ -195,6 +199,18 @@ func _update_status() -> void:
 		)
 		if game.suggested_delay >= 0:
 			_status.text += "\nSuggested delay for this connection: %d (R applies)" % game.suggested_delay
+		var recording: Lobby.Match.Types.RecordingStatus = game.peer.recording_status()
+		if recording.capacity_frames > 0:
+			_status.text += "\nReplay: %d/%d frames recorded | %d pending" % [recording.finalized_frames, recording.capacity_frames, recording.pending_frames]
+			if recording.omitted_frames > 0:
+				_status.text += " | %d later frames omitted" % recording.omitted_frames
+				_status.text += "\nReplay recording limit passed. Later gameplay and its final state are outside the recording."
+			elif can_finish_replay:
+				var remaining: int = recording.capacity_frames - recording.finalized_frames - recording.pending_frames
+				if remaining == 0:
+					_status.text += "\nReplay recording limit reached. Press Finish replay now to include the final state."
+				elif remaining <= REPLAY_WARNING_FRAMES:
+					_status.text += "\nReplay limit in %d simulated frames. Press Finish replay now to include the final state." % remaining
 		if game.replay_finishing:
 			if game.replay_captured:
 				_status.text += "\nReplay final state captured. Download the replay, then leave the room."

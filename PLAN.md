@@ -114,6 +114,8 @@ Callback Leave retires outstanding game work and fences canceled startup before 
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
+Recording progress separates finalized exports, pending correction/confirmation and gameplay omitted beyond the configured cap without copying replay bytes.
+Spectator host observations separate authenticated liveness and pending final-row recovery from playback progress.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
 Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.
 Validated terminal states share the bounded checkpoint cache, allowing direct return to a verified ending after backward inspection.

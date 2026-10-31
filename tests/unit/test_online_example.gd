@@ -121,6 +121,7 @@ func run_case(name: String, context: RefCounted) -> void:
 				context.equal(lobby.connect_room("ws://localhost:8080/ws", "Player", "", 0), ERR_UNAVAILABLE, "missing SDK is actionable without parse failure")
 			lobby.disconnect_room()
 			context.equal(lobby.state, "offline", "leave available after missing SDK")
+			_recording_warning(context, node)
 			node.free()
 		"handshake_timeout":
 			var fixture: Dictionary = _fixture(context, U)
@@ -469,3 +470,74 @@ func _viewer_lifetime(context: RefCounted) -> void:
 	context.equal(inspector.disabled, false, "inspection available after leaving")
 	client.free()
 	node.free()
+
+
+# Value: protects=recording limits warn before final-state capture becomes unavailable;
+# fails_when=only finalized rows trigger the warning or no advance warning exists; why_new=scene coverage checks omitted rows only; seam=none
+func _recording_warning(context: RefCounted, node: Node) -> void:
+	var near: String = "Replay limit in 300 simulated frames. Press Finish replay now to include the final state."
+	var full: String = "Replay recording limit reached. Press Finish replay now to include the final state."
+	var omitted: String = "Replay recording limit passed. Later gameplay and its final state are outside the recording."
+	var rows: Array[Dictionary] = [
+		{"capacity": 304, "frames": 3, "deliver": true, "warning": "", "label": "before warning threshold"},
+		{"capacity": 304, "frames": 4, "deliver": true, "warning": near, "label": "five-second warning threshold"},
+		{"capacity": 3, "frames": 3, "deliver": false, "warning": full, "label": "pending inputs fill the cap"},
+		{"capacity": 3, "frames": 3, "deliver": true, "warning": full, "label": "finalized inputs fill the cap"},
+		{"capacity": 3, "frames": 4, "deliver": true, "warning": omitted, "label": "gameplay exceeds the cap"},
+		{"capacity": 0, "frames": 4, "deliver": true, "warning": "", "label": "recording disabled"},
+		{"capacity": 3, "frames": 3, "deliver": true, "warning": "", "finishing": true, "label": "finishing already stops gameplay"},
+		{"capacity": 3, "frames": 3, "deliver": false, "warning": "", "state": "offline", "label": "Leave suppresses unavailable finish action"},
+		{"capacity": 3, "frames": 3, "deliver": true, "warning": "", "state": "failed", "label": "failure suppresses unavailable finish action"},
+		{"capacity": 3, "frames": 4, "deliver": true, "warning": omitted, "state": "offline", "label": "Leave retains omitted disclosure"},
+		{"capacity": 3, "frames": 4, "deliver": true, "warning": omitted, "state": "failed", "label": "failure retains omitted disclosure"},
+		{"capacity": 3, "frames": 3, "deliver": true, "warning": "", "state": "playing", "label": "detached match rejects stale playing state"},
+		{"capacity": 3, "frames": 3, "deliver": true, "warning": "", "failure": "Disconnected.", "label": "match failure rejects finish before lobby cleanup"},
+	]
+	for row: Dictionary in rows:
+		var recorded: Dictionary = _fixture(context, U)
+		var game_match: Match = recorded.driver
+		game_match.record_replay = row.capacity > 0
+		var config: Config = Config.new()
+		config.sync_test = false
+		config.check_distance = 0
+		config.replay_max_frames = row.capacity
+		config.local_players = PackedInt32Array([0])
+		config.max_snapshot_bytes = Simulation.SNAPSHOT_BYTES
+		config.storage_budget_bytes = config.required_storage_bytes()
+		var core: Session = game_match.peer._core
+		context.equal(core.configure(config), Types.Code.OK, "scene recording control configures")
+		var driver: Driver = Driver.new(core, Simulation.new())
+		node.controller.game_match = game_match
+		node.controller.state = "playing"
+		game_match.replay_finishing = row.get("finishing", false)
+		for frame: int in row.frames:
+			if row.deliver:
+				context.equal(core.receive_input(1, frame, PackedByteArray([0])).code, Types.Code.OK, "receive scene recording input")
+			context.equal(driver.step(frame, [Driver.LocalInput.new(0, frame, PackedByteArray([0]))]).code, Types.Code.OK, "scene gameplay reaches declared recording boundary")
+		var detached: bool = row.has("state")
+		if detached:
+			game_match.detach()
+			node.controller.state = row.state
+		game_match.failure = row.get("failure", "")
+		node.call("_update_status")
+		var unavailable: bool = detached or row.capacity == 0 or row.get("finishing", false) or not game_match.failure.is_empty()
+		context.equal(node.finish_replay_button.disabled, unavailable, "finish button agrees with actual match lifetime")
+		if row.warning.is_empty():
+			context.equal(node._status.text.contains("Replay limit in") or node._status.text.contains("Replay recording limit"), false, row.label)
+		else:
+			context.equal(node._status.text.contains(row.warning), true, row.label)
+		if not row.deliver:
+			context.equal(core.recording_status().pending_frames, 3, "pending-at-cap control uses actual unconfirmed gameplay")
+		if row.capacity == 3 and row.frames == 4:
+			context.equal(node._status.text.contains("Replay: 3/3 frames recorded | 0 pending | 1 later frames omitted"), true, "omitted count remains visible")
+		var capture: int = Types.Code.UNSUPPORTED if row.capacity == 0 else Types.Code.OK
+		if row.capacity > 0 and row.frames > row.capacity:
+			capture = Types.Code.HISTORY_UNAVAILABLE
+		elif not row.deliver:
+			capture = Types.Code.PREDICTION_STALL
+		if detached:
+			capture = Types.Code.TERMINATED
+		context.equal(driver.capture_replay_boundary().code, capture, "warning matches actual final-boundary capture availability")
+		game_match.detach()
+		recorded.mesh.free()
+		recorded.client.free()

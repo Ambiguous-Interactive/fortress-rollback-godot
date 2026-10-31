@@ -160,6 +160,10 @@ after a failed match and after **Leave / new room**. Save it before creating or 
 the next room, which replaces the old match. At the recording limit,
 gameplay continues while the recorded prefix stops growing; later exports contain that
 same prefix.
+The live status shows finalized frames against the recording limit and counts pending frames.
+After the limit, it also counts later gameplay omitted from the recording.
+During the last 300 simulated frames, the status prompts you to finish the replay before its limit.
+Pending confirmation counts toward that limit. Once gameplay passes it, the recording cannot include the current ending.
 
 For a final-state checksum, press **Finish replay** before leaving. This stops your local
 simulation, keeps transport delivery active, and applies pending corrections without another

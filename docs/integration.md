@@ -165,6 +165,8 @@ Named script annotations must match the supplied view or its ancestors. For exam
 cannot receive the writer passed to `save_state`. Godot can erase script-specific types to `RefCounted`;
 these erased annotations remain the game's responsibility. Replay and diagnostic setup use the same checks.
 A rejected configuration leaves the previously configured game installed.
+`driver.configure()` returns `BUSY` while either its current session or its target session owns an unfinished expert request batch.
+Complete that batch before replacing callbacks or attaching another driver.
 
 ## The frame loop
 
@@ -313,6 +315,11 @@ var bytes: PackedByteArray = driver.replay().to_bytes()  # or session.replay() /
 `driver.replay()` and `session.replay()` return a copy holding every frame whose inputs are confirmed and already simulated.
 The driver returns null before configuration or when recording is disabled. Changing an exported
 copy cannot change the session's recording.
+Read `driver.recording_status()` (also on `session` and `peer`) for an owned scalar progress snapshot without copying replay bytes.
+`capacity_frames` is the configured cap; zero means recording is disabled or unconfigured.
+`finalized_frames` counts the safe exportable prefix. `pending_frames` counts simulated frames inside the cap awaiting confirmation or correction.
+`omitted_frames` counts simulated frames beyond the cap; gameplay continues, but those frames cannot enter the recording.
+Reads are available during callbacks and after termination. They neither expose confirmed history nor change session clocks.
 `replay.to_bytes()` returns empty if the recording's metadata or backing storage is malformed,
 or an input digest is missing. It preserves stored digests and checksums; playback still reports
 content mismatches at their owning frame instead of silently repairing the evidence.
