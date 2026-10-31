@@ -239,6 +239,8 @@
 
 ### Fixed
 
+- Fix ambiguous spectator catch-up key labels by naming Comma and Period.
+
 - Fix SDK callbacks reviving canceled or expired online matches. Unsafe plan or peer-directive reentry stops the old mesh before SDK consumption and requires a fresh session.
 
 - Fix delay prompts and shortcuts outside active online or local peer gameplay. Retain match observations and recovery instructions after failure or leaving.
