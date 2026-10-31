@@ -154,6 +154,9 @@ that rollback history or membership remains recoverable.
 Synchronous SDK callbacks cannot replace an ended lifetime while attach, plan
 conversion or mesh teardown returns. Teardown marks the mesh released before calling
 the SDK, and refuses nested plan acceptance or replacement attach until it returns.
+Setup observes lifecycle and remote-incarnation changes before reading SDK identities.
+Getter-triggered detach stops attachment before listeners or a mesh can be published again.
+Live identity checks preserve that same lifetime across SDK getter callbacks.
 An initial plan emitted during attach remains accepted. This guards lifecycle
 ownership; it does not add transparent replan or ICE-restart support.
 

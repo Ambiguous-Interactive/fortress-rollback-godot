@@ -125,6 +125,27 @@ func step_viewer() -> int:
 	return viewer_code
 
 
+## Pause and play all currently buffered rows allowed by the viewing delay in one bounded action.
+## Preserves the selected delay/rate, never samples the host, and stops immediately on playback failure.
+func catch_up_viewer() -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	is_paused = true
+	viewer_code = _viewer_result(viewer_code)
+	if viewer_code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
+		return viewer_code
+	var playback: Dictionary = viewer.playback_status()
+	var work: int = maxi(1, int(playback.playable_frames) + (1 if playback.input_closed else 0))
+	var samples: Array[Driver.LocalInput] = []
+	for _step: int in range(work):
+		viewer_code = _advance_viewer(samples)
+		if viewer_code != Types.Code.OK:
+			break
+	return viewer_code
+
+
 ## Changes the confirmed-frame cushion without stepping, rewinding or changing pause/catch-up policy.
 ## Raising the delay waits for more input; clean host endings always release the complete tail.
 func set_viewing_delay(frames: int) -> int:

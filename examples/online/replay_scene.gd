@@ -54,6 +54,9 @@ var _speed: OptionButton
 var _target: SpinBox
 var _seek_button: Button
 var _cancel_button: Button
+var _timeline: HSlider
+var _timeline_label: Label
+var _is_scrubbing: bool = false
 var _dialog: FileDialog
 var _web_import: JavaScriptObject
 var _web_callback: JavaScriptObject
@@ -113,6 +116,19 @@ func _ready() -> void:
 	panel.add_child(checksums)
 	_previous_recorded_checksum = _button(checksums, "Previous recorded checksum", _jump_recorded_checksum.bind(false))
 	_next_recorded_checksum = _button(checksums, "Next recorded checksum", _jump_recorded_checksum.bind(true))
+	var timeline_row: HBoxContainer = HBoxContainer.new()
+	panel.add_child(timeline_row)
+	_timeline = HSlider.new()
+	_timeline.name = "ReplayTimeline"
+	_timeline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_timeline.tooltip_text = "Drag to choose a recorded moment; release to navigate and pause."
+	_timeline.step = 1
+	_timeline.value_changed.connect(_timeline_changed)
+	_timeline.drag_started.connect(_timeline_drag_started)
+	_timeline.drag_ended.connect(_timeline_drag_ended)
+	timeline_row.add_child(_timeline)
+	_timeline_label = Label.new()
+	timeline_row.add_child(_timeline_label)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -165,11 +181,15 @@ func _web_file(arguments: Array) -> void:
 
 
 func _toggle() -> void:
+	if _is_scrubbing:
+		return
 	viewer.toggle_play()
 	_refresh()
 
 
 func _step() -> void:
+	if _is_scrubbing:
+		return
 	if viewer.is_playing:
 		viewer.toggle_play()
 	viewer.step()
@@ -177,42 +197,95 @@ func _step() -> void:
 
 
 func _speed_selected(index: int) -> void:
+	if _is_scrubbing:
+		return
 	viewer.set_playback_speed([1, 2, 4, 8, 16][index])
 	_refresh()
 
 
 func _back_one_frame() -> void:
+	if _is_scrubbing:
+		return
 	viewer.step_back()
 	_refresh()
 
 
 func _seek() -> void:
+	if _is_scrubbing:
+		return
 	_target.apply()
 	viewer.seek(int(_target.value))
 	_refresh()
 
 
+func _timeline_drag_started() -> void:
+	if viewer._is_busy() or viewer.frame_count() == 0:
+		return
+	_is_scrubbing = true
+	if viewer.is_seeking():
+		viewer.cancel_seek()
+	if viewer.is_playing:
+		viewer.toggle_play()
+	_refresh()
+
+
+func _timeline_drag_ended(changed: bool) -> void:
+	if not _is_scrubbing:
+		return
+	_is_scrubbing = false
+	if viewer._is_busy():
+		return
+	if viewer.is_playing:
+		viewer.toggle_play()
+	if changed:
+		viewer.seek(int(_timeline.value))
+	_refresh()
+
+
+func _timeline_changed(value: float) -> void:
+	if not _is_scrubbing:
+		viewer.seek(int(value))
+		_refresh()
+
+
+func _time_label(frame: int) -> String:
+	@warning_ignore("integer_division")
+	var seconds: int = frame / 60
+	@warning_ignore("integer_division")
+	return "%d:%02d" % [seconds / 60, seconds % 60]
+
+
 func _cancel_seek() -> void:
+	if _is_scrubbing:
+		return
 	viewer.cancel_seek()
 	_refresh()
 
 
 func _jump_checkpoint(forward: bool) -> void:
+	if _is_scrubbing:
+		return
 	viewer.seek_checkpoint(forward)
 	_refresh()
 
 
 func _jump_input_change(forward: bool) -> void:
+	if _is_scrubbing:
+		return
 	viewer.seek_input_change(forward)
 	_refresh()
 
 
 func _jump_recorded_checksum(forward: bool) -> void:
+	if _is_scrubbing:
+		return
 	viewer.seek_recorded_checksum(forward)
 	_refresh()
 
 
 func _restart() -> void:
+	if _is_scrubbing:
+		return
 	viewer.restart()
 	_refresh()
 
@@ -254,7 +327,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	viewer.tick()
+	if not _is_scrubbing:
+		viewer.tick()
 	_refresh()
 
 
@@ -271,20 +345,28 @@ func _refresh() -> void:
 		_status.text += "\n" + _failure_notice
 	_failure_download.disabled = not viewer.has_failure()
 	_play.text = "Pause" if viewer.is_playing else "Play"
-	_play.disabled = viewer.is_seeking() or not viewer.can_step()
+	_play.disabled = _is_scrubbing or viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
-	_back_button.disabled = viewer.is_seeking() or viewer.current_frame() == 0
-	_restart_button.disabled = viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0
+	_back_button.disabled = _is_scrubbing or viewer.is_seeking() or viewer.current_frame() == 0
+	_restart_button.disabled = _is_scrubbing or (viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0)
+	_speed.disabled = _is_scrubbing
+	_timeline.set_block_signals(true)
+	_timeline.max_value = viewer.frame_count()
+	if not _is_scrubbing:
+		_timeline.value = viewer.current_frame()
+	_timeline.set_block_signals(false)
+	_timeline.editable = _is_scrubbing or (viewer.frame_count() > 0 and not viewer._is_busy())
+	_timeline_label.text = "%s / %s" % [_time_label(viewer.current_frame()), _time_label(viewer.frame_count())]
 	_target.max_value = viewer.frame_count()
-	_target.editable = viewer.frame_count() > 0
-	_seek_button.disabled = viewer.frame_count() == 0
-	_cancel_button.disabled = not viewer.is_seeking()
-	_previous_checkpoint.disabled = viewer.checkpoint_target(false) < 0
-	_next_checkpoint.disabled = viewer.checkpoint_target(true) < 0
-	_previous_input_change.disabled = viewer.input_change_target(false) < 0
-	_next_input_change.disabled = viewer.input_change_target(true) < 0
-	_previous_recorded_checksum.disabled = viewer.recorded_checksum_target(false) < 0
-	_next_recorded_checksum.disabled = viewer.recorded_checksum_target(true) < 0
+	_target.editable = not _is_scrubbing and viewer.frame_count() > 0
+	_seek_button.disabled = _is_scrubbing or viewer.frame_count() == 0
+	_cancel_button.disabled = _is_scrubbing or not viewer.is_seeking()
+	_previous_checkpoint.disabled = _is_scrubbing or viewer.checkpoint_target(false) < 0
+	_next_checkpoint.disabled = _is_scrubbing or viewer.checkpoint_target(true) < 0
+	_previous_input_change.disabled = _is_scrubbing or viewer.input_change_target(false) < 0
+	_next_input_change.disabled = _is_scrubbing or viewer.input_change_target(true) < 0
+	_previous_recorded_checksum.disabled = _is_scrubbing or viewer.recorded_checksum_target(false) < 0
+	_next_recorded_checksum.disabled = _is_scrubbing or viewer.recorded_checksum_target(true) < 0
 	queue_redraw()
 
 

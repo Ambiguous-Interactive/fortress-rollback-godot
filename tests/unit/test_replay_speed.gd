@@ -9,7 +9,7 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls"])
+	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "timeline"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -17,6 +17,8 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.equal(viewer.has_method("set_playback_speed"), true, "playback speed can be selected")
 	if viewer.has_method("set_playback_speed"):
 		match name:
+			"timeline":
+				_timeline(context)
 			"keyboard_controls":
 				_keyboard_controls(context)
 			"cadence":
@@ -315,3 +317,120 @@ func _key(node: Node, code: int, modified: String = "") -> void:
 	event.meta_pressed = modified == "meta"
 	event.shift_pressed = modified == "shift"
 	node.call("_unhandled_key_input", event)
+
+
+# Value: protects=timeline selection uses bounded verified navigation and preserves drag intent;
+# fails_when=refresh seeks recursively, dragging advances playback or corrupt prefixes are skipped; why_new=frame-entry tests have no timeline; seam=none
+func _timeline(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	var sliders: Array[Node] = node.find_children("ReplayTimeline", "HSlider", true, false)
+	context.equal(sliders.size(), 1, "viewer exposes a replay timeline")
+	if sliders.is_empty():
+		node._exit_tree()
+		node.free()
+		return
+	var timeline: HSlider = sliders[0]
+	context.equal(timeline.editable, false, "empty viewer cannot scrub")
+	var replay: RefCounted = Fixture.recording(900)
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	context.equal([timeline.max_value, timeline.value, timeline.editable], [900.0, 0.0, true], "timeline spans every recorded state boundary")
+	node.viewer.toggle_play()
+	node._physics_process(0.0)
+	context.equal(timeline.value, 1.0, "timeline follows playback without seeking")
+	context.equal(node.viewer.is_playing, true, "refresh does not pause playback")
+	timeline.drag_started.emit()
+	for key: int in [KEY_P, KEY_N, KEY_B, KEY_R, KEY_ESCAPE]:
+		_key(node, key)
+		context.equal([node.viewer.current_frame(), node.viewer.is_playing, node.viewer.is_seeking()], [1, false, false], "drag owns playback against keyboard controls")
+	for action: String in ["_toggle", "_step", "_back_one_frame", "_restart", "_seek", "_cancel_seek"]:
+		node.call(action)
+		context.equal([node.viewer.current_frame(), node.viewer.is_playing, node.viewer.is_seeking()], [1, false, false], "drag owns playback against direct composed controls")
+	for action: String in ["_jump_checkpoint", "_jump_input_change", "_jump_recorded_checksum"]:
+		node.call(action, true)
+		context.equal([node.viewer.current_frame(), node.viewer.is_playing, node.viewer.is_seeking()], [1, false, false], "drag owns other navigation destinations")
+	# The scene must also keep its service loop idle if a caller resumes the underlying player directly.
+	node.viewer.toggle_play()
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 1, "drag blocks the scene playback service loop")
+	timeline.drag_ended.emit(false)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [1, false], "unchanged release remains paused")
+	timeline.drag_started.emit()
+	timeline.set_value_no_signal(899)
+	timeline.value_changed.emit(float(899))
+	for tick: int in 3:
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 1, "dragging pauses playback before choosing a destination")
+	context.equal(timeline.value, 899.0, "refresh preserves drag destination")
+	timeline.drag_ended.emit(true)
+	context.equal(node.viewer.is_seeking(), true, "release starts ordinary verified navigation")
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 121, "timeline seek keeps per-tick budget")
+	timeline.set_value_no_signal(60)
+	timeline.value_changed.emit(float(60))
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [60, false], "timeline can retarget an active seek and finishes paused")
+	var expected: Simulation = Simulation.new()
+	for frame: int in 60:
+		expected.simulate_frame(frame, replay.inputs(frame))
+	context.bytes_equal(node.viewer.game.canonical_bytes(), expected.canonical_bytes(), 60, "timeline preserves original canonical state")
+	context.equal(node._timeline_label.text, "0:01 / 0:15", "timeline gives elapsed and total recorded time")
+	timeline.set_value_no_signal(900)
+	timeline.value_changed.emit(float(900))
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 900, "last timeline position reaches final state")
+	timeline.set_value_no_signal(0)
+	timeline.value_changed.emit(float(0))
+	context.equal(node.viewer.current_frame(), 0, "first timeline position returns to initial state")
+	var corrupt: RefCounted = Fixture.recording(900)
+	corrupt._inputs[14] ^= 1
+	node.viewer.open_bytes(corrupt.to_bytes())
+	node._refresh()
+	timeline.set_value_no_signal(900)
+	timeline.value_changed.emit(float(900))
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 7, "timeline cannot skip a corrupt prefix")
+	context.equal(node.viewer.has_failure(), true, "timeline exposes playback failure")
+	context.equal(timeline.value, 7.0, "failed navigation shows the actual stopped boundary")
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	var opened: RefCounted = node.viewer._player.begin_advance()
+	context.equal(opened.batch != null, true, "retain ordinary expert replay work")
+	timeline.drag_started.emit()
+	context.equal(node._is_scrubbing, false, "active expert work refuses drag ownership before changing scene state")
+	timeline.drag_ended.emit(true)
+	context.equal([node.viewer.current_frame(), node.viewer.is_seeking()], [0, false], "refused drag release cannot navigate through retained work")
+	node.viewer._player.terminate()
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	timeline.drag_started.emit()
+	opened = node.viewer._player.begin_advance()
+	context.equal(opened.batch != null, true, "independent expert work can own the paused player")
+	node._physics_process(0.0)
+	context.equal(timeline.editable, true, "held timeline stays editable so the real mouse release can retire drag ownership")
+	timeline.drag_ended.emit(false)
+	context.equal(node._is_scrubbing, false, "mouse release retires scene drag even while player is busy")
+	context.equal(node.viewer.current_frame(), 0, "busy drag release never services retained player work")
+	while true:
+		var request: Viewer.Types.Request = opened.batch.next_request()
+		if request == null:
+			break
+		var checksum: PackedByteArray = PackedByteArray()
+		var ok: bool
+		if request.kind == Viewer.Types.Kind.SAVE:
+			var saved: RefCounted = node.viewer.game.save_state(request.frame, request.writer)
+			ok = saved.ok
+			checksum = saved.checksum
+		else:
+			ok = node.viewer.game.simulate_frame(request.frame, request.inputs)
+		var completed: RefCounted = node.viewer._player.complete_request(request.batch_id, request.request_id, ok, checksum)
+		context.equal(completed.code, Viewer.Types.Code.OK, "original expert owner completes normally")
+	node.viewer.toggle_play()
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 2, "released busy drag cannot suppress later scene playback")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()

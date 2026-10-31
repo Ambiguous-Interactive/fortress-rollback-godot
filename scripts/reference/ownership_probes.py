@@ -85,7 +85,7 @@ EXPECTED.update({
     'res://tests/unit/test_spectator_policy.gd': {
         'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status', 'gapped_end'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
-    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls'},
+    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls', 'timeline'},
 })
 EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
     'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum', 'client_history'}
@@ -183,9 +183,11 @@ EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
 EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {'replacement', 'callback_controls', 'callback_termination', 'expert_controls'}
 EXPECTED['res://tests/unit/test_replay_input_navigation.gd'] = {'input_change_navigation', 'input_change_integrity', 'input_change_controls',
     'checksum_navigation', 'checksum_navigation_integrity', 'checksum_navigation_controls'}
-EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'catchup_control'})
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'catchup_control', 'catchup_once', 'catchup_once_control'})
 EXPECTED['res://tests/unit/test_spectator_replay_viewer.gd'] = {'round_trip', 'compatibility', 'checksum_failure', 'scene_controls'}
 EXPECTED['res://tests/unit/test_spectator_recording_feedback.gd'] = {'recording_limit_feedback'}
+EXPECTED['res://tests/unit/test_signalfish_adapter_reentry.gd'] = {
+    'relay_teardown', 'attach_failure', 'attach_plan', 'plan_detach', 'refusal_plan', 'detach_replace', 'attach_getters', 'lifetime_getters'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -256,6 +258,7 @@ FILES += ['addons/fortress_rollback/transport/signalfish_spectator_host.gd', 'te
 FILES += ['tests/unit/test_signalfish_fallback_failure.gd', 'tests/unit/test_signalfish_fallback.gd', 'tests/unit/test_signalfish_webrtc.gd',
           'addons/fortress_rollback/transport/signalfish_fallback.gd', 'addons/fortress_rollback/transport/signalfish_webrtc.gd',
           'addons/fortress_rollback/transport/signalfish_webrtc_types.gd']
+FILES += ['tests/unit/test_signalfish_adapter.gd', 'tests/unit/test_signalfish_adapter_reentry.gd']
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -341,6 +344,7 @@ const DriverDropParity = preload("res://tests/unit/test_driver_drop_parity.gd")
 const SpectatorRelay = preload("res://tests/unit/test_signalfish_spectator_relay.gd")
 const FallbackFailure = preload("res://tests/unit/test_signalfish_fallback_failure.gd")
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
+const AdapterReentry = preload("res://tests/unit/test_signalfish_adapter_reentry.gd")
 func _ready() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, DiagnosticLifetime, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
@@ -352,7 +356,7 @@ func _ready() -> void:
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
 		DriverInputPolicy, DriverTermination, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation, FallbackFailure,
-		SpectatorRecordingFeedback, DriverLifecycleParity]
+		SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.
 \t# JSON decoding is a dynamic boundary; reject unknown or repeated paths.

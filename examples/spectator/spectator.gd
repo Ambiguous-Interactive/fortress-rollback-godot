@@ -46,6 +46,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		demo.is_paused = not demo.is_paused
 	elif event.keycode == KEY_N:
 		demo.step_viewer()
+	elif event.keycode == KEY_C:
+		demo.catch_up_viewer()
 	elif event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
 		var delay: int = demo.viewer.playback_policy()[0]
 		demo.set_viewing_delay(maxi(0, delay + (-1 if event.keycode == KEY_BRACKETLEFT else 1)))
@@ -100,7 +102,8 @@ func _update_label() -> void:
 		state = "HOST CONNECTION LOST | R: start again"
 	_label.text = (
 		"Delayed spectator | %s\n" % state
-		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | E: end host\n[: less delay | ]: more delay\n,: slower catch-up | .: faster catch-up\n"
+		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\n"
+		+ "E: end host\n[: less delay | ]: more delay\n,: slower catch-up | .: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]

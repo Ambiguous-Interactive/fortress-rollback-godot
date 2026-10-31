@@ -25,6 +25,8 @@ func cases() -> PackedStringArray:
 			"pause_and_catchup",
 			"catchup_speed",
 			"catchup_control",
+			"catchup_once",
+			"catchup_once_control",
 			"lost_history",
 			"idle_host_liveness",
 			"clean_host_end",
@@ -48,7 +50,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		_corrected_viewing(context)
 	elif name == "pause_and_catchup":
 		_pause_and_catchup(context)
-	elif name in ["catchup_speed", "catchup_control"]:
+	elif name in ["catchup_speed", "catchup_control", "catchup_once", "catchup_once_control"]:
 		call("_" + name, context)
 	elif name == "lost_history":
 		_lost_history(context)
@@ -522,7 +524,7 @@ func _restart_busy(context: RefCounted) -> void:
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
 	for actor: String in ["host", "viewer", "batch", "game_callback"]:
-		for action: String in ["tick", "step_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed"]:
+		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed"]:
 			var demo: Demo = Demo.new()
 			context.equal(demo.start(), Types.Code.OK, "start guarded service")
 			demo.is_paused = true
@@ -872,4 +874,77 @@ func _catchup_control(context: RefCounted) -> void:
 	context.equal(scene._label.text.contains(",: slower catch-up | .: faster catch-up"), true, "help exposes catch-up controls")
 	before[10] = scene.demo.viewer.playback_policy()
 	context.equal(_service_observation(scene.demo), before, "catch-up keys do not service or resume viewing")
+	scene.free()
+
+
+# Value: protects=one-shot catch-up consumes buffered rows within delay; fails_when=skips history or samples host; why_new=rate controls need ticks; seam=none
+func _catchup_once(context: RefCounted) -> void:
+	var empty: Demo = Demo.new()
+	context.equal(empty.has_method("catch_up_viewer"), true, "viewer exposes one-shot catch-up")
+	if not empty.has_method("catch_up_viewer"):
+		return
+	context.equal(empty.call("catch_up_viewer"), Types.Code.NOT_CONFIGURED, "catch-up requires started viewing")
+	for clean_end: bool in [false, true]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "start buffered catch-up")
+		context.equal(demo.call("catch_up_viewer"), Types.Code.PREDICTION_STALL, "empty viewing cannot invent rows")
+		context.equal(demo.is_paused, true, "one-shot inspection pauses continuous viewing")
+		var original: Game = Game.new()
+		var history: Array[PackedByteArray] = [original.canonical_bytes()]
+		for tick: int in range(80):
+			var buttons: int = Game.RIGHT | (Game.FIRE if tick % 5 < 3 else Game.LEFT)
+			context.equal(demo.tick(buttons), Types.Code.OK, "host builds original confirmed backlog")
+			var rows: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(tick)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(original.simulate_frame(tick, Types.FrameInputs.new(rows, statuses)), true, "independent changing-input history")
+			history.append(original.canonical_bytes())
+		if clean_end:
+			context.equal(demo.finish_host(), Types.Code.OK, "close original host input")
+			for tick: int in range(20):
+				demo.tick(0)
+		context.equal(demo.set_catchup_speed(1), Types.Code.OK, "ordinary continuous viewing uses slow rate")
+		var host_frame: int = demo.host.loop.game.frame
+		var host_tick: int = demo.host.tick_count
+		var policy: PackedInt64Array = demo.viewer.playback_policy()
+		var target: int = demo.game.frame + int(demo.viewer.playback_status().playable_frames)
+		context.equal(target > 1, true, "action exercises multiple buffered frames")
+		context.equal(demo.call("catch_up_viewer"), Types.Code.TERMINATED if clean_end else Types.Code.OK, "catch-up services buffered prefix and clean end")
+		context.equal(demo.game.frame, target, "catch-up reaches configured delayed edge without skipping input")
+		context.bytes_equal(demo.game.canonical_bytes(), history[target], target, "catch-up equals independent original canonical prefix")
+		context.equal(demo.host.loop.game.frame, host_frame, "catch-up never advances host")
+		context.equal(demo.host.tick_count, host_tick, "catch-up never polls or samples host")
+		context.equal(demo.viewer.playback_policy(), policy, "one-shot action preserves delay and continuous rate")
+		context.equal(demo.is_paused, true, "one-shot catch-up stays paused for inspection")
+		context.equal(demo.call("catch_up_viewer"), Types.Code.TERMINATED if clean_end else Types.Code.PREDICTION_STALL, "repeated action cannot invent another frame")
+		if clean_end:
+			context.equal(demo.viewer.is_complete(), true, "clean catch-up publishes final completion")
+		else:
+			context.equal(demo.lose_host_connection(), Types.Code.PROTOCOL_FAILED, "stop buffered viewer")
+			context.equal(demo.call("catch_up_viewer"), Types.Code.PROTOCOL_FAILED, "catch-up preserves original host-loss reason")
+		context.equal(demo.start(), Types.Code.OK, "fresh viewing after catch-up")
+		context.equal(demo.is_paused, false, "restart restores continuous playback")
+
+
+# Value: protects=keyboard catch-up is deliberate and bounded; fails_when=C is missing or repeats; why_new=API tests bypass scene binding; seam=scene input
+func _catchup_once_control(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	scene.demo.is_paused = true
+	for tick: int in range(50):
+		scene.demo.tick(Game.RIGHT)
+	var frame: int = scene.demo.game.frame
+	var key: InputEventKey = InputEventKey.new()
+	key.keycode = KEY_C
+	key.pressed = false
+	scene._unhandled_key_input(key)
+	key.pressed = true
+	key.echo = true
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.game.frame, frame, "release and held key do not catch up")
+	key.echo = false
+	var target: int = frame + int(scene.demo.viewer.playback_status().playable_frames)
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.game.frame, target, "C consumes currently playable backlog")
+	context.equal(scene.demo.is_paused, true, "C leaves viewer paused")
+	context.equal(scene._label.text.contains("C: catch up once"), true, "help exposes one-shot catch-up")
 	scene.free()

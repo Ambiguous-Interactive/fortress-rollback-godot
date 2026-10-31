@@ -13,6 +13,34 @@ class Client:
 	signal room_left
 
 
+class GetterClient:
+	extends Client
+	var callback: Callable
+	var boundary: String
+	var armed: bool = true
+
+	func attempt(stage: String) -> void:
+		if armed and stage == boundary:
+			armed = false
+			callback.call()
+
+	func get_player_id() -> String:
+		attempt("player")
+		return super.get_player_id()
+
+	func get_room_id() -> String:
+		attempt("room")
+		return super.get_room_id()
+
+	func is_connected_to_server() -> bool:
+		attempt("connected")
+		return super.is_connected_to_server()
+
+	func is_authenticated() -> bool:
+		attempt("authenticated")
+		return super.is_authenticated()
+
+
 class CallbackMesh:
 	extends Fixture.MeshStub
 	var on_attach: Callable
@@ -44,10 +72,18 @@ class CallbackPlan:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["relay_teardown", "attach_failure", "attach_plan", "plan_detach", "refusal_plan", "detach_replace"])
+	return PackedStringArray(["relay_teardown", "attach_failure", "attach_plan", "plan_detach", "refusal_plan", "detach_replace", "attach_getters", "lifetime_getters"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "lifetime_getters":
+		_lifetime_getters(context)
+		context.finish()
+		return
+	if name == "attach_getters":
+		_attach_getters(context)
+		context.finish()
+		return
 	var membership: Membership = Membership.new()
 	var session: PackedByteArray = PackedByteArray()
 	session.resize(16)
@@ -112,3 +148,87 @@ func run_case(name: String, context: RefCounted) -> void:
 	client.free()
 	mesh.free()
 	context.finish()
+
+
+func _attach_getters(context: RefCounted) -> void:
+	for boundary: String in ["player", "room"]:
+		for operation: String in ["control", "detach", "nested", "ended", "remote_ended"]:
+			var membership: Membership = Membership.new()
+			var session: PackedByteArray = PackedByteArray()
+			session.resize(16)
+			var incarnation: PackedByteArray = PackedByteArray()
+			incarnation.resize(8)
+			context.equal(
+				membership.configure(Fixture.LOCAL, PackedStringArray([Fixture.LOCAL, Fixture.REMOTE]), session, incarnation, Protocol.Config.new()), OK, "getter frozen roster"
+			)
+			var client: GetterClient = GetterClient.new()
+			var mesh: CallbackMesh = CallbackMesh.new()
+			var adapter: Adapter = Adapter.new()
+			var nested: Array[int] = []
+			client.boundary = boundary
+			client.callback = func() -> void:
+				match operation:
+					"detach":
+						adapter.detach()
+					"nested":
+						nested.append(adapter.attach(client, mesh, membership))
+					"ended":
+						client.room_left.emit()
+					"remote_ended":
+						client.player_reconnected.emit(Fixture.REMOTE)
+			var result: Error = adapter.attach(client, mesh, membership)
+			context.equal(client.armed, false, "actual SDK getter callback ran: " + boundary)
+			if operation in ["control", "nested"]:
+				context.equal(result, OK, "healthy outer attachment survives: " + operation)
+				context.equal(mesh.client == client, true, "healthy attachment owns mesh once")
+				context.equal(client.session_plan.get_connections().size(), 1, "healthy attachment has one plan listener")
+				if operation == "nested":
+					context.equal(nested, [ERR_ALREADY_IN_USE], "getter cannot replace active setup")
+			else:
+				context.equal(result, ERR_UNAVAILABLE, "getter cancellation refuses attach: " + boundary)
+				context.equal(mesh.client == null, true, "canceled getter never starts mesh: " + boundary)
+				context.equal(client.session_plan.get_connections().size(), 0, "canceled getter retains no plan listener: " + boundary)
+				context.equal(client.new_peer.get_connections().size(), 0, "canceled getter retains no additive listener: " + boundary)
+			adapter.detach()
+			context.equal(client.room_left.get_connections().size(), 0, "final detach releases lifecycle observer")
+			client.callback = Callable()
+			client.free()
+			mesh.free()
+
+
+func _lifetime_getters(context: RefCounted) -> void:
+	for boundary: String in ["connected", "authenticated", "player", "room"]:
+		for operation: String in ["status", "plan", "new_peer"]:
+			var membership: Membership = Membership.new()
+			var session: PackedByteArray = PackedByteArray()
+			session.resize(16)
+			var incarnation: PackedByteArray = PackedByteArray()
+			incarnation.resize(8)
+			context.equal(
+				membership.configure(Fixture.LOCAL, PackedStringArray([Fixture.LOCAL, Fixture.REMOTE]), session, incarnation, Protocol.Config.new()), OK, "live getter roster"
+			)
+			var client: GetterClient = GetterClient.new()
+			var mesh: CallbackMesh = CallbackMesh.new()
+			var adapter: Adapter = Adapter.new()
+			client.armed = false
+			context.equal(adapter.attach(client, mesh, membership), OK, "ordinary attachment precedes getter teardown")
+			client.session_plan.emit(Fixture.Plan.new())
+			client.boundary = boundary
+			client.callback = adapter.detach
+			client.armed = true
+			match operation:
+				"status":
+					adapter.status()
+				"plan":
+					client.session_plan.emit(Fixture.Plan.new())
+				"new_peer":
+					client.new_peer.emit(Fixture.REMOTE, false)
+			context.equal(client.armed, false, "live SDK getter actually triggers teardown: " + boundary)
+			context.equal(adapter.status().route, "unconfigured", "old operation cannot overwrite getter detach: " + operation)
+			context.equal(mesh.client == null, true, "getter teardown releases mesh")
+			context.equal(client.session_plan.get_connections().size(), 0, "getter teardown releases plan listener")
+			context.equal(client.new_peer.get_connections().size(), 0, "getter teardown releases additive listeners")
+			adapter.detach()
+			client.callback = Callable()
+			client.free()
+			mesh.free()

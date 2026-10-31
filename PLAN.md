@@ -32,6 +32,7 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
+- [Replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Online delay shortcuts and action prompts gated by live gameplay](docs/online-example.md#install-and-run).
 - [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
@@ -112,6 +113,8 @@ Spectator playback observations distinguish contiguous input waits, deliberate d
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
+Online setup guards SDK callbacks and fences cancellation before accepting a new match or transport.
+The local spectator can catch up through its currently buffered playable rows without changing its viewing delay or normal rate.
 Callback Leave retires outstanding game work and fences canceled startup before SDK owners are physically released.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.
