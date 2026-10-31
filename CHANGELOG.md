@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add a draggable replay timeline with elapsed and total recorded time. Selection uses bounded, verified navigation and finishes paused.
+
+- Add C to catch the local spectator up through currently buffered rows, preserving its viewing delay and normal catch-up rate.
+
 - Add spectator replay progress and a warning before its recording limit. Continued viewing shows omitted frames and explains where the saved replay ends.
 
 - Add recording progress through session, driver and peer APIs. The online example shows finalized, pending and omitted gameplay at the recording limit.
@@ -230,6 +234,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix SDK callbacks reviving canceled or expired online matches. Unsafe plan or peer-directive reentry stops the old mesh before SDK consumption and requires a fresh session.
 
 - Fix delay prompts and shortcuts outside active online or local peer gameplay. Retain match observations and recovery instructions after failure or leaving.
 

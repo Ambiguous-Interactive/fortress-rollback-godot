@@ -154,6 +154,12 @@ that rollback history or membership remains recoverable.
 Synchronous SDK callbacks cannot replace an ended lifetime while attach, plan
 conversion or mesh teardown returns. Teardown marks the mesh released before calling
 the SDK, and refuses nested plan acceptance or replacement attach until it returns.
+Setup observes lifecycle and remote-incarnation changes before reading SDK identities.
+Getter-triggered detach stops attachment before listeners or a mesh can be published again.
+Live identity checks preserve that same lifetime across SDK getter callbacks.
+The pinned SDK also consumes plans and peer directives synchronously. Emitting either from an identity getter
+or another plan conversion stops the old mesh and requires a fresh session. Keep custom SDK accessors stable and free of these notifications;
+the adapter does not replay deferred SDK notifications.
 An initial plan emitted during attach remains accepted. This guards lifecycle
 ownership; it does not add transparent replan or ICE-restart support.
 
@@ -169,6 +175,6 @@ The installed-SDK witness uses its actual decoder, public transport injection,
 mesh attach and binary APIs. It is separate from complete browser or server
 integration; it does not establish real WebRTC availability or relay latency.
 
-- [Pinned client public APIs](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/db7d30f228d8d564adcb2eb38d5983bf6b9877ac/addons/signal_fish/signal_fish_client.gd)
-- [Pinned mesh identity and plan handling](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/db7d30f228d8d564adcb2eb38d5983bf6b9877ac/addons/signal_fish/webrtc/sf_webrtc_mesh.gd)
-- [Pinned v3 plan and offerer fields](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/db7d30f228d8d564adcb2eb38d5983bf6b9877ac/addons/signal_fish/protocol/sf_session_types.gd)
+- [Pinned client public APIs](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/8e1475ed12a618fb41660bd1c8a1b0c934dee77f/addons/signal_fish/signal_fish_client.gd)
+- [Pinned mesh identity and plan handling](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/8e1475ed12a618fb41660bd1c8a1b0c934dee77f/addons/signal_fish/webrtc/sf_webrtc_mesh.gd)
+- [Pinned v3 plan and offerer fields](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/8e1475ed12a618fb41660bd1c8a1b0c934dee77f/addons/signal_fish/protocol/sf_session_types.gd)

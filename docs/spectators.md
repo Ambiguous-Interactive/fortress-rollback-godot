@@ -21,6 +21,11 @@ Move with A/D or arrows and fire with Space. Press P to pause only the viewer;
 resume to catch up at most four frames per physics tick by default. Press N to pause and inspect
 one confirmed viewer frame at a time. Each press advances at most one frame and still
 respects the viewing delay; it waits when confirmed inputs are unavailable.
+Press C to catch up once through all currently buffered playable frames, then remain paused.
+This action preserves the viewing delay and ordinary catch-up rate. It consumes each
+confirmed row in order, with at most one queue capacity of input work per press.
+It does not retrieve rows still waiting at the host. Later ticks deliver at most 16 packets each,
+subject to backpressure and retained history.
 Press [ or ] to lower or raise the viewing delay by one confirmed frame, including while paused.
 Press comma or period to lower or raise the catch-up limit by one frame per tick.
 The limit ranges from one frame through the configured queue capacity; it changes neither
@@ -35,7 +40,8 @@ they cannot be played yet. These counts show the current backlog independently o
 The host continues playing during inspection. E stops the host at its current
 frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
-After the last frame, press N once more to report completion.
+After the last frame, press N once more to report completion. C drains the buffered final
+tail and reports completion in the same action when the complete tail has arrived.
 The viewer shows `BUFFERING` at startup while it waits for enough confirmed input to preserve
 its delay. A paused final tail shows `FINAL TAIL PAUSED` and the resume/step controls.
 Press L to simulate a known loss of the viewer's host connection. Buffered viewer
@@ -47,7 +53,7 @@ completion message just because its next operation reports a generic stopped res
 Plain cancellation shows `STOPPED`; only fully serviced clean host endings show `COMPLETE`.
 Restart retires the prior host and viewer, including retained driver and stream handles.
 An active callback or expert request batch must finish before restart, another tick,
-single-frame inspection, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
+single-frame inspection, one-shot catch-up, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
 without consuming time, changing playback controls or stopping the viewer.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.

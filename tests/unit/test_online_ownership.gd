@@ -63,6 +63,102 @@ class ReentrantGame:
 		return super.simulate_frame(frame, inputs)
 
 
+class CancellationClient:
+	extends Fixture.Client
+	signal new_peer(peer_id: String, you_initiate: bool)
+	signal player_reconnected(peer_id: String)
+
+
+class SetupClient:
+	extends CancellationClient
+	var target_ref: WeakRef
+	var boundary: String
+	var cancel: bool
+	var attempts: int = 0
+	var required_calls: int = 1
+	var observed_calls: int = 0
+	var nested: int = -1
+
+	func attempt(stage: String) -> void:
+		if stage != boundary:
+			return
+		observed_calls += 1
+		if observed_calls < required_calls:
+			return
+		attempts += 1
+		boundary = ""
+		var target: Match = target_ref.get_ref()
+		if cancel:
+			target.detach()
+		else:
+			nested = target.freeze(self, null, PackedStringArray(), PackedByteArray())
+
+	func get_room_id() -> String:
+		attempt("room")
+		return Fixture.ROOM
+
+	func get_player_id() -> String:
+		attempt("player")
+		return local
+
+
+class SetupAdapter:
+	extends Match.Adapter
+	var target_ref: WeakRef
+	var cancel: bool
+	var armed: bool = false
+	var nested: int = -1
+
+	func status() -> Dictionary:
+		if armed:
+			armed = false
+			var target: Match = target_ref.get_ref()
+			if cancel:
+				target.detach()
+			else:
+				nested = target.start_transport(null, null, null, null, 0)
+		return super.status()
+
+
+class SetupDirect:
+	extends Match.Direct
+	var callback: Callable
+	var owned_before_callback: bool = false
+
+	func configure(mesh: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null) -> int:
+		var code: int = super.configure(mesh, membership, adapter, peer, options)
+		if code == Code.OK and callback.is_valid():
+			owned_before_callback = _mesh != null and _transport != null
+			callback.call()
+		return code
+
+
+class SetupRelay:
+	extends Match.Relay
+	var callback: Callable
+	var owned_before_callback: bool = false
+
+	func configure(client: Object, sdk_config: Object, protocol_info: Object, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null) -> int:
+		var code: int = super.configure(client, sdk_config, protocol_info, membership, adapter, peer, options)
+		if code == Code.OK and callback.is_valid():
+			owned_before_callback = _client != null and client.game_data_binary_received.get_connections().size() == 1
+			callback.call()
+		return code
+
+
+class SetupFallback:
+	extends Match.Fallback
+	var callback: Callable
+	var owned_before_callback: bool = false
+
+	func configure(direct: Direct, relay: Relay, membership: Membership, adapter: Adapter, peer: Peer, options: Options = null) -> int:
+		var code: int = super.configure(direct, relay, membership, adapter, peer, options)
+		if code == Code.OK and callback.is_valid():
+			owned_before_callback = _direct != null and _relay != null
+			callback.call()
+		return code
+
+
 class ReentrantCoordinator:
 	extends Fixture.IdleCoordinator
 	var actor: ReentrantGame
@@ -97,10 +193,18 @@ class ReentrantClient:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["callback_controls", "notification_controls", "expert_controls", "service_controls", "lobby_controls"])
+	return PackedStringArray(["callback_controls", "notification_controls", "expert_controls", "service_controls", "lobby_controls", "setup_controls", "transport_setup_controls"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	if name == "transport_setup_controls":
+		_transport_setup_controls(context)
+		context.finish()
+		return
+	if name == "setup_controls":
+		_setup_controls(context)
+		context.finish()
+		return
 	if name == "lobby_controls":
 		_lobby_controls(context)
 		context.finish()
@@ -196,3 +300,130 @@ func _lobby_controls(context: RefCounted) -> void:
 		context.equal(client.polls, 2, "later SDK service remains usable")
 		client.free()
 		mesh.free()
+
+
+func _setup_controls(context: RefCounted) -> void:
+	for stage: String in ["control", "room", "player", "adapter_room", "adapter_player"]:
+		for cancel: bool in [false, true]:
+			var target: Match = Match.new()
+			var client: SetupClient = SetupClient.new()
+			var mesh: Fixture.DirectFixture.FakeMesh = Fixture.DirectFixture.FakeMesh.new()
+			client.local = Fixture.U
+			client.target_ref = weakref(target)
+			client.boundary = stage.trim_prefix("adapter_")
+			client.required_calls = 2 if stage.begins_with("adapter_") else 1
+			client.cancel = cancel
+			var result: Error = target.freeze(client, mesh, PackedStringArray([Fixture.U, Fixture.V]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8]))
+			if stage == "control":
+				context.equal(result, OK, "ordinary initial setup remains supported")
+			elif cancel:
+				context.equal(result, ERR_UNAVAILABLE, "canceled SDK getter cannot revive setup: " + stage)
+				if stage.begins_with("adapter_"):
+					context.equal(target.peer._core != null, true, "adapter callback occurs after real peer configuration")
+					_assert_detached(context, target, client, mesh, stage)
+				else:
+					context.equal(target.peer._core == null, true, "canceled getter cannot configure a new live session: " + stage)
+					context.equal(target.local_slot, -1, "canceled getter cannot freeze player ownership: " + stage)
+			else:
+				context.equal(client.nested, ERR_BUSY, "nested freeze refuses SDK callback ownership: " + stage)
+				context.equal(result, OK, "refused nested setup preserves the outer setup: " + stage)
+			context.equal(target._is_busy(), false, "setup always releases operation ownership")
+			target.detach()
+			mesh.free()
+			client.free()
+
+
+func _transport_setup_controls(context: RefCounted) -> void:
+	_transport_configure_controls(context)
+	for cancel: bool in [false, true]:
+		var target: Match = Match.new()
+		var client: CancellationClient = CancellationClient.new()
+		var mesh: Fixture.DirectFixture.FakeMesh = Fixture.DirectFixture.FakeMesh.new()
+		var transport: Fixture.MeshFixture.Transport = Fixture.MeshFixture.Transport.new()
+		var adapter: SetupAdapter = SetupAdapter.new()
+		client.local = Fixture.U
+		transport.local = Fixture.U
+		mesh.transport = transport
+		adapter.target_ref = weakref(target)
+		adapter.cancel = cancel
+		target.adapter = adapter
+		context.equal(
+			target.freeze(client, mesh, PackedStringArray([Fixture.U, Fixture.V]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])), OK, "transport test freezes ordinary setup"
+		)
+		var plan: Fixture.MembershipFixture.Plan = Fixture.MembershipFixture.Plan.new()
+		plan.data.peers = [{"player_id": Fixture.V, "initiate": true}]
+		client.session_plan.emit(plan)
+		var config: Fixture.RelayFixture.SDKConfig = Fixture.RelayFixture.SDKConfig.new()
+		config.max_buffered_bytes = 4096
+		config.max_outbound_frame_bytes = 4096
+		var info: Fixture.RelayFixture.Info = Fixture.RelayFixture.Info.new()
+		adapter.armed = true
+		var result: Error = target.start_transport(client, mesh, config, info, 0)
+		context.equal(adapter.armed, false, "transport setup crosses actual adapter status callback")
+		if cancel:
+			context.equal(result, ERR_UNAVAILABLE, "canceled transport setup refuses completion")
+			_assert_detached(context, target, client, mesh, "adapter_status")
+		else:
+			context.equal(result, OK, "refused nested transport setup preserves ordinary startup")
+			context.equal(adapter.nested, ERR_BUSY, "transport setup owns callbacks until completion")
+			context.equal(target.has_started, true, "ordinary startup still publishes started match")
+		context.equal(target._is_busy(), false, "transport setup releases operation ownership")
+		target.detach()
+		mesh.free()
+		client.free()
+
+
+func _assert_detached(context: RefCounted, target: Match, client: Object, mesh: Object, stage: String) -> void:
+	context.equal(target.has_started, false, "canceled setup cannot publish started state: " + stage)
+	context.equal(target.peer.status().lifecycle, Types.Lifecycle.TERMINATED, "canceled setup retires configured peer: " + stage)
+	context.equal(mesh.attached, false, "canceled setup releases mesh: " + stage)
+	for signal_name: String in ["new_peer", "player_reconnected"]:
+		context.equal(client.has_signal(signal_name), true, "cancellation fixture exposes optional listener: " + signal_name)
+	for signal_name: String in Match.Adapter.LIFETIME_SIGNALS + ["session_plan", "game_data_binary_received", "new_peer", "player_reconnected"]:
+		if client.has_signal(signal_name):
+			context.equal(client.get_signal_connection_list(signal_name).size(), 0, "canceled setup releases listener: " + stage + "/" + signal_name)
+	context.equal(target.direct._mesh == null, true, "canceled setup releases direct ownership: " + stage)
+	context.equal(target.relay._client == null, true, "canceled setup releases relay ownership: " + stage)
+	context.equal(target.fallback._relay == null, true, "canceled setup releases fallback ownership: " + stage)
+
+
+func _transport_configure_controls(context: RefCounted) -> void:
+	for stage: String in ["control", "direct", "relay", "fallback"]:
+		var target: Match = Match.new()
+		var client: CancellationClient = CancellationClient.new()
+		var mesh: Fixture.DirectFixture.FakeMesh = Fixture.DirectFixture.FakeMesh.new()
+		var transport: Fixture.MeshFixture.Transport = Fixture.MeshFixture.Transport.new()
+		var direct: SetupDirect = SetupDirect.new()
+		var relay: SetupRelay = SetupRelay.new()
+		var fallback: SetupFallback = SetupFallback.new()
+		target.direct = direct
+		target.relay = relay
+		target.fallback = fallback
+		client.local = Fixture.U
+		transport.local = Fixture.U
+		mesh.transport = transport
+		context.equal(target.freeze(client, mesh, PackedStringArray([Fixture.U, Fixture.V]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])), OK, "configure callback fixture freezes")
+		var plan: Fixture.MembershipFixture.Plan = Fixture.MembershipFixture.Plan.new()
+		plan.data.peers = [{"player_id": Fixture.V, "initiate": true}]
+		client.session_plan.emit(plan)
+		var config: Fixture.RelayFixture.SDKConfig = Fixture.RelayFixture.SDKConfig.new()
+		config.max_buffered_bytes = 4096
+		config.max_outbound_frame_bytes = 4096
+		var info: Fixture.RelayFixture.Info = Fixture.RelayFixture.Info.new()
+		if stage != "control":
+			target.get(stage).callback = target.detach
+		var result: Error = target.start_transport(client, mesh, config, info, 0)
+		if stage == "control":
+			context.equal(result, OK, "ordinary composed transport setup succeeds")
+			context.equal(target.has_started, true, "ordinary composed setup publishes running state")
+		else:
+			context.equal(target.get(stage).owned_before_callback, true, "callback occurs after actual transport ownership: " + stage)
+			context.equal(result, ERR_UNAVAILABLE, "configure callback cancels composed startup: " + stage)
+			_assert_detached(context, target, client, mesh, stage)
+		context.equal(target._is_busy(), false, "composed transport callback releases match guard")
+		direct.callback = Callable()
+		relay.callback = Callable()
+		fallback.callback = Callable()
+		target.detach()
+		mesh.free()
+		client.free()

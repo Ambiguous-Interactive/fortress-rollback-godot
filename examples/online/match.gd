@@ -54,6 +54,7 @@ var _tokens: int = 0
 var _pending: Array[Peer.Packet] = []
 var _last_now: int = -1
 var _is_servicing: bool = false
+var _revision: int = 0
 
 
 ## New rooms and sorted full UUID rosters define a fresh application match.
@@ -74,13 +75,30 @@ static func session_identity(room_id: String, roster: PackedStringArray) -> Pack
 func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray) -> Error:
 	if _is_busy():
 		return ERR_BUSY
-	var session_id: PackedByteArray = session_identity(client.call("get_room_id"), roster)
+	_is_servicing = true
+	var revision: int = _revision
+	var code: Error = _freeze(client, mesh, roster, incarnation, revision)
+	if revision != _revision:
+		detach()
+		code = ERR_UNAVAILABLE
+	_is_servicing = false
+	return code
+
+
+func _freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation: PackedByteArray, revision: int) -> Error:
+	var room: String = client.call("get_room_id")
+	if revision != _revision:
+		return ERR_UNAVAILABLE
+	var session_id: PackedByteArray = session_identity(room, roster)
 	if session_id.is_empty():
 		return ERR_INVALID_DATA
 	var profile: Protocol.Config = Protocol.Config.new()
 	profile.input_delay = 2
 	profile.desync_interval = 30
-	var code: Error = membership.configure(client.call("get_player_id"), roster, session_id, incarnation, profile)
+	var player: String = client.call("get_player_id")
+	if revision != _revision:
+		return ERR_UNAVAILABLE
+	var code: Error = membership.configure(player, roster, session_id, incarnation, profile)
 	if code != OK:
 		return code
 	local_slot = membership.slot(membership.local_uuid())
@@ -107,19 +125,41 @@ func freeze(client: Object, mesh: Object, roster: PackedStringArray, incarnation
 func start_transport(client: Object, mesh: Object, sdk_config: Object, info: Object, now_us: int) -> Error:
 	if _is_busy():
 		return ERR_BUSY
-	if has_started or adapter.status().route != "mesh":
+	_is_servicing = true
+	var revision: int = _revision
+	var code: Error = _start_transport(client, mesh, sdk_config, info, now_us, revision)
+	if revision != _revision:
+		detach()
+		code = ERR_UNAVAILABLE
+	_is_servicing = false
+	return code
+
+
+func _start_transport(client: Object, mesh: Object, sdk_config: Object, info: Object, now_us: int, revision: int) -> Error:
+	if has_started:
+		return ERR_UNAVAILABLE
+	var route: String = adapter.status().route
+	if revision != _revision or route != "mesh":
 		return ERR_UNAVAILABLE
 	var options: Direct.Options = Direct.Options.new()
 	options.max_packet_bytes = PACKET_BYTES
 	if direct.configure(mesh, membership, adapter, peer, options) != Direct.Code.OK:
 		return ERR_UNAVAILABLE
+	if revision != _revision:
+		return ERR_UNAVAILABLE
 	var relay_options: Relay.Options = Relay.Options.new()
 	relay_options.max_packet_bytes = PACKET_BYTES
 	if relay.configure(client, sdk_config, info, membership, adapter, peer, relay_options) != Relay.Code.OK:
 		return ERR_UNAVAILABLE
+	if revision != _revision:
+		return ERR_UNAVAILABLE
 	if fallback.configure(direct, relay, membership, adapter, peer) != Fallback.Code.OK:
 		return ERR_UNAVAILABLE
+	if revision != _revision:
+		return ERR_UNAVAILABLE
 	if peer.begin(now_us, [next_token()]) != Inputs.Code.OK:
+		return ERR_UNAVAILABLE
+	if revision != _revision:
 		return ERR_UNAVAILABLE
 	has_started = true
 	return OK
@@ -308,6 +348,7 @@ func _service(now_us: int) -> bool:
 
 
 func detach() -> void:
+	_revision += 1
 	has_started = false
 	if peer._core != null:
 		peer._core.terminate()

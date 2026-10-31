@@ -269,8 +269,8 @@ player UUID and frozen room identity through public getters. A close can invalid
 the connection before its signal arrives; a spectator baseline can replace identity.
 Treat SDK getters and protocol-info conversion as synchronous callback boundaries. Observe lifecycle signals during setup; fence recursive entry, detach and replacement;
 keep joint identity/config observations local until revision and failure checks pass. Require stable SDK accessors; repeated reads cannot make arbitrary side effects atomic.
-A known-member reconnect requires a new rollback lifetime when the SDK omits the
-server epoch. Prove refusal with a valid queued packet and no outgoing work.
+Deferred adapter validation does not pause downstream SDK listeners. Inspect actual consumers; refuse unsafe synchronous reentry before they consume it.
+A known-member reconnect requires a new rollback lifetime when the SDK omits the server epoch. Prove refusal with a valid queued packet and no outgoing work.
 
 Audit committed lifecycle state against published events on callback failure,
 including a retained input prefix followed by refusal. Preserve accepted liveness

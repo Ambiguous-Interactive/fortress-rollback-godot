@@ -176,6 +176,7 @@ not an agreement to end both players at the same frame.
 
 Controller calls during a game callback, completion notification or manual request preserve the active operation.
 Tick and clock service skip reentrant work; room setup, delay changes and replay finishing return BUSY.
+Room setup also holds ownership across SDK getters and transport configuration; leaving during setup cancels completion.
 Call them again after the operation completes. Busy service does not commit a new clock or stop the match.
 Explicit leave and failure cleanup remain available. Leaving cancels outstanding game work immediately;
 SDK nodes still executing a callback are released after it returns. Canceled startup cannot reopen the room.
@@ -220,10 +221,15 @@ When a recording includes a validated final-state checksum, its ending is also
 retained within the checkpoint budget. **Next checkpoint** can return to that
 ending after backward inspection, even between five-second boundaries.
 These controls become available as playback builds its cache. They finish paused and cannot skip a playback failure.
-Enter a frame number and press **Go** to navigate forward or backward. Navigation
+Drag the timeline to choose a recorded moment, then release to navigate and pause.
+The time display shows elapsed and total recorded minutes and seconds at 60 frames per second.
+The timeline follows playback; dragging pauses it. You can select a new destination during a seek.
+Enter a frame number and press **Go** for an exact forward or backward destination. Navigation
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**
 pauses at the last validated boundary. Navigation finishes paused at the requested frame.
+![Replay timeline and recorded time](images/replay-timeline.png)
+
 Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
 The display shows the current frame and stops at the first failed recorded checksum.
 The selected-state line separately identifies a matching, unchecked or absent recorded state checksum.

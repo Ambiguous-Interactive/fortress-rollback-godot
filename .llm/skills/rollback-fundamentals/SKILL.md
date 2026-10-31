@@ -139,6 +139,8 @@ Driver attachment and callback replacement must check the shared mutation gate o
 A callback-only guard misses expert batches paused between a completed SAVE and the remaining ADVANCE.
 Apply the same ownership check before composed service controls change clocks, stage inputs or pause/end playback.
 An inner BUSY result cannot undo those outer side effects; cross each control with host/viewer callbacks and retained expert batches.
+Hold the same composed-operation guard across SDK setup getters and transport configuration.
+A callback can cancel setup before a core exists; fence the setup lifetime before creating or publishing later owners.
 Cancellation may clear the public handle before the callback returns; retain that executing owner privately until it unwinds, including across repeated cancellation.
 Completion getters must also exclude open navigation/revalidation batches and active callbacks, even when
 the exposed frame still equals the final boundary. Test after LOAD and before its verification SAVE.
