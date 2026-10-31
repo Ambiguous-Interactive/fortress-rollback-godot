@@ -69,6 +69,14 @@ minutes of viewed input, including finalized player statuses. It does not record
 host frames the viewer has not played. Saving leaves host gameplay and viewing
 controls unchanged.
 
+The label shows recorded viewed frames and the recording limit. It warns during
+the last 600 available frames. At the limit, save before viewing more frames to
+include the displayed state. Viewing can continue afterward; the label counts
+omitted viewed frames and explains that the saved replay ends before the display.
+Pausing preserves these counts, and restart clears them.
+
+![Viewed recording limit and omitted frames](images/spectator-recording-after.png)
+
 A live or paused save captures the displayed state boundary through the ordinary
 driver SAVE callback. A clean ending captures that boundary before the viewer
 terminates, including a match with no input frames. Loading the bytes with

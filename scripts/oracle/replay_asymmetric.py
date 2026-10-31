@@ -100,7 +100,9 @@ def expected(rust, neutral=False, terminal=False):
             deliveries.append(dict(round=turn, messages=count, eligible=eligible))
         count = sum(sum(group) for group in pending) + sum(group[0] for group in pending)
         recovery = [dict(messages=count, frames=[rounds, rounds], errors=[
-            "Invalid Request: missing local input for one or more players"] * 2)]
+            "Invalid Request: missing local input for one or more players"] * 2,
+            frontiers=[dict(peer=peer, current_before=rounds, current_frame=rounds, confirmed_frame=rounds - 1, receipt_frame=rounds - 1,
+                            last_inputs=rows[-1], callback_count=len(peers[peer]['records'])) for peer in range(2)])]
     else:
         deliveries = [dict(round=turn, peer=peer, rows=period) for turn in range(rounds)
                       for peer, period in enumerate((2, 3)) if turn % period == period - 1]
@@ -200,7 +202,9 @@ def observe(binary, engine, root, output, execute):
             raise ValueError(f'{runtime}: asymmetric missing receipts did not stop gameplay')
     from replay_corruption import observe as observe_corruption
     serialized = observe_corruption(engine, root, output, execute, combined['corrected']['godot'])
-    return dict(repeat_equal=True, observations=combined, manual_api=manual_api, negative_controls=controls(combined['corrected']),
+    from replay_recovery import observe as observe_recovery
+    recovery = observe_recovery(binary, output, execute, combined)
+    return dict(source_final_receipts=recovery, repeat_equal=True, observations=combined, manual_api=manual_api, negative_controls=controls(combined['corrected']),
                 standalone_rejections=refused, serialized_controls=serialized, terminal=observe_terminal(engine, root, output, execute))
 
 

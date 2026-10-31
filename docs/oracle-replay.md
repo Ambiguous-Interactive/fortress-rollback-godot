@@ -342,6 +342,15 @@ exact; speculative saved checksums still produce 128 versus 170 `ReplayDesync` e
 under #253. Neither final polling nor export repairs the original speculative game state.
 These source outcomes remain explicit observations, rather than normalized parity.
 
+After the final asymmetric delivery, the source witness also reads the public
+confirmation and remote-receipt frontiers and the actual original final input row.
+It checks that the rejected no-sample call leaves the public frame unchanged and
+executes no game callbacks. Omitting that delivery fails the final-input read for
+both changing and neutral workloads. The pressure schedule already received its
+final inputs before draining its remaining control messages; that drain does not
+qualify delayed final-input recovery. Neither observation supplies the missing
+source recovery-only recording API.
+
 Ten mutations reject a symmetric history relabeled as asymmetric, omitted corrections,
 missing final delivery, altered post-wrap exports and corrupted decoded playback at
 specific diagnostics. An actual withheld-receipt control lets endpoint zero advance to

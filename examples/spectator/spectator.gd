@@ -7,6 +7,7 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE]
 
 const REPLAY_FILENAME: String = "fortress-spectator.frrp"
+const REPLAY_WARNING_FRAMES: int = 600
 
 var demo: Demo = Demo.new()
 var _code: int = Types.Code.OK
@@ -104,10 +105,28 @@ func _update_label() -> void:
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
+		+ _recording_feedback()
 		+ "A long pause can exceed retained history; the host keeps playing.\n"
 		+ "Two local views. Live spectator networking is not connected."
 		+ ("\n" + _replay_notice if not _replay_notice.is_empty() else "")
 	)
+
+
+func _recording_feedback() -> String:
+	var recording: Types.RecordingStatus = demo.viewer.recording_status()
+	if recording.capacity_frames == 0:
+		return "Viewed replay recording is disabled.\n"
+	var text: String = "Viewed replay: %d/%d frames recorded" % [recording.finalized_frames, recording.capacity_frames]
+	if recording.omitted_frames > 0:
+		return text + " | %d later viewed frames omitted.\nSaved replay ends before the displayed state.\n" % recording.omitted_frames
+	text += "\n"
+	if demo.viewer.status().lifecycle != Types.Lifecycle.TERMINATED:
+		var remaining: int = recording.capacity_frames - recording.finalized_frames - recording.pending_frames
+		if remaining == 0:
+			text += "Replay limit reached. Save now to include the displayed state.\n"
+		elif remaining <= REPLAY_WARNING_FRAMES:
+			text += "Replay limit in %d viewed frames.\n" % remaining
+	return text
 
 
 func _export_replay() -> void:
