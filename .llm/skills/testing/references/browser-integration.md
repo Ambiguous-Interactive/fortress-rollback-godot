@@ -66,7 +66,8 @@ Limit overlap inventories to the decoded packet/frame domain needed by the proof
 while counting all traffic separately. Late delivery of an early packet stays eligible.
 Repeated timer yields per input can make integration duration depend on
 software rendering, despite unchanged protocol work; verify under CPU limits.
-Keep protocol service active across page-readiness barriers. Quiesce only for the
+Keep protocol service active across page-readiness barriers. Recording finalization must also keep
+recovery-only receipt publication active after local completion until all participants finish. Quiesce only for the
 physical mutation, with controller and page deadlines below the live peer timeout;
 verify that agreement starts after closure. Do not hide a long hold by resetting clocks.
 Real socket witnesses must measure transport deadlines with elapsed monotonic

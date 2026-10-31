@@ -7,6 +7,7 @@
 | Terminal status detection did not retire buffered playback | The status-first room-change probe reported WRONG_STATE while the retained driver advanced frame 0; poll-first stopped it | Retire only committed failures in the captured bridge revision; preserve recursive checks and independently replaced sessions |
 | Existing getter matrix treated status retirement differently | The player/config mutation cases explicitly excluded status from termination expectations | Correct those expectations and add status-first playable-row, queued-row, pending-acceptance and active-view controls |
 | Matching synthetic engine strings hid incompatible producer formats | First actual Chromium recording completed but the independent validator rejected CLI version text versus replay metadata | Capture exact native version-dictionary identity and require one marker; retain strict recording metadata comparison |
+| Locally finalized peers stopped recovery before slower peers confirmed | CI mixed-close had five completed peers and three at confirmation 38 despite full final receipt/ACK 39 | Keep public recovery active through the shared finish barrier; preserve the existing deadlines |
 | Short exported recordings extend an existing transport witness | Mixed rooms already own original inputs, sockets, rollback and teardown evidence | Reuse those rooms and validate each endpoint’s own decoded export; keep long-match/refusal/source gaps explicit |
 
 ## Verification entry points

@@ -20,7 +20,7 @@ func run(host: Node, count: int) -> Dictionary:
 		return {}
 	# Recovery publishes bounded historical carriers when the last original input needs receipt gossip.
 	# A recovery failure ends the wait immediately; the health check below refuses its latched error.
-	if not await host._wait(func() -> bool: return not _recover(host, peer) or peer.status().confirmed_frame == FRAMES - 1, true):
+	if not await host._wait(func() -> bool: return peer.status().confirmed_frame == FRAMES - 1, true):
 		return {}
 	if not host._healthy(true):
 		return {}
@@ -64,15 +64,6 @@ func run(host: Node, count: int) -> Dictionary:
 	return {"hex": bytes.hex_encode(), "before_frame": before, "after_frame": after, "recover_code": recovered.code,
 		"capture_code": captured.code, "decode_code": decode_code, "playback_code": code, "playback_frame": player.current_frame(),
 		"failure_frame": player.failure_frame(), "canonical": game.bytes().hex_encode(), "checked_checksums": player.checked_checksum_count()}
-
-
-func _recover(host: Node, peer: Peer) -> bool:
-	host._update_transport_clock()
-	var result: Driver.StepResult = peer.recover(host.transport_us)
-	if result.code != S.Code.OK or peer.status().current_frame != FRAMES:
-		host.errors.append("recording_confirmation_recover_%d" % result.code)
-		return false
-	return host._healthy(true)
 
 
 func _matches_inputs(host: Node, recording: Replay, count: int) -> bool:

@@ -270,6 +270,19 @@ func _mixed_batches(fixture: Fixture, peer: Peer) -> bool:
 	var routes: RouteMixed = RouteMixed.new()
 	probe.mixed = routes
 	if not _check(probe._service_batch() and routes.calls == 8, "mixed route changes keep the bounded service batch"): return false
+	# A locally finished recorder must still publish recovery receipts for slower peers.
+	var recovered: Array[int] = [0]
+	var completed: Callable = func(code: int, before: int, after: int) -> void:
+		if code == probe.S.Code.OK and before == after:
+			recovered[0] += 1
+	peer.step_completed.connect(completed)
+	probe.mixed = RetainedMixed.new()
+	probe.stage = "recording_capture"
+	var frame_before: int = peer.status().current_frame
+	if not _check(probe._service() and probe._service(), "completed recorder keeps serving slower peers"): return false
+	if not _check(recovered[0] == 2 and peer.status().current_frame == frame_before,
+		"each post-capture service recovers without samples or forward frames"): return false
+	peer.step_completed.disconnect(completed)
 	probe.meshes[0].free()
 	probe.clients[0].free()
 	probe.free()

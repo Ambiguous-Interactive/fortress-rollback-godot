@@ -304,6 +304,12 @@ func _service() -> bool:
 					return false
 			if not peers[index].drain_transitions().is_empty(): _service_had_work = true
 			if polled == I.Code.OK: break
+		if mixed_enabled and stage in ["recording_confirmation", "recording_capture"]:
+			var recovery: Driver.StepResult = peers[index].recover(transport_us)
+			if recovery.code != S.Code.OK or recovery.frame_before != recovery.frame_after:
+				_capture_peer_failure(peers[index], index, recovery.code)
+				errors.append("recording_service_recovery_%d" % recovery.code)
+				return false
 		if mixed_enabled:
 			var routes: Array = mixed.fallback.status().relay_peers
 			var traffic: int = sent_packets + received_packets
