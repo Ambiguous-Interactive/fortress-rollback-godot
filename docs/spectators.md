@@ -24,7 +24,8 @@ respects the viewing delay; it waits when confirmed inputs are unavailable.
 Press C to catch up once through all currently buffered playable frames, then remain paused.
 This action preserves the viewing delay and ordinary catch-up rate. It consumes each
 confirmed row in order, with at most one queue capacity of input work per press.
-It does not retrieve rows still waiting at the host; another tick delivers those rows.
+It does not retrieve rows still waiting at the host. Later ticks deliver at most 16 packets each,
+subject to backpressure and retained history.
 Press [ or ] to lower or raise the viewing delay by one confirmed frame, including while paused.
 Press comma or period to lower or raise the catch-up limit by one frame per tick.
 The limit ranges from one frame through the configured queue capacity; it changes neither

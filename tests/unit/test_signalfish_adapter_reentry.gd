@@ -152,7 +152,7 @@ func run_case(name: String, context: RefCounted) -> void:
 
 func _attach_getters(context: RefCounted) -> void:
 	for boundary: String in ["player", "room"]:
-		for operation: String in ["control", "detach", "nested", "ended", "remote_ended"]:
+		for operation: String in ["control", "detach", "nested", "replace", "ended", "remote_ended"]:
 			var membership: Membership = Membership.new()
 			var session: PackedByteArray = PackedByteArray()
 			session.resize(16)
@@ -172,6 +172,9 @@ func _attach_getters(context: RefCounted) -> void:
 						adapter.detach()
 					"nested":
 						nested.append(adapter.attach(client, mesh, membership))
+					"replace":
+						adapter.detach()
+						nested.append(adapter.attach(client, mesh, membership))
 					"ended":
 						client.room_left.emit()
 					"remote_ended":
@@ -185,6 +188,8 @@ func _attach_getters(context: RefCounted) -> void:
 				if operation == "nested":
 					context.equal(nested, [ERR_ALREADY_IN_USE], "getter cannot replace active setup")
 			else:
+				if operation == "replace":
+					context.equal(nested, [ERR_ALREADY_IN_USE], "detached getter cannot replace setup before outer attach returns")
 				context.equal(result, ERR_UNAVAILABLE, "getter cancellation refuses attach: " + boundary)
 				context.equal(mesh.client == null, true, "canceled getter never starts mesh: " + boundary)
 				context.equal(client.session_plan.get_connections().size(), 0, "canceled getter retains no plan listener: " + boundary)

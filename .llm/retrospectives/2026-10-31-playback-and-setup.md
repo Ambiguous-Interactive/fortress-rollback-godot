@@ -14,6 +14,11 @@ New capabilities, a reproduced lifecycle defect and review corrections trigger t
 | A drag-start pause alone does not own playback for the held interaction. | Fresh adversarial review crosses timeline dragging with P, refresh and release without movement. | Extend browser test guidance to held interactions crossed with shortcuts. |
 | Test controls outside the live tree cannot establish actual Range signal routing. | Initial property-only timeline tests missed value-change delivery; deferred live scene and actual mouse click complete navigation. | Retain explicit signal tests for controller behavior and live GUI evidence for routing, following existing infrastructure guidance. |
 
+The automated PR review also identified missing composed Match cancellation and detach-before-replacement controls.
+The existing matrices were extended so inner-adapter success cannot substitute for caller cleanup coverage.
+Global probes started before that review were retired when their input sources changed; their partial results do not qualify the final candidate.
+Existing source-freeze guidance already covers this coordination, so it was reinforced rather than duplicated.
+
 ## Verification and limits
 
 The new timeline capability first fails on the missing control, then passes the focused suite on both engine pins.
