@@ -20,6 +20,8 @@ const FRAMES: int = 257
 class Client:
 	extends Fixture.Client
 	var refused: int = 0
+	var refused_after_wrap: int = 0
+	var is_post_wrap: bool = false
 	var retried: int = 0
 	var blocked_head: PackedByteArray = PackedByteArray()
 	var changed_head: bool = false
@@ -29,6 +31,8 @@ class Client:
 			changed_head = true
 		if busy:
 			refused += 1
+			if is_post_wrap:
+				refused_after_wrap += 1
 			blocked_head = bytes.duplicate()
 			return ERR_BUSY
 		if not blocked_head.is_empty():
@@ -94,8 +98,9 @@ func run_case(name: String, context: RefCounted) -> void:
 		var fixture: Dictionary = fixtures[index]
 		var client: Client = fixture.client
 		var peer: Peer = fixture.peer
-		context.equal(client.refused > 0, true, "SDK actually refused sends")
-		context.equal(client.retried > 0, true, "refused bytes later accepted")
+		context.equal(client.refused > 1, true, "SDK sustained send refusal")
+		context.equal(client.refused_after_wrap > 1, true, "SDK repeated refusal continues after queue wrap")
+		context.equal(client.retried > 1, true, "multiple refused heads later accepted")
 		context.equal(client.changed_head, false, "every refused head retries identical envelope bytes")
 		context.equal(client.blocked_head.is_empty(), true, "every final refused head drained")
 		context.equal(stalls[index] > 0, true, "each endpoint stalled under sustained asymmetric pressure")
@@ -134,7 +139,9 @@ func run_case(name: String, context: RefCounted) -> void:
 func _service(context: RefCounted, fixtures: Array[Dictionary], now: int, pressure: bool, turn: int = 0) -> void:
 	for index: int in 3:
 		var fixture: Dictionary = fixtures[index]
-		fixture.client.busy = pressure and turn % (index + 4) != index + 3
+		var client: Client = fixture.client
+		client.is_post_wrap = pressure and fixture.peer.status().current_frame > 128
+		client.busy = pressure and turn % (index + 4) != index + 3
 		context.equal(fixture.peer.poll(now), 0, "poll actual byte session")
 		var packets: Array[Peer.Packet] = fixture.peer.drain_outbox()
 		context.equal(fixture.relay.enqueue_batch(packets), Relay.Code.OK, "transport owns complete peer batch")
