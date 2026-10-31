@@ -124,10 +124,13 @@ func _run(context: RefCounted, omit_resume: bool = false, stale_sample: bool = f
 	_phase(context, driven, expert, "expired", ["disconnected"])
 	for index: int in 2:
 		var calls: int = driven.games[index].requests.size()
+		var expert_calls: int = expert.games[index].requests.size()
 		context.equal(driven.peers[index].recover(2500003).code, Types.Code.TERMINATED, "expired callback recovery rejects work")
 		context.equal(parity._manual(expert.peers[index], expert.games[index], 2500003, empty, false).code, Types.Code.TERMINATED, "expired manual recovery rejects work")
 		context.equal(driven.games[index].requests.size(), calls, "expiry invokes no further game callback")
+		context.equal(expert.games[index].requests.size(), expert_calls, "expiry invokes no further manual game work")
 		context.equal(driven.peers[index].status().reason, Types.Code.PROTOCOL_FAILED, "expiry has explicit protocol terminal cause")
+		context.equal(expert.peers[index].status().reason, Types.Code.PROTOCOL_FAILED, "manual expiry preserves explicit protocol terminal cause")
 	context.equal(driven.notices, expert.notices, "same ordered prediction, recovery and terminal completion notifications")
 	var expected_notices: Array[PackedInt64Array] = []
 	for frame: int in 8:
