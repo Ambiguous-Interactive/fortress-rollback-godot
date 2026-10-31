@@ -427,6 +427,8 @@ Snapshot callbacks can read small fields into reusable buffers without a result 
 Local example restarts retire retained old host/viewer sessions and refuse replacement during active ordered work.
 Fixed-membership peers expose callback-free ordered request batches for advancement, recovery and final replay capture.
 Callback and manual peers share input publication and completion controls; pending batches fence transport mutation and expire on explicit cancellation.
+Core manual/driver recording comparisons preserve asymmetric and stalled correction histories through final recovery and checksum capture.
+Native relay recording also covers sustained injected SDK send refusal, exact retries and decoded original histories through queue reuse; real-server/browser acceptance remains open.
 Encoded P2P acceptance compares both public interfaces under delayed,
 lost and duplicated traffic, including multiple local slots and queue reuse. Independent original
 input history remains the state oracle; this local comparison does not qualify browser transport.

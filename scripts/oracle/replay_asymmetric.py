@@ -157,6 +157,7 @@ def controls(observed):
 
 def observe(binary, engine, root, output, execute):
     combined = {}
+    manual_api = {}
     for neutral in (False, True):
         mode = '--remote-recording-asymmetric' + ('-neutral' if neutral else '')
         repeats = []
@@ -179,6 +180,9 @@ def observe(binary, engine, root, output, execute):
             repeats.append(observed)
         compare(repeats[0], repeats[1], 'asymmetric.repeat')
         combined['neutral' if neutral else 'corrected'] = repeats[0]
+        from replay_api_parity import observe as observe_api
+        manual_api['neutral' if neutral else 'corrected'] = observe_api(
+            engine, root, output, execute, expected(False, neutral), mode)
     refused = []
     for runtime in ('rust', 'godot'):
         mode = '--remote-recording-asymmetric-withhold'
@@ -196,13 +200,14 @@ def observe(binary, engine, root, output, execute):
             raise ValueError(f'{runtime}: asymmetric missing receipts did not stop gameplay')
     from replay_corruption import observe as observe_corruption
     serialized = observe_corruption(engine, root, output, execute, combined['corrected']['godot'])
-    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']),
+    return dict(repeat_equal=True, observations=combined, manual_api=manual_api, negative_controls=controls(combined['corrected']),
                 standalone_rejections=refused, serialized_controls=serialized, terminal=observe_terminal(engine, root, output, execute))
 
 
 def observe_terminal(engine, root, output, execute, pressure=False):
     """Recovered complete histories require an actual final SAVE and decoded terminal validation."""
     combined = {}
+    manual_api = {}
     for neutral in (False, True):
         mode = '--remote-recording-' + ('pressure' if pressure else 'asymmetric') + '-terminal' + ('-neutral' if neutral else '')
         observations = []
@@ -219,10 +224,15 @@ def observe_terminal(engine, root, output, execute, pressure=False):
             observations.append(actual)
         compare(observations[0], observations[1], 'asymmetric.terminal.repeat')
         combined['neutral' if neutral else 'corrected'] = observations[0]
+        from replay_api_parity import observe as observe_api
+        from replay_pressure import expected as pressure_expected
+        wanted = (pressure_expected if pressure else expected)(False, neutral, terminal=True)
+        manual_api['neutral' if neutral else 'corrected'] = observe_api(
+            engine, root, output, execute, wanted, mode, terminal=True)
     from replay_corruption import observe as observe_corruption
     serialized = observe_corruption(engine, root, output, execute, combined['corrected'], terminal=True, pressure=pressure)
     bypassed = terminal_capture_controls(engine, root, output, execute, pressure)
-    return dict(repeat_equal=True, observations=combined, serialized_controls=serialized, capture_controls=bypassed)
+    return dict(repeat_equal=True, observations=combined, manual_api=manual_api, serialized_controls=serialized, capture_controls=bypassed)
 
 
 def validate_terminal(actual, neutral=False, pressure=False):

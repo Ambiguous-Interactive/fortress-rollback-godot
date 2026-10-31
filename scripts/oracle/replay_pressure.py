@@ -167,6 +167,7 @@ def controls(observed):
 
 def observe(binary, engine, root, output, execute):
     combined = {}
+    manual_api = {}
     for neutral in (False, True):
         mode = '--remote-recording-pressure' + ('-neutral' if neutral else '')
         repeats = []
@@ -189,6 +190,9 @@ def observe(binary, engine, root, output, execute):
             repeats.append(observed)
         compare(repeats[0], repeats[1], 'pressure.repeat')
         combined['neutral' if neutral else 'corrected'] = repeats[0]
+        from replay_api_parity import observe as observe_api
+        manual_api['neutral' if neutral else 'corrected'] = observe_api(
+            engine, root, output, execute, expected(False, neutral), mode)
     refused = []
     for runtime in ('rust', 'godot'):
         mode = '--remote-recording-pressure-withhold'
@@ -222,5 +226,5 @@ def observe(binary, engine, root, output, execute):
     else:
         raise ValueError('pressure resampling was accepted')
     from replay_asymmetric import observe_terminal
-    return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']), standalone_rejections=refused,
+    return dict(repeat_equal=True, observations=combined, manual_api=manual_api, negative_controls=controls(combined['corrected']), standalone_rejections=refused,
                 terminal=observe_terminal(engine, root, output, execute, pressure=True))
