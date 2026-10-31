@@ -63,8 +63,14 @@ class ReentrantGame:
 		return super.simulate_frame(frame, inputs)
 
 
-class SetupClient:
+class CancellationClient:
 	extends Fixture.Client
+	signal new_peer(peer_id: String, you_initiate: bool)
+	signal player_reconnected(peer_id: String)
+
+
+class SetupClient:
+	extends CancellationClient
 	var target_ref: WeakRef
 	var boundary: String
 	var cancel: bool
@@ -331,7 +337,7 @@ func _transport_setup_controls(context: RefCounted) -> void:
 	_transport_configure_controls(context)
 	for cancel: bool in [false, true]:
 		var target: Match = Match.new()
-		var client: Fixture.Client = Fixture.Client.new()
+		var client: CancellationClient = CancellationClient.new()
 		var mesh: Fixture.DirectFixture.FakeMesh = Fixture.DirectFixture.FakeMesh.new()
 		var transport: Fixture.MeshFixture.Transport = Fixture.MeshFixture.Transport.new()
 		var adapter: SetupAdapter = SetupAdapter.new()
@@ -356,8 +362,7 @@ func _transport_setup_controls(context: RefCounted) -> void:
 		context.equal(adapter.armed, false, "transport setup crosses actual adapter status callback")
 		if cancel:
 			context.equal(result, ERR_UNAVAILABLE, "canceled transport setup refuses completion")
-			context.equal(target.has_started, false, "canceled startup cannot publish a running match")
-			context.equal(target.peer.status().lifecycle, Types.Lifecycle.TERMINATED, "canceled transport session remains retired")
+			_assert_detached(context, target, client, mesh, "adapter_status")
 		else:
 			context.equal(result, OK, "refused nested transport setup preserves ordinary startup")
 			context.equal(adapter.nested, ERR_BUSY, "transport setup owns callbacks until completion")
@@ -372,7 +377,9 @@ func _assert_detached(context: RefCounted, target: Match, client: Object, mesh: 
 	context.equal(target.has_started, false, "canceled setup cannot publish started state: " + stage)
 	context.equal(target.peer.status().lifecycle, Types.Lifecycle.TERMINATED, "canceled setup retires configured peer: " + stage)
 	context.equal(mesh.attached, false, "canceled setup releases mesh: " + stage)
-	for signal_name: String in Match.Adapter.LIFETIME_SIGNALS + ["session_plan", "game_data_binary_received"]:
+	for signal_name: String in ["new_peer", "player_reconnected"]:
+		context.equal(client.has_signal(signal_name), true, "cancellation fixture exposes optional listener: " + signal_name)
+	for signal_name: String in Match.Adapter.LIFETIME_SIGNALS + ["session_plan", "game_data_binary_received", "new_peer", "player_reconnected"]:
 		if client.has_signal(signal_name):
 			context.equal(client.get_signal_connection_list(signal_name).size(), 0, "canceled setup releases listener: " + stage + "/" + signal_name)
 	context.equal(target.direct._mesh == null, true, "canceled setup releases direct ownership: " + stage)
@@ -383,7 +390,7 @@ func _assert_detached(context: RefCounted, target: Match, client: Object, mesh: 
 func _transport_configure_controls(context: RefCounted) -> void:
 	for stage: String in ["control", "direct", "relay", "fallback"]:
 		var target: Match = Match.new()
-		var client: Fixture.Client = Fixture.Client.new()
+		var client: CancellationClient = CancellationClient.new()
 		var mesh: Fixture.DirectFixture.FakeMesh = Fixture.DirectFixture.FakeMesh.new()
 		var transport: Fixture.MeshFixture.Transport = Fixture.MeshFixture.Transport.new()
 		var direct: SetupDirect = SetupDirect.new()

@@ -29,13 +29,14 @@ var _is_stopping_mesh: bool = false
 var _restart_required: bool = false
 var _room_id: String = ""
 var _lifetime_revision: int = 0
+var _is_applying_plan: bool = false
 var _state: Dictionary = {"route": "unconfigured", "generation": "", "offerers": {}, "error": OK, "byte_delivery_implemented": false}
 
 
 ## Supply installed SDK objects. No SDK class names or resources are loaded here.
 ## Attach after joining the room, before its first session plan. Keep both Nodes alive.
 func attach(client: Object, mesh: Object, membership: Membership) -> Error:
-	if _client != null or _is_attaching or _is_detaching or _is_stopping_mesh:
+	if _client != null or _is_attaching or _is_detaching or _is_stopping_mesh or _is_checking_lifetime or _is_applying_plan:
 		return ERR_ALREADY_IN_USE
 	if client == null or mesh == null or membership == null or membership.local_uuid().is_empty():
 		return ERR_INVALID_PARAMETER
@@ -113,6 +114,19 @@ func detach() -> void:
 ## Plans replace routing and offerer roles without changing player slots or session IDs.
 ## Relay selection requires the separate byte-delivery adapter; it does not send bytes.
 func _apply_plan(plan: Object) -> Error:
+	if _is_detaching or _is_stopping_mesh or _restart_required:
+		return ERR_UNAVAILABLE
+	if _is_checking_lifetime or _is_applying_plan:
+		# The SDK consumes this signal synchronously; detach before its listener runs.
+		_restart_required = true
+		return _refuse(ERR_UNAVAILABLE)
+	_is_applying_plan = true
+	var code: Error = _apply_checked_plan(plan)
+	_is_applying_plan = false
+	return code
+
+
+func _apply_checked_plan(plan: Object) -> Error:
 	if _is_detaching or _is_stopping_mesh:
 		return ERR_UNAVAILABLE
 	var revision: int = _lifetime_revision
@@ -121,7 +135,7 @@ func _apply_plan(plan: Object) -> Error:
 		return ERR_UNAVAILABLE
 	if _restart_required:
 		return _refuse(ERR_UNAVAILABLE)
-	if _membership == null or plan == null or not plan.has_method("to_dict"):
+	if _membership == null or not is_instance_valid(plan) or not plan.has_method("to_dict"):
 		return _refuse(ERR_INVALID_PARAMETER)
 	# Variant is the optional SDK's public, JSON-shaped value-object boundary.
 	var value: Variant = plan.call("to_dict")
@@ -197,6 +211,12 @@ func _on_plan(plan: Object) -> void:
 
 func _on_new_peer(peer_uuid: String, you_initiate: bool) -> void:
 	# NewPeer lacks a generation: accept only identities and roles authorized by the current plan.
+	if _is_detaching or _is_stopping_mesh or _restart_required:
+		return
+	if _is_checking_lifetime or _is_applying_plan:
+		_restart_required = true
+		_refuse(ERR_UNAVAILABLE)
+		return
 	var revision: int = _lifetime_revision
 	_check_lifetime()
 	if revision != _lifetime_revision:
@@ -226,6 +246,8 @@ func _refuse(code: Error) -> Error:
 
 func _on_transport_ended(_first: Variant = null, _second: Variant = null) -> void:
 	# SDK lifecycle signals carry different optional event payloads.
+	if _restart_required:
+		return
 	_restart_required = true
 	_refuse(ERR_UNAVAILABLE)
 
@@ -237,7 +259,7 @@ func _on_player_reconnected(uuid: String) -> void:
 
 
 func _check_lifetime() -> void:
-	if _is_checking_lifetime or _client == null:
+	if _is_checking_lifetime or _client == null or _restart_required:
 		return
 	_is_checking_lifetime = true
 	_check_current_lifetime()

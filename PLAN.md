@@ -114,6 +114,7 @@ The local spectator example adjusts its viewing delay without rewinding playback
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
 Online setup guards SDK callbacks and fences cancellation before accepting a new match or transport.
+Unsafe SDK plan/directive reentry during identity validation or plan conversion stops the old mesh before SDK consumption and requires a fresh session.
 The local spectator can catch up through its currently buffered playable rows without changing its viewing delay or normal rate.
 Callback Leave retires outstanding game work and fences canceled startup before SDK owners are physically released.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.

@@ -19,6 +19,11 @@ The existing matrices were extended so inner-adapter success cannot substitute f
 Global probes started before that review were retired when their input sources changed; their partial results do not qualify the final candidate.
 Existing source-freeze guidance already covers this coordination, so it was reinforced rather than duplicated.
 
+A later outside-diff review found that a getter-emitted plan could bypass an invalid lifetime observation.
+Deferring only the adapter handler remained unsafe: the pinned SDK independently consumes the same signal and opens peers.
+The transport guidance now requires checking downstream SDK consumers before buffering notifications.
+Unsafe reentry is refused before SDK consumption; no private handler or synthetic notification is used.
+
 ## Verification and limits
 
 The new timeline capability first fails on the missing control, then passes the focused suite on both engine pins.

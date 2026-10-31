@@ -157,6 +157,9 @@ the SDK, and refuses nested plan acceptance or replacement attach until it retur
 Setup observes lifecycle and remote-incarnation changes before reading SDK identities.
 Getter-triggered detach stops attachment before listeners or a mesh can be published again.
 Live identity checks preserve that same lifetime across SDK getter callbacks.
+The pinned SDK also consumes plans and peer directives synchronously. Emitting either from an identity getter
+or another plan conversion stops the old mesh and requires a fresh session. Keep custom SDK accessors stable and free of these notifications;
+the adapter does not replay deferred SDK notifications.
 An initial plan emitted during attach remains accepted. This guards lifecycle
 ownership; it does not add transparent replan or ICE-restart support.
 

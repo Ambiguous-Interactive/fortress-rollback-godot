@@ -187,7 +187,8 @@ EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'ca
 EXPECTED['res://tests/unit/test_spectator_replay_viewer.gd'] = {'round_trip', 'compatibility', 'checksum_failure', 'scene_controls'}
 EXPECTED['res://tests/unit/test_spectator_recording_feedback.gd'] = {'recording_limit_feedback'}
 EXPECTED['res://tests/unit/test_signalfish_adapter_reentry.gd'] = {
-    'relay_teardown', 'attach_failure', 'attach_plan', 'plan_detach', 'refusal_plan', 'detach_replace', 'attach_getters', 'lifetime_getters'}
+    'relay_teardown', 'attach_failure', 'attach_plan', 'plan_detach', 'refusal_plan', 'detach_replace', 'attach_getters', 'lifetime_getters',
+    'getter_plans', 'getter_plan_refusal', 'plan_conversion'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
