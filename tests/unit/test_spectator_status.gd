@@ -228,6 +228,8 @@ func _playback_observation(context: RefCounted) -> void:
 
 func _check_observation(context: RefCounted, viewer: Spectator, state: int, buffered: int, playable: int, steps: int) -> void:
 	var observed: Dictionary = viewer.playback_status()
+	context.equal(observed.get("capacity_frames", -1), viewer._host_tags.size(), "observation names bounded row capacity")
+	context.equal(observed.get("available_frames", -1), viewer._host_tags.size() - observed.pending_frames, "only unplayed rows occupy receive capacity")
 	context.equal(observed.state, state, "playback state separates input wait, delay, tail and termination")
 	context.equal(observed.buffered_frames, buffered, "only contiguous rows count as buffered playback")
 	context.equal(observed.playable_frames, playable, "playable count applies delay until host closure")
@@ -251,6 +253,7 @@ func _gap_observation(context: RefCounted) -> void:
 			context.equal(viewer.receive_host_frame(start + offset, Fixture.new()._row(start + offset)).code, Code.OK, "retain later host row")
 		var observed: Dictionary = viewer.playback_status()
 		context.equal(observed.get("pending_frames", -1), 2, "pending count includes accepted future rows")
+		context.equal(observed.get("available_frames", -1), Fixture.new()._config().queue_capacity - 2, "future rows occupy capacity even before their gap fills")
 		context.equal(observed.get("missing_frame", -2), start, "first missing row explains input wait")
 		context.equal(observed.buffered_frames, 0, "future rows are not a contiguous playable prefix")
 		context.equal(viewer.receive_host_frame(start + 1, Fixture.new()._row(start + 1)).code, Code.OK, "duplicate future receipt remains idempotent")

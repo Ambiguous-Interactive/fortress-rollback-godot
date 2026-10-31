@@ -60,6 +60,13 @@ var _is_scrubbing: bool = false
 var _dialog: FileDialog
 var _web_import: JavaScriptObject
 var _web_callback: JavaScriptObject
+var _drop_window: Window
+
+
+func _enter_tree() -> void:
+	if not OS.has_feature("web"):
+		_drop_window = get_window()
+		_drop_window.files_dropped.connect(_files_dropped)
 
 
 func _ready() -> void:
@@ -161,7 +168,20 @@ func _open() -> void:
 		_dialog.popup_centered_ratio(0.8)
 
 
+## Native file drops share the chooser's bounded decoder and preserve active game work.
+func _files_dropped(paths: PackedStringArray) -> void:
+	if _is_scrubbing or viewer._is_busy():
+		return
+	if paths.size() != 1:
+		viewer.message = "Drop one replay file at a time."
+		_refresh()
+		return
+	_native_file(paths[0])
+
+
 func _native_file(path: String) -> void:
+	if _is_scrubbing or viewer._is_busy():
+		return
 	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
 	if file == null:
 		viewer.message = "Could not open the replay file."
@@ -295,6 +315,9 @@ func _back() -> void:
 
 
 func _exit_tree() -> void:
+	if is_instance_valid(_drop_window):
+		_drop_window.files_dropped.disconnect(_files_dropped)
+		_drop_window = null
 	if _web_import != null:
 		_web_import.dispose()
 

@@ -587,6 +587,7 @@ func _service_observation(demo: RefCounted) -> Array:
 # why_new=demo lifecycle tests inspect codes without user guidance; seam=scene labels
 func _playback_feedback(context: RefCounted) -> void:
 	_gap_feedback(context)
+	_buffer_pressure_feedback(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	context.equal(scene._label.text.contains("BUFFERING"), true, "startup explains why viewer has not advanced")
@@ -948,3 +949,33 @@ func _catchup_once_control(context: RefCounted) -> void:
 	context.equal(scene.demo.is_paused, true, "C leaves viewer paused")
 	context.equal(scene._label.text.contains("C: catch up once"), true, "help exposes one-shot catch-up")
 	scene.free()
+
+
+# Value: protects=paused viewers can act before bounded history is lost; fails_when=full buffers hide receive pressure;
+# why_new=lost-history tests only check failure after it happens; seam=actual local publication
+func _buffer_pressure_feedback(context: RefCounted) -> void:
+	for action: String in ["catchup", "terminate", "finish"]:
+		var scene: Node2D = Scene.new()
+		scene._ready()
+		scene.demo.is_paused = true
+		for tick: int in range(200):
+			if scene.demo.viewer.playback_status().pending_frames == scene.demo.viewer._host_tags.size():
+				break
+			scene.demo.tick(Game.RIGHT)
+		scene._update_label()
+		context.equal(scene.demo.viewer.playback_status().pending_frames, scene.demo.viewer._host_tags.size(), "actual publication fills paused viewer")
+		context.equal(scene.demo.viewer.status().lifecycle != Types.Lifecycle.TERMINATED, true, "full buffer is recoverable")
+		context.equal(scene._label.text.contains("Input buffer full"), true, "pressure is visible before failure")
+		context.equal(scene._label.text.contains("C: catch up"), true, "pressure names an available recovery control")
+		var host_frame: int = scene.demo.host.loop.game.frame
+		match action:
+			"catchup":
+				context.equal(scene.demo.catch_up_viewer(), Types.Code.OK, "catch-up releases receive capacity")
+			"terminate":
+				scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
+			"finish":
+				context.equal(scene.demo.viewer.finish_host(), Types.Code.OK, "full tail no longer accepts new input")
+		scene._update_label()
+		context.equal(scene._label.text.contains("Input buffer full"), false, "recovered or closed playback clears receive prompt")
+		context.equal(scene.demo.host.loop.game.frame, host_frame, "viewer action does not advance host")
+		scene.free()

@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add native replay file drops with bounded validation and preservation of the current recording after refused imports.
+
+- Add spectator input-buffer capacity observations and a resume/catch-up prompt when paused input fills the buffer.
+
 - Add a draggable replay timeline with elapsed and total recorded time. Selection uses bounded, verified navigation and finishes paused.
 
 - Add C to catch the local spectator up through currently buffered rows, preserving its viewing delay and normal catch-up rate.

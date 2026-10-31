@@ -100,6 +100,9 @@ func _update_label() -> void:
 			state = "HISTORY UNAVAILABLE | R: start again"
 	if demo.is_host_connection_lost:
 		state = "HOST CONNECTION LOST | R: start again"
+	var buffer_notice: String = ""
+	if demo.is_paused and status.lifecycle != Types.Lifecycle.TERMINATED and not playback.input_closed and playback.available_frames == 0:
+		buffer_notice = "Input buffer full. P: resume or C: catch up to receive more.\n"
 	_label.text = (
 		"Delayed spectator | %s\n" % state
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\n"
@@ -108,6 +111,7 @@ func _update_label() -> void:
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
+		+ buffer_notice
 		+ _recording_feedback()
 		+ "A long pause can exceed retained history; the host keeps playing.\n"
 		+ "Two local views. Live spectator networking is not connected."
