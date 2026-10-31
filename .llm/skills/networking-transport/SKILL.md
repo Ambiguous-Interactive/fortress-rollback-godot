@@ -267,6 +267,7 @@ Deferred adapter detach must finish cleanup after unwind; latched failure alone 
 Before servicing queued optional-SDK bytes, validate current connection, authentication,
 player UUID and frozen room identity through public getters. A close can invalidate
 the connection before its signal arrives; a spectator baseline can replace identity.
+Committed spectator status failures retire owned buffered playback and queued acceptance; recursive checks and independent replacements stay untouched.
 Treat SDK getters and protocol-info conversion as synchronous callback boundaries. Observe lifecycle signals during setup; fence recursive entry, detach and replacement;
 keep joint identity/config observations local until revision and failure checks pass. Require stable SDK accessors; repeated reads cannot make arbitrary side effects atomic.
 Deferred adapter validation does not pause downstream SDK listeners. Inspect actual consumers; refuse unsafe synchronous reentry before they consume it.
@@ -277,8 +278,7 @@ including a retained input prefix followed by refusal. Preserve accepted livenes
 transitions before terminal failure; exclude speculative input-success events.
 Normalize exported event metadata by type as well as field name. A reason can
 contain nested roster IDs or input bytes; export only bounded scalar tags.
-Capture the terminal cause when lifecycle commits, before any public event drain.
-Collect diagnostic downloads after verified termination or physical teardown.
+Capture the terminal cause when lifecycle commits, before any public event drain. Collect diagnostics only after verified termination or physical teardown.
 Awaited downloads can advance a live witness beyond its retained-history bound.
 Reserve bounded fatal diagnostics independently of normal event capacity. Fill
 the reserve with a recoverable overflow first, then inject terminal events from

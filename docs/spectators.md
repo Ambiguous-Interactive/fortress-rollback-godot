@@ -592,7 +592,9 @@ Capacity overflow ends playback explicitly and releases retained packets.
 SDK frame and buffer limits must keep fitting the agreed packet ceiling, including
 128 bytes of inbound framing allowance. An incompatible runtime change retires playback with `TOO_LARGE` before queued history is delivered.
 Connection loss, room replacement, identity changes and stream replacement retire
-that delivery lifetime. The selected host's `player_left` or `player_reconnected`
+that delivery lifetime. A terminal `status()` observation also stops buffered playback
+and releases queued rows and pending acceptance; it does not require another poll.
+Transient recursive observations preserve the active viewer. The selected host's `player_left` or `player_reconnected`
 notification immediately stops buffered playback and expires active request views.
 Another player's departure or reconnection leaves the viewer running. Retained callbacks from a detached bridge cannot deliver
 into a later configuration. Call `poll(now_us)` even while playback is paused;

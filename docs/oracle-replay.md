@@ -479,3 +479,23 @@ advances injected time by one millisecond. Final service includes the endpoint's
 server sockets or browser transport. Those release gates and unchanged-source
 recovery-only recording remain open in #256; #253 preserves the source checksum
 ordering discrepancy.
+
+## Exported mixed-path recordings
+
+The real exported WebRTC witness additionally validates each 2/4/8-player
+endpoint's own recording in its mixed-path rooms. It covers injected direct-channel
+pressure and physical unreliable-channel loss with real SignalFish relay delivery.
+The fixed 40-frame match ends through recovery-only receipt service and final
+boundary capture. Each export is decoded and replayed against independently
+calculated original inputs, finalized statuses and all 41 state boundaries.
+
+Run the `mixed`, `mixed-default` and `mixed-close` labels using the
+[fallback witness instructions](signalfish-fallback.md). The receipt includes
+bounded serialized recordings, final recovery/capture frames, decoded playback
+results and checksum counts. Independent mutation controls reject changed rows,
+statuses, digests, checksums, metadata, terminal evidence and incomplete results.
+
+This is Godot browser evidence, not a source-runtime comparison. Forty frames
+do not cross two default input-ring capacities. Sustained actual relay refusal,
+asymmetric long-match browser recordings and unchanged-source recovery remain
+open in #256; #253 retains the source's speculative checksum discrepancy.

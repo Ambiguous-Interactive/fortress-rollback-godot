@@ -79,6 +79,8 @@ class ClockProbe:
 		return ticks_us
 
 func _initialize() -> void:
+	var engine: Dictionary = Engine.get_version_info()
+	print("WEBRTC_ENGINE_IDENTITY ", "%d.%d.%d.%s %s" % [engine.major, engine.minor, engine.patch, engine.status, engine.hash])
 	var probe: ClockProbe = ClockProbe.new()
 	probe.service_calls = 0
 	if not await _passive_departure_wait(probe): return

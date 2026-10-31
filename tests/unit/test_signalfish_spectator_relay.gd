@@ -133,6 +133,7 @@ func cases() -> PackedStringArray:
 			"post_completion",
 			"terminal_failures",
 			"getter_lifetime",
+			"status_lifetime",
 			"configure_lifetime",
 			"source_departures",
 			"source_callback_lifetime"
@@ -798,7 +799,7 @@ func _getter_lifetime(context: RefCounted) -> void:
 					context.equal(observation.host.code, Types.Code.OK, "unchanged status lifetime retains host observation")
 			if (
 				action in ["detach", "replace", "signal", "signal_ingress", "terminate_ingress", "overflow_signal"]
-				or (action in ["player_change", "config_change"] and entry != "status")
+				or action in ["player_change", "config_change"]
 			):
 				context.equal(previous.status().lifecycle, Types.Lifecycle.TERMINATED, "getter detach retires original viewer")
 			else:
@@ -819,6 +820,103 @@ func _getter_lifetime(context: RefCounted) -> void:
 				context.equal(fixture.relay.status().host.liveness_time_us, 1, "fresh status call observes replacement host baseline")
 				context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "replacement gate remains usable")
 			fixture.client.on_room = Callable()
+			fixture.relay.detach()
+
+
+# Value: protects=status rejects obsolete playback before driver callbacks; fails_when=gate only latches failure;
+# why_new=poll and ingress retire viewers but status previously left playable rows live; seam=SDK properties and retained driver
+func _status_lifetime(context: RefCounted) -> void:
+	_status_owned_requests(context)
+	for action: String in [
+		"control", "capacity_control", "room", "connection", "role", "identity", "raw", "budget", "frame_capacity", "buffer_capacity", "first_cause", "replace_session"
+	]:
+		var fixture: Dictionary = _fixture(context)
+		_emit(fixture, fixture.publisher.encode_offer())
+		context.equal(fixture.relay.poll(1).received, 1, "offer retains caller-owned acceptance")
+		_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+		context.equal(fixture.relay.poll(2).received, 1, "original row is playable before status observation")
+		_emit(fixture, fixture.stream.encode_row(1, Fixture.new()._row(1)))
+		var expected: int = Relay.Code.WRONG_STATE
+		match action:
+			"control", "capacity_control":
+				expected = Relay.Code.OK
+				if action == "capacity_control":
+					fixture.config.max_inbound_frame_bytes = 256
+					fixture.config.max_buffered_bytes = 128
+			"room", "first_cause":
+				fixture.client.room = "room-two"
+				if action == "first_cause":
+					fixture.driver.terminate(Types.Code.DESYNC)
+			"connection":
+				fixture.client.connection = -1
+			"role":
+				fixture.client.state = -1
+			"identity":
+				fixture.client.player = FOREIGN
+			"raw", "budget":
+				expected = Relay.Code.INCOMPATIBLE_MODE
+				if action == "raw":
+					fixture.config.decode_msgpack_payloads = true
+				else:
+					fixture.config.max_inbound_packets_per_poll = 0
+			"frame_capacity", "buffer_capacity":
+				expected = Relay.Code.TOO_LARGE
+				fixture.config.set("max_inbound_frame_bytes" if action == "frame_capacity" else "max_buffered_bytes", 255 if action == "frame_capacity" else 127)
+			"replace_session":
+				context.equal(fixture.stream.playback_session().configure(Fixture.new()._config()), Types.Code.OK, "independent replacement owns a fresh playback lifetime")
+		var healthy: bool = expected == Relay.Code.OK
+		var observation: Dictionary = fixture.relay.status()
+		context.equal(observation.code, expected, "status adjudicates SDK lifetime: " + action)
+		context.equal(observation.received_packets, 1 if healthy else 0, "failed status releases queued row: " + action)
+		context.equal(observation.received_bytes > 0, healthy, "failed status releases owned bytes: " + action)
+		context.equal(observation.accept_pending, healthy, "failed status releases pending acceptance: " + action)
+		if action == "replace_session":
+			context.equal(fixture.driver.status().lifecycle, Types.Lifecycle.RUNNING, "stale status preserves independent replacement")
+			context.equal(observation.host, {}, "stale status hides replacement host")
+		else:
+			context.equal(fixture.driver.step(3, _empty()).code, Types.Code.OK if healthy else Types.Code.TERMINATED, "status fences already playable callbacks: " + action)
+			context.equal(fixture.game.value, 1 if healthy else 0, "failed status cannot simulate original buffered row: " + action)
+			if not healthy:
+				context.equal(fixture.driver.status().reason, Types.Code.DESYNC if action == "first_cause" else Types.Code.PROTOCOL_FAILED, "status preserves first terminal cause")
+		fixture.client.room = "room-one"
+		fixture.client.connection = Relay.CONNECTED
+		fixture.client.state = Relay.SPECTATING
+		fixture.client.player = ""
+		fixture.config.decode_msgpack_payloads = false
+		fixture.config.max_inbound_packets_per_poll = 128
+		fixture.config.max_inbound_frame_bytes = 100000
+		fixture.config.max_buffered_bytes = 100000
+		context.equal(fixture.relay.status().code, expected, "restoring SDK state cannot revive failed lifetime")
+		fixture.relay.detach()
+
+
+func _status_owned_requests(context: RefCounted) -> void:
+	for changed: bool in [false, true]:
+		for manual: bool in [false, true]:
+			var fixture: Dictionary = _fixture(context)
+			_emit(fixture, fixture.stream.encode_row(0, Fixture.new()._row(0)))
+			context.equal(fixture.relay.poll(1).received, 1, "original row ready before owned status observation")
+			if manual:
+				var session: RefCounted = fixture.stream.playback_session()
+				var opened: Types.Result = session.begin_advance()
+				context.equal(opened.code, Types.Code.READY, "expert owns a spectator request")
+				var request: Types.Request = opened.batch.next_request()
+				context.equal(request.kind, Types.Kind.ADVANCE, "first spectator request owns bounded inputs")
+				fixture.client.room = "room-two" if changed else "room-one"
+				context.equal(fixture.relay.status().code, Relay.Code.WRONG_STATE if changed else Relay.Code.OK, "owned request still detects SDK room lifetime")
+				context.equal(request.inputs.size().code, Types.Code.EXPIRED_VIEW if changed else Types.Code.OK, "terminal status expires expert inputs immediately")
+				context.equal(session.status().lifecycle, Types.Lifecycle.TERMINATED if changed else Types.Lifecycle.RUNNING, "healthy observation preserves expert ownership")
+			else:
+				var game: DepartureGame = DepartureGame.new()
+				var client_ref: WeakRef = weakref(fixture.client)
+				var relay_ref: WeakRef = weakref(fixture.relay)
+				game.departure = func() -> void:
+					client_ref.get_ref().room = "room-two" if changed else "room-one"
+					relay_ref.get_ref().status()
+				var driver: Driver = Driver.new(fixture.stream.playback_session(), game)
+				context.equal(driver.step(2, _empty()).code, Types.Code.TERMINATED if changed else Types.Code.OK, "terminal callback status prevents frame commit")
+				context.equal(game.input_code, Types.Code.EXPIRED_VIEW if changed else Types.Code.OK, "terminal callback status expires inputs immediately")
+				context.equal(driver.status().current_frame, 0 if changed else 1, "only healthy callback commits original row")
 			fixture.relay.detach()
 
 

@@ -27,6 +27,9 @@ core's bounded snapshot callback so callback/write failures and checksum evidenc
 follow the same terminal contract as ordinary stepping. Validate every observed control
 frontier and nested failure integer, rejecting Python bool/float equality lookalikes.
 
+Bind recorded engine metadata to the verified native engine’s version dictionary, not CLI version text;
+those strings have different formats. Validate an actual emitted recording before trusting matching synthetic fixtures.
+
 Replay coverage reports distinguish recorded checksums from comparisons that actually passed.
 Exercise absent, sparse and complete checksums, repeated navigation, failed comparisons and restart;
 checksum-free playback must never imply verification. Separate host input closure from completed spectator playback.

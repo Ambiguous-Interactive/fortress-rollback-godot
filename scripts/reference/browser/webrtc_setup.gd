@@ -145,6 +145,10 @@ func run(host: Node, count: int) -> bool:
 		config.sync_test = false
 		config.check_distance = 0
 		config.max_snapshot_bytes = 4 + 4 * count
+		if host.mixed_enabled:
+			config.replay_max_frames = 40
+			config.diagnostic_version = "fortress-webrtc-integer-v1"
+			config.diagnostic_seed = "0"
 		config.storage_budget_bytes = 1048576
 		var game: Game = Game.new(count, JavaScriptBridge.eval("window.fortressCorrupt || false"))
 		host.games.append(game)
