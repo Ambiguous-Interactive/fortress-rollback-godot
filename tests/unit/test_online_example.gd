@@ -620,8 +620,8 @@ func _fresh_room(context: RefCounted, node: Node, previous: Match) -> void:
 	client += "func connect_to_server() -> Error: return OK\nfunc close(_code: int, _reason: String) -> Error: return OK\n"
 	client += "func get_room_code() -> String: return \"\"\nfunc get_players() -> Array: return []\n"
 	var config: String = "extends RefCounted\n"
-	for property: String in ["app_id", "endpoint_url", "protocol_version", "supported_transports", "supported_topologies", "game_data_format",
-		"decode_msgpack_payloads", "auto_poll"]:
+	for property: String in ["app_id: String", "endpoint_url: String", "protocol_version: int", "supported_transports: PackedStringArray",
+		"supported_topologies: PackedStringArray", "game_data_format: String", "decode_msgpack_payloads: bool", "auto_poll: bool"]:
 		config += "var " + property + "\n"
 	var sources: Array[String] = [client, config, "extends Node\nvar multiplayer_peer_factory: Callable\nvar peer_connection_factory: Callable\n"]
 	var paths: Array[String] = [Lobby.SDK_PATH, Lobby.CONFIG_PATH, Lobby.MESH_PATH]
