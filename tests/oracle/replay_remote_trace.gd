@@ -32,7 +32,7 @@ func _initialize() -> void:
 		_fail("expected remote recording mode")
 		return
 	var expert: bool = args.size() == 2
-	var manuals: Array[RefCounted] = [Manual.new(), Manual.new()]
+	var manuals: Array[Manual] = [Manual.new(), Manual.new()]
 	var sessions: Array[Session] = []
 	var games: Array[Game] = []
 	var drivers: Array[Driver] = []
