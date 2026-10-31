@@ -175,6 +175,6 @@ The installed-SDK witness uses its actual decoder, public transport injection,
 mesh attach and binary APIs. It is separate from complete browser or server
 integration; it does not establish real WebRTC availability or relay latency.
 
-- [Pinned client public APIs](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/db7d30f228d8d564adcb2eb38d5983bf6b9877ac/addons/signal_fish/signal_fish_client.gd)
-- [Pinned mesh identity and plan handling](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/db7d30f228d8d564adcb2eb38d5983bf6b9877ac/addons/signal_fish/webrtc/sf_webrtc_mesh.gd)
-- [Pinned v3 plan and offerer fields](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/db7d30f228d8d564adcb2eb38d5983bf6b9877ac/addons/signal_fish/protocol/sf_session_types.gd)
+- [Pinned client public APIs](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/8e1475ed12a618fb41660bd1c8a1b0c934dee77f/addons/signal_fish/signal_fish_client.gd)
+- [Pinned mesh identity and plan handling](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/8e1475ed12a618fb41660bd1c8a1b0c934dee77f/addons/signal_fish/webrtc/sf_webrtc_mesh.gd)
+- [Pinned v3 plan and offerer fields](https://github.com/Ambiguous-Interactive/signal-fish-client-godot/blob/8e1475ed12a618fb41660bd1c8a1b0c934dee77f/addons/signal_fish/protocol/sf_session_types.gd)
