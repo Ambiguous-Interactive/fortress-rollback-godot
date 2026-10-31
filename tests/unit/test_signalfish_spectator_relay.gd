@@ -790,7 +790,12 @@ func _getter_lifetime(context: RefCounted) -> void:
 					"old ingress cannot enqueue into replacement"
 				)
 			else:
-				fixture.relay.status()
+				var observation: Dictionary = fixture.relay.status()
+				if action in ["detach", "replace"]:
+					context.equal(observation.code, Relay.Code.WRONG_STATE, "getter replacement rejects old status lifetime")
+					context.equal(observation.host, {}, "old status call cannot report replacement host liveness")
+				elif action == "control":
+					context.equal(observation.host.code, Types.Code.OK, "unchanged status lifetime retains host observation")
 			if (
 				action in ["detach", "replace", "signal", "signal_ingress", "terminate_ingress", "overflow_signal"]
 				or (action in ["player_change", "config_change"] and entry != "status")
@@ -811,6 +816,7 @@ func _getter_lifetime(context: RefCounted) -> void:
 				context.equal(fixture.relay.status().code, Relay.Code.RECEIVE_OVERFLOW, "later SDK signal preserves first terminal cause")
 			if action == "replace":
 				context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "old gate cannot terminate replacement viewer")
+				context.equal(fixture.relay.status().host.liveness_time_us, 1, "fresh status call observes replacement host baseline")
 				context.equal(fixture.relay.poll(2).code, Relay.Code.OK, "replacement gate remains usable")
 			fixture.client.on_room = Callable()
 			fixture.relay.detach()

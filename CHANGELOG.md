@@ -233,6 +233,10 @@
 
 - Fix stale spectator host deadline checks after replacing the exposed viewer.
 
+- Fix spectator relay status attributing a replacement viewer's host activity to an earlier SDK getter call.
+
+- Fix recording-limit warnings to include pending frames and prompt finishing before the recording fills.
+
 - Fix diagnostic viewer controls replacing or advancing playback during game callbacks. Successful restart or import retires the previous player.
 
 - Fix leaving an online room during SDK or game callbacks. Leave stops further gameplay and setup, and releases active SDK owners after callbacks return.

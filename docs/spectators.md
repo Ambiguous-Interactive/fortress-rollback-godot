@@ -404,6 +404,7 @@ Check `code` before using the observation: it reports mutation readiness, includ
 Unconfigured or replaced viewers report unknown timestamps, deadline and frame fields as `-1`, with input closure false.
 The SignalFish viewer adapter exposes the same observation under `relay.status().host` only for its attached playback lifetime.
 Detached adapters or replaced streams/viewers return an empty host dictionary until a fresh attachment succeeds.
+An attachment that changes during a status read also leaves that call's host observation empty; read again for the fresh lifetime.
 
 Startup offers and their retries obey the same monotonic clock, strict host deadline,
 active-request guard and terminal lifetime as row delivery. An offer arriving at the

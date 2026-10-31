@@ -248,14 +248,25 @@ func poll(now_us: int, send_accept: Callable = Callable()) -> Types.Result:
 
 
 func status() -> Dictionary:
+	var revision: int = _revision
+	var stream: Stream = _stream
+	var session: RefCounted = _session
+	var source_config: RefCounted = _source_config
+	var code: int = _gate()
+	var host: Dictionary = {}
+	if (
+		revision == _revision and stream != null and stream == _stream and session == _session and source_config == _source_config
+		and stream.playback_session() == session and session._config == source_config
+	):
+		host = stream.host_status()
 	return {
-		"code": _gate(),
+		"code": code,
 		"received_packets": _received.size(),
 		"received_bytes": _received_bytes,
 		"accept_pending": not _accept.is_empty(),
 		"rejected": _rejected,
 		"last_receive_code": _last_receive,
-		"host": _stream.host_status() if _stream != null and _stream.playback_session() == _session and _session._config == _source_config else {}
+		"host": host
 	}
 
 
