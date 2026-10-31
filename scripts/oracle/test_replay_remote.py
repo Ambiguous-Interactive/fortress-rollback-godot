@@ -145,21 +145,22 @@ class SerializedRemoteRecordingTest(unittest.TestCase):
     # Value: protects=encoded remote corruption stops before its owning advance; fails_when=control changes another row or ignores failed playback;
     # why_new=JSON mutations cannot establish production decoding and comparison; seam=none
     def test_serialized_control_requires_exact_change_and_runtime_stop(self):
-        healthy = replay_asymmetric.expected(False)
-        peer = healthy['peers'][1]
-        before = encoded(dict(frames=peer['frames'], checksums=peer['checksums'], players=2, seed=0xffffffff))
-        cursor = 27
-        for _ in range(5):
-            cursor += 1 + before[cursor]
-        header = bytearray(before[:27])
-        header[21] = 4
-        for text in ('oracle', '0.1.0', 'fortress-rollback ' + replay_corruption.REVISION, '', ''):
-            header += bytes([len(text)]) + text.encode('ascii')
-        before = bytes(header) + before[cursor:]
-        cursor = len(header)
-        for fault in ('input', 'checksum', 'status'):
+        for fault in ('input', 'checksum', 'status', 'terminal'):
+            healthy = replay_asymmetric.expected(False, terminal=fault == 'terminal')
+            peer = healthy['peers'][1]
+            before = encoded(dict(name='terminal', frames=peer['frames'], checksums=peer['checksums'], players=2, seed=0xffffffff),
+                             version=6 if fault == 'terminal' else 5)
+            cursor = 27
+            for _ in range(5):
+                cursor += 1 + before[cursor]
+            header = bytearray(before[:27])
+            header[21] = 4
+            for text in ('oracle', '0.1.0', 'fortress-rollback ' + replay_corruption.REVISION, '', ''):
+                header += bytes([len(text)]) + text.encode('ascii')
+            before = bytes(header) + before[cursor:]
+            cursor = len(header)
             changed = copy.deepcopy(healthy)
-            offset = cursor + 129 * 43 + {'input': 0, 'checksum': 11, 'status': 8}[fault]
+            offset = len(before) - 16 if fault == 'terminal' else cursor + 129 * 43 + {'input': 0, 'checksum': 11, 'status': 8}[fault]
             after = bytearray(before)
             after[offset] ^= 2 if fault == 'status' else 1
             changed['serialized_control'] = dict(before=before.hex(), after=after.hex())
@@ -175,10 +176,16 @@ class SerializedRemoteRecordingTest(unittest.TestCase):
                 checksum[0] ^= 1
                 target['checksums'][129] = checksum.hex()
             playback = target['playback']
-            boundary = next(row['bytes'] for row in playback['records'] if row['kind'] == 'save' and row['frame'] == 129)
-            playback['records'] = [row for row in playback['records'] if row['frame'] < 129 or
-                                   (fault == 'checksum' and row['frame'] == 129 and row['kind'] == 'save')]
-            playback.update(current_frame=129, complete=False, code=18, failure_frame=129, bytes=boundary)
+            if fault == 'terminal':
+                checksum = bytearray.fromhex(target['terminal_checksum'])
+                checksum[0] ^= 1
+                target['terminal_checksum'] = checksum.hex()
+                playback.update(complete=False, code=18, failure_frame=257)
+            else:
+                boundary = next(row['bytes'] for row in playback['records'] if row['kind'] == 'save' and row['frame'] == 129)
+                playback['records'] = [row for row in playback['records'] if row['frame'] < 129 or
+                                       (fault == 'checksum' and row['frame'] == 129 and row['kind'] == 'save')]
+                playback.update(current_frame=129, complete=False, code=18, failure_frame=129, bytes=boundary)
             replay_corruption.validate(changed, healthy, fault, 'oracle')
             for forgery, diagnostic in [('no-mutation', 'exact_mutation'), ('extra-mutation', 'exact_mutation'),
                                         ('original-row', 'original'), ('playback-continues', 'observed'),

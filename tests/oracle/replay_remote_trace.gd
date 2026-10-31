@@ -12,6 +12,8 @@ func _initialize() -> void:
 				"--remote-recording-pressure-neutral",
 				"--remote-recording-pressure-withhold",
 				"--remote-recording-asymmetric",
+				"--remote-recording-asymmetric-terminal",
+				"--remote-recording-asymmetric-terminal-neutral",
 				"--remote-recording-asymmetric-neutral",
 				"--remote-recording-asymmetric-withhold",
 				"--remote-recording",
@@ -32,6 +34,7 @@ func _initialize() -> void:
 	var neutral: bool = args[0].contains("neutral")
 	var asymmetric: bool = args[0].contains("asymmetric") or args[0].contains("pressure")
 	var pressure: bool = args[0].contains("pressure")
+	var terminal: bool = args[0].contains("terminal")
 	var received: Array[int] = [-1, -1]
 	var rounds: int = 257 if args[0].ends_with("-long") or asymmetric else 9
 	for peer: int in 2:
@@ -131,6 +134,9 @@ func _initialize() -> void:
 			recovery.append({"peer": peer, "rows": count, "before": rounds, "after": int(games[peer].state[0]), "requests": requests})
 	var peers: Array[Dictionary] = []
 	for peer: int in 2:
+		if terminal and drivers[peer].capture_replay_boundary().code != Types.Code.OK:
+			_fail("asymmetric terminal capture failed")
+			return
 		var recording: Replay = sessions[peer].replay()
 		var decoded: Replay = Replay.new()
 		if decoded.decode(recording.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != recording.to_bytes():
@@ -164,6 +170,8 @@ func _initialize() -> void:
 				"playback": playback
 			}
 		)
+		if terminal:
+			peers[-1].terminal_checksum = decoded.checksum(rounds).hex_encode()
 	var result: Dictionary = {"format": 1, "peers": peers, "deliveries": deliveries}
 	if asymmetric:
 		result.recovery = recovery
