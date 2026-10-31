@@ -372,8 +372,8 @@ Separate changing and neutral asymmetric workloads call the production final-bou
 capture after recovery, without submitting a new local sample or advancing input.
 Each endpoint exports all 257 original rows as version 6. The independent original
 history requires one final SAVE at boundary 257, the exact terminal checksum, and
-successful decoded playback through that final SAVE. Both pinned engines repeat both
-workloads with complete callback and delivery inventories.
+successful decoded playback through that final SAVE. Godot 4.3 and 4.7.2 each repeat
+both terminal workloads with complete callback and delivery inventories.
 
 A copied observer changes exactly one byte in the final serialized checksum for endpoint
 one. The control independently reconstructs the complete original file and requires all

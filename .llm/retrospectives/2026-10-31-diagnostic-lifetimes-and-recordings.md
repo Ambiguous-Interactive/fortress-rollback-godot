@@ -53,3 +53,7 @@ State: `findings-acted`. The source recovery-only, transport-refusal, full
 upstream parity and release matrix requirements remain in their existing issues.
 Candidate CI, feedback, merge and main-CI results are tracked separately from
 these local observations.
+
+Review interpreted “both pinned engines” as Rust and Godot rather than the two
+Godot versions. Named Godot 4.3 and 4.7.2 explicitly in the owning replay guide;
+the existing source-limitation paragraph and executed scope remain unchanged.
