@@ -23,9 +23,9 @@ def validate(actual, healthy, fault, engine_metadata):
         before, after = (bytes.fromhex(encoded[key]) for key in ('before', 'after'))
     except (ValueError, TypeError) as error:
         raise ValueError('serialized.control: invalid byte evidence') from error
-    if fault not in ('input', 'checksum', 'status'):
+    if fault not in ('input', 'checksum', 'status', 'terminal'):
         raise ValueError('serialized.control: unknown fault')
-    header = b'FRRP' + struct.pack('<HBIIIHBB', 5, 2, 4, 257, 0, 0, 4, 0) + b'\0' * 4
+    header = b'FRRP' + struct.pack('<HBIIIHBB', 6 if fault == 'terminal' else 5, 2, 4, 257, 0, 0, 4, 0) + b'\0' * 4
     metadata = (engine_metadata, '0.1.0', 'fortress-rollback ' + REVISION, '', '')
     for text in metadata:
         value = text.encode('ascii')
@@ -36,8 +36,10 @@ def validate(actual, healthy, fault, engine_metadata):
         row = struct.pack('<II', *peer['frames'][frame])
         checksum = bytes.fromhex(peer['checksums'][frame])
         original += row + b'\1\1\1' + checksum + hashlib.sha256(row + b'\1\1').digest()[:16]
+    if fault == 'terminal':
+        original += bytes.fromhex(peer['terminal_checksum'])
     compare(before, bytes(original), 'serialized.control.original_file')
-    target = len(header) + FRAME * 43 + {'input': 0, 'checksum': 11, 'status': 8}[fault]
+    target = len(before) - 16 if fault == 'terminal' else len(header) + FRAME * 43 + {'input': 0, 'checksum': 11, 'status': 8}[fault]
     changed = bytearray(before)
     changed[target] ^= 2 if fault == 'status' else 1
     compare(after, bytes(changed), 'serialized.control.exact_mutation')
@@ -54,6 +56,13 @@ def validate(actual, healthy, fault, engine_metadata):
         checksum = bytearray.fromhex(peer['checksums'][FRAME])
         checksum[0] ^= 1
         peer['checksums'][FRAME] = checksum.hex()
+    if fault == 'terminal':
+        checksum = bytearray.fromhex(peer['terminal_checksum'])
+        checksum[0] ^= 1
+        peer['terminal_checksum'] = checksum.hex()
+        playback.update(complete=False, code=18, failure_frame=257)
+        compare(actual, wanted, 'serialized.observed')
+        return
     playback['records'] = [record for record in playback['records']
                            if record['frame'] < FRAME or (fault == 'checksum' and record['frame'] == FRAME and record['kind'] == 'save')]
     boundary = next(record['bytes'] for record in healthy['peers'][1]['playback']['records']
@@ -62,7 +71,7 @@ def validate(actual, healthy, fault, engine_metadata):
     compare(actual, wanted, 'serialized.observed')
 
 
-def observe(engine, root, output, execute, healthy):
+def observe(engine, root, output, execute, healthy, terminal=False):
     """The unchanged asymmetric workload is the green control; copied observers alter actual encoded bytes."""
     original = (root / 'tests/oracle/replay_remote_trace.gd').read_text()
     needle = '\t\tif decoded.decode(recording.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != recording.to_bytes():'
@@ -83,7 +92,7 @@ def observe(engine, root, output, execute, healthy):
             raise ValueError('invalid serialized control engine observation')
         info = json.loads(lines[0])
         engine_metadata = '%d.%d.%d.%s %s' % (info['major'], info['minor'], info['patch'], info['status'], info['hash'])
-        for fault in ('input', 'checksum', 'status'):
+        for fault in (('terminal',) if terminal else ('input', 'checksum', 'status')):
             injection = '''\t\tvar encoded: PackedByteArray = recording.to_bytes()
 \t\tif peer == 1:
 \t\t\tvar before: PackedByteArray = encoded.duplicate()
@@ -94,7 +103,9 @@ def observe(engine, root, output, execute, healthy):
 \t\t\tencoded[cursor] ^= %d
 \t\t\tserialized_control = {"before": before.hex_encode(), "after": encoded.hex_encode()}
 \t\tif decoded.decode(encoded) != Replay.DecodeCode.OK or decoded.to_bytes() != encoded:''' % (
-                {'input': 0, 'checksum': 11, 'status': 8}[fault], 2 if fault == 'status' else 1)
+                {'input': 0, 'checksum': 11, 'status': 8, 'terminal': 0}[fault], 2 if fault == 'status' else 1)
+            if terminal:
+                injection = injection.replace('cursor += 129 * 43 + 0', 'cursor = encoded.size() - 16')
             altered = original.replace('var deliveries: Array[Dictionary] = []',
                                        'var deliveries: Array[Dictionary] = []\n\tvar serialized_control: Dictionary = {}')
             altered = altered.replace(needle, injection).replace(result_needle, '\tresult.serialized_control = serialized_control\n' + result_needle)
@@ -116,7 +127,7 @@ def observe(engine, root, output, execute, healthy):
             script = Path(directory) / (fault + '.gd')
             script.write_text(altered)
             command = [str(engine), '--headless', '--path', str(root), '--script', 'res://' + script.relative_to(root).as_posix(),
-                       '--', '--remote-recording-asymmetric']
+                       '--', '--remote-recording-asymmetric-terminal' if terminal else '--remote-recording-asymmetric']
             stdout, stderr = execute(command, output / f'asymmetric-serialized-{fault}-godot.log')
             lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines() if line.startswith('FORTRESS_REPLAY_RESULT ')]
             if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
@@ -126,10 +137,10 @@ def observe(engine, root, output, execute, healthy):
             try:
                 compare({key: value for key, value in actual.items() if key != 'serialized_control'}, healthy, 'asymmetric.godot')
             except ValueError as error:
-                field = {'input': 'frames[129][0]', 'checksum': 'checksums[129]', 'status': 'playback.bytes'}[fault]
+                field = {'input': 'frames[129][0]', 'checksum': 'checksums[129]', 'status': 'playback.bytes', 'terminal': 'playback.code'}[fault]
                 if not str(error).startswith(f'asymmetric.godot.peers[1].{field}:'):
                     raise ValueError(f'wrong serialized {fault} rejection: {error}') from error
             else:
                 raise ValueError(f'serialized {fault} corruption accepted')
-            names.append('godot-serialized-post-wrap-' + fault)
+            names.append('godot-serialized-' + ('final-boundary' if terminal else 'post-wrap-' + fault))
     return names

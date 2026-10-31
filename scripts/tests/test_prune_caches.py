@@ -15,6 +15,8 @@ A final guardrail test fails if any repository script copies the whole
 working tree, which is what turned one scratch copy into 634 GB.
 """
 
+import io
+import json
 import os
 import shutil
 import subprocess
@@ -23,6 +25,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -272,6 +275,112 @@ class ContainerPlanTest(unittest.TestCase):
         planned = [plan.path for plan in plans]
         self.assertIn(releases / '0.1.0', planned)
         self.assertNotIn(releases / '0.2.0', planned)
+
+
+class MeasurementTest(unittest.TestCase):
+    # Value: protects=du results need no second traversal; fails_when=eager defaults walk again; why_new=no measurement coverage; seam=du process
+    def test_du_sizes_skip_fallback_and_only_missing_roots_are_walked(self):
+        roots = [Path('/cache/a'), Path('/cache/b'), Path('/cache/c')]
+        result = subprocess.CompletedProcess([], 1, '12\t/cache/a\ninvalid\t/cache/b\n34\t/cache/c\n', '')
+        with unittest.mock.patch.object(prune_caches.subprocess, 'run', return_value=result), \
+                unittest.mock.patch.object(prune_caches, 'tree_bytes', return_value=56) as fallback:
+            sizes = prune_caches.measure(roots)
+        self.assertEqual(sizes, {roots[0]: 12, roots[1]: 56, roots[2]: 34})
+        self.assertEqual([call.args[0] for call in fallback.call_args_list], [roots[1]])
+        with unittest.mock.patch.object(prune_caches.subprocess, 'run', side_effect=FileNotFoundError), \
+                unittest.mock.patch.object(prune_caches, 'tree_bytes', return_value=78) as fallback:
+            self.assertEqual(prune_caches.measure(roots), dict.fromkeys(roots, 78))
+        self.assertEqual([call.args[0] for call in fallback.call_args_list], roots)
+
+    # Value: protects=wide inventory work scales with depth; fails_when=pairwise ancestor scan returns; why_new=small safety fixtures hide cost; seam=path comparison count
+    def test_wide_inventory_preserves_roots_with_bounded_comparisons(self):
+        class CountedPath(type(Path())):
+            comparisons = 0
+
+            def __eq__(self, other):
+                type(self).comparisons += 1
+                return super().__eq__(other)
+
+            __hash__ = type(Path()).__hash__
+
+        roots = [CountedPath('/cache') / f'run-{index}' for index in range(400)]
+        candidates = [path / 'nested' / 'receipt' for path in reversed(roots)] + roots + [roots[0], CountedPath('/cache/run-0-other')]
+        expected = set(roots + [CountedPath('/cache/run-0-other')])
+        payload = ''.join(f'1\t{path}\n' for path in expected)
+        result = subprocess.CompletedProcess([], 0, payload, '')
+        with unittest.mock.patch.object(prune_caches.subprocess, 'run', return_value=result) as du:
+            sizes = prune_caches.measure(candidates)
+        comparisons = CountedPath.comparisons
+        self.assertEqual(set(sizes), expected)
+        actual = {Path(name) for name in du.call_args.kwargs['input'].split('\0') if name}
+        self.assertEqual(actual, expected)
+        self.assertLess(comparisons, len(candidates) * 20, 'sibling candidates must not be compared pairwise')
+
+
+class DiagnosticTest(unittest.TestCase):
+    # Value: protects=JSON and local citations; fails_when=diagnostics pollute output or skip notes; why_new=no large CLI fixture; seam=real CLI
+    def test_diagnostics_keep_json_and_citations_in_large_local_inventory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            results = root / '.cache' / 'reference' / 'results'
+            results.mkdir(parents=True)
+            notes = root / 'progress'
+            notes.mkdir()
+            for index in range(240):
+                kept = results / f'run-{index}'
+                kept.mkdir()
+                (kept / 'receipt.json').write_text('{}')
+                extra = kept / 'uncited.bin'
+                extra.write_bytes(b'old')
+                age(extra, 30)
+                (notes / f'note-{index}.md').write_text(f'.cache/reference/results/run-{index}/receipt.json')
+            outside = root / 'outside'
+            outside.mkdir()
+            (outside / 'receipt.json').write_text('{}')
+            (outside / 'uncited.bin').write_bytes(b'keep outside the cache')
+            age(outside / 'uncited.bin', 30)
+            (results / 'linked').symlink_to(outside, target_is_directory=True)
+            age(results / 'linked', 30)
+            lease = results / 'lease'
+            lease.mkdir()
+            (lease / 'host.lock').write_text('')
+            age(lease / 'host.lock', 30)
+            age(lease, 30)
+            (root / 'tracked.md').write_text('.cache/reference/results/tracked.json .cache/reference/results/linked/receipt.json')
+            subprocess.run(['git', '-C', str(root), 'add', 'tracked.md'], check=True)
+            kept_file = results / 'tracked.json'
+            kept_file.write_text('{}')
+            age(kept_file, 30)
+            command = [sys.executable, str(REPO / 'scripts' / 'prune_caches.py'), '--root', str(root), '--scope', 'workspace', '--json']
+            environment = dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(lease))
+            control = subprocess.run(command, capture_output=True, text=True, check=True, timeout=30, env=environment)
+            observed = subprocess.run(command + ['--diagnostics'], capture_output=True, text=True, check=True, timeout=30, env=environment)
+            self.assertEqual(json.loads(control.stdout), json.loads(observed.stdout))
+            summary = json.loads(observed.stdout)
+            self.assertEqual({entry['path'] for entry in summary['entries']}, {str(results / f'run-{index}' / 'uncited.bin') for index in range(240)})
+            events = [json.loads(line.removeprefix('prune: ')) for line in observed.stderr.splitlines()]
+            self.assertEqual(events[0]['event'], 'started')
+            completed = {event['phase']: event for event in events if event['event'] == 'completed'}
+            self.assertEqual(completed['citations']['read_files'], 241)
+            self.assertGreater(completed['citations']['read_bytes'], 0)
+            self.assertEqual(completed['measure']['candidate_paths'], 240)
+            self.assertTrue(kept_file.is_file(), 'diagnostic dry run must preserve cited evidence')
+            self.assertTrue((results / 'linked').is_symlink())
+            self.assertTrue((lease / 'host.lock').is_file())
+
+    # Value: protects=start emitted before slow discovery; fails_when=reports buffered until done; why_new=CLI output alone proves only final report; seam=main discovery boundary
+    def test_phase_start_is_emitted_before_discovery_and_errors_stop_reporting(self):
+        output, errors = io.StringIO(), io.StringIO()
+        def discovery(*_):
+            self.assertIn('"phase": "inventory", "event": "started"', errors.getvalue())
+            self.assertEqual(output.getvalue(), '')
+            raise OSError('inventory unavailable')
+        with unittest.mock.patch.object(sys, 'argv', ['prune_caches.py', '--diagnostics', '--json']), \
+                unittest.mock.patch.object(prune_caches, 'tracked_files', side_effect=discovery), redirect_stdout(output), redirect_stderr(errors):
+            with self.assertRaisesRegex(OSError, 'inventory unavailable'):
+                prune_caches.main()
+        self.assertIn('"event": "failed"', errors.getvalue())
 
 
 class DryRunTest(unittest.TestCase):

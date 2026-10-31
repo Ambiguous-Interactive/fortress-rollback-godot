@@ -51,6 +51,7 @@ megabytes instead of gigabytes.
 | Need an isolated copy of the tree | `make scratch SCRATCH=probe-01` |
 | Need a temp directory | `python3 scripts/scratch_workspace.py create probe-01` and use `.cache/scratch/probe-01/` |
 | Cache or scratch looks large | `make disk` for the sizes, `make prune` for what is removable |
+| A scan is slow | add `--diagnostics` to `scripts/prune_caches.py`; phase counters and heartbeats use stderr, preserving JSON stdout |
 | Ready to reclaim | `make prune-apply` |
 | Starting a session | `make prune` (report only), then act on the report |
 | Building the Rust oracles | use `scripts/reference/signalfish_build_server.py`; its target tree is shared and revision-keyed, so do not add a per-run `CARGO_TARGET_DIR` |

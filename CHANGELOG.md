@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `DiagnosticPlayer.terminate()` to cancel captured-window playback, expire active views and preserve earlier failure evidence.
+
 - Add spectator backlog feedback during pause and playback. Show contiguous buffered input separately from later rows waiting beyond gaps.
 
 - Add saved spectator-example playback in the replay viewer, including checksum validation, Fire input inspection and backward navigation. New exports identify their game; older unnamed exports remain refused.
@@ -222,6 +224,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix diagnostic viewer controls replacing or advancing playback during game callbacks. Successful restart or import retires the previous player.
 
 - Fix leaving an online room during SDK or game callbacks. Leave stops further gameplay and setup, and releases active SDK owners after callbacks return.
 

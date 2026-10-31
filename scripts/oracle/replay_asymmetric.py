@@ -1,12 +1,14 @@
 """Independent asymmetric remote recording history and recovery-only export witness."""
 import json
 import copy
+import tempfile
+from pathlib import Path
 
 from replay_launch import advance, compare, expected as playback_expected, state_bytes
 from replay_remote import sample
 
 
-def expected(rust, neutral=False):
+def expected(rust, neutral=False, terminal=False):
     rounds = 257
     rows = [[sample(slot, frame, neutral) for slot in range(2)] for frame in range(rounds)]
     initial = (0, 0xffffffff, 0xffffffff, 0)
@@ -64,8 +66,15 @@ def expected(rust, neutral=False):
         checksums = [first_saved[frame] if rust else state_bytes(canonical[frame]).hex() for frame in range(exported)]
         playback = playback_expected(dict(name=f'remote-{peer}', players=2, seed=0xffffffff, validate=True,
                                           frames=rows[:exported], checksums=checksums), rust)
+        if terminal:
+            save()
+            playback = playback_expected(dict(name=f'remote-{peer}', players=2, seed=0xffffffff, validate=True,
+                                              frames=rows, checksums=checksums), False, version=6)
+            playback['name'] = f'remote-{peer}'
         peers.append(dict(peer=peer, current_frame=rounds, bytes=state_bytes(state).hex(), records=records,
                           services=services, frames=copy.deepcopy(rows[:exported]), checksums=checksums, skipped=0, playback=playback))
+        if terminal:
+            peers[-1]['terminal_checksum'] = state_bytes(canonical[-1]).hex()
     deliveries = []
     if rust:
         # Each forward call emits one INPUT. Each received INPUT emits one ACK;
@@ -188,4 +197,72 @@ def observe(binary, engine, root, output, execute):
     from replay_corruption import observe as observe_corruption
     serialized = observe_corruption(engine, root, output, execute, combined['corrected']['godot'])
     return dict(repeat_equal=True, observations=combined, negative_controls=controls(combined['corrected']),
-                standalone_rejections=refused, serialized_controls=serialized)
+                standalone_rejections=refused, serialized_controls=serialized, terminal=observe_terminal(engine, root, output, execute))
+
+
+def observe_terminal(engine, root, output, execute):
+    """Recovered complete histories require an actual final SAVE and decoded terminal validation."""
+    combined = {}
+    for neutral in (False, True):
+        mode = '--remote-recording-asymmetric-terminal' + ('-neutral' if neutral else '')
+        observations = []
+        for repeat in (1, 2):
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(root), '--script',
+                                      'res://tests/oracle/replay_remote_trace.gd', '--', mode],
+                                     output / f'{mode[2:]}-godot-{repeat}.log')
+            lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines()
+                     if line.startswith('FORTRESS_REPLAY_RESULT ')]
+            if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
+                raise ValueError('invalid asymmetric terminal completion')
+            actual = json.loads(lines[0])
+            validate_terminal(actual, neutral)
+            observations.append(actual)
+        compare(observations[0], observations[1], 'asymmetric.terminal.repeat')
+        combined['neutral' if neutral else 'corrected'] = observations[0]
+    from replay_corruption import observe as observe_corruption
+    serialized = observe_corruption(engine, root, output, execute, combined['corrected'], terminal=True)
+    bypassed = terminal_capture_controls(engine, root, output, execute)
+    return dict(repeat_equal=True, observations=combined, serialized_controls=serialized, capture_controls=bypassed)
+
+
+def validate_terminal(actual, neutral=False):
+    wanted = expected(False, neutral, terminal=True)
+    for peer in (0, 1):
+        compare(actual['peers'][peer]['terminal_checksum'], wanted['peers'][peer]['terminal_checksum'],
+                f'asymmetric.terminal.peers[{peer}].terminal_checksum')
+    compare(actual, wanted, 'asymmetric.terminal')
+
+
+def terminal_capture_controls(engine, root, output, execute):
+    original = (root / 'tests/oracle/replay_remote_trace.gd').read_text()
+    needle = 'if terminal and drivers[peer].capture_replay_boundary().code != Types.Code.OK:'
+    if original.count(needle) != 1:
+        raise ValueError('terminal capture boundary missing or ambiguous')
+    names = []
+    scratch_root = root / '.cache/scratch'
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='replay-terminal-capture-', dir=scratch_root) as directory:
+        for peer in (0, 1):
+            script = Path(directory) / f'peer-{peer}.gd'
+            script.write_text(original.replace(needle, needle.replace('terminal and', f'terminal and peer != {peer} and')))
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(root), '--script',
+                                      'res://' + script.relative_to(root).as_posix(), '--', '--remote-recording-asymmetric-terminal'],
+                                     output / f'asymmetric-terminal-skipped-{peer}-godot.log')
+            lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines()
+                     if line.startswith('FORTRESS_REPLAY_RESULT ')]
+            if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
+                raise ValueError('invalid skipped terminal capture completion')
+            actual = json.loads(lines[0])
+            wanted = expected(False, terminal=True)
+            wanted['peers'][peer] = expected(False)['peers'][peer]
+            wanted['peers'][peer]['terminal_checksum'] = ''
+            compare(actual, wanted, 'asymmetric.capture_bypass')
+            try:
+                validate_terminal(actual)
+            except ValueError as error:
+                if not str(error).startswith(f'asymmetric.terminal.peers[{peer}].terminal_checksum:'):
+                    raise ValueError(f'wrong skipped terminal capture rejection: {error}') from error
+            else:
+                raise ValueError('skipped terminal capture accepted')
+            names.append(f'godot-skipped-terminal-capture-{peer}')
+    return names

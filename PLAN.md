@@ -241,6 +241,9 @@ Snapshot slots own their storage and carry frame/generation tags.
 Callback views are valid only for their documented operation.
 Reject oversized snapshots, stale slots and incomplete request consumption.
 Refuse recursive advancement and stop explicitly on callback failure.
+Diagnostic playback uses the same callback ownership rule: busy controls preserve
+the active player, replacement retires it, and explicit cancellation expires views
+without replacing an earlier failure.
 
 Emit notifications after request processing; signals do not control mid-tick
 simulation. Presentation reads the final state after resimulation.

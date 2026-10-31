@@ -23,6 +23,10 @@ recorded inputs. **Play** consumes at most one row per presentation tick;
 retained window. Completion or failure stops playback. No network input is sampled.
 The capture's descriptive `replay_command` is never executed.
 
+Restarting or successfully importing another file retires the previous playback.
+Retained old player handles cannot execute more callbacks. Viewer controls leave playback unchanged
+while a game callback owns it; they become available again when that callback returns.
+
 The status shows the application version, captured seed text, first and last
 retained boundaries, next row, successful canonical comparisons, and successful
 advances. Seed text stays text, including values larger than a signed 64-bit

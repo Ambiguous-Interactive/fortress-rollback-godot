@@ -612,6 +612,35 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
             validate_result(clean)
 
+    # Value: cleanup after a witnessed desync must preserve the original canonical corruption diagnostic, not mask unrelated failures.
+    def test_corrupt_control_accepts_clean_cleanup_after_either_peer_reports_desync(self):
+        for desync_page in (0, 1):
+            changed = corrupt_snapshot(corrupt_evidence(), 1)
+            peers = {peer['page_index']: peer for peer in changed['rounds'][0]['peers']}
+            peers[desync_page].update(state='failed', failure='Game stopped (18).', terminal_reason=18)
+            stopped = peers[1 - desync_page]
+            stopped.update(state='failed', failure='', terminal_reason=19)
+            changed['rounds'][0]['corrupt_control']['desync_page'] = desync_page
+            with self.subTest(desync_page=desync_page), self.assertRaisesRegex(ValueError, 'canonical prefix mismatch at frame 3'):
+                validate_result(changed, corrupt=True)
+            stopped['state'] = 'offline'
+            with self.subTest(desync_page=desync_page, state='offline'), self.assertRaisesRegex(ValueError, 'canonical prefix mismatch at frame 3'):
+                validate_result(changed, corrupt=True)
+            stopped['state'] = 'failed'
+            for key, value in [('terminal_reason', reason) for reason in (0.0, False, True, 14, 23, 19.0)] + [('failure', 'protocol failed'), ('state', 'playing')]:
+                invalid = copy.deepcopy(changed)
+                target = next(peer for peer in invalid['rounds'][0]['peers'] if peer['page_index'] == 1 - desync_page)
+                target[key] = value
+                with self.subTest(desync_page=desync_page, key=key, value=value), self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
+                    validate_result(invalid, corrupt=True)
+            missing = copy.deepcopy(changed)
+            missing['rounds'][0]['peers'][desync_page].update(state='failed', failure='', terminal_reason=19)
+            with self.assertRaisesRegex(ValueError, 'corrupt control observed no desync'):
+                validate_result(missing, corrupt=True)
+            corrupted_history = corrupt_snapshot(copy.deepcopy(changed), 0)
+            with self.assertRaisesRegex(ValueError, 'healthy peer lost its canonical history'):
+                validate_result(corrupted_history, corrupt=True)
+
     # Value: cleared terminal lobby fields retain frozen prediction identity; foreign rooms still fail before canonical validation.
     def test_prediction_receipt_survives_cleared_failed_room_without_accepting_foreign_identity(self):
         changed = corrupt_snapshot(corrupt_evidence(), 1)
@@ -680,7 +709,7 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
         lost = corrupt_evidence()
         corrupt_snapshot(lost, 1)
         lost['rounds'][0]['peers'][0].update(terminal_reason=23)
-        with self.assertRaisesRegex(ValueError, 'corrupt control lost the healthy peer'):
+        with self.assertRaisesRegex(ValueError, 'rollback or confirmation missing'):
             validate_result(lost, corrupt=True)
 
     def test_complete_evidence_and_missing_or_wrong_transport_contracts(self):

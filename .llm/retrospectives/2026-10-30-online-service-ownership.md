@@ -71,3 +71,24 @@ feature or acceptance milestone.
 
 State: `findings-acted`. Follow-up implementation scope remains in #38, #40,
 #45 and #47. Issue #266 owns callback Leave delivery; this repair changes no simulation or portable file format.
+
+## Post-merge witness correction
+
+Main run41117845956 exposed a second valid control ordering after #265 merged.
+The actual reporter stopped with DESYNC18; its counterpart then stopped cleanly
+with reason19 and no game failure. The old witness assumed room cleanup never
+terminated the shared session and rejected this evidence before its canonical
+comparison. Artifact13005229898 matches its published SHA-256 digest.
+
+Issue #267 owns the correction. The repaired validator keeps actual desync
+attribution and original canonical comparisons separate from clean cleanup.
+The saved CI artifact now reaches the intended canonical mismatch at frame3.
+Data-driven controls cover both reporters, wrong reason types, unrelated errors,
+missing desync and corrupted healthy history. All36 focused tests pass; fresh
+adversarial review is clean. Complete reference tooling ran 247 tests with ten
+expected skips; the final failed/offline cleanup rows also pass all 36 focused
+tests. The existing oracle-validation reference now records this distinction.
+
+The primary session PR was already merged when the failure appeared. A focused
+follow-up requires the user's exception to GOAL.md's one-PR limit; no second PR
+was opened before that decision. Main CI and final issue closure stay pending.

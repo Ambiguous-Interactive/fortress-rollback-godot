@@ -366,6 +366,22 @@ This exercises real decoding and playback; the earlier JSON mutation controls re
 An unchanged asymmetric recording supplies the green control. Forged byte evidence,
 extra mutations and playback that continues cannot qualify these controls.
 
+### Final evidence after asymmetric recovery
+
+Separate changing and neutral asymmetric workloads call the production final-boundary
+capture after recovery, without submitting a new local sample or advancing input.
+Each endpoint exports all 257 original rows as version 6. The independent original
+history requires one final SAVE at boundary 257, the exact terminal checksum, and
+successful decoded playback through that final SAVE. Godot 4.3 and 4.7.2 each repeat
+both terminal workloads with complete callback and delivery inventories.
+
+A copied observer changes exactly one byte in the final serialized checksum for endpoint
+one. The control independently reconstructs the complete original file and requires all
+257 inputs to play before DESYNC at boundary 257; no further ADVANCE is allowed.
+The endpoint zero control remains healthy. This qualifies Godot terminal capture after
+unequal remote correction, while the unchanged source's missing recovery-only API and
+speculative checksum discrepancy above remain explicit.
+
 ### Repeated prediction stalls and resumed recording
 
 The remote gate also repeats changing and neutral 257-frame histories while endpoint

@@ -21,6 +21,7 @@ from signalfish_probe import inventory
 from wire import INPUT_HEADER
 
 DESYNC_REASON = 18
+TERMINATED_REASON = 19
 # The witness owns the development host while it runs.
 HOST_LEASE_NAME = "online-witness"
 HOST_WAIT_SECONDS = 900.0
@@ -390,6 +391,12 @@ def validate_stale_callbacks(peer):
 
 
 
+def cleanly_stopped_peer(peer):
+    """Room cleanup retires the session without inventing a game failure."""
+    return (type(peer.get('terminal_reason')) is int and peer['terminal_reason'] == TERMINATED_REASON
+            and peer.get('failure') == '' and peer.get('state') in ('failed', 'offline'))
+
+
 def validate_corrupt_control(record, peers):
     """The corrupt control must reach a restore on every peer and the desync must be caught.
 
@@ -416,7 +423,7 @@ def validate_corrupt_control(record, peers):
     desynced = pages[control['desync_page']]
     if desynced.get('state') != 'failed' or desynced.get('terminal_reason') != DESYNC_REASON:
         raise ValueError('online example corrupt control observed no desync')
-    if any(peer.get('terminal_reason') not in (0, DESYNC_REASON) for peer in healthy):
+    if any(peer.get('terminal_reason') not in (0, DESYNC_REASON) and not cleanly_stopped_peer(peer) for peer in healthy):
         raise ValueError('online example corrupt control lost the healthy peer')
 
 
@@ -528,12 +535,13 @@ def validate_result(value, corrupt=False, expected_engine=None):
             # A desynced peer stops capturing at termination; the session still bounds its confirmation.
             confirmed_limit = (peer['frame'] + INPUT_DELAY if intended_desync and type(peer.get('frame')) is int
                                else len(peer['inputs']) - 1)
-            # A closed room clears the lobby state but never the session, so a peer without a session failure stays valid.
-            session_intact = peer.get('failure') == '' and peer.get('terminal_reason') == 0
+            # Cleanup can retire the other peer after the control's actual desync has been observed.
+            session_intact = peer.get('failure') == '' and type(peer.get('terminal_reason')) is int and peer['terminal_reason'] == 0
+            intentional_cleanup = corrupt and cleanly_stopped_peer(peer)
             if (type(peer.get('restores')) is not int or peer['restores'] < 1 or (peer.get('failure') != '' and not intended_desync)
                     or type(peer.get('confirmed')) is not int or not (20 if corrupt else 90) <= peer['confirmed'] <= confirmed_limit
                     or type(peer.get('frame')) is not int or not 20 <= peer['frame'] <= len(peer['inputs'])
-                    or (peer.get('state') != 'playing' and not intended_desync and not session_intact)
+                    or not (intended_desync or session_intact or intentional_cleanup)
                     or (peer.get('room') or identified[peer['page_index']].get('room')) != record['room']):
                 raise ValueError('online example rollback or confirmation missing')
             validate_scheduling(peer.get('scheduling'), peer.get('confirmed'))

@@ -83,5 +83,11 @@ statuses and input order. All readers, writers, and input views expire immediate
 after their callback. Reentrant configuration and stepping return `BUSY`. Failure
 stops playback before applying the failing row's inputs; configure again to retry.
 
+Call `player.terminate()` when abandoning a reproduction, including inside a game callback.
+Cancellation immediately expires its active reader, writer or input view and prevents later callbacks.
+The current callback still owns the player until it returns: nested `step` and `configure` remain `BUSY`.
+The report retains completed comparisons and advances, with `failure.kind` set to `cancelled` at the captured boundary.
+Cancellation preserves an earlier failure instead of replacing its evidence. Configure explicitly after the callback returns to start a fresh lifetime.
+
 Capture collection, privacy defaults, and memory reservations are documented in
 [the trace contract](peer-lifecycle.md#opt-in-canonical-divergence-evidence).
