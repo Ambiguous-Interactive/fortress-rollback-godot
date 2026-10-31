@@ -121,6 +121,29 @@ func run_case(name: String, context: RefCounted) -> void:
 				context.equal(lobby.connect_room("ws://localhost:8080/ws", "Player", "", 0), ERR_UNAVAILABLE, "missing SDK is actionable without parse failure")
 			lobby.disconnect_room()
 			context.equal(lobby.state, "offline", "leave available after missing SDK")
+			var recorded: Dictionary = _fixture(context, U)
+			var game_match: Match = recorded.driver
+			var config: Config = Config.new()
+			config.sync_test = false
+			config.check_distance = 0
+			config.replay_max_frames = 3
+			config.local_players = PackedInt32Array([0])
+			config.max_snapshot_bytes = Simulation.SNAPSHOT_BYTES
+			config.storage_budget_bytes = config.required_storage_bytes()
+			var core: Session = game_match.peer._core
+			context.equal(core.configure(config), Types.Code.OK, "small recording cap configures the scene control")
+			var driver: Driver = Driver.new(core, Simulation.new())
+			node.controller.game_match = game_match
+			node.call("_update_status")
+			context.equal(node._status.text.contains("Replay: 0/3 frames recorded | 0 pending"), true, "scene shows remaining recording capacity before gameplay")
+			for frame: int in 4:
+				context.equal(core.receive_input(1, frame, PackedByteArray([0])).code, Types.Code.OK, "actual scene recording input")
+				context.equal(driver.step(frame, [Driver.LocalInput.new(0, frame, PackedByteArray([0]))]).code, Types.Code.OK, "scene recording continues beyond cap")
+			node.call("_update_status")
+			context.equal(node._status.text.contains("Replay: 3/3 frames recorded | 0 pending | 1 later frames omitted"), true, "scene identifies omitted gameplay when recording is full")
+			game_match.detach()
+			recorded.mesh.free()
+			recorded.client.free()
 			node.free()
 		"handshake_timeout":
 			var fixture: Dictionary = _fixture(context, U)

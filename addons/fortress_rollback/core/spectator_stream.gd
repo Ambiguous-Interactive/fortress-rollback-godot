@@ -298,9 +298,35 @@ func _receive_offer(packet: PackedByteArray, now_us: int) -> int:
 
 ## Observe elapsed host expiry without mutating playback, including during an active request.
 ## A transport owner may retire its session when this is true; poll() keeps its BUSY contract.
+## Replacing the exposed viewer ends this stream's deadline authority.
 ## Invalid or retrograde clocks are false and remain subject to poll() validation.
 func host_deadline_elapsed(now_us: int) -> bool:
-	return _session != null and not _is_finished and now_us >= _last_time and now_us - _last_received >= _timeout_us
+	return _session != null and _session._config == _config and not _is_finished and now_us >= _last_time and now_us - _last_received >= _timeout_us
+
+
+## Owned transport observation at the last accepted protocol clock; reads never poll or renew liveness.
+## liveness_time_us starts at configuration and refreshes only on accepted host traffic.
+## end_frame is the authenticated exclusive END, even before missing rows arrive; -1 means none.
+## missing_frame is the first gap before received rows or END; -1 means no known gap.
+## timeout_remaining_us is -1 after complete input closure, when the clean tail needs no host.
+## code fences unconfigured/replaced viewers and reports playback mutation readiness independently.
+func host_status() -> Dictionary:
+	var code: int = Code.NOT_CONFIGURED
+	var frontier: int = -1
+	var owns_viewer: bool = _session != null and _session._config == _config
+	if _session != null:
+		code = _session._mutation_code() if owns_viewer else Code.INVALID_CONFIGURATION
+	if owns_viewer:
+		frontier = _session.host_frontier()
+	return {
+		"code": code,
+		"observed_time_us": _last_time if owns_viewer else -1,
+		"liveness_time_us": _last_received if owns_viewer else -1,
+		"timeout_remaining_us": maxi(0, _timeout_us - (_last_time - _last_received)) if owns_viewer and not _is_finished else -1,
+		"end_frame": _end_frame if owns_viewer else -1,
+		"missing_frame": frontier + 1 if owns_viewer and maxi(_highest_frame, _end_frame - 1) > frontier else -1,
+		"input_closed": owns_viewer and _is_finished
+	}
 
 
 ## Inject monotonic microseconds. Expiry wins over a newly arrived packet at the deadline.

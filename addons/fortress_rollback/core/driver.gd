@@ -66,7 +66,7 @@ func _init(session: Session = null, game: RefCounted = null) -> void:
 
 ## Game supplies save_state -> SaveResult and load_state/simulate_frame -> bool.
 func configure(session: Session, game: RefCounted) -> int:
-	if _is_stepping or (_session != null and _session._has_driver_guard()) or (session != null and session._has_driver_guard()):
+	if _is_stepping or (_session != null and _session._mutation_code() == Types.Code.BUSY) or (session != null and session._mutation_code() == Types.Code.BUSY):
 		return Types.Code.BUSY
 	if session == null or game == null:
 		return Types.Code.INVALID_CONFIGURATION
@@ -191,6 +191,11 @@ func confirmed_inputs(frame: int) -> Types.FrameInputs:
 ## Pending corrections hide the provisional tail until ordered recovery callbacks complete.
 func replay() -> RefCounted:
 	return _session.replay() if _session != null else null
+
+
+## Owned recording capacity and finalized/pending/omitted frame counts, without copying the replay.
+func recording_status() -> Types.RecordingStatus:
+	return _session.recording_status() if _session != null else Types.RecordingStatus.new()
 
 
 ## Stop the owned session and expire active views, including during callbacks or completion handlers.

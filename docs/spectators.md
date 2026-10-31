@@ -388,6 +388,23 @@ rosters and player confirmation remain unchanged.
 
 ## Negotiate the envelope before the first row
 
+`stream.host_status()` separates host liveness from playback progress. Its owned dictionary reports
+`observed_time_us`, `liveness_time_us`, `timeout_remaining_us`, `end_frame`, `missing_frame`, `input_closed` and `code`.
+The clock is the last accepted injected protocol time; reading never polls, drains events or renews host liveness.
+The liveness baseline starts at configuration and refreshes on accepted host traffic, including keepalives.
+Obsolete rows outside retained history do not refresh it. Remaining timeout is measured at that observed clock,
+not wall-clock time. Keep calling `poll(now_us)` independently of playback to observe elapsed time.
+
+`end_frame` exposes an authenticated exclusive END immediately, even when missing inputs prevent closure.
+`missing_frame` identifies the first missing row before accepted later rows or that END; `-1` means no known gap.
+`end_frame = -1` means no authenticated END has arrived.
+This lets a client distinguish recovery of final input from an open host stream. A complete clean tail sets
+`input_closed` and disables expiry with `timeout_remaining_us = -1`; it still requires ordinary playback to finish.
+Check `code` before using the observation: it reports mutation readiness, including `BUSY`, `TERMINATED` and replacement rejection.
+Unconfigured or replaced viewers report unknown timestamps, deadline and frame fields as `-1`, with input closure false.
+The SignalFish viewer adapter exposes the same observation under `relay.status().host` only for its attached playback lifetime.
+Detached adapters or replaced streams/viewers return an empty host dictionary until a fresh attachment succeeds.
+
 Startup offers and their retries obey the same monotonic clock, strict host deadline,
 active-request guard and terminal lifetime as row delivery. An offer arriving at the
 deadline expires the viewer before agreement; a retry cannot reopen a clean end.

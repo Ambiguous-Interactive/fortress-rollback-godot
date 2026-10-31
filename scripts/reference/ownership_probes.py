@@ -77,7 +77,7 @@ EXPECTED.update({
     'res://tests/unit/test_replay_checkpoints.gd': {'cached_navigation', 'bounded_cache', 'restore_failures', 'checkpoint_callbacks'},
     'res://tests/unit/test_spectator_stream.gd': {'wire_golden', 'byte_delivery', 'malformed', 'authentication', 'negotiation',
         'lifetime_and_timeout', 'clean_tail', 'bounds', 'busy', 'keepalive', 'viewer_lifetime', 'viewer_lifetime_control',
-        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates', 'initial_state_agreement', 'obsolete_rows'},
+        'policy_preserved', 'replaced_viewer', 'wide_shapes', 'offer_lifecycle', 'closed_input_duplicates', 'initial_state_agreement', 'obsolete_rows', 'host_observation'},
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
@@ -144,7 +144,7 @@ EXPECTED['res://tests/unit/test_peer_drop_ready_pressure.gd'] = {'partial_ready_
 EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused_ready_preserves_remote_donor', 'remote_donor_ready_control'}
 EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
-EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler'}
+EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler', 'manual_configuration'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',

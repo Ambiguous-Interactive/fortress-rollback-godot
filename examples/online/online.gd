@@ -195,6 +195,13 @@ func _update_status() -> void:
 		)
 		if game.suggested_delay >= 0:
 			_status.text += "\nSuggested delay for this connection: %d (R applies)" % game.suggested_delay
+		var recording: Lobby.Match.Types.RecordingStatus = game.peer.recording_status()
+		if recording.capacity_frames > 0:
+			_status.text += "\nReplay: %d/%d frames recorded | %d pending" % [recording.finalized_frames, recording.capacity_frames, recording.pending_frames]
+			if recording.omitted_frames > 0:
+				_status.text += " | %d later frames omitted" % recording.omitted_frames
+			elif recording.finalized_frames == recording.capacity_frames:
+				_status.text += " | recording limit reached"
 		if game.replay_finishing:
 			if game.replay_captured:
 				_status.text += "\nReplay final state captured. Download the replay, then leave the room."

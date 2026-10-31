@@ -30,6 +30,18 @@ class FailingGame:
 		return input_frame != 5 and super.simulate_frame(input_frame, inputs)
 
 
+class ProgressGame:
+	extends Game
+	var session_ref: WeakRef
+	var observations: Array[PackedInt32Array] = []
+
+	func save_state(saved_frame: int, writer: Game.Writer) -> Driver.SaveResult:
+		var session: Session = session_ref.get_ref()
+		var progress: Types.RecordingStatus = session.recording_status()
+		observations.append(PackedInt32Array([progress.finalized_frames, progress.pending_frames]))
+		return super.save_state(saved_frame, writer)
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["records_corrected_match", "records_metadata", "detects_changed_rules", "golden", "rejects_malformed_files",
@@ -380,6 +392,7 @@ func _protects_input_rows(context: RefCounted) -> void:
 
 
 func _bounds_recording(context: RefCounted) -> void:
+	_recording_progress(context)
 	var session: Session = _match(context, {"lag": 3, "burst": 6}, 10)
 	var replay: Replay = session.replay()
 	context.equal(replay.frame_count(), 10, "keeps only the first configured frames")
@@ -417,6 +430,8 @@ func _lockstep_confirmation_limit(context: RefCounted) -> void:
 		context.equal(driver.step(frame, [Driver.LocalInput.new(0, frame, PackedByteArray([_local(frame)]))]).code, Types.Code.OK, "lockstep advances")
 		if frame % 10 == 9:
 			context.equal(session.set_confirmation_limit(frame - 5).code, Types.Code.OK, "limit trails receipts")
+	var progress: Types.RecordingStatus = session.recording_status()
+	context.equal([progress.finalized_frames, progress.pending_frames], [25, 5], "progress excludes privately staged rows before mesh confirmation")
 	var replay: Replay = session.replay()
 	context.equal(replay.frame_count(), 25, "exports only mesh-confirmed frames")
 	context.equal(session.set_confirmation_limit(29).code, Types.Code.OK, "finalizes the staged tail")
@@ -500,3 +515,48 @@ func _status_integrity(context: RefCounted) -> void:
 		code = player.begin_advance().code if expert else player.step()
 		context.equal(code, Types.Code.DESYNC, "status corruption fails before simulation without state checksums")
 		context.equal(player.failure_frame(), 0, "status digest identifies owning row")
+
+
+# Value: protects=clients see finalized recording capacity without exporting or claiming provisional history;
+# fails_when=progress counts predictions, ignores caps, or exposes confirmation; why_new=recording bounds inspect copies only; seam=none
+func _recording_progress(context: RefCounted) -> void:
+	var session: Session = Session.new()
+	context.equal(session.has_method("recording_status"), true, "recording capacity is observable before allocating an export")
+	if not session.has_method("recording_status"):
+		return
+	var empty: RefCounted = session.call("recording_status")
+	context.equal([empty.capacity_frames, empty.finalized_frames, empty.pending_frames, empty.omitted_frames], [0, 0, 0, 0], "unconfigured recording has empty progress")
+	context.equal(session.configure(_config(false, 3)), Types.Code.OK, "configure bounded progress recording")
+	var game: ProgressGame = ProgressGame.new()
+	game.session_ref = weakref(session)
+	var driver: Driver = Driver.new(session, game)
+	context.equal(driver.step(0, [Driver.LocalInput.new(0, 0, PackedByteArray([Game.RIGHT]))]).code, Types.Code.OK, "play predicted first input")
+	var status: RefCounted = session.call("recording_status")
+	context.equal([status.capacity_frames, status.finalized_frames, status.pending_frames, status.omitted_frames], [3, 0, 1, 0], "prediction remains pending inside the recording cap")
+	context.equal(session.receive_input(1, 0, PackedByteArray([Game.LEFT])).code, Types.Code.OK, "actual correction arrives")
+	status = session.call("recording_status")
+	context.equal(status.finalized_frames, 0, "receipts cannot publish an unrepaired prefix")
+	context.equal(status.pending_frames, 1, "correction remains pending until callbacks finish")
+	context.equal(driver.recover(1).code, Types.Code.OK, "repair the recording without a new input")
+	context.equal(game.observations, [PackedInt32Array([0, 0]), PackedInt32Array([0, 1])], "SAVE callbacks observe only the committed prefix through correction")
+	for frame: int in range(1, 5):
+		var before: int = session._exposed_confirmed_high_water
+		status = driver.call("recording_status")
+		context.equal(
+			[status.finalized_frames, status.pending_frames, status.omitted_frames], [mini(frame, 3), 0, maxi(0, frame - 3)],
+			"progress follows the finalized cap and later omitted gameplay"
+		)
+		context.equal(session._exposed_confirmed_high_water, before, "progress observation cannot expose confirmed history")
+		status.capacity_frames = 999
+		context.equal(session.call("recording_status").capacity_frames, 3, "progress snapshots belong to the caller")
+		context.equal(session.receive_input(1, frame, PackedByteArray([Game.LEFT])).code, Types.Code.OK, "receive actual input before bounded step")
+		context.equal(driver.step(frame + 1, [Driver.LocalInput.new(0, frame, PackedByteArray([Game.RIGHT]))]).code, Types.Code.OK, "gameplay continues after recording fills")
+	context.equal(session.replay().frame_count(), 3, "reported finalized capacity matches the portable export")
+	session.terminate()
+	status = session.call("recording_status")
+	context.equal([status.finalized_frames, status.omitted_frames], [3, 2], "terminal recording retains its progress")
+	var disabled: Session = Session.new()
+	context.equal(disabled.configure(_config(true, 0)), Types.Code.OK, "configure recording disabled")
+	empty = disabled.call("recording_status")
+	context.equal([empty.capacity_frames, empty.finalized_frames, empty.pending_frames, empty.omitted_frames], [0, 0, 0, 0], "disabled recording has no capacity or omitted history")
+	context.state(5, session.replay().to_bytes())

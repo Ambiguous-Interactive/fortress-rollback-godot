@@ -135,6 +135,8 @@ latched terminal reason before accepting callback returns, invoking another call
 committing a restored frame or publishing validation coverage.
 Replacing an owned example match must retire its prior sessions and replay player, including retained public handles.
 Stage replacement first and refuse it during callbacks, notifications or active expert batches.
+Driver attachment and callback replacement must check the shared mutation gate on both current and target sessions.
+A callback-only guard misses expert batches paused between a completed SAVE and the remaining ADVANCE.
 Apply the same ownership check before composed service controls change clocks, stage inputs or pause/end playback.
 An inner BUSY result cannot undo those outer side effects; cross each control with host/viewer callbacks and retained expert batches.
 Cancellation may clear the public handle before the callback returns; retain that executing owner privately until it unwinds, including across repeated cancellation.

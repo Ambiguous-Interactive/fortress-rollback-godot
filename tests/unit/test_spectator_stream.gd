@@ -36,7 +36,7 @@ func cases() -> PackedStringArray:
 	return PackedStringArray(
 		["wire_golden", "byte_delivery", "malformed", "authentication", "negotiation", "lifetime_and_timeout", "clean_tail", "bounds", "busy", "keepalive",
 			"viewer_lifetime", "viewer_lifetime_control", "policy_preserved", "replaced_viewer", "wide_shapes", "offer_lifecycle", "closed_input_duplicates",
-			"initial_state_agreement", "obsolete_rows"]
+			"initial_state_agreement", "obsolete_rows", "host_observation"]
 	)
 
 
@@ -422,6 +422,7 @@ func _check_viewer_lifetime(context: RefCounted, replace_viewer: bool) -> void:
 		if replace_viewer:
 			var deadline: RefCounted = _stream(context)
 			context.equal(deadline.playback_session().configure(Fixture.new()._config()), CODE.OK, "replace viewer before old deadline")
+			context.equal(deadline.host_deadline_elapsed(1000), false, "old deadline observation cannot authorize stopping replacement viewer")
 			context.equal(deadline.poll(1000), CODE.INVALID_CONFIGURATION, "old deadline cannot terminate replacement viewer")
 			context.equal(deadline.playback_session().status().reason, CODE.OK, "old timeout preserves replacement viewer lifecycle")
 			for packet: PackedByteArray in packets:
@@ -435,6 +436,7 @@ func _check_viewer_lifetime(context: RefCounted, replace_viewer: bool) -> void:
 		else:
 			context.equal(stream.receive_packet(packets[2], 1), CODE.OK, "rejected configuration preserves stream state")
 			context.equal(stream.poll(99), CODE.OK, "rejected configuration preserves stream clock")
+			context.equal(stream.host_deadline_elapsed(101), not complete_end, "rejected replacement preserves original deadline or clean closure")
 		var fresh: PackedByteArray = _identity()
 		fresh[31] += 1
 		context.equal(stream.configure(Fixture.new()._config(), fresh, _key(), _digest(), 10, 100, 128), CODE.OK, "explicit stream configuration restores fresh ownership")
@@ -856,6 +858,7 @@ func _obsolete_rows(context: RefCounted) -> void:
 		forged[64] ^= 1
 		context.equal(stream.receive_packet(forged, 20), CODE.PROTOCOL_FAILED, "obsolete rows still authenticate their bytes")
 		context.equal(stream.receive_packet(obsolete, 20), CODE.OK, "authenticated obsolete row is inert for every transport")
+		context.equal(stream.host_status().liveness_time_us, 13 if closed_tail else 12, "obsolete input cannot fabricate recent host activity")
 		context.equal(viewer.status().current_frame, before, "obsolete traffic preserves displayed boundary")
 		context.equal(viewer.host_frontier(), 11, "obsolete traffic preserves contiguous host history")
 		context.equal(game.value, expected, "obsolete traffic never repeats simulation")
@@ -871,3 +874,72 @@ func _obsolete_rows(context: RefCounted) -> void:
 			context.equal(stream.receive_packet(obsolete, 111), CODE.OK, "obsolete retry before deadline remains inert")
 			context.equal(stream.receive_packet(obsolete, 112), CODE.PROTOCOL_FAILED, "obsolete retry cannot renew host deadline")
 			context.equal(driver.step(12, _empty()).code, CODE.TERMINATED, "real host expiry stops viewing")
+
+
+# Value: protects=host liveness and overtaking END are observable independently of playback;
+# fails_when=observation consumes time or hides missing final inputs; why_new=playback status has no wire END or host deadline; seam=none
+func _host_observation(context: RefCounted) -> void:
+	var unconfigured: RefCounted = Stream.new()
+	context.equal(unconfigured.has_method("host_status"), true, "custom transports can observe host liveness separately from playback")
+	if not unconfigured.has_method("host_status"):
+		return
+	context.equal(unconfigured.host_status().code, CODE.NOT_CONFIGURED, "no host before configuration")
+	context.equal(unconfigured.host_status().timeout_remaining_us, -1, "unconfigured host has no deadline")
+	for closes: bool in [false, true]:
+		var stream: RefCounted = _stream(context)
+		var viewer: RefCounted = stream.playback_session()
+		var initial: Dictionary = stream.host_status()
+		context.equal(initial.size(), 7, "host observation contains only documented scalar fields")
+		context.equal(initial.observed_time_us, 0, "initial protocol clock")
+		context.equal(initial.liveness_time_us, 0, "configuration establishes first liveness baseline")
+		context.equal(initial.timeout_remaining_us, 100, "full initial host deadline")
+		context.equal(initial.end_frame, -1, "no invented clean ending")
+		context.equal(initial.missing_frame, -1, "no invented input gap")
+		context.equal(stream.receive_packet(stream.encode_row(2, _row(2)), 10), CODE.OK, "receive future row without its prefix")
+		if closes:
+			context.equal(stream.receive_packet(stream.encode_end(3), 20), CODE.OK, "END overtakes missing final inputs")
+		var waiting: Dictionary = stream.host_status()
+		context.equal(waiting.code, CODE.OK, "gapped stream remains serviceable")
+		context.equal(waiting.missing_frame, 0, "first missing input remains visible")
+		context.equal(waiting.end_frame, 3 if closes else -1, "report only authenticated exclusive END")
+		context.equal(waiting.input_closed, false, "END cannot close incomplete input")
+		context.equal(stream.receive_packet(stream.encode_keepalive(), 30), CODE.OK, "heartbeat refreshes host without repairing gap")
+		context.equal(stream.poll(129), CODE.OK, "observe immediately before exact host deadline")
+		var observed: Dictionary = stream.host_status()
+		context.equal(observed.observed_time_us, 129, "observation uses accepted injected protocol clock")
+		context.equal(observed.liveness_time_us, 30, "poll does not fabricate host receipt")
+		context.equal(observed.timeout_remaining_us, 1, "one microsecond before deadline")
+		context.equal(observed.missing_frame, 0, "heartbeat does not fill missing input")
+		observed.liveness_time_us = 1000
+		context.equal(stream.host_status().liveness_time_us, 30, "returned dictionary is caller-owned")
+		context.equal(viewer.host_frontier(), -1, "reads do not accept input")
+		context.equal(viewer.status().current_frame, 0, "reads do not play input")
+		var events: Array[RefCounted] = viewer.drain_events()
+		context.equal(events.size(), 1, "observational reads preserve waiting-for-host notification")
+		if closes:
+			context.equal(stream.receive_packet(stream.encode_row(0, _row(0)), 129), CODE.OK, "late prefix before expiry remains recoverable")
+			context.equal(stream.host_status().missing_frame, 1, "next final gap is observable")
+			context.equal(stream.receive_packet(stream.encode_row(1, _row(1)), 130), CODE.OK, "last gap releases complete clean tail")
+			context.equal(stream.poll(1000), CODE.OK, "complete final input no longer needs host liveness")
+			var complete: Dictionary = stream.host_status()
+			context.equal(complete.end_frame, 3, "exclusive END remains visible during playback")
+			context.equal(complete.missing_frame, -1, "complete input clears gap")
+			context.equal(complete.input_closed, true, "last original row closes input")
+			context.equal(complete.timeout_remaining_us, -1, "clean tail has no host deadline")
+		else:
+			context.equal(stream.poll(130), CODE.PROTOCOL_FAILED, "observational reads do not renew host deadline at equality")
+			context.equal(stream.host_status().code, CODE.TERMINATED, "actual host failure is visible")
+			context.equal(stream.host_status().timeout_remaining_us, 0, "elapsed host deadline stays elapsed")
+	var replaced: RefCounted = _stream(context)
+	context.equal(replaced.receive_packet(replaced.encode_end(3), 20), CODE.OK, "retain old lifetime final target")
+	context.equal(replaced.playback_session().configure(Fixture.new()._config()), CODE.OK, "replace exposed viewer")
+	context.equal(replaced.host_status().code, CODE.INVALID_CONFIGURATION, "old host observation cannot describe replacement as connected")
+	context.equal(replaced.host_status().end_frame, -1, "replacement does not mix old END with new input")
+	context.equal(replaced.host_status().liveness_time_us, -1, "replacement does not inherit old host liveness")
+	context.equal(replaced.host_status().timeout_remaining_us, -1, "replacement does not inherit old deadline")
+	var busy: RefCounted = _stream(context)
+	context.equal(busy.receive_packet(busy.encode_row(0, _row(0)), 10), CODE.OK, "retain input before active request")
+	context.equal(busy.playback_session().begin_advance().code, CODE.READY, "open expert request")
+	context.equal(busy.host_status().code, CODE.BUSY, "observation reports active request ownership")
+	context.equal(busy.host_status().liveness_time_us, 10, "busy observation retains accepted liveness")
+	busy.playback_session().terminate()

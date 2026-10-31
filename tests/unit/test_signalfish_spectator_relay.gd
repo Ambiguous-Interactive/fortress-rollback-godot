@@ -191,6 +191,7 @@ func _playback(context: RefCounted) -> void:
 		_emit(fixture, bytes)
 		bytes[bytes.size() - 1] ^= 1
 		context.equal(fixture.relay.poll(frame + 1).received, 1, "owned SDK packet delivered through ring wrap")
+		context.equal(fixture.relay.status().host.liveness_time_us, frame + 1, "SDK caller can observe actual accepted host activity")
 		context.equal(fixture.driver.step(frame, _empty()).code, Types.Code.OK, "viewer plays finalized host row")
 		for player: int in 2:
 			expected = expected * 3 + Fixture.new()._row(frame)[player][0] + frame
@@ -198,6 +199,8 @@ func _playback(context: RefCounted) -> void:
 	_emit(fixture, fixture.stream.encode_end(12))
 	context.equal(fixture.relay.poll(13).received, 1, "END delivered")
 	context.equal(fixture.relay.status().received_bytes, 0, "retained bytes drained")
+	context.equal(fixture.relay.status().host.end_frame, 12, "SDK observation preserves authenticated final target")
+	context.equal(fixture.relay.status().host.timeout_remaining_us, -1, "complete tail disables host expiry without implying playback completion")
 	fixture.relay.detach()
 
 
@@ -353,6 +356,8 @@ func _lifetimes(context: RefCounted) -> void:
 				var callback: Callable = fixture.client.get_signal_connection_list("game_data_binary_received")[0].callable
 				fixture.relay.detach()
 				callback.call(HOST, 1, row)
+		if event in ["replace_stream", "replace_session"]:
+			context.equal(fixture.relay.status().host, {}, "stale bridge cannot describe replacement viewer host: " + event)
 		context.equal(fixture.relay.poll(1).code, Relay.Code.INCOMPATIBLE_MODE if event == "budget" else Relay.Code.WRONG_STATE, "old SDK lifetime cannot deliver " + event)
 		if event == "replace_session":
 			context.equal(fixture.stream.playback_session().status().lifecycle, Types.Lifecycle.RUNNING, "independently configured viewer survives stale bridge")

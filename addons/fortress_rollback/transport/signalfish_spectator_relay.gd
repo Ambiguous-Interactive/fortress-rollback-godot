@@ -254,7 +254,8 @@ func status() -> Dictionary:
 		"received_bytes": _received_bytes,
 		"accept_pending": not _accept.is_empty(),
 		"rejected": _rejected,
-		"last_receive_code": _last_receive
+		"last_receive_code": _last_receive,
+		"host": _stream.host_status() if _stream != null and _stream.playback_session() == _session and _session._config == _source_config else {}
 	}
 
 

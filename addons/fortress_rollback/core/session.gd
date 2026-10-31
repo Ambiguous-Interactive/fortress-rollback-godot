@@ -650,6 +650,26 @@ func diagnostic_trace() -> Dictionary:
 func replay() -> Replay:
 	if _replay == null:
 		return null
+	var prefix: Replay = _replay.owned_prefix(_replay_prefix_frames())
+	_exposed_confirmed_high_water = maxi(_exposed_confirmed_high_water, prefix.frame_count() - 1)
+	return prefix
+
+
+## Owned scalar progress without copying replay bytes or exposing confirmed history.
+## Finalized frames equal the exportable prefix, including confirmation and correction fences.
+## Available during callbacks and after termination; disabled/unconfigured recording returns zero fields.
+func recording_status() -> Types.RecordingStatus:
+	var result: Types.RecordingStatus = Types.RecordingStatus.new()
+	if _replay == null:
+		return result
+	result.capacity_frames = _config.replay_max_frames
+	result.finalized_frames = _replay_prefix_frames()
+	result.pending_frames = mini(_current, result.capacity_frames) - result.finalized_frames
+	result.omitted_frames = maxi(0, _current - result.capacity_frames)
+	return result
+
+
+func _replay_prefix_frames() -> int:
 	var frames: int = mini(_current, _confirmed() + 1)
 	if _replay_repair_frame >= 0:
 		frames = mini(frames, _replay_repair_frame)
@@ -657,9 +677,7 @@ func replay() -> Replay:
 		var incorrect: int = queue.first_incorrect_frame()
 		if incorrect >= 0:
 			frames = mini(frames, incorrect)
-	var prefix: Replay = _replay.owned_prefix(maxi(0, frames))
-	_exposed_confirmed_high_water = maxi(_exposed_confirmed_high_water, prefix.frame_count() - 1)
-	return prefix
+	return clampi(frames, 0, _replay.frame_count())
 
 
 ## Stage simulated receipts before lockstep can discard them. Public export separately gates on
