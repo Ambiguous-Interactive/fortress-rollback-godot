@@ -165,6 +165,7 @@ Use `make test-focus SUITE=res://tests/unit/x.gd` for one suite and
 `make test-changed` for suites reaching files changed since `origin/main`.
 The launcher's repeatable `--suite` option selects suite paths; `--filter` matches case names only.
 Inspect the selected case inventory before claiming a subsystem passed; a matching word can cover only a few unrelated cases.
+When tightening configuration ownership, sweep constructor setup in related suites: attach expected owners before opening the batch whose exclusion is under test.
 Deliver the full suite. Process isolation, worker order and cache verification
 are described in [infrastructure evidence](references/infrastructure.md#faster-local-iteration).
 

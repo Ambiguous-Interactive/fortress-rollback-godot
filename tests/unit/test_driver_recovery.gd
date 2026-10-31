@@ -211,10 +211,14 @@ func _expert_parity(context: RefCounted) -> void:
 	var driver: RefCounted = _predict(context, driven, driver_game)
 	manual_game.trace.clear()
 	driver_game.trace.clear()
+	var alternate: RefCounted = Driver.new(manual, manual_game)
 	var advance: RefCounted = manual.begin_recovery()
 	context.equal(advance.code, Types.Code.READY, "expert recovery opens shared batch")
 	context.equal(driver.recover(3).code, Types.Code.OK, "driver recovery")
-	context.equal(Driver.new(manual, Fixture.Game.new()).recover(3).code, Types.Code.BUSY, "external batch remains caller-owned")
+	var pending: RefCounted = advance.batch.next_request()
+	context.equal(alternate.recover(3).code, Types.Code.BUSY, "external batch remains caller-owned")
+	context.equal(advance.batch.next_request(), pending, "rejected recovery preserves the expert request")
+	context.equal(Driver.new(manual, manual_game).recover(3).code, Types.Code.NOT_CONFIGURED, "constructor cannot attach during an expert batch")
 	while true:
 		var request: RefCounted = advance.batch.next_request()
 		if request == null:
