@@ -422,3 +422,50 @@ copied observers omit each endpoint's capture, or corrupt exactly one serialized
 terminal-checksum byte; all three controls reject the claimed terminal evidence.
 This combines resumed recording with final-state verification on both engine pins.
 It does not add source recovery-only recording or transport send-refusal coverage.
+
+### Manual and callback recording equivalence
+
+The asymmetric and pressure gates also execute the Godot session through its manual
+request API. Each changing/neutral history runs with and without final-boundary
+capture, twice in fresh processes on each engine pin. The manual consumer calls
+`poll`, `submit_local_input`, `begin_advance`, `begin_recovery` and
+`begin_capture_replay_boundary`, then acknowledges each actual SAVE, LOAD and ADVANCE.
+It does not delegate request execution to `FortressDriver`.
+
+The independent original-history models require the same complete callback records,
+applied input/status values, service attempts, final state, exported rows/checksums
+and decoded playback as the driver. A separate manual-call inventory checks every
+advance result, prediction stall, recovery and capture. Recovery must keep boundary
+257 without submitting another local sample. Mutations reject missing calls,
+changed result codes, an extra recovery advance and altered post-wrap exports.
+This comparison covers external-input core sessions; it does not add network-event
+or outer peer-facade equivalence claims.
+
+### Relay recording under sustained send refusal
+
+`tests/unit/test_relay_recording.gd` runs three production byte sessions and relay
+adapters through the SDK's public binary-send boundary. Injected SDK clients refuse
+sends until every fourth, fifth or sixth service turn, respectively. Changing and
+neutral histories each advance 257 original frames, through two default input-ring
+capacities. Each endpoint must stall; only changing input may require rollback.
+
+The test requires every refused FIFO head to retry with identical envelope bytes.
+It compares corrected confirmed snapshots while pressure is active, then releases
+pressure and services final receipts through recovery only. Each endpoint must
+export all 257 original finalized rows, with no skipped history. Every recorded
+checksum and every decoded playback boundary must match the independently computed
+original state. Final checksum capture and validation must leave gameplay at 257.
+
+Run this gate with the native unit runner on either pinned engine:
+
+```sh
+python3 scripts/run_godot_tests.py --godot godot \
+  --suite res://tests/unit/test_relay_recording.gd
+```
+
+The schedule has a 1,000-turn gameplay bound and 256 final recovery turns; each turn
+advances injected time by one millisecond. Final service includes the endpoint's
+200 ms retry interval. This is native injected SDK refusal, not actual SignalFish
+server sockets or browser transport. Those release gates and unchanged-source
+recovery-only recording remain open in #256; #253 preserves the source checksum
+ordering discrepancy.

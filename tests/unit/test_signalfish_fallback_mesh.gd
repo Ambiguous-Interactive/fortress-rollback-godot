@@ -27,7 +27,7 @@ func run_case(_name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _build(context: RefCounted, index: int) -> Dictionary:
+func _build(context: RefCounted, index: int, replay_frames: int = 0, client_override: Client = null) -> Dictionary:
 	var helper: RefCounted = M.new()
 	var membership: RefCounted = helper._membership(context, ROSTER[index], ROSTER)
 	var config: M.C = M.C.new()
@@ -37,6 +37,7 @@ func _build(context: RefCounted, index: int) -> Dictionary:
 	config.input_width = 4
 	config.neutral_input = PackedByteArray([0, 0, 0, 0])
 	config.max_snapshot_bytes = 24
+	config.replay_max_frames = replay_frames
 	config.storage_budget_bytes = 1048576
 	var game: M.Game = M.Game.new(3)
 	var handshake: M.H.Options = M.H.Options.new()
@@ -47,7 +48,7 @@ func _build(context: RefCounted, index: int) -> Dictionary:
 	context.equal(membership.configure_peer(peer, config, game, handshake, M.I.Options.new(), lifecycle), F.Code.OK, "configure real mesh peer")
 	var tokens: Array[PackedByteArray] = [helper._bytes(33, 16), helper._bytes(34, 16)]
 	context.equal(peer.begin(0, tokens), F.Code.OK, "begin real mesh peer")
-	var client: Client = Client.new()
+	var client: Client = Client.new() if client_override == null else client_override
 	client.local = ROSTER[index]
 	var transport: Transport = Transport.new()
 	transport.local = ROSTER[index]
@@ -76,9 +77,27 @@ func _build(context: RefCounted, index: int) -> Dictionary:
 	options.restore_after_us = 10
 	var fallback: F = F.new()
 	context.equal(fallback.configure(direct, relay, membership, adapter, peer, options), F.Code.OK, "configure mixed coordinator")
-	return {"fallback": fallback, "direct": direct, "relay": relay, "membership": membership, "peer": peer, "game": game,
-		"client": client, "mesh": mesh, "adapter": adapter, "config": sdk_config, "info": info, "transport": transport, "confirmed": -1, "loads": 0, "fault_loads": 0, "comparisons": 0,
-		"saved": {}, "fault_comparisons": 0, "session_id": membership.handshake_message().session_id}
+	return {
+		"fallback": fallback,
+		"direct": direct,
+		"relay": relay,
+		"membership": membership,
+		"peer": peer,
+		"game": game,
+		"client": client,
+		"mesh": mesh,
+		"adapter": adapter,
+		"config": sdk_config,
+		"info": info,
+		"transport": transport,
+		"confirmed": -1,
+		"loads": 0,
+		"fault_loads": 0,
+		"comparisons": 0,
+		"saved": {},
+		"fault_comparisons": 0,
+		"session_id": membership.handshake_message().session_id
+	}
 
 
 func _exercise(context: RefCounted, switch_paths: bool) -> PackedByteArray:

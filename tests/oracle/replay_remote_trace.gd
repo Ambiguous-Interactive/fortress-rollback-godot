@@ -1,10 +1,13 @@
 extends "res://tests/oracle/replay_session_trace.gd"
 
+const Manual = preload("res://tests/oracle/replay_manual.gd")
+
 
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if (
-		args.size() != 1
+		args.size() not in [1, 2]
+		or (args.size() == 2 and args[1] != "--expert")
 		or (
 			args[0]
 			not in [
@@ -28,6 +31,8 @@ func _initialize() -> void:
 	):
 		_fail("expected remote recording mode")
 		return
+	var expert: bool = args.size() == 2
+	var manuals: Array[RefCounted] = [Manual.new(), Manual.new()]
 	var sessions: Array[Session] = []
 	var games: Array[Game] = []
 	var drivers: Array[Driver] = []
@@ -70,7 +75,7 @@ func _initialize() -> void:
 			var first: int = games[peer].records.size()
 			var before: int = games[peer].state[0]
 			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(peer, round, _sample(peer, round, neutral))]
-			var step_code: int = drivers[peer].step(round, samples).code
+			var step_code: int = manuals[peer].step(sessions[peer], games[peer], round, samples) if expert else drivers[peer].step(round, samples).code
 			if pressure and args[0].ends_with("-withhold") and step_code == Types.Code.PREDICTION_STALL:
 				_fail("pressure prediction-window stall: peer=%d turn=%d frames=[%d,%d]" % [peer, turn, games[0].state[0], games[1].state[0]])
 				return
@@ -126,7 +131,7 @@ func _initialize() -> void:
 					return
 				count += 1
 			var first: int = games[peer].records.size()
-			var code: int = drivers[peer].recover(rounds).code
+			var code: int = manuals[peer].recover(sessions[peer], games[peer], rounds) if expert else drivers[peer].recover(rounds).code
 			if code != Types.Code.OK:
 				_fail("asymmetric recovery failed: %d" % code)
 				return
@@ -136,9 +141,13 @@ func _initialize() -> void:
 			recovery.append({"peer": peer, "rows": count, "before": rounds, "after": int(games[peer].state[0]), "requests": requests})
 	var peers: Array[Dictionary] = []
 	for peer: int in 2:
-		if terminal and drivers[peer].capture_replay_boundary().code != Types.Code.OK:
-			_fail("asymmetric terminal capture failed")
+		if terminal and expert and manuals[peer].capture(sessions[peer], games[peer]) != Types.Code.OK:
+			_fail("expert terminal capture failed")
 			return
+		if not expert:
+			if terminal and drivers[peer].capture_replay_boundary().code != Types.Code.OK:
+				_fail("asymmetric terminal capture failed")
+				return
 		var recording: Replay = sessions[peer].replay()
 		var decoded: Replay = Replay.new()
 		if decoded.decode(recording.to_bytes()) != Replay.DecodeCode.OK or decoded.to_bytes() != recording.to_bytes():
@@ -177,6 +186,8 @@ func _initialize() -> void:
 	var result: Dictionary = {"format": 1, "peers": peers, "deliveries": deliveries}
 	if asymmetric:
 		result.recovery = recovery
+	if expert:
+		result.expert_calls = [manuals[0].calls, manuals[1].calls]
 	print("FORTRESS_REPLAY_RESULT " + JSON.stringify(result))
 	quit(0)
 
