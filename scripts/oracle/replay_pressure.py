@@ -98,7 +98,9 @@ def expected(rust, neutral=False, terminal=False):
     if rust:
         count = sum(sum(group) for group in pending) + sum(group[0] for group in pending)
         recovery = [dict(messages=count, frames=[rounds, rounds], errors=[
-            'Invalid Request: missing local input for one or more players'] * 2)]
+            'Invalid Request: missing local input for one or more players'] * 2,
+            frontiers=[dict(peer=slot, current_before=rounds, current_frame=rounds, confirmed_frame=rounds - 1, receipt_frame=rounds - 1,
+                            last_inputs=rows[-1], callback_count=len(peer['records'])) for slot, peer in enumerate(peers)])]
     else:
         for slot, peer in enumerate(peers):
             first = len(peer['records'])

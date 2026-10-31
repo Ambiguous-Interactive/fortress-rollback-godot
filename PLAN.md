@@ -114,9 +114,11 @@ Integration controllers validate ownership, retained input and time before stagi
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
 Callback Leave retires outstanding game work and fences canceled startup before SDK owners are physically released.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
+Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.
 Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Recording progress separates finalized exports, pending correction/confirmation and gameplay omitted beyond the configured cap without copying replay bytes.
+The spectator example also shows its viewed recording limit, advance warning and omitted viewed frames while playback continues.
 Spectator host observations separate authenticated liveness and pending final-row recovery from playback progress.
 Explicit finalized-boundary capture adds FRRP v6 terminal checksums; ordinary v4/v5 playback retains its historical coverage.
 Owned replay prefixes only trim existing storage; they cannot pad missing gameplay or checksum bytes into portable evidence.

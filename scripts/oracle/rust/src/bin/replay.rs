@@ -201,7 +201,8 @@ fn main() -> Result<(), String> {
     if arguments.len() == 1 && ["--remote-recording", "--remote-recording-withhold", "--remote-recording-neutral",
         "--remote-recording-long", "--remote-recording-neutral-long", "--remote-recording-asymmetric",
         "--remote-recording-pressure", "--remote-recording-pressure-neutral", "--remote-recording-pressure-withhold",
-        "--remote-recording-asymmetric-neutral", "--remote-recording-asymmetric-withhold"].contains(&arguments[0].as_str()) {
+        "--remote-recording-asymmetric-neutral", "--remote-recording-asymmetric-withhold",
+        "--remote-recording-asymmetric-final-missing", "--remote-recording-asymmetric-neutral-final-missing"].contains(&arguments[0].as_str()) {
         println!("{}", remote::run(&arguments[0])?);
         return Ok(());
     }
