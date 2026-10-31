@@ -20,7 +20,7 @@ direct and relay paths; verify the retried original bytes after later keys chang
 Valid foreign session, sender or connection identities must be discarded with bounded
 work, owned byte/token release and rejection accounting. Check shared session clocks,
 confirmation and control publication too; endpoint rejection alone does not prove
-inert facade behavior. Fence reusable SDK callback owners by their connection lifetime.
+inert facade behavior. Fence SDK callbacks by connection lifetime and nested status/expiry observations by captured session and configuration.
 
 Server-restart witnesses must terminate the owned process handle and verify its
 terminal exit. Restart the same verified binary/configuration on the same endpoint;
