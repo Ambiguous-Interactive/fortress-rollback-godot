@@ -986,7 +986,20 @@ func _buffer_pressure_feedback(context: RefCounted) -> void:
 			"terminate":
 				scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
 			"finish":
-				context.equal(scene.demo.viewer.finish_host(), Types.Code.OK, "full tail no longer accepts new input")
+				context.equal(scene.demo.finish_host(), Types.Code.OK, "request clean completion from the host")
+				for _tick: int in 20:
+					if scene.demo.is_host_finished:
+						break
+					scene.demo.tick(Game.RIGHT)
+				context.equal(scene.demo.is_host_finished, true, "host recovery reaches a fixed final boundary")
+				context.equal(scene.demo.viewer.playback_status().input_closed, false, "full buffer holds END behind unsent final rows")
+				var final_rows: int = scene.demo.host.loop.game.frame - scene.demo.next_host_frame
+				context.equal(final_rows > 0, true, "completion still needs original host rows")
+				for _row: int in final_rows:
+					context.equal(scene.demo.step_viewer(), Types.Code.OK, "release exactly enough slots for the final rows")
+				context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "publisher and stream deliver the final rows and END")
+				context.equal(scene.demo.viewer.playback_status().input_closed, true, "authenticated END closes the complete host tail")
+				context.equal(scene.demo.viewer.playback_status().available_frames, 0, "closed-tail suppression is exercised while the buffer is still full")
 		scene._update_label()
 		context.equal(scene._label.text.contains("Input buffer full"), false, "recovered or closed playback clears receive prompt")
 		context.equal(scene.demo.host.loop.game.frame, host_frame, "viewer action does not advance host")
