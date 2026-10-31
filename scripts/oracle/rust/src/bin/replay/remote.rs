@@ -130,13 +130,25 @@ pub fn run(mode: &str) -> Result<Value, String> {
     let mut recovery = Vec::new();
     if asymmetric {
         let mut delivered = 0;
-        for _ in 0..4 { delivered += exchange(&buffers); for session in &mut sessions { session.poll_remote_clients(); } }
+        for _ in 0..4 {
+            if !mode.ends_with("-final-missing") { delivered += exchange(&buffers); }
+            for session in &mut sessions { session.poll_remote_clients(); }
+        }
         let mut errors = Vec::new();
-        for session in &mut sessions {
+        let mut frontiers = Vec::new();
+        for (peer, session) in sessions.iter_mut().enumerate() {
+            let before = session.current_frame().as_i32();
             let error = session.advance_frame().err().ok_or("source unexpectedly allowed recovery without a local sample")?;
             errors.push(error.to_string());
+            let last_inputs = session.confirmed_inputs_for_frame(fortress_rollback::Frame::new(rounds as i32 - 1))
+                .map_err(|_| format!("source final original input unavailable: peer={peer} frame={}", rounds - 1))?;
+            frontiers.push(json!({"peer":peer,"current_before":before,"current_frame":session.current_frame().as_i32(),
+                "confirmed_frame":session.confirmed_frame().as_i32(),
+                "receipt_frame":session.diagnostic_player_receipt_frame((1 - peer).into()).ok_or("missing source receipt frontier")?.as_i32(),
+                "last_inputs":last_inputs,"callback_count":records[peer].len()}));
         }
-        recovery.push(json!({"messages":delivered,"frames":states.iter().map(|state|state[0]).collect::<Vec<_>>(), "errors":errors }));
+        recovery.push(json!({"messages":delivered,"frames":states.iter().map(|state|state[0]).collect::<Vec<_>>(),
+            "errors":errors,"frontiers":frontiers}));
     }
     let mut peers = Vec::new();
     for (peer, session) in sessions.into_iter().enumerate() {

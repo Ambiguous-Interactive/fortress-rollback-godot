@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add spectator replay progress and a warning before its recording limit. Continued viewing shows omitted frames and explains where the saved replay ends.
+
 - Add recording progress through session, driver and peer APIs. The online example shows finalized, pending and omitted gameplay at the recording limit.
 
 - Add spectator host observations for liveness, remaining timeout and missing final rows, including through the SignalFish viewer adapter.
