@@ -26,11 +26,13 @@ class ObservedGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["recovery", "sustained_faults", "reset", "scene"])
+	return PackedStringArray(["recovery", "sustained_faults", "reset", "scene", "scene_delay_actions"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"scene_delay_actions":
+			_scene_delay_actions(context)
 		"recovery":
 			_recovery(context)
 		"sustained_faults":
@@ -205,3 +207,42 @@ func _reference(count: int) -> Array[PackedByteArray]:
 		driver.step(frame, inputs)
 		result.append(simulation.canonical_bytes())
 	return result
+
+
+# Value: protects=peer scene delay prompts and keys after termination; fails_when=historical sessions advertise live actions;
+# why_new=match tests do not inspect scene text or handlers; seam=actual scene and peer lifetime
+func _scene_delay_actions(context: RefCounted) -> void:
+	var scene: PackedScene = load("res://examples/peer/peer.tscn")
+	var node: Node = scene.instantiate()
+	node.call("_ready")
+	var game: Match = node._match
+	for phase: String in ["starting", "live", "stopped", "reset", "recovered", "match_failure"]:
+		if phase in ["live", "recovered"]:
+			for tick: int in 50:
+				game.tick(PackedInt32Array([0, 0]))
+		elif phase == "stopped":
+			context.equal(game.sessions[0].close(game.now_us), Types.Code.OK, "actual local peer closure")
+		elif phase == "reset":
+			var reset: InputEventKey = InputEventKey.new()
+			reset.pressed = true
+			reset.keycode = KEY_R
+			node.call("_unhandled_key_input", reset)
+		elif phase == "match_failure":
+			game.tick(PackedInt32Array([16, 0]))
+			context.equal(game.failure, I.Code.INVALID_ARGUMENT, "actual example input failure")
+			node._delay_result = " | Preserve previous feedback."
+		var actionable: bool = phase in ["live", "recovered"]
+		node.call("_update_label")
+		context.equal(node._label.text.contains("raise peer input delay"), actionable, phase + " peer delay prompt readiness")
+		var before: PackedInt32Array = PackedInt32Array([game.sessions[0].input_delay(0), game.sessions[1].input_delay(1)])
+		var feedback: String = node._delay_result
+		for key: Key in [KEY_1, KEY_2]:
+			var event: InputEventKey = InputEventKey.new()
+			event.keycode = key
+			event.pressed = true
+			node.call("_unhandled_key_input", event)
+		var after: PackedInt32Array = PackedInt32Array([game.sessions[0].input_delay(0), game.sessions[1].input_delay(1)])
+		context.equal(after, PackedInt32Array([before[0] + 1, before[1] + 1]) if actionable else before, phase + " peer delay keys readiness")
+		if not actionable:
+			context.equal(node._delay_result, feedback, phase + " unavailable keys preserve feedback")
+	node.free()

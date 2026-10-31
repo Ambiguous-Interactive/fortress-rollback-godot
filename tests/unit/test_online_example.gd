@@ -577,8 +577,7 @@ func _delay_actions(context: RefCounted) -> void:
 				context.equal(game_match.finish_replay(), Types.Code.OK, "actual finish stops new gameplay")
 			"fresh_room":
 				node.call("_leave")
-				lobby.game_match = Match.new()
-				lobby.state = "connecting"
+				_fresh_room(context, node, game_match)
 			"stale_suggestion":
 				game_match.suggested_delay = 2
 				game_match.tick(100 * 16667, 0)
@@ -604,7 +603,54 @@ func _delay_actions(context: RefCounted) -> void:
 		else:
 			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay, phase + " stale keys preserve delay")
 		node.free()
+		lobby.disconnect_room()
 		for fixture: Dictionary in fixtures:
 			fixture.driver.detach()
 			fixture.mesh.free()
 			fixture.client.free()
+
+
+# SDK resource doubles exercise the real Create/Join boundary without installing the optional SDK.
+func _fresh_room(context: RefCounted, node: Node, previous: Match) -> void:
+	var client: String = "extends Node\n"
+	for signal_name: String in ["protocol_info", "room_joined", "lobby_state_changed", "protocol_error", "connection_failed", "authentication_error",
+		"room_join_failed", "server_error", "reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]:
+		client += "signal " + signal_name + "\n"
+	client += "func set_auto_reconnect(_enabled: bool) -> void: pass\nfunc configure(_config: Object) -> Error: return OK\n"
+	client += "func connect_to_server() -> Error: return OK\nfunc close(_code: int, _reason: String) -> Error: return OK\n"
+	client += "func get_room_code() -> String: return \"\"\nfunc get_players() -> Array: return []\n"
+	var config: String = "extends RefCounted\n"
+	for property: String in ["app_id", "endpoint_url", "protocol_version", "supported_transports", "supported_topologies", "game_data_format",
+		"decode_msgpack_payloads", "auto_poll"]:
+		config += "var " + property + "\n"
+	var sources: Array[String] = [client, config, "extends Node\nvar multiplayer_peer_factory: Callable\nvar peer_connection_factory: Callable\n"]
+	var paths: Array[String] = [Lobby.SDK_PATH, Lobby.CONFIG_PATH, Lobby.MESH_PATH]
+	var originals: Array[Resource] = []
+	var doubles: Array[GDScript] = []
+	for index: int in paths.size():
+		originals.append(load(paths[index]) if ResourceLoader.exists(paths[index]) else null)
+		var script: GDScript = GDScript.new()
+		script.source_code = sources[index]
+		context.equal(script.reload(), OK, "SDK resource double compiles")
+		script.take_over_path(paths[index])
+		doubles.append(script)
+	for join_room: bool in [false, true]:
+		node.endpoint.text = "ws://fixture"
+		node.player_name.text = "Player"
+		node.room_code.text = "ROOM01" if join_room else ""
+		var old_match: Match = node.controller.game_match
+		old_match.suggested_delay = 5
+		var button: Button = node.join_button if join_room else node.create_button
+		button.pressed.emit()
+		var replacement: Match = node.controller.game_match
+		context.equal(node.controller.state, "connecting", "production room connection starts")
+		context.equal(replacement != old_match and replacement != previous, true, "production room connection replaces the match")
+		context.equal(replacement.suggested_delay, -1, "production replacement discards stale recommendation")
+		context.equal(replacement.local_slot, -1, "new room has no seated player before startup")
+		context.equal(node._status.text.contains("= raises") or node._status.text.contains("R applies"), false, "fresh room has no delay actions")
+		if not join_room:
+			node.call("_leave")
+	for index: int in paths.size():
+		doubles[index].take_over_path("")
+		if originals[index] != null:
+			originals[index].take_over_path(paths[index])
