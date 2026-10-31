@@ -79,6 +79,8 @@ func _physics_process(_delta: float) -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
+	if not _can_change_delay():
+		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_EQUAL, KEY_KP_ADD]:
 		var code: int = controller.game_match.raise_input_delay()
 		controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
@@ -89,6 +91,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			controller.message = "No suggested delay to apply."
 		else:
 			controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+
+
+func _can_change_delay() -> bool:
+	var game: Lobby.Match = controller.game_match
+	return (
+		controller.state == "playing"
+		and game.has_started
+		and game.failure.is_empty()
+		and not game.replay_finishing
+		and game.local_slot >= 0
+		and game.peer.network_status().state == "running"
+		and game.peer.status().lifecycle == Lobby.Match.Types.Lifecycle.RUNNING
+	)
 
 
 func _exit_tree() -> void:
@@ -167,9 +182,7 @@ func _leave() -> void:
 func _update_status() -> void:
 	var connected: bool = controller.client != null
 	var game: Lobby.Match = controller.game_match
-	var can_finish_replay: bool = (
-		controller.state == "playing" and game.record_replay and not game.replay_finishing and game.has_started and game.failure.is_empty()
-	)
+	var can_finish_replay: bool = controller.state == "playing" and game.record_replay and not game.replay_finishing and game.has_started and game.failure.is_empty()
 	watch_button.disabled = connected
 	inspect_button.disabled = connected
 	create_button.disabled = connected
@@ -194,11 +207,19 @@ func _update_status() -> void:
 	if game.local_slot >= 0:
 		var state: Lobby.Match.Types.Status = game.peer.status()
 		_status.text += (
-			"\nYou: player %d | frame %d | confirmed %d | delay %d (= raises) | stalls %d | event %s"
-			% [game.local_slot + 1, state.current_frame, state.confirmed_frame, game.peer.input_delay(game.local_slot), game.stalls, game.latest_event]
+			"\nYou: player %d | frame %d | confirmed %d | delay %d%s | stalls %d | event %s"
+			% [
+				game.local_slot + 1,
+				state.current_frame,
+				state.confirmed_frame,
+				game.peer.input_delay(game.local_slot),
+				" (= raises)" if _can_change_delay() else "",
+				game.stalls,
+				game.latest_event
+			]
 		)
 		if game.suggested_delay >= 0:
-			_status.text += "\nSuggested delay for this connection: %d (R applies)" % game.suggested_delay
+			_status.text += "\nSuggested delay for this connection: %d%s" % [game.suggested_delay, " (R applies)" if _can_change_delay() else ""]
 		var recording: Lobby.Match.Types.RecordingStatus = game.peer.recording_status()
 		if recording.capacity_frames > 0:
 			_status.text += "\nReplay: %d/%d frames recorded | %d pending" % [recording.finalized_frames, recording.capacity_frames, recording.pending_frames]

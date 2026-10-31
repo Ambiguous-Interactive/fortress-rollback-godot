@@ -229,6 +229,8 @@
 
 ### Fixed
 
+- Fix delay prompts and shortcuts outside active online or local peer gameplay. Retain match observations and recovery instructions after failure or leaving.
+
 - Fix driver callback replacement during unfinished expert batches so the original game state stays attached.
 
 - Fix stale spectator host deadline checks after replacing the exposed viewer.

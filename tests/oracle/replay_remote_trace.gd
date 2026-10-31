@@ -10,6 +10,8 @@ func _initialize() -> void:
 			not in [
 				"--remote-recording-pressure",
 				"--remote-recording-pressure-neutral",
+				"--remote-recording-pressure-terminal",
+				"--remote-recording-pressure-terminal-neutral",
 				"--remote-recording-pressure-withhold",
 				"--remote-recording-asymmetric",
 				"--remote-recording-asymmetric-terminal",

@@ -48,10 +48,21 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		KEY_X:
 			_match.inject_desync()
 		KEY_1, KEY_2:
+			if not _can_change_delay():
+				return
 			var player: int = 0 if event.keycode == KEY_1 else 1
 			var code: int = _match.raise_input_delay(player)
 			_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged (code %d)" % [player + 1, code]
 	_update_label()
+
+
+func _can_change_delay() -> bool:
+	if _match.failure != Match.I.Code.OK or _match.sessions.size() != 2:
+		return false
+	for session: Peer in _match.sessions:
+		if session.network_status().state != "running" or session.status().lifecycle != Peer.Types.Lifecycle.RUNNING:
+			return false
+	return true
 
 
 func _buttons(left: Key, right: Key, up: Key, down: Key) -> int:
@@ -62,9 +73,10 @@ func _buttons(left: Key, right: Key, up: Key, down: Key) -> int:
 func _update_label() -> void:
 	_label.text = ("Two peer sessions | actual encoded bytes in this process | failure: %d\n"
 		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets | X: wrong game rules\n"
-		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s | 1/2: raise peer input delay%s\n"
+		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s%s%s\n"
 		+ "Sent %d | Dropped %d | Delivered %d | Queued %d / 256") % [
-		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned), _delay_result,
+		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
+		" | 1/2: raise peer input delay" if _can_change_delay() else "", _delay_result,
 		_match.sent, _match.dropped, _match.delivered, _match.queued_packets()]
 	for player: int in range(_match.sessions.size()):
 		var session: Peer = _match.sessions[player]

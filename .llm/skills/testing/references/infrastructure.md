@@ -29,6 +29,8 @@ do not supersede CI failures for the same source candidate. A failed rerun
 must never leave a stale success receipt beside logs from its replacement.
 Finalize fixtures before declaring a verification snapshot frozen. An intervening
 edit restarts affected fresh-process and source-inventory checks.
+Coordinate one source freeze across parallel agents when launchers fingerprint an entire
+helper directory, even when their selected workloads are unrelated.
 Read actual runtime settings after automation initializes; requested profile
 values can be overridden before the behavior under test executes.
 Validate fresh service startup as well as warm state: asynchronous catalogs may

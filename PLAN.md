@@ -33,6 +33,8 @@ Local development contracts and evidence entry points:
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
+- [Online delay shortcuts and action prompts gated by live gameplay](docs/online-example.md#install-and-run).
+- [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
 - [Native/browser diagnostic file viewer, including saved callback failure names and frames](docs/diagnostic-viewer.md).

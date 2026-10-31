@@ -200,11 +200,11 @@ def observe(binary, engine, root, output, execute):
                 standalone_rejections=refused, serialized_controls=serialized, terminal=observe_terminal(engine, root, output, execute))
 
 
-def observe_terminal(engine, root, output, execute):
+def observe_terminal(engine, root, output, execute, pressure=False):
     """Recovered complete histories require an actual final SAVE and decoded terminal validation."""
     combined = {}
     for neutral in (False, True):
-        mode = '--remote-recording-asymmetric-terminal' + ('-neutral' if neutral else '')
+        mode = '--remote-recording-' + ('pressure' if pressure else 'asymmetric') + '-terminal' + ('-neutral' if neutral else '')
         observations = []
         for repeat in (1, 2):
             stdout, stderr = execute([str(engine), '--headless', '--path', str(root), '--script',
@@ -215,25 +215,29 @@ def observe_terminal(engine, root, output, execute):
             if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
                 raise ValueError('invalid asymmetric terminal completion')
             actual = json.loads(lines[0])
-            validate_terminal(actual, neutral)
+            validate_terminal(actual, neutral, pressure)
             observations.append(actual)
         compare(observations[0], observations[1], 'asymmetric.terminal.repeat')
         combined['neutral' if neutral else 'corrected'] = observations[0]
     from replay_corruption import observe as observe_corruption
-    serialized = observe_corruption(engine, root, output, execute, combined['corrected'], terminal=True)
-    bypassed = terminal_capture_controls(engine, root, output, execute)
+    serialized = observe_corruption(engine, root, output, execute, combined['corrected'], terminal=True, pressure=pressure)
+    bypassed = terminal_capture_controls(engine, root, output, execute, pressure)
     return dict(repeat_equal=True, observations=combined, serialized_controls=serialized, capture_controls=bypassed)
 
 
-def validate_terminal(actual, neutral=False):
-    wanted = expected(False, neutral, terminal=True)
+def validate_terminal(actual, neutral=False, pressure=False):
+    from replay_pressure import expected as pressure_expected
+    wanted = (pressure_expected if pressure else expected)(False, neutral, terminal=True)
     for peer in (0, 1):
         compare(actual['peers'][peer]['terminal_checksum'], wanted['peers'][peer]['terminal_checksum'],
                 f'asymmetric.terminal.peers[{peer}].terminal_checksum')
     compare(actual, wanted, 'asymmetric.terminal')
 
 
-def terminal_capture_controls(engine, root, output, execute):
+def terminal_capture_controls(engine, root, output, execute, pressure=False):
+    from replay_pressure import expected as pressure_expected
+    expectation = pressure_expected if pressure else expected
+    mode = '--remote-recording-' + ('pressure' if pressure else 'asymmetric') + '-terminal'
     original = (root / 'tests/oracle/replay_remote_trace.gd').read_text()
     needle = 'if terminal and drivers[peer].capture_replay_boundary().code != Types.Code.OK:'
     if original.count(needle) != 1:
@@ -246,19 +250,19 @@ def terminal_capture_controls(engine, root, output, execute):
             script = Path(directory) / f'peer-{peer}.gd'
             script.write_text(original.replace(needle, needle.replace('terminal and', f'terminal and peer != {peer} and')))
             stdout, stderr = execute([str(engine), '--headless', '--path', str(root), '--script',
-                                      'res://' + script.relative_to(root).as_posix(), '--', '--remote-recording-asymmetric-terminal'],
-                                     output / f'asymmetric-terminal-skipped-{peer}-godot.log')
+                                      'res://' + script.relative_to(root).as_posix(), '--', mode],
+                                     output / f'{mode[2:]}-skipped-{peer}-godot.log')
             lines = [line.removeprefix('FORTRESS_REPLAY_RESULT ') for line in stdout.splitlines()
                      if line.startswith('FORTRESS_REPLAY_RESULT ')]
             if len(lines) != 1 or any(marker in stdout + stderr for marker in ('SCRIPT ERROR:', 'ERROR:', 'Parse Error:')):
                 raise ValueError('invalid skipped terminal capture completion')
             actual = json.loads(lines[0])
-            wanted = expected(False, terminal=True)
-            wanted['peers'][peer] = expected(False)['peers'][peer]
+            wanted = expectation(False, terminal=True)
+            wanted['peers'][peer] = expectation(False)['peers'][peer]
             wanted['peers'][peer]['terminal_checksum'] = ''
             compare(actual, wanted, 'asymmetric.capture_bypass')
             try:
-                validate_terminal(actual)
+                validate_terminal(actual, pressure=pressure)
             except ValueError as error:
                 if not str(error).startswith(f'asymmetric.terminal.peers[{peer}].terminal_checksum:'):
                     raise ValueError(f'wrong skipped terminal capture rejection: {error}') from error

@@ -56,3 +56,6 @@ agreement, reset, invalid controls and scene loading. Real WebRTC transport,
 connection discovery and membership repair remain separate work.
 `tests/unit/test_peer_example_lifecycle.gd` exercises visible interruption,
 short-partition recovery, terminal long partitions, restart and real game desync.
+
+Delay shortcuts and their prompt are available only while both peer sessions run.
+Reset remains available after a match stops; retained observations still describe the previous gameplay.

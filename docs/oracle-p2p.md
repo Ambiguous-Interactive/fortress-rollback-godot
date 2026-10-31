@@ -197,6 +197,31 @@ retransmission difference, not a delay-change rule: any resend from frame `D`
 would show it. The rapid case therefore raises only after frame zero is
 acknowledged.
 
+## Asymmetric recovery across queue wrap
+
+`mesh_3_asymmetric_recovery_wrap` runs three real upstream and Godot peers for
+132 changing-input rounds, then one forward repair round. Receiver zero gets
+player one's traffic promptly, while player two's traffic waits three rounds.
+Each release delivers the latest accumulated input packet before its older
+packets, exercising an actual multi-row recovery batch and stale overlaps.
+The supported prediction window is eight; every peer must advance on all 133
+attempts. The scenario explicitly disables checksum exchange through its
+lifecycle settings. It does not change the source or production defaults.
+
+Both runtimes must execute repeated LOAD corrections, including a correction
+at or beyond frame 128, and retain at least 129 independently reconstructed
+canonical confirmed boundaries per peer. Ordered requests, packets, confirmation,
+inputs and statuses still pass the complete existing comparison. Additional
+controls remove wrapped LOAD evidence and corrupt a corrected canonical boundary;
+each must fail at its declared diagnostic. The existing source/tool identities,
+raw compressed-packet revalidation and fresh-process repeats apply unchanged.
+
+This advances [#61](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/61)
+and [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59).
+Ordinary queue wrap does not prove forced full-capacity reclamation, retained-floor
+side-slot behavior, all queue profiles or complete partition/healing acceptance.
+Those issue requirements remain open.
+
 ## Lifecycle observations
 
 Eight additional two-peer scenarios compare real quality reports, echoed replies,
