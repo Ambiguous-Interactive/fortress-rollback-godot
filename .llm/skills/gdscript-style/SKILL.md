@@ -81,6 +81,8 @@ returns through normal failure acknowledgement and test that guards release.
 
 Keep owned diagnostic snapshots out of internal scalar hot paths. A narrow value getter can preserve current-read timing without copying or exposing mutable state.
 
+For bounded native file reads, pass the captured checked length to `get_buffer`; a fresh metadata query can observe growth after the cap check.
+
 ## File Hygiene
 
 - Soft target: keep `.gd` files under 300 lines, same as the harness cap.

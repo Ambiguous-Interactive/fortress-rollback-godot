@@ -183,12 +183,13 @@ func _native_file(path: String) -> void:
 	if _is_scrubbing or viewer._is_busy():
 		return
 	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
+	var length: int = file.get_length() if file != null else 0
 	if file == null:
 		viewer.message = "Could not open the replay file."
-	elif file.get_length() > Viewer.MAX_BYTES:
+	elif length > Viewer.MAX_BYTES:
 		viewer.message = Viewer.FILE_SIZE_MESSAGE
 	else:
-		viewer.open_bytes(file.get_buffer(file.get_length()))
+		viewer.open_bytes(file.get_buffer(length))
 	_refresh()
 
 

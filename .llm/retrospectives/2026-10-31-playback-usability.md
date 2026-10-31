@@ -11,6 +11,7 @@ The driver ownership audit and asymmetric recording inspection found no new demo
 | Finding | Evidence | Action |
 | --- | --- | --- |
 | Detached scene callbacks do not establish window lifecycle wiring. | The first manual `get_window()` fixture returned null; deferred real-tree probes pass eight attachment/removal/reentry assertions on both engine pins. | Keep bounded-import handler tests in the existing suite; use actual entered-tree signal evidence for wiring. |
+| A file size check does not bound a later fresh size query. | Both engine pins report a grown length through an already open reader; both native viewers queried size twice. | Cache the checked size in both import paths; retain decoder and failure-preservation controls. |
 | Punctuation keys beside colons can be misread in rendered help. | The source-rendered `,:` and `.:` image was read as other keys; the explicit-key label control fails before repair. | Spell out Comma and Period in the scene, regenerate its image, and extend the existing user-copy guidance. |
 | A paused input buffer can be full while viewing is still recoverable. | Actual local publication fills 128 rows without terminating; C frees capacity without advancing the host. | Show recovery controls before history failure; suppress them for closed or stopped playback. |
 
@@ -18,6 +19,7 @@ The existing [UI evidence guidance](../skills/testing/references/browser-integra
 and previous [timeline retrospective](2026-10-31-playback-and-setup.md) already cover live-tree evidence.
 No new overlapping skill is needed; the existing user-copy skill now covers punctuation key labels.
 The invalid fixture is not production red evidence.
+The file-growth probe demonstrates a controlled two-handle engine interleaving, not a concurrent race inside the import method.
 Baseline capability tests fail only for the absent handler, capacity fields and warning.
 
 ## Verification and limits

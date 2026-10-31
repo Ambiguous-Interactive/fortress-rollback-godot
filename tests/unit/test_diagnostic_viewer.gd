@@ -208,6 +208,31 @@ func _scene_controls(context: RefCounted) -> void:
 	else:
 		node._web_file([Marshalls.raw_to_base64(bytes), ""])
 	context.equal(node.viewer.status().rows_consumed, 0, "file import starts paused")
+	node.viewer.step()
+	var original: PackedByteArray = node.viewer.game.canonical_bytes()
+	var oversized: PackedByteArray = PackedByteArray()
+	oversized.resize(Viewer.MAX_BYTES + 1)
+	var rejected: Array[PackedByteArray] = [oversized, PackedByteArray([0, 1, 2])]
+	var messages: PackedStringArray = PackedStringArray(["Diagnostic file exceeds the 1 MiB limit.", "Could not open diagnostic JSON."])
+	for index: int in rejected.size():
+		fixture_code = OK
+		if not OS.has_feature("web"):
+			var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+			if file == null:
+				fixture_code = FileAccess.get_open_error()
+			else:
+				file.store_buffer(rejected[index])
+				file.flush()
+				fixture_code = file.get_error()
+				file.close()
+		context.equal(fixture_code, OK, "refused import fixture is prepared")
+		if not OS.has_feature("web"):
+			node._native_file(path)
+		else:
+			node._web_file([Marshalls.raw_to_base64(rejected[index]), ""])
+		context.equal(node.viewer.message, messages[index], "native size and decoder failures remain distinct")
+		context.equal(node.viewer.status().rows_consumed, 1, "refused file preserves selected playback")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), original, 1, "refused file preserves original canonical state")
 	var removal_code: int = OK
 	var fixture_absent: bool = true
 	if not OS.has_feature("web"):
