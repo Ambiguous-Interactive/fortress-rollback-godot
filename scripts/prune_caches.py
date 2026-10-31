@@ -23,12 +23,15 @@ Dry run is the default: `--apply` is required to delete anything.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import fnmatch
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -67,6 +70,62 @@ CITATION = re.compile(r'\.cache/[A-Za-z0-9_./{},*\-]*')
 BRACE = re.compile(r'\{([^}]*)\}')
 
 
+class Diagnostics:
+    """Optional stderr phase reports, including heartbeats during slow subprocesses."""
+
+    def __init__(self, enabled: bool = False) -> None:
+        self.enabled = enabled
+        self.phase_name = 'starting'
+        self.started = time.monotonic()
+        self.counts: dict[str, int] = {}
+        self.lock = threading.RLock()
+        self.stopped = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def emit(self, event: str) -> None:
+        if self.enabled:
+            with self.lock:
+                print('prune: ' + json.dumps({'phase': self.phase_name, 'event': event,
+                      'elapsed_seconds': round(time.monotonic() - self.started, 3), **self.counts}), file=sys.stderr, flush=True)
+
+    def heartbeat(self) -> None:
+        while not self.stopped.wait(1.0):
+            self.emit('progress')
+
+    def __enter__(self):
+        if self.enabled:
+            self.emit('started')
+            self.thread = threading.Thread(target=self.heartbeat, daemon=True)
+            self.thread.start()
+        return self
+
+    def __exit__(self, *_):
+        self.stopped.set()
+        if self.thread is not None:
+            self.thread.join()
+
+    def count(self, **values: int) -> None:
+        if self.enabled:
+            with self.lock:
+                for key, value in values.items():
+                    self.counts[key] = self.counts.get(key, 0) + value
+
+    @contextmanager
+    def phase(self, name: str):
+        with self.lock:
+            self.phase_name = name
+            self.started = time.monotonic()
+            self.counts = {}
+            self.emit('started')
+        try:
+            yield
+        except BaseException:
+            self.emit('failed')
+            raise
+        else:
+            self.emit('completed')
+
+
 class Plan:
     """One removal the tool intends to make."""
 
@@ -80,7 +139,7 @@ class Plan:
         return {'path': str(self.path), 'scope': self.scope, 'reason': self.reason, 'bytes': self.bytes}
 
 
-def tree_bytes(path: Path) -> int:
+def tree_bytes(path: Path, diagnostics: Diagnostics | None = None) -> int:
     """Size of a file, or of every file under a directory, in bytes."""
     if path.is_symlink() or path.is_file():
         try:
@@ -89,6 +148,8 @@ def tree_bytes(path: Path) -> int:
             return 0
     total = 0
     for root, _, files in os.walk(path):
+        if diagnostics:
+            diagnostics.count(fallback_directories=1, fallback_files=len(files))
         for name in files:
             try:
                 total += os.lstat(os.path.join(root, name)).st_size
@@ -97,27 +158,38 @@ def tree_bytes(path: Path) -> int:
     return total
 
 
-def measure(paths: list[Path]) -> dict[Path, int]:
+def measure(paths: list[Path], diagnostics: Diagnostics | None = None) -> dict[Path, int]:
     """Size of every path in bytes, measured in one pass.
 
     Nested paths are collapsed to the outermost one so a parent and its
     child are never counted twice.
     """
     tops: list[Path] = []
+    top_set: set[Path] = set()
     for path in sorted(paths, key=lambda item: len(item.parts)):
-        if any(path == top or path.is_relative_to(top) for top in tops):
+        if diagnostics:
+            diagnostics.count(candidate_paths=1)
+        # Ancestors are bounded by path depth, unlike a scan of every earlier candidate.
+        if path in top_set or any(parent in top_set for parent in path.parents):
             continue
         tops.append(path)
+        top_set.add(path)
     sizes: dict[Path, int] = {}
     if not tops:
         return sizes
+    if diagnostics:
+        diagnostics.count(measurement_roots=len(tops))
     payload = ''.join(f'{path}\0' for path in tops)
     try:
         result = subprocess.run(['du', '-sb', '--files0-from=-'], input=payload,
                                 capture_output=True, text=True)
     except OSError:
         for path in tops:
-            sizes[path] = tree_bytes(path)
+            if diagnostics:
+                diagnostics.count(fallback_paths=1)
+            sizes[path] = tree_bytes(path, diagnostics)
+        if diagnostics:
+            diagnostics.count(measured_paths=len(sizes), measured_bytes=sum(sizes.values()))
         return sizes
     for line in result.stdout.splitlines():
         size, _, name = line.partition('\t')
@@ -125,11 +197,17 @@ def measure(paths: list[Path]) -> dict[Path, int]:
             continue
         sizes[Path(name)] = int(size)
     for path in tops:
-        sizes.setdefault(path, tree_bytes(path))
+        # dict.setdefault evaluates its default even when du already supplied the size.
+        if path not in sizes:
+            if diagnostics:
+                diagnostics.count(fallback_paths=1)
+            sizes[path] = tree_bytes(path, diagnostics)
+    if diagnostics:
+        diagnostics.count(measured_paths=len(sizes), measured_bytes=sum(sizes.values()))
     return sizes
 
 
-def tracked_files(root: Path) -> list[Path]:
+def tracked_files(root: Path, diagnostics: Diagnostics | None = None) -> list[Path]:
     """Tracked files plus machine-local notes; both can cite evidence."""
     files: list[Path] = []
     try:
@@ -153,10 +231,13 @@ def tracked_files(root: Path) -> list[Path]:
             files.extend(sorted(notes.rglob('*')))
     # Ignore rules describe what to exclude, not evidence. A pattern such as
     # `/.cache/session-*/` would otherwise protect every session directory.
-    return [path for path in files if path.name != '.gitignore']
+    result = [path for path in files if path.name != '.gitignore']
+    if diagnostics:
+        diagnostics.count(inventory_paths=len(result))
+    return result
 
 
-def cited_paths(root: Path) -> set[Path]:
+def cited_paths(root: Path, files: list[Path] | None = None, diagnostics: Diagnostics | None = None) -> set[Path]:
     """Absolute paths named by a tracked file or a machine-local note.
 
     Brace alternatives and glob wildcards are expanded so a citation like
@@ -164,11 +245,16 @@ def cited_paths(root: Path) -> set[Path]:
     artifacts it names.
     """
     found: set[Path] = set()
-    for path in tracked_files(root):
+    for path in tracked_files(root) if files is None else files:
         try:
-            text = path.read_text(encoding='utf-8', errors='ignore')
+            data = path.read_bytes()
+            text = data.decode('utf-8', errors='ignore')
         except OSError:
+            if diagnostics:
+                diagnostics.count(unreadable_paths=1)
             continue
+        if diagnostics:
+            diagnostics.count(read_files=1, read_bytes=len(data))
         for match in CITATION.findall(text):
             cleaned = match.rstrip('.,;:)')
             alternatives = [cleaned]
@@ -187,6 +273,8 @@ def cited_paths(root: Path) -> set[Path]:
                             found.add(child)
                 else:
                     found.add(absolute)
+    if diagnostics:
+        diagnostics.count(cited_paths=len(found))
     return found
 
 
@@ -224,7 +312,7 @@ def age_days(path: Path) -> float:
         return 0.0
 
 
-def plan_workspace(root: Path, ttl_days: float, protected: set[Path]) -> list[Plan]:
+def plan_workspace(root: Path, ttl_days: float, protected: set[Path], diagnostics: Diagnostics | None = None) -> list[Plan]:
     """Prunable entries under the repository's gitignored `.cache/` tree."""
     plans: list[Plan] = []
     cache = root / '.cache'
@@ -244,7 +332,7 @@ def plan_workspace(root: Path, ttl_days: float, protected: set[Path]) -> list[Pl
                 if sub in PRUNABLE_REFERENCE:
                     plans.extend(plan_entries(path / sub, ttl_days, protected, 'workspace', 'run output'))
 
-    plans.extend(redundant_archives(cache, protected))
+    plans.extend(redundant_archives(cache, protected, diagnostics))
     return plans
 
 
@@ -307,7 +395,7 @@ def plan_entries(directory: Path, ttl_days: float, protected: set[Path], scope: 
     return plans
 
 
-def redundant_archives(cache: Path, protected: set[Path]) -> list[Plan]:
+def redundant_archives(cache: Path, protected: set[Path], diagnostics: Diagnostics | None = None) -> list[Plan]:
     """Archives whose extracted sibling already exists.
 
     CI uploads keep both the archive and its extraction; the archive is the
@@ -319,6 +407,8 @@ def redundant_archives(cache: Path, protected: set[Path]) -> list[Plan]:
         if not base.is_dir():
             continue
         for root, dirs, files in os.walk(base):
+            if diagnostics:
+                diagnostics.count(archive_directories=1, archive_files=len(files))
             dirs[:] = [name for name in dirs if name != 'target']
             for name in files:
                 if not name.endswith('.zip'):
@@ -448,31 +538,50 @@ def main() -> int:
     parser.add_argument('--scratch-ttl-hours', type=float, default=24.0, help='keep scratch entries for this many hours')
     parser.add_argument('--apply', action='store_true', help='actually delete (default: dry run)')
     parser.add_argument('--json', action='store_true', help='emit a machine-readable report')
+    parser.add_argument('--diagnostics', action='store_true', help='emit phase timings and counters to stderr every second')
     args = parser.parse_args()
 
-    scopes = tuple(args.scope) if args.scope else ('workspace', 'scratch', 'container')
-    root = args.root.resolve()
-    protected = protection_set(cited_paths(root))
+    with Diagnostics(args.diagnostics) as diagnostics:
+        scopes = tuple(args.scope) if args.scope else ('workspace', 'scratch', 'container')
+        root = args.root.resolve()
+        with diagnostics.phase('inventory'):
+            files = tracked_files(root, diagnostics)
+        with diagnostics.phase('citations'):
+            cited = cited_paths(root, files, diagnostics)
+        with diagnostics.phase('protection'):
+            protected = protection_set(cited)
+            diagnostics.count(cited_paths=len(cited), protected_paths=len(protected))
 
-    plans: list[Plan] = []
-    if 'workspace' in scopes:
-        plans.extend(plan_workspace(root, args.session_ttl_days, protected))
-    if 'scratch' in scopes:
-        plans.extend(plan_scratch(args.scratch_root.resolve(), args.scratch_ttl_hours))
-    if 'container' in scopes:
-        plans.extend(plan_container(Path.home()))
+        plans: list[Plan] = []
+        if 'workspace' in scopes:
+            with diagnostics.phase('workspace'):
+                plans.extend(plan_workspace(root, args.session_ttl_days, protected, diagnostics))
+                diagnostics.count(planned_paths=len(plans))
+        if 'scratch' in scopes:
+            with diagnostics.phase('scratch'):
+                additions = plan_scratch(args.scratch_root.resolve(), args.scratch_ttl_hours)
+                diagnostics.count(planned_paths=len(additions))
+                plans.extend(additions)
+        if 'container' in scopes:
+            with diagnostics.phase('container'):
+                additions = plan_container(Path.home())
+                diagnostics.count(planned_paths=len(additions))
+                plans.extend(additions)
 
-    unique: dict[Path, Plan] = {}
-    for plan in plans:
-        unique.setdefault(plan.path, plan)
-    plans = list(unique.values())
-    sizes = measure([plan.path for plan in plans])
-    for plan in plans:
-        plan.bytes = sizes.get(plan.path, 0)
+        unique: dict[Path, Plan] = {}
+        for plan in plans:
+            unique.setdefault(plan.path, plan)
+        plans = list(unique.values())
+        with diagnostics.phase('measure'):
+            sizes = measure([plan.path for plan in plans], diagnostics)
+            for plan in plans:
+                plan.bytes = sizes.get(plan.path, 0)
 
-    skipped = 0
-    if args.apply:
-        skipped = apply_plans(plans)
+        skipped = 0
+        if args.apply:
+            with diagnostics.phase('apply'):
+                skipped = apply_plans(plans)
+                diagnostics.count(planned_paths=len(plans), skipped_paths=skipped)
 
     summary = report(plans, args.apply)
     summary['skipped'] = skipped
