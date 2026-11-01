@@ -360,6 +360,9 @@ const FallbackFailure = preload("res://tests/unit/test_signalfish_fallback_failu
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
 const AdapterReentry = preload("res://tests/unit/test_signalfish_adapter_reentry.gd")
 func _ready() -> void:
+\tcall_deferred("_run_suites")
+
+func _run_suites() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, DiagnosticLifetime, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
