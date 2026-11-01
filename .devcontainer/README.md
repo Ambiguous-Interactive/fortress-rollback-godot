@@ -54,6 +54,12 @@ checksums are not pinned for the latest-tracking tools.
 "Latest at build" means *newest when that image layer was built* — Docker
 caches the layer, so a plain rebuild will not fetch a newer CLI.
 
+Reference Rust builds share their target directories and disable Cargo incremental
+compilation to reduce build-cache growth. Dependency artifacts still remain cached;
+clean builds can take longer. Existing incremental artifacts are not removed by
+this setting, and the target directories do not have a hard size limit. Use
+`make disk` and `make prune` to inspect machine-local growth.
+
 Because the global npm root is writable by the container user, updating in
 place is the fast path and needs no rebuild:
 

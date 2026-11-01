@@ -24,7 +24,8 @@ CASES = [
 def rust_environment():
     environment = os.environ.copy()
     environment.update(CARGO_HOME=str(CACHE / 'cargo'), RUSTUP_HOME=str(CACHE / 'rustup'),
-                       CARGO_TARGET_DIR=str(CACHE / 'target'), PROPTEST_RNG_SEED='1', PROPTEST_RNG_ALGORITHM='xs')
+                       CARGO_TARGET_DIR=str(CACHE / 'target'), CARGO_INCREMENTAL='0',
+                       PROPTEST_RNG_SEED='1', PROPTEST_RNG_ALGORITHM='xs')
     # User flags could silently enable unreviewed cfg/features or change the oracle.
     for key in ('RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER'):
         environment.pop(key, None)

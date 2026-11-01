@@ -25,10 +25,15 @@ from unittest.mock import patch
 
 import signalfish_build_server as builder
 import signalfish_live_probe as probe
+import run as reference_run
 from fetch import CACHE
 
 
 class SharedTargetTest(unittest.TestCase):
+    def test_reference_builds_disable_incremental_artifacts(self):
+        with patch.dict(os.environ, {'CARGO_INCREMENTAL': '1'}):
+            self.assertEqual(reference_run.rust_environment()['CARGO_INCREMENTAL'], '0')
+
     def test_target_is_keyed_by_revision(self):
         first = builder.shared_target('a' * 40)
         second = builder.shared_target('b' * 40)
