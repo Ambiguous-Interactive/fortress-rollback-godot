@@ -9,8 +9,11 @@ def fixture_environment() -> dict[str, str]:
     environment.update(
         GIT_CONFIG_GLOBAL=os.devnull,
         GIT_CONFIG_NOSYSTEM="1",
-        GIT_CONFIG_COUNT="1",
+        GIT_ATTR_NOSYSTEM="1",
+        GIT_CONFIG_COUNT="2",
         GIT_CONFIG_KEY_0="core.excludesFile",
         GIT_CONFIG_VALUE_0=os.devnull,
+        GIT_CONFIG_KEY_1="core.attributesFile",
+        GIT_CONFIG_VALUE_1=os.devnull,
     )
     return environment

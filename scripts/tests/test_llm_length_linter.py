@@ -117,6 +117,18 @@ class StagedModeTest(unittest.TestCase):
                 staged = checker.git_staged_files(self.root)
         self.assertEqual([p.as_posix() for p in staged], [".llm/good.md"])
 
+    # Value: protects=fixture staging ignores caller attributes; fails_when=XDG encoding rejects UTF-8; why_new=ignore control misses attributes; seam=none
+    def test_staging_ignores_caller_xdg_attributes(self):
+        config = self.root / "caller-config"
+        (config / "git").mkdir(parents=True)
+        (config / "git/attributes").write_text(".llm/* working-tree-encoding=UTF-16\n", encoding="utf-8")
+        with patch.dict(os.environ, XDG_CONFIG_HOME=str(config)):
+            with patch.dict(os.environ, fixture_environment(), clear=True):
+                self._git("init")
+                self._git("add", ".llm/good.md")
+                staged = checker.git_staged_files(self.root)
+        self.assertEqual([p.as_posix() for p in staged], [".llm/good.md"])
+
     def test_git_staged_files_on_unborn_head(self):
         # First-commit scenario: files staged, no commit exists yet.
         self._git("init")

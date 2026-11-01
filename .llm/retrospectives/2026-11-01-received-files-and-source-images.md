@@ -46,6 +46,8 @@ fixture suites. The durable procedure extends
 An XDG ignore control also reproduces ignored fixture inputs before repair;
 the environment now overrides `core.excludesFile`. Engine self-mutation has its
 own qualification rejection control, and fixture subprocesses have deadlines.
+The matching XDG attribute control reproduces unwanted UTF-16 conversion;
+fixture Git now overrides `core.attributesFile` and disables system attributes.
 
 The click lesson extends
 [browser integration evidence](../skills/testing/references/browser-integration.md).
