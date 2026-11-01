@@ -12,6 +12,7 @@ The trigger is a reproduced user-flow defect plus new integration acceptance cel
 | --- | --- | --- |
 | Native import guards did not protect asynchronous browser completion. | `examples/online/replay_scene.gd` guarded `_native_file` but not `_web_file`; the new `dropped_file` completion matrix fails main at recording length, frame and canonical state. | Apply the same drag/busy guard before success or error handling; extend the existing browser testing procedure. |
 | A stale local server build receipt can name the wrong source pin. | The default local build named `9c2fb8f`; current launcher requires `8cbf5d9`. The source-bound launcher refuses it; corrected runs use the verified current build. | Preserve the existing identity gate and correct the invocation; do not relax tool validation or rebuild without evidence. |
+| The new pressure label lacked room-budget regression coverage. | Automatic review found the omission in `test_signalfish_webrtc_probe.py`; selecting three rooms fails at 1,500 versus 540 seconds after adding its data row. | Extend the existing label table; preserve the launcher and every watchdog duration. |
 
 ## Verification
 
