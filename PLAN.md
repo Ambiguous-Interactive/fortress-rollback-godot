@@ -108,14 +108,17 @@ Internal readiness checks avoid owned sample copies; public retained-input reads
 They can also export owned finalized input rows for confirmed effects and spectator publication without recording.
 Replay failure evidence identifies the first failed game request and comparison domain.
 The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
+It can export original input history before the displayed frame, retaining existing checksum evidence without generating new validation.
 It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
+The local peer example prepares replacement sessions before retiring the old match and preserves active shared game operations during reset.
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
 Online setup guards SDK callbacks and fences cancellation before accepting a new match or transport.
 Unsafe SDK plan/directive reentry during identity validation or plan conversion stops the old mesh before SDK consumption and requires a fresh session.
 The local spectator can catch up through its currently buffered playable rows without changing its viewing delay or normal rate.
+Follow live resumes viewing with zero delay and bounded catch-up to the latest contiguous received input.
 Callback Leave retires outstanding game work and fences canceled startup before SDK owners are physically released.
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.

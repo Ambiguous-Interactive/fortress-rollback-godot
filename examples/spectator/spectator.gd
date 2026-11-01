@@ -13,6 +13,7 @@ var demo: Demo = Demo.new()
 var _code: int = Types.Code.OK
 var _replay_notice: String = ""
 var _label: Label
+var _follow_live_button: Button
 
 
 func _ready() -> void:
@@ -21,6 +22,12 @@ func _ready() -> void:
 	_label.size.x = 712
 	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_label)
+	_follow_live_button = Button.new()
+	_follow_live_button.name = "FollowLive"
+	_follow_live_button.text = "Follow live (F)"
+	_follow_live_button.focus_mode = Control.FOCUS_NONE
+	_follow_live_button.pressed.connect(_follow_live)
+	add_child(_follow_live_button)
 	_code = demo.start()
 	_update_label()
 
@@ -48,6 +55,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		demo.step_viewer()
 	elif event.keycode == KEY_C:
 		demo.catch_up_viewer()
+	elif event.keycode == KEY_F:
+		_follow_live()
 	elif event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
 		var delay: int = demo.viewer.playback_policy()[0]
 		demo.set_viewing_delay(maxi(0, delay + (-1 if event.keycode == KEY_BRACKETLEFT else 1)))
@@ -66,6 +75,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	_update_label()
 
 
+func _follow_live() -> void:
+	demo.follow_live()
+	_update_label()
+
+
 func _process(_delta: float) -> void:
 	var size: Vector2 = get_viewport_rect().size
 	var content_height: float = _board_top() + 150.0 + 125.0 + 24.0
@@ -75,6 +89,7 @@ func _process(_delta: float) -> void:
 
 
 func _update_label() -> void:
+	_follow_live_button.disabled = demo.viewer == null or demo._mutation_code() == Types.Code.BUSY or demo.viewer._mutation_code() != Types.Code.OK
 	if demo.host == null or demo.viewer == null:
 		_label.text = "Could not start: code %d" % _code
 		return
@@ -105,7 +120,7 @@ func _update_label() -> void:
 		buffer_notice = "Input buffer full. P: resume or C: catch up to receive more.\n"
 	_label.text = (
 		"Delayed spectator | %s\n" % state
-		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\n"
+		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
 		+ "E: end host\n[: less delay | ]: more delay\nComma: slower catch-up | Period: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
@@ -117,6 +132,8 @@ func _update_label() -> void:
 		+ "Two local views. Live spectator networking is not connected."
 		+ ("\n" + _replay_notice if not _replay_notice.is_empty() else "")
 	)
+
+	_follow_live_button.position = Vector2(24, _label.position.y + _label.get_minimum_size().y + 8)
 
 
 func _recording_feedback() -> String:
@@ -156,7 +173,7 @@ func _export_replay() -> void:
 
 
 func _board_top() -> float:
-	return _label.position.y + _label.get_minimum_size().y + 16.0
+	return _label.position.y + _label.get_minimum_size().y + _follow_live_button.get_minimum_size().y + 24.0
 
 
 func _draw() -> void:

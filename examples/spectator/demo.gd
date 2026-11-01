@@ -157,6 +157,20 @@ func set_viewing_delay(frames: int) -> int:
 	return viewer.set_playback(frames, policy[1], policy[2])
 
 
+## Resume with zero viewing delay and catch-up threshold, at the maximum bounded catch-up rate.
+## Later ticks play every delivered contiguous row; this action never steps either game or skips history.
+func follow_live() -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	var capacity: int = viewer.playback_status().capacity_frames
+	var code: int = viewer.set_playback(0, 0, capacity)
+	if code == Types.Code.OK:
+		is_paused = false
+	return code
+
+
 ## Changes the maximum playback steps per tick while preserving delay, threshold and pause.
 ## The viewer rejects speeds outside one through its configured queue capacity.
 func set_catchup_speed(frames_per_tick: int) -> int:

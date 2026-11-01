@@ -48,7 +48,10 @@ and both arenas keep agreeing because the added frames reach the other peer as o
 The example reuses the offline integer simulation, complete snapshots and
 presentation ledger. It draws reversible pulses from corrected state after
 successful steps. Reset preserves the selected latency/loss/reorder settings
-and releases any active packet block.
+and releases any active packet block. Retained handles to the old peers stop permanently.
+An invalid replacement preserves the current match. While either peer owns a callback,
+completion notification or expert request, reset and delay changes return BUSY;
+nested ticks and desync injection leave the match unchanged.
 
 The headless suite `tests/unit/test_peer_example.gd` exercises actual loss,
 reordering, a prediction stall, partition healing, full canonical state
@@ -56,6 +59,8 @@ agreement, reset, invalid controls and scene loading. Real WebRTC transport,
 connection discovery and membership repair remain separate work.
 `tests/unit/test_peer_example_lifecycle.gd` exercises visible interruption,
 short-partition recovery, terminal long partitions, restart and real game desync.
+`tests/unit/test_peer_example_ownership.gd` covers retained old handles, rejected
+replacement and shared callback/expert ownership of the example controls.
 
 Delay shortcuts and their prompt are available only while both peer sessions run.
 Reset remains available after a match stops; retained observations still describe the previous gameplay.

@@ -225,6 +225,17 @@ retained within the checkpoint budget. **Next checkpoint** can return to that
 ending after backward inspection, even between five-second boundaries.
 These controls become available as playback builds its cache. They finish paused and cannot skip a playback failure.
 Drag the timeline to choose a recorded moment, then release to navigate and pause.
+Press **Download prefix** to save original inputs before the displayed frame as `fortress-replay-prefix-SOURCE-FRAME.frrp`.
+The source fingerprint distinguishes prefixes from different recordings.
+Native runs save under `user://`; browsers download the file. Reopening it reproduces that recorded prefix.
+The export keeps original metadata and existing checksum evidence, including a v6 checksum at the selected ending.
+It generates no new checksum and does not claim that unchecked history was validated.
+After playback fails, you can still save the history preceding the failed boundary.
+Seeking, timeline dragging and active game requests disable this action.
+At frame zero, export requires an original v6 checksum that makes the empty prefix readable.
+
+![Replay prefix download at the displayed frame](images/replay-prefix.png)
+
 The time display shows elapsed and total recorded minutes and seconds at 60 frames per second.
 The timeline follows playback; dragging pauses it. You can select a new destination during a seek.
 Enter a frame number and press **Go** for an exact forward or backward destination. Navigation

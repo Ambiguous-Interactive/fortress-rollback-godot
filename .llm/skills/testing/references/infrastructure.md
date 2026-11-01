@@ -31,6 +31,7 @@ Finalize fixtures before declaring a verification snapshot frozen. An intervenin
 edit restarts affected fresh-process and source-inventory checks.
 Coordinate one source freeze across parallel agents when launchers fingerprint an entire
 helper directory, even when their selected workloads are unrelated.
+Inventory-contract tests also need frozen declarations and registries; importing expected cases before an author adds cases creates a mixed-source failure.
 Read actual runtime settings after automation initializes; requested profile
 values can be overridden before the behavior under test executes.
 Validate fresh service startup as well as warm state: asynchronous catalogs may
@@ -101,6 +102,7 @@ layout settles. Keep native/Web assertion inventories equal when platform UI dif
 `make test-godot` runs each suite in its own fresh-process pair across CPUs, slowest first from `.cache/tests/durations.json`;
 suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
 selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
+Direct launcher calls default to 30 seconds; pass `--timeout 180` when selecting long stress or full-duration replay cases, as the full Makefile target does.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
 Concurrent native launchers must use distinct `--results` paths: a focused review

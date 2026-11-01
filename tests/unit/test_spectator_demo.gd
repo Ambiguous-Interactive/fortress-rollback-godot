@@ -27,6 +27,8 @@ func cases() -> PackedStringArray:
 			"catchup_control",
 			"catchup_once",
 			"catchup_once_control",
+			"follow_live",
+			"follow_live_controls",
 			"lost_history",
 			"idle_host_liveness",
 			"clean_host_end",
@@ -50,7 +52,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		_corrected_viewing(context)
 	elif name == "pause_and_catchup":
 		_pause_and_catchup(context)
-	elif name in ["catchup_speed", "catchup_control", "catchup_once", "catchup_once_control"]:
+	elif name in ["catchup_speed", "catchup_control", "catchup_once", "catchup_once_control", "follow_live", "follow_live_controls"]:
 		call("_" + name, context)
 	elif name == "lost_history":
 		_lost_history(context)
@@ -524,7 +526,7 @@ func _restart_busy(context: RefCounted) -> void:
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
 	for actor: String in ["host", "viewer", "batch", "game_callback"]:
-		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed"]:
+		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live"]:
 			var demo: Demo = Demo.new()
 			context.equal(demo.start(), Types.Code.OK, "start guarded service")
 			demo.is_paused = true
@@ -1004,3 +1006,104 @@ func _buffer_pressure_feedback(context: RefCounted) -> void:
 		context.equal(scene._label.text.contains("Input buffer full"), false, "recovered or closed playback clears receive prompt")
 		context.equal(scene.demo.host.loop.game.frame, host_frame, "viewer action does not advance host")
 		scene.free()
+
+
+# Value: protects=resume near live input without manual delay edits; fails_when=follow skips history or ignores ownership;
+# why_new=one-shot catch-up preserves pause and deliberate delay; seam=none
+func _follow_live(context: RefCounted) -> void:
+	var empty: Demo = Demo.new()
+	context.equal(empty.has_method("follow_live"), true, "viewer exposes continuous live following")
+	if not empty.has_method("follow_live"):
+		return
+	context.equal(empty.call("follow_live"), Types.Code.NOT_CONFIGURED, "follow requires started viewing")
+	for speed: int in [1, 4]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "start follow-live fixture")
+		demo.is_paused = true
+		context.equal(demo.set_viewing_delay(32), Types.Code.OK, "hold a deliberate delay")
+		context.equal(demo.set_catchup_speed(speed), Types.Code.OK, "set bounded continuous rate")
+		var original: Game = Game.new()
+		var history: Array[PackedByteArray] = [original.canonical_bytes()]
+		for tick: int in range(80):
+			var buttons: int = Game.RIGHT | (Game.FIRE if tick % 5 < 3 else Game.LEFT)
+			context.equal(demo.tick(buttons), Types.Code.OK, "host builds confirmed backlog")
+			var rows: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(tick)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(original.simulate_frame(tick, Types.FrameInputs.new(rows, statuses)), true, "independent original input")
+			history.append(original.canonical_bytes())
+		var before: Array = _service_observation(demo)
+		context.equal(demo.call("follow_live"), Types.Code.OK, "follow releases delay and resumes")
+		before[7] = false
+		before[10] = PackedInt64Array([0, 0, demo.viewer.playback_status().capacity_frames])
+		context.equal(_service_observation(demo), before, "action only updates continuous playback policy")
+		for tick: int in range(80, 170):
+			var frame: int = demo.game.frame
+			var buttons: int = Game.LEFT | (Game.FIRE if tick % 3 == 0 else 0)
+			context.equal(demo.tick(buttons), Types.Code.OK, "host continues while viewer follows")
+			var rows: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(tick)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(original.simulate_frame(tick, Types.FrameInputs.new(rows, statuses)), true, "extend independent original history")
+			history.append(original.canonical_bytes())
+			context.equal(demo.game.frame - frame <= demo.viewer.playback_status().capacity_frames, true, "each tick respects the bounded queue capacity")
+			context.bytes_equal(demo.game.canonical_bytes(), history[demo.game.frame], demo.game.frame, "live following preserves each canonical prefix")
+			context.equal(demo.game.frame, demo.viewer.host_frontier() + 1, "each follow tick reaches the delivered live edge")
+		context.equal(demo.game.frame > 0, true, "follow resumes actual playback")
+		context.equal(demo.game.frame, demo.viewer.host_frontier() + 1, "bounded live following reaches latest confirmed input")
+		demo.is_paused = true
+		demo.lose_host_connection()
+		before = _service_observation(demo)
+		context.equal(demo.call("follow_live"), Types.Code.TERMINATED, "stopped playback refuses following")
+		context.equal(_service_observation(demo), before, "refusal preserves stopped playback controls")
+	_service_busy(context)
+
+
+# Value: protects=button and key share follow-live policy; fails_when=controls resume while busy or hide readiness;
+# why_new=direct API calls miss actual scene controls; seam=scene controls
+func _follow_live_controls(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	context.equal(scene.demo.has_method("follow_live"), true, "follow-live capability exists")
+	if not scene.demo.has_method("follow_live"):
+		scene.free()
+		return
+	var button: Button = scene.get_node_or_null("FollowLive")
+	context.equal(button != null, true, "scene exposes follow-live button")
+	if button == null:
+		scene.free()
+		return
+	context.equal(button.focus_mode, Control.FOCUS_NONE, "follow button does not steal gameplay keyboard focus")
+	scene.demo.is_paused = true
+	var key: InputEventKey = InputEventKey.new()
+	key.keycode = KEY_F
+	key.pressed = false
+	scene._unhandled_key_input(key)
+	key.pressed = true
+	key.echo = true
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, true, "release and held key do not resume")
+	key.echo = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, false, "F resumes continuous following")
+	context.equal(scene.demo.viewer.playback_policy()[0], 0, "F clears viewing delay")
+	context.equal(scene._label.text.contains("F: follow live"), true, "help distinguishes continuous live following")
+	scene.demo.is_paused = true
+	scene.demo.set_viewing_delay(12)
+	button.pressed.emit()
+	context.equal(scene.demo.is_paused, false, "button resumes continuous following")
+	context.equal(scene.demo.viewer.playback_policy()[0], 0, "button clears viewing delay")
+	scene.demo.is_paused = true
+	for tick: int in range(35):
+		scene.demo.tick(Game.RIGHT)
+	scene.demo.set_viewing_delay(12)
+	context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "open owned viewer request")
+	scene._update_label()
+	context.equal(button.disabled, true, "button disables while viewer request owns playback")
+	var before: Array = _service_observation(scene.demo)
+	scene._unhandled_key_input(key)
+	context.equal(_service_observation(scene.demo), before, "key preserves busy playback")
+	scene.demo.viewer.terminate()
+	scene._update_label()
+	context.equal(button.disabled, true, "stopped playback disables follow-live button")
+	scene._unhandled_key_input(key)
+	context.equal(_service_observation(scene.demo), before.slice(0, 9) + [Types.Code.TERMINATED, before[10]], "stopped key preserves policy and pause")
+	scene.free()
