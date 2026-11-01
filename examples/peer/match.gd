@@ -62,24 +62,13 @@ var _held: PackedInt32Array = PackedInt32Array([-1, -1])
 var _ids: Array[PackedByteArray] = [PackedByteArray([1, 0, 0, 0, 0, 0, 0, 0]), PackedByteArray([2, 0, 0, 0, 0, 0, 0, 0])]
 
 
+## Replace an idle match only after both new peers are ready. Retained old peers stop permanently.
 func reset() -> int:
-	sessions.clear()
-	games.clear()
-	presentations.clear()
-	_packets.clear()
-	stalls = PackedInt32Array([0, 0])
-	last_codes = PackedInt32Array([0, 0])
-	_held = PackedInt32Array([-1, -1])
-	now_us = 0
-	sent = 0
-	dropped = 0
-	delivered = 0
-	_tokens = 0
-	failure = I.Code.OK
-	event_counts = [{}, {}]
-	latest_events = [{}, {}]
-	recommendations = [[], []]
-	is_partitioned = false
+	if _has_operation_guard():
+		return I.Code.BUSY
+	var next_sessions: Array[Peer] = []
+	var next_games: Array[Game] = []
+	var next_presentations: Array[Presentation] = []
 	for player: int in range(2):
 		var config: Config = Config.new()
 		config.sync_test = false
@@ -103,23 +92,51 @@ func reset() -> int:
 		var session: Peer = Peer.new()
 		var inputs: I.Options = I.Options.new()
 		inputs.max_pending_frames = max_pending_frames
-		failure = session.configure(config, profile, game, handshake, inputs)
-		if failure != I.Code.OK:
-			return failure
-		sessions.append(session)
-		games.append(game)
-		presentations.append(Presentation.new())
+		var code: int = session.configure(config, profile, game, handshake, inputs)
+		if code != I.Code.OK:
+			return code
+		var token: PackedByteArray = PackedByteArray()
+		token.resize(16)
+		token.encode_s64(0, player + 1)
+		code = session.begin(0, [token])
+		if code != I.Code.OK:
+			return code
+		next_sessions.append(session)
+		next_games.append(game)
+		next_presentations.append(Presentation.new())
 	for session: Peer in sessions:
-		failure = session.begin(now_us, [_token()])
-		if failure != I.Code.OK:
-			return failure
+		session.close(maxi(now_us, session._now))
+	sessions = next_sessions
+	games = next_games
+	presentations = next_presentations
+	_packets.clear()
+	stalls = PackedInt32Array([0, 0])
+	last_codes = PackedInt32Array([0, 0])
+	_held = PackedInt32Array([-1, -1])
+	now_us = 0
+	sent = 0
+	dropped = 0
+	delivered = 0
+	_tokens = sessions.size()
+	failure = I.Code.OK
+	event_counts = [{}, {}]
+	latest_events = [{}, {}]
+	recommendations = [[], []]
+	is_partitioned = false
 	_collect()
 	return failure
 
 
+func _has_operation_guard() -> bool:
+	for session: Peer in sessions:
+		if session._has_mutation_guard() or (session._core != null and session._core._mutation_code() == Types.Code.BUSY):
+			return true
+	return false
+
+
 ## Clock and packet faults are explicit; simulation receives only input bytes.
 func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
-	if failure != I.Code.OK:
+	if _has_operation_guard() or failure != I.Code.OK:
 		return
 	if latency_ticks < 0 or latency_ticks > 120 or drop_every < 0 or drop_every > 1000:
 		failure = I.Code.INVALID_ARGUMENT
@@ -170,6 +187,8 @@ func queued_packets() -> int:
 
 ## Delay one more frame of this player's input; peers receive the added frames as ordinary input.
 func raise_input_delay(player: int) -> int:
+	if _has_operation_guard():
+		return Types.Code.BUSY
 	if player < 0 or player >= sessions.size():
 		return Types.Code.INVALID_PLAYER
 	return sessions[player].set_input_delay(player, sessions[player].input_delay(player) + 1)
@@ -177,7 +196,7 @@ func raise_input_delay(player: int) -> int:
 
 ## Deliberately use different game rules on peer one to demonstrate checksum failure.
 func inject_desync() -> void:
-	if games.size() == 2:
+	if not _has_operation_guard() and games.size() == 2:
 		games[0].is_divergent = true
 
 

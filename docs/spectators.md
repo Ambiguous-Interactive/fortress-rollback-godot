@@ -26,6 +26,10 @@ This action preserves the viewing delay and ordinary catch-up rate. It consumes 
 confirmed row in order, with at most one queue capacity of input work per press.
 It does not retrieve rows still waiting at the host. Later ticks deliver at most 16 packets each,
 subject to backpressure and retained history.
+Press F or click **Follow live** to clear the viewing delay and resume continuous playback.
+This selects the maximum bounded catch-up rate and allows catch-up whenever input waits.
+Later ticks consume all delivered contiguous confirmed rows, with at most one queue capacity of input work per tick.
+The action itself never skips history or advances either game. Comma and Period can adjust the rate afterward.
 Press [ or ] to lower or raise the viewing delay by one confirmed frame, including while paused.
 Press comma or period to lower or raise the catch-up limit by one frame per tick.
 The limit ranges from one frame through the configured queue capacity; it changes neither
@@ -53,7 +57,7 @@ completion message just because its next operation reports a generic stopped res
 Plain cancellation shows `STOPPED`; only fully serviced clean host endings show `COMPLETE`.
 Restart retires the prior host and viewer, including retained driver and stream handles.
 An active callback or expert request batch must finish before restart, another tick,
-single-frame inspection, one-shot catch-up, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
+single-frame inspection, one-shot catch-up, live following, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
 without consuming time, changing playback controls or stopping the viewer.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.

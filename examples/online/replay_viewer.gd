@@ -434,5 +434,28 @@ func has_failure() -> bool:
 	return _player.failure_frame() >= 0
 
 
+## Whether the displayed boundary has a portable prefix this viewer can reopen.
+## Active navigation and game work refuse export; failed playback may export its preceding history.
+func can_export_prefix() -> bool:
+	return (
+		_recording != null
+		and not _is_busy()
+		and not is_seeking()
+		and (current_frame() > 0 or (not _recording.checksum(_recording.frame_count()).is_empty() and not _recording.checksum(0).is_empty()))
+	)
+
+
+## Owned original inputs before the displayed frame, preserving original metadata and recorded evidence.
+## No gameplay or checksum is generated. Existing v6 evidence at the selected ending is retained;
+## historical formats retain their original final-state limits. Empty when export is unavailable.
+func prefix_bytes() -> PackedByteArray:
+	return _recording.owned_prefix(current_frame()).to_bytes() if can_export_prefix() else PackedByteArray()
+
+
+## The source recording's identity and selected ending distinguish exported prefixes.
+func prefix_filename() -> String:
+	return "fortress-replay-prefix-%s-%d.frrp" % [_recording_sha256.left(12), current_frame()] if can_export_prefix() else ""
+
+
 func _is_busy() -> bool:
 	return _player._is_stepping or _player._batch != null

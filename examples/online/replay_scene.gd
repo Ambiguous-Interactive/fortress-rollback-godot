@@ -49,6 +49,10 @@ var _previous_recorded_checksum: Button
 var _next_recorded_checksum: Button
 var _failure_download: Button
 var _failure_notice: String = ""
+var _prefix_download: Button
+var _prefix_notice: String = ""
+var _prefix_frame: int = -1
+var _prefix_game: RefCounted
 var _restart_button: Button
 var _speed: OptionButton
 var _target: SpinBox
@@ -114,7 +118,11 @@ func _ready() -> void:
 	panel.add_child(checkpoints)
 	_previous_checkpoint = _button(checkpoints, "Previous checkpoint", _jump_checkpoint.bind(false))
 	_next_checkpoint = _button(checkpoints, "Next checkpoint", _jump_checkpoint.bind(true))
-	_failure_download = _button(checkpoints, "Download failure", _download_failure)
+	var exports: HBoxContainer = HBoxContainer.new()
+	panel.add_child(exports)
+	_failure_download = _button(exports, "Download failure", _download_failure)
+	_prefix_download = _button(exports, "Download prefix", _download_prefix)
+	_prefix_download.tooltip_text = "Save original inputs before the displayed frame, preserving recorded checksum evidence."
 	var changes: HBoxContainer = HBoxContainer.new()
 	panel.add_child(changes)
 	_previous_input_change = _button(changes, "Previous input change", _jump_input_change.bind(false))
@@ -359,6 +367,9 @@ func _physics_process(_delta: float) -> void:
 
 
 func _refresh() -> void:
+	if viewer.current_frame() != _prefix_frame or viewer.game != _prefix_game:
+		_prefix_notice = ""
+		_prefix_game = null
 	if not viewer.has_failure():
 		_failure_notice = ""
 	_status.text = (
@@ -369,7 +380,10 @@ func _refresh() -> void:
 	_status.text += "\n" + viewer.input_summary()
 	if not _failure_notice.is_empty():
 		_status.text += "\n" + _failure_notice
+	if not _prefix_notice.is_empty():
+		_status.text += "\n" + _prefix_notice
 	_failure_download.disabled = not viewer.has_failure()
+	_prefix_download.disabled = _is_scrubbing or not viewer.can_export_prefix()
 	_play.text = "Pause" if viewer.is_playing else "Play"
 	_play.disabled = _is_scrubbing or viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
@@ -441,4 +455,30 @@ func _download_failure() -> void:
 			var saved: bool = file.get_error() == OK
 			file.close()
 			_failure_notice = "Failure report saved: " + ProjectSettings.globalize_path(path) if saved else "Could not save the failure report."
+	_refresh()
+
+
+func _download_prefix() -> void:
+	if _is_scrubbing:
+		return
+	var bytes: PackedByteArray = viewer.prefix_bytes()
+	if bytes.is_empty():
+		return
+	var frame: int = viewer.current_frame()
+	var filename: String = viewer.prefix_filename()
+	_prefix_frame = frame
+	_prefix_game = viewer.game
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(bytes, filename, "application/octet-stream")
+		_prefix_notice = "Prefix download requested: original inputs before frame %d." % frame
+	else:
+		var path: String = "user://" + filename
+		var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+		if file == null:
+			_prefix_notice = "Could not save the replay prefix."
+		else:
+			file.store_buffer(bytes)
+			var saved: bool = file.get_error() == OK
+			file.close()
+			_prefix_notice = "Prefix saved: " + ProjectSettings.globalize_path(path) if saved else "Could not save the replay prefix."
 	_refresh()

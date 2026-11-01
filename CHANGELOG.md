@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add replay prefix downloads at the displayed frame, preserving original inputs, metadata and recorded checksum evidence.
+
+- Add Follow live to resume the local spectator at the latest received input through bounded catch-up.
+
 - Add native replay file drops with bounded validation and preservation of the current recording after refused imports.
 
 - Add spectator input-buffer capacity observations and a resume/catch-up prompt when paused input fills the buffer.
@@ -238,6 +242,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix local peer-example reset leaving replaced sessions playable through retained handles. Busy game operations and invalid replacement settings preserve the current match.
 
 - Fix browser replay file-read completion replacing a recording during timeline dragging or changing feedback while game work owns playback.
 
