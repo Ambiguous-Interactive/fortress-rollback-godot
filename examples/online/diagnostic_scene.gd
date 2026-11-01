@@ -131,6 +131,7 @@ func _back() -> void:
 
 
 func _exit_tree() -> void:
+	viewer.terminate()
 	if _web_import != null:
 		_web_import.dispose()
 

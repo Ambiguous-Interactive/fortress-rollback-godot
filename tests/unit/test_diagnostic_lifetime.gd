@@ -2,6 +2,7 @@ extends RefCounted
 
 # Value: protects=diagnostic callbacks cannot replace or advance their owning viewer; fails_when=controls mutate playback during a callback;
 # why_new=ordinary viewer controls and player reentry do not cross the composed ownership boundary; seam=none
+const Scene = preload("res://examples/online/diagnostic.tscn")
 const Fixture = preload("res://tests/unit/test_diagnostic_viewer.gd")
 const Viewer = preload("res://examples/online/diagnostic_viewer.gd")
 const Player = preload("res://addons/fortress_rollback/core/diagnostic_player.gd")
@@ -22,6 +23,7 @@ class ReentrantGame:
 	var cancellation_codes: PackedInt32Array = PackedInt32Array()
 	var callback_calls: PackedInt32Array = PackedInt32Array()
 	var cancelled_view_expired: bool = false
+	var scene_ref: WeakRef
 
 	func _attempt(kind: int, active_view: RefCounted) -> void:
 		if kind != callback_kind or attempted:
@@ -29,6 +31,16 @@ class ReentrantGame:
 		attempted = true
 		view = active_view
 		var target: RefCounted = owner_ref.get_ref()
+		if action == "scene_exit":
+			var player: RefCounted = target._player
+			var scene: Node = scene_ref.get_ref()
+			if not scene.is_inside_tree():
+				scene._exit_tree()
+			scene.free()
+			observations.append(not target.open_bytes(Fixture.encoded(Fixture.capture())))
+			target.restart()
+			observations.append(target._player == player)
+			return
 		if action == "terminate":
 			target.terminate()
 			target.terminate()
@@ -72,7 +84,7 @@ class ReentrantGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["viewer_callback_controls", "player_cancellation", "retired_playback"])
+	return PackedStringArray(["viewer_callback_controls", "player_cancellation", "retired_playback", "scene_exit", "scene_exit_callbacks"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -172,3 +184,84 @@ func _retired_playback(context: RefCounted) -> void:
 			context.bytes_equal(old_game.canonical_bytes(), before, 3, "retained retired handle cannot advance its old game")
 			viewer.step()
 			context.equal(viewer.status().rows_consumed, 1, "fresh replacement remains independently playable")
+
+
+# Value: protects=leaving diagnostic playback retires retained players; fails_when=old handles simulate after scene exit;
+# why_new=retirement tests only replace or restart a viewer; seam=none
+func _scene_exit(context: RefCounted) -> void:
+	for mode: String in ["paused", "playing", "failed", "complete"]:
+		var node: Node2D = Scene.instantiate()
+		(Engine.get_main_loop() as SceneTree).root.add_child(node)
+		if not node.is_inside_tree():
+			node._ready()
+		var trace: Dictionary = Fixture.capture()
+		if mode == "failed":
+			trace.frames[0].checksum = "00".repeat(16)
+		context.equal(node.viewer.open_bytes(Fixture.encoded(trace)), true, "diagnostic exit fixture imports")
+		var viewer: Viewer = node.viewer
+		var player: Player = viewer._player
+		var game: Game = viewer.game
+		if mode == "playing":
+			viewer.toggle_play()
+		elif mode == "failed":
+			viewer.step()
+		elif mode == "complete":
+			while viewer.can_step():
+				viewer.step()
+			context.equal(player.is_complete(), true, "diagnostic complete fixture reaches its ending")
+		var before: Dictionary = viewer.status()
+		var message: String = viewer.message
+		var bytes: PackedByteArray = game.canonical_bytes()
+		if not node.is_inside_tree():
+			node._exit_tree()
+		node.free()
+		context.equal(
+			viewer.message,
+			message if mode == "failed" else "Playback stopped. Restart to inspect again.",
+			"diagnostic exit names cancellation while retaining existing failure text"
+		)
+		context.equal(viewer.is_playing, false, "diagnostic scene exit stops cadence")
+		context.equal(viewer.can_step(), false, "diagnostic scene exit stops controller playback")
+		var code: int = player.step()
+		context.equal(code, int(before.code) if mode == "failed" else Types.Code.TERMINATED, "diagnostic exit retires the owned player and preserves its first cause")
+		viewer.tick()
+		viewer.step()
+		context.equal(viewer.status().rows_consumed, before.rows_consumed, "diagnostic exit preserves completed row count")
+		context.bytes_equal(game.canonical_bytes(), bytes, game.frame, "retained diagnostic handles cannot change departed game")
+		context.state(game.frame, bytes)
+
+
+# Value: protects=diagnostic scene exit cancels executing game work and retains callback ownership;
+# fails_when=the viewer restarts during teardown or accepts later callback results; why_new=idle exit has no active view; seam=none
+func _scene_exit_callbacks(context: RefCounted) -> void:
+	for kind: int in [Types.Kind.LOAD, Types.Kind.SAVE, Types.Kind.ADVANCE]:
+		var node: Node2D = Scene.instantiate()
+		(Engine.get_main_loop() as SceneTree).root.add_child(node)
+		if not node.is_inside_tree():
+			node._ready()
+		var viewer: Viewer = node.viewer
+		var trace: Dictionary = Fixture.capture()
+		context.equal(viewer.open_bytes(Fixture.encoded(trace)), true, "diagnostic callback exit fixture imports")
+		var game: ReentrantGame = ReentrantGame.new()
+		game.owner_ref = weakref(viewer)
+		game.scene_ref = weakref(node)
+		game.callback_kind = kind
+		game.action = "scene_exit"
+		viewer.game = game
+		var player: Player = viewer._player
+		context.equal(player.configure(trace, game, Game.SNAPSHOT_BYTES), Types.Code.OK, "diagnostic callback exit game configures")
+		viewer.toggle_play()
+		viewer.tick()
+		context.equal(game.attempted, true, "diagnostic teardown executes during selected callback")
+		context.equal(is_instance_valid(node), false, "diagnostic callback frees actual scene")
+		for unchanged: bool in game.observations:
+			context.equal(unchanged, true, "diagnostic callback teardown preserves shared ownership")
+		context.equal(viewer._player, player, "diagnostic callback cannot restart canceled player")
+		context.equal(viewer.game, game, "diagnostic callback keeps its original game")
+		context.equal(viewer.status().code, Types.Code.TERMINATED, "diagnostic outer service preserves cancellation")
+		context.equal(viewer.status().rows_consumed, 0, "canceled diagnostic row is not completed")
+		context.equal(viewer.is_playing, false, "diagnostic callback exit stops cadence")
+		var calls: PackedInt32Array = game.callback_calls.duplicate()
+		context.equal(player.step(), Types.Code.TERMINATED, "retained diagnostic player remains canceled")
+		context.equal(game.callback_calls, calls, "diagnostic cancellation cannot invoke another callback")
+		context.state(game.frame, game.canonical_bytes())
