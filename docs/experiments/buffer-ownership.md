@@ -147,14 +147,17 @@ selected inventory includes `test_replay_viewer_prefix.gd`. Both pinned engines
 and the selected Chromium or Firefox runtime use this same gate.
 The browser clicks **Download prefix**, receives the actual file, and compares
 all bytes with the original selected prefix. It independently checks the decoded
-slot-one DISCONNECTED status from original input frame 17 onward. It covers frame 301 of 610,
+slot-one DISCONNECTED status from original input frame 17 onward. It compares
+decoded metadata/configuration and every retained input, status, input digest,
+checksum and skip flag directly with the retained full original recording.
+The ending checksum must also match that original boundary, including absent evidence. It covers frame 301 of 610,
 the complete recorded terminal ending, and a readable initial-only recording.
 It then opens each received file through the production browser picker, requires
 a replaced player and exact recording identity, and compares playback with the
 original canonical state. Disabled seek and held-timeline clicks must emit no files.
 
 The round retains files and screenshots in `ownership-VERSION-positive-downloads/`
-beside the aggregate receipt. Three live controls reject a refused second import,
+beside the aggregate receipt. Four live controls reject altered decoded metadata, a refused second import,
 a console error after screenshot capture, and an unexpected late download.
 Receipt mutation tests reject wrong types, missing boundaries, changed files,
 missing screenshots and incomplete control inventories.

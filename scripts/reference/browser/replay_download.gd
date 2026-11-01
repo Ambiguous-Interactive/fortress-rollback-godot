@@ -5,6 +5,7 @@ extends Node
 const Scene = preload("res://examples/online/replay.tscn")
 const Fixture = preload("res://tests/unit/test_replay_viewer.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const CASES: Array[String] = ["interior", "terminal", "initial"]
@@ -19,6 +20,9 @@ var _open_button: Button
 var _prior_player: RefCounted
 var _statuses_valid: bool = false
 var _statuses_checked: bool = false
+var _original_valid: bool = false
+var _download_original: Replay
+var _download_frame: int = -1
 var _disconnected_rows: int = 0
 
 
@@ -41,6 +45,7 @@ func _select(index: int) -> void:
 	recording = Fixture.recording(610)
 	_statuses_valid = false
 	_statuses_checked = false
+	_original_valid = false
 	_disconnected_rows = 0
 	for frame: int in range(17, 610):
 		recording._statuses[frame * 2 + 1] = Queue.Status.DISCONNECTED
@@ -69,6 +74,11 @@ func _select(index: int) -> void:
 func _command(arguments: Array) -> void:
 	var command: String = str(arguments[0])
 	match command:
+		"prepare_download":
+			_download_original = recording
+			_download_frame = FRAMES[selected]
+		"alter_metadata":
+			scene.viewer._recording._text[0] += " altered"
 		"verify_import":
 			_statuses_valid = true
 			_disconnected_rows = 0
@@ -78,6 +88,7 @@ func _command(arguments: Array) -> void:
 					var actual_status: int = scene.viewer._recording.inputs(frame).read(slot).status
 					_statuses_valid = _statuses_valid and actual_status == expected_status
 					_disconnected_rows += int(actual_status == Queue.Status.DISCONNECTED)
+			_original_valid = _matches_original(scene.viewer._recording)
 			_statuses_checked = true
 		"prepare_import":
 			_prior_player = scene.viewer._player
@@ -100,6 +111,43 @@ func _command(arguments: Array) -> void:
 			while scene.viewer.is_seeking():
 				scene.viewer.tick()
 	scene._refresh()
+
+
+func _matches_original(actual: Replay) -> bool:
+	if _download_original == null or actual == null or not actual.is_valid() or actual.frame_count() != _download_frame:
+		return false
+	if _identity(actual) != _identity(_download_original):
+		return false
+	var skipped: int = 0
+	for frame: int in _download_frame:
+		if actual.input_digest(frame) != _download_original.input_digest(frame) or actual.checksum(frame) != _download_original.checksum(frame):
+			return false
+		if actual.is_skipped_frame(frame) != _download_original.is_skipped_frame(frame):
+			return false
+		skipped += int(_download_original.is_skipped_frame(frame))
+		var actual_inputs: Types.FrameInputs = actual.inputs(frame)
+		var original_inputs: Types.FrameInputs = _download_original.inputs(frame)
+		for slot: int in _download_original.player_count():
+			if actual_inputs.read(slot).bytes != original_inputs.read(slot).bytes or actual_inputs.read(slot).status != original_inputs.read(slot).status:
+				return false
+	return actual.skipped_frames() == skipped and actual.checksum(_download_frame) == _download_original.checksum(_download_frame)
+
+
+# Metadata and configuration getters return different scalar and packed-byte types.
+func _identity(value: Replay) -> Array[Variant]:
+	return [
+		value.engine_version(),
+		value.addon_version(),
+		value.upstream_revision(),
+		value.game_seed(),
+		value.game_version(),
+		value.player_count(),
+		value.input_width(),
+		value.neutral_input(),
+		value.input_delay(),
+		value.max_prediction_frames(),
+		value.sync_test(),
+	]
 
 
 func _process(_delta: float) -> void:
@@ -128,6 +176,7 @@ func _process(_delta: float) -> void:
 		"import_replaced": _prior_player != null and scene.viewer._player != _prior_player,
 		"statuses_valid": _statuses_valid,
 		"statuses_checked": _statuses_checked,
+		"original_valid": _original_valid,
 		"disconnected_rows": _disconnected_rows,
 		"source_sha256": scene.viewer._recording_sha256,
 		"source_bytes": scene.viewer._recording_bytes,
