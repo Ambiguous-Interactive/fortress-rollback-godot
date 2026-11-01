@@ -13,6 +13,8 @@ Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
 Exercise actual UI controls during playback, after failure and at completion.
+Before attributing a missed canvas click to browser activation, compare a bounded
+pointer press/release across render turns with a trusted DOM control using the same importer.
 Validate displayed state boundaries through every action that pauses playback,
 including Step and Pause, not only seeking and cancellation. A departing-boundary
 check can leave a corrupt destination displayed until playback resumes.

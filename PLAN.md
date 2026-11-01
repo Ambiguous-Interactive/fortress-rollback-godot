@@ -33,6 +33,7 @@ Local development contracts and evidence entry points:
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
 - [Native replay file drops, replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
+- [Actual received browser prefix files, production-picker reimport and remaining supervision qualification](docs/experiments/buffer-ownership.md#received-browser-replay-downloads).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Online delay shortcuts and action prompts gated by live gameplay](docs/online-example.md#install-and-run).
 - [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
@@ -147,6 +148,10 @@ through default queue reuse with independent canonical histories;
 A separate two-endpoint browser witness records 257 original frames through repeated injected direct/relay send-buffer refusal.
 Both engine pins verify exact retained retries, post-wrap canonical history and recovery-only decoded recordings, including the final checksum.
 Physical congestion, the complete asymmetric browser schedule and unchanged-source recovery-only export remain open in #256.
+The retained-history source comparison also exercises donor recovery after two queue capacities of original gameplay,
+with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
+Native development receipts execute a bounded private authored-source image and record its hashes and starting Git identity;
+Python helper identity and descendant supervision remain separate evidence gaps in #298.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
