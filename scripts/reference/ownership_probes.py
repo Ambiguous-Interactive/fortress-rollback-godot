@@ -194,7 +194,7 @@ EXPECTED['res://tests/unit/test_signalfish_adapter_reentry.gd'] = {
     'getter_plans', 'getter_plan_refusal', 'plan_conversion'}
 EXPECTED['res://tests/unit/test_replay_viewer_prefix.gd'] = {'selected_prefix', 'prefix_boundaries', 'prefix_guards', 'prefix_controls'}
 EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {'replacement', 'rejected_configuration', 'completion_controls', 'manual_controls', 'callback_controls'}
-EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks'}
+EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
