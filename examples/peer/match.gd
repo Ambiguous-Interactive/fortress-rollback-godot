@@ -135,15 +135,26 @@ func _has_operation_guard() -> bool:
 
 
 ## Clock and packet faults are explicit; simulation receives only input bytes.
-func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
-	if _has_operation_guard() or failure != I.Code.OK:
-		return
+## Invalid controls or conflicting expert-staged samples reject before service and remain retryable.
+## Returns an input-endpoint code for service, or a session code for local-input rejection.
+func tick(buttons: PackedInt32Array, can_advance: bool = true) -> int:
+	if _has_operation_guard():
+		return I.Code.BUSY
+	if failure != I.Code.OK:
+		return failure
 	if latency_ticks < 0 or latency_ticks > 120 or drop_every < 0 or drop_every > 1000:
-		failure = I.Code.INVALID_ARGUMENT
-		return
+		return I.Code.INVALID_ARGUMENT
 	if buttons.size() != 2 or buttons[0] < 0 or buttons[0] > 15 or buttons[1] < 0 or buttons[1] > 15:
-		failure = I.Code.INVALID_ARGUMENT
-		return
+		return I.Code.INVALID_ARGUMENT
+	if can_advance:
+		for player: int in range(sessions.size()):
+			var session: Peer = sessions[player]
+			if session.status().lifecycle == Types.Lifecycle.TERMINATED:
+				continue
+			var sample: int = _held[player] if _held[player] != -1 else buttons[player]
+			var code: int = session._core.validate_local_input(player, session.status().current_frame, PackedByteArray([sample]))
+			if code != Types.Code.OK:
+				return code
 	now_us += TICK_US
 	for session: Peer in sessions:
 		if session.status().lifecycle == Types.Lifecycle.TERMINATED:
@@ -179,6 +190,7 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 				recommendations[player].append(event.duplicate(true))
 		session.drain_transitions()
 	_collect()
+	return failure
 
 
 func queued_packets() -> int:

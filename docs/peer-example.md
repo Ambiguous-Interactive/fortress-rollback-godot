@@ -52,6 +52,12 @@ and releases any active packet block. Retained handles to the old peers stop per
 An invalid replacement preserves the current match. While either peer owns a callback,
 completion notification or expert request, reset and delay changes return BUSY;
 nested ticks and desync injection leave the match unchanged.
+`Match.tick()` returns an input-endpoint service code, or a session code when
+local input conflicts with an expert-staged sample. Invalid buttons and fault
+settings return `I.Code.INVALID_ARGUMENT`; active ownership returns `I.Code.BUSY`.
+These rejected attempts preserve clocks, queued packets, held samples and the
+playable match. Correct the controls and retry; actual service failures still
+populate `failure`. A stalled frame continues using its original held buttons.
 
 The headless suite `tests/unit/test_peer_example.gd` exercises actual loss,
 reordering, a prediction stall, partition healing, full canonical state

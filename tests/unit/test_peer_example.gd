@@ -182,8 +182,8 @@ func _reset(context: RefCounted) -> void:
 	context.equal(game.games[1].frame, 0, "second simulation reset")
 	context.equal(game.delivered, 0, "old packets and delivery count removed")
 	context.equal(game.games[0].restores, 0, "rollback diagnostics reset")
-	game.tick(PackedInt32Array([16, 0]))
-	context.equal(game.failure, I.Code.INVALID_ARGUMENT, "unsupported controls fail before simulation")
+	context.equal(game.tick(PackedInt32Array([16, 0])), I.Code.INVALID_ARGUMENT, "unsupported controls reject before simulation")
+	context.equal(game.failure, I.Code.OK, "invalid controls keep the replacement retryable")
 	context.equal(game.games[0].frame, 0, "bad controls preserve state")
 
 
@@ -228,8 +228,12 @@ func _scene_delay_actions(context: RefCounted) -> void:
 			reset.keycode = KEY_R
 			node.call("_unhandled_key_input", reset)
 		elif phase == "match_failure":
-			game.tick(PackedInt32Array([16, 0]))
-			context.equal(game.failure, I.Code.INVALID_ARGUMENT, "actual example input failure")
+			game._packets.append({"sender": 0, "due": game.now_us, "bytes": PackedByteArray([0])})
+			context.equal(game.tick(PackedInt32Array([0, 0])) != I.Code.OK, true, "actual encoded delivery failure")
+			context.equal(game.failure != I.Code.OK, true, "actual service failure stays latched")
+			var stopped_at: int = game.now_us
+			context.equal(game.tick(PackedInt32Array([0, 0])), game.failure, "later controls retain actual failure")
+			context.equal(game.now_us, stopped_at, "latched service failure stops further service")
 			node._delay_result = " | Preserve previous feedback."
 		var actionable: bool = phase in ["live", "recovered"]
 		node.call("_update_label")

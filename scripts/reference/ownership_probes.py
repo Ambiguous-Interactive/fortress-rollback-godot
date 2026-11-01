@@ -147,7 +147,7 @@ EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused
 EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler', 'manual_configuration'}
-EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file'})
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
@@ -193,7 +193,8 @@ EXPECTED['res://tests/unit/test_signalfish_adapter_reentry.gd'] = {
     'relay_teardown', 'attach_failure', 'attach_plan', 'plan_detach', 'refusal_plan', 'detach_replace', 'attach_getters', 'lifetime_getters',
     'getter_plans', 'getter_plan_refusal', 'plan_conversion'}
 EXPECTED['res://tests/unit/test_replay_viewer_prefix.gd'] = {'selected_prefix', 'prefix_boundaries', 'prefix_guards', 'prefix_controls'}
-EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {'replacement', 'rejected_configuration', 'completion_controls', 'manual_controls', 'callback_controls'}
+EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {
+    'replacement', 'rejected_configuration', 'completion_controls', 'manual_controls', 'callback_controls', 'input_preflight'}
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [

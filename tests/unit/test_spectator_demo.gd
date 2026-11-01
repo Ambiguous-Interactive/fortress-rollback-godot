@@ -279,6 +279,7 @@ func _single_frame_end(context: RefCounted) -> void:
 
 # Value: protects=scene keyboard frame-step control; fails_when=N is unbound or repeats on held key; why_new=demo API tests bypass scene input; seam=none
 func _single_frame_control(context: RefCounted) -> void:
+	_pointer_playback_controls(context)
 	_pause_control_ownership(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
@@ -1280,3 +1281,72 @@ func _scene_busy_retry(context: RefCounted) -> void:
 	scene._physics_process(0.0)
 	context.equal(_service_observation(scene.demo), before, "true failure remains stopped on later physics turns")
 	scene.free()
+
+
+# Value: protects=pointer inspection and bounded catch-up share keyboard behavior;
+# fails_when=buttons skip delay, advance host or bypass ownership; why_new=keyboard-only controls omit pointer users; seam=scene controls
+func _pointer_playback_controls(context: RefCounted) -> void:
+	for action: String in ["StepViewer", "CatchUpViewer"]:
+		var scene: Node2D = Scene.new()
+		scene._ready()
+		var button: Button = scene.get_node_or_null(action)
+		context.equal(button != null, true, "pointer users can inspect and catch up viewing")
+		if button == null:
+			scene.free()
+			continue
+		context.equal(button.focus_mode, Control.FOCUS_NONE, "viewer button preserves host keyboard focus")
+		context.equal(button.disabled, false, "idle input wait still permits paused inspection")
+		button.pressed.emit()
+		context.equal(scene.demo.is_paused, true, "pointer action pauses while waiting for host input")
+		context.equal(scene.demo.game.frame, 0, "pointer action cannot fabricate absent input")
+		for tick: int in range(40):
+			context.equal(scene.demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "host supplies original buffered inputs")
+		var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
+		var host_frame: int = scene.demo.host.loop.game.frame
+		var confirmation: int = scene.demo.host.loop.session.status().confirmed_frame
+		var playable: int = scene.demo.viewer.playback_status().playable_frames
+		button.pressed.emit()
+		var expected_frame: int = 1 if action == "StepViewer" else playable
+		context.equal(scene.demo.game.frame, expected_frame, "pointer action consumes exact eligible confirmed prefix")
+		context.equal(scene.demo.host.loop.game.frame, host_frame, "pointer action never samples host")
+		context.equal(scene.demo.host.loop.session.status().confirmed_frame, confirmation, "pointer action never changes player confirmation")
+		context.equal(scene.demo.viewer.playback_policy(), policy, "one-shot pointer action preserves continuous policy")
+		context.equal(scene.demo.is_paused, true, "pointer inspection remains paused")
+		var original: Game = Game.new()
+		for frame: int in range(expected_frame):
+			var rows: Array[PackedByteArray] = [PackedByteArray([Game.RIGHT | Game.FIRE]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(original.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent original input history")
+		context.bytes_equal(scene.demo.game.canonical_bytes(), original.canonical_bytes(), expected_frame, "pointer playback matches original canonical prefix")
+		if action == "CatchUpViewer":
+			button.pressed.emit()
+			context.equal(scene.demo.game.frame, expected_frame, "catch-up never bypasses deliberate viewing delay")
+		context.equal(scene.demo.set_viewing_delay(0), Types.Code.OK, "remaining buffered rows permit owned request")
+		context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "expert owns the next playback request")
+		scene._update_label()
+		context.equal(button.disabled, true, "active expert request disables pointer action")
+		var before: Array = _service_observation(scene.demo)
+		button.pressed.emit()
+		context.equal(_service_observation(scene.demo), before, "direct button signal cannot bypass active ownership")
+		scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
+		scene._update_label()
+		context.equal(button.disabled, true, "failed viewer disables pointer action")
+		before = _service_observation(scene.demo)
+		before[6] = Types.Code.PROTOCOL_FAILED
+		button.pressed.emit()
+		context.equal(_service_observation(scene.demo), before, "failed viewer remains stopped while reporting its committed failure")
+		context.equal(scene.demo.start(), Types.Code.OK, "restart pointer viewing after failure")
+		scene.demo.set_paused(true)
+		for tick: int in range(40):
+			scene.demo.tick(Game.RIGHT | Game.FIRE)
+		scene.demo.finish_host()
+		for tick: int in range(20):
+			scene.demo.tick(0)
+		scene._update_label()
+		context.equal(button.disabled, false, "clean final tail retains pointer inspection")
+		for step: int in range(41 if action == "StepViewer" else 1):
+			button.pressed.emit()
+		context.equal(scene.demo.viewer.is_complete(), true, "pointer action publishes clean final completion")
+		context.equal(button.disabled, true, "completed viewer disables pointer action")
+		context.bytes_equal(scene.demo.game.canonical_bytes(), scene.demo.host.loop.game.canonical_bytes(), 40, "pointer final tail preserves complete original history")
+		scene.free()

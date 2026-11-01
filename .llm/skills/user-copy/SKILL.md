@@ -27,6 +27,8 @@ Use Simplified Technical English: common words, active voice, and one idea per s
 Aim for about 15 words per sentence; keep ordinary prose sentences at 25 words or fewer.
 Keep API names exact. Remove filler and unexplained abbreviations.
 Product action text must share its control's readiness gates; retained replay data does not imply a live match.
+Label imported provenance as recorded metadata, separate from runtime identity and checksum coverage.
+Render caller-supplied metadata as bounded plain text; escape control characters before using it in labels or tooltips.
 Spell out punctuation key names when adjacent separators could obscure them, such as Comma and Period before a colon.
 Explain why, how, and what in PRs and commit messages, with detail proportional to the change.
 Keep technical mechanisms and investigation evidence in commit bodies or linked issues unless needed by a required review format.

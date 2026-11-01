@@ -36,7 +36,7 @@ class GuardedGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["replacement", "rejected_configuration", "completion_controls", "manual_controls", "callback_controls"])
+	return PackedStringArray(["replacement", "rejected_configuration", "completion_controls", "manual_controls", "callback_controls", "input_preflight"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -204,3 +204,72 @@ func _controls(game: Match) -> PackedInt64Array:
 			game.sessions[1].input_delay(1) if game.sessions.size() == 2 else -1
 		]
 	)
+
+
+# Value: protects=retryable composed input rejection; fails_when=invalid buttons or expert conflicts poison live peers; why_new=ownership cases hold batches only; seam=none
+func _input_preflight(context: RefCounted) -> void:
+	for active: int in 2:
+		var startup: Match = Match.new()
+		startup.drop_every = 0
+		startup.reorder = false
+		startup.latency_ticks = 0
+		context.equal(startup.reset(), I.Code.OK, "fresh peers begin synchronization")
+		context.equal(
+			startup.sessions[active]._core.submit_local_input(active, 0, PackedByteArray([2])).code,
+			Types.Code.OK, "expert stages input before handshake")
+		var before_start: PackedInt64Array = _controls(startup)
+		context.equal(
+			startup.tick(PackedInt32Array([1, 1])), Types.Code.INPUT_ALREADY_SUBMITTED,
+			"synchronizing peer rejects conflict before delivery starts gameplay")
+		context.equal(_controls(startup), before_start, "startup rejection preserves handshakes, clocks and queues")
+		for tick: int in 40:
+			startup.tick(PackedInt32Array([2, 2]))
+		context.equal(startup.failure, I.Code.OK, "corrected startup input completes actual handshake")
+		context.equal(startup.games[0].frame > 20 and startup.games[1].frame > 20, true, "both peers play after corrected startup")
+	for active: int in 2:
+		for rejection: String in ["conflict", "buttons", "faults"]:
+			var game: Match = Fixture.new()._healthy(context)
+			var expected: Match = Fixture.new()._healthy(context)
+			var buttons: PackedInt32Array = PackedInt32Array([2, 8])
+			var frame: int = game.sessions[active].status().current_frame
+			if rejection == "conflict":
+				var original: PackedByteArray = PackedByteArray([buttons[active]])
+				context.equal(game.sessions[active]._core.submit_local_input(active, frame, original).code, Types.Code.OK, "expert stages input without holding a batch")
+				buttons[active] = 1 if active == 0 else 4
+			elif rejection == "buttons":
+				buttons[active] = 256
+			else:
+				game.latency_ticks = -1
+			var before: PackedInt64Array = _controls(game)
+			var held: PackedInt32Array = game._held.duplicate()
+			var canonical: Array[PackedByteArray] = [game.games[0].canonical_bytes(), game.games[1].canonical_bytes()]
+			var rejected: int = Types.Code.INPUT_ALREADY_SUBMITTED if rejection == "conflict" else I.Code.INVALID_ARGUMENT
+			context.equal(game.tick(buttons), rejected, "preflight reports the rejected control")
+			context.equal(_controls(game), before, "rejected " + rejection + " preserves composed clock, packets and failure")
+			context.equal(game._held, held, "rejected input preserves retained buttons on both peers")
+			for player: int in 2:
+				context.bytes_equal(game.games[player].canonical_bytes(), canonical[player], game.games[player].frame, "rejected attempt invokes no game callback")
+			game.latency_ticks = 0
+			for tick: int in 40:
+				var valid: PackedInt32Array = PackedInt32Array([2, 8])
+				game.tick(valid)
+				expected.tick(valid)
+			context.equal(game.failure, I.Code.OK, "corrected retry preserves playable match")
+			context.equal(game.now_us, expected.now_us, "rejected attempt does not consume a service tick")
+			for player: int in 2:
+				context.bytes_equal(
+					game.games[player].canonical_bytes(), expected.games[player].canonical_bytes(),
+					game.games[player].frame, "corrected retry keeps original canonical continuation")
+
+	var stalled: Match = Fixture.new()._healthy(context)
+	stalled.is_partitioned = true
+	for tick: int in 16:
+		stalled.tick(PackedInt32Array([2, 8]))
+	context.equal(stalled._held, PackedInt32Array([2, 8]), "prediction stalls retain both original samples")
+	context.equal(stalled.tick(PackedInt32Array([1, 4])), I.Code.OK, "changed keyboard state services the held samples")
+	context.equal(stalled._held, PackedInt32Array([2, 8]), "new buttons cannot replace stalled inputs")
+	stalled.is_partitioned = false
+	for tick: int in 80:
+		stalled.tick(PackedInt32Array([1, 4]))
+	context.equal(stalled.failure, I.Code.OK, "held samples recover after actual packet delivery resumes")
+	context.equal(stalled.games[0].frame > 140 and stalled.games[1].frame > 140, true, "both peers resume beyond the stalled frame")
