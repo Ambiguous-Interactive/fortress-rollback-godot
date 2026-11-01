@@ -15,6 +15,7 @@ from launch import execute
 from p2p_launch import source_files, upstream_inventory, executable_identity, require_unchanged
 from drop_history_contract import history_bytes, compare, negative_controls, loss_evidence_controls, commit_loss_evidence_controls, require, REVISION
 
+from drop_history_contract import wrapped_evidence_controls
 from drop_history_ack_controls import controls as ack_loss_evidence_controls
 from drop_history_inventory_controls import controls as inventory_loss_evidence_controls
 
@@ -170,17 +171,21 @@ def main():
     controls = []
     for repeat in (1, 2):
         scenarios = {}
-        for name, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss in [
-                ('clean', False, 1, 1, False, False, False, False), ('lost-history', True, 1, 1, False, False, False, False),
-                ('multi-clean', False, 4, 1, False, False, False, False), ('multi-lost-history', True, 4, 1, False, False, False, False),
-                ('grouped-clean', False, 4, 2, False, False, False, False), ('grouped-lost-history', True, 4, 2, False, False, False, False),
-                ('unequal-clean', False, 4, 2, True, False, False, False), ('unequal-lost-history', True, 4, 2, True, False, False, False),
-                ('unequal-lost-commit', False, 4, 2, True, True, False, False), ('unequal-lost-history-and-commit', True, 4, 2, True, True, False, False),
-                ('unequal-lost-ack', False, 4, 2, True, False, True, False),
-                ('unequal-lost-history-commit-and-ack', True, 4, 2, True, True, True, False),
-                ('unequal-lost-inventory', False, 4, 2, True, False, False, True),
-                ('unequal-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True)]:
+        for name, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup in [
+                ('clean', False, 1, 1, False, False, False, False, 0), ('lost-history', True, 1, 1, False, False, False, False, 0),
+                ('multi-clean', False, 4, 1, False, False, False, False, 0), ('multi-lost-history', True, 4, 1, False, False, False, False, 0),
+                ('grouped-clean', False, 4, 2, False, False, False, False, 0), ('grouped-lost-history', True, 4, 2, False, False, False, False, 0),
+                ('unequal-clean', False, 4, 2, True, False, False, False, 0), ('unequal-lost-history', True, 4, 2, True, False, False, False, 0),
+                ('unequal-lost-commit', False, 4, 2, True, True, False, False, 0), ('unequal-lost-history-and-commit', True, 4, 2, True, True, False, False, 0),
+                ('unequal-lost-ack', False, 4, 2, True, False, True, False, 0),
+                ('unequal-lost-history-commit-and-ack', True, 4, 2, True, True, True, False, 0),
+                ('unequal-lost-inventory', False, 4, 2, True, False, False, True, 0),
+                ('unequal-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True, 0),
+                ('wrapped-clean', False, 4, 2, True, False, False, False, 251),
+                ('wrapped-lost-inventory-history-commit-and-ack', True, 4, 2, True, True, True, True, 251)]:
             fault_args = ['--drop-first-history'] if loss else []
+            if warmup:
+                fault_args.append('--wrapped-history')
             if inventory_loss:
                 fault_args.append('--drop-first-inventory')
             if ack_loss:
@@ -201,9 +206,11 @@ def main():
                                       'res://tests/oracle/drop_history_trace.gd', '--', *fault_args],
                                       args.output / f'godot-{name}-{repeat}.log')
             godot = parse_godot(stdout, stderr)
-            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss)
-            controls.extend(name + ':' + control for control in negative_controls(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss))
+            evidence[name] = compare(source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup)
+            controls.extend(name + ':' + control for control in negative_controls(
+                source, godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup))
             scenarios[name] = {'source': source, 'godot': godot}
+        controls.extend(wrapped_evidence_controls(scenarios['unequal-clean'], scenarios['wrapped-clean']))
         controls.extend(loss_evidence_controls(scenarios['clean'], scenarios['lost-history']))
         controls.extend('multi:' + control for control in loss_evidence_controls(scenarios['multi-clean'], scenarios['multi-lost-history'], 4))
         controls.extend('grouped:' + control for control in loss_evidence_controls(
@@ -238,7 +245,7 @@ def main():
         'evidence': evidence, 'negative_controls': controls,
         'scope': ('Paired one/four-row single-target and four-row two-target clean/lost-first-history three-endpoint original-history/cut scenarios: source explicit removal; '
                   'Godot elapsed timeout; equal and unequal exposed frontiers; first-inventory/COMMIT/ACK loss alone and combined with donor-data loss; '
-                  'distinct non-interoperable wires.')}, indent=2) + '\n')
+                  '251-frame warmup wraps the original queues before equal-policy donor recovery; distinct non-interoperable wires.')}, indent=2) + '\n')
     print('drop history: two survivors preserve twenty original canonical prefixes and statuses through '
           'one/four-row single/two-target donor recovery and lost inventory/commits/acknowledgements, twice', flush=True)
 

@@ -23,16 +23,16 @@ def integer(value, minimum, maximum, label):
     require(type(value) is int and minimum <= value <= maximum, label)
 
 
-def history_bytes(missing_rows, target_slots):
-    return bytes((frame * 11 + player * 7 + index) % 251 for frame in range(8, 8 + missing_rows)
+def history_bytes(missing_rows, target_slots, warmup=0):
+    return bytes((frame * 11 + player * 7 + index) % 251 for frame in range(warmup + 8, warmup + 8 + missing_rows)
                  for player in range(2 * target_slots, 3 * target_slots) for index in range(4))
 
 
-def original_history(missing_rows=1, target_slots=1):
-    cut = 7 + missing_rows
+def original_history(missing_rows=1, target_slots=1, warmup=0):
+    cut = warmup + 7 + missing_rows
     values = [0] * (3 * target_slots)
     result = []
-    for frame in range(20):
+    for frame in range(warmup + 20):
         inputs = [bytes((min(frame, cut) * 11 + player * 7 + index) % 251 if player >= 2 * target_slots
                         else (frame * 11 + player * 7 + index) % 251 for index in range(4)) for player in range(3 * target_slots)]
         for player, data in enumerate(inputs):
@@ -41,31 +41,32 @@ def original_history(missing_rows=1, target_slots=1):
                    for player, data in enumerate(inputs)]
         result.append({'frame': frame, 'inputs': [data.hex() for data in inputs],
                        'state': {'frame': frame, 'bytes': struct.pack('<' + 'q' * (len(values) + 1), frame + 1, *values).hex(), 'inputs': details}})
-    return result
+    return result[warmup:]
 
 
-def check_rows(value, label, missing_rows, target_slots, unequal=False):
+def check_rows(value, label, missing_rows, target_slots, unequal=False, warmup=0):
     require(type(value) is list and len(value) == 2, label + ' survivors')
-    expected = original_history(missing_rows, target_slots)
+    expected = original_history(missing_rows, target_slots, warmup)
     for peer, survivor in enumerate(value):
         fields(survivor, 'peer current_frame confirmed_frame rows', label + ' survivor')
         require(same(survivor['peer'], peer), label + ' peer')
-        integer(survivor['current_frame'], 22 + int(unequal and peer == 0), 22 + int(unequal and peer == 0), label + ' continuation')
-        integer(survivor['confirmed_frame'], 20, 21, label + ' confirmation')
+        integer(survivor['current_frame'], warmup + 22 + int(unequal and peer == 0), warmup + 22 + int(unequal and peer == 0), label + ' continuation')
+        integer(survivor['confirmed_frame'], warmup + 20, warmup + 21, label + ' confirmation')
         require(same(survivor['rows'], expected), label + ' original rows, statuses or canonical states')
 
 
-def check_before(value, label, missing_rows, target_slots, unequal=False):
+def check_before(value, label, missing_rows, target_slots, unequal=False, warmup=0):
     require(type(value) is list and len(value) == 2, label + ' inventory count')
     for peer, inventory in enumerate(value):
         fields(inventory, 'confirmed targets', label + ' inventory')
-        integer(inventory['confirmed'], 4 + int(unequal and peer == 1), 4 + int(unequal and peer == 1), label + ' exposed confirmation')
+        integer(inventory['confirmed'], warmup + 4 + int(unequal and peer == 1), warmup + 4 + int(unequal and peer == 1), label + ' exposed confirmation')
         require(type(inventory['targets']) is list and len(inventory['targets']) == target_slots, label + ' target count')
         for offset, target in enumerate(inventory['targets']):
             fields(target, 'slot first last', label + ' target')
             require(same(target['slot'], 2 * target_slots + offset), label + ' target slot')
-            integer(target['first'], 0, 7, label + ' retained start')
-            integer(target['last'], 7 + peer * missing_rows, 7 + peer * missing_rows, label + ' physical missing row')
+            first = warmup + 2 + int(unequal and peer == 0) if label == 'source' else max(0, warmup - 2 + int(unequal and peer == 0))
+            integer(target['first'], first, first, label + ' retained start')
+            integer(target['last'], warmup + 7 + peer * missing_rows, warmup + 7 + peer * missing_rows, label + ' physical missing row')
 
 
 def check_source_operation(operation, label, target_slots):
@@ -81,7 +82,7 @@ def check_source_operation(operation, label, target_slots):
                              'target_set_digest': digest}), label + ' identity')
 
 
-def check_source_content(kind, content, label, missing_rows, target_slots, unequal=False):
+def check_source_content(kind, content, label, missing_rows, target_slots, unequal=False, warmup=0):
     names = {
         'DropPrepare': 'operation targets participants',
         'DropReport': 'operation participant stage exposed_confirmed cut cut_digest receipts',
@@ -94,7 +95,7 @@ def check_source_content(kind, content, label, missing_rows, target_slots, unequ
         require(same(content['targets'], targets), label + ' targets')
         require(same(content['participants'], [0, target_slots]), label + ' participants')
     if kind in ('DropReport', 'DropCommit'):
-        cut = 7 + missing_rows
+        cut = warmup + 7 + missing_rows
         digest = 0xcbf29ce484222325
         for slot in range(2 * target_slots, 3 * target_slots):
             data = struct.pack('<H', slot) + bytes((cut * 11 + slot * 7 + index) % 251 for index in range(4))
@@ -108,19 +109,19 @@ def check_source_content(kind, content, label, missing_rows, target_slots, unequ
         stage = content['stage']
         require(stage in ('Inventory', 'Ready', 'Committed'), label + ' report stage')
         if stage == 'Inventory':
-            receipts = [{'target': target['handle'], 'available_from': 3 if unequal and participant == 0 else 2,
-                         'contiguous_through': 7 if participant == 0 else cut} for target in targets]
+            receipts = [{'target': target['handle'], 'available_from': warmup + (3 if unequal and participant == 0 else 2),
+                         'contiguous_through': warmup + 7 if participant == 0 else cut} for target in targets]
             require(same(content['receipts'], receipts), label + ' receipts')
-            require(same(content['exposed_confirmed'], 4 + int(unequal and participant == target_slots)) and same(content['cut'], -1)
+            require(same(content['exposed_confirmed'], warmup + 4 + int(unequal and participant == target_slots)) and same(content['cut'], -1)
                     and same(content['cut_digest'], 0), label + ' inventory values')
         else:
             require(same(content['exposed_confirmed'], -1) and same(content['cut'], cut)
                     and same(content['cut_digest'], digest) and same(content['receipts'], []), label + ' certificate values')
 
 
-def check_source_controls(controls, label, missing_rows, target_slots, unequal=False, complete=True):
-    cut = 7 + missing_rows
-    donor_bytes = list(history_bytes(missing_rows, target_slots))
+def check_source_controls(controls, label, missing_rows, target_slots, unequal=False, complete=True, warmup=0):
+    cut = warmup + 7 + missing_rows
+    donor_bytes = list(history_bytes(missing_rows, target_slots, warmup))
     require(type(controls) is list and 1 <= len(controls) <= 4096, label + ' count')
     donor = False
     commit = False
@@ -138,11 +139,11 @@ def check_source_controls(controls, label, missing_rows, target_slots, unequal=F
         require(kind in ('DropPrepare', 'DropReport', 'DropBackfill', 'DropCommit', 'DropAbort') and type(content) is dict, label + ' kind')
         require(kind != 'DropAbort', label + ' source aborted')
         check_source_operation(content.get('operation'), label + ' operation', target_slots)
-        check_source_content(kind, content, label, missing_rows, target_slots, unequal)
+        check_source_content(kind, content, label, missing_rows, target_slots, unequal, warmup)
         if kind == 'DropReport' and content['stage'] == 'Inventory':
             inventories.add(content['participant'])
         if kind == 'DropBackfill':
-            require(same(content.get('start_frame'), 8) and same(content.get('frame_count'), missing_rows)
+            require(same(content.get('start_frame'), warmup + 8) and same(content.get('frame_count'), missing_rows)
                     and same(content.get('chunk_index'), 0) and same(content.get('chunk_count'), 1)
                     and same(content.get('bytes'), donor_bytes), label + ' original donor backfill')
             donor = donor or (packet['from'] == 1 and packet['to'] == 0)
@@ -156,9 +157,9 @@ def check_source_controls(controls, label, missing_rows, target_slots, unequal=F
 
 
 
-def check_godot_packet(raw, missing_rows, target_slots):
-    cut = 7 + missing_rows
-    donor_bytes = history_bytes(missing_rows, target_slots)
+def check_godot_packet(raw, missing_rows, target_slots, warmup=0):
+    cut = warmup + 7 + missing_rows
+    donor_bytes = history_bytes(missing_rows, target_slots, warmup)
     require(type(raw) is str and len(raw) == 196 + target_slots * 6 + missing_rows * target_slots * 8
             and all(character in '0123456789abcdef' for character in raw), 'Godot packet bytes')
     packet = bytes.fromhex(raw)
@@ -175,21 +176,21 @@ def check_godot_packet(raw, missing_rows, target_slots):
     require(struct.unpack_from('<HHIQ', packet, 48) == (0, 21 << 8, target_era + 1, digest)
             and packet[94:94 + len(targets)] == targets, 'Godot history packet operation')
     require(struct.unpack_from('<H', packet, 48)[0] == 0 and struct.unpack_from('<i', packet, 64)[0] == cut
-            and struct.unpack_from('<i', packet, 68)[0] == 8 and struct.unpack_from('<i', packet, 72)[0] == target_slots,
+            and struct.unpack_from('<i', packet, 68)[0] == warmup + 8 and struct.unpack_from('<i', packet, 72)[0] == target_slots,
             'Godot history packet range')
     require(struct.unpack_from('<3H', packet, 84) == (0, 1, 0) and struct.unpack_from('<I', packet, 90)[0] == len(targets)
             and struct.unpack_from('<I', packet, 94 + len(targets))[0] == len(donor_bytes) and packet[98 + len(targets):] == donor_bytes,
             'Godot history packet original bytes')
 
 
-def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False):
+def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False, warmup=0, unequal=False):
     fields(packet, 'from to packet emission order', 'Godot commit')
     integer(packet['order'], 1, 8192, 'Godot commit order')
     require(same(packet['from'], int(acknowledgement)) and same(packet['to'], int(not acknowledgement)), 'Godot commit sender')
     raw = packet['packet']
     require(type(raw) is str and len(raw) == 196 + target_slots * 6
             and all(character in '0123456789abcdef' for character in raw), 'Godot commit bytes')
-    cut = 7 + missing_rows
+    cut = warmup + 7 + missing_rows
     target_era = 23 << 8
     targets = b''.join(struct.pack('<BH', slot, target_era) for slot in range(2 * target_slots, 3 * target_slots))
     def digest(data):
@@ -200,7 +201,8 @@ def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False
     value = bytes((cut * 11 + slot * 7 + index) % 251 for slot in range(2 * target_slots, 3 * target_slots) for index in range(4))
     expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2 if acknowledgement else 1]) + bytes(7) + bytes([22 if acknowledgement else 21]) + bytes(7)
                 + struct.pack('<I4BHHIQiiiQHHHI', 54 + len(targets), 2 if acknowledgement else 4, 3 if acknowledgement else 0, 0, 0, 0, 21 << 8,
-                              target_era + 1, digest(targets), cut, 0, cut if acknowledgement else 7, digest(value), 0, 0, 0, len(targets))
+                              target_era + 1, digest(targets), cut, max(0, warmup - 2 + int(unequal and not acknowledgement)),
+                              cut if acknowledgement else warmup + 7, digest(value), 0, 0, 0, len(targets))
                 + targets + struct.pack('<I', 0))
     require(bytes.fromhex(raw) == expected, 'Godot exact certified acknowledgement' if acknowledgement else 'Godot exact certified commit')
 
@@ -222,10 +224,17 @@ def payload(packet):
     return {key: value for key, value in packet.items() if key not in ('emission', 'order')}
 
 
-def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False, inventory_loss=False):
+def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False, inventory_loss=False, warmup=0):
     require(type(missing_rows) is int and missing_rows in (1, 4), 'scenario missing rows')
     require(type(target_slots) is int and target_slots in (1, 2), 'scenario target slots')
-    cut = 7 + missing_rows
+    cut = warmup + 7 + missing_rows
+    require(type(warmup) is int and warmup in (0, 251), 'scenario warmup')
+    if warmup:
+        for label, value in [('source', source), ('Godot', godot)]:
+            require(same(value.get('warmup'), warmup), label + ' executed warmup')
+            require(same(value.get('expired_original_rows'), [True, True]), label + ' expired original rows')
+        source = {key: value for key, value in source.items() if key not in ('warmup', 'expired_original_rows')}
+        godot = {key: value for key, value in godot.items() if key not in ('warmup', 'expired_original_rows')}
     fields(source, 'format complete missing_rows target_slots upstream_revision before dropped controls '
            'received_controls survivors lost_history lost_commit lost_ack lost_inventory', 'source')
     fields(godot, 'format complete missing_rows target_slots before cuts history_packets donors history_emissions history_receipts '
@@ -235,22 +244,22 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
         require(same(value['format'], 6) and value['complete'] is True, label + ' completion')
         require(same(value['missing_rows'], missing_rows), label + ' missing rows')
         require(same(value['target_slots'], target_slots), label + ' target slots')
-        check_before(value['before'], label, missing_rows, target_slots, unequal)
-        check_rows(value['survivors'], label, missing_rows, target_slots, unequal)
+        check_before(value['before'], label, missing_rows, target_slots, unequal, warmup)
+        check_rows(value['survivors'], label, missing_rows, target_slots, unequal, warmup)
     require(source['upstream_revision'] == REVISION, 'source revision')
     require(same(source['dropped'], [target_slots, target_slots]), 'source drops')
-    check_source_controls(source['controls'], 'source emitted controls', missing_rows, target_slots, unequal)
-    check_source_controls(source['received_controls'], 'source received controls', missing_rows, target_slots, unequal)
+    check_source_controls(source['controls'], 'source emitted controls', missing_rows, target_slots, unequal, warmup=warmup)
+    check_source_controls(source['received_controls'], 'source received controls', missing_rows, target_slots, unequal, warmup=warmup)
     require(same(godot['cuts'], [[cut] * target_slots, [cut] * target_slots]) and same(godot['donors'], [1]), 'Godot cut or donor')
     integer(godot['history_packets'], 1, 4096, 'Godot historical transfer')
     require(godot['failures'] == [], 'Godot assertion failures')
-    donor_bytes = history_bytes(missing_rows, target_slots).hex()
+    donor_bytes = history_bytes(missing_rows, target_slots, warmup).hex()
     receipts = godot['history_receipts']
     require(type(receipts) is list and len(receipts) == godot['history_packets'], 'Godot history receipt count')
     for receipt in receipts:
         fields(receipt, 'from to bytes packet emission', 'Godot history receipt')
         require(same(receipt['from'], 1) and same(receipt['to'], 0) and receipt['bytes'] == donor_bytes, 'Godot original donor receipt')
-        check_godot_packet(receipt['packet'], missing_rows, target_slots)
+        check_godot_packet(receipt['packet'], missing_rows, target_slots, warmup)
     require(type(source['lost_history']) is list and len(source['lost_history']) == int(loss), 'source loss count')
     require(type(godot['lost_history']) is list and len(godot['lost_history']) == int(loss), 'Godot loss count')
     require(type(source['lost_commit']) is list and len(source['lost_commit']) == int(commit_loss), 'source commit loss count')
@@ -266,13 +275,13 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
     check_delivery(godot['history_emissions'], godot['lost_history'], receipts, 'Godot')
     require(type(godot['commit_emissions']) is list and 1 <= len(godot['commit_emissions']) <= 4096, 'Godot commit emissions')
     for packet in godot['commit_emissions']:
-        check_godot_commit(packet, missing_rows, target_slots)
+        check_godot_commit(packet, missing_rows, target_slots, warmup=warmup, unequal=unequal)
     check_delivery(godot['commit_emissions'], godot['lost_commit'], godot['commit_receipts'], 'Godot commit', observed=True)
     require(type(godot['ack_emissions']) is list and 1 <= len(godot['ack_emissions']) <= 4096, 'Godot acknowledgement emissions')
     for packet in godot['ack_emissions']:
-        check_godot_commit(packet, missing_rows, target_slots, acknowledgement=True)
+        check_godot_commit(packet, missing_rows, target_slots, acknowledgement=True, warmup=warmup, unequal=unequal)
     check_delivery(godot['ack_emissions'], godot['lost_ack'], godot['ack_receipts'], 'Godot acknowledgement', observed=True)
-    check_inventory(source, godot, inventory_loss, missing_rows, target_slots, unequal)
+    check_inventory(source, godot, inventory_loss, missing_rows, target_slots, unequal, warmup)
     check_godot_observation_order(godot)
     if ack_loss:
         first = next(packet for packet in source['controls'] if packet['from'] == 1 and packet['to'] == 0
@@ -306,7 +315,7 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
     if loss:
         lost_source = source['lost_history'][0]
         check_source_controls([lost_source, next(packet for packet in source['controls'] if 'DropCommit' in packet['body'])],
-                              'source lost packet', missing_rows, target_slots, unequal, complete=False)
+                              'source lost packet', missing_rows, target_slots, unequal, complete=False, warmup=warmup)
         first_source = next(packet for packet in source['controls'] if packet['from'] == 1 and packet['to'] == 0 and 'DropBackfill' in packet['body'])
         require(same(lost_source, first_source), 'source first donor emission lost')
         require(sum(same(payload(packet), payload(lost_source)) for packet in source['controls']) >= 2, 'source exact donor retry emission')
@@ -316,13 +325,13 @@ def compare(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=F
         require(same(lost_godot, godot['history_emissions'][0]), 'Godot first donor emission lost')
         require(any(same(payload(packet), payload(lost_godot)) and packet['emission'] > lost_godot['emission']
                     for packet in receipts), 'Godot exact donor retry receipt')
-    return {'cut': cut, 'unequal_exposure': unequal, 'missing_rows': missing_rows, 'target_slots': target_slots,
+    return {'cut': cut, 'warmup_frames': warmup, 'unequal_exposure': unequal, 'missing_rows': missing_rows, 'target_slots': target_slots,
             'compared_frames': 20, 'survivors': 2, 'original_history_validated': True,
             'lost_first_history_recovered': loss, 'lost_first_commit_recovered': commit_loss, 'lost_first_acknowledgement_recovered': ack_loss,
             'lost_first_inventory_recovered': inventory_loss, 'source_donor_emission_and_receipt': True, 'Godot_donor_receipt': True}
 
 
-def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False, inventory_loss=False):
+def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1, unequal=False, commit_loss=False, ack_loss=False, inventory_loss=False, warmup=0):
     def shared_wrong_history(source, godot):
         for trace in (source, godot):
             trace['survivors'][0]['rows'][8]['inputs'][2] = '00000000'
@@ -355,6 +364,12 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
         'foreign_donor': ('Godot original donor receipt', lambda s, g: g['history_receipts'][0].update(**{'from': 0})),
         'bool_frame': ('Godot original rows, statuses or canonical states', lambda s, g: g['survivors'][0]['rows'][0].update(frame=False)),
     }
+    if warmup:
+        for label, bank in [('source', 'source'), ('Godot', 'godot')]:
+            mutations[label + '_wrong_warmup'] = (label + ' executed warmup',
+                lambda s, g, bank=bank: (s if bank == 'source' else g).update(warmup=0))
+            mutations[label + '_invented_eviction'] = (label + ' expired original rows',
+                lambda s, g, bank=bank: (s if bank == 'source' else g).update(expired_original_rows=[False, True]))
     if unequal:
         for label, bank in [('source', 'source'), ('Godot', 'godot')]:
             mutations[label + '_equalized_exposure'] = (label + ' exposed confirmation',
@@ -472,7 +487,7 @@ def negative_controls(source, godot, loss=False, missing_rows=1, target_slots=1,
         candidate_source, candidate_godot = copy.deepcopy(source), copy.deepcopy(godot)
         mutate(candidate_source, candidate_godot)
         try:
-            compare(candidate_source, candidate_godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss)
+            compare(candidate_source, candidate_godot, loss, missing_rows, target_slots, unequal, commit_loss, ack_loss, inventory_loss, warmup)
         except ValueError as error:
             require(str(error) == 'drop history: ' + diagnostic, name + ' unrelated failure: ' + str(error))
         else:
@@ -528,3 +543,23 @@ def commit_loss_evidence_controls(clean, lost):
         else:
             raise ValueError('drop history: negative control survived: ' + name)
     return [name for name, _, _ in controls]
+
+
+def wrapped_evidence_controls(short, wrapped):
+    controls = []
+    for label, bank in [('source', 'source'), ('Godot', 'godot')]:
+        source, godot = copy.deepcopy(wrapped['source']), copy.deepcopy(wrapped['godot'])
+        replacement = copy.deepcopy(short[bank])
+        replacement.update(warmup=251, expired_original_rows=[True, True])
+        if bank == 'source':
+            source = replacement
+        else:
+            godot = replacement
+        try:
+            compare(source, godot, False, 4, 2, True, warmup=251)
+        except ValueError as error:
+            require(str(error) == 'drop history: ' + label + ' exposed confirmation', label + ' relabeled short trace diagnostic')
+        else:
+            raise ValueError('drop history: relabeled short trace survived: ' + label)
+        controls.append(label + '_short_trace_cannot_claim_wrap')
+    return controls
