@@ -20,6 +20,7 @@ change; it does not claim complete release or issue acceptance.
 | A readiness label can match stale state from the previous import. | CodeRabbit identified repeated terminal selection observing an earlier 301-frame recording before the next render. | Publish command state synchronously and check it within the same browser evaluation. |
 | Rejected evidence needs a terminal diagnostic round as well as no success receipt. | CodeRabbit identified download-gate exceptions leaving `ownership-rounds.json` at running. | Mark the round failed with bounded diagnostics before rethrowing; retain a table of execution and validation failures. |
 | A commit-only control must not also change its source bytes. | The original commit mode edited and committed the file, allowing inventory checks to conceal a missing HEAD check. | Commit the existing dirty source and assert unchanged bytes and a clean ending worktree. |
+| Temporary repositories can inherit the caller's staged index. | A controlled `GIT_INDEX_FILE` reproduction let the new fixture replace a separate staged index. | Clear Git overrides and unrelated configuration for fixture commands and children; sweep the existing temporary-repository tests. |
 
 ## Actions taken
 
@@ -38,6 +39,10 @@ retained full original, avoiding shared prefix-generation expectations.
 CodeRabbit's later feedback also bounds Git calls, permits source roots below
 external symlinks while rejecting in-tree links, and isolates the commit control.
 Native symlink/deadline controls reproduce both defects before repair and pass afterward.
+The caller-index regression also reproduces the unsafe write before repair.
+Shared fixture isolation now covers the native controls and four existing Git
+fixture suites. The durable procedure extends
+[infrastructure evidence](../skills/testing/references/infrastructure.md).
 
 The click lesson extends
 [browser integration evidence](../skills/testing/references/browser-integration.md).

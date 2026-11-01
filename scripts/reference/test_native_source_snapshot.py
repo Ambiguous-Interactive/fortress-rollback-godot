@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import native_source_snapshot as SNAPSHOT
+from git_test_environment import fixture_environment
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -63,11 +64,28 @@ class SourceImageControls(unittest.TestCase):
 
 
 class SourceReceiptControls(unittest.TestCase):
+    # Value: protects=caller's staged index; fails_when=fixture Git inherits an external index; why_new=earlier controls used a clean Git environment; seam=owned caller repo
+    def test_fixture_preserves_callers_index(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            caller = Path(directory)
+            environment = fixture_environment()
+            subprocess.run(["git", "init", "-q"], cwd=caller, env=environment, check=True, capture_output=True, timeout=30)
+            (caller / "sentinel").write_text("caller staged content\n")
+            subprocess.run(["git", "add", "sentinel"], cwd=caller, env=environment, check=True, capture_output=True, timeout=30)
+            index = caller / ".git/index"
+            original = index.read_bytes()
+            with patch.dict(os.environ, {"GIT_INDEX_FILE": str(index)}):
+                self.test_executed_source_identity()
+            self.assertEqual(index.read_bytes(), original, "temporary fixture changed caller's staged index")
+            self.assertEqual(subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=caller,
+                                                    env=environment, text=True, timeout=30), "sentinel\n")
+
     # Value: protects=executed source identity; fails_when=end-only Git metadata qualifies changed bytes; why_new=runner controls only validate outcomes; seam=fake engine process
     def test_executed_source_identity(self) -> None:
         for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
+                environment = fixture_environment()
                 for source in ("scripts/run_godot_tests.py", "scripts/host_capacity.py", "scripts/changed_suites.py",
                                "scripts/reference/engine_path.py", "scripts/native_source_snapshot.py"):
                     target = root / source
@@ -81,9 +99,9 @@ class SourceReceiptControls(unittest.TestCase):
                 (root / ".gitignore").write_text(".cache/\n")
                 for command in (["git", "init", "-q"], ["git", "add", "."],
                                 ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"]):
-                    subprocess.run(command, cwd=root, check=True, capture_output=True, timeout=30)
+                    subprocess.run(command, cwd=root, env=environment, check=True, capture_output=True, timeout=30)
                 suite.write_text("stable dirty source\n")
-                initial_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=30).strip()
+                initial_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, env=environment, text=True, timeout=30).strip()
                 engine = root / ".cache/engine"
                 engine.parent.mkdir()
                 marker = root / ".cache/mutated"
@@ -112,7 +130,7 @@ class SourceReceiptControls(unittest.TestCase):
                 receipt.write_text('{"passed":true}')
                 process = subprocess.run([sys.executable, str(root / "scripts/run_godot_tests.py"), "--godot", str(engine),
                                           "--suite", "res://tests/unit/test_sample.gd", "--jobs", "1", "--results", str(receipt)],
-                                         cwd=root, capture_output=True, text=True, timeout=30)
+                                         cwd=root, env=environment, capture_output=True, text=True, timeout=30)
                 report = json.loads(receipt.read_text())
                 expected = mode in ("stable_dirty", "transient_edit")
                 self.assertEqual(process.returncode, 0 if expected else 1, process.stderr)
@@ -127,8 +145,9 @@ class SourceReceiptControls(unittest.TestCase):
                     self.assertEqual(report["failure"], "source_changed" if mode != "replace_snapshot" else "snapshot_changed")
                 if mode == "commit":
                     self.assertEqual(suite.read_text(), "stable dirty source\n")
-                    self.assertEqual(subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True, timeout=30), "")
-                    self.assertNotEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=30).strip(), initial_commit)
+                    self.assertEqual(subprocess.check_output(["git", "status", "--porcelain"], cwd=root, env=environment, text=True, timeout=30), "")
+                    actual_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, env=environment, text=True, timeout=30).strip()
+                    self.assertNotEqual(actual_commit, initial_commit)
 
 
 if __name__ == "__main__":

@@ -1,13 +1,16 @@
 """Self-tests for the 300-line hard-limit checker (red-green discipline)."""
 
+import os
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from llm import check_llm_file_lengths as checker
 from llm import llm_paths
+from git_test_environment import fixture_environment
 
 
 def write_lines(path: Path, n: int) -> Path:
@@ -82,6 +85,9 @@ class StagedModeTest(unittest.TestCase):
     def setUp(self):
         import tempfile
 
+        environment = patch.dict(os.environ, fixture_environment(), clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.good = write_lines(self.root / ".llm" / "good.md", 5)
