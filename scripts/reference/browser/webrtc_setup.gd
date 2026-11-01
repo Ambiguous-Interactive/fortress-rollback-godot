@@ -146,7 +146,7 @@ func run(host: Node, count: int) -> bool:
 		config.check_distance = 0
 		config.max_snapshot_bytes = 4 + 4 * count
 		if host.mixed_enabled:
-			config.replay_max_frames = 40
+			config.replay_max_frames = host.frame_count
 			config.diagnostic_version = "fortress-webrtc-integer-v1"
 			config.diagnostic_seed = "0"
 		config.storage_budget_bytes = 1048576

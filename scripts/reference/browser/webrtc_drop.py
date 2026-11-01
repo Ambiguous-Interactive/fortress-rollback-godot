@@ -2,10 +2,10 @@
 import re
 import hashlib
 
-def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False):
+def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answer=False, relay_only=False):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('peerDrop') is not True
             or result.get('dropCorrupt') is not corrupt or result.get('dropAnswer', False) is not lost_answer
-            or result.get('dropClose', False) is not physical_close or result.get('errors') != []
+            or result.get('dropRelay', False) is not relay_only or result.get('dropClose', False) is not physical_close or result.get('errors') != []
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2):
         raise ValueError('peer-drop browser run incomplete')
     records = result.get('records')
@@ -54,7 +54,7 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                 or row['frames_submitted'] != (7 if index == 2 else 40)):
             raise ValueError('peer-drop departure or continued input missing')
         if index == 2:
-            if physical_close:
+            if physical_close or relay_only:
                 departure = rtc.get('departure', {})
                 for field, expected in [('frame', 6), ('channels_created', 6), ('channels_closed', 6)]:
                     if type(departure.get(field)) is not int or departure[field] != expected:
@@ -65,16 +65,16 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
                         or departure['connections_closed'] != departure['connections_created']):
                     raise ValueError('peer-drop physical departure incomplete')
             continue
-        if physical_close:
+        if physical_close or relay_only:
             mixed = row.get('mixed', {})
             continuing = [channel for channel in channels if channel.get('id') == 3 and type(channel.get('restoredSent')) is int
                           and channel['restoredSent'] > 0 and type(channel.get('postDropReceived')) is int and channel['postDropReceived'] > 0]
-            if len(continuing) != 1:
+            if not relay_only and len(continuing) != 1:
                 raise ValueError('peer-drop surviving direct link did not continue physical delivery')
             if (type(rtc.get('binarySent')) is not int or rtc['binarySent'] < 1
-                    or mixed.get('switched') is not True or type(mixed.get('relay_peers')) is not int or mixed['relay_peers'] != 1
+                    or mixed.get('switched') is not True or type(mixed.get('relay_peers')) is not int or mixed['relay_peers'] != (2 if relay_only else 1)
                     or type(mixed.get('caller_pending')) is not int or mixed['caller_pending'] != 0):
-                raise ValueError('peer-drop physical outage did not use bounded fallback')
+                raise ValueError('peer-drop physical outage did not use bounded fallback relay')
             for field in ('maximum_pending', 'maximum_relay_pending', 'maximum_relay_received'):
                 if type(mixed.get(field)) is not int or not 0 <= mixed[field] <= 128:
                     raise ValueError('peer-drop fallback queue exceeded its bound')
@@ -154,6 +154,55 @@ def validate_drop_browser(result, corrupt=False, physical_close=False, lost_answ
             if (certificate_rows != expected or not isinstance(certificate_rows, list)
                     or any(type(item.get('cut')) is not int for item in certificate_rows)):
                 raise ValueError('peer-drop participant certificate differs from agreed frame or value')
+        if relay_only:
+            for index, row in enumerate(survivors):
+                peer = records[0]['peers'][index]
+                rtc = peer['rtc']
+                departure = rtc.get('departure', {})
+                if (departure.get('frame') != 6 or type(departure.get('frame')) is not int
+                        or departure.get('survivor_frames') != [6, 6]
+                        or any(type(frame) is not int for frame in departure['survivor_frames'])
+                        or any(type(departure.get(field)) is not int for field in
+                               ('connections_created', 'connections_closed', 'channels_created', 'channels_closed'))
+                        or departure['connections_created'] < 2 or departure['connections_closed'] != departure['connections_created']
+                        or departure['channels_created'] != 6 or departure['channels_closed'] != 6):
+                    raise ValueError('peer-drop relay direct paths were not closed before agreement')
+                if any(type(channel.get(field)) is not int or channel[field] != 0
+                       for channel in rtc['channels'] for field in ('restoredSent', 'postDropReceived')):
+                    raise ValueError('peer-drop relay continued direct delivery')
+                packets = row.get('relay_barriers')
+                accepted = row['mixed'].get('accepted_binary')
+                if (type(accepted) is not int or accepted < 1 or not isinstance(packets, list)
+                        or not 1 <= len(packets) <= 128 or len(packets) > accepted):
+                    raise ValueError('peer-drop relay barrier receipts missing')
+                other = next(item for item in survivors if item is not row)
+                sender = hashlib.sha256(other['uuid'].encode('ascii')).digest()[:8]
+                required = (2, 2) if row['role'] == 1 else (4, 0)
+                found = False
+                for packet in packets:
+                    if not isinstance(packet, str) or not re.fullmatch(r'[0-9a-f]{202,2048}', packet) or len(packet) % 2:
+                        raise ValueError('peer-drop relay barrier packet malformed')
+                    data = bytes.fromhex(packet)
+                    targets = int.from_bytes(data[90:94], 'little')
+                    if (data[:8] != b'FRGP\x02\x00\x0c\x00' or data[24:32] != sender
+                            or data[8:24].hex() != row.get('session_id')
+                            or int.from_bytes(data[40:44], 'little') != len(data) - 44
+                            or targets != 3 or data[94] != row['departing_slot']
+                            or type(row.get('target_generation')) is not int
+                            or int.from_bytes(data[95:97], 'little') != row['target_generation']
+                            or 98 + targets > len(data)
+                            or int.from_bytes(data[94 + targets:98 + targets], 'little') != len(data) - 98 - targets
+                            or any(type(row.get(field)) is not int or int.from_bytes(data[start:end], 'little') != row[field]
+                                   for field, start, end in [('coordinator', 48, 50), ('coordinator_generation', 50, 52), ('operation', 52, 56)])
+                            or f"{int.from_bytes(data[56:64], 'little'):016x}" != row.get('target_set_digest')):
+                        raise ValueError('peer-drop relay barrier identity differs from survivor operation')
+                    if tuple(data[44:46]) == required:
+                        if (int.from_bytes(data[64:68], 'little', signed=True) != row['freeze_frame']
+                                or f"{int.from_bytes(data[76:84], 'little'):016x}" != row['digest']):
+                            raise ValueError('peer-drop relay certificate differs from committed history')
+                        found = True
+                if not found:
+                    raise ValueError('peer-drop relay all-survivor certificate or commit missing')
         departed = records[0]['peers'][2]['result']['records'][0]
         if (type(departed.get('slot')) is not int or not 0 <= departed['slot'] < 3
                 or any(row['departing_slot'] != departed['slot'] for row in survivors)

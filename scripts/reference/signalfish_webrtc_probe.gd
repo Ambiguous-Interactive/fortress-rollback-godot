@@ -53,6 +53,9 @@ var local_index: int = 0
 var membership_frozen: bool = false
 var tearing_down: bool = false
 var mixed_enabled: bool = false
+var frame_count: int = 40
+var recording_pressure: bool = false
+var pressure_service_turn: int = 0
 var mixed: Mixed = Mixed.new()
 var drop_enabled: bool = false
 var drop_witness: DropWitness = DropWitness.new()
@@ -60,6 +63,8 @@ var drop_witness: DropWitness = DropWitness.new()
 var _service_had_work: bool = false
 
 func _ready() -> void:
+	recording_pressure = JavaScriptBridge.eval("window.fortressRecordingPressure || false")
+	frame_count = 257 if recording_pressure else 40
 	drop_enabled = JavaScriptBridge.eval("window.fortressPeerDrop || false")
 	mixed_enabled = JavaScriptBridge.eval("window.fortressMixed || false")
 	endpoint = JavaScriptBridge.eval("window.fortressEndpoint")
@@ -124,7 +129,7 @@ func _play(count: int) -> bool:
 	if not await _wait(func() -> bool: return JavaScriptBridge.eval("window.fortressFirstStepReady || false"), true): return false
 	stage = "gameplay"
 	JavaScriptBridge.eval("window.fortressFaultActive = true")
-	for frame: int in 40:
+	for frame: int in frame_count:
 		if not await _wait(func() -> bool:
 			for peer: Peer in peers:
 				for endpoint_status: Dictionary in peer.network_status().peers.values():
@@ -152,7 +157,7 @@ func _play(count: int) -> bool:
 	stage = "final_confirmation"
 	if not await _wait(func() -> bool:
 		for peer: Peer in peers:
-			if peer.status().confirmed_frame < 38: return false
+			if peer.status().confirmed_frame < frame_count - 2: return false
 		return true, true): return false
 	if not _healthy(true): return false
 	stage = "canonical_state"
@@ -160,8 +165,8 @@ func _play(count: int) -> bool:
 	var minimum_confirmed: int = 2147483647
 	for index: int in clients.size():
 		minimum_confirmed = mini(minimum_confirmed, peers[index].status().confirmed_frame)
-		if peers[index].status().confirmed_frame < 38: return false
-		for frame: int in range(1, 39):
+		if peers[index].status().confirmed_frame < frame_count - 2: return false
+		for frame: int in range(1, frame_count - 1):
 			var expected: PackedByteArray = _expected(frame, count)
 			if games[index].history.get(frame) != expected: return false
 			comparisons += 1
@@ -170,7 +175,7 @@ func _play(count: int) -> bool:
 	if mixed_enabled:
 		recording = await Recording.new().run(self, count)
 		if recording.is_empty() or not _healthy(true): return false
-	var row: Dictionary = {"players": count, "frames_submitted": 40, "minimum_confirmed": minimum_confirmed, "canonical_comparisons": comparisons,
+	var row: Dictionary = {"players": count, "frames_submitted": frame_count, "minimum_confirmed": minimum_confirmed, "canonical_comparisons": comparisons,
 		"direct": _transport_totals(), "rollback_loads": games[0].loads, "active_comparisons": active_comparisons,
 		"mixed": mixed.report() if mixed_enabled else {}}
 	if mixed_enabled:
@@ -283,6 +288,9 @@ func _service_batch() -> bool:
 
 
 func _service() -> bool:
+	if recording_pressure:
+		pressure_service_turn += 1
+		JavaScriptBridge.eval("window.fortressRelayRefused = %s" % ("false" if pressure_service_turn % (5 + local_index) == 0 else "true"))
 	_service_had_work = false
 	_update_transport_clock()
 	if not _healthy(): return false

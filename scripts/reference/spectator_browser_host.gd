@@ -95,6 +95,8 @@ func _run() -> void:
 	}
 	if runtime.get("browser_fault") == "initial-state":
 		admission.initial_state = "ff".repeat(24)
+	elif runtime.get("browser_fault") == "room-identity":
+		admission.room = "foreign-room"
 	response = await _http("/admit", runtime.host_token, admission)
 	if response.status != 200:
 		_fail("browser admission")

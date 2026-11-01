@@ -437,6 +437,40 @@ test('physical departure separates slow readiness from the bounded quiet close p
   }
 });
 
+// Value: relay agreement cannot start until every endpoint loses every direct path.
+test('relay departure closes every endpoint before releasing any gameplay', async () => {
+  for (const broken of [false, true]) {
+    let released = 0;
+    const states = Array.from({ length: 3 }, () => {
+      const resources = { channels: Array.from({ length: 6 }, () => ({ readyState: 'open' })), connections: [] };
+      resources.connections = Array.from({ length: 2 }, () => ({ connectionState: 'connected', close() {
+        this.connectionState = 'closed';
+        if (!broken || resources !== states[0].window.fortressResources)
+          resources.channels.forEach(channel => { channel.readyState = 'closed'; });
+      } }));
+      return vm.createContext({ window: { fortressResources: resources, fortressRtc: {} },
+        document: { body: { dataset: { fortressFrame: '6', fortressDropReady: 'true', fortressDropPaused: 'true' } } } });
+    });
+    const pages = states.map(state => ({
+      async evaluate(operation, argument) {
+        state.argument = argument;
+        const value = vm.runInContext(`(${operation.toString()})(argument)`, state);
+        if (state.window.fortressDropGo) {
+          assert.ok(states.every(context => context.window.fortressResources.channels.every(channel => channel.readyState === 'closed')));
+          released++;
+        }
+        return value;
+      },
+      async waitForFunction(operation) {
+        if (!vm.runInContext(`(${operation.toString()})()`, state)) throw new Error('not closed');
+      },
+    }));
+    if (broken) await assert.rejects(closeDepartingRtc(pages, () => 0, true), /not closed/);
+    else await closeDepartingRtc(pages, () => 0, true);
+    assert.equal(released, broken ? 0 : 3);
+  }
+});
+
 // Value: a lost inventory answer must retry exact owned bytes through the real channel send wrapper.
 test('peer-drop answer loss drops one inventory report and passes its exact retry', () => {
   const sent = [];
@@ -654,4 +688,58 @@ test('corrupt control sets both physical second directions before either origina
   const receipts = await execute(pages, wait, true);
   assert.equal(receipts.length, 2);
   fixtures.forEach(f => assert.equal(f.sent.length, 1, 'the actual held original was released'));
+});
+
+// Value: repeated relay refusal must preserve actual socket state and stop exactly after queue reuse.
+test('recording pressure follows service turns on both physical socket types through frame252', () => {
+  class Socket {
+    constructor() { this.readyState = 1; this.nativeBuffered = 7; this.sent = []; }
+    get bufferedAmount() { return this.nativeBuffered; }
+    addEventListener() {}
+    send(bytes) { this.sent.push(bytes); }
+  }
+  class Channel extends Socket {
+    constructor(options) { super(); Object.assign(this, options); }
+    get bufferedAmount() { return this.nativeBuffered; }
+  }
+  class Connection {
+    constructor() { this.connectionState = 'connected'; this.iceConnectionState = 'connected'; }
+    addEventListener() {}
+    createDataChannel(label, options) { return new Channel({ label, ...options }); }
+  }
+  global.RTCDataChannel = Channel;
+  global.RTCPeerConnection = Connection;
+  global.WebSocket = Socket;
+  global.window = { RTCPeerConnection: Connection };
+  global.document = { body: { dataset: { fortressFrame: '3' } } };
+  try {
+    instrument({ count: 2, index: 1, mixed: true, recordingPressure: true, faults: false });
+    const channel = new window.RTCPeerConnection().createDataChannel('unreliable', { id: 3 });
+    const socket = new window.WebSocket();
+    window.fortressRelayRefused = true;
+    assert.equal(socket.bufferedAmount, 7);
+    assert.equal(channel.bufferedAmount, 7);
+    for (const frame of [4, 128, 129, 252]) {
+      document.body.dataset.fortressFrame = String(frame);
+      assert.equal(socket.bufferedAmount, 262144);
+      assert.equal(channel.bufferedAmount, 262144);
+      window.fortressRelayRefused = false;
+      assert.equal(socket.bufferedAmount, 7);
+      window.fortressRelayRefused = true;
+    }
+    assert.equal(window.fortressRtc.relayBlockedReads, 4);
+    assert.equal(window.fortressRtc.relayPostWrapBlockedReads, 2);
+    document.body.dataset.fortressFrame = '253';
+    assert.equal(socket.bufferedAmount, 7);
+    assert.equal(channel.bufferedAmount, 7);
+    assert.equal(socket.readyState, 1);
+    socket.send(new Uint8Array([1, 2]));
+    assert.equal(socket.sent.length, 1);
+  } finally {
+    delete global.WebSocket;
+    delete global.window;
+    delete global.RTCPeerConnection;
+    delete global.RTCDataChannel;
+    delete global.document;
+  }
 });

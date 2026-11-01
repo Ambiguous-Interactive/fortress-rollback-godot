@@ -172,6 +172,7 @@ class Control:
                     if not state.accepted_once or type(body) is not dict or set(body) != {'complete'} or body['complete'] is not True:
                         return 403, {'error': 'wrong_lifetime'}
                     state.done = body.copy()
+                    state.accept = None
                     return 200, {'complete': True}
                 if self.command == 'POST' and self.path == '/admit':
                     required = {'viewer', 'room', 'host', 'identity', 'key', 'digest', 'initial_state', 'players', 'width', 'neutral', 'seed', 'rules'}
@@ -187,7 +188,7 @@ class Control:
                 if self.command == 'GET' and self.path == '/admission':
                     return (200, state.admission.copy()) if state.admission else (202, {'pending': True})
                 if self.command == 'POST' and self.path == '/accept':
-                    if (not isinstance(body, dict) or set(body) != {'viewer', 'room', 'identity', 'packet'} or state.admission is None
+                    if (state.done is not None or not isinstance(body, dict) or set(body) != {'viewer', 'room', 'identity', 'packet'} or state.admission is None
                             or any(body.get(key) != state.admission[key] for key in ['viewer', 'room', 'identity'])
                             or type(body['packet']) is not str or len(body['packet']) != 176
                             or any(c not in '0123456789abcdef' for c in body['packet'])):

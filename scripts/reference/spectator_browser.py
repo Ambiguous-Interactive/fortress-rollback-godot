@@ -97,21 +97,21 @@ class ExportServer:
 
 def validate_no_acceptance(control):
     if control.accepted_once is not False or type(control.received) is not int or control.received != 0 or control.done is not None:
-        raise ValueError('exported initial-state control accepted or completed playback')
+        raise ValueError('exported admission control accepted or completed playback')
 
 
 def validate_fault(returncode, browser, host_alive, control, stderr=''):
     if (stderr or type(returncode) is not int or returncode != 1 or host_alive is not True or type(browser) is not dict
             or browser.get('browser') != 'Chromium' or type(browser.get('version')) is not str or not browser['version']
             or browser.get('errors') != [] or type(browser.get('result')) is not dict):
-        raise ValueError('exported initial-state control did not reach its intended rejection')
+        raise ValueError('exported admission control did not reach its intended rejection')
     result = browser['result']
     if result.get('passed') is not False or result.get('reason') != 'browser original-state or membership binding' or result.get('errors') != []:
-        raise ValueError('exported initial-state control did not reach its intended rejection')
+        raise ValueError('exported admission control did not reach its intended rejection')
     expected = {'compared': 0, 'frame': 0, 'simulations': 0, 'accept_pending': False, 'accept_delivered': False}
     observed = browser.get('state')
     if type(observed) is not dict or any(type(observed.get(key)) is not type(value) or observed[key] != value for key, value in expected.items()):
-        raise ValueError('exported initial-state control performed acceptance or playback work')
+        raise ValueError('exported admission control performed acceptance or playback work')
     validate_no_acceptance(control)
 
 
@@ -128,7 +128,7 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
                 raise ValueError('exported spectator browser process deadline') from error
             (output / 'browser.log').write_text(process.stdout + process.stderr)
             browser_output = process.stdout
-            if fault == 'initial-state':
+            if fault in ['initial-state', 'room-identity']:
                 browser = json.loads(browser_output)
                 validate_fault(process.returncode, browser, host.poll() is None, control, process.stderr)
                 return {'fault': fault, 'rejected': True, 'viewer': browser}

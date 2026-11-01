@@ -17,7 +17,7 @@ import zipfile
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import validate_drop_browser
-from browser.webrtc_recording import engine_identity, validate_recording
+from browser.webrtc_recording import engine_identity, validate_recording, validate_pressure
 from browser.webrtc_runner import run_browser
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
@@ -36,7 +36,7 @@ import host_capacity  # noqa: E402
 HOST_LEASE_NAME = 'webrtc-witness'
 HOST_WAIT_SECONDS = 900.0
 LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mixed-disabled', 'mixed-close', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close',
-          'peer-drop-answer')
+          'peer-drop-answer', 'peer-drop-relay', 'recording-pressure')
 
 
 def validate_engine(engine, expected):
@@ -388,9 +388,10 @@ def main():
     owned_logs = ['server.log', 'tls-certificate.log', 'instrument-controls.log'] + [f'{version}-{suffix}.log' for version in versions
         for suffix in ('version', 'import', 'clock-test', 'export', 'clean', 'faults', 'corrupt', 'clean-events',
                        'faults-events', 'corrupt-events', 'default', 'default-events', 'mixed', 'mixed-events',
-                       'mixed-default', 'mixed-default-events', 'mixed-disabled', 'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
+                       'recording-pressure', 'recording-pressure-events', 'mixed-default', 'mixed-default-events', 'mixed-disabled',
+                       'mixed-disabled-events', 'mixed-close', 'mixed-close-events',
                        'peer-drop', 'peer-drop-events', 'peer-drop-corrupt', 'peer-drop-corrupt-events',
-                       'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events')]
+                       'peer-drop-close', 'peer-drop-close-events', 'peer-drop-answer', 'peer-drop-answer-events', 'peer-drop-relay', 'peer-drop-relay-events')]
     for name in owned_logs:
         (args.output / name).unlink(missing_ok=True)
     sdk_pin, server_pin = pins['sources']['sdk'], pins['sources']['server']
@@ -602,10 +603,14 @@ def main():
                             validate_identity(result, pair, pins)
                         else:
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log',
-                                                 rooms=1 if label in ('corrupt', 'default', 'peer-drop', 'peer-drop-corrupt', 'peer-drop-close', 'peer-drop-answer') else 3)
+                                                 rooms=1 if label in ('corrupt', 'default', 'peer-drop', 'peer-drop-corrupt',
+                                                              'peer-drop-close', 'peer-drop-answer', 'peer-drop-relay', 'recording-pressure') else 3)
                             validate_identity(json.loads(output), pair, pins)
                             if label.startswith('peer-drop'):
-                                result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close', label == 'peer-drop-answer')
+                                result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',
+                                                               label == 'peer-drop-answer', label == 'peer-drop-relay')
+                            elif label == 'recording-pressure':
+                                result = validate_pressure(json.loads(output), recording_engine)
                             elif label in ('corrupt', 'default'):
                                 result = validate_restore_control(json.loads(output), label)
                             else:
@@ -628,11 +633,15 @@ def main():
               'log_sha256': {name: digest(args.output / name) for name in owned_logs if (args.output / name).exists()},
               'limits': 'Real release Web exports in two independent selected pinned browser processes over local host ICE. '
                         'Ordinary labels use 2/4/8 peers, 40 submitted frames and 38 corrected canonical prefixes per peer. '
+                        'Recording-pressure uses two peers and 257 original frames across queue reuse with repeated synthetic direct/socket buffer refusal, '
+                        'post-wrap exact-byte relay retries, real addressed server receipts and decoded original final-state recordings. '
                         'Peer-drop labels use three peers: one stops protocol service after seven inputs, while two certify a frozen sample '
                         'over real WebRTC and continue to 40 inputs with 38 independent canonical prefix checks. Ordinary drop labels retain ICE. '
                         'The peer-drop-close label stops one endpoint and closes every constructed RTC connection and channel before survivors agree, '
                         'then unavailable routes use the bounded relay fallback. Signaling membership remains frozen. '
                         'The peer-drop-answer label loses the first inventory answer at the real channel send boundary and requires an exact-byte retry. '
+                        'The peer-drop-relay label closes every endpoint RTC path before agreement, requires addressed relay certificate/commit bytes, '
+                        'and preserves original canonical history during relay continuation. '
                         'Post-drop simulation corruption must fail the canonical gate. No room departure, process death or complete pinned barrier parity claim. '
                         'All successful browser data channels and peer connections close at teardown. Snapshot restore corruption fails '
                         'at the gameplay canonical prefix comparison. Mixed runs exercise actual relay bytes and direct restoration under '
