@@ -82,15 +82,15 @@ func _terminal_partition(context: RefCounted) -> void:
 		context.equal(closed.now_us, stopped_at, "stopped match consumes no further service time")
 	for failed: int in 2:
 		var callback_failure: Match = _healthy(context)
-		var game: FailingGame = FailingGame.new()
+		var failing_game: FailingGame = FailingGame.new()
 		var frame: int = callback_failure.games[failed].frame
-		context.equal(game.load_state(frame, Match.Reader.new(callback_failure.games[failed].canonical_bytes(), true)), true, "failure fixture restores canonical state")
-		context.equal(callback_failure.sessions[failed]._driver.configure(callback_failure.sessions[failed]._core, game), Types.Code.OK, "attach actual failing SAVE callback")
-		callback_failure.games[failed] = game
+		context.equal(failing_game.load_state(frame, Match.Reader.new(callback_failure.games[failed].canonical_bytes(), true)), true, "failure fixture restores canonical state")
+		context.equal(callback_failure.sessions[failed]._driver.configure(callback_failure.sessions[failed]._core, failing_game), Types.Code.OK, "attach actual failing SAVE callback")
+		callback_failure.games[failed] = failing_game
 		var other_before: int = callback_failure.games[1 - failed].frame
 		context.equal(callback_failure.tick(PackedInt32Array([2, 8])), I.Code.INPUT_FAILED, "callback termination reports stopped match")
 		context.equal(callback_failure.sessions[failed].status().reason, Types.Code.CALLBACK_FAILED, "cleanup retains callback first cause")
-		context.equal(game.failed_writer.status(), SnapshotStatus.Code.EXPIRED, "terminal cleanup leaves retained writer expired")
+		context.equal(failing_game.failed_writer.status(), SnapshotStatus.Code.EXPIRED_VIEW, "terminal cleanup leaves retained writer expired")
 		context.equal(callback_failure.sessions[1 - failed].status().lifecycle, Types.Lifecycle.TERMINATED, "callback failure retires retained counterpart")
 		if failed == 0:
 			context.equal(callback_failure.games[1].frame, other_before, "first endpoint failure prevents later counterpart simulation")
