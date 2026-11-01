@@ -31,8 +31,9 @@ Press F or click **Follow live** to clear the viewing delay and resume continuou
 This selects the maximum bounded catch-up rate and allows catch-up whenever input waits.
 Later ticks consume all delivered contiguous confirmed rows, with at most one queue capacity of input work per tick.
 The action itself never skips history or advances either game. Comma and Period can adjust the rate afterward.
-Press [ or ] to lower or raise the viewing delay by one confirmed frame, including while paused.
-Press comma or period to lower or raise the catch-up limit by one frame per tick.
+Press [ or ] or click **Less delay** or **More delay** to change the viewing delay by one confirmed frame, including while paused.
+Press Comma or Period or click **Slower catch-up** or **Faster catch-up** to change the catch-up limit by one frame per tick.
+Policy buttons disable at their respective limits and while a request, callback or stopped viewer prevents changes.
 The limit ranges from one frame through the configured queue capacity; it changes neither
 viewing delay nor pause. The label shows the selected limit.
 Reducing delay catches up within that work limit; raising delay waits for

@@ -33,6 +33,10 @@ The integration controller and loop reject buttons outside 0–7 with `INVALID_C
 Rejected buttons preserve queued deliveries, sampled input, accepted time and the running match.
 Stopping replay inside a callback keeps that ownership until the callback returns; live play can then resume.
 The scene retries temporary `BUSY` ticks after ownership releases, without restarting the match.
+The example also holds the shared session guard while calling confirmed `Effects.play()` hooks.
+Nested service, restart, replay and expert mutations return `BUSY` until those hooks return.
+An effect hook can terminate the match; the bounded batch of already-confirmed effects finishes,
+and live or final-tail service returns the first terminal cause. Restart is available after the callback returns.
 If expert work advanced on prediction, resumed delivery fills the missing remote prefix within the existing queue limit.
 Already accepted external input stays authoritative; finishing repairs only frames already simulated.
 

@@ -11,6 +11,17 @@ const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
+class InvalidSaveGame:
+	extends RefCounted
+
+	# Variant deliberately exercises a malformed application callback return.
+	func save_state(_frame: int, _writer: RefCounted) -> Variant:
+		return true
+
+	func simulate_frame(_frame: int, _inputs: Types.FrameInputs) -> bool:
+		return true
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(
 		[
@@ -24,13 +35,16 @@ func cases() -> PackedStringArray:
 			"empty_terminal",
 			"input_inspection",
 			"dropped_file",
-			"recording_metadata"
+			"recording_metadata",
+			"paused_validation"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"paused_validation":
+			_paused_validation(context)
 		"recording_metadata":
 			_recording_metadata(context)
 		"dropped_file":
@@ -586,5 +600,94 @@ func _recording_metadata(context: RefCounted) -> void:
 		node.viewer.terminate()
 		context.equal(node.viewer.recording_details(), details, "stopped playback still identifies the selected recording")
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=users can validate the displayed initial or paused state without advancing input;
+# fails_when=validation consumes input, accepts divergence or runs during held navigation; why_new=step and seek require navigation; seam=none
+func _paused_validation(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	var button: Button = _button(node, "Validate state")
+	context.equal(button != null, true, "scene exposes explicit paused state validation")
+	if button == null:
+		node._exit_tree()
+		node.free()
+		return
+	context.equal(button.disabled, true, "empty viewer cannot validate")
+	for recorded: bool in [false, true]:
+		var replay: Replay = recording(310)
+		if not recorded:
+			replay._flags.fill(0)
+		context.equal(node.viewer.open_bytes(replay.to_bytes()), true, "paused validation fixture imports")
+		node._refresh()
+		context.equal(button.disabled, false, "initial state can be inspected without stepping")
+		var original: PackedByteArray = node.viewer.game.canonical_bytes()
+		button.pressed.emit()
+		context.equal(node.viewer.current_frame(), 0, "validation consumes no input")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), original, 0, "validation preserves displayed state")
+		context.equal(node.viewer.checked_checksum_count(), 1 if recorded else 0, "only existing recorded state evidence counts")
+		context.equal(node.viewer.current_state_coverage_message().contains("recorded checksum matched"), recorded, "state coverage distinguishes absent recorded evidence")
+		button.pressed.emit()
+		context.equal(node.viewer.checked_checksum_count(), 1 if recorded else 0, "revalidation does not inflate distinct coverage")
+		node.viewer.toggle_play()
+		node._refresh()
+		context.equal(button.disabled, true, "playing state disables paused validation")
+		var message: String = node.viewer.message
+		node._validate_state()
+		context.equal(node.viewer.is_playing, true, "forced action during playback preserves cadence")
+		context.equal(node.viewer.message, message, "refused action preserves playback message")
+		node.viewer.toggle_play()
+		var work: Types.Result = node.viewer._player.begin_validate_current_frame()
+		context.equal(work.code, Types.Code.READY, "paused expert SAVE owns the displayed boundary")
+		var request: Types.Request = work.batch.next_request()
+		node._refresh()
+		context.equal(button.disabled, true, "idle manual batch disables paused validation")
+		context.equal(node.viewer.validate_state(), false, "controller refuses manual-owned validation")
+		context.equal(request.writer.status(), request.writer.Code.OK, "refusal preserves the manual writer")
+		node.viewer._player.terminate()
+		node.viewer.restart()
+		node._is_scrubbing = true
+		node._refresh()
+		context.equal(button.disabled, true, "held timeline disables validation")
+		node._validate_state()
+		context.equal(node.viewer.current_frame(), 0, "held timeline preserves selected frame")
+		node._is_scrubbing = false
+		node.viewer.seek(310)
+		node._refresh()
+		context.equal(button.disabled, true, "active seek disables validation")
+		node.viewer.cancel_seek()
+		node.viewer.restart()
+	var replay: Replay = recording(3)
+	var final_game: Simulation = Simulation.new()
+	for frame: int in replay.frame_count():
+		final_game.simulate_frame(frame, replay.inputs(frame))
+	replay._format_version = Replay.TERMINAL_VERSION
+	replay._terminal_checksum = Simulation.checksum(final_game.canonical_bytes())
+	node.viewer.open_bytes(replay.to_bytes())
+	for frame: int in replay.frame_count():
+		node.viewer._player.step()
+	context.equal(node.viewer._player.is_final_state_validated(), false, "direct input playback leaves terminal state unchecked")
+	node._refresh()
+	context.equal(button.disabled, false, "paused terminal state can be checked without another input")
+	button.pressed.emit()
+	context.equal(node.viewer.current_frame(), 3, "terminal validation consumes no nonexistent input")
+	context.equal(node.viewer._player.is_final_state_validated(), true, "terminal action checks recorded ending")
+	node.viewer.open_bytes(replay.to_bytes())
+	node.viewer.game.x[0] += 1
+	node._refresh()
+	button.pressed.emit()
+	context.equal(node.viewer.has_failure(), true, "explicit validation catches initial-state divergence")
+	context.equal(node.viewer.current_frame(), 0, "failure identifies the unapplied initial boundary")
+	context.equal(node.viewer._player.failure_comparison(), "state_checksum", "failure retains exact comparison")
+	context.equal(node.viewer.failure_report_bytes().is_empty(), false, "explicit validation failure exposes downloadable evidence")
+	context.equal(button.disabled, true, "failed playback disables validation until restart")
+	node.viewer.restart()
+	node.viewer._player._game = InvalidSaveGame.new()
+	context.equal(node.viewer.validate_state(), false, "malformed callback is refused through explicit validation")
+	context.equal(node.viewer._player.failure_code(), Types.Code.CALLBACK_FAILED, "malformed result retains callback failure")
+	context.equal(node.viewer._is_busy(), false, "malformed result releases the game guard")
+	context.equal(node.viewer.current_frame(), 0, "malformed result consumes no input")
 	node._exit_tree()
 	node.free()

@@ -72,5 +72,15 @@ func tick(now_us: int, buttons: int) -> int:
 	var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(local_player, frame, _sample)]
 	code = driver.step(now_us, samples).code
 	if code == Types.Code.OK or code == Types.Code.PREDICTION_STALL:
-		effects.reconcile(game, session.status())
+		var effect_code: int = _reconcile_effects()
+		if effect_code != Types.Code.OK:
+			return effect_code
 	return code
+
+
+func _reconcile_effects() -> int:
+	# Application effect hooks must not replace or advance the match still being serviced.
+	session._begin_driver_notification()
+	effects.reconcile(game, session.status())
+	session._end_driver_notification()
+	return session.status().reason

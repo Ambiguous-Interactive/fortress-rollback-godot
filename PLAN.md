@@ -130,6 +130,9 @@ Example integer button inputs are validated before byte conversion or controller
 Scene physics loops retry temporary ownership holds without replacing their current match.
 Browser file-read completions also preserve held timeline controls and active game requests.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
+An explicit paused-state action checks the selected replay boundary without consuming input.
+The local spectator offers pointer controls for bounded viewing delay and catch-up rate.
+Confirmed-effect hooks keep the shared integration session guarded until their bounded batch finishes; cancellation remains observable.
 Recording progress separates finalized exports, pending correction/confirmation and gameplay omitted beyond the configured cap without copying replay bytes.
 The spectator example also shows its viewed recording limit, advance warning and omitted viewed frames while playback continues.
 Spectator host observations separate authenticated liveness and pending final-row recovery from playback progress.

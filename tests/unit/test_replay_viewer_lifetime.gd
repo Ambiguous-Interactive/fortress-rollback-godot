@@ -46,6 +46,8 @@ class ReentrantGame:
 				owner.restart()
 			"seek":
 				accepted = owner.seek(0)
+			"validate":
+				accepted = owner.validate_state()
 			"speed":
 				accepted = owner.set_playback_speed(16)
 			"play":
@@ -118,7 +120,7 @@ func _replacement(context: RefCounted) -> void:
 
 func _callback_controls(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "callback fixture imports")
@@ -152,6 +154,29 @@ func _callback_controls(context: RefCounted) -> void:
 			context.bytes_equal(game.original.canonical_bytes(), expected.canonical_bytes(), target, "reentry preserves canonical selected state")
 			context.state(target, game.original.canonical_bytes())
 
+	for cancelled: bool in [false, true]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate"]:
+			var viewer: Viewer = Viewer.new()
+			var recording: Replay = Fixture.recording(3)
+			viewer.open_bytes(recording.to_bytes())
+			var game: ReentrantGame = ReentrantGame.new()
+			game.viewer = weakref(viewer)
+			game.boundary = Types.Kind.SAVE
+			game.operation = operation
+			game.terminate_first = cancelled
+			viewer.game = game
+			var player: Player = viewer._player
+			context.equal(player.configure(recording, game, Simulation.SNAPSHOT_BYTES), Types.Code.OK, "validation callback configures")
+			context.equal(viewer.validate_state(), not cancelled, "validation accepts only completed uncancelled SAVE")
+			context.equal(game.attempts, 1, "validation actually crosses reentrant SAVE")
+			context.equal(game.accepted, false, "validation callback refuses reentrant controls")
+			context.equal(viewer._player, player, "validation callback preserves original owner")
+			context.equal(viewer.game, game, "validation callback preserves original game")
+			context.equal(viewer.current_frame(), 0, "validation callback consumes no input")
+			context.equal(viewer.can_validate_state(), not cancelled, "cancelled validation cannot advertise readiness")
+			context.equal(player.failure_code(), Types.Code.TERMINATED if cancelled else Types.Code.OK, "cancellation remains first cause")
+			context.bytes_equal(game.original.canonical_bytes(), Simulation.new().canonical_bytes(), 0, "validation callback preserves canonical initial state")
+
 
 func _expert_controls(context: RefCounted) -> void:
 	var viewer: Viewer = Viewer.new()
@@ -171,6 +196,7 @@ func _expert_controls(context: RefCounted) -> void:
 	context.equal(viewer.set_playback_speed(16), false, "retained work refuses cadence changes")
 	context.equal(viewer.seek(0), false, "retained work refuses navigation")
 	viewer.cancel_seek()
+	context.equal(viewer.validate_state(), false, "retained work refuses paused validation")
 	viewer.step()
 	viewer.tick()
 	context.equal(viewer._player, player, "retained batch preserves player ownership")
@@ -191,7 +217,7 @@ func _expert_controls(context: RefCounted) -> void:
 
 func _callback_termination(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "termination fixture imports")
@@ -261,7 +287,9 @@ func _scene_exit(context: RefCounted) -> void:
 		if not node.is_inside_tree():
 			node._exit_tree()
 		node.free()
-		context.equal(viewer.message, message if mode == "failed" else "Playback stopped. Restart to watch again.", "scene exit names cancellation and preserves existing failure text")
+		context.equal(
+			viewer.message, message if mode == "failed" else "Playback stopped. Restart to watch again.", "scene exit names cancellation and preserves existing failure text"
+		)
 		context.equal(viewer.is_playing, false, "scene exit stops playback cadence")
 		context.equal(viewer.is_seeking(), false, "scene exit abandons navigation")
 		context.equal(player.failure_code(), reason if mode == "failed" else Types.Code.TERMINATED, "exit retires the player while preserving its first failure")

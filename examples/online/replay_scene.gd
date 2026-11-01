@@ -58,6 +58,7 @@ var _status: Label
 var _recording_metadata: Label
 var _play: Button
 var _step_button: Button
+var _validate_button: Button
 var _back_button: Button
 var _previous_checkpoint: Button
 var _next_checkpoint: Button
@@ -145,6 +146,8 @@ func _ready() -> void:
 	panel.add_child(exports)
 	_failure_download = _button(exports, "Download failure", _download_failure)
 	_prefix_download = _button(exports, "Download prefix", _download_prefix)
+	_validate_button = _button(exports, "Validate state", _validate_state)
+	_validate_button.tooltip_text = "Check available recorded evidence at this paused frame without consuming input. Missing checksums remain unverified."
 	_prefix_download.tooltip_text = "Save original inputs before the displayed frame, preserving recorded checksum evidence."
 	var changes: HBoxContainer = HBoxContainer.new()
 	panel.add_child(changes)
@@ -247,6 +250,13 @@ func _step() -> void:
 	if viewer.is_playing:
 		viewer.toggle_play()
 	viewer.step()
+	_refresh()
+
+
+func _validate_state() -> void:
+	if _is_scrubbing:
+		return
+	viewer.validate_state()
 	_refresh()
 
 
@@ -413,6 +423,7 @@ func _refresh() -> void:
 	_play.text = "Pause" if viewer.is_playing else "Play"
 	_play.disabled = _is_scrubbing or viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
+	_validate_button.disabled = _is_scrubbing or not viewer.can_validate_state()
 	_back_button.disabled = _is_scrubbing or viewer.is_seeking() or viewer.current_frame() == 0
 	_restart_button.disabled = _is_scrubbing or (viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0)
 	_speed.disabled = _is_scrubbing

@@ -126,6 +126,8 @@ guard. Test valid request identities as well as terminate-then-reconfigure.
 Completion notifications need a guard on the shared session too. A facade-local flag
 cannot stop a second driver or the expert API from changing state between handlers.
 Test both access paths and cancellation; keep completed read-only exports available.
+Application presentation hooks can run after driver guards release. Hold shared ownership through a composed effect batch;
+exercise immediate and delayed final-tail effects, including cancellation followed by reentry, and return the terminal cause.
 Observe reentrant control state inside the callback; an outer reset can erase a transient mutation before the final assertion.
 Destructive event drains share that guard so one completion handler cannot consume cancellation before later handlers observe it.
 Apply callback termination checks to paused validation and checkpoint restoration too.

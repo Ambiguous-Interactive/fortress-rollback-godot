@@ -17,6 +17,7 @@ var _follow_live_button: Button
 var _pause_button: Button
 var _step_button: Button
 var _catchup_button: Button
+var _policy_controls: HBoxContainer
 
 
 func _ready() -> void:
@@ -48,6 +49,19 @@ func _ready() -> void:
 	_catchup_button.focus_mode = Control.FOCUS_NONE
 	_catchup_button.pressed.connect(_catch_up_viewer)
 	add_child(_catchup_button)
+	_policy_controls = HBoxContainer.new()
+	_policy_controls.name = "PlaybackPolicy"
+	_policy_controls.add_theme_constant_override("separation", 12)
+	add_child(_policy_controls)
+	var names: PackedStringArray = PackedStringArray(["LessDelay", "MoreDelay", "SlowerCatchUp", "FasterCatchUp"])
+	var labels: PackedStringArray = PackedStringArray(["Less delay ([)", "More delay (])", "Slower catch-up (,)", "Faster catch-up (.)"])
+	for index: int in range(names.size()):
+		var button: Button = Button.new()
+		button.name = names[index]
+		button.text = labels[index]
+		button.focus_mode = Control.FOCUS_NONE
+		button.pressed.connect(_adjust_policy.bind(index))
+		_policy_controls.add_child(button)
 	_code = demo.start()
 	_update_label()
 
@@ -86,11 +100,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_F:
 		_follow_live()
 	elif event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
-		var delay: int = demo.viewer.playback_policy()[0]
-		demo.set_viewing_delay(maxi(0, delay + (-1 if event.keycode == KEY_BRACKETLEFT else 1)))
+		_adjust_policy(0 if event.keycode == KEY_BRACKETLEFT else 1)
 	elif event.keycode in [KEY_COMMA, KEY_PERIOD] and demo.viewer != null:
-		var speed: int = demo.viewer.playback_policy()[2]
-		demo.set_catchup_speed(maxi(1, speed + (-1 if event.keycode == KEY_COMMA else 1)))
+		_adjust_policy(2 if event.keycode == KEY_COMMA else 3)
 	elif event.keycode == KEY_L:
 		demo.lose_host_connection()
 	elif event.keycode == KEY_E:
@@ -123,6 +135,18 @@ func _follow_live() -> void:
 	_update_label()
 
 
+func _adjust_policy(action: int) -> void:
+	if demo.viewer == null:
+		return
+	var policy: PackedInt64Array = demo.viewer.playback_policy()
+	var change: int = -1 if action in [0, 2] else 1
+	if action < 2:
+		demo.set_viewing_delay(policy[0] + change)
+	else:
+		demo.set_catchup_speed(policy[2] + change)
+	_update_label()
+
+
 func _process(_delta: float) -> void:
 	var size: Vector2 = get_viewport_rect().size
 	var content_height: float = _board_top() + 150.0 + 125.0 + 24.0
@@ -137,12 +161,18 @@ func _update_label() -> void:
 	_step_button.disabled = _follow_live_button.disabled
 	_catchup_button.disabled = _follow_live_button.disabled
 	_pause_button.text = "Resume viewer (P)" if demo.is_paused else "Pause viewer (P)"
+	for button: Button in _policy_controls.get_children():
+		button.disabled = _follow_live_button.disabled
 	if demo.host == null or demo.viewer == null:
 		_label.text = "Could not start: code %d" % _code
 		return
 	var state: String = "PAUSED" if demo.is_paused else "WATCHING"
 	var policy: PackedInt64Array = demo.viewer.playback_policy()
 	var playback: Dictionary = demo.viewer.playback_status()
+	var limits: PackedInt64Array = PackedInt64Array([0, playback.capacity_frames - 1, 1, playback.capacity_frames])
+	for index: int in range(4):
+		var button: Button = _policy_controls.get_child(index)
+		button.disabled = button.disabled or policy[0 if index < 2 else 2] == limits[index]
 	if not demo.is_paused:
 		if playback.state == Spectator.PlaybackState.WAITING_FOR_INPUT:
 			state = "BUFFERING | waiting for confirmed input"
@@ -184,6 +214,7 @@ func _update_label() -> void:
 	_pause_button.position = _follow_live_button.position + Vector2(_follow_live_button.get_minimum_size().x + 12, 0)
 	_step_button.position = _pause_button.position + Vector2(_pause_button.get_minimum_size().x + 12, 0)
 	_catchup_button.position = _step_button.position + Vector2(_step_button.get_minimum_size().x + 12, 0)
+	_policy_controls.position = _follow_live_button.position + Vector2(0, _follow_live_button.get_minimum_size().y + 8)
 
 
 func _recording_feedback() -> String:
@@ -223,7 +254,7 @@ func _export_replay() -> void:
 
 
 func _board_top() -> float:
-	return _label.position.y + _label.get_minimum_size().y + _follow_live_button.get_minimum_size().y + 24.0
+	return _policy_controls.position.y + _policy_controls.get_minimum_size().y + 16.0
 
 
 func _draw() -> void:

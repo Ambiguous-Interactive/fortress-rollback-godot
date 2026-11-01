@@ -202,7 +202,9 @@ func finish_tick() -> int:
 	if code != Types.Code.OK:
 		return code
 	var status: Types.Status = loop.session.status()
-	effects.reconcile(loop.game, status)
+	code = loop._reconcile_effects()
+	if code != Types.Code.OK:
+		return code
 	return Types.Code.OK if status.confirmed_frame >= status.current_frame - 1 else Types.Code.PREDICTION_STALL
 
 

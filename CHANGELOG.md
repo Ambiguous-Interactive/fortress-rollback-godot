@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add a replay Validate state control to check a paused boundary without advancing input. Missing recorded checksums remain explicitly unverified.
+
+- Add pointer controls for spectator viewing delay and catch-up speed, with limits and playback readiness shown on each button.
+
 - Add pointer controls for single-frame spectator stepping and one-time bounded catch-up.
 
 - Add replay provenance during inspection, with wrapping hover details for engine, game, seed and source revisions.
@@ -248,6 +252,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix confirmed effect hooks replacing or advancing the integration example’s active match. Cancellation reports its first cause after the confirmed effect batch.
 
 - Fix local peer matches reporting success after a session stops. Both owned peers now retire, and the match must be reset.
 
