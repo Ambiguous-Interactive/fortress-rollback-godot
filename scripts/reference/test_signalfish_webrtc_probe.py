@@ -13,6 +13,7 @@ import tempfile
 
 import signalfish_webrtc_probe as probe
 from wire import INPUT_HEADER, VERSION
+from test_webrtc_recording import recording
 
 
 def gameplay_diagnostic():
@@ -54,6 +55,7 @@ def mixed_evidence():
                    + hashlib.sha256(b'00000000-0000-0000-0000-000000000000').digest()[:8]
                    + bytes([1]) + bytes(7) + struct.pack('<I', len(body)) + body).hex()
         for index, peer in enumerate(record['peers']):
+            peer['result']['records'][0]['recording'] = recording(count)
             peer['result']['binary_receives'] = 5 if index != 0 else 0
             peer['result']['records'][0]['mixed'] = {
                 'switched': index == 0, 'restored': index == 0, 'relay_peers': 0, 'maximum_pending': 7,
@@ -78,6 +80,8 @@ class BrowserWebRtcEvidenceControls(unittest.TestCase):
         original = mixed_evidence()
         self.assertEqual(probe.validate_browser(original, False, mixed=True), original)
         changes = [
+            (('result', 'records', 0, 'recording'), None),
+            (('result', 'records', 0, 'recording', 'after_frame'), 41),
             (('result', 'records', 0, 'mixed', 'switched'), False),
             (('result', 'records', 0, 'mixed', 'restored'), False),
             (('result', 'records', 0, 'mixed', 'route_budget'), True),

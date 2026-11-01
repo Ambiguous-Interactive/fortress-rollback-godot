@@ -17,6 +17,7 @@ import zipfile
 
 from browser.webrtc_import import freeze_after_import
 from browser.webrtc_drop import validate_drop_browser
+from browser.webrtc_recording import engine_identity, validate_recording
 from browser.webrtc_runner import run_browser
 from browser.webrtc_matrix import PAIRS, prepare_firefox, validate_identity
 from browser.owned_server import OwnedServer
@@ -41,7 +42,7 @@ LABELS = ('clean', 'faults', 'corrupt', 'default', 'mixed', 'mixed-default', 'mi
 def validate_engine(engine, expected):
     if digest(engine) != expected:
         raise ValueError("supplied engine differs from pinned editor archive")
-def validate_browser(result, faults, mixed=False, default_budgets=False, physical_close=False):
+def validate_browser(result, faults, mixed=False, default_budgets=False, physical_close=False, expected_engine=None):
     if (not isinstance(result, dict) or result.get('passed') is not True or result.get('browser') not in ('chromium/chromium', 'firefox/firefox', 'chromium/firefox')
             or type(result.get('browser_instances')) is not int or result['browser_instances'] != 2
             or result.get('faults') is not faults or result.get('corrupt') is not False or result.get('errors') != []
@@ -103,6 +104,7 @@ def validate_browser(result, faults, mixed=False, default_budgets=False, physica
                     raise ValueError('data-channel fault controls unobserved')
             if mixed:
                 validate_mixed_peer(row, rtc, index, count, default_budgets, physical_close)
+                validate_recording(row.get('recording'), count, expected_engine)
                 if row['mixed']['accepted_binary'] > witness['binary_receives']:
                     raise ValueError('addressed receipts exceed physical binary receipts')
                 if not physical_close and index == 0 and row['mixed']['accepted_binary'] != 0:
@@ -408,6 +410,8 @@ def main():
                'host': ROOT / 'scripts/reference/signalfish_webrtc_probe.gd', 'setup': ROOT / 'scripts/reference/browser/webrtc_setup.gd',
                'game': ROOT / 'scripts/reference/browser/webrtc_game.gd', 'import_helper': ROOT / 'scripts/reference/browser/webrtc_import.py',
                'mixed': ROOT / 'scripts/reference/browser/webrtc_mixed.gd',
+               'recording': ROOT / 'scripts/reference/browser/webrtc_recording.gd',
+               'recording_validator': ROOT / 'scripts/reference/browser/webrtc_recording.py',
                'drop': ROOT / 'scripts/reference/browser/webrtc_drop.gd',
                'drop_validator': ROOT / 'scripts/reference/browser/webrtc_drop.py',
                'browser_launcher': ROOT / 'scripts/reference/browser/webrtc.cjs',
@@ -555,7 +559,8 @@ def main():
                     shutil.copytree(sources['addon'], project / 'addons/fortress_rollback')
                     shutil.copytree(sdk / 'addons/signal_fish', project / 'addons/signal_fish')
                     for key, filename in [('host', 'host.gd'), ('game', 'webrtc_game.gd'), ('setup', 'webrtc_setup.gd'),
-                                          ('mixed', 'webrtc_mixed.gd'), ('drop', 'webrtc_drop.gd'), ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
+                                          ('mixed', 'webrtc_mixed.gd'), ('recording', 'webrtc_recording.gd'), ('drop', 'webrtc_drop.gd'),
+                                          ('clock_test', 'clock_test.gd'), ('clock_fixture', 'clock_fixture.gd')]:
                         shutil.copyfile(sources[key], project / filename)
                     (project / 'project.godot').write_text(
                         'config_version=5\n[application]\nconfig/name="WebRTC witness"\nrun/main_scene="res://main.tscn"\n'
@@ -569,7 +574,7 @@ def main():
                     export.mkdir()
                     executed = {'addon': project / 'addons/fortress_rollback', 'sdk': project / 'addons/signal_fish',
                                 'host': project / 'host.gd', 'game': project / 'webrtc_game.gd', 'setup': project / 'webrtc_setup.gd', 'project': project / 'project.godot',
-                                'mixed': project / 'webrtc_mixed.gd', 'drop': project / 'webrtc_drop.gd',
+                                'mixed': project / 'webrtc_mixed.gd', 'recording': project / 'webrtc_recording.gd', 'drop': project / 'webrtc_drop.gd',
                                 'clock_test': project / 'clock_test.gd', 'clock_fixture': project / 'clock_fixture.gd',
                                 'scene': project / 'main.tscn', 'preset': project / 'export_presets.cfg', 'certificate': certificate, 'private_key': tls_private_key}
                     frozen = inventory(executed)
@@ -579,8 +584,11 @@ def main():
                         raise ValueError('unexpected engine version')
                     run(command + ['--editor', '--quit'], environment, args.output / f'{version}-import.log')
                     frozen = freeze_after_import(executed, frozen)
-                    if 'WEBRTC_CLOCK_TEST passed' not in run(command + ['--script', 'res://clock_test.gd', '--quit-after', '2'],
-                            environment, args.output / f'{version}-clock-test.log'): raise ValueError('transport clock regression incomplete')
+                    clock_output = run(command + ['--script', 'res://clock_test.gd', '--quit-after', '2'],
+                                       environment, args.output / f'{version}-clock-test.log')
+                    if 'WEBRTC_CLOCK_TEST passed' not in clock_output:
+                        raise ValueError('transport clock regression incomplete')
+                    recording_engine = engine_identity(clock_output, version, actual)
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
                     for label in labels:
@@ -602,7 +610,7 @@ def main():
                                 result = validate_restore_control(json.loads(output), label)
                             else:
                                 result = validate_browser(json.loads(output), faults, mixed=label.startswith('mixed'),
-                                                          default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close')
+                                                          default_budgets=label == 'mixed-default', physical_close=label == 'mixed-close', expected_engine=recording_engine)
                         records.append({'engine': actual, 'faults': faults, 'control': label if label in ('corrupt', 'default', 'mixed-disabled', 'peer-drop-corrupt') else None,
                                         'command': browser_command, 'result': result})
                         print(f'{version} {label} passed in {time.monotonic() - started:.0f}s', file=sys.stderr, flush=True)

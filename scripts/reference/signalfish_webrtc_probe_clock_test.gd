@@ -12,6 +12,9 @@ const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 const Game = preload("res://webrtc_game.gd")
 const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
 const Mixed = preload("res://webrtc_mixed.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 class RetainedMixed:
 	extends Mixed
@@ -20,6 +23,35 @@ class RetainedMixed:
 	func service(host: Node) -> bool:
 		calls += 1
 		if traffic_per_call: host.sent_packets += 1
+		return true
+
+# Owns only peers, never the probe whose service calls it.
+class ReceiptMixed:
+	extends RetainedMixed
+	var peers: Array[Peer] = []
+	var fixture: Fixture = Fixture.new()
+	var now_us: int = 0
+	var omitted: int = 0
+	func service(host: Node) -> bool:
+		now_us = host.transport_us
+		return transfer(false)
+	func transfer(omit_final: bool) -> bool:
+		for source: int in peers.size():
+			for packet: Peer.Packet in peers[source].drain_outbox():
+				if omit_final and source == 0 and packet.to == fixture._id(2):
+					var limits: T.Limits = T.Limits.new()
+					limits.player_count = peers.size()
+					var decoded: T.Result = Codec.decode(packet.bytes, limits)
+					if decoded.code != T.Code.OK: return false
+					var message: T.Message = decoded.message
+					if message.kind == T.Kind.INPUT:
+						for status: T.Status in message.statuses:
+							if status.last_frame != 39: return false
+						omitted += 1
+						continue
+				var destination: int = packet.to[0] - 1
+				if peers[destination].receive(packet.bytes, fixture._id(source + 1), now_us, fixture._id(source + 1, 16)) != I.Code.OK:
+					return false
 		return true
 
 class RouteFallback:
@@ -79,6 +111,8 @@ class ClockProbe:
 		return ticks_us
 
 func _initialize() -> void:
+	var engine: Dictionary = Engine.get_version_info()
+	print("WEBRTC_ENGINE_IDENTITY ", "%d.%d.%d.%s %s" % [engine.major, engine.minor, engine.patch, engine.status, engine.hash])
 	var probe: ClockProbe = ClockProbe.new()
 	probe.service_calls = 0
 	if not await _passive_departure_wait(probe): return
@@ -161,6 +195,7 @@ func _initialize() -> void:
 	if not _check(retained._service(), "retained mixed transport remains serviceable"): return
 	if not _check(peer.network_status().last_now_us == 400000, "retained mixed output cannot suppress actual peer elapsed time"): return
 	if not _check(mixed.calls == 1 and mixed.has_pending(), "poll preserves caller-owned mixed batch until service"): return
+	if not _post_capture_receipts(fixture): return
 	if not _mixed_batches(fixture, peer): return
 	if not _expired_handshake(fixture, config, lifecycle): return
 	retained.meshes[0].free()
@@ -268,6 +303,19 @@ func _mixed_batches(fixture: Fixture, peer: Peer) -> bool:
 	var routes: RouteMixed = RouteMixed.new()
 	probe.mixed = routes
 	if not _check(probe._service_batch() and routes.calls == 8, "mixed route changes keep the bounded service batch"): return false
+	# A locally finished recorder must still publish recovery receipts for slower peers.
+	var recovered: Array[int] = [0]
+	var completed: Callable = func(code: int, before: int, after: int) -> void:
+		if code == probe.S.Code.OK and before == after:
+			recovered[0] += 1
+	peer.step_completed.connect(completed)
+	probe.mixed = RetainedMixed.new()
+	probe.stage = "recording_capture"
+	var frame_before: int = peer.status().current_frame
+	if not _check(probe._service() and probe._service(), "completed recorder keeps serving slower peers"): return false
+	if not _check(recovered[0] == 2 and peer.status().current_frame == frame_before,
+		"each post-capture service recovers without samples or forward frames"): return false
+	peer.step_completed.disconnect(completed)
 	probe.meshes[0].free()
 	probe.clients[0].free()
 	probe.free()
@@ -364,3 +412,85 @@ func _handshake_deadline_case(fixture: Fixture, config: Config, lifecycle: L.Opt
 	probe.clients[0].free()
 	probe.free()
 	return _check(valid, "probe handshake deadline=%d full_diagnostics=%s service=%s calls=%d" % [now_us, full_diagnostics, serviced, mixed.calls])
+
+
+# Value: protects=post-capture final receipt delivery; fails_when=host stops recover after recording; why_new=invocation checks cannot prove gossip; seam=real peers and bytes
+func _post_capture_receipts(fixture: Fixture) -> bool:
+	for recover_after_capture: bool in [false, true]:
+		var probe: RetainedProbe = RetainedProbe.new()
+		var routes: ReceiptMixed = ReceiptMixed.new()
+		var roster: Array[PackedByteArray] = [fixture._id(1), fixture._id(2), fixture._id(3)]
+		for slot: int in 3:
+			var config: Config = Config.new()
+			config.player_count = 3
+			config.local_players = PackedInt32Array([slot])
+			config.check_distance = 0
+			config.sync_test = false
+			config.max_snapshot_bytes = 16
+			config.storage_budget_bytes = 1048576
+			config.replay_max_frames = 40
+			config.diagnostic_version = "fortress-webrtc-integer-v1"
+			config.diagnostic_seed = "0"
+			var options: H.Options = H.Options.new()
+			options.roundtrips = 1
+			var lifecycle: L.Options = L.Options.new()
+			lifecycle.enabled = false
+			var peer: Peer = Peer.new()
+			if not _check(peer.configure(config, fixture._local(slot + 1, roster), Game.new(3), options, I.Options.new(), lifecycle) == I.Code.OK,
+				"configure final receipt mesh"): return false
+			routes.peers.append(peer)
+			if not _check(peer.begin(0, [fixture._id(slot + 1, 16), fixture._id(slot + 4, 16)]) == I.Code.OK,
+				"begin final receipt mesh"): return false
+		for turn: int in 6:
+			if not _check(routes.transfer(false), "deliver actual receipt mesh handshake"): return false
+		for frame: int in 40:
+			routes.now_us = (frame + 1) * 1000
+			for slot: int in 3:
+				var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(slot, frame, PackedByteArray([probe._sample(frame, slot)]))]
+				if not _check(routes.peers[slot].step(routes.now_us, samples).code == S.Code.OK, "advance original forty mesh inputs"): return false
+			if not _check(routes.transfer(false) and routes.transfer(false), "deliver original mesh input and ACK bytes"): return false
+		# All originals and ACKs arrive, but the final receipt inventories need a historical carrier.
+		routes.now_us = 240001
+		for peer: Peer in routes.peers:
+			if not _check(peer.recover(routes.now_us).code == S.Code.OK, "publish final receipt inventory"): return false
+		if not _check(routes.transfer(true) and routes.transfer(false), "lose one final inventory carrier"): return false
+		var finished: Peer = routes.peers[0]
+		var waiting: Peer = routes.peers[1]
+		if not _check(routes.omitted == 1 and finished.status().confirmed_frame == 39 and waiting.status().confirmed_frame < 39,
+			"one lost carrier leaves an asymmetric final confirmation"): return false
+		if not _check(finished.recover(routes.now_us).code == S.Code.OK and finished.capture_replay_boundary().code == S.Code.OK
+			and finished.replay().frame_count() == 40, "finished endpoint captures its actual complete recording"): return false
+		var hash: HashingContext = HashingContext.new()
+		hash.start(HashingContext.HASH_SHA256)
+		hash.update(probe._expected(40, 3))
+		var expected_checksum: PackedByteArray = hash.finish().slice(0, 16)
+		if not _check(finished.replay().checksum(40) == expected_checksum, "finished recording captures the independent canonical boundary"): return false
+		probe.clients.append(probe.SDK.new())
+		probe.meshes.append(probe.SDKMesh.new())
+		probe.peers.append(finished)
+		probe.mixed_enabled = true
+		probe.mixed = routes
+		probe.next_progress_us = 1000000
+		probe.transport_epoch_us = probe.ticks_us - 440002
+		# This paired control keeps ordinary polling and actual delivery, but omits post-capture recovery.
+		probe.stage = "recording_capture" if recover_after_capture else "canonical_state"
+		if not _check(probe._service() and probe._service(), "captured endpoint keeps servicing actual peer packets"): return false
+		if not _check((waiting.status().confirmed_frame == 39) == recover_after_capture,
+			"post-capture host recovery alone releases the slower endpoint final receipt"): return false
+		for peer: Peer in routes.peers:
+			if not _check(peer.status().current_frame == 40, "receipt service adds no forward frame"): return false
+			for endpoint: Dictionary in peer.network_status().peers.values():
+				if not _check(endpoint.last_submitted_frame == 39 and endpoint.last_received_frame == 39,
+					"receipt service preserves all forty originals without new samples"): return false
+		if recover_after_capture:
+			if not _check(waiting.recover(440002).code == S.Code.OK and waiting.capture_replay_boundary().code == S.Code.OK
+				and waiting.replay().frame_count() == 40 and waiting.replay().checksum(40) == expected_checksum,
+				"slower endpoint captures its complete finalized recording tail"): return false
+			for slot: int in 3:
+				if not _check(waiting.replay().inputs(39).read(slot).bytes == PackedByteArray([probe._sample(39, slot)]),
+					"slower recording retains each original final input"): return false
+		probe.meshes[0].free()
+		probe.clients[0].free()
+		probe.free()
+	print("WEBRTC_POST_CAPTURE_RECEIPTS passed")
+	return true

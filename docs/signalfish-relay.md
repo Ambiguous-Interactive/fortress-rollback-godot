@@ -168,17 +168,17 @@ This native loopback evidence covers the production relay and actual server;
 live queue pressure, browser behavior and direct WebRTC remain separate gates.
 
 First complete the [reference setup](reference/README.md). Use the direct Cargo
-executable from the installed Rust 1.94.0 toolchain and the verified server source:
+executable from the installed pinned Rust toolchain and the verified server source:
 
 ```sh
 python3 scripts/reference/signalfish_build_server.py \
   --cargo <pinned-toolchain>/bin/cargo \
-  --source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
   --output .cache/reference/results/signalfish-server-build
 python3 scripts/reference/signalfish_live_probe.py \
   --godot <editor> \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/signalfish-live-<version>
 ```

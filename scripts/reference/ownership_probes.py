@@ -164,7 +164,7 @@ EXPECTED['res://tests/unit/test_peer_drop_multi_slot.gd'] = {
     'interleaved_slots', 'reversed_slot_ownership', 'last_survivor_multi_slot', 'last_survivor_missing_slot'}
 EXPECTED['res://tests/unit/test_peer_notifications.gd'] = {
     'completion', 'stall_and_repair', 'failure', 'callback_failure', 'shared_engine', 'handler_stop', 'external_facade'}
-EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime'})
+EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'].update({'source_departures', 'source_callback_lifetime', 'status_lifetime'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'].add('viewer_departures')
 EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {
     'malformed_storage', 'malformed_metadata', 'valid_recording_ownership', 'invalid_config_type', 'recording_accessors'}

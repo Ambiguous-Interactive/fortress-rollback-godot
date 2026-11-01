@@ -239,6 +239,8 @@
 
 ### Fixed
 
+- Fix spectator status checks leaving buffered playback active after SDK room, identity or receive-limit changes.
+
 - Fix native replay and diagnostic imports exceeding their checked allocation size if a file grows during import.
 
 - Fix ambiguous spectator catch-up key labels by naming Comma and Period.

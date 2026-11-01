@@ -253,6 +253,8 @@ func status() -> Dictionary:
 	var session: RefCounted = _session
 	var source_config: RefCounted = _source_config
 	var code: int = _gate()
+	if code != Code.OK and not _checking and revision == _revision:
+		_stop_owned_viewer()
 	var host: Dictionary = {}
 	if (
 		revision == _revision and stream != null and stream == _stream and session == _session and source_config == _source_config

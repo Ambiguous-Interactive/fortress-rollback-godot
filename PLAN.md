@@ -366,7 +366,10 @@ single-link send pressure, using default and selected work budgets on both pins.
 It correlates one input packet across direct and relay receipt, requires restored
 direct sends, and rejects a fallback-disabled stall. A physical-outage room also closes one actual unreliable channel at frame four.
 The affected pair continues on relay through confirmed original game history,
-while healthy links stay direct. Idempotent engine peer removal prevents duplicate
+while healthy links stay direct. Each mixed-path endpoint also exports and decodes its
+40-frame finalized recording, with recovery-only final receipt service and independently
+checked original inputs, statuses and all 41 state boundaries. Long asymmetric recordings
+and sustained relay refusal remain in #256. Idempotent engine peer removal prevents duplicate
 SDK teardown errors. ICE restoration, relay congestion, replan handling and the
 full browser matrix remain acceptance work in S3–S5 and #75; keep those tasks open.
 

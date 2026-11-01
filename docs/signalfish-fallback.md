@@ -160,7 +160,7 @@ Run the full witness with the pinned server built as described in
 ```sh
 python3 scripts/reference/signalfish_webrtc_probe.py \
   --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-  --server-source .cache/reference/signal-fish-server-9c2fb8fa635a69241b8ccf38be651d561fef7434 \
+  --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
   --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
   --output .cache/reference/results/signalfish-webrtc
 ```
@@ -170,6 +170,19 @@ channel at source frame four. Godot removes that link and closes its companion
 channels. Both ends keep relay service through final confirmation; healthy links
 continue direct service. The same original-input, rollback, overlap, queue and
 teardown gates apply. No replacement channel is created during this workload.
+
+The `mixed`, `mixed-default` and `mixed-close` rooms also export each endpoint's
+40-frame recording. Final receipt service uses recovery without submitting another
+local input or advancing gameplay. The witness captures the final boundary, decodes
+each endpoint's own bytes and replays all original confirmed inputs and statuses.
+An independent byte parser compares every row, input digest, state checksum and
+terminal checksum with the declared original game. Native engine identity binds
+recording metadata to the verified engine, separately from its CLI version text.
+The receipt retains the exported bytes and decoded playback result.
+
+This short-match recording check does not establish input-ring reuse, sustained
+relay send refusal or unchanged-source recording parity. Those remain in
+[recording acceptance](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/256).
 
 This scoped witness does not establish ICE restoration, relay congestion,
 SDK-driven channel replacement, relay-to-mesh server replans, browser

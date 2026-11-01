@@ -17,6 +17,7 @@ const Setup = preload("res://webrtc_setup.gd")
 const Game = preload("res://webrtc_game.gd")
 const Mixed = preload("res://webrtc_mixed.gd")
 const DropWitness = preload("res://webrtc_drop.gd")
+const Recording = preload("res://webrtc_recording.gd")
 const FAILURE_SIGNALS: PackedStringArray = ["protocol_error", "server_error", "room_join_failed", "authentication_error", "connection_failed",
 	"reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]
 const MEMBERSHIP_SIGNALS: PackedStringArray = ["room_joined", "player_joined", "player_left", "player_reconnected", "spectator_joined", "new_peer"]
@@ -165,9 +166,16 @@ func _play(count: int) -> bool:
 			if games[index].history.get(frame) != expected: return false
 			comparisons += 1
 	if not _healthy(true): return false
-	records.append({"players": count, "frames_submitted": 40, "minimum_confirmed": minimum_confirmed, "canonical_comparisons": comparisons,
+	var recording: Dictionary = {}
+	if mixed_enabled:
+		recording = await Recording.new().run(self, count)
+		if recording.is_empty() or not _healthy(true): return false
+	var row: Dictionary = {"players": count, "frames_submitted": 40, "minimum_confirmed": minimum_confirmed, "canonical_comparisons": comparisons,
 		"direct": _transport_totals(), "rollback_loads": games[0].loads, "active_comparisons": active_comparisons,
-		"mixed": mixed.report() if mixed_enabled else {}})
+		"mixed": mixed.report() if mixed_enabled else {}}
+	if mixed_enabled:
+		row["recording"] = recording
+	records.append(row)
 	return true
 
 static func _expected(frame: int, count: int) -> PackedByteArray:
@@ -296,6 +304,12 @@ func _service() -> bool:
 					return false
 			if not peers[index].drain_transitions().is_empty(): _service_had_work = true
 			if polled == I.Code.OK: break
+		if mixed_enabled and stage in ["recording_confirmation", "recording_capture"]:
+			var recovery: Driver.StepResult = peers[index].recover(transport_us)
+			if recovery.code != S.Code.OK or recovery.frame_before != recovery.frame_after:
+				_capture_peer_failure(peers[index], index, recovery.code)
+				errors.append("recording_service_recovery_%d" % recovery.code)
+				return false
 		if mixed_enabled:
 			var routes: Array = mixed.fallback.status().relay_peers
 			var traffic: int = sent_packets + received_packets
