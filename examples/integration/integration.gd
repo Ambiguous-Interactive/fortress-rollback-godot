@@ -22,6 +22,12 @@ func _ready() -> void:
 	_update_label()
 
 
+func _exit_tree() -> void:
+	_demo.stop_replay()
+	if _demo.loop != null:
+		_demo.loop.session.terminate()
+
+
 func _physics_process(_delta: float) -> void:
 	if _demo.replay_player != null:
 		_replay_code = _demo.replay_tick()

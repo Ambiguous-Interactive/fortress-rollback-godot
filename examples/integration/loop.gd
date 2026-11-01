@@ -49,6 +49,8 @@ func _tick_code(now_us: int, buttons: int) -> int:
 	var code: int = session._check_advance_limits()
 	if code != Types.Code.OK:
 		return code
+	if buttons < 0 or buttons > (Game.LEFT | Game.RIGHT | Game.FIRE):
+		return Types.Code.INVALID_CONFIGURATION
 	var frame: int = session.status().current_frame
 	var sample: PackedByteArray = _sample if _sample_frame == frame else PackedByteArray([buttons])
 	code = session.validate_local_input(local_player, frame, sample)

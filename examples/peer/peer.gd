@@ -18,6 +18,12 @@ func _ready() -> void:
 	_update_label()
 
 
+func _exit_tree() -> void:
+	for session: Peer in _match.sessions:
+		if session._core != null:
+			session._core.terminate()
+
+
 func _physics_process(_delta: float) -> void:
 	_match.tick(PackedInt32Array([_buttons(KEY_A, KEY_D, KEY_W, KEY_S), _buttons(KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN)]))
 	_update_label()

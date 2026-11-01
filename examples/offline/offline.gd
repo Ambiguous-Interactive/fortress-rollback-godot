@@ -33,6 +33,10 @@ func _ready() -> void:
 	_update_label()
 
 
+func _exit_tree() -> void:
+	_session.terminate()
+
+
 func _physics_process(_delta: float) -> void:
 	if _code != Types.Code.OK:
 		return

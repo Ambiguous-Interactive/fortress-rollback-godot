@@ -173,6 +173,7 @@ func _stopped_controls(context: RefCounted) -> void:
 
 
 func _input_rejections(context: RefCounted) -> void:
+	_invalid_buttons(context)
 	for facade: String in ["demo", "loop"]:
 		for rejection: String in ["conflict", "player", "width"]:
 			var demo: Demo = Demo.new()
@@ -210,3 +211,28 @@ func _input_rejections(context: RefCounted) -> void:
 		var before: Array = _snapshot(demo)
 		context.equal(_attempt(demo, control), Types.Code.INVALID_TIME, control + " rejects stale controller time")
 		context.equal(_snapshot(demo), before, control + " invalid time preserves queued deliveries")
+
+
+# Value: protects=integer buttons reject before narrowing or callbacks; fails_when=256 wraps to zero or8 terminates;
+# why_new=existing rejection matrix checks sample metadata only; seam=none
+func _invalid_buttons(context: RefCounted) -> void:
+	for facade: String in ["demo", "loop"]:
+		for has_pending: bool in [false, true]:
+			for buttons: int in [-9223372036854775807 - 1, -256, -1, 8, 255, 256, 263, 9223372036854775807]:
+				var demo: Demo = Demo.new()
+				context.equal(demo.start(3), Types.Code.OK, "invalid-button fixture starts")
+				if has_pending:
+					context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "queues earlier remote input before rejection")
+				var before: Array = _snapshot(demo)
+				var position: int = demo.loop.game.x[0]
+				var code: int = demo.tick(buttons) if facade == "demo" else demo.loop.tick(1000000, buttons)
+				context.equal(code, Types.Code.INVALID_CONFIGURATION, facade + " rejects integer buttons " + str(buttons))
+				context.equal(_snapshot(demo), before, facade + " invalid buttons preserve controller and accepted time")
+				context.equal(demo.loop.session.status().lifecycle, Types.Lifecycle.RUNNING, facade + " invalid buttons preserve match liveness")
+				code = demo.tick(Game.LEFT) if facade == "demo" else demo.loop.tick(0, Game.LEFT)
+				context.equal(code, Types.Code.OK, facade + " corrected same-frame retry advances")
+				context.equal(demo.loop.game.x[0], position - 4, facade + " corrected retry uses LEFT without narrowed input")
+	for buttons: int in range(8):
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(0), Types.Code.OK, "valid-button fixture starts")
+		context.equal(demo.tick(buttons), Types.Code.OK, "all supported button combinations remain valid")
