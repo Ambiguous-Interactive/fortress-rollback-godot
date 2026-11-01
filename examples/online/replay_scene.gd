@@ -35,6 +35,23 @@ window.fortressReplayImport = {
 };
 """
 
+
+class MetadataLabel:
+	extends Label
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_PASS
+
+	func _make_custom_tooltip(text: String) -> Object:
+		var tooltip: Label = Label.new()
+		tooltip.text = text
+		tooltip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tooltip.custom_minimum_size.x = 560.0
+		if is_inside_tree():
+			tooltip.custom_minimum_size.x = minf(560.0, maxf(1.0, get_viewport_rect().size.x - 32.0))
+		return tooltip
+
+
 var viewer: Viewer = Viewer.new()
 var _panel: VBoxContainer
 var _status: Label
@@ -83,7 +100,7 @@ func _ready() -> void:
 	var title: Label = Label.new()
 	title.text = "Watch an online or spectator recording | no server required"
 	panel.add_child(title)
-	_recording_metadata = Label.new()
+	_recording_metadata = MetadataLabel.new()
 	_recording_metadata.name = "RecordingMetadata"
 	_recording_metadata.clip_text = true
 	_recording_metadata.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS

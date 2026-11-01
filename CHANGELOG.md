@@ -6,7 +6,7 @@
 
 - Add pointer controls for single-frame spectator stepping and one-time bounded catch-up.
 
-- Add replay provenance during inspection, including recorded engine, game, seed and source revisions.
+- Add replay provenance during inspection, with wrapping hover details for engine, game, seed and source revisions.
 
 - Add a Pause/Resume button to the local spectator, with the same readiness checks as its keyboard control.
 

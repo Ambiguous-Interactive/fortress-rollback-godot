@@ -566,6 +566,16 @@ func _recording_metadata(context: RefCounted) -> void:
 			context.equal(label.clip_text, true, "long file metadata cannot widen its row")
 			context.equal(label.text_overrun_behavior, TextServer.OVERRUN_TRIM_ELLIPSIS, "long metadata remains visibly truncated")
 			context.equal(label.tooltip_text, details, "tooltip exposes complete literal metadata")
+			context.equal(label.mouse_filter, Control.MOUSE_FILTER_PASS, "actual hover can reach recording metadata")
+			context.equal(label.has_method("_make_custom_tooltip"), true, "metadata hover provides bounded wrapping")
+			if label.has_method("_make_custom_tooltip"):
+				var tooltip: Label = label.call("_make_custom_tooltip", details) as Label
+				context.equal(tooltip != null, true, "tooltip remains plain text")
+				if tooltip != null:
+					context.equal(tooltip.text, details, "wrapped tooltip preserves every metadata character")
+					context.equal(tooltip.autowrap_mode, TextServer.AUTOWRAP_WORD_SMART, "long unbroken metadata can wrap")
+					context.equal(tooltip.custom_minimum_size.x <= 560, true, "tooltip width is bounded")
+					tooltip.free()
 			context.equal(label.text, node.viewer.recording_summary(), "visible summary follows selected file")
 		context.equal(node.viewer.checked_checksum_count(), 0, "provenance display does not validate recorded states")
 		node.viewer.step()
