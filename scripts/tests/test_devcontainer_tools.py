@@ -27,7 +27,7 @@ class ToolProbeTests(unittest.TestCase):
             env = fixture_environment()
             repository = Path(directory) / "repository with spaces"
             repository.mkdir()
-            subprocess.run(["git", "init", "-q", str(repository)], check=True, env=env)
+            subprocess.run(["git", "init", "-q", str(repository)], check=True, env=env, timeout=30)
             hooks = repository / ".githooks"
             hooks.mkdir()
             (repository / "other-hooks").mkdir()
@@ -53,14 +53,15 @@ class ToolProbeTests(unittest.TestCase):
             ]
             for configured, valid in cases:
                 with self.subTest(configured=configured):
-                    subprocess.run(["git", "-C", str(repository), "config", "--local", "--unset-all", "core.hooksPath"], check=False, env=env)
+                    subprocess.run(["git", "-C", str(repository), "config", "--local", "--unset-all", "core.hooksPath"], check=False, env=env, timeout=30)
                     if configured is not None:
-                        subprocess.run(["git", "-C", str(repository), "config", "--local", "core.hooksPath", configured], check=True, env=env)
+                        subprocess.run(["git", "-C", str(repository), "config", "--local", "core.hooksPath", configured], check=True, env=env, timeout=30)
                     result = subprocess.run(
                         ["bash", "-c", 'set -euo pipefail; ROOT="$1"; source "$2"; '
                          'ok() { echo PASS; }; bad() { echo FAIL; }; ' + wiring,
                          "probe", str(repository), str(HELPERS)],
                         cwd=directory, env=env, capture_output=True, text=True, check=True,
+                        timeout=30,
                     )
                     self.assertEqual(result.stdout.strip(), "PASS" if valid else "FAIL")
 
@@ -79,6 +80,7 @@ source "$1"
 eval "$2"
 ''', "probe", str(HELPERS), call],
                 env=env, capture_output=True, text=True, check=True,
+                timeout=30,
             )
             return result.stdout
 
@@ -137,6 +139,7 @@ eval "$2"
                     result = subprocess.run(
                         ["bash", "-c", 'ok() { echo PASS; }; bad() { echo FAIL; }; source "$1"; check_codex_package',
                          "probe", str(HELPERS)], env=env, capture_output=True, text=True, check=True,
+                        timeout=30,
                     )
                     self.assertEqual(result.stdout.strip(), "PASS" if packaged else "FAIL")
 
@@ -179,6 +182,7 @@ eval "$2"
                     ["bash", "-c", 'ok() { echo "PASS: $*"; }; bad() { echo "FAIL: $*"; }; source "$1"; check_opencode_runtime "$2" 1',
                      "probe", str(HELPERS), directory],
                     env=env, capture_output=True, text=True, check=True,
+                    timeout=30,
                 )
                 self.assertIn(expected + ":", result.stdout)
                 if expected == "PASS":
@@ -237,6 +241,7 @@ eval "$2"
                 with self.subTest(path=path, valid=valid, godot=variant["mcp"]["servers"]["godot"]):
                     result = subprocess.run(
                         ["jq", "-e", predicate], input=json.dumps(variant), capture_output=True, text=True,
+                        timeout=30,
                     )
                     self.assertEqual(result.returncode == 0, valid)
 

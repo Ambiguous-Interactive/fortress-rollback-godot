@@ -82,7 +82,7 @@ class SourceReceiptControls(unittest.TestCase):
 
     # Value: protects=executed source identity; fails_when=end-only Git metadata qualifies changed bytes; why_new=runner controls only validate outcomes; seam=fake engine process
     def test_executed_source_identity(self) -> None:
-        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit"):
+        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 environment = fixture_environment()
@@ -113,6 +113,8 @@ class SourceReceiptControls(unittest.TestCase):
                     "assert sample.read_text() == 'stable dirty source\\n', 'executed moving source'\n"
                     f"original=pathlib.Path({str(suite)!r});marker=pathlib.Path({str(marker)!r})\n"
                     "if not marker.exists():\n marker.write_text('mutated')\n"
+                    + (" pathlib.Path(sys.argv[0]).write_text(pathlib.Path(sys.argv[0]).read_text() + '\\n# mutated engine\\n')\n"
+                       if mode == "engine_edit" else "")
                     + (" original.write_text('changed source\\n')\n" if mode == "edit" else "")
                     + (f" subprocess.run(['git','add','.'],cwd={str(root)!r},check=True,timeout=10)\n"
                        " subprocess.run(['git','-c','user.name=Test','-c','user.email=test@example.invalid',"
@@ -142,7 +144,8 @@ class SourceReceiptControls(unittest.TestCase):
                 self.assertEqual(len(identity["sha256"]), 64)
                 self.assertFalse(Path(identity["path"]).exists(), "snapshot must be cleaned after qualification")
                 if not expected:
-                    self.assertEqual(report["failure"], "source_changed" if mode != "replace_snapshot" else "snapshot_changed")
+                    failure = {"replace_snapshot": "snapshot_changed", "engine_edit": "engine_changed"}.get(mode, "source_changed")
+                    self.assertEqual(report["failure"], failure)
                 if mode == "commit":
                     self.assertEqual(suite.read_text(), "stable dirty source\n")
                     self.assertEqual(subprocess.check_output(["git", "status", "--porcelain"], cwd=root, env=environment, text=True, timeout=30), "")

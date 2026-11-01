@@ -26,6 +26,7 @@ import time
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
+from functools import partial
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -48,6 +49,9 @@ class CitedPathTest(unittest.TestCase):
         environment = unittest.mock.patch.dict(os.environ, fixture_environment(), clear=True)
         environment.start()
         self.addCleanup(environment.stop)
+        bounded_git = unittest.mock.patch.object(prune_caches.subprocess, 'run', partial(prune_caches.subprocess.run, timeout=30))
+        bounded_git.start()
+        self.addCleanup(bounded_git.stop)
         self.root = Path(os.environ.get('TMPDIR', '/tmp')) / 'frg-prune-cited'
         shutil.rmtree(self.root, ignore_errors=True)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -327,7 +331,7 @@ class DiagnosticTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             environment = fixture_environment()
-            subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment)
+            subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment, timeout=30)
             results = root / '.cache' / 'reference' / 'results'
             results.mkdir(parents=True)
             notes = root / 'progress'
@@ -353,7 +357,7 @@ class DiagnosticTest(unittest.TestCase):
             age(lease / 'host.lock', 30)
             age(lease, 30)
             (root / 'tracked.md').write_text('.cache/reference/results/tracked.json .cache/reference/results/linked/receipt.json')
-            subprocess.run(['git', '-C', str(root), 'add', 'tracked.md'], check=True, env=environment)
+            subprocess.run(['git', '-C', str(root), 'add', 'tracked.md'], check=True, env=environment, timeout=30)
             kept_file = results / 'tracked.json'
             kept_file.write_text('{}')
             age(kept_file, 30)
@@ -398,7 +402,7 @@ class DryRunTest(unittest.TestCase):
         age(stale, 30)
         result = subprocess.run([sys.executable, str(REPO / 'scripts' / 'prune_caches.py'),
                                  '--root', str(root), '--scope', 'workspace'],
-                                capture_output=True, text=True, env=fixture_environment())
+                                capture_output=True, text=True, env=fixture_environment(), timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(stale.is_dir(), 'a dry run must not delete anything')
 

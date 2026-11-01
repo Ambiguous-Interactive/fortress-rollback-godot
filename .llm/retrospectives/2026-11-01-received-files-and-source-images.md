@@ -43,6 +43,9 @@ The caller-index regression also reproduces the unsafe write before repair.
 Shared fixture isolation now covers the native controls and four existing Git
 fixture suites. The durable procedure extends
 [infrastructure evidence](../skills/testing/references/infrastructure.md).
+An XDG ignore control also reproduces ignored fixture inputs before repair;
+the environment now overrides `core.excludesFile`. Engine self-mutation has its
+own qualification rejection control, and fixture subprocesses have deadlines.
 
 The click lesson extends
 [browser integration evidence](../skills/testing/references/browser-integration.md).
