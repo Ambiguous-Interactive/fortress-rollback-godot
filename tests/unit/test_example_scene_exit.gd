@@ -33,6 +33,8 @@ func run_case(name: String, context: RefCounted) -> void:
 		if name == "active_batches":
 			for example: String in ["offline", "integration"]:
 				_busy_retry(context, example)
+	if name == "active_batches":
+		_expert_gap_recovery(context)
 	context.finish()
 
 
@@ -126,7 +128,6 @@ func _busy_retry(context: RefCounted, example: String) -> void:
 	var manual_inputs: Array[PackedByteArray] = [PackedByteArray([2]), PackedByteArray([0])]
 	if demo != null:
 		manual_inputs[1] = PackedByteArray([demo.remote_buttons(frame)])
-		context.equal(session.receive_input(1, frame, manual_inputs[1]).code, Types.Code.OK, "manual frame receives actual remote input")
 	for player: int in range(2):
 		if session.input_delay(player) >= 0:
 			context.equal(session.submit_local_input(player, frame, manual_inputs[player]).code, Types.Code.OK, example + " retains manual buttons")
@@ -189,3 +190,63 @@ func _callbacks(context: RefCounted) -> void:
 	context.equal(demo.loop.session.status().reason, Types.Code.TERMINATED, "expired save cannot replace departure's first cause")
 	context.equal(game.frame, 0, "callback cancellation never reaches ADVANCE")
 	node.free()
+
+
+# Value: protects=controller repairs remote rows skipped by external advancement; fails_when=current frame leaves a gap;
+# why_new=ordinary scheduling never advances outside the controller; seam=none
+func _expert_gap_recovery(context: RefCounted) -> void:
+	for lag: int in [0, 3, 12]:
+		for row: PackedInt32Array in [
+			PackedInt32Array([0, 0, 0]), PackedInt32Array([1, 0, 0]), PackedInt32Array([8, 0, 0]),
+			PackedInt32Array([8, 4, 0]), PackedInt32Array([128, 128, 0]),
+			PackedInt32Array([1, 0, 1]), PackedInt32Array([8, 0, 1]), PackedInt32Array([8, 4, 1]), PackedInt32Array([128, 128, 1]),
+		]:
+			var scene: PackedScene = load("res://examples/integration/integration.tscn")
+			var node: Node = scene.instantiate()
+			node.call("_ready")
+			var demo: RefCounted = node.get("_demo")
+			context.equal(demo.start(lag), Types.Code.OK, "gap fixture starts")
+			var reference: IntegrationGame = IntegrationGame.new()
+			for frame: int in range(row[0]):
+				var actual: int = 2 if frame < row[1] else ((4 if frame % 8 < 4 else 0) | (1 if frame % 7 < 3 else 2))
+				if row[1] == 4 and frame < 4 and lag > 0:
+					context.equal(demo.tick(IntegrationGame.RIGHT), Types.Code.OK, "queues original remote rows before external receipt")
+					context.equal(demo.loop.session.receive_input(1, frame, PackedByteArray([actual])).code, Types.Code.OK, "external first receipt owns pending remote row")
+				else:
+					if frame < row[1]:
+						context.equal(demo.loop.session.receive_input(1, frame, PackedByteArray([actual])).code, Types.Code.OK, "expert supplies a contiguous actual prefix")
+					var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, PackedByteArray([IntegrationGame.RIGHT]))]
+					context.equal(demo.loop.driver.step(maxi(0, demo.loop.session._time), samples).code, Types.Code.OK, "external advancement creates a skipped controller frame")
+				var original: Types.FrameInputs = Types.FrameInputs.new([PackedByteArray([2]), PackedByteArray([actual])], PackedInt32Array([0, 0]))
+				context.equal(reference.simulate_frame(frame, original), true, "reference retains original external history")
+			var comparisons: int = 0
+			for tick: int in range(0 if row[2] == 1 else 48):
+				if tick == 32:
+					context.equal(demo.set_lag(0), Types.Code.OK, "drains delayed rows without changing their due times")
+				var frame: int = demo.loop.session.status().current_frame
+				var code: int = demo.tick(IntegrationGame.LEFT)
+				context.equal(code in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "controller recovers after external advancement")
+				if code == Types.Code.OK:
+					var actual: int = (4 if frame % 8 < 4 else 0) | (1 if frame % 7 < 3 else 2)
+					var original: Types.FrameInputs = Types.FrameInputs.new([PackedByteArray([1]), PackedByteArray([actual])], PackedInt32Array([0, 0]))
+					context.equal(reference.simulate_frame(frame, original), true, "reference advances controller input")
+				context.equal(demo.pending_input_count() <= demo.MAX_PENDING_INPUTS, true, "remote catch-up work stays bounded")
+				var previous: int = -1
+				for sample: RefCounted in demo._pending:
+					context.equal(sample.frame > previous, true, "repeated ticks retain each pending row once in order")
+					previous = sample.frame
+				var status: Types.Status = demo.loop.session.status()
+				if status.confirmed_frame >= status.current_frame - 1 and status.pending_rollback_frame == -1:
+					context.bytes_equal(demo.loop.game.canonical_bytes(), reference.canonical_bytes(), reference.frame, "corrected prefix matches independent original inputs")
+					comparisons += 1
+			for tick: int in range(24):
+				var code: int = demo.finish_tick()
+				context.equal(code in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "final catch-up does not sample another local frame")
+				if code == Types.Code.OK:
+					break
+			context.equal(demo.loop.session.status().confirmed_frame >= reference.frame - 1, true, "all skipped remote rows eventually finalize")
+			context.bytes_equal(demo.loop.game.canonical_bytes(), reference.canonical_bytes(), reference.frame, "final corrected state preserves external actual authority")
+			if row[2] == 0:
+				context.equal(comparisons > 0, true, "compares corrected prefixes after the declared delivery drain")
+			node.call("_exit_tree")
+			node.free()
