@@ -100,6 +100,12 @@ class OwnershipBatchTests(unittest.TestCase):
         for negative in (False, True):
             native = probes.aggregate_native([(suite, value) for suite, value in self.batches(negative) if suite in selected], negative, selected)
             records = [{'negative_control': negative, 'native': native, 'browser': {'result': copy.deepcopy(native)}}]
+            if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in selected:
+                from test_replay_download import fixture
+                records[0]['replay_downloads'] = fixture()
+                records[0]['replay_download_controls'] = [
+                    {'control': name, 'exit_code': 1, 'diagnostic': diagnostic}
+                    for name, diagnostic in probes.CONTROL_DIAGNOSTICS.items()]
             probes.validate_coverage(records, '2', suites)
             for mutation in ('declaration', 'foreign', 'missing', 'browser', 'alias', 'control', 'order', 'cases', 'empty', 'part'):
                 with self.subTest(negative=negative, mutation=mutation):
@@ -307,6 +313,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 root = Path(directory) / 'root'
                 cache = Path(directory) / 'cache'
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+                                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                        'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -489,6 +496,7 @@ class OwnershipRejectionTests(unittest.TestCase):
         root = directory / 'root'
         cache = directory / 'cache'
         files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+                                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                 'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -565,6 +573,14 @@ class OwnershipRejectionTests(unittest.TestCase):
                     template.write_text('mutated Web template during export')
                     changed_tool.append(True)
                 mutate_project(Path(command[command.index('--path') + 1]), 'export')
+            if str(command[1]).endswith('ownership.cjs') and command[3] == '--replay-downloads':
+                from test_replay_download import fixture
+                browser = {'browser': selected.title(), 'version': 'fixture', 'result': fixture(Path(command[4])), 'errors': []}
+                if selected == 'firefox':
+                    browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False,
+                                                        'toolkit.shutdown.fastShutdownStage': 0},
+                                   display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
+                return json.dumps(browser)
             if str(command[1]).endswith('ownership.cjs'):
                 browser_calls.append((command, log, timeout))
                 if node_alias:
@@ -621,6 +637,9 @@ class OwnershipRejectionTests(unittest.TestCase):
         capture_calls = []
 
         def capture(command, environment, log, timeout):
+            if str(command[1]).endswith('ownership.cjs'):
+                name = environment['FORTRESS_REPLAY_DOWNLOAD_CONTROL']
+                return 1, 'Error: ' + probes.CONTROL_DIAGNOSTICS[name] + '\n'
             capture_calls.append((command, log, timeout))
             project = Path(command[command.index('--path') + 1])
             (project / '.godot/cache').write_text('mutable native cache')

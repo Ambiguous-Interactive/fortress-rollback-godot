@@ -150,6 +150,7 @@ print(commands.get(sys.argv[1], ''))
             with self.subTest(boundary=boundary):
                 child = self.run_browser(json.dumps(SUITES[:1]), selected='firefox', cleanup=boundary + '-error')
                 self.assertNotEqual(child.returncode, 0)
+                self.assertEqual(child.stdout, '', 'cleanup failure must not publish a candidate')
                 self.assertIn('fixture ' + boundary + ' close failure', child.stderr)
                 cleanup = [json.loads(line) for line in child.stderr.splitlines()
                            if line.startswith('{') and 'cleanup' in json.loads(line)]

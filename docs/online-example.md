@@ -242,6 +242,9 @@ At frame zero, export requires an original v6 checksum that makes the empty pref
 
 ![Replay prefix download at the displayed frame](images/replay-prefix.png)
 
+The [received-file browser gate](experiments/buffer-ownership.md#received-browser-replay-downloads)
+checks actual prefix downloads and reopens their received bytes through this viewer.
+
 The time display shows elapsed and total recorded minutes and seconds at 60 frames per second.
 The timeline follows playback; dragging pauses it. You can select a new destination during a seek.
 Enter a frame number and press **Go** for an exact forward or backward destination. Navigation

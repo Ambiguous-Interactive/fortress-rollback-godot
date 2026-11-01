@@ -12,6 +12,7 @@ import zipfile
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from local_ownership import claim
+from replay_download import CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_capacity  # noqa: E402
@@ -273,6 +274,7 @@ FILES += ['tests/unit/test_signalfish_fallback_failure.gd', 'tests/unit/test_sig
           'addons/fortress_rollback/transport/signalfish_fallback.gd', 'addons/fortress_rollback/transport/signalfish_webrtc.gd',
           'addons/fortress_rollback/transport/signalfish_webrtc_types.gd']
 FILES += ['tests/unit/test_signalfish_adapter.gd', 'tests/unit/test_signalfish_adapter_reentry.gd']
+FILES += ["scripts/reference/browser/replay_download.gd"]
 FILES = list(dict.fromkeys(FILES))
 HOST = '''extends Node
 const Scenarios = preload("res://tests/runner/scenario_runner.gd")
@@ -367,6 +369,9 @@ func _ready() -> void:
 \tcall_deferred("_run_suites")
 
 func _run_suites() -> void:
+\tif JavaScriptBridge.eval("new URLSearchParams(location.search).has('replay-downloads')"):
+\t\tadd_child(preload("res://scripts/reference/browser/replay_download.gd").new())
+\t\treturn
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, DiagnosticLifetime, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
@@ -598,6 +603,9 @@ def validate_coverage(records, part, suites):
             validate(record['browser']['result'], negative, expected)
             if not same_json(record['native'], record['browser']['result']):
                 raise ValueError('native/web ownership divergence')
+            if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in expected:
+                validate_downloads(record.get('replay_downloads'))
+                validate_controls(record.get('replay_download_controls'))
 
 
 def last_progress(output):
@@ -686,6 +694,7 @@ def rejected_state(progress):
 
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+               'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
                'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -1056,6 +1065,32 @@ def run_probes(args, results):
                     raise ValueError('native/web ownership divergence')
                 record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name,
                               export_inventory=exported_sources, export_tool_inventory=export_frozen)
+                if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in selected:
+                    download_output = results / ('ownership-' + label + '-downloads')
+                    if download_output.exists():
+                        shutil.rmtree(download_output)
+                    download_output.mkdir()
+                    verify_sources(frozen_sources)
+                    verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                    download = json.loads(run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
+                                               str(export), '--replay-downloads', str(download_output)], environment,
+                                              results / ('ownership-' + label + '-downloads.log'), timeout=240))
+                    validate_browser(download, browser_identity, args.browser, data)
+                    record['replay_downloads'] = validate_downloads(download['result'], download_output)
+                    controls = []
+                    for control, diagnostic in CONTROL_DIAGNOSTICS.items():
+                        code, text = capture([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
+                                              str(export), '--replay-downloads', str(download_output / control)],
+                                             {**environment, 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': control},
+                                             results / ('ownership-' + label + '-downloads-' + control + '.log'), timeout=240)
+                        if code != 1 or ('Error: ' + diagnostic + '\n') not in text or any(
+                                line.startswith('{"browser":') for line in text.splitlines()):
+                            raise ValueError('replay download control failed outside its expected diagnostic: ' + control)
+                        controls.append({'control': control, 'exit_code': code, 'diagnostic': diagnostic})
+                    record['replay_download_controls'] = validate_controls(controls)
+                    verify_sources(frozen_sources)
+                    verify_staged(project, staged_frozen)
+                    verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
             verify_staged(project, staged_frozen)
             records.append(record)
             finish(started)
