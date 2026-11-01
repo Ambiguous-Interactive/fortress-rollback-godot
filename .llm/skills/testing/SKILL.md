@@ -144,6 +144,9 @@ A benchmark is a test of a measurement, and it fails like a test.
    the coordination's own record and compares the agreed value with the
    contract. The engine's runtime semantics are in
    [GDScript runtime facts](../../knowledge/gdscript-runtime.md).
+7. Ownership handoff tests must complete expert work with both actual and predicted
+   remote inputs, then continue past the delivery delay. Preloading every remote row
+   can hide gaps when automatic input production resumes.
 
 ## Evidence references
 
