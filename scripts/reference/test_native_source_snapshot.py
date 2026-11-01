@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,6 +18,33 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class SourceImageControls(unittest.TestCase):
+    # Value: protects=source roots below system symlinks; fails_when=ancestor aliases are rejected; why_new=existing tests cover in-tree links only; seam=none
+    def test_source_root_below_external_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "real/nested/repo"
+            root.mkdir(parents=True)
+            (root / "source").write_bytes(b"source")
+            (base / "alias").symlink_to(base / "real", target_is_directory=True)
+            alias = base / "alias/nested/repo"
+            self.assertEqual(SNAPSHOT.inventory(alias, ["source"]), SNAPSHOT.inventory(root, ["source"]))
+            (root / "link").symlink_to(root / "source")
+            for selected in (root, alias):
+                with self.assertRaisesRegex(ValueError, "source_symlink"):
+                    SNAPSHOT.inventory(selected, ["link"])
+
+    # Value: protects=pre-engine Git deadline; fails_when=metadata ignores its watchdog; why_new=engine timeouts do not cover source capture; seam=scripted Git process
+    def test_git_query_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / "git"
+            executable.write_text("#!" + sys.executable + "\nimport time\ntime.sleep(0.5)\nprint('late')\n")
+            executable.chmod(0o755)
+            with (patch.dict(os.environ, {"PATH": str(root)}),
+                  patch.object(SNAPSHOT, "GIT_TIMEOUT", 0.05, create=True),
+                  self.assertRaises(subprocess.TimeoutExpired)):
+                SNAPSHOT.git(root, "rev-parse", "HEAD")
+
     # Value: protects=bounded source capture; fails_when=symlinks escape or copying is unbounded; why_new=launcher outcomes cannot prove capture policy; seam=none
     def test_bounded_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -50,11 +78,12 @@ class SourceReceiptControls(unittest.TestCase):
                 suite.parent.mkdir(parents=True)
                 suite.write_text("original source\n")
                 (root / "project.godot").write_text("config_version=5\n")
+                (root / ".gitignore").write_text(".cache/\n")
                 for command in (["git", "init", "-q"], ["git", "add", "."],
                                 ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"]):
-                    subprocess.run(command, cwd=root, check=True, capture_output=True)
+                    subprocess.run(command, cwd=root, check=True, capture_output=True, timeout=30)
                 suite.write_text("stable dirty source\n")
-                initial_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+                initial_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=30).strip()
                 engine = root / ".cache/engine"
                 engine.parent.mkdir()
                 marker = root / ".cache/mutated"
@@ -66,9 +95,10 @@ class SourceReceiptControls(unittest.TestCase):
                     "assert sample.read_text() == 'stable dirty source\\n', 'executed moving source'\n"
                     f"original=pathlib.Path({str(suite)!r});marker=pathlib.Path({str(marker)!r})\n"
                     "if not marker.exists():\n marker.write_text('mutated')\n"
-                    + (" original.write_text('changed source\\n')\n" if mode in ("edit", "commit") else "")
-                    + (f" subprocess.run(['git','add','.'],cwd={str(root)!r},check=True)\n"
-                       f" subprocess.run(['git','-c','user.name=Test','-c','user.email=test@example.invalid','commit','-qm','intervening'],cwd={str(root)!r},check=True)\n"
+                    + (" original.write_text('changed source\\n')\n" if mode == "edit" else "")
+                    + (f" subprocess.run(['git','add','.'],cwd={str(root)!r},check=True,timeout=10)\n"
+                       " subprocess.run(['git','-c','user.name=Test','-c','user.email=test@example.invalid',"
+                       f"'commit','-qm','intervening'],cwd={str(root)!r},check=True,timeout=10)\n"
                        if mode == "commit" else "")
                     + (" sample.write_text('replaced snapshot\\n')\n" if mode == "replace_snapshot" else "")
                     + (" original.write_text('transient source\\n');original.write_text('stable dirty source\\n')\n"
@@ -95,6 +125,10 @@ class SourceReceiptControls(unittest.TestCase):
                 self.assertFalse(Path(identity["path"]).exists(), "snapshot must be cleaned after qualification")
                 if not expected:
                     self.assertEqual(report["failure"], "source_changed" if mode != "replace_snapshot" else "snapshot_changed")
+                if mode == "commit":
+                    self.assertEqual(suite.read_text(), "stable dirty source\n")
+                    self.assertEqual(subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True, timeout=30), "")
+                    self.assertNotEqual(subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True, timeout=30).strip(), initial_commit)
 
 
 if __name__ == "__main__":

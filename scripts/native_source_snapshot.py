@@ -10,11 +10,12 @@ import tempfile
 
 MAX_FILES = 8192
 MAX_BYTES = 64 * 1024 * 1024
+GIT_TIMEOUT = 30
 EXCLUDED = {".git", ".cache", ".godot", "progress", "__pycache__", "node_modules", "worktrees"}
 
 
 def git(root: Path, *arguments: str) -> str:
-    return subprocess.check_output(["git", *arguments], cwd=root, encoding="utf-8", errors="strict")
+    return subprocess.check_output(["git", *arguments], cwd=root, encoding="utf-8", errors="strict", timeout=GIT_TIMEOUT)
 
 
 def source_paths(root: Path) -> list[str]:
@@ -31,8 +32,11 @@ def inventory(root: Path, names: list[str]) -> dict:
         path = root / name
         if Path(name).is_absolute() or ".." in Path(name).parts:
             raise ValueError("unsafe_source_path")
-        if any(parent.is_symlink() for parent in [path, *path.parents] if parent != root.parent):
-            raise ValueError("source_symlink")
+        current = root
+        for part in Path(name).parts:
+            current = current / part
+            if current.is_symlink():
+                raise ValueError("source_symlink")
         try:
             metadata = path.stat()
         except FileNotFoundError:

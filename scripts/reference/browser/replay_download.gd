@@ -68,7 +68,7 @@ func _select(index: int) -> void:
 	scene.viewer.seek(FRAMES[index])
 	while scene.viewer.is_seeking():
 		scene.viewer.tick()
-	scene._refresh()
+	_publish_state()
 
 
 func _command(arguments: Array) -> void:
@@ -110,7 +110,7 @@ func _command(arguments: Array) -> void:
 		"finish":
 			while scene.viewer.is_seeking():
 				scene.viewer.tick()
-	scene._refresh()
+	_publish_state()
 
 
 func _matches_original(actual: Replay) -> bool:
@@ -153,6 +153,10 @@ func _identity(value: Replay) -> Array[Variant]:
 func _process(_delta: float) -> void:
 	if scene == null:
 		return
+	_publish_state()
+
+
+func _publish_state() -> void:
 	scene._refresh()
 	var button: Rect2 = scene._prefix_download.get_global_rect()
 	var open: Rect2 = _open_button.get_global_rect()

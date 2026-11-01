@@ -20,14 +20,19 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
     } else forbidden++;
   });
   const read = () => page.evaluate(() => window.fortressReplayDownload);
-  const command = (name, value = 0) => page.evaluate(arg => window.fortressReplayDownloadCommand(arg.name, arg.value), { name, value });
+  const command = (name, value = 0) => page.evaluate(arg => {
+    window.fortressReplayDownloadCommand(arg.name, arg.value);
+    return window.fortressReplayDownload;
+  }, { name, value });
   const wait = expression => page.waitForFunction(expression, null, { timeout: 30000 });
   const quiet = () => requireState(errors.length === 0 && forbidden === 0, 'replay download forbidden events observed');
   await page.goto(url);
   const display = await onLoaded();
   await wait(() => window.fortressReplayDownload?.case === 'interior' && !window.fortressReplayDownload.disabled);
   for (const [index, name, frame] of [[0, 'interior', 301], [1, 'terminal', 610], [2, 'initial', 0]]) {
-    await command('select', index);
+    const selectedState = await command('select', index);
+    requireState(selectedState?.case === name && selectedState.frame === frame && selectedState.frames === 610,
+      'replay download command state is stale');
     await page.waitForFunction(value => window.fortressReplayDownload?.case === value && !window.fortressReplayDownload.disabled,
       name, { timeout: 30000 });
     const before = await read();

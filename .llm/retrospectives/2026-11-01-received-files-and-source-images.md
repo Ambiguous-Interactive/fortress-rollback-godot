@@ -17,6 +17,9 @@ change; it does not claim complete release or issue acceptance.
 | Wrapped trace labels do not prove physical history reuse. | The donor witness now exchanges 257 original frames through 128-row queues; short traces relabeled as wrapped fail their exact frontier checks. | Observe expired original history and retain raw absolute frames and independent canonical state. |
 | Preflight failure can preserve stale success before execution starts. | Fresh review seeded `ownership.json`, refused host capacity and observed the earlier success unchanged. | Claim receipt ownership and invalidate it before waiting for host capacity; protect an active concurrent owner's receipt. |
 | Tooling tests cannot compile a new exported GDScript fixture. | Godot 4.3 export rejected a nested digest index that shadowed a parameter after Python controls passed. | Rename the loop variable and compile the actual staged fixture on the minimum engine before final matrix qualification. |
+| A readiness label can match stale state from the previous import. | CodeRabbit identified repeated terminal selection observing an earlier 301-frame recording before the next render. | Publish command state synchronously and check it within the same browser evaluation. |
+| Rejected evidence needs a terminal diagnostic round as well as no success receipt. | CodeRabbit identified download-gate exceptions leaving `ownership-rounds.json` at running. | Mark the round failed with bounded diagnostics before rethrowing; retain a table of execution and validation failures. |
+| A commit-only control must not also change its source bytes. | The original commit mode edited and committed the file, allowing inventory checks to conceal a missing HEAD check. | Commit the existing dirty source and assert unchanged bytes and a clean ending worktree. |
 
 ## Actions taken
 
@@ -32,6 +35,9 @@ found no findings and exercised the new paired traces and mutation controls.
 Browser review's preflight finding received a regression, repair and clean
 fresh review. A further review accepted direct decoded comparisons with the
 retained full original, avoiding shared prefix-generation expectations.
+CodeRabbit's later feedback also bounds Git calls, permits source roots below
+external symlinks while rejecting in-tree links, and isolates the commit control.
+Native symlink/deadline controls reproduce both defects before repair and pass afterward.
 
 The click lesson extends
 [browser integration evidence](../skills/testing/references/browser-integration.md).

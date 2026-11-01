@@ -1074,31 +1074,35 @@ def run_probes(args, results):
                 record.update(browser=browser, browser_artifact=browser_artifact, template_artifact=template_name,
                               export_inventory=exported_sources, export_tool_inventory=export_frozen)
                 if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in selected:
-                    download_output = results / ('ownership-' + label + '-downloads')
-                    if download_output.exists():
-                        shutil.rmtree(download_output)
-                    download_output.mkdir()
-                    verify_sources(frozen_sources)
-                    verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
-                    download = json.loads(run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
-                                               str(export), '--replay-downloads', str(download_output)], environment,
-                                              results / ('ownership-' + label + '-downloads.log'), timeout=240))
-                    validate_browser(download, browser_identity, args.browser, data)
-                    record['replay_downloads'] = validate_downloads(download['result'], download_output)
-                    controls = []
-                    for control, diagnostic in CONTROL_DIAGNOSTICS.items():
-                        code, text = capture([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
-                                              str(export), '--replay-downloads', str(download_output / control)],
-                                             {**environment, 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': control},
-                                             results / ('ownership-' + label + '-downloads-' + control + '.log'), timeout=240)
-                        if code != 1 or ('Error: ' + diagnostic + '\n') not in text or any(
-                                line.startswith('{"browser":') for line in text.splitlines()):
-                            raise ValueError('replay download control failed outside its expected diagnostic: ' + control)
-                        controls.append({'control': control, 'exit_code': code, 'diagnostic': diagnostic})
-                    record['replay_download_controls'] = validate_controls(controls)
-                    verify_sources(frozen_sources)
-                    verify_staged(project, staged_frozen)
-                    verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                    try:
+                        download_output = results / ('ownership-' + label + '-downloads')
+                        if download_output.exists():
+                            shutil.rmtree(download_output)
+                        download_output.mkdir()
+                        verify_sources(frozen_sources)
+                        verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                        download = json.loads(run([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
+                                                   str(export), '--replay-downloads', str(download_output)], environment,
+                                                  results / ('ownership-' + label + '-downloads.log'), timeout=240))
+                        validate_browser(download, browser_identity, args.browser, data)
+                        record['replay_downloads'] = validate_downloads(download['result'], download_output)
+                        controls = []
+                        for control, diagnostic in CONTROL_DIAGNOSTICS.items():
+                            code, text = capture([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
+                                                  str(export), '--replay-downloads', str(download_output / control)],
+                                                 {**environment, 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': control},
+                                                 results / ('ownership-' + label + '-downloads-' + control + '.log'), timeout=240)
+                            if code != 1 or ('Error: ' + diagnostic + '\n') not in text or any(
+                                    line.startswith('{"browser":') for line in text.splitlines()):
+                                raise ValueError('replay download control failed outside its expected diagnostic: ' + control)
+                            controls.append({'control': control, 'exit_code': code, 'diagnostic': diagnostic})
+                        record['replay_download_controls'] = validate_controls(controls)
+                        verify_sources(frozen_sources)
+                        verify_staged(project, staged_frozen)
+                        verify_browser_inputs(browser_paths, browser_frozen, export, exported_sources)
+                    except Exception as error:
+                        reject(started, 'failed', alive=False, errors=bounded_errors([str(error)]))
+                        raise
             verify_staged(project, staged_frozen)
             records.append(record)
             finish(started)
