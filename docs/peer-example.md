@@ -56,8 +56,15 @@ nested ticks and desync injection leave the match unchanged.
 local input conflicts with an expert-staged sample. Invalid buttons and fault
 settings return `I.Code.INVALID_ARGUMENT`; active ownership returns `I.Code.BUSY`.
 These rejected attempts preserve clocks, queued packets, held samples and the
-playable match. Correct the controls and retry; actual service failures still
-populate `failure`. A stalled frame continues using its original held buttons.
+playable match. Correct the controls and retry when `failure` remains zero.
+The return-code domains overlap: `Types.Code.INPUT_ALREADY_SUBMITTED` and
+`I.Code.CONFLICT` both equal 10. Check `failure` before classifying a nonzero
+return as retryable; a nonzero `failure` requires reset. Actual service failures
+retain their first code. Any terminal fixed member stops the whole match,
+retires the other peer and reports `I.Code.INPUT_FAILED` unless an earlier
+service failure already supplies the cause. Per-peer status retains the detailed
+terminal reasons and drained events remain visible in the example observations.
+A stalled frame continues using its original held buttons.
 
 The headless suite `tests/unit/test_peer_example.gd` exercises actual loss,
 reordering, a prediction stall, partition healing, full canonical state

@@ -3,6 +3,19 @@ extends RefCounted
 # Value: protects=fixed-membership timeout halt; fails_when=partition advances or silently recovers; why_new=P3 covered only healed short faults; seam=none
 const Match = preload("res://examples/peer/match.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const I = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+const SnapshotStatus = preload("res://addons/fortress_rollback/core/snapshot_status.gd")
+
+
+class FailingGame:
+	extends Match.Game
+	var failed_writer: RefCounted
+
+	func save_state(_frame: int, writer: Match.Simulation.Writer) -> Driver.SaveResult:
+		failed_writer = writer
+		return Driver.SaveResult.new(false)
+
 
 
 func cases() -> PackedStringArray:
@@ -39,6 +52,8 @@ func _terminal_partition(context: RefCounted) -> void:
 	game.is_partitioned = true
 	for tick: int in range(450):
 		game.tick(PackedInt32Array([2, 8]))
+	context.equal(game.tick(PackedInt32Array([2, 8])), I.Code.INPUT_FAILED, "terminal partition reports a reset-required match")
+	context.equal(game.failure, I.Code.INPUT_FAILED, "terminal partition latches its failure")
 	var frozen: Array[PackedByteArray] = []
 	for peer: int in range(2):
 		context.equal(game.sessions[peer].status().lifecycle, Types.Lifecycle.TERMINATED, "unrecoverable fixed-membership partition terminates peer=%d" % peer)
@@ -54,6 +69,33 @@ func _terminal_partition(context: RefCounted) -> void:
 	for tick: int in range(80):
 		game.tick(PackedInt32Array([1, 4]))
 	context.equal(game.games[0].frame > 40 and game.games[1].frame > 40, true, "restarted peers advance")
+	for departed: int in 2:
+		var closed: Match = _healthy(context)
+		context.equal(closed.sessions[departed].close(closed.now_us), Types.Code.OK, "one owned peer explicitly departs")
+		var reason: int = closed.sessions[departed].status().reason
+		context.equal(closed.tick(PackedInt32Array([2, 8])), I.Code.INPUT_FAILED, "one terminal fixed member reports a stopped match")
+		for player: int in 2:
+			context.equal(closed.sessions[player].status().lifecycle, Types.Lifecycle.TERMINATED, "match cleanup retires both retained peer handles")
+		context.equal(closed.sessions[departed].status().reason, reason, "cleanup preserves the departed peer first cause")
+		var stopped_at: int = closed.now_us
+		context.equal(closed.tick(PackedInt32Array([2, 8])), I.Code.INPUT_FAILED, "terminal result stays latched on later controls")
+		context.equal(closed.now_us, stopped_at, "stopped match consumes no further service time")
+	for failed: int in 2:
+		var callback_failure: Match = _healthy(context)
+		var game: FailingGame = FailingGame.new()
+		var frame: int = callback_failure.games[failed].frame
+		context.equal(game.load_state(frame, Match.Reader.new(callback_failure.games[failed].canonical_bytes(), true)), true, "failure fixture restores canonical state")
+		context.equal(callback_failure.sessions[failed]._driver.configure(callback_failure.sessions[failed]._core, game), Types.Code.OK, "attach actual failing SAVE callback")
+		callback_failure.games[failed] = game
+		var other_before: int = callback_failure.games[1 - failed].frame
+		context.equal(callback_failure.tick(PackedInt32Array([2, 8])), I.Code.INPUT_FAILED, "callback termination reports stopped match")
+		context.equal(callback_failure.sessions[failed].status().reason, Types.Code.CALLBACK_FAILED, "cleanup retains callback first cause")
+		context.equal(game.failed_writer.status(), SnapshotStatus.Code.EXPIRED, "terminal cleanup leaves retained writer expired")
+		context.equal(callback_failure.sessions[1 - failed].status().lifecycle, Types.Lifecycle.TERMINATED, "callback failure retires retained counterpart")
+		if failed == 0:
+			context.equal(callback_failure.games[1].frame, other_before, "first endpoint failure prevents later counterpart simulation")
+
+
 
 
 # Value: protects=visible interruption and resume; fails_when=timer or healing event is lost; why_new=timeout case only checks terminal states; seam=none

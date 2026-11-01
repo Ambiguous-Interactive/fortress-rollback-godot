@@ -249,6 +249,8 @@
 
 ### Fixed
 
+- Fix local peer matches reporting success after a session stops. Both owned peers now retire, and the match requires reset.
+
 - Fix rejected local peer controls stopping the match. Conflicting expert-staged inputs and invalid controls now allow corrected retries.
 
 - Fix offline, integration and spectator scenes staying paused after temporary ownership holds. Integration playback also repairs missing remote inputs after predicted expert advancement.
