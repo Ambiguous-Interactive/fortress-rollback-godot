@@ -202,6 +202,12 @@ Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and 
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame and finishes paused. Step and Pause validate the displayed
 state boundary immediately, including sparse recorded checksums, without consuming its input.
+**Validate state** checks the paused boundary without advancing, including the initial or final state.
+It checks available recorded checksums and input integrity; absent state checksums remain unverified.
+Playback, seeking, held timeline controls and active game work disable this action.
+
+![Validate the initial replay state without advancing](images/replay-validation.png)
+
 Pause, stepping, seeking and speed changes clear any partial
 slow-motion frame; restart and new imports keep your selected speed.
 Press **Back one frame** to inspect the preceding state, including after completion or a checksum failure.

@@ -859,6 +859,7 @@ func _catchup_speed(context: RefCounted) -> void:
 
 # Value: protects=playable catch-up rate keys respect bounds and pause; fails_when=keys are missing or repeat on held input; why_new=API controls bypass keyboard; seam=scene input
 func _catchup_control(context: RefCounted) -> void:
+	_pointer_policy_controls(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	scene.demo.is_paused = true
@@ -1350,3 +1351,56 @@ func _pointer_playback_controls(context: RefCounted) -> void:
 		context.equal(button.disabled, true, "completed viewer disables pointer action")
 		context.bytes_equal(scene.demo.game.canonical_bytes(), scene.demo.host.loop.game.canonical_bytes(), 40, "pointer final tail preserves complete original history")
 		scene.free()
+
+
+# Value: protects=pointer users can tune bounded delay and catch-up; fails_when=buttons bypass ownership or policy bounds;
+# why_new=policy controls currently require punctuation keys; seam=scene controls
+func _pointer_policy_controls(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	var actions: PackedStringArray = PackedStringArray(["LessDelay", "MoreDelay", "SlowerCatchUp", "FasterCatchUp"])
+	for action: String in actions:
+		context.equal(scene.get_node_or_null("PlaybackPolicy/" + action) != null, true, "pointer users can tune viewing policy")
+		if scene.get_node_or_null("PlaybackPolicy/" + action) == null:
+			scene.free()
+			return
+	scene.demo.set_paused(true)
+	for tick: int in range(40):
+		scene.demo.tick(Game.RIGHT | Game.FIRE)
+	for action: String in actions:
+		var button: Button = scene.get_node("PlaybackPolicy/" + action)
+		context.equal(button.focus_mode, Control.FOCUS_NONE, "policy adjustment preserves host keyboard focus")
+		var before: Array = _service_observation(scene.demo)
+		var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
+		button.pressed.emit()
+		var expected: PackedInt64Array = policy.duplicate()
+		var index: int = 0 if action in ["LessDelay", "MoreDelay"] else 2
+		expected[index] += -1 if action in ["LessDelay", "SlowerCatchUp"] else 1
+		context.equal(scene.demo.viewer.playback_policy(), expected, "pointer changes exactly one policy setting")
+		context.equal(_service_observation(scene.demo).slice(0, 10), before.slice(0, 10), "policy adjustment never samples, delivers or plays input")
+	var capacity: int = scene.demo.viewer.playback_status().capacity_frames
+	for boundary: int in [0, 1]:
+		scene.demo.viewer.set_playback(0 if boundary == 0 else capacity - 1, 4, 1 if boundary == 0 else capacity)
+		scene._update_label()
+		for action: String in actions:
+			var button: Button = scene.get_node("PlaybackPolicy/" + action)
+			context.equal(button.disabled, (action in ["LessDelay", "SlowerCatchUp"]) == (boundary == 0), "policy buttons expose exact accepted bounds")
+			var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
+			if button.disabled:
+				button.pressed.emit()
+				context.equal(scene.demo.viewer.playback_policy(), policy, "direct signal cannot exceed policy bound")
+	scene.demo.viewer.set_playback(0, 4, 4)
+	context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "expert request owns viewing")
+	for terminal: bool in [false, true]:
+		if terminal:
+			scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
+		scene._update_label()
+		for action: String in actions:
+			var button: Button = scene.get_node("PlaybackPolicy/" + action)
+			context.equal(button.disabled, true, "policy tuning disables while owned or stopped")
+			var before: Array = _service_observation(scene.demo)
+			var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
+			button.pressed.emit()
+			context.equal(scene.demo.viewer.playback_policy(), policy, "direct signal preserves owned or stopped policy")
+			context.equal(_service_observation(scene.demo), before, "refused policy action leaves game and clocks unchanged")
+	scene.free()

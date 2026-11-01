@@ -194,6 +194,19 @@ func step() -> void:
 	_finish_seek()
 
 
+## Paused boundaries can validate their recorded checksum and input digest without consuming input.
+## Missing recorded checksums remain explicitly unverified; cache comparisons do not replace them.
+func can_validate_state() -> bool:
+	return _recording != null and not _is_busy() and not is_playing and not is_seeking() and not has_failure()
+
+
+func validate_state() -> bool:
+	if not can_validate_state():
+		return false
+	_finish_seek()
+	return not has_failure()
+
+
 ## Inspect the preceding state through validated checkpoint navigation, finishing paused.
 ## Long restores use tick's seek budget and can be canceled. A failed prefix is replayed again.
 func step_back() -> bool:
