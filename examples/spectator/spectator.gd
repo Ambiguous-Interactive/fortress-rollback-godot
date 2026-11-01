@@ -15,6 +15,8 @@ var _replay_notice: String = ""
 var _label: Label
 var _follow_live_button: Button
 var _pause_button: Button
+var _step_button: Button
+var _catchup_button: Button
 
 
 func _ready() -> void:
@@ -34,6 +36,18 @@ func _ready() -> void:
 	_pause_button.focus_mode = Control.FOCUS_NONE
 	_pause_button.pressed.connect(_toggle_pause)
 	add_child(_pause_button)
+	_step_button = Button.new()
+	_step_button.name = "StepViewer"
+	_step_button.text = "Step viewer (N)"
+	_step_button.focus_mode = Control.FOCUS_NONE
+	_step_button.pressed.connect(_step_viewer)
+	add_child(_step_button)
+	_catchup_button = Button.new()
+	_catchup_button.name = "CatchUpViewer"
+	_catchup_button.text = "Catch up once (C)"
+	_catchup_button.focus_mode = Control.FOCUS_NONE
+	_catchup_button.pressed.connect(_catch_up_viewer)
+	add_child(_catchup_button)
 	_code = demo.start()
 	_update_label()
 
@@ -66,9 +80,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if event.keycode == KEY_P:
 		_toggle_pause()
 	elif event.keycode == KEY_N:
-		demo.step_viewer()
+		_step_viewer()
 	elif event.keycode == KEY_C:
-		demo.catch_up_viewer()
+		_catch_up_viewer()
 	elif event.keycode == KEY_F:
 		_follow_live()
 	elif event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
@@ -94,6 +108,16 @@ func _toggle_pause() -> void:
 	_update_label()
 
 
+func _step_viewer() -> void:
+	demo.step_viewer()
+	_update_label()
+
+
+func _catch_up_viewer() -> void:
+	demo.catch_up_viewer()
+	_update_label()
+
+
 func _follow_live() -> void:
 	demo.follow_live()
 	_update_label()
@@ -110,6 +134,8 @@ func _process(_delta: float) -> void:
 func _update_label() -> void:
 	_follow_live_button.disabled = demo.viewer == null or demo._mutation_code() == Types.Code.BUSY or demo.viewer._mutation_code() != Types.Code.OK
 	_pause_button.disabled = _follow_live_button.disabled
+	_step_button.disabled = _follow_live_button.disabled
+	_catchup_button.disabled = _follow_live_button.disabled
 	_pause_button.text = "Resume viewer (P)" if demo.is_paused else "Pause viewer (P)"
 	if demo.host == null or demo.viewer == null:
 		_label.text = "Could not start: code %d" % _code
@@ -156,6 +182,8 @@ func _update_label() -> void:
 
 	_follow_live_button.position = Vector2(24, _label.position.y + _label.get_minimum_size().y + 8)
 	_pause_button.position = _follow_live_button.position + Vector2(_follow_live_button.get_minimum_size().x + 12, 0)
+	_step_button.position = _pause_button.position + Vector2(_pause_button.get_minimum_size().x + 12, 0)
+	_catchup_button.position = _step_button.position + Vector2(_step_button.get_minimum_size().x + 12, 0)
 
 
 func _recording_feedback() -> String:

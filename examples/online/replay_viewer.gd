@@ -241,6 +241,38 @@ func current_state_coverage_message() -> String:
 	return prefix + "recorded checksum not checked."
 
 
+## A short identity for the selected recording, independent of playback success or validation.
+func recording_summary() -> String:
+	if _recording == null:
+		return "No recording loaded."
+	var game_name: String = "Movement and fire" if is_integration_game() else "Online movement"
+	return "%s | Recorded engine: %s" % [game_name, JSON.stringify(_recording.engine_version())]
+
+
+## Plain, bounded file metadata and SHA-256 identity; these are file claims, not checksum coverage.
+## Quoted values preserve literal printable metadata. Failed imports retain the selected file's details.
+func recording_details() -> String:
+	if _recording == null:
+		return "No recording loaded."
+	return (
+		"\n"
+		. join(
+			PackedStringArray(
+				[
+					"Recorded engine: " + JSON.stringify(_recording.engine_version()),
+					"Playback engine: " + JSON.stringify(Engine.get_version_info().string),
+					"Addon: " + JSON.stringify(_recording.addon_version()),
+					"Upstream: " + JSON.stringify(_recording.upstream_revision()),
+					"Game: " + JSON.stringify(_recording.game_version()),
+					"Seed: " + JSON.stringify(_recording.game_seed()),
+					"File bytes: %d" % _recording_bytes,
+					"SHA-256: " + _recording_sha256,
+				]
+			)
+		)
+	)
+
+
 func current_frame() -> int:
 	return _player.current_frame()
 

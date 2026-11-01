@@ -135,23 +135,39 @@ func _has_operation_guard() -> bool:
 
 
 ## Clock and packet faults are explicit; simulation receives only input bytes.
-func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
-	if _has_operation_guard() or failure != I.Code.OK:
-		return
+## Invalid controls or conflicting expert-staged samples reject before service and remain retryable.
+## Returns an input-endpoint service code or a session input-rejection code; numeric domains overlap.
+## A nonzero failure requires reset, even when the return value also names a retryable rejection.
+func tick(buttons: PackedInt32Array, can_advance: bool = true) -> int:
+	if _has_operation_guard():
+		return I.Code.BUSY
+	if _stop_terminal_match() or failure != I.Code.OK:
+		return failure
 	if latency_ticks < 0 or latency_ticks > 120 or drop_every < 0 or drop_every > 1000:
-		failure = I.Code.INVALID_ARGUMENT
-		return
+		return I.Code.INVALID_ARGUMENT
 	if buttons.size() != 2 or buttons[0] < 0 or buttons[0] > 15 or buttons[1] < 0 or buttons[1] > 15:
-		failure = I.Code.INVALID_ARGUMENT
-		return
+		return I.Code.INVALID_ARGUMENT
+	if can_advance:
+		for player: int in range(sessions.size()):
+			var session: Peer = sessions[player]
+			if session.status().lifecycle == Types.Lifecycle.TERMINATED:
+				continue
+			var sample: int = _held[player] if _held[player] != -1 else buttons[player]
+			var code: int = session._core.validate_local_input(player, session.status().current_frame, PackedByteArray([sample]))
+			if code != Types.Code.OK:
+				return code
 	now_us += TICK_US
 	for session: Peer in sessions:
 		if session.status().lifecycle == Types.Lifecycle.TERMINATED:
 			continue
 		var code: int = session.poll(now_us, [_token()])
-		if code != I.Code.OK and session.status().lifecycle != Types.Lifecycle.TERMINATED:
+		if code != I.Code.OK and session.status().lifecycle != Types.Lifecycle.TERMINATED and failure == I.Code.OK:
 			failure = code
+		if _stop_terminal_match():
+			return failure
 	_deliver()
+	if _stop_terminal_match():
+		return failure
 	for player: int in range(sessions.size()):
 		var session: Peer = sessions[player]
 		if can_advance and session.network_status().state == "running":
@@ -167,8 +183,18 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 				stalls[player] += 1
 			elif session.status().lifecycle == Types.Lifecycle.TERMINATED:
 				pass
-			else:
+			elif failure == I.Code.OK:
 				failure = I.Code.INPUT_FAILED
+		if _stop_terminal_match():
+			return failure
+	_drain_events()
+	_collect()
+	return failure
+
+
+func _drain_events() -> void:
+	for player: int in range(sessions.size()):
+		var session: Peer = sessions[player]
 		# Bounded diagnostics must be drained even when simulation stalls.
 		for event: Dictionary in session.drain_events():
 			var kind: String = event.kind
@@ -178,7 +204,23 @@ func tick(buttons: PackedInt32Array, can_advance: bool = true) -> void:
 			if kind == "input_delay_recommendation":
 				recommendations[player].append(event.duplicate(true))
 		session.drain_transitions()
-	_collect()
+
+
+func _stop_terminal_match() -> bool:
+	var has_terminal: bool = false
+	for session: Peer in sessions:
+		if session.status().lifecycle == Types.Lifecycle.TERMINATED:
+			has_terminal = true
+	if not has_terminal:
+		return false
+	if failure == I.Code.OK:
+		failure = I.Code.INPUT_FAILED
+	for session: Peer in sessions:
+		if session.status().lifecycle != Types.Lifecycle.TERMINATED:
+			session.close(maxi(now_us, session.network_status().last_now_us))
+	_packets.clear()
+	_drain_events()
+	return true
 
 
 func queued_packets() -> int:
@@ -233,7 +275,10 @@ func _deliver() -> void:
 		if code != I.Code.OK and sessions[1 - source].status().lifecycle == Types.Lifecycle.TERMINATED:
 			delivered += 1
 		elif code != I.Code.OK:
-			failure = code
+			if failure == I.Code.OK:
+				failure = code
 		else:
 			delivered += 1
+		if _stop_terminal_match():
+			return
 	_packets = retained

@@ -23,13 +23,16 @@ func cases() -> PackedStringArray:
 			"full_length_recording",
 			"empty_terminal",
 			"input_inspection",
-			"dropped_file"
+			"dropped_file",
+			"recording_metadata"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"recording_metadata":
+			_recording_metadata(context)
 		"dropped_file":
 			_dropped_file(context)
 		"input_inspection":
@@ -527,3 +530,61 @@ func _dropped_file(context: RefCounted) -> void:
 	node._exit_tree()
 	node.free()
 	context.equal(DirAccess.remove_absolute(ProjectSettings.globalize_path(path)), OK, "remove owned drop fixture")
+
+
+# Value: protects=healthy replay inspection identifies the selected file without markup or unbounded layout;
+# fails_when=metadata stays stale after replacement or inflates the scene; why_new=failure reports expose provenance only after errors; seam=none
+func _recording_metadata(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.viewer.has_method("recording_details"), true, "healthy viewer exposes recording provenance")
+	if not node.viewer.has_method("recording_details"):
+		node._exit_tree()
+		node.free()
+		return
+	context.equal(node.viewer.recording_details(), "No recording loaded.", "empty viewer has no retained provenance")
+	for engine: String in ["4.3.stable.recorded", "[b]" + "x".repeat(Replay.MAX_TEXT_BYTES - 7) + "[/b]"]:
+		var replay: Replay = recording(8)
+		replay._text[0] = engine
+		var bytes: PackedByteArray = replay.to_bytes()
+		context.equal(node.viewer.open_bytes(bytes), true, "printable engine metadata imports")
+		node._refresh()
+		var details: String = node.viewer.recording_details()
+		context.equal(details.contains("Recorded engine: " + JSON.stringify(engine)), true, "recorded engine is quoted verbatim")
+		context.equal(details.contains("Playback engine: " + JSON.stringify(Engine.get_version_info().string)), true, "current engine remains separate from recorded metadata")
+		for item: String in [replay.addon_version(), replay.upstream_revision(), replay.game_seed(), replay.game_version()]:
+			context.equal(details.contains(JSON.stringify(item)), true, "details retain each format metadata field")
+		var hash: HashingContext = HashingContext.new()
+		hash.start(HashingContext.HASH_SHA256)
+		hash.update(bytes)
+		context.equal(details.contains(hash.finish().hex_encode()), true, "details identify the exact selected file")
+		context.equal(details.contains("File bytes: %d" % bytes.size()), true, "details retain received file size")
+		context.equal(details.length() <= 2048, true, "bounded metadata keeps the tooltip finite")
+		var label: Label = node.find_child("RecordingMetadata", true, false) as Label
+		context.equal(label != null, true, "scene presents provenance in a plain label")
+		if label != null:
+			context.equal(label.clip_text, true, "long file metadata cannot widen its row")
+			context.equal(label.text_overrun_behavior, TextServer.OVERRUN_TRIM_ELLIPSIS, "long metadata remains visibly truncated")
+			context.equal(label.tooltip_text, details, "tooltip exposes complete literal metadata")
+			context.equal(label.mouse_filter, Control.MOUSE_FILTER_PASS, "actual hover can reach recording metadata")
+			context.equal(label.has_method("_make_custom_tooltip"), true, "metadata hover provides bounded wrapping")
+			if label.has_method("_make_custom_tooltip"):
+				var tooltip: Label = label.call("_make_custom_tooltip", details) as Label
+				context.equal(tooltip != null, true, "tooltip remains plain text")
+				if tooltip != null:
+					context.equal(tooltip.text, details, "wrapped tooltip preserves every metadata character")
+					context.equal(tooltip.autowrap_mode, TextServer.AUTOWRAP_WORD_SMART, "long unbroken metadata can wrap")
+					context.equal(tooltip.custom_minimum_size.x <= 560, true, "tooltip width is bounded")
+					tooltip.free()
+			context.equal(label.text, node.viewer.recording_summary(), "visible summary follows selected file")
+		context.equal(node.viewer.checked_checksum_count(), 0, "provenance display does not validate recorded states")
+		node.viewer.step()
+		context.equal(node.viewer.open_bytes(PackedByteArray([0])), false, "malformed replacement refuses")
+		context.equal(node.viewer.recording_details(), details, "refused import preserves original file identity")
+		node.viewer.restart()
+		context.equal(node.viewer.recording_details(), details, "restart preserves selected file identity")
+		node.viewer.terminate()
+		context.equal(node.viewer.recording_details(), details, "stopped playback still identifies the selected recording")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()

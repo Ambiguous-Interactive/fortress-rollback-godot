@@ -12,23 +12,23 @@ The session logic (see
 whether it is talking to ENet, WebRTC, or a replay file. Everything on the
 wire is bytes with an exact, versioned layout.
 
-Peers can finish synchronization independently. Validate early input/control
-identity and bodies before discarding them without ACKs, receipts or lifecycle
-updates. Test a final handshake reply overtaken by original gameplay on both
-direct and relay paths; verify the retried original bytes after later keys change.
+Peers can finish synchronization independently. Validate early input/control identity and bodies before discarding them without ACKs, receipts or lifecycle
+updates. Test a final handshake reply overtaken by original gameplay on both direct and relay paths; verify the retried original bytes after later keys change.
 
 Valid foreign session, sender or connection identities must be discarded with bounded
 work, owned byte/token release and rejection accounting. Check shared session clocks,
 confirmation and control publication too; endpoint rejection alone does not prove
 inert facade behavior. Fence SDK callbacks by connection lifetime and nested status/expiry observations by captured session and configuration.
 
+Check terminal lifetime changes after each received packet, before processing the next packet.
+Preserve the first failure and return before a retained batch can restore queues cleared by cleanup; test both packet orders.
+
 Server-restart witnesses must terminate the owned process handle and verify its
 terminal exit. Restart the same verified binary/configuration on the same endpoint;
 check the new live handle with bounded readiness. Socket/proxy outage evidence
 cannot substitute for process death or a fresh service lifetime.
 
-A replay or spectator format change must update independent consumers and raw packet/
-model fixtures as well as the core decoder, oracle and golden. Search magic bytes,
+A replay or spectator format change must update independent consumers and raw packet/model fixtures as well as the core decoder, oracle and golden. Search magic bytes,
 header builders, authentication helpers, version tuples and binary unpack calls;
 run the whole consumer suites, since old synthetic fixtures can hide stale formats.
 Label failed comparison domains in public diagnostics: an input digest, recorded state

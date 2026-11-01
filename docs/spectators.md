@@ -19,10 +19,10 @@ The upper board is a playable host with delayed remote input and actual rollback
 The lower board follows its corrected input history, initially twelve confirmed frames behind.
 Move with A/D or arrows and fire with Space. Press P or click **Pause viewer** to pause only the viewer;
 press P again or click **Resume viewer** to catch up at most four frames per physics tick by default.
-Pause controls wait while an active request or callback owns playback, and disable after playback stops. Press N to pause and inspect
-one confirmed viewer frame at a time. Each press advances at most one frame and still
+Playback buttons wait while an active request or callback owns playback, and disable after playback stops.
+Press N or click **Step viewer** to pause and inspect one confirmed viewer frame at a time. Each press advances at most one frame and still
 respects the viewing delay; it waits when confirmed inputs are unavailable.
-Press C to catch up once through all currently buffered playable frames, then remain paused.
+Press C or click **Catch up once** to consume all currently buffered playable frames, then remain paused.
 This action preserves the viewing delay and ordinary catch-up rate. It consumes each
 confirmed row in order, with at most one queue capacity of input work per press.
 It does not retrieve rows still waiting at the host. Later ticks deliver at most 16 packets each,

@@ -245,6 +245,14 @@ pauses at the last validated boundary. Navigation finishes paused at the request
 ![Replay timeline and recorded time](images/replay-timeline.png)
 
 Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
+The recording row identifies the game and recorded engine. Hover over it for full engine, addon,
+upstream, game and seed metadata, plus the selected file's byte count and SHA-256.
+The tooltip separates the recorded engine from the engine running playback; metadata does not establish state validation.
+Long metadata stays clipped in its row; hover reveals a width-limited plain-text tooltip that wraps long values.
+A refused replacement keeps the current recording's identity.
+
+![Replay provenance shown on hover](images/replay-provenance.png)
+
 The display shows the current frame and stops at the first failed recorded checksum.
 The selected-state line separately identifies a matching, unchecked or absent recorded state checksum.
 The next-input line shows each player's recorded directions and confirmed or disconnected status

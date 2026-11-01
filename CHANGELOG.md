@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add pointer controls for single-frame spectator stepping and one-time bounded catch-up.
+
+- Add replay provenance during inspection, with wrapping hover details for engine, game, seed and source revisions.
+
 - Add a Pause/Resume button to the local spectator, with the same readiness checks as its keyboard control.
 
 - Add replay prefix downloads at the displayed frame, preserving original inputs, metadata and recorded checksum evidence.
@@ -244,6 +248,10 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix local peer matches reporting success after a session stops. Both owned peers now retire, and the match must be reset.
+
+- Fix rejected local peer controls stopping the match. Conflicting expert-staged inputs and invalid controls now allow corrected retries.
 
 - Fix offline, integration and spectator scenes staying paused after temporary ownership holds. Integration playback also repairs missing remote inputs after predicted expert advancement.
 
