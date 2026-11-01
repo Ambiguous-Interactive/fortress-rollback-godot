@@ -57,12 +57,17 @@ Boring, typed, reviewable GDScript. The reference formatter is `gdformat`
 
 Owned `RefCounted` callback graphs must not keep strong back-references. Use a
 `WeakRef` when a game or test fixture refers back to its owning driver/session.
+Scenes that own a match or playback must retire it on exit; freeing a Node does not
+terminate retained `RefCounted` players, drivers or request views. Test retained handles after teardown.
+Scene physics loops must retry temporary `BUSY` results after ownership releases; a controller's safe refusal must not become a permanent scene stop.
 Engine resource-leak errors fail verification even if structured assertions pass.
 Validate bounded view status separately from callback success and capture it before
 expiration. A matching checksum cannot make a failed snapshot write successful.
 Public view constructors also need backing-array shape checks before indexing metadata or copying caller buffers;
 ordinary engine-created views can hide malformed-constructor failures. Preserve destinations on rejection.
 Validate value domains too when scalar reads reserve error sentinels; successful owned and scalar reads must agree.
+Validate integer controller inputs before converting to byte arrays: narrowing can silently turn invalid values into valid buttons.
+Reject before polling clocks, retaining samples or changing composed controller state.
 Validate callback checksum width before encoding diagnostics; a typed `SaveResult`
 does not constrain its contained byte array.
 Check callback argument counts at configuration before replacing an active game.

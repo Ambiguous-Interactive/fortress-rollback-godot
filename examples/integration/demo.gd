@@ -166,13 +166,7 @@ func tick(buttons: int) -> int:
 	if code != Types.Code.OK:
 		return code
 	var frame: int = loop.session.status().current_frame
-	if frame != _remote_sample_frame:
-		_remote_sample_frame = frame
-		var due_tick: int = tick_count + lag_ticks
-		# Keep input ordered when lag decreases, without rewriting queued deliveries.
-		if not _pending.is_empty():
-			due_tick = maxi(due_tick, _pending.back().due_tick)
-		_pending.append(RemoteInput.new(frame, due_tick, remote_buttons(frame)))
+	_queue_remote_through(frame)
 	code = _deliver_ready()
 	if code != Types.Code.OK:
 		return code
@@ -196,6 +190,10 @@ func finish_tick() -> int:
 	code = loop.session.poll(tick_count * TICK_US).code
 	if code != Types.Code.OK:
 		return code
+	code = _deliver_ready()
+	if code != Types.Code.OK:
+		return code
+	_queue_remote_through(loop.session.status().current_frame - 1)
 	code = _deliver_ready()
 	if code != Types.Code.OK:
 		return code
@@ -237,11 +235,31 @@ static func remote_buttons(frame: int) -> int:
 	return (Game.FIRE if frame % 8 < 4 else 0) | (Game.LEFT if frame % 7 < 3 else Game.RIGHT)
 
 
+func _queue_remote_through(frame: int) -> void:
+	var first: int = maxi(loop.session.received_frames()[1] + 1, _remote_sample_frame + 1)
+	var last: int = mini(frame, first + MAX_PENDING_INPUTS - _pending.size() - 1)
+	var due_tick: int = tick_count + lag_ticks
+	# Preserve existing delivery times while filling rows skipped by expert advancement.
+	if not _pending.is_empty():
+		var tail: RemoteInput = _pending.back()
+		due_tick = maxi(due_tick, tail.due_tick)
+	for next_frame: int in range(first, last + 1):
+		_pending.append(RemoteInput.new(next_frame, due_tick, remote_buttons(next_frame)))
+		_remote_sample_frame = next_frame
+
+
 func _deliver_ready() -> int:
-	while not _pending.is_empty() and _pending[0].due_tick <= tick_count:
+	var received: int = loop.session.received_frames()[1]
+	while not _pending.is_empty():
 		var sample: RemoteInput = _pending[0]
+		if sample.frame <= received:
+			_pending.pop_front()
+			continue
+		if sample.due_tick > tick_count:
+			break
 		var code: int = loop.session.receive_input(1, sample.frame, PackedByteArray([sample.buttons])).code
 		if code != Types.Code.OK:
 			return code
+		received = sample.frame
 		_pending.pop_front()
 	return Types.Code.OK

@@ -33,8 +33,12 @@ func _ready() -> void:
 	_update_label()
 
 
+func _exit_tree() -> void:
+	_session.terminate()
+
+
 func _physics_process(_delta: float) -> void:
-	if _code != Types.Code.OK:
+	if _code not in [Types.Code.OK, Types.Code.BUSY]:
 		return
 	_previous_positions = _current_positions.duplicate()
 	var frame: int = _session.status().current_frame

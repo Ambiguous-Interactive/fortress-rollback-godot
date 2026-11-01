@@ -75,6 +75,16 @@ func restart() -> void:
 	_opened()
 
 
+## Retire the owned player when its scene leaves, preserving the first playback failure.
+## Active callbacks keep their ownership guard until return; restart creates a fresh lifetime.
+func terminate() -> void:
+	_player.terminate()
+	is_playing = false
+	if _code == Types.Code.OK:
+		_code = Types.Code.TERMINATED
+		message = "Playback stopped. Restart to inspect again."
+
+
 func can_step() -> bool:
 	return _code == Types.Code.OK and not _player.is_complete()
 

@@ -17,8 +17,9 @@ godot --path . res://examples/spectator/spectator.tscn
 
 The upper board is a playable host with delayed remote input and actual rollback.
 The lower board follows its corrected input history, initially twelve confirmed frames behind.
-Move with A/D or arrows and fire with Space. Press P to pause only the viewer;
-resume to catch up at most four frames per physics tick by default. Press N to pause and inspect
+Move with A/D or arrows and fire with Space. Press P or click **Pause viewer** to pause only the viewer;
+press P again or click **Resume viewer** to catch up at most four frames per physics tick by default.
+Pause controls wait while an active request or callback owns playback, and disable after playback stops. Press N to pause and inspect
 one confirmed viewer frame at a time. Each press advances at most one frame and still
 respects the viewing delay; it waits when confirmed inputs are unavailable.
 Press C to catch up once through all currently buffered playable frames, then remain paused.
@@ -59,6 +60,7 @@ Restart retires the prior host and viewer, including retained driver and stream 
 An active callback or expert request batch must finish before restart, another tick,
 single-frame inspection, one-shot catch-up, live following, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
 without consuming time, changing playback controls or stopping the viewer.
+An embedded host replay also holds live ticks; the scene resumes when that replay closes.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.
 

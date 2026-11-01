@@ -29,7 +29,12 @@ Its service and lag controls return `BUSY` during live callbacks, completion han
 and during active replay callbacks or batches. These `BUSY` rejections preserve queued deliveries, clocks and sampled buttons.
 Local sample conflicts, incompatible player/width and invalid clocks are checked before controller staging too;
 corrected retries can supply new buttons. Once an accepted step stalls, its original sample stays fixed until advancement.
+The integration controller and loop reject buttons outside 0–7 with `INVALID_CONFIGURATION` before packing the input byte.
+Rejected buttons preserve queued deliveries, sampled input, accepted time and the running match.
 Stopping replay inside a callback keeps that ownership until the callback returns; live play can then resume.
+The scene retries temporary `BUSY` ticks after ownership releases, without restarting the match.
+If expert work advanced on prediction, resumed delivery fills the missing remote prefix within the existing queue limit.
+Already accepted external input stays authoritative; finishing repairs only frames already simulated.
 
 Hollow flashes show recent shots from the current, corrected simulation. Prediction can create a flash
 that disappears when the remote player's actual input arrives. Filled pulses below each lane represent

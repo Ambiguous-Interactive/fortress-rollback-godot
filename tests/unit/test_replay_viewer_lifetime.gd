@@ -2,6 +2,7 @@ extends RefCounted
 
 # Value: protects=viewer controls preserve an executing replay lifetime and retire replaced players;
 # fails_when=reentrant controls replace the game or leave old playback usable; why_new=ordinary viewer controls run only between callbacks; seam=none
+const Scene = preload("res://examples/online/replay.tscn")
 const Viewer = preload("res://examples/online/replay_viewer.gd")
 const Fixture = preload("res://tests/unit/test_replay_viewer.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
@@ -21,6 +22,7 @@ class ReentrantGame:
 	var accepted: bool = false
 	var is_playing_after_control: bool = true
 	var terminate_first: bool = false
+	var scene_ref: WeakRef
 
 	func _attempt(kind: int) -> void:
 		if kind != boundary:
@@ -31,6 +33,13 @@ class ReentrantGame:
 		if terminate_first:
 			owner._player.terminate()
 		match operation:
+			"exit":
+				var scene: Node = scene_ref.get_ref()
+				if not scene.is_inside_tree():
+					scene._exit_tree()
+				scene.free()
+				accepted = owner.open_bytes(Fixture.recording(3).to_bytes())
+				owner.restart()
 			"open":
 				accepted = owner.open_bytes(Fixture.recording(3).to_bytes())
 			"restart":
@@ -65,7 +74,7 @@ class ReentrantGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["replacement", "callback_controls", "callback_termination", "expert_controls"])
+	return PackedStringArray(["replacement", "callback_controls", "callback_termination", "expert_controls", "scene_exit", "scene_exit_callbacks"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -75,6 +84,10 @@ func run_case(name: String, context: RefCounted) -> void:
 		_callback_controls(context)
 	elif name == "callback_termination":
 		_callback_termination(context)
+	elif name == "scene_exit_callbacks":
+		_scene_exit_callbacks(context)
+	elif name == "scene_exit":
+		_scene_exit(context)
 	else:
 		_expert_controls(context)
 	context.finish()
@@ -207,3 +220,93 @@ func _callback_termination(context: RefCounted) -> void:
 			viewer.step()
 			context.equal(viewer.current_frame(), 1, "fresh playback is allowed after callback unwinds")
 			context.state(viewer.current_frame(), viewer.game.canonical_bytes())
+
+
+# Value: protects=leaving the replay scene retires owned playback and expires manual views;
+# fails_when=retained players keep invoking the departed scene's game; why_new=replacement coverage never exits a scene; seam=none
+func _scene_exit(context: RefCounted) -> void:
+	for mode: String in ["paused", "playing", "seeking", "expert", "failed", "complete"]:
+		var node: Node2D = Scene.instantiate()
+		(Engine.get_main_loop() as SceneTree).root.add_child(node)
+		if not node.is_inside_tree():
+			node._ready()
+		var recording: Replay = Fixture.recording(301)
+		if mode == "failed":
+			recording._digests[0] ^= 1
+		context.equal(node.viewer.open_bytes(recording.to_bytes()), true, "exit fixture imports")
+		var viewer: Viewer = node.viewer
+		var player: Player = viewer._player
+		var game: RefCounted = viewer.game
+		var request: Types.Request
+		if mode == "playing":
+			viewer.toggle_play()
+		elif mode == "seeking":
+			viewer.seek(300)
+		elif mode == "expert":
+			var result: Types.Result = player.begin_advance()
+			context.equal(result.code, Types.Code.READY, "manual batch opens before exit")
+			request = result.batch.next_request()
+			context.equal(request.kind, Types.Kind.SAVE, "manual writer is active before exit")
+		elif mode == "failed":
+			viewer.step()
+		elif mode == "complete":
+			viewer.seek(301)
+			while viewer.is_seeking():
+				viewer.tick()
+			context.equal(player.is_complete(), true, "completed exit fixture reached its ending")
+		var frame: int = viewer.current_frame()
+		var bytes: PackedByteArray = game.canonical_bytes()
+		var reason: int = player.failure_code()
+		var message: String = viewer.message
+		if not node.is_inside_tree():
+			node._exit_tree()
+		node.free()
+		context.equal(viewer.message, message if mode == "failed" else "Playback stopped. Restart to watch again.", "scene exit names cancellation and preserves existing failure text")
+		context.equal(viewer.is_playing, false, "scene exit stops playback cadence")
+		context.equal(viewer.is_seeking(), false, "scene exit abandons navigation")
+		context.equal(player.failure_code(), reason if mode == "failed" else Types.Code.TERMINATED, "exit retires the player while preserving its first failure")
+		if request != null:
+			context.equal(request.writer.write_bytes(PackedByteArray([1])), request.writer.Code.EXPIRED_VIEW, "scene exit expires the retained manual writer")
+		viewer.tick()
+		context.equal(player.step(), reason if mode == "failed" else Types.Code.TERMINATED, "retained player cannot invoke game callbacks after exit")
+		context.equal(viewer.current_frame(), frame, "exit preserves the last exposed boundary")
+		context.bytes_equal(game.canonical_bytes(), bytes, frame, "exit cannot continue simulation through retained handles")
+		context.state(frame, bytes)
+
+
+# Value: protects=scene teardown inside a game callback cancels further replay work without reopening reentry;
+# fails_when=termination releases callback ownership or outer seek continues; why_new=idle teardown does not cross executing callbacks; seam=none
+func _scene_exit_callbacks(context: RefCounted) -> void:
+	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
+		var node: Node2D = Scene.instantiate()
+		(Engine.get_main_loop() as SceneTree).root.add_child(node)
+		if not node.is_inside_tree():
+			node._ready()
+		var viewer: Viewer = node.viewer
+		var recording: Replay = Fixture.recording(8)
+		context.equal(viewer.open_bytes(recording.to_bytes()), true, "callback exit fixture imports")
+		var game: ReentrantGame = ReentrantGame.new()
+		game.viewer = weakref(viewer)
+		game.scene_ref = weakref(node)
+		viewer.game = game
+		var player: Player = viewer._player
+		context.equal(player.configure(recording, game, Simulation.SNAPSHOT_BYTES, 1, 8), Types.Code.OK, "callback exit game configures")
+		for frame: int in 4:
+			viewer.step()
+		game.operation = "exit"
+		game.boundary = kind
+		viewer.seek(7 if kind != Types.Kind.LOAD else 1)
+		if viewer.is_seeking():
+			viewer.tick()
+		context.equal(game.attempts, 1, "teardown occurs during requested game callback")
+		context.equal(is_instance_valid(node), false, "callback actually frees its scene")
+		context.equal(game.accepted, false, "terminated callback still refuses replacement import")
+		context.equal(viewer._player, player, "terminated callback cannot restart owned playback")
+		context.equal(viewer.game, game, "terminated callback retains original game until return")
+		context.equal(player.failure_code(), Types.Code.TERMINATED, "scene exit remains first playback cause")
+		context.equal(viewer.current_frame(), 4, "callback cancellation preserves last exposed boundary")
+		context.equal([viewer.is_playing, viewer.is_seeking()], [false, false], "outer callback service cannot resume navigation")
+		var bytes: PackedByteArray = game.original.canonical_bytes()
+		context.equal(player.step(), Types.Code.TERMINATED, "retained canceled player cannot invoke another callback")
+		context.bytes_equal(game.original.canonical_bytes(), bytes, 4, "canceled replay preserves callback-completed diagnostic state")
+		context.state(4, bytes)

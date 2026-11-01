@@ -125,6 +125,18 @@ func restart() -> void:
 		message = "Ready. Press Play; this recording has no checksums."
 
 
+## Stop the owned playback lifetime, including active callbacks or manual requests.
+## Retained players cannot keep simulating after their scene exits; restart creates a new lifetime.
+func terminate() -> void:
+	var had_failure: bool = has_failure()
+	_player.terminate()
+	is_playing = false
+	_seek_target = -1
+	_playback_quarters = 0
+	if _recording != null and not had_failure:
+		message = "Playback stopped. Restart to watch again."
+
+
 func toggle_play() -> void:
 	if _is_busy() or is_seeking() or not can_step():
 		return

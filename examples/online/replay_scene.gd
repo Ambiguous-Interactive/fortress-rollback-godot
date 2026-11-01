@@ -326,6 +326,7 @@ func _back() -> void:
 
 
 func _exit_tree() -> void:
+	viewer.terminate()
 	if is_instance_valid(_drop_window):
 		_drop_window.files_dropped.disconnect(_files_dropped)
 		_drop_window = null

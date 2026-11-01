@@ -59,7 +59,8 @@ EXPECTED.update({
     'res://tests/unit/test_replay_callbacks.gd': {'snapshot_failures', 'uninitialized_replay', 'callback_arguments'},
     'res://tests/unit/test_diagnostic_player.gd': {'captured_window', 'canonical_mismatch', 'malformed', 'callbacks', 'bounds'},
     'res://tests/unit/test_diagnostic_viewer.gd': {'imports', 'controls', 'divergence', 'scene_controls'},
-    'res://tests/unit/test_diagnostic_lifetime.gd': {'viewer_callback_controls', 'player_cancellation', 'retired_playback'},
+    'res://tests/unit/test_diagnostic_lifetime.gd': {
+        'viewer_callback_controls', 'player_cancellation', 'retired_playback', 'scene_exit', 'scene_exit_callbacks'},
     'res://tests/unit/test_replay_viewer.gd': {'controls', 'rejects_incompatible', 'stops_at_divergence', 'scene_controls', 'navigation', 'navigation_boundaries'},
     'res://tests/unit/test_replay.gd': {'records_corrected_match', 'records_metadata', 'detects_changed_rules', 'golden',
         'rejects_malformed_files', 'bounds_recording', 'lockstep_confirmation_limit', 'refuses_foreign_recording',
@@ -180,7 +181,8 @@ for _suite in ['host', 'relay']:
     EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
 EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
     'send_failure', 'receive_failure', 'latched_failure', 'busy_control', 'failed_configuration', 'healthy_configuration'}
-EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {'replacement', 'callback_controls', 'callback_termination', 'expert_controls'}
+EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {
+    'replacement', 'callback_controls', 'callback_termination', 'expert_controls', 'scene_exit', 'scene_exit_callbacks'}
 EXPECTED['res://tests/unit/test_replay_input_navigation.gd'] = {'input_change_navigation', 'input_change_integrity', 'input_change_controls',
     'checksum_navigation', 'checksum_navigation_integrity', 'checksum_navigation_controls'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'catchup_control', 'catchup_once', 'catchup_once_control'})
@@ -192,6 +194,7 @@ EXPECTED['res://tests/unit/test_signalfish_adapter_reentry.gd'] = {
     'getter_plans', 'getter_plan_refusal', 'plan_conversion'}
 EXPECTED['res://tests/unit/test_replay_viewer_prefix.gd'] = {'selected_prefix', 'prefix_boundaries', 'prefix_guards', 'prefix_controls'}
 EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {'replacement', 'rejected_configuration', 'completion_controls', 'manual_controls', 'callback_controls'}
+EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -249,6 +252,8 @@ FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_peer_example_ownership.gd', 'tests/unit/test_peer_example_lifecycle.gd',
           'examples/peer/match.gd', 'examples/offline/presentation.gd']
+FILES += ['tests/unit/test_example_scene_exit.gd']
+FILES += [f'examples/{name}/{name}.{suffix}' for name in ('offline', 'integration', 'peer') for suffix in ('gd', 'tscn')]
 FILES += ['tests/unit/test_driver_peer_parity.gd']
 FILES += ['tests/unit/test_driver_lifecycle_parity.gd']
 FILES += ['tests/unit/test_driver_drop_parity.gd']
@@ -345,6 +350,7 @@ const DropCommit = preload("res://tests/unit/test_peer_drop_commit.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const PeerExampleOwnership = preload("res://tests/unit/test_peer_example_ownership.gd")
+const ExampleSceneExit = preload("res://tests/unit/test_example_scene_exit.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 const DriverPeerParity = preload("res://tests/unit/test_driver_peer_parity.gd")
 const DriverLifecycleParity = preload("res://tests/unit/test_driver_lifecycle_parity.gd")
@@ -354,6 +360,9 @@ const FallbackFailure = preload("res://tests/unit/test_signalfish_fallback_failu
 const SpectatorHost = preload("res://tests/unit/test_signalfish_spectator_host.gd")
 const AdapterReentry = preload("res://tests/unit/test_signalfish_adapter_reentry.gd")
 func _ready() -> void:
+\tcall_deferred("_run_suites")
+
+func _run_suites() -> void:
 \tvar scripts: Array[Script] = [Suite, Integers, Protocol, HandshakeFields, Handshake, Endpoint, Seams, Peers, Lifecycle, PeerLifecycle, StalledGossip, DiagnosticTrace,
 \t\tPeerTrace, Replay, ReplayCallbacks, DiagnosticPlayer, DiagnosticViewer, DiagnosticLifetime, ReplayViewer, SpectatorReplayViewer, Spectator, CallbackResults, DriverInputs,
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
@@ -363,7 +372,7 @@ func _ready() -> void:
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
-		DriverInputPolicy, DriverTermination, PeerExampleOwnership, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation, FallbackFailure,
+		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation, FallbackFailure,
 		SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.

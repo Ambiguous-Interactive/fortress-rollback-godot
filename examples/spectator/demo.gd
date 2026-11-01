@@ -125,6 +125,20 @@ func step_viewer() -> int:
 	return viewer_code
 
 
+## Change viewing pause without changing either game, input delivery, delay or catch-up policy.
+## Active requests and callbacks retain the current policy; stopped viewing cannot resume.
+func set_paused(paused: bool) -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if viewer == null:
+		return Types.Code.NOT_CONFIGURED
+	var code: int = viewer._mutation_code()
+	if code != Types.Code.OK:
+		return code
+	is_paused = paused
+	return Types.Code.OK
+
+
 ## Pause and play all currently buffered rows allowed by the viewing delay in one bounded action.
 ## Preserves the selected delay/rate, never samples the host, and stops immediately on playback failure.
 func catch_up_viewer() -> int:
@@ -215,6 +229,11 @@ func tick(buttons: int) -> int:
 		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
+	if not is_host_finished and host.replay_player != null:
+		return Types.Code.BUSY
+	if not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:
+		if buttons < 0 or buttons > (Game.LEFT | Game.RIGHT | Game.FIRE):
+			return Types.Code.INVALID_CONFIGURATION
 	_tick_count += 1
 	var code: int = Types.Code.OK
 	if not is_host_finished:
