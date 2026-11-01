@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add a Pause/Resume button to the local spectator, with the same readiness checks as its keyboard control.
+
 - Add replay prefix downloads at the displayed frame, preserving original inputs, metadata and recorded checksum evidence.
 
 - Add Follow live to resume the local spectator at the latest received input through bounded catch-up.
@@ -242,6 +244,12 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix departed example scenes leaving retained matches and replay players usable. Teardown expires pending views and preserves earlier failure causes.
+
+- Fix invalid integration and spectator button values silently wrapping or stopping gameplay. Rejected values preserve the match and controller time.
+
+- Fix spectator pause controls changing playback while a callback or manual request owns the viewer.
 
 - Fix local peer-example reset leaving replaced sessions playable through retained handles. Busy game operations and invalid replacement settings preserve the current match.
 

@@ -123,6 +123,8 @@ Callback Leave retires outstanding game work and fences canceled startup before 
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.
 Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
+Owning example scenes retire match and playback lifetimes on exit, including retained request views.
+Example integer button inputs are validated before byte conversion or controller-clock changes.
 Browser file-read completions also preserve held timeline controls and active game requests.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Recording progress separates finalized exports, pending correction/confirmation and gameplay omitted beyond the configured cap without copying replay bytes.
