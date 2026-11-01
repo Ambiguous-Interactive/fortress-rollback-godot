@@ -59,7 +59,7 @@ These rejected attempts preserve clocks, queued packets, held samples and the
 playable match. Correct the controls and retry when `failure` remains zero.
 The return-code domains overlap: `Types.Code.INPUT_ALREADY_SUBMITTED` and
 `I.Code.CONFLICT` both equal 10. Check `failure` before classifying a nonzero
-return as retryable; a nonzero `failure` requires reset. Actual service failures
+return as retryable; a match with nonzero `failure` must be reset. Actual service failures
 retain their first code. Any terminal fixed member stops the whole match,
 retires the other peer and reports `I.Code.INPUT_FAILED` unless an earlier
 service failure already supplies the cause. Per-peer status retains the detailed

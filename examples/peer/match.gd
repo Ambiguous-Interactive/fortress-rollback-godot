@@ -279,4 +279,6 @@ func _deliver() -> void:
 				failure = code
 		else:
 			delivered += 1
+		if _stop_terminal_match():
+			return
 	_packets = retained

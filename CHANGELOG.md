@@ -249,7 +249,7 @@
 
 ### Fixed
 
-- Fix local peer matches reporting success after a session stops. Both owned peers now retire, and the match requires reset.
+- Fix local peer matches reporting success after a session stops. Both owned peers now retire, and the match must be reset.
 
 - Fix rejected local peer controls stopping the match. Conflicting expert-staged inputs and invalid controls now allow corrected retries.
 

@@ -13,6 +13,7 @@
 | Idle expert-staged input can conflict without an open batch | `examples/peer/match.gd` previously polled and advanced before validating both local samples; `input_preflight` reproduces the permanent failure | Validate effective held/current samples for both endpoints before composed service |
 | Invalid user controls and actual runtime failures need distinct recovery behavior | `test_peer_example.gd` expected invalid buttons to poison the match; scene test used the same shortcut | Reject invalid controls for corrected retry; exercise malformed packet delivery to verify real failure remains latched |
 | A new result can expose an old suppressed terminal path | PR 296 review and `terminal_partition` regression: stopped peers left composed failure at OK | Latch reset-required status, retire both owned peers and preserve their first cause |
+| Batch-end terminal checks allow later packets to replace the first cause | Real GOODBYE and malformed packet orders in `terminal_partition` | Fence after each receive and return before retained queues can be reassigned |
 | Provenance and checksum coverage answer different questions | `recording_metadata` retains file identity across failed replacement and playback termination | Label recorded/runtime engines separately; keep identity text outside validation claims |
 | Pointer controls need actual viewport evidence | Spectator unit handler tests run during runner initialization | Retain deterministic guards and verify mouse events after live layout settles |
 
@@ -23,7 +24,8 @@ bounded plain-text presentation. Existing rollback guidance already requires
 preflight before composed side effects, including idle expert input ownership.
 Existing testing guidance already requires live pointer checks and distinct
 result paths for parallel launchers; both apply directly to this session.
-No additional overlapping skill or test runner was created.
+The networking skill now requires terminal fencing after each receive and before
+retained-batch restoration. No overlapping skill or test runner was created.
 
 ## Prune Ledger
 
