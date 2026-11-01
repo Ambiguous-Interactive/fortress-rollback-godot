@@ -229,6 +229,8 @@ func tick(buttons: int) -> int:
 		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
+	if not is_host_finished and host.replay_player != null:
+		return Types.Code.BUSY
 	if not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:
 		if buttons < 0 or buttons > (Game.LEFT | Game.RIGHT | Game.FIRE):
 			return Types.Code.INVALID_CONFIGURATION

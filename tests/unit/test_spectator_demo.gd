@@ -528,6 +528,7 @@ func _restart_busy(context: RefCounted) -> void:
 # Value: protects=active callbacks and expert batches own spectator service; fails_when=recursive controls consume time or stop viewing;
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
+	_host_replay_tick_ownership(context)
 	for actor: String in ["host", "viewer", "batch", "game_callback"]:
 		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live", "set_paused"]:
 			var demo: Demo = Demo.new()
@@ -1208,3 +1209,39 @@ func _scene_exit(context: RefCounted) -> void:
 				context.equal(request.inputs.player_count(), -1, "exit expires retained frame input view")
 		context.bytes_equal(demo.game.canonical_bytes(), viewer_bytes, 0, "removed viewer game remains unchanged")
 		context.bytes_equal(demo.host.loop.game.canonical_bytes(), host_bytes, 40, "removed host game remains unchanged")
+
+
+# Value: protects=host replay holds live spectator service without killing viewing; fails_when=BUSY consumes a tick or stops the viewer;
+# why_new=callback guards omit idle replay mode; seam=none
+func _host_replay_tick_ownership(context: RefCounted) -> void:
+	for finishing: bool in [false, true]:
+		for buttons: int in [Game.RIGHT, -256, 8, 256]:
+			var demo: Demo = Demo.new()
+			context.equal(demo.start(), Types.Code.OK, "start host replay ownership fixture")
+			demo.set_paused(true)
+			for tick: int in range(40):
+				context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "buffer confirmed rows before host replay")
+			if finishing:
+				context.equal(demo.finish_host(), Types.Code.OK, "queue host ending before replay hold")
+			context.equal(demo.host.start_replay(), Types.Code.OK, "idle host replay owns live host mode")
+			var player: RefCounted = demo.host.replay_player
+			var before: Array = _service_observation(demo)
+			for retry: int in range(2):
+				context.equal(demo.tick(buttons), Types.Code.BUSY, "host replay takes precedence over input validation")
+				context.equal(_service_observation(demo), before, "replay hold preserves clocks, history and viewer liveness")
+				context.equal(demo.host.replay_player == player, true, "replay hold preserves replay ownership")
+			demo.host.stop_replay()
+			context.equal(demo.tick(Game.LEFT), Types.Code.PREDICTION_STALL if finishing else Types.Code.OK, "spectator service resumes after host replay closes")
+			context.equal(demo.viewer.status().reason, Types.Code.OK, "replay hold never becomes viewer failure")
+	var finished: Demo = Demo.new()
+	context.equal(finished.start(), Types.Code.OK, "start completed-host replay control")
+	finished.set_paused(true)
+	for tick: int in range(40):
+		finished.tick(Game.RIGHT)
+	context.equal(finished.finish_host(), Types.Code.OK, "finish control host")
+	for tick: int in range(20):
+		finished.tick(0)
+	context.equal(finished.is_host_finished, true, "control host no longer needs live service")
+	context.equal(finished.host.start_replay(), Types.Code.OK, "completed host can replay independently")
+	context.equal(finished.tick(256), Types.Code.OK, "idle replay does not block independent final-tail service")
+	context.equal(finished.viewer.status().reason, Types.Code.OK, "paused final-tail viewer stays live")
