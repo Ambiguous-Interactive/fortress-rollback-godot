@@ -81,16 +81,20 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
       'received replay download replacement refused');
     // Successful import restarts at zero. The source identity gate above prevents old playback satisfying this check.
     requireState(imported.frame === 0 && !imported.failure, 'received replay download did not restart');
+    await command('verify_import');
+    await wait(() => window.fortressReplayDownload.statuses_valid);
     await page.evaluate(value => window.fortressReplayDownloadCommand('navigate', value), frame);
     await page.waitForFunction(value => window.fortressReplayDownload.frame === value && !window.fortressReplayDownload.seeking,
       frame, { timeout: 15000 });
     const reopened = await read();
+    requireState(reopened.statuses_valid && reopened.disconnected_rows === Math.max(0, frame - 17),
+      'received replay download statuses differ');
     requireState(reopened.canonical === before.original && reopened.canonical.length > 0 && !reopened.failure,
       'received replay download canonical playback differs');
     await page.screenshot({ path: path.join(output, name + '.png') });
     records.push({ case: name, frame: reopened.frame, frames: reopened.frames, bytes: bytes.length, sha256,
       filename: before.filename, canonical: reopened.canonical, original: before.original,
-      replaced: true, seek_disabled: seeking.disabled, held_disabled: held.disabled });
+      replaced: true, disconnected_rows: reopened.disconnected_rows, seek_disabled: seeking.disabled, held_disabled: held.disabled });
     quiet();
   }
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') await page.evaluate(() => console.error('late replay download control'));

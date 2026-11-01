@@ -797,24 +797,32 @@ def validate_phases(records, rounds, versions, phases=None):
 
 
 def main():
-    parser = ReceiptParser(description=__doc__, receipt='ownership.json', output=CACHE / 'results')
-    parser.add_argument('--offline', action='store_true')
-    parser.add_argument('--web', action='store_true')
-    parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
-    parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
-    parser.add_argument('--suite-part', choices=['all', '1', '2'], default='all')
-    pins = load_manifest()['godot']
-    parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
-    args = parser.parse_args()
-    if args.browser != 'chromium' and not args.web:
-        parser.error('--browser firefox requires --web')
-    results = CACHE / 'results'
-    # One local run at a time owns these paths, and the browser part needs a
-    # responsive host: a local test wave would otherwise starve it and turn a
-    # slow run into a timeout.
-    if not host_capacity.acquire_when_free('ownership-witness', 900.0):
-        raise ValueError('the development host stayed busy; the ownership witness needs a responsive host')
     with claim('ownership', directory=CACHE / 'locks'):
+        receipt = CACHE / 'results/ownership.json'
+        previous_receipt = receipt.read_bytes() if receipt.is_file() else None
+        begin_results(receipt.parent, receipt.name, [])
+        parser = ReceiptParser(description=__doc__, receipt='ownership.json', output=CACHE / 'results')
+        parser.add_argument('--offline', action='store_true')
+        parser.add_argument('--web', action='store_true')
+        parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
+        parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
+        parser.add_argument('--suite-part', choices=['all', '1', '2'], default='all')
+        pins = load_manifest()['godot']
+        parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
+        try:
+            args = parser.parse_args()
+        except SystemExit as error:
+            if error.code == 0 and previous_receipt is not None:
+                receipt.write_bytes(previous_receipt)
+            raise
+        if args.browser != 'chromium' and not args.web:
+            parser.error('--browser firefox requires --web')
+        results = CACHE / 'results'
+        # One local run at a time owns these paths, and the browser part needs a
+        # responsive host: a local test wave would otherwise starve it and turn a
+        # slow run into a timeout.
+        if not host_capacity.acquire_when_free('ownership-witness', 900.0):
+            raise ValueError('the development host stayed busy; the ownership witness needs a responsive host')
         return run_probes(args, results)
 
 

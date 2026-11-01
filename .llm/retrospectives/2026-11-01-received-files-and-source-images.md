@@ -15,6 +15,7 @@ change; it does not claim complete release or issue acceptance.
 | A successful export request does not prove a browser received the file or replaced playback. | The old Web prefix test replayed expected bytes; `browser/replay_download.cjs` now receives files and checks replacement, digest and frame count before playback. | Keep received-file and canonical playback gates separate. |
 | A missed synthetic canvas click can look like a broken file picker. | An instant Open replay click missed the chooser. A bounded pointer press and trusted DOM control both opened the same importer with active browser activation. | Extend existing browser testing guidance with the paired control. |
 | Wrapped trace labels do not prove physical history reuse. | The donor witness now exchanges 257 original frames through 128-row queues; short traces relabeled as wrapped fail their exact frontier checks. | Observe expired original history and retain raw absolute frames and independent canonical state. |
+| Preflight failure can preserve stale success before execution starts. | Fresh review seeded `ownership.json`, refused host capacity and observed the earlier success unchanged. | Claim receipt ownership and invalidate it before waiting for host capacity; protect an active concurrent owner's receipt. |
 
 ## Actions taken
 
@@ -27,6 +28,8 @@ Fresh native review found no implementation defect within the documented
 scope. It retained explicit #298 gaps for imported Python bytecode, complete
 descendant supervision and other result writers. Fresh drop-history review
 found no findings and exercised the new paired traces and mutation controls.
+Browser review's preflight finding received a regression and repair. A fresh
+review follows the fix; the received-file positive run cannot waive it.
 
 The click lesson extends
 [browser integration evidence](../skills/testing/references/browser-integration.md).

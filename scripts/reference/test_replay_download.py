@@ -17,7 +17,7 @@ def fixture(output=None):
             (output / (name + '.png')).write_bytes(b'\x89PNG\r\n\x1a\nfixture')
         records.append({'case': name, 'frame': frame, 'frames': frame, 'bytes': len(received),
                         'sha256': hashlib.sha256(received).hexdigest(), 'filename': name + '.frrp',
-                        'canonical': '010203', 'original': '010203', 'replaced': True,
+                        'canonical': '010203', 'original': '010203', 'replaced': True, 'disconnected_rows': max(0, frame - 17),
                         'seek_disabled': True, 'held_disabled': True})
     return {'cases': records, 'download_events': 3, 'forbidden_events': 0, 'errors': []}
 
@@ -31,7 +31,7 @@ class ReplayDownloadTests(unittest.TestCase):
 
     def test_table_rejects_wrong_values_and_scalar_type_aliases(self):
         mutations = [(key, value) for key, values in {
-            'frame': [True, 301.0, -1, 0, '301'], 'frames': [True, 301.0, 610, '301'],
+            'frame': [True, 301.0, -1, 0, '301'], 'disconnected_rows': [True, 284.0, 0, 283], 'frames': [True, 301.0, 610, '301'],
             'bytes': [True, 1.0, 0, -1], 'sha256': ['', 'a' * 63, 'A' * 64, None],
             'filename': ['../x.frrp', '/x.frrp', 'x', None], 'canonical': ['', '00', '0', None],
             'original': ['00', None], 'replaced': [False, 1], 'seek_disabled': [False, 1],

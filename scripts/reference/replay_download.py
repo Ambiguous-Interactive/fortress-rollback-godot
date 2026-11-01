@@ -18,12 +18,14 @@ def validate_downloads(value, output=None):
         raise ValueError('incomplete replay download cases')
     for record, (name, frame) in zip(value['cases'], CASES):
         fields = {'case', 'frame', 'frames', 'bytes', 'sha256', 'filename', 'canonical', 'original',
-                  'replaced', 'seek_disabled', 'held_disabled'}
+                  'replaced', 'disconnected_rows', 'seek_disabled', 'held_disabled'}
         if type(record) is not dict or set(record) != fields or record['case'] != name:
             raise ValueError('incorrect replay download case fields')
         if (any(type(record[key]) is not int for key in ('frame', 'frames', 'bytes'))
                 or record['frame'] != frame or record['frames'] != frame or record['bytes'] <= 0):
             raise ValueError('replay download boundary differs')
+        if type(record['disconnected_rows']) is not int or record['disconnected_rows'] != max(0, frame - 17):
+            raise ValueError('replay download statuses differ')
         if any(record[key] is not True for key in ('replaced', 'seek_disabled', 'held_disabled')):
             raise ValueError('replay download ownership gate failed')
         if (type(record['canonical']) is not str or not re.fullmatch(r'(?:[0-9a-f]{2})+', record['canonical'])

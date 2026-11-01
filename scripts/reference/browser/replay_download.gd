@@ -5,6 +5,7 @@ extends Node
 const Scene = preload("res://examples/online/replay.tscn")
 const Fixture = preload("res://tests/unit/test_replay_viewer.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const CASES: Array[String] = ["interior", "terminal", "initial"]
 const FRAMES: Array[int] = [301, 610, 0]
@@ -16,6 +17,8 @@ var selected: int = -1
 var _command_callback: JavaScriptObject
 var _open_button: Button
 var _prior_player: RefCounted
+var _statuses_valid: bool = false
+var _disconnected_rows: int = 0
 
 
 func _ready() -> void:
@@ -35,6 +38,13 @@ func _start() -> void:
 func _select(index: int) -> void:
 	selected = index
 	recording = Fixture.recording(610)
+	_statuses_valid = false
+	_disconnected_rows = 0
+	for frame: int in range(17, 610):
+		recording._statuses[frame * 2 + 1] = Queue.Status.DISCONNECTED
+		var digest: PackedByteArray = recording.computed_input_digest(frame)
+		for index: int in Replay.DIGEST_BYTES:
+			recording._digests[frame * Replay.DIGEST_BYTES + index] = digest[index]
 	var game: Simulation = Simulation.new()
 	for frame: int in recording.frame_count():
 		game.simulate_frame(frame, recording.inputs(frame))
@@ -57,6 +67,15 @@ func _select(index: int) -> void:
 func _command(arguments: Array) -> void:
 	var command: String = str(arguments[0])
 	match command:
+		"verify_import":
+			_statuses_valid = true
+			_disconnected_rows = 0
+			for frame: int in scene.viewer.frame_count():
+				for slot: int in 2:
+					var expected_status: int = Queue.Status.DISCONNECTED if slot == 1 and frame >= 17 else Queue.Status.CONFIRMED
+					var actual_status: int = scene.viewer._recording.inputs(frame).read(slot).status
+					_statuses_valid = _statuses_valid and actual_status == expected_status
+					_disconnected_rows += int(actual_status == Queue.Status.DISCONNECTED)
 		"prepare_import":
 			_prior_player = scene.viewer._player
 		"select":
@@ -104,6 +123,8 @@ func _process(_delta: float) -> void:
 		"failure": scene.viewer.has_failure(),
 		"frames": scene.viewer.frame_count(),
 		"import_replaced": _prior_player != null and scene.viewer._player != _prior_player,
+		"statuses_valid": _statuses_valid,
+		"disconnected_rows": _disconnected_rows,
 		"source_sha256": scene.viewer._recording_sha256,
 		"source_bytes": scene.viewer._recording_bytes,
 		"message": scene.viewer.message,
