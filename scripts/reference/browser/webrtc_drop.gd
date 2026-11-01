@@ -3,7 +3,33 @@ extends RefCounted
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Drop = preload("res://addons/fortress_rollback/core/peer_drop_barrier.gd")
+const Envelope = preload("res://addons/fortress_rollback/transport/signalfish_relay_envelope.gd")
+const Codec = preload("res://addons/fortress_rollback/protocol/protocol_codec.gd")
+const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 var events: Array[Dictionary] = []
+var relay_barriers: Array[String] = []
+
+
+func observe_relay(host: Node) -> void:
+	host.clients[0].game_data_binary_received.connect(func(sender: String, encoding: int, bytes: PackedByteArray) -> void:
+		var envelope: RefCounted = Envelope.decode(bytes, 1024)
+		if encoding != 1 or envelope.code != 0 or envelope.sender != sender \
+			or envelope.recipient != host.clients[0].get_player_id() \
+			or envelope.session != host.memberships[0].handshake_message().session_id:
+			return
+		var limits: T.Limits = T.Limits.new()
+		limits.player_count = host.player_count
+		var decoded: T.Result = Codec.decode(envelope.payload, limits)
+		if decoded.code != T.Code.OK or decoded.message.kind != T.Kind.DROP_BARRIER \
+			or decoded.message.sender_id != host.memberships[0].identity(sender) or decoded.message.session_id != envelope.session:
+			return
+		var packet: String = envelope.payload.hex_encode()
+		if packet in relay_barriers:
+			return
+		if relay_barriers.size() >= 128:
+			host.errors.append("peer_drop_relay_capture_overflow")
+			return
+		relay_barriers.append(packet))
 
 
 func observed(event: Dictionary) -> void:
@@ -12,6 +38,8 @@ func observed(event: Dictionary) -> void:
 
 
 func run(host: Node, count: int) -> bool:
+	if JavaScriptBridge.eval("window.fortressDropRelay || false"):
+		observe_relay(host)
 	host.stage = "handshake"
 	if not await host._wait(func() -> bool: return host.peers[0].network_status().state == "running", true):
 		return false
@@ -161,6 +189,13 @@ func run(host: Node, count: int) -> bool:
 			"canonical_comparisons": 38,
 			"active_comparisons": comparisons,
 			"rollback_loads": host.games[0].loads,
+			"relay_barriers": relay_barriers.duplicate(),
+			"session_id": host.memberships[0].handshake_message().session_id.hex_encode(),
+			"target_generation": barrier.generations[0],
+			"operation": barrier.operation,
+			"coordinator": barrier.coordinator,
+			"coordinator_generation": barrier.coordinator_generation,
+			"target_set_digest": "%016x" % barrier.target_set_digest,
 			"direct": host._transport_totals(),
 			"mixed": host.mixed.report() if host.mixed_enabled else {}
 		}

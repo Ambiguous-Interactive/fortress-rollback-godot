@@ -342,8 +342,8 @@ jobs:
         if: matrix.part == 'direct' || matrix.part == 'mixed'
         run: |
           if [[ "${{ matrix.part }}" == direct ]]; then
-            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer)
-          else labels=(mixed mixed-default mixed-close); fi
+            labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer peer-drop-relay)
+          else labels=(mixed mixed-default mixed-close recording-pressure); fi
           python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
@@ -376,7 +376,7 @@ jobs:
               --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
               --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
               --output ".cache/reference/results/spectator-live-$version"
-            for browser_cell in healthy initial-state viewer-departure host-departure; do
+            for browser_cell in healthy initial-state room-identity viewer-departure host-departure; do
               browser_args=()
               if [ "$browser_cell" != healthy ]; then browser_args=(--browser-fault "$browser_cell"); fi
               python3 scripts/reference/signalfish_spectator_live.py \

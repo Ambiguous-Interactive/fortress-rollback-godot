@@ -248,7 +248,8 @@ python3 -m unittest discover -s scripts/reference -p test_spectator_control.py
 
 It serves two local origins and exercises authenticated admission, ACCEPT and
 host retrieval through real browser preflights. It also verifies wrong-role,
-foreign-origin and unapproved-header rejection. Without both tool paths, this
+foreign viewer/room/stream identity, foreign-origin and unapproved-header rejection. Completion discards queued ACCEPT
+and refuses its replay without increasing accepted controls. Without both tool paths, this
 browser case is explicitly skipped; the HTTP controls still run.
 
 This qualifies the fixture's browser HTTP boundary only. It does not execute an
@@ -277,12 +278,13 @@ server have deadlines; browser socket closure and owned process teardown precede
 receipt publication. Sources, copied scripts, imported metadata, exported files,
 pinned engine/templates/browser and SDK/server identities bind the receipt.
 
-Add `--browser-fault initial-state` for a controlled altered admission state.
-It must reach the exported viewer's original-state rejection before ACCEPT or
+Add `--browser-fault initial-state` for a controlled altered admission state,
+or `--browser-fault room-identity` for admission naming a foreign room.
+Both must reach the exported viewer's state/membership rejection before ACCEPT or
 playback. Independent control state remains unaccepted before host teardown and
 after HTTP shutdown; typed viewer observations prove zero simulation callbacks,
 including rejected attempts. A healthy control must complete all canonical comparisons. CI runs
-the healthy, altered-state, viewer-departure and host-departure cells on Godot 4.3 and 4.7.2 with pinned Chromium.
+the healthy, altered-state, foreign-room, viewer-departure and host-departure cells on Godot 4.3 and 4.7.2 with pinned Chromium.
 
 Add `--browser-fault viewer-departure` to close the exported viewer's actual
 WebSocket from Chromium after a canonical pause with at least two buffered rows.

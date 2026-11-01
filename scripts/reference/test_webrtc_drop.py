@@ -147,6 +147,64 @@ class PeerDropEvidence(unittest.TestCase):
             validate_drop_browser(value, True)
 
 
+class RelayDropEvidence(unittest.TestCase):
+    def test_relay_agreement_requires_closed_direct_paths_and_attributed_barrier_receipts(self):
+        original = evidence()
+        original['dropRelay'] = True
+        for index, peer in enumerate(original['records'][0]['peers']):
+            peer['rtc']['departure'] = {'frame': 6, 'survivor_frames': [6, 6], 'connections_created': 2,
+                                      'connections_closed': 2, 'channels_created': 6, 'channels_closed': 6}
+            if index == 2:
+                continue
+            row = peer['result']['records'][0]
+            row.update(operation=9, coordinator=0, coordinator_generation=1, target_set_digest='0000000000000007',
+                       session_id='01' * 16, target_generation=1)
+            peer['rtc'].update(binarySent=5, maximumRelayBuffered=1024)
+            for channel in peer['rtc']['channels']:
+                channel.update(restoredSent=0, postDropReceived=0)
+            row['mixed'] = {'switched': True, 'relay_peers': 2, 'caller_pending': 0, 'maximum_pending': 2,
+                            'maximum_relay_pending': 0, 'maximum_relay_received': 1, 'route_budget': 8,
+                            'send_budget': 32, 'receive_budget': 32, 'accepted_binary': 5}
+            packet = bytearray(101)
+            packet[:8] = b'FRGP\x02\x00\x0c\x00'
+            packet[8:24] = bytes([1] * 16)
+            other = original['records'][0]['peers'][1 - index]['result']['records'][0]
+            packet[24:32] = hashlib.sha256(other['uuid'].encode('ascii')).digest()[:8]
+            packet[40:44] = (57).to_bytes(4, 'little')
+            packet[44:46] = bytes([2, 2] if index == 0 else [4, 0])
+            packet[50:52] = (1).to_bytes(2, 'little')
+            packet[52:56] = (9).to_bytes(4, 'little')
+            packet[56:64] = (7).to_bytes(8, 'little')
+            packet[64:68] = row['freeze_frame'].to_bytes(4, 'little', signed=True)
+            packet[76:84] = int(row['digest'], 16).to_bytes(8, 'little')
+            packet[90:94] = (3).to_bytes(4, 'little')
+            packet[94:97] = bytes([2, 1, 0])
+            row['relay_barriers'] = [packet.hex()]
+        self.assertIs(validate_drop_browser(original, relay_only=True), original)
+        mutations = [
+            lambda peer: peer['rtc']['departure'].update(channels_closed=5),
+            lambda peer: peer['rtc']['channels'][2].update(postDropReceived=1),
+            lambda peer: peer['rtc'].update(binarySent=0),
+            lambda peer: peer['result']['records'][0].update(relay_barriers=[]),
+            lambda peer: peer['result']['records'][0].update(relay_barriers=['00' * 101]),
+            lambda peer: peer['result']['records'][0].update(operation=8),
+            lambda peer: peer['result']['records'][0]['mixed'].update(accepted_binary=0),
+        ]
+        for mutate in mutations:
+            value = copy.deepcopy(original)
+            mutate(value['records'][0]['peers'][0])
+            with self.subTest(mutate=mutate), self.assertRaisesRegex(ValueError, 'relay'):
+                validate_drop_browser(value, relay_only=True)
+        for byte in (8, 24, 44, 45, 48, 50, 52, 56, 64, 76, 90, 95, 98):
+            value = copy.deepcopy(original)
+            row = value['records'][0]['peers'][0]['result']['records'][0]
+            changed = bytearray.fromhex(row['relay_barriers'][0])
+            changed[byte] ^= 1
+            row['relay_barriers'] = [changed.hex()]
+            with self.subTest(byte=byte), self.assertRaisesRegex(ValueError, 'relay'):
+                validate_drop_browser(value, relay_only=True)
+
+
 class LostAnswerEvidence(unittest.TestCase):
     def test_lost_answer_requires_one_follower_drop_and_exact_retry(self):
         original = evidence()

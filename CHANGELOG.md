@@ -239,6 +239,8 @@
 
 ### Fixed
 
+- Fix browser replay file-read completion replacing a recording during timeline dragging or changing feedback while game work owns playback.
+
 - Fix spectator status checks leaving buffered playback active after SDK room, identity or receive-limit changes.
 
 - Fix native replay and diagnostic imports exceeding their checked allocation size if a file grows during import.

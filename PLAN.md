@@ -120,6 +120,7 @@ Callback Leave retires outstanding game work and fences canceled startup before 
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.
 Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
+Browser file-read completions also preserve held timeline controls and active game requests.
 Replay inspection distinguishes recorded checksum validation at the displayed state from lifetime coverage and cached-state comparisons.
 Recording progress separates finalized exports, pending correction/confirmation and gameplay omitted beyond the configured cap without copying replay bytes.
 The spectator example also shows its viewed recording limit, advance warning and omitted viewed frames while playback continues.
@@ -132,6 +133,9 @@ A separate source comparison checks each initially disconnected reserved-slot po
 Remote recording compares symmetric and asymmetric late corrections, repeated prediction stalls and resumed retained samples
 through default queue reuse with independent canonical histories;
 [pinned speculative-checksum discrepancies](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/253) remain explicit.
+A separate two-endpoint browser witness records 257 original frames through repeated injected direct/relay send-buffer refusal.
+Both engine pins verify exact retained retries, post-wrap canonical history and recovery-only decoded recordings, including the final checksum.
+Physical congestion, the complete asymmetric browser schedule and unchanged-source recovery-only export remain open in #256.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
@@ -579,6 +583,8 @@ Pause/catch-up, clean completion and altered initial-state rejection are qualifi
 Physical exported-viewer departure also stops paused buffered playback while the native host preserves canonical seated gameplay.
 Physical selected-host departure stops the exported viewer before adapter polling can consume buffered rows;
 its own socket remains connected, and an independent seated SDK client confirms the exact host departure.
+Foreign-room admission is rejected before browser acceptance or simulation on both engine pins.
+The development control fixture retires queued acceptance at completion and rejects later replay under the same lifetime.
 The development bearer service is not a production identity provider; seated remote inputs remain an injected schedule.
 [Exported spectator qualification](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/245)
 retains exported host/seated transport, replacement, pressure and remaining browser lifecycle cells.
@@ -637,7 +643,9 @@ on both pins, with independent confirmed-history checks and a corruption
 control. A second case closes every RTC connection on the departed endpoint before agreement, then requires actual late direct delivery between survivors.
 The lost-answer case drops one real follower inventory report and requires an exact retry before certified continuation.
 Natural unequal-delivery tests preserve the needed suffix, and captured donor journals survive physical source-ring reuse.
-Room/process departure, relay-delivered agreement and the remaining live fault
+A relay-only cell closes every endpoint's direct RTC resources before agreement, requires actual addressed relay certificates and commit bytes,
+and preserves original canonical continuation on both engine pins.
+Room/process departure and the remaining live fault
 cases stay in
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).
 Hot join uses reserved/dropped slots with fixed player cardinality,

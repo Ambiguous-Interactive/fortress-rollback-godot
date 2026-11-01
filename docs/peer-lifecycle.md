@@ -254,9 +254,13 @@ survivors enter agreement. Their surviving link continues actual direct packet
 delivery; unavailable links select bounded relay fallback and send binary bytes.
 The stopped endpoint does not consume relay bytes, so this does not establish
 relay-delivered barrier agreement. Signaling membership remains frozen.
+The separate `peer-drop-relay` cell closes every RTC connection and channel on all three pages before agreement.
+Survivors use bounded fallback to exchange addressed SignalFish relay certificates and commits, then continue canonical gameplay.
+Its validator binds the received packet bytes to the original sender, session, operation, target era, agreed frame and frozen-value digest.
+Actual relay receipts are required; binary sends or route-selection counters alone cannot qualify agreement.
 The `peer-drop-answer` case drops the follower's first actual inventory report at the RTC send boundary.
 An exact-byte report retry precedes certified agreement and canonical continuation on both engine pins.
-Room departure, process death, relay-delivered agreement, rollback-time
+Room departure, process death, rollback-time
 departure, foreign proposals and a second browser
 departure remain under
 [#166](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/166).

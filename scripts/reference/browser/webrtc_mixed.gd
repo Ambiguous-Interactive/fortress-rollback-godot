@@ -28,6 +28,10 @@ var route_budget: int = 0
 var uuid: String = ""
 var overlap_recipient: String = ""
 var relay_payloads: Dictionary = {}
+var pressure_refusals: int = 0
+var pressure_post_wrap_refusals: int = 0
+var pressure_retries: int = 0
+var refused_head: PackedByteArray = PackedByteArray()
 
 func configure(host: Node, mode: Object) -> bool:
 	uuid = host.memberships[0].local_uuid()
@@ -114,7 +118,19 @@ func service(host: Node) -> bool:
 		elif code != Relay.Code.BACKPRESSURE:
 			host.errors.append("mixed_overlap_%d" % code)
 			return false
+	if host.recording_pressure and not refused_head.is_empty():
+		if relay._pending.is_empty() or relay._pending[0] != refused_head:
+			host.errors.append("recording_pressure_head_changed")
+			return false
 	var result: Relay.Result = fallback.poll(host.transport_us, host._next_token)
+	if host.recording_pressure:
+		if not refused_head.is_empty() and relay._sent > 0:
+			pressure_retries += 1
+			refused_head.clear()
+		if result.code == Relay.Code.BACKPRESSURE and not relay._pending.is_empty():
+			pressure_refusals += 1
+			if host.peers[0].status().current_frame > 128: pressure_post_wrap_refusals += 1
+			refused_head = relay._pending[0].duplicate()
 	if result.code not in [Relay.Code.OK, Relay.Code.BACKPRESSURE]:
 		host.errors.append("mixed_poll_%d_peer_%d" % [result.code, result.peer_code])
 		return false
@@ -155,6 +171,8 @@ func report() -> Dictionary:
 		"maximum_relay_received": maximum_relay_received, "accepted_binary": accepted_binary, "overlap_packets": overlap_packets,
 		"caller_pending": pending.size(), "route_budget": route_budget, "send_budget": send_budget, "receive_budget": receive_budget,
 		"uuid": uuid, "relay_payloads": relay_payloads.keys(),
+		"pressure_refusals": pressure_refusals, "pressure_post_wrap_refusals": pressure_post_wrap_refusals,
+		"pressure_retries": pressure_retries, "refused_head_bytes": refused_head.size(),
 		"overlap": {} if overlap == null else {"recipient": overlap_recipient, "payload": overlap.bytes.hex_encode()}}
 
 func detach() -> void:

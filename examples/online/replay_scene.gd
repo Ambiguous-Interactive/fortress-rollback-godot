@@ -194,6 +194,8 @@ func _native_file(path: String) -> void:
 
 
 func _web_file(arguments: Array) -> void:
+	if _is_scrubbing or viewer._is_busy():
+		return
 	if not str(arguments[1]).is_empty():
 		viewer.message = str(arguments[1])
 	else:

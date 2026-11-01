@@ -69,6 +69,19 @@ class SpectatorControlTests(unittest.TestCase):
         self.assertEqual(self.request('/unknown')[0], 404)
         self.assertEqual(self.control.rejected, before + 1)
 
+    def test_completion_retires_pending_and_replayed_acceptance(self):
+        self.assertEqual(self.request('/admit', 'host', self.admission)[0], 200)
+        self.assertEqual(self.request('/accept', body=self.accept)[0], 200)
+        self.assertEqual(self.request('/done', body={'complete': True})[0], 200)
+        self.assertEqual(self.request('/take', 'host'), (200, {}))
+        received = self.control.received
+        for packet in [self.accept, {**self.accept, 'packet': '05' * 88}]:
+            with self.subTest(packet=packet):
+                self.assertEqual(self.request('/accept', body=packet), (403, {'error': 'wrong_lifetime'}))
+                self.assertEqual(self.request('/take', 'host'), (200, {}))
+                self.assertEqual(self.control.received, received)
+                self.assertEqual(self.request('/done', 'host'), (200, {'complete': True}))
+
     def test_independent_viewer_provisioning_is_role_and_lifetime_bound(self):
         room = {'code': 'ROOM', 'game': 'fortress-spectator-browser'}
         self.assertEqual(self.request('/room')[0], 202)
@@ -220,14 +233,26 @@ const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
       const admitted = await request('/admission','viewer');
       expect(admitted.status,200);
       expect(admitted.body.identity,data.admission.identity);
+      for (const field of ['viewer','room','identity']) {
+        expect((await request('/accept','viewer',{...data.accept,[field]:'foreign'})).status,403);
+        const empty = await request('/take','host');
+        expect(empty.status,200);
+        expect(Object.keys(empty.body).length,0);
+      }
       expect((await request('/accept','viewer',data.accept)).status,200);
       const taken = await request('/take','host');
       expect(taken.status,200);
       expect(taken.body.packet,data.accept.packet);
+      expect((await request('/accept','viewer',data.accept)).status,200);
+      expect((await request('/done','viewer',{complete:true})).status,200);
+      expect((await request('/accept','viewer',data.accept)).status,403);
+      const retired = await request('/take','host');
+      expect(retired.status,200);
+      expect(Object.keys(retired.body).length,0);
       let denied = false;
       try {await fetch(data.url + '/admission',{headers:{Authorization:'Bearer ' + data.viewer,'X-Foreign':'denied'}});} catch (_) {denied=true;}
       expect(denied,true);
-      return {allowed:true, capability_separation:true, denied_header:true};
+      return {allowed:true, capability_separation:true, retired_accept_denied:true, denied_header:true};
     }, input);
     await page.goto(input.origins[1]);
     result.foreign_origin_denied = await page.evaluate(async (data) => {
@@ -242,8 +267,11 @@ const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
                    'host': self.control.host_token, 'viewer': self.control.viewer_token, 'admission': self.admission, 'accept': self.accept}
         process = subprocess.run(['node', '-e', program], input=json.dumps(payload), capture_output=True, encoding='utf-8', timeout=30)
         self.assertEqual(process.returncode, 0, process.stderr)
-        self.assertEqual(json.loads(process.stdout), {'allowed': True, 'capability_separation': True, 'denied_header': True, 'foreign_origin_denied': True})
-        self.assertEqual(self.control.received, 1)
+        self.assertEqual(json.loads(process.stdout), {'allowed': True, 'capability_separation': True, 'retired_accept_denied': True,
+                                                    'denied_header': True, 'foreign_origin_denied': True})
+        self.assertEqual(self.control.received, 2)
+        self.assertIsNone(self.control.accept)
+        self.assertEqual(self.control.done, {'complete': True})
         self.assertEqual(self.control.admission, self.admission)
         self.assertGreaterEqual(self.control.rejected, 4)
 

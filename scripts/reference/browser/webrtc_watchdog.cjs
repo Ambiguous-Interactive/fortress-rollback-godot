@@ -6,7 +6,9 @@ const ROOM_MS = 480000;
 const LABEL_SECONDS = 1500;
 
 class ProgressWatchdog {
-  constructor(players, started) {
+  constructor(players, started, lastFrame = 39) {
+    if (![39, 256].includes(lastFrame)) throw new Error('invalid final frame');
+    this.lastFrame = lastFrame;
     this.players = players;
     this.started = started;
     this.peers = Array.from({ length: players }, () => ({ frame: -1, changed: started, finalStarted: null, frontier: null, done: false }));
@@ -28,9 +30,9 @@ class ProgressWatchdog {
     }
     if (value.done === true) { peer.done = true; return true; }
     const frame = value.frame;
-    if (!Number.isInteger(frame) || frame < peer.frame || frame > 39 || frame < -1) throw new Error('invalid frame frontier');
+    if (!Number.isInteger(frame) || frame < peer.frame || frame > this.lastFrame || frame < -1) throw new Error('invalid frame frontier');
     if (frame > peer.frame) { peer.frame = frame; peer.changed = now; }
-    if (frame < 39) {
+    if (frame < this.lastFrame) {
       return false;
     }
     if (peer.finalStarted === null) { peer.finalStarted = now; peer.changed = now; }
@@ -40,7 +42,7 @@ class ProgressWatchdog {
         || progress.received.length !== this.players - 1 || progress.acked.length !== this.players - 1)
         throw new Error('invalid endpoint frontier shape');
       const frontier = [progress.confirmed, ...progress.received, ...progress.acked];
-      if (frontier.some(item => !Number.isInteger(item) || item < -1 || item > 39)) throw new Error('invalid endpoint frontier value');
+      if (frontier.some(item => !Number.isInteger(item) || item < -1 || item > this.lastFrame)) throw new Error('invalid endpoint frontier value');
       if (peer.frontier && frontier.some((item, slot) => item < peer.frontier[slot])) throw new Error('endpoint frontier regressed');
       if (peer.frontier && frontier.some((item, slot) => item > peer.frontier[slot])) peer.changed = now;
       peer.frontier = frontier;
@@ -54,15 +56,15 @@ class ProgressWatchdog {
   }
 }
 
-function boundedFrontier(progress, players) {
+function boundedFrontier(progress, players, lastFrame = 39) {
   if (!progress || !Array.isArray(progress.received) || !Array.isArray(progress.acked)
     || progress.received.length !== players - 1 || progress.acked.length !== players - 1) return null;
-  if ([progress.confirmed, ...progress.received, ...progress.acked].some(value => !Number.isInteger(value) || value < -1 || value > 39)) return null;
+  if ([progress.confirmed, ...progress.received, ...progress.acked].some(value => !Number.isInteger(value) || value < -1 || value > lastFrame)) return null;
   return { confirmed: progress.confirmed, received: [...progress.received], acked: [...progress.acked] };
 }
 
-async function waitGameplay(pages, clock = () => performance.now(), pause = () => new Promise(resolve => setTimeout(resolve, 250))) {
-  const watchdog = new ProgressWatchdog(pages.length, clock());
+async function waitGameplay(pages, clock = () => performance.now(), pause = () => new Promise(resolve => setTimeout(resolve, 250)), lastFrame = 39) {
+  const watchdog = new ProgressWatchdog(pages.length, clock(), lastFrame);
   let timer;
   let active = true;
   let rejectObservation;
@@ -110,7 +112,7 @@ async function waitGameplay(pages, clock = () => performance.now(), pause = () =
         const now = clock();
         attempts[index].completed_ms = now - watchdog.started;
         evaluations[index] = { elapsed_ms: now - watchdog.started, frame: snapshot.frame, done: snapshot.done,
-          progress: boundedFrontier(snapshot.progress, pages.length) };
+          progress: boundedFrontier(snapshot.progress, pages.length, lastFrame) };
         try { watchdog.sample(index, snapshot, now); } catch (error) {
           if (/^peer \d+ (gameplay|final confirmation) stalled$/.test(error.message)) throw diagnosticError(error.message, now);
           throw error;

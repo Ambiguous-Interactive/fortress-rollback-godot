@@ -18,6 +18,7 @@ including Step and Pause, not only seeking and cancellation. A departing-boundar
 check can leave a corrupt destination displayed until playback resumes.
 Controller-only tests cannot prove that visible status and enabled buttons agree.
 Cross held interactions with keyboard controls: a drag-start pause must remain owned through refresh, shortcut input and release without movement.
+Cross asynchronous file-read success and error completion with held controls and active game requests; native chooser guards do not protect browser callbacks.
 When adding a public status field, update exact browser-result validators and their fixtures together.
 Check an actual exported observation too; matching synthetic producers and expectations can both retain an obsolete shape.
 Exercise navigation from measured starting frames in both directions; a receipt

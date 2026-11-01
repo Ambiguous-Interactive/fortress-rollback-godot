@@ -495,7 +495,17 @@ bounded serialized recordings, final recovery/capture frames, decoded playback
 results and checksum counts. Independent mutation controls reject changed rows,
 statuses, digests, checksums, metadata, terminal evidence and incomplete results.
 
-This is Godot browser evidence, not a source-runtime comparison. Forty frames
-do not cross two default input-ring capacities. Sustained actual relay refusal,
-asymmetric long-match browser recordings and unchanged-source recovery remain
-open in #256; #253 retains the source's speculative checksum discrepancy.
+The `recording-pressure` label adds a two-player, 257-frame match across two default
+input-ring capacities. Both independent browser contexts repeatedly refuse direct
+sends and report a full relay socket buffer on asymmetric bounded service turns.
+Accepted bytes still traverse the pinned SDK, real WebSockets and SignalFish server.
+The witness checks retained relay heads before retry, requires repeated refusal and
+successful retry after frame 128, and compares original canonical prefixes while
+pressure remains active. After final receipt recovery, both decoded recordings
+contain every original input/status row and all 258 original checksum boundaries.
+The original watchdog durations remain unchanged.
+
+These are Godot browser witnesses, not source-runtime comparisons. Buffer pressure
+is injected; physical relay congestion, the complete asymmetric delivery/stall
+schedule, neutral and withheld-delivery browser controls, and unchanged-source
+recovery remain open in #256. #253 retains the source's speculative checksum discrepancy.
