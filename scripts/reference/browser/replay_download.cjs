@@ -82,7 +82,8 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
     // Successful import restarts at zero. The source identity gate above prevents old playback satisfying this check.
     requireState(imported.frame === 0 && !imported.failure, 'received replay download did not restart');
     await command('verify_import');
-    await wait(() => window.fortressReplayDownload.statuses_valid);
+    await wait(() => window.fortressReplayDownload.statuses_checked);
+    requireState((await read()).statuses_valid, 'received replay download statuses differ');
     await page.evaluate(value => window.fortressReplayDownloadCommand('navigate', value), frame);
     await page.waitForFunction(value => window.fortressReplayDownload.frame === value && !window.fortressReplayDownload.seeking,
       frame, { timeout: 15000 });

@@ -146,7 +146,8 @@ The positive Web ownership round also runs a production replay scene when its
 selected inventory includes `test_replay_viewer_prefix.gd`. Both pinned engines
 and the selected Chromium or Firefox runtime use this same gate.
 The browser clicks **Download prefix**, receives the actual file, and compares
-all bytes with the original selected prefix. It covers frame 301 of 610,
+all bytes with the original selected prefix. It independently checks the decoded
+slot-one DISCONNECTED status from original input frame 17 onward. It covers frame 301 of 610,
 the complete recorded terminal ending, and a readable initial-only recording.
 It then opens each received file through the production browser picker, requires
 a replaced player and exact recording identity, and compares playback with the

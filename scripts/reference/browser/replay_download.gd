@@ -18,6 +18,7 @@ var _command_callback: JavaScriptObject
 var _open_button: Button
 var _prior_player: RefCounted
 var _statuses_valid: bool = false
+var _statuses_checked: bool = false
 var _disconnected_rows: int = 0
 
 
@@ -39,6 +40,7 @@ func _select(index: int) -> void:
 	selected = index
 	recording = Fixture.recording(610)
 	_statuses_valid = false
+	_statuses_checked = false
 	_disconnected_rows = 0
 	for frame: int in range(17, 610):
 		recording._statuses[frame * 2 + 1] = Queue.Status.DISCONNECTED
@@ -76,6 +78,7 @@ func _command(arguments: Array) -> void:
 					var actual_status: int = scene.viewer._recording.inputs(frame).read(slot).status
 					_statuses_valid = _statuses_valid and actual_status == expected_status
 					_disconnected_rows += int(actual_status == Queue.Status.DISCONNECTED)
+			_statuses_checked = true
 		"prepare_import":
 			_prior_player = scene.viewer._player
 		"select":
@@ -124,6 +127,7 @@ func _process(_delta: float) -> void:
 		"frames": scene.viewer.frame_count(),
 		"import_replaced": _prior_player != null and scene.viewer._player != _prior_player,
 		"statuses_valid": _statuses_valid,
+		"statuses_checked": _statuses_checked,
 		"disconnected_rows": _disconnected_rows,
 		"source_sha256": scene.viewer._recording_sha256,
 		"source_bytes": scene.viewer._recording_bytes,
