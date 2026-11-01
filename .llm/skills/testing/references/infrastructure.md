@@ -2,6 +2,12 @@
 
 Use for subprocess runners, receipts, staging, tool provenance and caches.
 
+Temporary Git repositories must clear caller Git environment overrides for every
+Git command and invoking Python child. Disable unrelated global/system configuration
+and the default XDG ignore file with an explicit `core.excludesFile` override.
+Use `scripts/git_test_environment.py`; test with an external staged index and
+verify the caller's HEAD, status and index bytes remain unchanged.
+
 Scope diagnostic environment variables to their intended child process; unrelated
 helpers can interpret the same variable differently and corrupt structured output.
 

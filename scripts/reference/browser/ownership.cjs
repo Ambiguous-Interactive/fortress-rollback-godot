@@ -5,14 +5,16 @@ const path = require('node:path');
 
 (async () => {
   if (![4, 5].includes(process.argv.length) || !process.argv[2]) throw new Error('expected export root, JSON suite batch and optional exact case');
+  const downloadMode = process.argv[3] === '--replay-downloads';
   let suites;
-  try { suites = JSON.parse(process.argv[3]); } catch { throw new Error('suite batch must be a JSON array'); }
+  try { suites = downloadMode ? ['res://tests/unit/test_replay_viewer_prefix.gd'] : JSON.parse(process.argv[3]); } catch { throw new Error('suite batch must be a JSON array'); }
   if (!Array.isArray(suites) || suites.length < 1 || suites.length > 4 ||
       suites.some(suite => typeof suite !== 'string' || !/^res:\/\/tests\/(unit|determinism)\/test_[a-z0-9_]+\.gd$/.test(suite)) ||
       new Set(suites).size !== suites.length) {
     throw new Error('suite batch must contain 1..4 unique canonical res://tests suite paths');
   }
-  const caseName = process.argv.length === 5 ? process.argv[4] : null;
+  const caseName = !downloadMode && process.argv.length === 5 ? process.argv[4] : null;
+  if (downloadMode && process.argv.length !== 5) throw new Error('replay downloads require an output directory');
   if (caseName !== null && (suites.length !== 1 || !/^[a-z][a-z0-9_]*$/.test(caseName))) {
     throw new Error('exact case requires one suite and a canonical case name');
   }
@@ -38,6 +40,8 @@ const path = require('node:path');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
+  let observation;
+  let verifyDownloads = () => {};
   try {
     browser = await engines[selected].launch(selected === 'chromium' ? {
       headless: true, executablePath: executable,
@@ -47,46 +51,55 @@ const path = require('node:path');
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     const url = new URL(`http://127.0.0.1:${server.address().port}/index.html`);
-    for (const suite of suites) url.searchParams.append('suite', suite);
-    if (caseName !== null) url.searchParams.append('case', caseName);
-    await page.goto(url.toString());
-    const display = selected === 'firefox' ? await placeFirefox(page, 0) : null;
-    try {
-      // Each batch keeps the existing page budget on bounded CI runners.
-      await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
-    } catch (error) {
-      // The watchdog rejected the run before the inventory could be
-      // printed. Report what the page saw, so an engine or script failure
-      // can be told apart from a run that was merely too slow. The
-      // inventory is printed first: reading the page can fail when the
-      // renderer is gone, and that failure must not hide this one.
-      const detail = { stage: 'ownership-result', suites, errors };
-      if (caseName !== null) detail.case = caseName;
-      console.error(JSON.stringify(detail));
+    if (downloadMode) {
+      url.searchParams.append('replay-downloads', '1');
+      const { replayDownloads } = require('./replay_download.cjs');
+      const downloads = await replayDownloads(page, url.toString(), path.resolve(process.argv[4]), errors,
+        selected === 'firefox' ? () => placeFirefox(page, 0) : async () => null);
+      verifyDownloads = downloads.verify;
+      observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result: downloads.result, errors };
+      if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display: downloads.display });
+    } else {
+      for (const suite of suites) url.searchParams.append('suite', suite);
+      if (caseName !== null) url.searchParams.append('case', caseName);
+      await page.goto(url.toString());
+      const display = selected === 'firefox' ? await placeFirefox(page, 0) : null;
       try {
-        detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
-      } catch (page_error) {
-        detail.reported = null;
-        detail.page_error = String(page_error).slice(0, 200);
+        // Each batch keeps the existing page budget on bounded CI runners.
+        await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
+      } catch (error) {
+        // The watchdog rejected the run before the inventory could be
+        // printed. Report what the page saw, so an engine or script failure
+        // can be told apart from a run that was merely too slow. The
+        // inventory is printed first: reading the page can fail when the
+        // renderer is gone, and that failure must not hide this one.
+        const detail = { stage: 'ownership-result', suites, errors };
+        if (caseName !== null) detail.case = caseName;
+        console.error(JSON.stringify(detail));
+        try {
+          detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
+        } catch (page_error) {
+          detail.reported = null;
+          detail.page_error = String(page_error).slice(0, 200);
+        }
+        // The page publishes the case that was executing, the number of
+        // completed cases and the time the last completed case took, so a
+        // rejected run names where it stopped and how long it took.
+        try {
+          const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
+          detail.progress = progress === undefined ? null : JSON.parse(progress);
+        } catch (progress_error) {
+          detail.progress = null;
+          detail.progress_error = String(progress_error).slice(0, 200);
+        }
+        console.error(JSON.stringify(detail));
+        throw error;
       }
-      // The page publishes the case that was executing, the number of
-      // completed cases and the time the last completed case took, so a
-      // rejected run names where it stopped and how long it took.
-      try {
-        const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
-        detail.progress = progress === undefined ? null : JSON.parse(progress);
-      } catch (progress_error) {
-        detail.progress = null;
-        detail.progress_error = String(progress_error).slice(0, 200);
-      }
-      console.error(JSON.stringify(detail));
-      throw error;
+      if (errors.length) throw new Error(JSON.stringify(errors));
+      const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
+      observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result, errors };
+      if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display });
     }
-    if (errors.length) throw new Error(JSON.stringify(errors));
-    const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
-    const observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result, errors };
-    if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display });
-    console.log(JSON.stringify(observation));
   } finally {
     try {
       if (browser) {
@@ -96,4 +109,7 @@ const path = require('node:path');
       }
     } finally { server.close(); }
   }
+  verifyDownloads();
+  if (errors.length) throw new Error(JSON.stringify(errors));
+  console.log(JSON.stringify(observation));
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -100,6 +100,12 @@ class OwnershipBatchTests(unittest.TestCase):
         for negative in (False, True):
             native = probes.aggregate_native([(suite, value) for suite, value in self.batches(negative) if suite in selected], negative, selected)
             records = [{'negative_control': negative, 'native': native, 'browser': {'result': copy.deepcopy(native)}}]
+            if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in selected:
+                from test_replay_download import fixture
+                records[0]['replay_downloads'] = fixture()
+                records[0]['replay_download_controls'] = [
+                    {'control': name, 'exit_code': 1, 'diagnostic': diagnostic}
+                    for name, diagnostic in probes.CONTROL_DIAGNOSTICS.items()]
             probes.validate_coverage(records, '2', suites)
             for mutation in ('declaration', 'foreign', 'missing', 'browser', 'alias', 'control', 'order', 'cases', 'empty', 'part'):
                 with self.subTest(negative=negative, mutation=mutation):
@@ -307,6 +313,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 root = Path(directory) / 'root'
                 cache = Path(directory) / 'cache'
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+                                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                        'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -482,13 +489,14 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
                  version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None,
-                 phase=None, suite_part='all'):
+                 phase=None, suite_part='all', download_fault=None):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
         root = directory / 'root'
         cache = directory / 'cache'
         files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
+                                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                 'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -565,6 +573,22 @@ class OwnershipRejectionTests(unittest.TestCase):
                     template.write_text('mutated Web template during export')
                     changed_tool.append(True)
                 mutate_project(Path(command[command.index('--path') + 1]), 'export')
+            if str(command[1]).endswith('ownership.cjs') and command[3] == '--replay-downloads':
+                if download_fault == 'run':
+                    raise RuntimeError('download command failure ' + 'x' * 600)
+                if download_fault == 'json':
+                    return '{'
+                from test_replay_download import fixture
+                browser = {'browser': selected.title(), 'version': 'fixture', 'result': fixture(Path(command[4])), 'errors': []}
+                if download_fault == 'browser':
+                    browser['errors'] = ['download browser failure']
+                if download_fault == 'download':
+                    browser['result']['cases'][0]['frames'] = 610
+                if selected == 'firefox':
+                    browser.update(firefox_preferences={'webgl.force-enabled': True, 'webgl.disabled': False,
+                                                        'toolkit.shutdown.fastShutdownStage': 0},
+                                   display={'x': 0, 'y': 0, 'width': 1280, 'height': 720, 'screen_width': 1280, 'screen_height': 1024})
+                return json.dumps(browser)
             if str(command[1]).endswith('ownership.cjs'):
                 browser_calls.append((command, log, timeout))
                 if node_alias:
@@ -621,6 +645,20 @@ class OwnershipRejectionTests(unittest.TestCase):
         capture_calls = []
 
         def capture(command, environment, log, timeout):
+            if str(command[1]).endswith('ownership.cjs'):
+                name = environment['FORTRESS_REPLAY_DOWNLOAD_CONTROL']
+                if download_fault == 'control-capture':
+                    raise RuntimeError('download control capture failure')
+                if download_fault == 'control':
+                    return 0, ''
+                if name == list(probes.CONTROL_DIAGNOSTICS)[-1]:
+                    if download_fault == 'source':
+                        (root / 'scripts/reference/browser/ownership.cjs').write_text('changed download source')
+                    elif download_fault == 'staged':
+                        (cache / 'ownership-projects/4.3-positive/host.gd').write_text('changed download staged source')
+                    elif download_fault == 'tools':
+                        registry.write_text('changed download runtime')
+                return 1, 'Error: ' + probes.CONTROL_DIAGNOSTICS[name] + '\n'
             capture_calls.append((command, log, timeout))
             project = Path(command[command.index('--path') + 1])
             (project / '.godot/cache').write_text('mutable native cache')
@@ -765,6 +803,29 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     def rounds(self, results):
         return json.loads((results / 'ownership-rounds.json').read_text(encoding='utf-8'))
+
+    # Value: protects=download failures leave a terminal diagnosis; fails_when=any gate error leaves a running round;
+    # why_new=ordinary browser-batch rejection does not cover downloads; seam=mocked tool outputs and real source inventories
+    def test_download_gate_failures_keep_bounded_failed_rounds(self):
+        part = next(part for part in ('1', '2') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
+        diagnostics = {
+            'run': 'download command failure ', 'json': 'Expecting property name enclosed in double quotes',
+            'browser': 'browser reported errors', 'download': 'replay download boundary differs',
+            'control-capture': 'download control capture failure', 'control': 'replay download control failed outside its expected diagnostic:',
+            'source': 'ownership source changed during execution: scripts/reference/browser/ownership.cjs',
+            'staged': 'ownership staged project changed during execution', 'tools': 'ownership runtime inputs changed during execution',
+        }
+        for fault, diagnostic in diagnostics.items():
+            with self.subTest(fault=fault):
+                results = self.scenario(expected=Exception, version='4.3', phase='positive', suite_part=part, download_fault=fault)
+                self.assertFalse((results / 'ownership.json').exists())
+                entry = self.rounds(results)[0]
+                self.assertEqual(entry['outcome'], 'failed')
+                self.assertIs(entry['alive'], False)
+                self.assertIsInstance(entry['seconds'], (int, float))
+                self.assertTrue(entry['errors'])
+                self.assertEqual(entry['errors'], probes.bounded_errors(entry['errors']))
+                self.assertTrue(entry['errors'][0].startswith(diagnostic), entry['errors'])
 
     # Value: protects=divergent case pages cannot publish or leave a running round; fails_when=assembly trusts repeats only; why_new=suite-level failures; seam=mocked browser
     def test_case_page_divergence_keeps_a_failed_round_and_no_receipt(self):

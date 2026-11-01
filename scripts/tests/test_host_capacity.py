@@ -15,6 +15,7 @@ ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 
 import ast
 import copy
+from contextlib import nullcontext
 import fcntl
 import json
 import os
@@ -103,6 +104,9 @@ class HostCapacityTest(unittest.TestCase):
             with host_capacity.LEASE_FILE.open("a+") as owner:
                 fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 with patch.object(run_godot_tests, "resolve_engine", return_value=Path(sys.executable)), \
+                        patch.object(run_godot_tests, "SourceSnapshot", return_value=nullcontext(SimpleNamespace(
+                            path=SCRIPTS.parent, commit="host-capacity-control", dirty=False, evidence=lambda: {},
+                            verify_image=lambda: None, changed=lambda: False))), \
                         patch.object(run_godot_tests.subprocess, "run", side_effect=command), \
                         patch.object(run_godot_tests, "timed", side_effect=timed), \
                         patch.object(run_godot_tests, "ThreadPoolExecutor", wraps=executor) as pool:
