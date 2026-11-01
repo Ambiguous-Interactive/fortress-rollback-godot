@@ -45,8 +45,8 @@ func _select(index: int) -> void:
 	for frame: int in range(17, 610):
 		recording._statuses[frame * 2 + 1] = Queue.Status.DISCONNECTED
 		var digest: PackedByteArray = recording.computed_input_digest(frame)
-		for index: int in Replay.DIGEST_BYTES:
-			recording._digests[frame * Replay.DIGEST_BYTES + index] = digest[index]
+		for digest_index: int in Replay.DIGEST_BYTES:
+			recording._digests[frame * Replay.DIGEST_BYTES + digest_index] = digest[digest_index]
 	var game: Simulation = Simulation.new()
 	for frame: int in recording.frame_count():
 		game.simulate_frame(frame, recording.inputs(frame))
