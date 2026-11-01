@@ -234,6 +234,10 @@ func _scene_delay_actions(context: RefCounted) -> void:
 			var stopped_at: int = game.now_us
 			context.equal(game.tick(PackedInt32Array([0, 0])), game.failure, "later controls retain actual failure")
 			context.equal(game.now_us, stopped_at, "latched service failure stops further service")
+			var first_cause: int = game.failure
+			context.equal(game.sessions[0].close(game.now_us), Types.Code.OK, "peer stops after earlier delivery failure")
+			context.equal(game.tick(PackedInt32Array([0, 0])), first_cause, "terminal cleanup preserves earlier actual service failure")
+			context.equal(game.sessions[1].status().lifecycle, Types.Lifecycle.TERMINATED, "earlier service failure does not strand terminal cleanup")
 			node._delay_result = " | Preserve previous feedback."
 		var actionable: bool = phase in ["live", "recovered"]
 		node.call("_update_label")
