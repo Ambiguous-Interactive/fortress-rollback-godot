@@ -15,6 +15,7 @@
 | Node departure does not retire retained RefCounted gameplay owners | Scene-exit regressions retain drivers, players and manual writers in six scenes | Terminate owned sessions/players in scene exit and preserve first cause |
 | Initialization-time unit tests do not establish actual scene-exit delivery | Native runner executes before the root enters the live tree | Retain deterministic teardown coverage and verify actual removal in deferred live-tree witnesses |
 | A browser host running suites inside its own ready callback blocks root child creation | PR 293 Firefox job 124767735203, diagnostic lifetime artifact reports `Parent node is busy setting up children` | Defer the existing host entry point until ready returns; preserve real scene teardown tests |
+| A safe controller refusal can become a permanent scene stop | PR 293 review and issue 294 reproduce BUSY latched by three scene physics guards | Test ownership release through the actual scene loop, and keep BUSY retryable |
 | Parallel authoring can change a selected browser case inventory | Ownership harness declares copied suites and exact case sets | Update selected declarations, staged dependencies and Web host together before source freeze |
 
 ## Actions Taken

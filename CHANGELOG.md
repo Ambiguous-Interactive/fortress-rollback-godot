@@ -245,6 +245,8 @@
 
 ### Fixed
 
+- Fix offline, integration and spectator scenes staying paused after temporary ownership holds. Gameplay resumes when the active request or replay releases ownership.
+
 - Fix departed example scenes leaving retained matches and replay players usable. Teardown expires pending views and preserves earlier failure causes.
 
 - Fix invalid integration and spectator button values silently wrapping or stopping gameplay. Rejected values preserve the match and controller time.

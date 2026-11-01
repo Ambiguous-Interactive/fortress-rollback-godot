@@ -59,6 +59,7 @@ Owned `RefCounted` callback graphs must not keep strong back-references. Use a
 `WeakRef` when a game or test fixture refers back to its owning driver/session.
 Scenes that own a match or playback must retire it on exit; freeing a Node does not
 terminate retained `RefCounted` players, drivers or request views. Test retained handles after teardown.
+Scene physics loops must retry temporary `BUSY` results after ownership releases; a controller's safe refusal must not become a permanent scene stop.
 Engine resource-leak errors fail verification even if structured assertions pass.
 Validate bounded view status separately from callback success and capture it before
 expiration. A matching checksum cannot make a failed snapshot write successful.

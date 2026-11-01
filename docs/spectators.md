@@ -60,6 +60,7 @@ Restart retires the prior host and viewer, including retained driver and stream 
 An active callback or expert request batch must finish before restart, another tick,
 single-frame inspection, one-shot catch-up, live following, viewing-delay or catch-up adjustment, or clean host ending can succeed. These actions return `BUSY`
 without consuming time, changing playback controls or stopping the viewer.
+An embedded host replay also holds live ticks; the scene resumes when that replay closes.
 This control reports known loss directly to the spectator session; it does not
 close a real network connection or simulate elapsed host timeout.
 

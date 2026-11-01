@@ -18,6 +18,7 @@ Move player 1 with WASD and player 2 with the arrow keys. Press R to restart.
 The arena scales to the window. The status displays the current frame,
 rewind distance, and number of unique color pulses.
 A stopped session displays its error code and failure frame.
+Temporary `BUSY` ticks retry after active expert work releases ownership; they do not stop the match.
 
 ![Offline sync-test running after 120 frames](offline-example.png)
 
