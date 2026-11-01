@@ -14,6 +14,7 @@ var _code: int = Types.Code.OK
 var _replay_notice: String = ""
 var _label: Label
 var _follow_live_button: Button
+var _pause_button: Button
 
 
 func _ready() -> void:
@@ -28,8 +29,21 @@ func _ready() -> void:
 	_follow_live_button.focus_mode = Control.FOCUS_NONE
 	_follow_live_button.pressed.connect(_follow_live)
 	add_child(_follow_live_button)
+	_pause_button = Button.new()
+	_pause_button.name = "PauseViewer"
+	_pause_button.focus_mode = Control.FOCUS_NONE
+	_pause_button.pressed.connect(_toggle_pause)
+	add_child(_pause_button)
 	_code = demo.start()
 	_update_label()
+
+
+func _exit_tree() -> void:
+	if demo.viewer != null:
+		demo.viewer.terminate()
+	if demo.host != null:
+		demo.host.loop.session.terminate()
+		demo.host.stop_replay()
 
 
 func _physics_process(_delta: float) -> void:
@@ -50,7 +64,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	if event.keycode == KEY_P:
-		demo.is_paused = not demo.is_paused
+		_toggle_pause()
 	elif event.keycode == KEY_N:
 		demo.step_viewer()
 	elif event.keycode == KEY_C:
@@ -75,6 +89,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	_update_label()
 
 
+func _toggle_pause() -> void:
+	demo.set_paused(not demo.is_paused)
+	_update_label()
+
+
 func _follow_live() -> void:
 	demo.follow_live()
 	_update_label()
@@ -90,6 +109,8 @@ func _process(_delta: float) -> void:
 
 func _update_label() -> void:
 	_follow_live_button.disabled = demo.viewer == null or demo._mutation_code() == Types.Code.BUSY or demo.viewer._mutation_code() != Types.Code.OK
+	_pause_button.disabled = _follow_live_button.disabled
+	_pause_button.text = "Resume viewer (P)" if demo.is_paused else "Pause viewer (P)"
 	if demo.host == null or demo.viewer == null:
 		_label.text = "Could not start: code %d" % _code
 		return
@@ -134,6 +155,7 @@ func _update_label() -> void:
 	)
 
 	_follow_live_button.position = Vector2(24, _label.position.y + _label.get_minimum_size().y + 8)
+	_pause_button.position = _follow_live_button.position + Vector2(_follow_live_button.get_minimum_size().x + 12, 0)
 
 
 func _recording_feedback() -> String:

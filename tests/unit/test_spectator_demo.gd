@@ -82,6 +82,7 @@ func run_case(name: String, context: RefCounted) -> void:
 
 
 func _corrected_viewing(context: RefCounted) -> void:
+	_rejected_host_buttons(context)
 	var demo: Demo = Demo.new()
 	context.equal(demo.start(), Types.Code.OK, "start delayed viewer")
 	var reference: Game = Game.new()
@@ -278,6 +279,7 @@ func _single_frame_end(context: RefCounted) -> void:
 
 # Value: protects=scene keyboard frame-step control; fails_when=N is unbound or repeats on held key; why_new=demo API tests bypass scene input; seam=none
 func _single_frame_control(context: RefCounted) -> void:
+	_pause_control_ownership(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	for tick: int in range(50):
@@ -420,6 +422,7 @@ func _host_loss_control(context: RefCounted) -> void:
 # Value: protects=restart retires retained match handles; fails_when=old drivers consume buffered rows;
 # why_new=keyboard restart checks only the replacement viewer; seam=none
 func _restart_lifetimes(context: RefCounted) -> void:
+	_scene_exit(context)
 	for scenario: String in ["control", "restart", "failed"]:
 		var demo: Demo = Demo.new()
 		context.equal(demo.start(), Types.Code.OK, "start retained-handle scenario")
@@ -526,7 +529,7 @@ func _restart_busy(context: RefCounted) -> void:
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
 	for actor: String in ["host", "viewer", "batch", "game_callback"]:
-		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live"]:
+		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live", "set_paused"]:
 			var demo: Demo = Demo.new()
 			context.equal(demo.start(), Types.Code.OK, "start guarded service")
 			demo.is_paused = true
@@ -538,7 +541,9 @@ func _service_busy(context: RefCounted) -> void:
 				var target: RefCounted = owner.get_ref()
 				var before: Array = _service_observation(target)
 				var code: int
-				if action in ["set_viewing_delay", "set_catchup_speed"]:
+				if action == "set_paused":
+					code = target.call(action, false)
+				elif action in ["set_viewing_delay", "set_catchup_speed"]:
 					if not target.has_method(action):
 						context.equal(false, true, "viewing delay exposes guarded adjustment")
 						return
@@ -1107,3 +1112,99 @@ func _follow_live_controls(context: RefCounted) -> void:
 	scene._unhandled_key_input(key)
 	context.equal(_service_observation(scene.demo), before.slice(0, 9) + [Types.Code.TERMINATED, before[10]], "stopped key preserves policy and pause")
 	scene.free()
+
+
+# Value: protects=pause controls preserve active playback ownership; fails_when=P changes pause inside a request;
+# why_new=service tests omit keyboard pause; seam=scene controls
+func _pause_control_ownership(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	context.equal(scene.demo.set_paused(true), Types.Code.OK, "ordinary pause succeeds")
+	var button: Button = scene.get_node_or_null("PauseViewer")
+	context.equal(button != null, true, "pointer users have pause and resume control")
+	if button == null:
+		scene.free()
+		return
+	scene._update_label()
+	context.equal(button.text, "Resume viewer (P)", "paused button names resume action")
+	context.equal(button.disabled, false, "ordinary paused viewer can resume")
+	context.equal(button.focus_mode, Control.FOCUS_NONE, "pause button preserves host keyboard focus")
+	button.pressed.emit()
+	context.equal(scene.demo.is_paused, false, "pointer resumes viewer")
+	context.equal(button.text, "Pause viewer (P)", "resumed button names pause action")
+	button.pressed.emit()
+	context.equal(scene.demo.is_paused, true, "pointer pauses viewer")
+	for tick: int in range(40):
+		scene.demo.tick(Game.RIGHT)
+	var key: InputEventKey = InputEventKey.new()
+	key.keycode = KEY_P
+	key.pressed = true
+	context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "open playback request before pause")
+	scene._update_label()
+	context.equal(button.disabled, true, "active request disables pointer pause")
+	var before: bool = scene.demo.is_paused
+	button.pressed.emit()
+	context.equal(scene.demo.is_paused, before, "direct button signal cannot bypass ownership")
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, before, "pause key preserves owned playback request")
+	scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
+	scene._update_label()
+	context.equal(button.disabled, true, "stopped viewing disables pause control")
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_paused, before, "pause key preserves stopped playback state")
+	scene.free()
+
+
+# Value: protects=invalid host buttons cannot alter spectator clocks; fails_when=narrowing accepts out-of-domain inputs;
+# why_new=canonical playback uses valid buttons only; seam=none
+func _rejected_host_buttons(context: RefCounted) -> void:
+	for buttons: int in [-9223372036854775807, -256, -1, 8, 255, 256, 263, 9223372036854775807]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "start invalid-host-input control")
+		var before: Array = _service_observation(demo)
+		context.equal(demo.tick(buttons), Types.Code.INVALID_CONFIGURATION, "reject host buttons before narrowing")
+		context.equal(_service_observation(demo), before, "invalid host buttons preserve both clocks and games")
+		context.equal(demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "valid corrected input remains available")
+		context.equal(demo.host.loop.game.frame, 1, "corrected retry uses first host frame")
+
+
+# Value: protects=leaving spectator scene retires host and viewer lifetimes; fails_when=retained drivers still invoke removed games;
+# why_new=restart coverage preserves the scene; seam=none
+func _scene_exit(context: RefCounted) -> void:
+	for mode: String in ["paused", "viewer_request", "host_request", "failed"]:
+		var scene: Node2D = Scene.new()
+		(Engine.get_main_loop() as SceneTree).root.add_child(scene)
+		if not scene.is_inside_tree():
+			scene._ready()
+		var demo: Demo = scene.demo
+		demo.set_paused(true)
+		for tick: int in range(40):
+			context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "host supplies exit fixture history")
+		context.equal(demo.host.start_replay(), Types.Code.OK, "host replay is retained before scene exit")
+		var replay: RefCounted = demo.host.replay_player
+		var request: Types.Request
+		if mode == "viewer_request":
+			request = demo.viewer.begin_advance().batch.next_request()
+		elif mode == "host_request":
+			request = replay.begin_advance().batch.next_request()
+		elif mode == "failed":
+			demo.lose_host_connection()
+		var viewer_bytes: PackedByteArray = demo.game.canonical_bytes()
+		var host_bytes: PackedByteArray = demo.host.loop.game.canonical_bytes()
+		if not scene.is_inside_tree() and scene.has_method("_exit_tree"):
+			scene._exit_tree()
+		scene.free()
+		context.equal(demo.viewer.status().reason, Types.Code.PROTOCOL_FAILED if mode == "failed" else Types.Code.TERMINATED, "scene exit preserves viewer first cause")
+		context.equal(demo.host.loop.session.status().reason, Types.Code.TERMINATED, "scene exit retires host gameplay")
+		context.equal(replay.step(), Types.Code.TERMINATED, "retained host replay cannot advance after exit")
+		var samples: Array[Demo.Driver.LocalInput] = []
+		context.equal(demo.driver.step(40 * Demo.Host.TICK_US, samples).code, Types.Code.TERMINATED, "retained viewer driver cannot advance after exit")
+		if request != null:
+			if request.writer != null:
+				context.equal(request.writer.write_bytes(PackedByteArray([1])), request.writer.Code.EXPIRED_VIEW, "exit expires retained snapshot writer")
+			elif request.reader != null:
+				context.equal(request.reader.status(), request.reader.Code.EXPIRED_VIEW, "exit expires retained snapshot reader")
+			else:
+				context.equal(request.inputs.player_count(), -1, "exit expires retained frame input view")
+		context.bytes_equal(demo.game.canonical_bytes(), viewer_bytes, 0, "removed viewer game remains unchanged")
+		context.bytes_equal(demo.host.loop.game.canonical_bytes(), host_bytes, 40, "removed host game remains unchanged")
