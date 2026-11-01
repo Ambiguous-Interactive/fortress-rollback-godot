@@ -241,7 +241,8 @@ func _queue_remote_through(frame: int) -> void:
 	var due_tick: int = tick_count + lag_ticks
 	# Preserve existing delivery times while filling rows skipped by expert advancement.
 	if not _pending.is_empty():
-		due_tick = maxi(due_tick, _pending.back().due_tick)
+		var tail: RemoteInput = _pending.back()
+		due_tick = maxi(due_tick, tail.due_tick)
 	for next_frame: int in range(first, last + 1):
 		_pending.append(RemoteInput.new(next_frame, due_tick, remote_buttons(next_frame)))
 		_remote_sample_frame = next_frame

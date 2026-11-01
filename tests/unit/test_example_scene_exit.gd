@@ -20,12 +20,14 @@ class ClosingGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["retained_handles", "active_batches", "active_callbacks"])
+	return PackedStringArray(["retained_handles", "active_batches", "active_callbacks", "expert_gap_recovery"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	if name == "active_callbacks":
 		_callbacks(context)
+	elif name == "expert_gap_recovery":
+		_expert_gap_recovery(context)
 	else:
 		for example: String in ["offline", "integration", "peer"]:
 			for failed: bool in [false, true]:
@@ -33,8 +35,6 @@ func run_case(name: String, context: RefCounted) -> void:
 		if name == "active_batches":
 			for example: String in ["offline", "integration"]:
 				_busy_retry(context, example)
-	if name == "active_batches":
-		_expert_gap_recovery(context)
 	context.finish()
 
 
