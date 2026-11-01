@@ -38,7 +38,7 @@ func _exit_tree() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if _code != Types.Code.OK:
+	if _code not in [Types.Code.OK, Types.Code.BUSY]:
 		return
 	_previous_positions = _current_positions.duplicate()
 	var frame: int = _session.status().current_frame

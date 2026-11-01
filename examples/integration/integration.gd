@@ -33,7 +33,7 @@ func _physics_process(_delta: float) -> void:
 		_replay_code = _demo.replay_tick()
 		_update_label()
 		return
-	if _code != Types.Code.OK and _code != Types.Code.PREDICTION_STALL:
+	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		return
 	var buttons: int = 0
 	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
