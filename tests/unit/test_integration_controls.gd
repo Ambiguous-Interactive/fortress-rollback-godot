@@ -217,21 +217,39 @@ func _input_rejections(context: RefCounted) -> void:
 # why_new=existing rejection matrix checks sample metadata only; seam=none
 func _invalid_buttons(context: RefCounted) -> void:
 	for facade: String in ["demo", "loop"]:
-		for has_pending: bool in [false, true]:
+		for mode: String in ["initial", "pending", "stalled"]:
 			for buttons: int in [-9223372036854775807 - 1, -256, -1, 8, 255, 256, 263, 9223372036854775807]:
 				var demo: Demo = Demo.new()
-				context.equal(demo.start(3), Types.Code.OK, "invalid-button fixture starts")
-				if has_pending:
+				context.equal(demo.start(12 if mode == "stalled" else 3), Types.Code.OK, "invalid-button fixture starts")
+				if mode == "pending":
 					context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "queues earlier remote input before rejection")
+				elif mode == "stalled":
+					for tick: int in range(8):
+						context.equal(demo.tick(Game.RIGHT), Types.Code.OK, "fills the prediction window before rejection")
+					context.equal(demo.tick(Game.RIGHT), Types.Code.PREDICTION_STALL, "retains original RIGHT while stalled")
 				var before: Array = _snapshot(demo)
 				var position: int = demo.loop.game.x[0]
 				var code: int = demo.tick(buttons) if facade == "demo" else demo.loop.tick(1000000, buttons)
 				context.equal(code, Types.Code.INVALID_CONFIGURATION, facade + " rejects integer buttons " + str(buttons))
 				context.equal(_snapshot(demo), before, facade + " invalid buttons preserve controller and accepted time")
 				context.equal(demo.loop.session.status().lifecycle, Types.Lifecycle.RUNNING, facade + " invalid buttons preserve match liveness")
-				code = demo.tick(Game.LEFT) if facade == "demo" else demo.loop.tick(0, Game.LEFT)
-				context.equal(code, Types.Code.OK, facade + " corrected same-frame retry advances")
-				context.equal(demo.loop.game.x[0], position - 4, facade + " corrected retry uses LEFT without narrowed input")
+				var accepted_time: int = maxi(0, demo.loop.session._time)
+				code = demo.tick(Game.LEFT) if facade == "demo" else demo.loop.tick(accepted_time, Game.LEFT)
+				if mode == "stalled":
+					context.equal(code, Types.Code.PREDICTION_STALL, facade + " corrected retry remains stalled")
+					context.equal(demo.loop._sample, PackedByteArray([Game.RIGHT]), facade + " corrected retry retains original RIGHT")
+					context.equal(demo.loop.session.scheduled_local_input(0).bytes, PackedByteArray([Game.RIGHT]), facade + " session retains original RIGHT")
+					var frame: int = demo.loop.session.status().current_frame
+					for tick: int in range(15):
+						if demo.loop.session.status().current_frame > frame:
+							break
+						code = demo.tick(Game.LEFT)
+						context.equal(code in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "delayed receipts resume the retained sample")
+					context.equal(demo.loop.session.status().current_frame, frame + 1, facade + " resumes exactly one held frame")
+					context.equal(demo.loop.game.x[0], position + 4, facade + " resumed frame uses original RIGHT")
+				else:
+					context.equal(code, Types.Code.OK, facade + " corrected same-frame retry advances")
+					context.equal(demo.loop.game.x[0], position - 4, facade + " corrected retry uses LEFT without narrowed input")
 	for buttons: int in range(8):
 		var demo: Demo = Demo.new()
 		context.equal(demo.start(0), Types.Code.OK, "valid-button fixture starts")
