@@ -47,7 +47,7 @@ func _exit_tree() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL]:
+	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		return
 	var buttons: int = 0
 	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):

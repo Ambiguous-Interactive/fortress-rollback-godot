@@ -528,6 +528,7 @@ func _restart_busy(context: RefCounted) -> void:
 # Value: protects=active callbacks and expert batches own spectator service; fails_when=recursive controls consume time or stop viewing;
 # why_new=restart guards do not cover playback and service actions; seam=none
 func _service_busy(context: RefCounted) -> void:
+	_scene_busy_retry(context)
 	_host_replay_tick_ownership(context)
 	for actor: String in ["host", "viewer", "batch", "game_callback"]:
 		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live", "set_paused"]:
@@ -1245,3 +1246,37 @@ func _host_replay_tick_ownership(context: RefCounted) -> void:
 	context.equal(finished.host.start_replay(), Types.Code.OK, "completed host can replay independently")
 	context.equal(finished.tick(256), Types.Code.OK, "idle replay does not block independent final-tail service")
 	context.equal(finished.viewer.status().reason, Types.Code.OK, "paused final-tail viewer stays live")
+
+
+# Value: protects=scene retries transient host replay ownership on the next physics turn;
+# fails_when=BUSY is latched as permanent failure; why_new=demo tests bypass the scene's early return; seam=none
+func _scene_busy_retry(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	for tick: int in range(40):
+		context.equal(scene.demo.tick(Game.RIGHT), Types.Code.OK, "scene supplies original input before replay hold")
+	context.equal(scene.demo.host.start_replay(), Types.Code.OK, "scene host enters idle replay mode")
+	var before: Array = _service_observation(scene.demo)
+	for retry: int in range(2):
+		scene._physics_process(0.0)
+		context.equal(scene._code, Types.Code.BUSY, "scene reports transient host replay ownership")
+		context.equal(_service_observation(scene.demo), before, "held physics turns preserve clocks and inputs")
+	scene.demo.host.stop_replay()
+	scene._physics_process(0.0)
+	context.equal(scene._code, Types.Code.OK, "scene retries once host replay releases ownership")
+	context.equal(scene.demo.host.loop.game.frame, 41, "released scene advances the next host input")
+	context.equal(scene.demo.viewer.status().reason, Types.Code.OK, "retry preserves healthy viewing")
+	context.equal(scene.demo.game.frame > int(before[4]), true, "released scene resumes actual confirmed viewing")
+	var original: Game = Game.new()
+	for frame: int in range(scene.demo.game.frame):
+		var rows: Array[PackedByteArray] = [PackedByteArray([Game.RIGHT]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
+		var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+		context.equal(original.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent original confirmed history")
+	context.bytes_equal(scene.demo.game.canonical_bytes(), original.canonical_bytes(), original.frame, "resumed viewing retains original canonical prefix")
+	scene.demo.host.loop.session.terminate(Types.Code.PROTOCOL_FAILED)
+	scene._physics_process(0.0)
+	context.equal(scene._code, Types.Code.TERMINATED, "true host failure still stops scene service")
+	before = _service_observation(scene.demo)
+	scene._physics_process(0.0)
+	context.equal(_service_observation(scene.demo), before, "true failure remains stopped on later physics turns")
+	scene.free()
