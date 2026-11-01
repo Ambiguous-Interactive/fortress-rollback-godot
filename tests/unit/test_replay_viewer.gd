@@ -473,8 +473,8 @@ func _navigation_boundaries(context: RefCounted) -> void:
 	context.equal(viewer.message.begins_with("Replay complete."), true, "same final target preserves completion")
 
 
-# Value: protects=dropped replays use bounded validated import; fails_when=drop wiring bypasses validation or replaces busy playback;
-# why_new=file chooser tests never deliver a dropped file list; seam=real files
+# Value: protects=file imports preserve bounded validation and active control ownership; fails_when=drop or browser completion replaces busy playback;
+# why_new=viewer byte imports do not cover file event completion during dragging; seam=real files and scene callbacks
 func _dropped_file(context: RefCounted) -> void:
 	var node: Node2D = Scene.instantiate()
 	node._ready()
@@ -505,12 +505,25 @@ func _dropped_file(context: RefCounted) -> void:
 	var message: String = node.viewer.message
 	node._files_dropped(PackedStringArray([path + ".missing"]))
 	context.equal(node.viewer.message, message, "active scrub preserves controls and message")
+	var replacement: String = Marshalls.raw_to_base64(recording(12).to_bytes())
+	for completion: Array in [[replacement, ""], ["", "Could not read the replay file."]]:
+		node._web_file(completion)
+		context.equal(node.viewer.frame_count(), 8, "browser completion cannot replace a dragged recording")
+		context.equal(node.viewer.current_frame(), 1, "browser completion preserves dragged frame")
+		context.equal(node.viewer.message, message, "browser completion preserves active drag feedback")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), original, 1, "browser completion preserves dragged state")
 	node._is_scrubbing = false
 	var pending: RefCounted = node.viewer._player.begin_advance()
 	context.equal(pending.code, Types.Code.READY, "manual request owns playback")
 	node._files_dropped(PackedStringArray([path + ".missing"]))
 	context.equal(node.viewer.message, message, "active game work preserves message")
+	for completion: Array in [[replacement, ""], ["", "Could not read the replay file."]]:
+		node._web_file(completion)
+		context.equal(node.viewer.message, message, "browser completion preserves active game feedback")
+		context.equal(node.viewer.current_frame(), 1, "browser completion preserves active game frame")
 	node.viewer._player.terminate()
+	node._web_file([replacement, ""])
+	context.equal(node.viewer.frame_count(), 12, "idle browser completion still imports a valid recording")
 	node._exit_tree()
 	node.free()
 	context.equal(DirAccess.remove_absolute(ProjectSettings.globalize_path(path)), OK, "remove owned drop fixture")
