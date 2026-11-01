@@ -105,7 +105,7 @@ func reset() -> int:
 		next_games.append(game)
 		next_presentations.append(Presentation.new())
 	for session: Peer in sessions:
-		session.close(maxi(now_us, session._now))
+		session.close(maxi(now_us, session.network_status().last_now_us))
 	sessions = next_sessions
 	games = next_games
 	presentations = next_presentations

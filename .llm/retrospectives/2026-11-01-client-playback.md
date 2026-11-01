@@ -15,6 +15,8 @@ Triggers: new capabilities and a reproduced match-lifetime defect.
 | A selected peer's guard does not protect a composed match. | The cross-peer completion control observes delay results BUSY/OK and OK/BUSY before repair. | Check both owned peers before reset, tick, rule changes and delay changes; extend the existing ownership testing guidance. |
 | Removing viewing delay alone cannot catch a running host at a one-frame playback rate. | The Follow live experiment crosses a paused backlog with ongoing changing host inputs at original speeds one and four. | Set zero delay/threshold and the configured bounded capacity; compare the exact delivered frontier and independent canonical state every tick. |
 | Saving an inspected prefix must not claim new validation. | Prefix tests cross v5/v6, backward cached selection, sparse checksums, frame zero and failed input history through independent decode and playback. | Reuse original owned-prefix storage; preserve only existing checksum evidence and gate unreadable empty prefixes. |
+| Parallel source edits can invalidate an imported inventory snapshot. | The first reference run sees new Follow live cases against its earlier imported registry; all 46 controls pass after freezing source. | Extend existing source-freeze guidance to inventory-contract tests. |
+| Direct focused launches can select existing cases longer than their default watchdog. | Auxiliary peer selections hit 30 seconds on sustained faults; full native and CI runs use the documented 180-second bound. | Add the direct-launcher bound beside the existing iteration commands; preserve production code and watchdog defaults. |
 
 ## Verification
 

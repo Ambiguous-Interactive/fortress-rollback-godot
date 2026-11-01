@@ -46,10 +46,6 @@ func cases() -> PackedStringArray:
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if not Viewer.new().has_method("prefix_bytes"):
-		context.equal(false, true, "viewer exports the selected original prefix")
-		context.finish()
-		return
 	match name:
 		"selected_prefix":
 			_selected_prefix(context)
@@ -78,7 +74,7 @@ func _navigate(viewer: Viewer, frame: int) -> void:
 
 
 func _check_export(context: RefCounted, viewer: Viewer, original: Replay, frame: int) -> Replay:
-	var exported: PackedByteArray = viewer.call("prefix_bytes")
+	var exported: PackedByteArray = viewer.prefix_bytes()
 	var decoded: Replay = Replay.new()
 	context.equal(decoded.decode(exported), Replay.DecodeCode.OK, "export is a complete portable recording")
 	context.equal(decoded.frame_count(), frame, "prefix ends at the displayed state boundary")
@@ -118,18 +114,18 @@ func _selected_prefix(context: RefCounted) -> void:
 		context.equal(decoded.checksum(301), replay.checksum(301) if terminal else PackedByteArray(), "only existing v6 boundary evidence survives trimming")
 		context.equal(viewer.current_frame(), 301, "export does not revisit previously explored later frames")
 		context.bytes_equal(viewer.game.canonical_bytes(), prior, 301, "export does not change displayed game state")
-		var bytes: PackedByteArray = viewer.call("prefix_bytes")
+		var bytes: PackedByteArray = viewer.prefix_bytes()
 		bytes[0] = 0
-		context.equal(viewer.call("prefix_bytes"), decoded.to_bytes(), "exported bytes are owned and cannot mutate later exports")
+		context.equal(viewer.prefix_bytes(), decoded.to_bytes(), "exported bytes are owned and cannot mutate later exports")
 
 
 func _prefix_boundaries(context: RefCounted) -> void:
 	var viewer: Viewer = Viewer.new()
-	context.equal(viewer.call("prefix_bytes"), PackedByteArray(), "empty viewer cannot export")
+	context.equal(viewer.prefix_bytes(), PackedByteArray(), "empty viewer cannot export")
 	var replay: Replay = Fixture.recording(4)
 	viewer.open_bytes(replay.to_bytes())
-	context.equal(viewer.call("can_export_prefix"), false, "historical zero-input prefix cannot reopen in this viewer")
-	context.equal(viewer.call("prefix_bytes"), PackedByteArray(), "historical initial boundary has no downloadable prefix")
+	context.equal(viewer.can_export_prefix(), false, "historical zero-input prefix cannot reopen in this viewer")
+	context.equal(viewer.prefix_bytes(), PackedByteArray(), "historical initial boundary has no downloadable prefix")
 	_navigate(viewer, 4)
 	_check_export(context, viewer, replay, 4)
 	replay = _terminal(Fixture.recording(4))
@@ -150,7 +146,7 @@ func _prefix_boundaries(context: RefCounted) -> void:
 	context.equal(unverified._format_version, Replay.FORMAT_VERSION, "sparse prefix retains the historical format when no final evidence exists")
 	sparse._flags[0] = 0
 	viewer.open_bytes(sparse.to_bytes())
-	context.equal(viewer.call("can_export_prefix"), false, "v6 source alone cannot invent absent initial-state evidence")
+	context.equal(viewer.can_export_prefix(), false, "v6 source alone cannot invent absent initial-state evidence")
 	var empty: Replay = _terminal(Fixture.recording(0))
 	viewer.open_bytes(empty.to_bytes())
 	_check_export(context, viewer, empty, 0)
@@ -187,17 +183,17 @@ func _prefix_guards(context: RefCounted) -> void:
 	viewer.step()
 	var result: Types.Result = viewer._player.begin_validate_current_frame()
 	context.equal(result.code, Types.Code.READY, "manual validation owns the displayed boundary")
-	context.equal(viewer.call("can_export_prefix"), false, "manual work blocks export eligibility")
-	context.equal(viewer.call("prefix_bytes"), PackedByteArray(), "manual work blocks exported bytes")
+	context.equal(viewer.can_export_prefix(), false, "manual work blocks export eligibility")
+	context.equal(viewer.prefix_bytes(), PackedByteArray(), "manual work blocks exported bytes")
 	context.equal(viewer._player._batch, result.batch, "refused export preserves the open manual batch")
 	viewer._player.terminate()
 	viewer.restart()
 	viewer.seek(310)
-	context.equal(viewer.call("can_export_prefix"), false, "active seek blocks export eligibility")
-	context.equal(viewer.call("prefix_bytes"), PackedByteArray(), "active seek cannot export an intermediate position")
+	context.equal(viewer.can_export_prefix(), false, "active seek blocks export eligibility")
+	context.equal(viewer.prefix_bytes(), PackedByteArray(), "active seek cannot export an intermediate position")
 	context.equal(viewer.is_seeking(), true, "refused export preserves the navigation target")
 	viewer.cancel_seek()
-	context.equal(viewer.call("can_export_prefix"), true, "cancelled seek exposes its actual selected boundary")
+	context.equal(viewer.can_export_prefix(), true, "cancelled seek exposes its actual selected boundary")
 
 
 func _prefix_controls(context: RefCounted) -> void:
@@ -215,9 +211,9 @@ func _prefix_controls(context: RefCounted) -> void:
 		node.viewer.step()
 		node._refresh()
 		context.equal(button.disabled, false, "displayed original history enables export")
-		var filename: String = node.viewer.call("prefix_filename")
+		var filename: String = node.viewer.prefix_filename()
 		var path: String = "user://" + filename
-		var expected: PackedByteArray = node.viewer.call("prefix_bytes")
+		var expected: PackedByteArray = node.viewer.prefix_bytes()
 		button.pressed.emit()
 		var downloaded: PackedByteArray = expected
 		var removed: int = OK
@@ -240,7 +236,7 @@ func _prefix_controls(context: RefCounted) -> void:
 		context.equal(node._prefix_notice, "", "moving the displayed boundary clears the prior export notice")
 		button.pressed.emit()
 		if not OS.has_feature("web"):
-			removed = DirAccess.remove_absolute(ProjectSettings.globalize_path("user://" + node.viewer.call("prefix_filename")))
+			removed = DirAccess.remove_absolute(ProjectSettings.globalize_path("user://" + node.viewer.prefix_filename()))
 		context.equal(removed, OK, "second process-owned native download is removed")
 		node.viewer.restart()
 		node._refresh()
