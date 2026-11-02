@@ -746,8 +746,10 @@ func _delay_actions(context: RefCounted) -> void:
 		var old_message: String = lobby.message
 		var old_delay: int = game_match.peer.input_delay(game_match.local_slot)
 		if phase == "live":
-			for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed"]:
+			for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed", "shift_pressed"]:
 				for key: Key in [KEY_R, KEY_EQUAL, KEY_KP_ADD]:
+					if modifier == "shift_pressed" and key == KEY_EQUAL:
+						continue
 					var modified: InputEventKey = InputEventKey.new()
 					modified.keycode = key
 					modified.pressed = true
@@ -765,6 +767,12 @@ func _delay_actions(context: RefCounted) -> void:
 				context.equal(lobby.message, old_message, phase + " rejected key preserves recovery message")
 		if phase == "live":
 			context.equal(game_match.peer.input_delay(game_match.local_slot), 6, "live suggestion and both raise keys work")
+			var plus: InputEventKey = InputEventKey.new()
+			plus.keycode = KEY_EQUAL
+			plus.pressed = true
+			plus.shift_pressed = true
+			node.call("_unhandled_key_input", plus)
+			context.equal(game_match.peer.input_delay(game_match.local_slot), 7, "Shift Equals preserves the ordinary plus shortcut")
 		elif phase == "stale_suggestion":
 			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay + 2, "stale suggestion does not block manual raise")
 		else:
