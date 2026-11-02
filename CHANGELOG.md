@@ -269,7 +269,7 @@
 
 ### Fixed
 
-- Fix replay controls and failure details pushing the displayed game outside short windows. Scroll controls vertically or horizontally in smaller windows. (#310)
+- Fix replay controls and failure details pushing the game outside short windows. Scroll controls in smaller windows; wheel scrolling over the timeline preserves playback and failure evidence. (#310)
 
 - Keep online arrow movement available after clicking input-delay and diagnostic/replay export buttons, preserving keyboard button access.
 

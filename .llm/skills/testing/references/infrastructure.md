@@ -117,6 +117,7 @@ nodes acquire live GUI focus. Direct handler calls can verify action gates, but
 cannot prove viewport routing, editable focus, popup consumption or tooltip delivery. Exercise those
 contracts in a deferred live scene with real input events; inspect rendering after
 layout settles. Keep native/Web assertion inventories equal when platform UI differs.
+Exercise wheel propagation over sliders when adding scroll containers; verify scrolling preserves unrelated playback and failure evidence.
 Browser test hosts must also defer scene-creating suites until their own `_ready` returns.
 A root already inside the tree can still reject `add_child` while setting up children;
 native initialization and an independently deferred witness do not exercise that host boundary.

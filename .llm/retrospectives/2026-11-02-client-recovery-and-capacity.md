@@ -95,6 +95,16 @@ main thread's Linux child list. Inspecting all task child lists repairs the
 instrument; the existing infrastructure guidance now records this boundary.
 No product fix or new test scaffold was needed for the observation error.
 
+Automatic review subsequently exposed wheel input changing the replay timeline
+inside its new scroll container. Both pins reproduce four preservation failures;
+disabling timeline wheel edits preserves parent scrolling, click and drag seeking.
+The committed deferred probe now checks the production game rectangle and all
+150 live assertions pass on both pins. It replaces the earlier 133-check gate.
+Spectator callback-failure coverage now starts after five successfully viewed
+frames and independently replays the exact retained prefix after failure and
+later host activity. An export-loss mutant is rejected. Fresh follow-up review
+finds no actionable defects. The existing GUI guidance now includes wheel routing.
+
 State: `findings-acted`.
 Broader spectator, replay, browser-workload and source-helper acceptance remains
 in the linked open roadmap issues. Final tests, fresh reviews, current-head CI,

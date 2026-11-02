@@ -291,6 +291,7 @@ Input digests and cached snapshots do not count as recorded state checksums.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
 Replay controls scroll within the upper part of the window, leaving the displayed game visible even after a failure.
 Use vertical scrolling for later controls and error details; narrow windows also provide horizontal scrolling.
+Wheel scrolling over the timeline scrolls the controls without seeking or clearing playback failures. Click or drag the timeline to seek.
 Keyboard focus brings offscreen controls into view.
 
 ![Short replay window keeps failure details and the failed game visible](images/replay-layout-after.png)
