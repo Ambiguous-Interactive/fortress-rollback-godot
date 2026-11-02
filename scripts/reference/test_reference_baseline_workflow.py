@@ -11,7 +11,8 @@ SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_p
                  'scripts/reference/signalfish_probe.py', 'scripts/reference/test_godot_runner.py',
                  'scripts/run_godot_tests.py']
 ORACLES_CHECKS = ['scripts/oracle/queue_launch.py', 'scripts/oracle/launch.py', 'scripts/oracle/replay_launch.py',
-                  'scripts/oracle/handshake_launch.py', 'scripts/oracle/p2p_launch.py']
+                  'scripts/oracle/handshake_launch.py', 'scripts/oracle/p2p_launch.py',
+                  'scripts/oracle/drop_history_launch.py', 'scripts/oracle/spectator_launch.py']
 
 
 def job_blocks(text):
@@ -81,6 +82,15 @@ def leg_commands(text, part):
 
 
 class ReferenceBaselineWorkflowTests(unittest.TestCase):
+    # Value: protects=native-only oracle jobs avoid unused browser setup; fails_when=setup runs on both legs; seam=workflow text
+    def test_browser_dependencies_are_only_installed_for_web_work(self):
+        steps = godot_steps(WORKFLOW.read_text(encoding='utf-8'))
+        setup = [step for step in steps if step['attributes'].get('uses', '').startswith('actions/setup-node')
+                 or 'playwright install-deps' in command(step)]
+        self.assertEqual(len(setup), 2)
+        for step in setup:
+            self.assertEqual(step['attributes'].get('if'), "matrix.part == 'suites'")
+
     # Value: protects=one exported web probe per pinned engine; fails_when=both legs run it; seam=workflow text
     def test_the_exported_web_probes_run_once_per_pinned_engine(self):
         text = WORKFLOW.read_text(encoding='utf-8')

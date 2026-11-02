@@ -190,6 +190,7 @@ jobs:
         with:
           python-version: "3.15.2"
       - uses: actions/setup-node@v7.1.0
+        if: matrix.part == 'suites'
         with:
           node-version: "26.12.1"
       - name: Select Ubuntu HTTPS mirror alternatives
@@ -222,6 +223,7 @@ jobs:
             .cache/reference/cargo/registry/index
           key: reference-godot-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
       - name: Install pinned browser runner and operating system dependencies
+        if: matrix.part == 'suites'
         run: |
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
