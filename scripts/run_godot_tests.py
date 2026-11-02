@@ -672,11 +672,13 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
     version_probe = None
     try:
         # Wait before starting engine children; a competing owner must retain responsive capacity.
+        host_deadline = time.monotonic() + args.host_wait
         contended = not host_capacity.acquire(LEASE_NAME)
         if contended:
             print(json.dumps({"host_capacity_lease": host_capacity.holder(), "waiting_seconds": args.host_wait,
                               "requested_jobs": args.jobs}), file=sys.stderr)
-            if not host_capacity.acquire_when_free(LEASE_NAME, args.host_wait):
+            remaining = host_deadline - time.monotonic()
+            if remaining <= 0 or not host_capacity.acquire_when_free(LEASE_NAME, remaining) or time.monotonic() >= host_deadline:
                 raise ValueError("host_capacity_timeout")
         version_probe = capture([str(executable), "--version"], args.timeout, merge_output=False)
         if "failure" in version_probe:

@@ -137,6 +137,47 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
         output, error = process.communicate(timeout=10)
         self.assertEqual(process.returncode, 0, (output, error))
 
+    # Value: contention diagnostics consume the original wait budget instead of starting a fresh wait afterward.
+    def test_contention_diagnostics_cannot_restart_the_wait_budget(self):
+        self.engine.write_text(self.engine.read_text().replace("if '--version' in sys.argv:",
+            "(root / 'any-engine-started').touch()\nif '--version' in sys.argv:"))
+        (self.root / 'finish').touch()
+        cases = [(0, 0, 0, False, [0]), (.1, .2, 0, False, [0]), (1, .2, 0, True, [0, .2]), (.1, 0, .2, False, [0, 0])]
+        for budget, diagnostic_elapsed, acquisition_elapsed, success, expected_attempts in cases:
+            with self.subTest(budget=budget, diagnostic_elapsed=diagnostic_elapsed, acquisition_elapsed=acquisition_elapsed):
+                (self.root / 'durations.json').write_text(json.dumps({'res://first.gd': 40, 'res://second.gd': 40}))
+                marker = self.root / 'any-engine-started'
+                marker.unlink(missing_ok=True)
+                script = (f"import sys, time, json; from types import SimpleNamespace; sys.path.insert(0, {str(self.checkout / 'scripts')!r}); "
+                          "import run_godot_tests as runner\n"
+                          "clock, attempts = [0.0], []\n"
+                          "runner.time = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep)\n"
+                          "def acquire(name):\n"
+                          "    attempts.append(clock[0])\n"
+                          f"    if len(attempts) > 1: clock[0] += {acquisition_elapsed!r}\n"
+                          "    return len(attempts) > 1\n"
+                          "def holder():\n"
+                          f"    clock[0] += {diagnostic_elapsed!r}\n"
+                          "    return 'previous-owner'\n"
+                          "runner.host_capacity.acquire = acquire\n"
+                          "runner.host_capacity.holder = holder\n"
+                          f"status = runner.main(['--godot', {str(self.engine)!r}, '--suite', 'res://first.gd', "
+                          f"'--host-wait', {str(budget)!r}, '--durations', {str(self.root / 'durations.json')!r}, '--results', {str(self.root / 'result.json')!r}])\n"
+                          "print(json.dumps(dict(attempts=attempts)))\n"
+                          "raise SystemExit(status)")
+                process = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           env=dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(host_capacity.LEASE_DIR)), text=True)
+                self.children.append(process)
+                output, error = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0 if success else 1, (output, error))
+                self.assertEqual(marker.exists(), success, 'expired caller budget cannot start any engine phase')
+                attempts = json.loads(output.splitlines()[-1])['attempts']
+                self.assertEqual(attempts, expected_attempts, 'only live budgets permit a second acquisition')
+                report = json.loads((self.root / 'result.json').read_text())
+                self.assertEqual(report['passed'], success)
+                if not success:
+                    self.assertEqual(report['failure'], 'host_capacity_timeout')
+
     def test_wait_timeout_fails_receipt_without_starting_engine(self):
         self.assertTrue(host_capacity.acquire('browser-before'))
         process = self.start('.1')
