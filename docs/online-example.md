@@ -230,7 +230,8 @@ When a recording includes a validated final-state checksum, its ending is also
 retained within the checkpoint budget. **Next checkpoint** can return to that
 ending after backward inspection, even between five-second boundaries.
 These controls become available as playback builds its cache. They finish paused and cannot skip a playback failure.
-Drag the timeline to choose a recorded moment, then release to navigate and pause.
+Drag the timeline to preview an exact frame and recorded time, then release to navigate and pause.
+The selected destination appears above the current playback status; the game stays at its actual frame until release.
 Press **Download prefix** to save original inputs before the displayed frame as `fortress-replay-prefix-SOURCE-FRAME.frrp`.
 The source fingerprint distinguishes prefixes from different recordings.
 Native runs save under `user://`; browsers download the file. Reopening it reproduces that recorded prefix.
@@ -251,7 +252,7 @@ Enter a frame number and press **Go** for an exact forward or backward destinati
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**
 pauses at the last validated boundary. Navigation finishes paused at the requested frame.
-![Replay timeline and recorded time](images/replay-timeline.png)
+![Replay timeline selection previews a destination while the game remains at its displayed frame](images/replay-timeline.png)
 
 Pausing at a seek destination validates that state through the same bounded snapshot callback as playback.
 The recording row identifies the game and recorded engine. Hover over it for full engine, addon,

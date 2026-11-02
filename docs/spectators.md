@@ -82,11 +82,16 @@ including initial prediction and viewer backpressure.
 
 ## Save the viewed history
 
-Press V to save `fortress-spectator.frrp`: browsers download the file; native builds
+Click **Save viewed replay** or press V to save `fortress-spectator.frrp`: browsers download the file; native builds
 save it under `user://` and show the full path. The example records the first ten
 minutes of viewed input, including finalized player statuses. It does not record
 host frames the viewer has not played. Saving leaves host gameplay and viewing
 controls unchanged.
+
+Saving is unavailable during active game work. A stopped viewer can still save
+its retained recording; a failed viewer with no recorded input or state cannot.
+
+![Pointer control saves the viewed recording](images/spectator-save-controls.png)
 
 The label shows recorded viewed frames and the recording limit. It warns during
 the last 600 available frames. At the limit, save before viewing more frames to

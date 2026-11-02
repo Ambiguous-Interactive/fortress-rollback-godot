@@ -27,8 +27,16 @@ func _init(player: int, ledger: Effects = null) -> void:
 	effects = ledger if ledger != null else Effects.new()
 
 
-## Returns OK when ready. Any other code is a configuration error.
-func start() -> int:
+## Starts a fresh match and retires the previous session and driver.
+## First start keeps caller-assigned game/effects; later starts use fresh defaults unless replacements are supplied.
+## Replacements must be at frame zero with an unused effects ledger. Rejection preserves the current match.
+func start(next_game: Game = null, next_effects: Effects = null) -> int:
+	if session._mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	var candidate_game: Game = next_game if next_game != null else (game if driver == null else Game.new())
+	var candidate_effects: Effects = next_effects if next_effects != null else (effects if driver == null else Effects.new())
+	if candidate_game == null or candidate_effects == null or candidate_game.frame != 0 or candidate_effects.last_played_id != 0:
+		return Types.Code.INVALID_CONFIGURATION
 	var config: Config = Config.new()
 	config.sync_test = false
 	config.local_players = PackedInt32Array([local_player])
@@ -38,10 +46,22 @@ func start() -> int:
 	config.max_snapshot_bytes = Game.SNAPSHOT_BYTES
 	config.storage_budget_bytes = config.required_storage_bytes()
 	config.replay_max_frames = REPLAY_FRAMES
-	var code: int = session.configure(config)
-	if code == Types.Code.OK:
-		driver = Driver.new(session, game)
-	return code
+	var candidate_session: Session = Session.new()
+	var code: int = candidate_session.configure(config)
+	if code != Types.Code.OK:
+		return code
+	var candidate_driver: Driver = Driver.new()
+	code = candidate_driver.configure(candidate_session, candidate_game)
+	if code != Types.Code.OK:
+		return code
+	session.terminate()
+	session = candidate_session
+	driver = candidate_driver
+	game = candidate_game
+	effects = candidate_effects
+	_sample_frame = -1
+	_sample = PackedByteArray()
+	return Types.Code.OK
 
 
 ## Checks ownership, sample compatibility and time before any controller sample is retained.

@@ -21,6 +21,7 @@ var _policy_controls: HBoxContainer
 var _host_controls: HBoxContainer
 var _end_host_button: Button
 var _restart_button: Button
+var _save_replay_button: Button
 
 
 func _ready() -> void:
@@ -81,6 +82,12 @@ func _ready() -> void:
 	_restart_button.focus_mode = Control.FOCUS_NONE
 	_restart_button.pressed.connect(_restart)
 	_host_controls.add_child(_restart_button)
+	_save_replay_button = Button.new()
+	_save_replay_button.name = "SaveViewedReplay"
+	_save_replay_button.text = "Save viewed replay (V)"
+	_save_replay_button.focus_mode = Control.FOCUS_NONE
+	_save_replay_button.pressed.connect(_save_replay)
+	_host_controls.add_child(_save_replay_button)
 	_code = demo.start()
 	_update_label()
 
@@ -127,7 +134,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_E:
 		_finish_host()
 	elif event.keycode == KEY_V:
-		_export_replay()
+		_save_replay()
 	elif event.keycode == KEY_R:
 		_restart()
 	_update_label()
@@ -165,6 +172,25 @@ func _follow_live() -> void:
 	_update_label()
 
 
+func _save_replay() -> void:
+	if not _can_export_replay():
+		return
+	_export_replay()
+	_update_label()
+
+
+func _can_export_replay() -> bool:
+	if demo.viewer == null or demo._mutation_code() == Types.Code.BUSY:
+		return false
+	var recording: Types.RecordingStatus = demo.viewer.recording_status()
+	if recording.capacity_frames == 0:
+		return false
+	if recording.finalized_frames > 0 or demo.viewer.status().lifecycle != Types.Lifecycle.TERMINATED:
+		return true
+	var retained: RefCounted = demo.driver.replay()
+	return retained != null and not retained.checksum(0).is_empty()
+
+
 func _adjust_policy(action: int) -> void:
 	if demo.viewer == null:
 		return
@@ -187,6 +213,7 @@ func _process(_delta: float) -> void:
 
 func _update_label() -> void:
 	_restart_button.disabled = demo._mutation_code() == Types.Code.BUSY
+	_save_replay_button.disabled = not _can_export_replay()
 	_end_host_button.disabled = (_restart_button.disabled or demo.host == null or demo.is_finishing or demo.host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED)
 	_follow_live_button.disabled = demo.viewer == null or demo._mutation_code() == Types.Code.BUSY or demo.viewer._mutation_code() != Types.Code.OK
 	_pause_button.disabled = _follow_live_button.disabled
