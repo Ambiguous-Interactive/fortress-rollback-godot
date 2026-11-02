@@ -57,9 +57,10 @@ Exercise original provenance metadata as well as newly generated fixtures; regen
 Verify that matrix selectors reach the actual command arguments; a declared partition alone can silently repeat the full workload.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
-Shared-host runs keep one worker and known slow-case isolation; serialization must
-not merge individually bounded cases into an over-budget process. Determine lease
-ownership from successful lock acquisition, never from matching owner names.
+Native runs wait within their host-capacity budget before starting engine children,
+then retain requested parallelism and known slow-case isolation under the lease.
+Timeouts must fail explicitly without starting children. Determine lease ownership
+from successful lock acquisition, never from matching owner names.
 Host-wide locks must coordinate independent checkout roots by default. Exercise real
 cross-root contenders and keep the lock inode through pruning, even when idle;
 unlinking an idle lock can race with acquisition. Validate shared directory ownership
@@ -118,6 +119,7 @@ native initialization and an independently deferred witness do not exercise that
 suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
 selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
 Direct launcher calls default to 30 seconds; pass `--timeout 180` when selecting long stress or full-duration replay cases, as the full Makefile target does.
+Scope tool installation to the matrix legs that actually invoke it; preserve every verification command when removing unused setup.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
 Concurrent native launchers must use distinct `--results` paths: a focused review
