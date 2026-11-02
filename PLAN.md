@@ -33,6 +33,7 @@ Local development contracts and evidence entry points:
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
 - [Native replay file drops, replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
+- [Actual received browser prefix files, production-picker reimport and remaining supervision qualification](docs/experiments/buffer-ownership.md#received-browser-replay-downloads).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Online delay shortcuts and action prompts gated by live gameplay](docs/online-example.md#install-and-run).
 - [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
@@ -113,7 +114,7 @@ It can export original input history before the displayed frame, retaining exist
 It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
-Pointer controls share its keyboard pause, single-frame and bounded one-time catch-up actions.
+Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending and fresh match restart actions.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 The local peer example prepares replacement sessions before retiring the old match and preserves active shared game operations during reset.
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
@@ -125,6 +126,7 @@ Callback Leave retires outstanding game work and fences canceled startup before 
 Standalone driver parity covers independently raised local-slot delays with retained samples through rollback and queue reuse.
 Byte-peer driver/expert comparison also requires interruption, resumed correction, retained-input continuation and renewed timeout events independently of shared outcomes.
 Replay viewer controls preserve active callback/manual-request ownership and retire replaced players.
+Their enabled state, file chooser and failure downloads also respect active game ownership and timeline holds.
 Owning example scenes retire match and playback lifetimes on exit, including retained request views.
 Example integer button inputs are validated before byte conversion or controller-clock changes.
 Scene physics loops retry temporary ownership holds without replacing their current match.
@@ -147,6 +149,10 @@ through default queue reuse with independent canonical histories;
 A separate two-endpoint browser witness records 257 original frames through repeated injected direct/relay send-buffer refusal.
 Both engine pins verify exact retained retries, post-wrap canonical history and recovery-only decoded recordings, including the final checksum.
 Physical congestion, the complete asymmetric browser schedule and unchanged-source recovery-only export remain open in #256.
+The retained-history source comparison also exercises donor recovery after two queue capacities of original gameplay,
+with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
+Native development receipts execute a bounded private authored-source image and record its hashes and starting Git identity;
+Python helper identity and descendant supervision remain separate evidence gaps in #298.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.

@@ -242,6 +242,9 @@ At frame zero, export requires an original v6 checksum that makes the empty pref
 
 ![Replay prefix download at the displayed frame](images/replay-prefix.png)
 
+The [received-file browser gate](experiments/buffer-ownership.md#received-browser-replay-downloads)
+checks actual prefix downloads and reopens their received bytes through this viewer.
+
 The time display shows elapsed and total recorded minutes and seconds at 60 frames per second.
 The timeline follows playback; dragging pauses it. You can select a new destination during a seek.
 Enter a frame number and press **Go** for an exact forward or backward destination. Navigation
@@ -269,7 +272,8 @@ Advancing an input does not check its resulting state until you pause, step or f
 Input digests and cached snapshots do not count as recorded state checksums.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
-Playback controls refuse changes while a game callback or manual replay request is active.
+Playback controls, file selection and downloads disable while a game callback or manual replay request is active.
+They become available again after the game releases its request; leaving the viewer remains available.
 Restarting or opening another recording terminates the previous player, including retained handles.
 Leaving either replay or diagnostic viewer also terminates its player and expires pending request views.
 An earlier playback failure remains available; cancellation does not replace its cause.

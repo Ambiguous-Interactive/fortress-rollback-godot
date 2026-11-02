@@ -344,6 +344,22 @@ while survivor one reaches twenty-two, preserving the same twenty original canon
 prefixes. Clean, lost-first-history, lost-first-COMMIT and combined-loss cases exercise this schedule.
 The source then explicitly removes the target. Godot detects its elapsed timeout.
 
+Two additional cases play 251 warmup frames before that six-frame setup. Both
+128-row queues have processed 257 original frames before the unequal suffix begins.
+The departing target's original frame-zero tag is physically overwritten in Godot;
+the source's public confirmed-row API also rejects that expired row before removal.
+Neither test alters inventory bytes or private counters to create that condition.
+Clean and combined INVENTORY/history/COMMIT/ACK-loss runs then recover original
+rows 259–262, commit cut 262 for both targets, and compare twenty canonical
+boundaries beginning at 251. The independent game computes every preceding input
+from frame zero, preserving accumulated state and absolute frames rather than
+normalizing the wrapped trace into the short scenario. Exact source/Godot retained
+starts, original encoded ranges, retry identities and statuses remain checked.
+Mutation controls reject skipped warmup and fabricated eviction evidence, as well
+as changed post-wrap rows, canonical bytes and donor packets. The global floor
+still protects the required donor suffix; these cases do not establish physical
+no-donor eviction, actual browser missing-history recovery or complete barrier parity.
+
 Each implementation must transfer every original missing row from donor one to
 coordinator zero, commit cut eight or eleven, and continue to frame twenty-two. The loss
 scenario discards the first actual historical backfill packet before socket delivery.

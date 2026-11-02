@@ -138,7 +138,7 @@ fn settle(sessions: &mut [P2PSession<Profile>], buffers: &[Arc<Mutex<Buffers>>],
     }
     Err("unbounded settlement".into())
 }
-fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool) -> Result<Value, String> {
+fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit_loss: bool, ack_loss: bool, inventory_loss: bool, warmup: i32) -> Result<Value, String> {
     let clock = Arc::new(Mutex::new(0_u64));
     let origin = web_time::Instant::now();
     let order = Arc::new(Mutex::new(0_usize));
@@ -171,15 +171,15 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         if format!("{:?}", session.current_state()) != "Running" { return Err("bootstrap".into()); }
         session.events().for_each(drop);
     }
-    for _ in 0..6 {
+    for _ in 0..(6 + warmup) {
         *clock.lock().unwrap() += 1000;
         for player in 0..3 { advance(&mut sessions[player], &mut games[player], player, &mut histories[player])?; }
         settle(&mut sessions, &buffers, false, false, &mut control, &mut fault)?;
     }
-    for frame in 6..(8 + missing_rows) {
+    for frame in (6 + warmup)..(8 + missing_rows + warmup) {
         *clock.lock().unwrap() += 1000;
         advance(&mut sessions[2], &mut games[2], 2, &mut histories[2])?;
-        settle(&mut sessions, &buffers, frame >= 8, false, &mut control, &mut fault)?;
+        settle(&mut sessions, &buffers, frame >= 8 + warmup, false, &mut control, &mut fault)?;
     }
     if unequal {
         *clock.lock().unwrap() += 1000;
@@ -193,6 +193,8 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         }).collect::<Vec<_>>();
         json!({"confirmed":sessions[peer].confirmed_frame().as_i32(),"targets":ranges})
     }).collect::<Vec<_>>();
+    let expired_original_rows = (0..2).map(|peer|
+        sessions[peer].confirmed_inputs_for_frame(Frame::new(0)).is_err()).collect::<Vec<_>>();
     for session in sessions.iter_mut().take(2) { session.remove_player(PlayerHandle::new(2 * target_slots)).map_err(|error| format!("{error:?}"))?; }
     for _ in 0..160 {
         *clock.lock().unwrap() += 1000;
@@ -214,7 +216,7 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
     let mut survivors = Vec::new();
     for peer in 0..2 {
         let mut rows = Vec::new();
-        for frame in 0..20 {
+        for frame in warmup..(warmup + 20) {
             let inputs = sessions[peer].confirmed_inputs_for_frame(Frame::new(frame)).map_err(|error| format!("confirmed row {peer}/{frame}: {error:?}"))?;
             rows.push(json!({"frame":frame,"inputs":inputs.iter().map(|bytes|hex(bytes)).collect::<Vec<_>>(),
                 "state":histories[peer].get(&frame).ok_or("missing corrected state")?}));
@@ -222,10 +224,15 @@ fn run(loss: bool, missing_rows: i32, target_slots: usize, unequal: bool, commit
         survivors.push(json!({"peer":peer,"current_frame":sessions[peer].current_frame().as_i32(),
             "confirmed_frame":sessions[peer].confirmed_frame().as_i32(),"rows":rows}));
     }
-    Ok(json!({"format":6,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
+    let mut result = json!({"format":6,"complete":true,"upstream_revision":"d124c89080004d96971a629bb0427056ee1805e3",
         "missing_rows":missing_rows,"target_slots":target_slots,"before":before,"dropped":dropped,
         "lost_inventory":fault.dropped_inventory,"lost_history":fault.dropped,"lost_commit":fault.dropped_commit,"lost_ack":fault.dropped_ack,
-        "controls":control,"received_controls":received_controls,"survivors":survivors}))
+        "controls":control,"received_controls":received_controls,"survivors":survivors});
+    if warmup > 0 {
+        result["warmup"] = json!(warmup);
+        result["expired_original_rows"] = json!(expired_original_rows);
+    }
+    Ok(result)
 }
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -235,12 +242,13 @@ fn main() {
     let commit_loss = arguments.contains(&"--drop-first-commit".into());
     let inventory_loss = arguments.contains(&"--drop-first-inventory".into());
     let ack_loss = arguments.contains(&"--drop-first-ack".into());
+    let wrapped = arguments.contains(&"--wrapped-history".into());
     let unequal = arguments.contains(&"--unequal-exposure".into());
     if arguments.len() != usize::from(inventory_loss) + usize::from(ack_loss) + usize::from(commit_loss) + usize::from(unequal)
-        + usize::from(loss) + usize::from(multi) + usize::from(grouped) {
+        + usize::from(loss) + usize::from(multi) + usize::from(grouped) + usize::from(wrapped) {
         eprintln!("drop history: unexpected argument"); std::process::exit(2);
     }
-    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss) {
+    match run(loss, if multi { 4 } else { 1 }, if grouped { 2 } else { 1 }, unequal, commit_loss, ack_loss, inventory_loss, if wrapped { 251 } else { 0 }) {
         Ok(result) => println!("{result}"),
         Err(error) => { eprintln!("drop history: {error}"); std::process::exit(2); }
     }

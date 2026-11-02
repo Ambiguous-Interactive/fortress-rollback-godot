@@ -56,6 +56,7 @@ var viewer: Viewer = Viewer.new()
 var _panel: VBoxContainer
 var _status: Label
 var _recording_metadata: Label
+var _open_button: Button
 var _play: Button
 var _step_button: Button
 var _validate_button: Button
@@ -111,7 +112,7 @@ func _ready() -> void:
 	panel.add_child(shortcuts)
 	var buttons: HBoxContainer = HBoxContainer.new()
 	panel.add_child(buttons)
-	_button(buttons, "Open replay", _open)
+	_open_button = _button(buttons, "Open replay", _open)
 	_play = _button(buttons, "Play", _toggle)
 	_step_button = _button(buttons, "Step", _step)
 	_restart_button = _button(buttons, "Restart", _restart)
@@ -196,6 +197,8 @@ func _button(parent: Node, caption: String, callback: Callable) -> Button:
 
 
 func _open() -> void:
+	if _is_scrubbing or viewer._is_busy():
+		return
 	if OS.has_feature("web"):
 		_web_import.choose(_web_callback)
 	else:
@@ -401,6 +404,7 @@ func _physics_process(_delta: float) -> void:
 
 
 func _refresh() -> void:
+	var held: bool = _is_scrubbing or viewer._is_busy()
 	_recording_metadata.text = viewer.recording_summary()
 	_recording_metadata.tooltip_text = viewer.recording_details()
 	if viewer.current_frame() != _prefix_frame or viewer.game != _prefix_game:
@@ -418,15 +422,16 @@ func _refresh() -> void:
 		_status.text += "\n" + _failure_notice
 	if not _prefix_notice.is_empty():
 		_status.text += "\n" + _prefix_notice
-	_failure_download.disabled = not viewer.has_failure()
+	_open_button.disabled = held
+	_failure_download.disabled = held or not viewer.has_failure()
 	_prefix_download.disabled = _is_scrubbing or not viewer.can_export_prefix()
 	_play.text = "Pause" if viewer.is_playing else "Play"
-	_play.disabled = _is_scrubbing or viewer.is_seeking() or not viewer.can_step()
+	_play.disabled = held or viewer.is_seeking() or not viewer.can_step()
 	_step_button.disabled = _play.disabled
 	_validate_button.disabled = _is_scrubbing or not viewer.can_validate_state()
-	_back_button.disabled = _is_scrubbing or viewer.is_seeking() or viewer.current_frame() == 0
-	_restart_button.disabled = _is_scrubbing or (viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0)
-	_speed.disabled = _is_scrubbing
+	_back_button.disabled = held or viewer.is_seeking() or viewer.current_frame() == 0
+	_restart_button.disabled = held or (viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0)
+	_speed.disabled = held
 	_timeline.set_block_signals(true)
 	_timeline.max_value = viewer.frame_count()
 	if not _is_scrubbing:
@@ -435,15 +440,15 @@ func _refresh() -> void:
 	_timeline.editable = _is_scrubbing or (viewer.frame_count() > 0 and not viewer._is_busy())
 	_timeline_label.text = "%s / %s" % [_time_label(viewer.current_frame()), _time_label(viewer.frame_count())]
 	_target.max_value = viewer.frame_count()
-	_target.editable = not _is_scrubbing and viewer.frame_count() > 0
-	_seek_button.disabled = _is_scrubbing or viewer.frame_count() == 0
-	_cancel_button.disabled = _is_scrubbing or not viewer.is_seeking()
-	_previous_checkpoint.disabled = _is_scrubbing or viewer.checkpoint_target(false) < 0
-	_next_checkpoint.disabled = _is_scrubbing or viewer.checkpoint_target(true) < 0
-	_previous_input_change.disabled = _is_scrubbing or viewer.input_change_target(false) < 0
-	_next_input_change.disabled = _is_scrubbing or viewer.input_change_target(true) < 0
-	_previous_recorded_checksum.disabled = _is_scrubbing or viewer.recorded_checksum_target(false) < 0
-	_next_recorded_checksum.disabled = _is_scrubbing or viewer.recorded_checksum_target(true) < 0
+	_target.editable = not held and viewer.frame_count() > 0
+	_seek_button.disabled = held or viewer.frame_count() == 0
+	_cancel_button.disabled = held or not viewer.is_seeking()
+	_previous_checkpoint.disabled = held or viewer.checkpoint_target(false) < 0
+	_next_checkpoint.disabled = held or viewer.checkpoint_target(true) < 0
+	_previous_input_change.disabled = held or viewer.input_change_target(false) < 0
+	_next_input_change.disabled = held or viewer.input_change_target(true) < 0
+	_previous_recorded_checksum.disabled = held or viewer.recorded_checksum_target(false) < 0
+	_next_recorded_checksum.disabled = held or viewer.recorded_checksum_target(true) < 0
 	queue_redraw()
 
 
@@ -476,6 +481,8 @@ func _draw_integration_game(game: IntegrationGame) -> void:
 
 
 func _download_failure() -> void:
+	if _is_scrubbing or viewer._is_busy():
+		return
 	var bytes: PackedByteArray = viewer.failure_report_bytes()
 	if bytes.is_empty():
 		return

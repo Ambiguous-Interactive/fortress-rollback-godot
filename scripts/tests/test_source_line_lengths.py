@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 CHECKER = Path(__file__).resolve().parents[1] / 'check_source_line_lengths.py'
+sys.path.insert(0, str(CHECKER.parent))
+from git_test_environment import fixture_environment
 
 
 class SourceLineLengthsTest(unittest.TestCase):
@@ -15,18 +17,19 @@ class SourceLineLengthsTest(unittest.TestCase):
     def test_source_boundary_and_data_exclusion(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            environment = fixture_environment()
+            subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment, timeout=30)
             source = root / 'sample.py'
             source.write_text('#' * 180 + '\n', encoding='utf-8')
             data = root / 'docs/reference/parity-ledger.json'
             data.parent.mkdir(parents=True)
             data.write_text('"' + 'x' * 200 + '"\n', encoding='utf-8')
-            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(root), 'add', '.'], check=True, env=environment, timeout=30)
             command = [sys.executable, str(CHECKER), '--root', str(root)]
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             source.write_text('#' * 181 + '\n', encoding='utf-8')
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True, env=environment, timeout=30)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('sample.py:1: 181 columns exceeds 180', result.stdout)
 
@@ -34,11 +37,12 @@ class SourceLineLengthsTest(unittest.TestCase):
     def test_untracked_source_and_extensionless_shell(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            subprocess.run(['git', 'init', '-q', str(root)], check=True)
+            environment = fixture_environment()
+            subprocess.run(['git', 'init', '-q', str(root)], check=True, env=environment, timeout=30)
             hook = root / '.githooks/pre-push'
             hook.parent.mkdir()
             hook.write_text('#!/bin/sh\n#' + 'x' * 180 + '\n', encoding='utf-8')
-            result = subprocess.run([sys.executable, str(CHECKER), '--root', str(root)], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, str(CHECKER), '--root', str(root)], capture_output=True, text=True, env=environment, timeout=30)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn('.githooks/pre-push:2: 181 columns exceeds 180', result.stdout)
 

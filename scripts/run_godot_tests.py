@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from engine_path import resolve_engine  # noqa: E402
 import host_capacity  # noqa: E402
+from native_source_snapshot import SourceSnapshot  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREFIX = "FORTRESS_TEST_RESULT "
@@ -369,10 +370,10 @@ def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
             and all(isinstance(name, str) and name for name in names) and len(set(names)) == len(names)}
 
 
-def discover(category: str) -> list[str]:
+def discover(category: str, root: Path = ROOT) -> list[str]:
     """Mirror run_tests.gd discovery: sorted test_*.gd under the category, plus the unit self-suite."""
-    paths = ["res://" + path.relative_to(ROOT).as_posix()
-             for path in (ROOT / "tests" / category).rglob("test_*.gd")]
+    paths = ["res://" + path.relative_to(root).as_posix()
+             for path in (root / "tests" / category).rglob("test_*.gd")]
     if category == "unit":
         paths.append("res://tests/runner/self_suite.gd")
     return sorted(paths)
@@ -491,7 +492,20 @@ def main(argv: list[str] | None = None) -> int:
     args.results.write_text(json.dumps({"format": 1, "passed": False,
                                        "failure": "in_progress"}) + "\n", encoding="utf-8")
     executable = resolve_engine(args.godot)
-    command = [str(executable), "--headless", "--path", str(ROOT), "--script",
+    try:
+        with SourceSnapshot(ROOT) as snapshot:
+            return execute(args, executable, snapshot)
+    except (OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
+        args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": str(exc)}) + "\n", encoding="utf-8")
+        print(json.dumps({"passed": False, "results": str(args.results)}))
+        return 1
+    finally:
+        host_capacity.release()
+
+
+def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot) -> int:
+    engine_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    command = [str(executable), "--headless", "--path", str(snapshot.path), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
                "--seed", str(args.seed)]
     if args.filter:
@@ -500,13 +514,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.changed:
         from changed_suites import changed_files, previous_class_names, select
         changed = changed_files(args.changed)
-        args.suite = select(discover(args.category), changed, old_names=previous_class_names(args.changed, changed))
+        args.suite = select(discover(args.category, snapshot.path), changed, root=snapshot.path, old_names=previous_class_names(args.changed, changed))
         print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
         if not args.suite:
             args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
             print(json.dumps({"passed": None, "results": str(args.results), "note": "no suite loads a changed file"}))
             return 0
-    suites = sorted(args.suite) or discover(args.category)
+    suites = sorted(args.suite) or discover(args.category, snapshot.path)
     durations = load_durations(args.durations)
     # Take the development host for this run. Another owner means a browser witness needs a
     # responsive host, so this run executes one process at a time while retaining
@@ -579,14 +593,10 @@ def main(argv: list[str] | None = None) -> int:
             failed = True
             runs[1]["failure"] = "fresh_process_divergence"
             runs[1]["divergence"] = first_divergence(runs[0].get("result"), runs[1].get("result"))
-        commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT,
-                                capture_output=True, text=True, check=True).stdout.strip()
-        manifest = ROOT / "docs/reference/pins.json"
-        report = {"format": 1, "passed": not failed, "commit": commit,
-                  "working_tree_dirty": bool(subprocess.run(
-                      ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True,
-                      text=True, check=True).stdout),
-                  "engine": version, "engine_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+        manifest = snapshot.path / "docs/reference/pins.json"
+        report = {"format": 1, "passed": not failed, "commit": snapshot.commit,
+                  "working_tree_dirty": snapshot.dirty,
+                  "engine": version, "engine_sha256": engine_sha256,
                   "pin_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest() if manifest.exists() else None,
                   "platform": platform.platform(), "machine": platform.machine(),
                   "cwd": str(ROOT), "seed": str(args.seed), "runs": runs}
@@ -596,6 +606,15 @@ def main(argv: list[str] | None = None) -> int:
             report["version_probe"] = version_probe
         if isinstance(exc, subprocess.TimeoutExpired):
             report.update(stdout=_decode(exc.stdout), stderr=_decode(exc.stderr))
+    report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence())
+    try:
+        if hashlib.sha256(executable.read_bytes()).hexdigest() != engine_sha256:
+            raise ValueError("engine_changed")
+        snapshot.verify_image()
+        if snapshot.changed():
+            raise ValueError("source_changed")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        report.update(passed=False, failure=str(exc))
     args.results.parent.mkdir(parents=True, exist_ok=True)
     args.results.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"passed": report["passed"], "results": str(args.results)}))

@@ -53,6 +53,23 @@ engine's stdout and stderr into one stream and keeps that stream in `stdout`,
 because the order of the progress records and the script errors is the evidence
 that names the case that was executing; `stderr` stays empty.
 
+Native runs execute a private source snapshot under `.cache/scratch/native-*`,
+then remove it after publishing the receipt. The snapshot contains Git-tracked
+and nonignored untracked files, including stable uncommitted work. It excludes
+machine-local caches, Git history, progress logs and dependency build trees.
+Capture rejects symlinks, nonregular files, more than 8,192 files or 64 MiB.
+The receipt's `source_snapshot.files` records each copied path, byte count,
+SHA-256 and mode; `source_snapshot.sha256` hashes that ordered inventory.
+Commit and dirty state describe the start of capture. Discovery and game
+execution use the copied project, including selected suites and fixtures.
+
+Qualification rejects a changed original inventory, intervening commit, changed
+snapshot or changed engine. An original file edited and restored during a run
+cannot affect the private executed image. These checks preserve fresh-process
+equality and changed-suite selection; they do not establish hostile-process
+containment or the identity of already imported Python bytecode. Those remaining
+tooling boundaries stay tracked in [#298](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/298).
+
 CI and `make test-godot` use `--timeout 180` for the complete unit category.
 This bounds each engine subprocess, including both in-process case repetitions.
 The previous 120-second local budget expired on the eight-peer driver parity case

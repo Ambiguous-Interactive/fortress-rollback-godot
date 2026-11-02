@@ -10,7 +10,7 @@ def follower_inventory(packet, target_slots):
     return packet['from'] == 1 and packet['to'] == 0 and report.get('stage') == 'Inventory' and same(report.get('participant'), target_slots)
 
 
-def check_godot_inventory(packet, missing_rows, target_slots, unequal):
+def check_godot_inventory(packet, missing_rows, target_slots, unequal, warmup=0):
     fields(packet, 'from to packet emission order', 'Godot inventory')
     integer(packet['order'], 1, 8192, 'Godot inventory order')
     require(same(packet['from'], 1) and same(packet['to'], 0), 'Godot inventory sender')
@@ -22,11 +22,11 @@ def check_godot_inventory(packet, missing_rows, target_slots, unequal):
     digest = 0x14650fb0739d0383
     for byte in targets:
         digest = ((digest ^ byte) * 1099511628211) & 0x3fffffffffffffff
-    receipts = bytes([1, target_slots]) + b''.join(struct.pack('<Bii', slot, 0, 7 + missing_rows)
+    receipts = bytes([1, target_slots]) + b''.join(struct.pack('<Bii', slot, max(0, warmup - 2), warmup + 7 + missing_rows)
                                                                 for slot in range(2 * target_slots, 3 * target_slots))
     expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2]) + bytes(7) + bytes([22]) + bytes(7)
                 + struct.pack('<I4BHHIQiiiQHHHI', 54 + len(targets) + len(receipts), 2, 1, 0, 0, 0, 21 << 8,
-                              era + 1, digest, 4 + int(unequal), 0, 7 + missing_rows, 0, 0, 64, 0, len(targets))
+                              era + 1, digest, warmup + 4 + int(unequal), max(0, warmup - 2), warmup + 7 + missing_rows, 0, 0, 64, 0, len(targets))
                 + targets + struct.pack('<I', len(receipts)) + receipts)
     require(bytes.fromhex(raw) == expected, 'Godot exact original inventory')
 
@@ -62,10 +62,10 @@ def check_godot_observation_order(godot):
 
 
 
-def check_inventory(source, godot, loss, missing_rows, target_slots, unequal):
+def check_inventory(source, godot, loss, missing_rows, target_slots, unequal, warmup=0):
     require(type(godot['inventory_emissions']) is list and 1 <= len(godot['inventory_emissions']) <= 4096, 'Godot inventory emissions')
     for packet in godot['inventory_emissions']:
-        check_godot_inventory(packet, missing_rows, target_slots, unequal)
+        check_godot_inventory(packet, missing_rows, target_slots, unequal, warmup)
     check_delivery(godot['inventory_emissions'], godot['lost_inventory'], godot['inventory_receipts'], 'Godot inventory', observed=True)
     if not loss:
         return

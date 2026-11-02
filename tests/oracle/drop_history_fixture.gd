@@ -19,6 +19,7 @@ var _lost_commit: Array[Dictionary] = []
 var _drop_first_commit: bool = false
 var _drop_first_history: bool = false
 var _corrupt_interior_history: bool = false
+var _warmup_frames: int = 0
 
 const Base = preload("res://tests/unit/test_peer_drop_backfill.gd")
 
@@ -65,8 +66,10 @@ func observe(
 	unequal: bool = false,
 	drop_first_commit: bool = false,
 	drop_first_ack: bool = false,
-	drop_first_inventory: bool = false
+	drop_first_inventory: bool = false,
+	warmup: int = 0
 ) -> Dictionary:
+	_warmup_frames = warmup
 	_drop_first_inventory = drop_first_inventory
 	_drop_first_ack = drop_first_ack
 	_drop_first_commit = drop_first_commit
@@ -85,7 +88,7 @@ func observe(
 		var game: ObservedGame = ObservedGame.new(3 * _slots)
 		context.equal(mesh.peers[peer]._driver.configure(mesh.peers[peer]._core, game), Types.Code.OK, "install actual request observer")
 		mesh.games[peer] = game
-	_play(context, mesh, 6, true)
+	_play(context, mesh, 6 + warmup, true)
 	_leave(context, mesh, 2)
 	if missing_rows == 4:
 		_leave(context, mesh, 2)
@@ -98,6 +101,10 @@ func observe(
 			var interval: PackedInt64Array = mesh.peers[peer]._core.retained_input_range(slot)
 			targets.append({"slot": slot, "first": interval[0], "last": interval[1]})
 		before.append({"confirmed": mesh.peers[peer].status().confirmed_frame, "targets": targets})
+	var expired_original_rows: Array[bool] = []
+	if warmup > 0:
+		for peer: int in range(2):
+			expired_original_rows.append(mesh.peers[peer]._core._queues[2 * _slots].confirmed_input(0).code == Queue.Code.NO_CONFIRMED_INPUT)
 	_detect(context, mesh, [0, 1], 800000, true, [], [], true)
 	var cuts: Array = []
 	for peer: int in range(2):
@@ -109,7 +116,7 @@ func observe(
 	var survivors: Array[Dictionary] = []
 	for peer: int in range(2):
 		var rows: Array[Dictionary] = []
-		for frame: int in range(20):
+		for frame: int in range(warmup, warmup + 20):
 			var row: Types.FrameInputs = mesh.peers[peer]._core.confirmed_inputs(frame)
 			var inputs: Array[String] = []
 			if status_control >= 0 and peer == 0 and frame == 0:
@@ -120,14 +127,14 @@ func observe(
 				if input.code != Types.Code.OK:
 					break
 				inputs.append(input.bytes.hex_encode())
-				var expected: int = Queue.Status.DISCONNECTED if player >= 2 * _slots and frame > 7 + missing_rows else Queue.Status.CONFIRMED
+				var expected: int = Queue.Status.DISCONNECTED if player >= 2 * _slots and frame > 7 + missing_rows + warmup else Queue.Status.CONFIRMED
 				context.equal(ObservedGame.status_name(input.status), ObservedGame.status_name(expected), "observed finalized export status")
 			rows.append(
 				{"frame": frame, "inputs": inputs, "state": {"frame": frame, "bytes": mesh.games[peer].states[frame].hex_encode(), "inputs": mesh.games[peer].applied[frame]}}
 			)
 		survivors.append({"peer": peer, "current_frame": mesh.peers[peer].status().current_frame, "confirmed_frame": mesh.peers[peer].status().confirmed_frame, "rows": rows})
 	context.equal(_observation.publications.is_empty(), true, "every accepted observed control reaches owned routing")
-	return {
+	var result: Dictionary = {
 		"format": 6,
 		"complete": true,
 		"missing_rows": missing_rows,
@@ -152,12 +159,17 @@ func observe(
 		"failures": context.failures
 	}
 
+	if warmup > 0:
+		result.warmup = warmup
+		result.expired_original_rows = expired_original_rows
+	return result
+
 
 func _deliver(context: RefCounted, mesh: Dictionary, packets: Array[Dictionary], terminated: bool = false) -> void:
 	for packet: Dictionary in packets:
 		var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
 		if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.INPUT and packet.from == 2 and packet.to == 0:
-			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7:
+			if decoded.message.start_frame + decoded.message.frame_count - 1 > 7 + _warmup_frames:
 				continue
 		var inventory_emission: Dictionary = {}
 		var history_emission: Dictionary = {}

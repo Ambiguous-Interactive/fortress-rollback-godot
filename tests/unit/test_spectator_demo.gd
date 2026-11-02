@@ -395,6 +395,7 @@ func _host_loss(context: RefCounted) -> void:
 # Value: protects=playable host-loss and restart controls; fails_when=L is unbound or held repeats;
 # why_new=API tests bypass keyboard dispatch; seam=none
 func _host_loss_control(context: RefCounted) -> void:
+	_pointer_host_controls(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	for tick: int in range(40):
@@ -418,6 +419,81 @@ func _host_loss_control(context: RefCounted) -> void:
 	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "R starts a fresh viewer")
 	context.equal(scene.demo.viewer_code, Types.Code.OK, "restart clears displayed failure")
 	scene.free()
+
+
+# Value: protects=pointer users can finish and restart with owned match retirement; fails_when=buttons bypass requests or retain prior playback;
+# why_new=restart and end controls require keyboard input; seam=scene controls
+func _pointer_host_controls(context: RefCounted) -> void:
+	for ending: String in ["clean", "loss"]:
+		var scene: Node2D = Scene.new()
+		scene._ready()
+		var end_button: Button = scene.get_node_or_null("HostControls/EndHost")
+		var restart_button: Button = scene.get_node_or_null("HostControls/RestartMatch")
+		context.equal(end_button != null and restart_button != null, true, "pointer users can finish and restart the match")
+		if end_button == null or restart_button == null:
+			scene.free()
+			continue
+		context.equal(end_button.focus_mode, Control.FOCUS_NONE, "end control preserves host keyboard focus")
+		context.equal(restart_button.focus_mode, Control.FOCUS_NONE, "restart control preserves host keyboard focus")
+		context.equal(end_button.disabled or restart_button.disabled, false, "fresh match permits host actions")
+		scene.demo.set_paused(true)
+		for tick: int in range(40):
+			context.equal(scene.demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "host supplies original history")
+		var old_host: RefCounted = scene.demo.host
+		var old_viewer: RefCounted = scene.demo.viewer
+		var old_driver: RefCounted = scene.demo.driver
+		var old_game: Game = scene.demo.game
+		var opened: Types.Result = old_viewer.begin_advance()
+		context.equal(opened.code, Types.Code.READY, "viewer expert request owns the match")
+		scene._update_label()
+		context.equal(end_button.disabled and restart_button.disabled, true, "active request disables both host controls")
+		var before: Array = _service_observation(scene.demo)
+		scene._replay_notice = "Saved replay is still available."
+		end_button.pressed.emit()
+		restart_button.pressed.emit()
+		context.equal(_service_observation(scene.demo), before, "direct host signals preserve active request ownership")
+		context.equal(scene.demo.is_finishing, false, "owned request cannot queue host completion")
+		context.equal(scene._replay_notice, "Saved replay is still available.", "refused restart preserves replay notice")
+		context.equal(scene.demo.host == old_host and scene.demo.viewer == old_viewer, true, "refused restart retains match identity")
+		var request: Types.Request = opened.batch.next_request()
+		while request != null:
+			var checksum: PackedByteArray = PackedByteArray()
+			var accepted: bool
+			if request.kind == Types.Kind.SAVE:
+				var saved: Demo.Driver.SaveResult = old_game.save_state(request.frame, request.writer)
+				accepted = saved.ok
+				checksum = saved.checksum
+			else:
+				accepted = old_game.simulate_frame(request.frame, request.inputs)
+			context.equal(old_viewer.complete_request(request.batch_id, request.request_id, accepted, checksum).code, Types.Code.OK, "complete owned original playback request")
+			request = opened.batch.next_request()
+		if ending == "clean":
+			end_button.pressed.emit()
+			context.equal(scene.demo.is_finishing, true, "pointer queues clean host completion")
+			context.equal(end_button.disabled, true, "queued ending disables repeated end control")
+			for tick: int in range(20):
+				scene.demo.tick(0)
+			context.equal(scene.demo.is_host_finished, true, "host corrects and closes complete original history")
+			context.equal(scene.demo.game.frame, 1, "clean ending preserves paused viewing")
+			context.equal(scene.demo.catch_up_viewer(), Types.Code.TERMINATED, "viewer drains full clean tail")
+			context.bytes_equal(scene.demo.game.canonical_bytes(), old_host.loop.game.canonical_bytes(), 40, "pointer ending retains canonical original state")
+		else:
+			scene.demo.lose_host_connection()
+		scene._update_label()
+		context.equal(restart_button.disabled, false, "stopped viewer retains pointer recovery")
+		var old_bytes: PackedByteArray = scene.demo.game.canonical_bytes()
+		restart_button.pressed.emit()
+		context.equal(scene.demo.host != old_host and scene.demo.viewer != old_viewer, true, "pointer recovery starts fresh match identities")
+		context.equal(scene.demo.game.frame, 0, "pointer recovery starts at original state")
+		context.equal(scene.demo.viewer.status().reason, Types.Code.OK, "fresh viewer clears prior termination")
+		context.equal(scene._replay_notice, "", "successful replacement clears old replay notice")
+		context.equal(end_button.disabled or restart_button.disabled, false, "replacement restores host controls")
+		var samples: Array[Demo.Driver.LocalInput] = []
+		context.equal(old_driver.step(100 * Demo.Host.TICK_US, samples).code, Types.Code.TERMINATED, "retained old driver cannot resume")
+		context.equal(old_host.loop.session.status().reason, Types.Code.TERMINATED, "restart retires original host")
+		context.bytes_equal(old_game.canonical_bytes(), old_bytes, old_viewer.status().current_frame, "restart freezes retained old viewer game")
+		context.equal(scene.demo.tick(Game.LEFT), Types.Code.OK, "replacement match accepts new host input")
+		scene.free()
 
 
 # Value: protects=restart retires retained match handles; fails_when=old drivers consume buffered rows;

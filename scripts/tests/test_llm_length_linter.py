@@ -1,13 +1,17 @@
 """Self-tests for the 300-line hard-limit checker (red-green discipline)."""
 
+import os
 import sys
 import unittest
+from functools import partial
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from llm import check_llm_file_lengths as checker
 from llm import llm_paths
+from git_test_environment import fixture_environment
 
 
 def write_lines(path: Path, n: int) -> Path:
@@ -82,6 +86,12 @@ class StagedModeTest(unittest.TestCase):
     def setUp(self):
         import tempfile
 
+        environment = patch.dict(os.environ, fixture_environment(), clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+        bounded_git = patch.object(checker.subprocess, "run", partial(checker.subprocess.run, timeout=30))
+        bounded_git.start()
+        self.addCleanup(bounded_git.stop)
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.good = write_lines(self.root / ".llm" / "good.md", 5)
@@ -93,7 +103,31 @@ class StagedModeTest(unittest.TestCase):
     def _git(self, *cmd):
         import subprocess
 
-        subprocess.run(["git", "-C", str(self.root), *cmd], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.root), *cmd], check=True, capture_output=True, timeout=30)
+
+    # Value: protects=fixture staging ignores caller exclusions; fails_when=XDG ignore hides authored files; why_new=config isolation misses default ignore; seam=none
+    def test_staging_ignores_caller_xdg_exclusions(self):
+        config = self.root / "caller-config"
+        (config / "git").mkdir(parents=True)
+        (config / "git/ignore").write_text(".llm/\n", encoding="utf-8")
+        with patch.dict(os.environ, XDG_CONFIG_HOME=str(config)):
+            with patch.dict(os.environ, fixture_environment(), clear=True):
+                self._git("init")
+                self._git("add", ".llm/good.md")
+                staged = checker.git_staged_files(self.root)
+        self.assertEqual([p.as_posix() for p in staged], [".llm/good.md"])
+
+    # Value: protects=fixture staging ignores caller attributes; fails_when=XDG encoding rejects UTF-8; why_new=ignore control misses attributes; seam=none
+    def test_staging_ignores_caller_xdg_attributes(self):
+        config = self.root / "caller-config"
+        (config / "git").mkdir(parents=True)
+        (config / "git/attributes").write_text(".llm/* working-tree-encoding=UTF-16\n", encoding="utf-8")
+        with patch.dict(os.environ, XDG_CONFIG_HOME=str(config)):
+            with patch.dict(os.environ, fixture_environment(), clear=True):
+                self._git("init")
+                self._git("add", ".llm/good.md")
+                staged = checker.git_staged_files(self.root)
+        self.assertEqual([p.as_posix() for p in staged], [".llm/good.md"])
 
     def test_git_staged_files_on_unborn_head(self):
         # First-commit scenario: files staged, no commit exists yet.

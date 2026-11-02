@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add End host and Restart match buttons to the local spectator, including recovery after host loss or completed playback.
+
 - Add a replay Validate state control to check a paused boundary without advancing input. Missing recorded checksums remain explicitly unverified.
 
 - Add pointer controls for spectator viewing delay and catch-up speed, with limits and playback readiness shown on each button.
@@ -252,6 +254,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix replay controls appearing available while game callbacks or manual replay requests hold playback. Controls become available after completion.
 
 - Fix confirmed effect hooks replacing or advancing the integration example’s active match. Cancellation reports its first cause after the confirmed effect batch.
 
