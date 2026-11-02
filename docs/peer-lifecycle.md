@@ -342,6 +342,14 @@ preserve wide integer values. The command is descriptive text and is never run.
 Leave it empty when the application has no exact replay command. The library
 cannot infer application versions, seeds or how to restore an application's state.
 
+Serialize diagnostic dictionaries with `FortressDiagnosticTrace.to_json(report)`;
+pass `false` as its second argument for compact JSON. This preserves accepted Unicode,
+control characters and literal backslashes while emitting standard JSON escapes.
+Godot's `JSON.stringify` alone can emit nonstandard `\v` or literal control characters.
+The online download, replay failure download and offline reproduction result use this serializer.
+The independent `scripts/reference/diagnostic_json.py --godot <editor>` probe strictly
+decodes their file bytes and replays the decoded canonical windows on both CI engine pins.
+
 Opt-in exports intentionally disclose the game's saved bytes, input bytes and
 these application-supplied metadata strings. Review their content before sharing;
 they can themselves contain sensitive data. The library automatically excludes

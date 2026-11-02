@@ -200,7 +200,13 @@ File-read completions preserve timeline dragging and active game requests. If a 
 Playback needs
 no SDK or server. Press **Play / Pause**, **Step**, or **Restart** to inspect the game.
 Keyboard controls: **P** plays or pauses, **N** steps forward, **B** steps backward,
-**R** restarts, and **Esc** cancels a seek. Shortcuts preserve text entry and file chooser input; modified and held-key repeats are ignored.
+**R** restarts, and **Esc** cancels a seek. **J / L** jump five seconds; **Home / End** select the start or ending. Shortcuts preserve text entry and file chooser input; modified and held-key repeats are ignored.
+Use **Start**, **Back 5 seconds**, **Forward 5 seconds**, or **End** for coarse navigation.
+Jumps clamp to the recording, pause playback, and validate the required history within the normal seek budget.
+They preserve held timeline controls and active game work; **Cancel seek** stops a long jump.
+
+![Replay five-second and start/end navigation](images/replay-time-navigation.png)
+
 Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and available checksum
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame and finishes paused. Step and Pause validate the displayed

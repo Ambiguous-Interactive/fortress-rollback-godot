@@ -4,6 +4,7 @@ extends SceneTree
 const Player = preload("res://addons/fortress_rollback/core/diagnostic_player.gd")
 const Game = preload("res://examples/offline/simulation.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const DiagnosticTrace = preload("res://addons/fortress_rollback/core/diagnostic_trace.gd")
 const MAX_FILE_BYTES: int = 1048576
 
 
@@ -43,5 +44,5 @@ func _initialize() -> void:
 
 func _finish(code: int, report: Dictionary) -> void:
 	report["code"] = code
-	print("FORTRESS_DIAGNOSTIC_RESULT " + JSON.stringify(report))
+	print("FORTRESS_DIAGNOSTIC_RESULT " + DiagnosticTrace.to_json(report, false))
 	quit(0 if code == Types.Code.FRAME_EXHAUSTED and report.get("complete") == true else 1)

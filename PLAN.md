@@ -39,7 +39,7 @@ Local development contracts and evidence entry points:
 - [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
-- [Native/browser diagnostic file viewer, including escaped recorded metadata and saved callback failure names and frames](docs/diagnostic-viewer.md).
+- [Native/browser diagnostic file viewer, including portable JSON export and escaped recorded metadata and saved callback failure names and frames](docs/diagnostic-viewer.md).
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).
@@ -111,6 +111,7 @@ Replay failure evidence identifies the first failed game request and comparison 
 Normal replay inspection also exposes recorded provenance separately from checksum coverage.
 Timeline dragging previews its selected frame and time while state and checksum observations continue to name the displayed frame.
 The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
+Five-second and start/end controls use the same verified seek budget and preserve active game and timeline ownership.
 It can export original input history before the displayed frame, retaining existing checksum evidence without generating new validation.
 It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.

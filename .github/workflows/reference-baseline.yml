@@ -233,6 +233,7 @@ jobs:
           python3 scripts/reference/test_package_audit.py --godot "$editor" -v
           python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
           python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
+          python3 scripts/reference/diagnostic_json.py --godot "$editor"
           python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
           for case in default_single default_batched readiness_boundary aborted_wait; do
             case_timeout=120
