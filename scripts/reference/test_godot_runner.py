@@ -149,8 +149,15 @@ class ReceiptControls(unittest.TestCase):
         self.assertIsInstance(report['process_group'], int)
         self.assertIs(report['cleanup_complete'], False)
 
-    # Value: protects=descendant replacement; fails_when=one proc listing hides a new child; why_new=stationary children cannot expose churn; seam=proc listing order
+    # Value: protects=descendant replacement; fails_when=a new child survives completion; why_new=stationary children cannot expose churn; seam=group check order
     def test_descendant_replacement_cannot_hide_from_completion(self) -> None:
+        self._replacement_completion(inventory_control=False)
+
+    # Value: protects=group-gate control; fails_when=fixture never creates the missed child; why_new=production gate avoids proc enumeration; seam=inventory gate mutation
+    def test_inventory_observation_can_miss_replacement(self) -> None:
+        self._replacement_completion(inventory_control=True)
+
+    def _replacement_completion(self, inventory_control: bool) -> None:
         if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
             self.skipTest('requires Linux process-group observations')
         with tempfile.TemporaryDirectory() as directory:
@@ -169,14 +176,10 @@ class ReceiptControls(unittest.TestCase):
                            f"ready=pathlib.Path({str(ready)!r})\n"
                            "while not ready.exists(): time.sleep(0.001)\n"
                            f"print({(RUNNER.PREFIX + json.dumps(valid_result()))!r})\n")
-            original = Path.iterdir
+            iterdir = Path.iterdir
+            group_exists = RUNNER._group_exists
             ordered = [False]
-            killed = [False]
-            kill_group = RUNNER._kill_group
-
-            def kill(process):
-                killed[0] = True
-                kill_group(process)
+            expected_group = [None]
 
             def live(path: Path) -> bool:
                 try:
@@ -184,28 +187,52 @@ class ReceiptControls(unittest.TestCase):
                 except FileNotFoundError:
                     return False
 
-            def observe(path: Path):
-                entries = list(original(path))
-                if path == Path('/proc') and not ordered[0] and not killed[0]:
-                    ordered[0] = True
-                    process_state = Path('/proc') / child_pid.read_text() / 'stat'
-                    if live(process_state):
-                        trigger.touch()
-                        deadline = time.monotonic() + 5
-                        while (not leaf_pid.exists() or live(process_state)) and time.monotonic() < deadline:
-                            time.sleep(0.001)
-                        self.assertTrue(leaf_pid.exists(), 'replacement fixture did not fork')
-                        self.assertFalse(live(process_state), 'replacement fixture parent did not exit')
+            def replace_child():
+                if ordered[0]:
+                    return
+                ordered[0] = True
+                process_state = Path('/proc') / child_pid.read_text() / 'stat'
+                self.assertTrue(live(process_state), 'replacement fixture parent exited too soon')
+                trigger.touch()
+                deadline = time.monotonic() + 5
+                while (not leaf_pid.exists() or live(process_state)) and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(leaf_pid.exists(), 'replacement fixture did not fork')
+                self.assertFalse(live(process_state), 'replacement fixture parent did not exit')
+                self.assertEqual(os.getpgid(int(leaf_pid.read_text())), expected_group[0], 'replacement escaped the owned group')
+
+            def observe_inventory(path: Path):
+                entries = list(iterdir(path))
+                if path == Path('/proc'):
+                    replace_child()
                 return iter(entries)
 
+            def observe_group(group: int):
+                expected_group[0] = group
+                if inventory_control:
+                    with patch.object(RUNNER, '_group_exists', group_exists):
+                        return RUNNER._group_active(group)
+                replace_child()
+                return group_exists(group)
+
             try:
-                with patch.object(Path, 'iterdir', observe), patch.object(RUNNER, '_kill_group', kill):
-                    result = RUNNER.invoke([sys.executable, '-c', parent_code], 5)
-                self.assertEqual(result.get('failure'), 'descendants_after_exit', result)
-                self.assertIs(result['cleanup_complete'], True)
-                for identity in (child_pid, leaf_pid):
-                    if identity.exists():
-                        self.assertFalse(live(Path('/proc') / identity.read_text() / 'stat'))
+                with patch.object(RUNNER, '_group_exists', observe_group):
+                    if inventory_control:
+                        with patch.object(Path, 'iterdir', observe_inventory):
+                            result = RUNNER.invoke([sys.executable, '-c', parent_code], 5)
+                    else:
+                        result = RUNNER.invoke([sys.executable, '-c', parent_code], 5)
+                self.assertTrue(ordered[0], 'replacement ordering hook did not execute')
+                self.assertTrue(leaf_pid.exists(), 'replacement fixture did not fork')
+                leaf_state = Path('/proc') / leaf_pid.read_text() / 'stat'
+                if inventory_control:
+                    self.assertNotIn('failure', result)
+                    self.assertIs(result['result']['passed'], True)
+                    self.assertTrue(live(leaf_state), 'inventory control did not expose a surviving replacement')
+                else:
+                    self.assertEqual(result.get('failure'), 'descendants_after_exit', result)
+                    self.assertIs(result['cleanup_complete'], True)
+                    self.assertFalse(live(leaf_state), 'owned replacement survived completion')
             finally:
                 for identity in (child_pid, leaf_pid):
                     if identity.exists():

@@ -26,6 +26,8 @@ parent decoder, including malformed stdout and stderr; mocks returning decoded
 strings cannot expose this boundary. Decoding failures must report sanitized
 errors without revealing captured CLI output or credentials.
 
+Fault fixtures must unconditionally assert that their injection ran and created the intended state. A production refactor can bypass an old observation hook while leaving its test green.
+
 Invalidate a prior success report before starting a new attempt, clear only the
 runner-owned logs, and preserve partial stdout/stderr on timeout. Identify the failed
 command with a fixed phase label; dumping arbitrary arguments or environment can expose credentials. Capture
