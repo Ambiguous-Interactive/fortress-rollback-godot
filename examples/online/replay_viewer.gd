@@ -28,6 +28,7 @@ var _playback_quarters: int = 0
 var _seek_target: int = -1
 var _recorded_checksums: PackedInt64Array = PackedInt64Array()
 var _input_changes: PackedInt64Array = PackedInt64Array()
+var _status_changes: PackedInt64Array = PackedInt64Array()
 var _recording_sha256: String = ""
 var _recording_bytes: int = 0
 var _recording: Replay
@@ -45,7 +46,8 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 		message = _open_failure_message(code)
 		return false
 	var changes: Array[int] = []
-	if not _compatible(recording, changes):
+	var status_changes: Array[int] = []
+	if not _compatible(recording, changes, status_changes):
 		message = "This viewer needs an identified online or spectator game recording (up to ten minutes)."
 		return false
 	var hash: HashingContext = HashingContext.new()
@@ -55,6 +57,7 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	_recording_bytes = bytes.size()
 	_recording = recording
 	_input_changes = PackedInt64Array(changes)
+	_status_changes = PackedInt64Array(status_changes)
 	_recorded_checksums.clear()
 	for frame: int in range(recording.frame_count() + 1):
 		if not recording.checksum(frame).is_empty():
@@ -74,7 +77,7 @@ func _open_failure_message(code: int) -> String:
 			return "Could not open replay: this file is malformed or incomplete."
 
 
-func _compatible(recording: Replay, changes: Array[int]) -> bool:
+func _compatible(recording: Replay, changes: Array[int], status_changes: Array[int]) -> bool:
 	if recording.player_count() != 2 or recording.input_width() != 1 or recording.frame_count() > MAX_FRAMES:
 		return false
 	if recording.frame_count() == 0 and recording.checksum(0).is_empty():
@@ -91,6 +94,7 @@ func _compatible(recording: Replay, changes: Array[int]) -> bool:
 	for frame: int in range(recording.frame_count()):
 		var inputs: Types.FrameInputs = recording.inputs(frame)
 		var changed: bool = frame == 0
+		var status_changed: bool = frame == 0
 		for slot: int in 2:
 			var sample: Types.InputResult = inputs.read(slot)
 			if sample.bytes[0] > (7 if is_integration else 15):
@@ -98,8 +102,11 @@ func _compatible(recording: Replay, changes: Array[int]) -> bool:
 			if previous != null:
 				var prior: Types.InputResult = previous.read(slot)
 				changed = changed or sample.bytes != prior.bytes or sample.status != prior.status
+				status_changed = status_changed or sample.status != prior.status
 		if changed:
 			changes.append(frame)
+		if status_changed:
+			status_changes.append(frame)
 		previous = inputs
 	return true
 
@@ -378,6 +385,23 @@ func input_change_target(forward: bool) -> int:
 ## A first visit still checks the entire preceding input history within tick's seek budget.
 func seek_input_change(forward: bool) -> bool:
 	var target: int = input_change_target(forward)
+	return target >= 0 and seek(target)
+
+
+## Nearest earlier/later finalized player-status change, excluding ordinary control changes.
+## Frame zero establishes initial statuses. Discovery does not validate recorded input integrity.
+func status_change_target(forward: bool) -> int:
+	if is_seeking() or has_failure() or _status_changes.is_empty():
+		return -1
+	var index: int = _status_changes.bsearch(current_frame(), not forward)
+	if not forward:
+		index -= 1
+	return _status_changes[index] if index >= 0 and index < _status_changes.size() else -1
+
+
+## Reach a status change through ordinary bounded, verified navigation and finish paused.
+func seek_status_change(forward: bool) -> bool:
+	var target: int = status_change_target(forward)
 	return target >= 0 and seek(target)
 
 

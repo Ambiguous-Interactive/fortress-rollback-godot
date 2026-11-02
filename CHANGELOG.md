@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add a replay status-only filter to inspect player disconnects without stopping at every control change.
+
+- Add online buttons to raise input delay or apply the current suggestion.
+
+- Add a Lose host link button to the local spectator, including during unfinished playback requests.
+
 - Add five-second and start/end replay jumps, with keyboard shortcuts and bounded checksum-validated navigation.
 
 - Add a Save viewed replay button to the local spectator, including retained recordings after viewing stops.

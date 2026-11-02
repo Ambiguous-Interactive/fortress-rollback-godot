@@ -111,16 +111,18 @@ Replay failure evidence identifies the first failed game request and comparison 
 Normal replay inspection also exposes recorded provenance separately from checksum coverage.
 Timeline dragging previews its selected frame and time while state and checksum observations continue to name the displayed frame.
 The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
+Its status-only filter skips changing controls when inspecting finalized player disconnect transitions.
 Five-second and start/end controls use the same verified seek budget and preserve active game and timeline ownership.
 It can export original input history before the displayed frame, retaining existing checksum evidence without generating new validation.
 It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
-Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending, fresh match restart and viewed-replay save actions.
+Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending, known host-link loss, fresh match restart and viewed-replay save actions.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Restarting the reusable integration loop stages a complete fresh game, session, driver and effects ledger before retiring its prior match.
 The local peer example prepares replacement sessions before retiring the old match and preserves active shared game operations during reset.
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
+Visible online input-delay controls share keyboard readiness checks and show when a suggested delay is available.
 Online setup guards SDK callbacks and fences cancellation before accepting a new match or transport.
 Unsafe SDK plan/directive reentry during identity validation or plan conversion stops the old mesh before SDK consumption and requires a fresh session.
 The local spectator can catch up through its currently buffered playable rows without changing its viewing delay or normal rate.

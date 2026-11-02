@@ -14,6 +14,7 @@ FILES = {
     "examples/scene.tscn": '[ext_resource type="Script" path="res://addons/b.gd" id="1"]\n',
     "tests/fixtures/data.json": "{}\n",
     "tests/unit/test_class.gd": "var alpha: Alpha\n",
+    "tests/unit/test_substring.gd": "var alpha: AlphaExtended\nvar other: PrefixAlpha\nvar snake: Alpha_value\n",
     "tests/unit/test_scene.gd": 'var scene = load("res://examples/scene.tscn")\n',
     "tests/unit/test_fixture.gd": 'const PATH = "res://tests/fixtures/data.json"\n',
     "tests/unit/test_listing.gd": 'const DIRECTORY = "res://tests/listed/"\n',
@@ -51,6 +52,10 @@ class SelectTests(unittest.TestCase):
             (root / "addons/a.gd").write_text("class_name Renamed\n")
             self.assertEqual(select(SUITES, ["addons/a.gd"], root), SUITES[3:])
             self.assertEqual(select(SUITES, ["addons/a.gd"], root, {"Alpha"}), [SUITES[0], SUITES[3]])
+            substring = "res://tests/unit/test_substring.gd"
+            self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [])
+            (root / "tests/unit/test_substring.gd").write_text("# Alpha.member and (Alpha) both name a complete class\n")
+            self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [substring])
 
 
 if __name__ == "__main__":

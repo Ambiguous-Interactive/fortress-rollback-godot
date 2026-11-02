@@ -397,6 +397,7 @@ func _host_loss(context: RefCounted) -> void:
 func _host_loss_control(context: RefCounted) -> void:
 	_modified_shortcuts(context)
 	_pointer_host_controls(context)
+	_pointer_host_loss(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	for tick: int in range(40):
@@ -420,6 +421,53 @@ func _host_loss_control(context: RefCounted) -> void:
 	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "R starts a fresh viewer")
 	context.equal(scene.demo.viewer_code, Types.Code.OK, "restart clears displayed failure")
 	scene.free()
+
+
+# Value: protects=pointer host loss immediately stops retained playback; fails_when=button is absent or waits for an active request;
+# why_new=host loss keyboard coverage omits pointer dispatch and held requests; seam=scene controls
+func _pointer_host_loss(context: RefCounted) -> void:
+	for owned_request: bool in [false, true]:
+		var scene: Node2D = Scene.new()
+		scene._ready()
+		var button: Button = scene.get_node_or_null("HostControls/LoseHostLink")
+		context.equal(button != null, true, "pointer users can simulate host-link loss")
+		if button == null:
+			scene.free()
+			continue
+		context.equal(button.focus_mode, Control.FOCUS_NONE, "loss control preserves host keyboard focus")
+		scene.demo.set_paused(owned_request)
+		for tick: int in range(40):
+			context.equal(scene.demo.tick(Game.RIGHT | Game.FIRE), Types.Code.OK, "host supplies buffered original rows")
+		var opened: Types.Result
+		if owned_request:
+			opened = scene.demo.viewer.begin_advance()
+			context.equal(opened.code, Types.Code.READY, "viewer retains an unfinished expert request")
+		scene._update_label()
+		context.equal(button.disabled, false, "known link loss remains available during active playback")
+		var frame: int = scene.demo.game.frame
+		var displayed: PackedByteArray = scene.demo.game.canonical_bytes()
+		var host_frame: int = scene.demo.host.loop.game.frame
+		button.pressed.emit()
+		context.equal(button.disabled, true, "stopped viewer disables repeated link loss")
+		context.equal(scene.demo.viewer.status().reason, Types.Code.PROTOCOL_FAILED, "pointer reports actual host-loss cause")
+		context.equal(scene._label.text.contains("HOST CONNECTION LOST"), true, "pointer loss explains viewer stop")
+		if owned_request:
+			context.equal(opened.batch.next_request(), null, "known loss expires unfinished playback")
+		button.pressed.emit()
+		context.equal(scene.demo.tick(Game.LEFT), Types.Code.OK, "player host continues after viewer loss")
+		context.equal(scene.demo.host.loop.game.frame, host_frame + 1, "pointer loss does not stop host simulation")
+		context.bytes_equal(scene.demo.game.canonical_bytes(), displayed, frame, "pointer loss preserves last displayed original state")
+		scene._restart()
+		context.equal(button.disabled, false, "fresh viewer restores link-loss control")
+		scene.demo.finish_host()
+		scene.demo.tick(0)
+		scene._update_label()
+		context.equal(scene.demo.viewer.is_complete(), true, "empty host control ends cleanly")
+		context.equal(button.disabled, true, "clean completion disables misleading link loss")
+		button.pressed.emit()
+		context.equal(scene.demo.viewer.is_complete(), true, "direct signal preserves clean first cause")
+		context.equal(scene.demo.is_host_connection_lost, false, "clean playback is never relabeled as connection loss")
+		scene.free()
 
 
 # Value: protects=modified application shortcuts preserve the spectator match; fails_when=Ctrl+R restarts or Ctrl+P pauses;
