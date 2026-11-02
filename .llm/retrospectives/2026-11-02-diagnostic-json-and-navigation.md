@@ -27,6 +27,8 @@
 - Non-ESRCH process-group probe errors now enter cleanup and failure; they cannot fall back to unsupervised inventory execution.
 - A real inherited-pipe witness confirmed capture waits until children finish before qualification. Independent review rejected an unnecessary parent-exit cutoff.
 
+- The current main baseline spends 24m55s on the critical path, with browser verification dominating setup. Chromium now uses existing two-part inventories; selector forwarding and exact coverage union are tested.
+
 ## Curation and Pruning
 
 - Updated existing testing and copy guidance rather than adding a new skill.

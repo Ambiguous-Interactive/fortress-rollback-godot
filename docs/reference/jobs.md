@@ -117,3 +117,28 @@ This table records the measured baseline and names the dominant browser work.
 It does not shorten a browser job. The reduction of the room and page work
 without weakening a gate is tracked in the follow-up issue linked from
 [#148](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/148).
+
+
+## Current ownership wall-time partition
+
+Run [41394927982](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/41394927982)
+qualified main `1e4f96f161430e7c400ea4764c325f4e23e589b0` on 2026-11-02.
+Its 22 jobs summed to 211m58s and the workflow took 24m55s. This expanded
+inventory is not comparable with the older 69m20s total above.
+
+| Chromium ownership pin | Job time | Verification step |
+| --- | --- | --- |
+| 4.7.2 | 24m52s | 23m55s |
+| 4.3 | 18m23s | 17m37s |
+
+The Chromium ownership matrix now uses the existing suite parts 1 and 2 on
+each engine pin. Each part still runs native and exported Web execution,
+negative and positive controls, and the unchanged repetitions. Their exact
+union contains every declared suite/case; only the alias control is repeated.
+Distinct job and artifact names preserve each part's evidence. The spectator
+origin check stays once on Chromium 4.3 part 1.
+
+This targets wall time by running smaller inventories concurrently. It repeats
+setup and export work, so summed runner time can increase. No observed speedup
+is claimed until the new complete current-head CI finishes. Reducing total
+work without removing coverage remains tracked in #148 and #164.
