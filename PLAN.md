@@ -111,11 +111,13 @@ Replay failure evidence identifies the first failed game request and comparison 
 Normal replay inspection also exposes recorded provenance separately from checksum coverage.
 Timeline dragging previews its selected frame and time while state and checksum observations continue to name the displayed frame.
 The online replay viewer can inspect preceding or following control/status changes through bounded verified navigation.
+Its controls scroll within short or narrow windows so failure details and the displayed game remain reachable together.
 Its status-only filter skips changing controls when inspecting finalized player disconnect transitions.
 Five-second and start/end controls use the same verified seek budget and preserve active game and timeline ownership.
 It can export original input history before the displayed frame, retaining existing checksum evidence without generating new validation.
 It also discovers preceding/following recorded checksum boundaries, including final states, independently of visited checkpoint caches.
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
+The local spectator names stopped-viewing causes and failed game operations with their recorded frame, preserving the first cause through later host events.
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
 Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending, known host-link loss, fresh match restart and viewed-replay save actions.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
@@ -158,6 +160,8 @@ The retained-history source comparison also exercises donor recovery after two q
 with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
 Native development receipts execute a bounded private authored-source image and record its hashes and starting Git identity;
 Python helper identity and descendant supervision remain separate evidence gaps in #298.
+Native test launches wait within an explicit host-capacity budget before starting engines, then retain requested parallelism under the machine-wide lease.
+Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.
 The [queue append benchmark](docs/experiments/input-queue-performance.md) records the measured scope and narrow-input noise.
