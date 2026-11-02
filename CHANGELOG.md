@@ -259,6 +259,12 @@
 
 ### Fixed
 
+- Fix conflicting expert-staged input stopping online matches. Rejected keyboard samples preserve clocks and service state so the original input can be retried.
+
+- Fix modified keyboard shortcuts changing or restarting playable matches. Offline restart also ignores held-key repeats.
+
+- Fix imported diagnostic seed text adding misleading status lines. Recorded metadata now appears quoted with control characters escaped.
+
 - Fix restarting the reusable integration loop to replace the game, session, driver, retained input and effect ledger together. Rejected replacements preserve the running match.
 
 - Fix replay controls appearing available while game callbacks or manual replay requests hold playback. Controls become available after completion.

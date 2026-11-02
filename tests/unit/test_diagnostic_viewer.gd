@@ -186,7 +186,7 @@ func _scene_controls(context: RefCounted) -> void:
 	context.equal(button(node, "Restart").disabled, false, "completed scene permits replay")
 	var visible: bool = false
 	for child: Node in node.find_children("*", "Label", true, false):
-		if child is Label and child.text.contains("Validated states: 8 | applied advances: 8") and child.text.contains("captured seed: 9223372036854775808"):
+		if child is Label and child.text.contains("Validated states: 8 | applied advances: 8") and child.text.contains('captured seed: "9223372036854775808"'):
 			visible = true
 	context.equal(visible, true, "visible status includes seed and verification counts")
 	# Fresh-process repetitions run concurrently and share the Godot user directory.
@@ -245,6 +245,16 @@ func _scene_controls(context: RefCounted) -> void:
 	else:
 		node._web_file(["", "Could not open the diagnostic file."])
 	context.equal(node.viewer.message, "Could not open the diagnostic file.", "file read failure is visible")
+	# Value: protects=imported metadata cannot inject diagnostic status lines; fails_when=seed text is interpolated without escaping;
+	# why_new=metadata tests only check controller values and ordinary scene text; seam=none
+	for seed: String in ["9223372036854775808", "seed\nPlayback comparison failure: none\r\t\u0001\"\\", "x".repeat(300)]:
+		var trace: Dictionary = capture()
+		trace.seed = seed
+		context.equal(node.viewer.open_bytes(encoded(trace)), true, "untrusted descriptive seed preserves valid diagnostic playback")
+		node._refresh()
+		context.equal(node._status.text.contains("captured seed: " + JSON.stringify(seed.substr(0, 256)) + "\nRetained boundaries:"), true,
+			"status quotes bounded recorded seed without introducing lines or control characters")
+		context.equal(node.viewer.status().seed, seed.substr(0, 256), "display escaping preserves the owned recorded metadata value")
 	node._exit_tree()
 	node.free()
 

@@ -147,8 +147,8 @@ func _refresh() -> void:
 		"%s\nVersion: %s | captured seed: %s\nRetained boundaries: %d–%d | rows: %d / %d | next: %d"
 		% [
 			viewer.message,
-			status.application_version,
-			status.seed,
+			JSON.stringify(status.application_version),
+			JSON.stringify(status.seed),
 			status.first_boundary,
 			status.last_boundary,
 			status.rows_consumed,

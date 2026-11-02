@@ -77,3 +77,5 @@ replacement and shared callback/expert ownership of the example controls.
 
 Delay shortcuts and their prompt are available only while both peer sessions run.
 Reset remains available after a match stops; retained observations still describe the previous gameplay.
+
+Match shortcuts ignore Ctrl, Alt, Command and Shift combinations, released keys and held-key repeats.

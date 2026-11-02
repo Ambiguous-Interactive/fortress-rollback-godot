@@ -30,7 +30,8 @@ while a game callback owns it; they become available again when that callback re
 The status shows the application version, captured seed text, first and last
 retained boundaries, next row, successful canonical comparisons, and successful
 advances. Seed text stays text, including values larger than a signed 64-bit
-integer. The simulation restores the captured RNG state rather than starting
+integer. Metadata appears in quotes, with control characters escaped, so recorded text cannot add status lines.
+The simulation restores the captured RNG state rather than starting
 again from that seed. Before the first Step, the game display shows its default
 state; it becomes the restored captured execution when playback begins.
 

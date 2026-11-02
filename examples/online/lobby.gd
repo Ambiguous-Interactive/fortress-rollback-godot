@@ -195,6 +195,8 @@ func _tick(now_us: int, buttons: int) -> void:
 	if now_us < _last_now:
 		_fail("Host clock moved backwards.")
 		return
+	if state == "playing" and game_match._local_input_code(buttons) == Match.Types.Code.INPUT_ALREADY_SUBMITTED:
+		return
 	_last_now = now_us
 	if state == "playing" and not game_match.poll_protocol_time(now_us - _epoch):
 		_fail(game_match.failure)

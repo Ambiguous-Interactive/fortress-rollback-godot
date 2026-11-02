@@ -13,6 +13,8 @@ Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
 Exercise actual UI controls during playback, after failure and at completion.
+Cross match shortcuts with Ctrl, Alt, Meta, Shift, release and echo events. Preserve intentional shifted punctuation,
+such as Plus, and verify that ordinary reset still replaces the match.
 Before attributing a missed canvas click to browser activation, compare a bounded
 pointer press/release across render turns with a trusted DOM control using the same importer.
 Return command observations synchronously and check them in the same page evaluation;

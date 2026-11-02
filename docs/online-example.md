@@ -113,8 +113,11 @@ installed WebRTC implementation.
    When the measured connection needs more delay, the display shows a suggested delay.
    Press **R** to apply it.
 
+Ctrl, Alt and Command combinations leave delay controls unchanged.
 Delay shortcuts and action prompts stop after Leave, failure or Finish replay.
 Retained delay observations remain available for diagnostics.
+When mixing expert input submission with the online controller, conflicting keyboard samples
+leave gameplay and clocks unchanged. Retry the already-staged buttons to resume service.
 
 ## Diagnostics
 

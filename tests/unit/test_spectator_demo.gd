@@ -395,6 +395,7 @@ func _host_loss(context: RefCounted) -> void:
 # Value: protects=playable host-loss and restart controls; fails_when=L is unbound or held repeats;
 # why_new=API tests bypass keyboard dispatch; seam=none
 func _host_loss_control(context: RefCounted) -> void:
+	_modified_shortcuts(context)
 	_pointer_host_controls(context)
 	var scene: Node2D = Scene.new()
 	scene._ready()
@@ -419,6 +420,37 @@ func _host_loss_control(context: RefCounted) -> void:
 	context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.RUNNING, "R starts a fresh viewer")
 	context.equal(scene.demo.viewer_code, Types.Code.OK, "restart clears displayed failure")
 	scene.free()
+
+
+# Value: protects=modified application shortcuts preserve the spectator match; fails_when=Ctrl+R restarts or Ctrl+P pauses;
+# why_new=ordinary shortcut tests omit modifier combinations; seam=scene input
+func _modified_shortcuts(context: RefCounted) -> void:
+	var shortcuts: PackedInt32Array = PackedInt32Array(
+		[KEY_P, KEY_N, KEY_C, KEY_F, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_COMMA, KEY_PERIOD, KEY_L, KEY_E, KEY_V, KEY_R]
+	)
+	for modifier: String in ["alt_pressed", "ctrl_pressed", "meta_pressed", "shift_pressed"]:
+		var scene: Node2D = Scene.new()
+		scene._ready()
+		for tick: int in range(40):
+			scene.demo.tick(Game.RIGHT | Game.FIRE)
+		var host: RefCounted = scene.demo.host
+		var viewer: RefCounted = scene.demo.viewer
+		var before: Array = _service_observation(scene.demo)
+		var host_bytes: PackedByteArray = scene.demo.host.loop.game.canonical_bytes()
+		var viewer_bytes: PackedByteArray = scene.demo.game.canonical_bytes()
+		for shortcut: int in shortcuts:
+			var key: InputEventKey = InputEventKey.new()
+			key.keycode = shortcut
+			key.pressed = true
+			key.set(modifier, true)
+			scene._unhandled_key_input(key)
+			context.equal(_service_observation(scene.demo), before, "modified shortcuts preserve service and playback policy")
+			context.equal(scene.demo.host == host and scene.demo.viewer == viewer, true, "modified shortcuts preserve the owned match")
+			context.equal(scene.demo.is_host_connection_lost, false, "modified shortcut cannot disconnect the host")
+			context.equal(scene._replay_notice, "", "modified shortcut cannot request a replay export")
+			context.bytes_equal(scene.demo.host.loop.game.canonical_bytes(), host_bytes, 40, "modified shortcuts preserve host state")
+			context.bytes_equal(scene.demo.game.canonical_bytes(), viewer_bytes, scene.demo.game.frame, "modified shortcuts preserve displayed state")
+		scene.free()
 
 
 # Value: protects=pointer users can finish and restart with owned match retirement; fails_when=buttons bypass requests or retain prior playback;

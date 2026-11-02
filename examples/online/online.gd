@@ -79,6 +79,8 @@ func _physics_process(_delta: float) -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
+	if event is InputEventKey and (event.ctrl_pressed or event.alt_pressed or event.meta_pressed):
+		return
 	if not _can_change_delay():
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_EQUAL, KEY_KP_ADD]:

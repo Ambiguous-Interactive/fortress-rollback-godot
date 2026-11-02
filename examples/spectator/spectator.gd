@@ -117,6 +117,8 @@ func _physics_process(_delta: float) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
+	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
+		return
 	if event.keycode == KEY_P:
 		_toggle_pause()
 	elif event.keycode == KEY_N:
