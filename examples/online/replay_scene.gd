@@ -186,6 +186,7 @@ func _ready() -> void:
 	_timeline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_timeline.tooltip_text = "Drag to choose a recorded moment; release to navigate and pause."
 	_timeline.step = 1
+	_timeline.scrollable = false
 	_timeline.value_changed.connect(_timeline_changed)
 	_timeline.drag_started.connect(_timeline_drag_started)
 	_timeline.drag_ended.connect(_timeline_drag_ended)
@@ -510,11 +511,16 @@ func _refresh() -> void:
 	queue_redraw()
 
 
-func _draw() -> void:
+func _game_rect() -> Rect2:
 	var origin: Vector2 = Vector2(24, _controls_view.position.y + _controls_view.size.y + 16.0)
 	var available: Vector2 = get_viewport_rect().size - origin - Vector2(16, 16)
 	var fit: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
-	draw_set_transform(origin, 0.0, Vector2.ONE * fit)
+	return Rect2(origin, Vector2(480, 300) * fit)
+
+
+func _draw() -> void:
+	var bounds: Rect2 = _game_rect()
+	draw_set_transform(bounds.position, 0.0, Vector2.ONE * (bounds.size.x / 480.0))
 	draw_rect(Rect2(Vector2.ZERO, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
 	if viewer.is_integration_game():
 		_draw_integration_game(viewer.game)
