@@ -20,6 +20,7 @@ var _catchup_button: Button
 var _policy_controls: HBoxContainer
 var _host_controls: HBoxContainer
 var _end_host_button: Button
+var _lose_host_button: Button
 var _restart_button: Button
 var _save_replay_button: Button
 
@@ -76,6 +77,12 @@ func _ready() -> void:
 	_end_host_button.focus_mode = Control.FOCUS_NONE
 	_end_host_button.pressed.connect(_finish_host)
 	_host_controls.add_child(_end_host_button)
+	_lose_host_button = Button.new()
+	_lose_host_button.name = "LoseHostLink"
+	_lose_host_button.text = "Lose host link (L)"
+	_lose_host_button.focus_mode = Control.FOCUS_NONE
+	_lose_host_button.pressed.connect(_lose_host_connection)
+	_host_controls.add_child(_lose_host_button)
 	_restart_button = Button.new()
 	_restart_button.name = "RestartMatch"
 	_restart_button.text = "Restart match (R)"
@@ -132,7 +139,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode in [KEY_COMMA, KEY_PERIOD] and demo.viewer != null:
 		_adjust_policy(2 if event.keycode == KEY_COMMA else 3)
 	elif event.keycode == KEY_L:
-		demo.lose_host_connection()
+		_lose_host_connection()
 	elif event.keycode == KEY_E:
 		_finish_host()
 	elif event.keycode == KEY_V:
@@ -144,6 +151,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _finish_host() -> void:
 	demo.finish_host()
+	_update_label()
+
+
+func _lose_host_connection() -> void:
+	demo.lose_host_connection()
 	_update_label()
 
 
@@ -217,6 +229,7 @@ func _update_label() -> void:
 	_restart_button.disabled = demo._mutation_code() == Types.Code.BUSY
 	_save_replay_button.disabled = not _can_export_replay()
 	_end_host_button.disabled = (_restart_button.disabled or demo.host == null or demo.is_finishing or demo.host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED)
+	_lose_host_button.disabled = demo.viewer == null or demo.viewer.status().lifecycle == Types.Lifecycle.TERMINATED
 	_follow_live_button.disabled = demo.viewer == null or demo._mutation_code() == Types.Code.BUSY or demo.viewer._mutation_code() != Types.Code.OK
 	_pause_button.disabled = _follow_live_button.disabled
 	_step_button.disabled = _follow_live_button.disabled

@@ -53,6 +53,10 @@ engine's stdout and stderr into one stream and keeps that stream in `stdout`,
 because the order of the progress records and the script errors is the evidence
 that names the case that was executing; `stderr` stays empty.
 
+Changed-suite selection indexes complete word tokens once per file when following
+class references. This preserves conservative matches in comments and strings,
+including renamed classes, without searching every file once per declared class.
+
 Native runs execute a private source snapshot under `.cache/scratch/native-*`,
 then remove it after publishing the receipt. The snapshot contains Git-tracked
 and nonignored untracked files, including stable uncommitted work. It excludes

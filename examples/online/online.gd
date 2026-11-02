@@ -23,6 +23,8 @@ var inspect_button: Button
 var watch_button: Button
 var finish_replay_button: Button
 var replay_button: Button
+var raise_delay_button: Button
+var apply_delay_button: Button
 var _replay_notice: String = ""
 var _status: Label
 
@@ -58,6 +60,11 @@ func _ready() -> void:
 	finish_replay_button = _button(replay_row, "Finish replay", _finish_replay)
 	replay_button = _button(replay_row, "Download replay", _export_replay)
 	watch_button = _button(replay_row, "Watch replay", _watch_replay)
+	var delay_row: HBoxContainer = HBoxContainer.new()
+	panel.add_child(delay_row)
+	raise_delay_button = _button(delay_row, "Raise input delay (=)", _raise_input_delay)
+	raise_delay_button.tooltip_text = "Apply your moves one frame later to reduce corrections. This cannot be undone during this match."
+	apply_delay_button = _button(delay_row, "Apply suggested delay (R)", _apply_suggested_delay)
 	_status = Label.new()
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	panel.add_child(_status)
@@ -85,15 +92,32 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not _can_change_delay():
 		return
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode in [KEY_EQUAL, KEY_KP_ADD]:
-		var code: int = controller.game_match.raise_input_delay()
-		controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+		_raise_input_delay()
 	elif event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_R:
-		var had_suggestion: bool = controller.game_match.suggested_delay >= 0
-		var code: int = controller.game_match.apply_suggested_delay()
-		if not had_suggestion:
-			controller.message = "No suggested delay to apply."
-		else:
-			controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+		_apply_suggested_delay()
+
+
+func _raise_input_delay() -> void:
+	if not _can_change_delay():
+		return
+	_release_gameplay_focus()
+	var code: int = controller.game_match.raise_input_delay()
+	controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+	_update_status()
+
+
+func _apply_suggested_delay() -> void:
+	if not _can_change_delay() or controller.game_match.suggested_delay < 0:
+		return
+	_release_gameplay_focus()
+	var code: int = controller.game_match.apply_suggested_delay()
+	controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+	_update_status()
+
+
+func _release_gameplay_focus() -> void:
+	if is_inside_tree() and _can_change_delay():
+		get_viewport().gui_release_focus()
 
 
 func _can_change_delay() -> bool:
@@ -184,6 +208,8 @@ func _leave() -> void:
 
 func _update_status() -> void:
 	var connected: bool = controller.client != null
+	raise_delay_button.disabled = not _can_change_delay()
+	apply_delay_button.disabled = raise_delay_button.disabled or controller.game_match.suggested_delay < 0
 	var game: Lobby.Match = controller.game_match
 	var can_finish_replay: bool = controller.state == "playing" and game.record_replay and not game.replay_finishing and game.has_started and game.failure.is_empty()
 	watch_button.disabled = connected
@@ -265,6 +291,7 @@ func diagnostic_report_bytes() -> PackedByteArray:
 
 
 func _export_diagnostics() -> void:
+	_release_gameplay_focus()
 	var bytes: PackedByteArray = diagnostic_report_bytes()
 	if OS.has_feature("web"):
 		JavaScriptBridge.download_buffer(bytes, "fortress-diagnostics.json", "application/json")
@@ -287,6 +314,7 @@ func replay_bytes() -> PackedByteArray:
 
 
 func _export_replay() -> void:
+	_release_gameplay_focus()
 	var bytes: PackedByteArray = replay_bytes()
 	if bytes.is_empty():
 		_replay_notice = "No confirmed replay frames are available yet."

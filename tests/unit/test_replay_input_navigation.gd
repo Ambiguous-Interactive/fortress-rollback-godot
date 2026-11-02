@@ -11,7 +11,15 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["input_change_navigation", "input_change_integrity", "input_change_controls", "checksum_navigation", "checksum_navigation_integrity", "checksum_navigation_controls"]
+		[
+			"status_navigation",
+			"input_change_navigation",
+			"input_change_integrity",
+			"input_change_controls",
+			"checksum_navigation",
+			"checksum_navigation_integrity",
+			"checksum_navigation_controls"
+		]
 	)
 
 
@@ -252,5 +260,84 @@ func _checksum_navigation_controls(context: RefCounted) -> void:
 		previous.pressed.emit()
 		context.equal(node.viewer.current_frame(), 0, "button restores initial recorded checksum")
 		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=disconnect inspection skips ordinary changing controls while preserving verified history;
+# fails_when=status-only navigation follows button changes or bypasses corruption; why_new=ordinary change navigation mixes both; seam=none
+func _status_navigation(context: RefCounted) -> void:
+	var viewer: Viewer = Viewer.new()
+	context.equal(viewer.has_method("status_change_target"), true, "viewer exposes status-only destinations")
+	if not viewer.has_method("status_change_target"):
+		return
+	context.equal(viewer.call("status_change_target", true), -1, "empty viewer has no status transition")
+	var replay: Replay = _recording()
+	viewer.open_bytes(replay.to_bytes())
+	context.equal(viewer.call("input_change_target", true), 450, "ordinary navigation retains control changes")
+	context.equal(viewer.call("status_change_target", true), 600, "status-only navigation skips changing controls")
+	context.equal(viewer.call("seek_status_change", true), true, "status navigation uses normal verified seeking")
+	context.equal(viewer.call("status_change_target", true), -1, "active seeking suspends status destinations")
+	_finish(context, viewer, replay, 600)
+	context.equal(viewer.input_summary().contains("disconnected"), true, "selected input identifies the departed player")
+	context.equal(viewer.call("status_change_target", true), -1, "ordinary later control changes are not status transitions")
+	viewer.seek(900)
+	_finish(context, viewer, replay, 900)
+	context.equal(viewer.call("status_change_target", false), 600, "final boundary can return to the disconnect")
+	viewer.call("seek_status_change", false)
+	_finish(context, viewer, replay, 600)
+	context.equal(viewer.call("status_change_target", false), 0, "first input establishes the original statuses")
+	context.equal(viewer.open_bytes(PackedByteArray([0])), false, "invalid replacement refuses")
+	context.equal(viewer.call("status_change_target", false), 0, "invalid import preserves the status index")
+	viewer.open_bytes(_recording(100).to_bytes())
+	context.equal(viewer.call("status_change_target", true), -1, "successful replacement clears old disconnect destinations")
+	var other_player: Replay = _recording()
+	for frame: int in range(600, other_player.frame_count()):
+		other_player._statuses[frame * 2] = Queue.Status.CONFIRMED
+		other_player._statuses[frame * 2 + 1] = Queue.Status.DISCONNECTED
+		var digest: PackedByteArray = other_player.computed_input_digest(frame)
+		for index: int in Replay.DIGEST_BYTES:
+			other_player._digests[frame * Replay.DIGEST_BYTES + index] = digest[index]
+	viewer.open_bytes(other_player.to_bytes())
+	context.equal(viewer.call("status_change_target", true), 600, "either player's status change is indexed")
+	viewer.call("seek_status_change", true)
+	_finish(context, viewer, other_player, 600)
+	for fault_frame: int in [120, 600]:
+		var damaged: Replay = _recording()
+		damaged._digests[fault_frame * Replay.DIGEST_BYTES] ^= 1
+		viewer.open_bytes(damaged.to_bytes())
+		viewer.call("seek_status_change", true)
+		while viewer.is_seeking():
+			viewer.tick()
+		context.equal(viewer.current_frame(), fault_frame, "status navigation checks the required prefix and destination input")
+		context.equal(viewer.has_failure(), true, "corruption cannot be skipped by status navigation")
+		context.equal(viewer.call("status_change_target", false), -1, "failure suspends status destinations")
+	var node: Node2D = Fixture.Scene.instantiate()
+	node._ready()
+	var filter_button: CheckButton = node.find_child("StatusChangesOnly", true, false) as CheckButton
+	context.equal(filter_button != null, true, "scene exposes a status-only navigation filter")
+	if filter_button != null:
+		node.viewer.open_bytes(replay.to_bytes())
+		node._refresh()
+		filter_button.button_pressed = true
+		var following: Button = Fixture._button(node, "Next status change")
+		context.equal(following != null, true, "filtered action names status changes")
+		if following != null:
+			following.pressed.emit()
+			context.equal(filter_button.disabled, true, "active seek holds the filter")
+			while node.viewer.is_seeking():
+				node._physics_process(0.0)
+			context.equal(node.viewer.current_frame(), 600, "visible action reaches the disconnect directly")
+			context.equal(following.disabled, true, "status filter has no later disconnect")
+			filter_button.button_pressed = false
+			context.equal(following.text, "Next input change", "clearing the filter restores ordinary change navigation")
+			context.equal(following.disabled, false, "later controls remain reachable after removing the filter")
+			node._timeline_drag_started()
+			context.equal(filter_button.disabled, true, "held timeline suspends the filter")
+			following.pressed.emit()
+			context.equal(node.viewer.current_frame(), 600, "held timeline refuses navigation")
+			node._timeline_drag_ended(false)
+			context.equal(filter_button.disabled, false, "released timeline restores the filter")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()

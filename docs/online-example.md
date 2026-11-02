@@ -108,13 +108,13 @@ installed WebRTC implementation.
    Click outside text fields if a field still has keyboard focus.
 4. Move with WASD or the arrow keys. The display reports your player number,
    frame, confirmed frame, input delay, stalls, latest event and active relay links.
-5. During active gameplay, press **=** to raise your input delay by one frame.
+5. During active gameplay, click **Raise input delay (=)** or press **=** to add one frame.
    Moves then take effect a frame later, with fewer corrections. Raises cannot be undone in this match.
    When the measured connection needs more delay, the display shows a suggested delay.
-   Press **R** to apply it.
+   Click **Apply suggested delay (R)** or press **R** to apply it.
 
 Ctrl, Alt and Command combinations leave delay controls unchanged.
-Delay shortcuts and action prompts stop after Leave, failure or Finish replay.
+Delay buttons, shortcuts and action prompts stop after Leave, failure or Finish replay.
 Retained delay observations remain available for diagnostics.
 When mixing expert input submission with the online controller, conflicting keyboard samples
 leave gameplay and clocks unchanged. Retry the already-staged buttons to resume service.
@@ -227,6 +227,13 @@ strictly before or after the displayed frame and finishes paused. The first inpu
 at frame zero; the final state has no input. These actions use the same bounded,
 verified navigation as **Go** and cannot skip corrupt history. Failed playback requires
 **Restart** or an explicit **Go** before input-change navigation becomes available again.
+Select **Status only** to skip ordinary control changes and jump directly to player status changes.
+The actions become **Previous status change** and **Next status change**. Frame zero establishes
+initial statuses; each later destination identifies a confirmed/disconnected transition for either player.
+The filter preserves the same bounded verification and pause behavior as ordinary input-change navigation.
+
+![Inspect a player disconnect without stopping at every control change](images/replay-status-navigation.png)
+
 Use **Previous recorded checksum** and **Next recorded checksum** to find the recording's
 state verification boundaries, including a recorded final state. These destinations are
 available before playback visits them, even when checksums are sparse. Each action

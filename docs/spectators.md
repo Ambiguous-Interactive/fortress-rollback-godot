@@ -50,10 +50,11 @@ After the last frame, press N once more to report completion. C drains the buffe
 tail and reports completion in the same action when the complete tail has arrived.
 The viewer shows `BUFFERING` at startup while it waits for enough confirmed input to preserve
 its delay. A paused final tail shows `FINAL TAIL PAUSED` and the resume/step controls.
-Press L to simulate a known loss of the viewer's host connection. Buffered viewer
+Press L or click **Lose host link** to simulate a known loss of the viewer's host connection. Buffered viewer
 frames stop immediately, including while paused, and the last displayed state remains.
 The host keeps playing. Press R or click **Restart match** to start a fresh game after completion or connection loss.
-Both host buttons wait while callbacks or expert requests own the match. End host also disables after an ending is queued.
+End host and Restart match wait while callbacks or expert requests own the match. End host also disables after an ending is queued.
+Lose host link remains available during unfinished playback and disables after the viewer stops.
 Viewer failures keep their original reason through later ticks, single-frame inspection,
 completion callbacks and independent host failures. A failed viewer never displays a clean
 completion message just because its next operation reports a generic stopped result.

@@ -44,16 +44,17 @@ def select(suites: list[str], changed: list[str], root: Path = ROOT, old_names: 
     files = [path for directory in SOURCES for path in (root / directory).rglob("*") if path.suffix in SCANNED and path.is_file()]
     texts = {path.relative_to(root).as_posix(): path.read_text(encoding="utf-8", errors="replace") for path in files}
     classes = {name: path for path, text in texts.items() for name in CLASS_NAME.findall(text)}
+    words = {path: set(re.findall(r"\w+", text)) for path, text in texts.items()}
     # Over-approximate: any res:// string or class name mentioned in a file is a dependency.
     dependents: dict[str, set[str]] = {}
     for path, text in texts.items():
         used = set(RESOURCE.findall(text))
-        used |= {target for name, target in classes.items() if target != path and re.search(r"\b" + name + r"\b", text)}
+        used |= {classes[name] for name in words[path].intersection(classes) if classes[name] != path}
         for target in used:
             dependents.setdefault(target, set()).add(path)
     # A directory reference (a res:// string ending in /) depends on every file under it, including new ones.
     directories = [target for target in dependents if target.endswith("/")]
-    reached = set(relevant) | {path for path, text in texts.items() if any(re.search(r"\b" + name + r"\b", text) for name in old_names)}
+    reached = set(relevant) | {path for path in texts if words[path].intersection(old_names)}
     pending = list(reached)
     while pending:
         path = pending.pop()

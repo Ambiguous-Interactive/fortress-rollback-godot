@@ -66,6 +66,7 @@ var _previous_checkpoint: Button
 var _next_checkpoint: Button
 var _previous_input_change: Button
 var _next_input_change: Button
+var _status_changes_only: CheckButton
 var _previous_recorded_checksum: Button
 var _next_recorded_checksum: Button
 var _failure_download: Button
@@ -162,6 +163,12 @@ func _ready() -> void:
 	panel.add_child(changes)
 	_previous_input_change = _button(changes, "Previous input change", _jump_input_change.bind(false))
 	_next_input_change = _button(changes, "Next input change", _jump_input_change.bind(true))
+	_status_changes_only = CheckButton.new()
+	_status_changes_only.name = "StatusChangesOnly"
+	_status_changes_only.text = "Status only"
+	_status_changes_only.tooltip_text = "Skip changing controls and inspect confirmed/disconnected status changes. Frame zero establishes the initial statuses."
+	_status_changes_only.toggled.connect(_status_filter_changed)
+	changes.add_child(_status_changes_only)
 	var checksums: HBoxContainer = HBoxContainer.new()
 	panel.add_child(checksums)
 	_previous_recorded_checksum = _button(checksums, "Previous recorded checksum", _jump_recorded_checksum.bind(false))
@@ -356,7 +363,14 @@ func _jump_checkpoint(forward: bool) -> void:
 func _jump_input_change(forward: bool) -> void:
 	if _is_scrubbing:
 		return
-	viewer.seek_input_change(forward)
+	if _status_changes_only.button_pressed:
+		viewer.seek_status_change(forward)
+	else:
+		viewer.seek_input_change(forward)
+	_refresh()
+
+
+func _status_filter_changed(_enabled: bool) -> void:
 	_refresh()
 
 
@@ -476,8 +490,12 @@ func _refresh() -> void:
 		_time_buttons[index].disabled = held or viewer.is_seeking() or viewer.frame_count() == 0 or at_boundary
 	_previous_checkpoint.disabled = held or viewer.checkpoint_target(false) < 0
 	_next_checkpoint.disabled = held or viewer.checkpoint_target(true) < 0
-	_previous_input_change.disabled = held or viewer.input_change_target(false) < 0
-	_next_input_change.disabled = held or viewer.input_change_target(true) < 0
+	var status_only: bool = _status_changes_only.button_pressed
+	_status_changes_only.disabled = held or viewer.is_seeking() or viewer.frame_count() == 0
+	_previous_input_change.text = "Previous status change" if status_only else "Previous input change"
+	_next_input_change.text = "Next status change" if status_only else "Next input change"
+	_previous_input_change.disabled = held or (viewer.status_change_target(false) if status_only else viewer.input_change_target(false)) < 0
+	_next_input_change.disabled = held or (viewer.status_change_target(true) if status_only else viewer.input_change_target(true)) < 0
 	_previous_recorded_checksum.disabled = held or viewer.recorded_checksum_target(false) < 0
 	_next_recorded_checksum.disabled = held or viewer.recorded_checksum_target(true) < 0
 	queue_redraw()

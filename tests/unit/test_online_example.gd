@@ -315,7 +315,7 @@ func _staged_input_terminal(context: RefCounted) -> void:
 					fixture.client.free()
 
 
-func _fixture(context: RefCounted, uuid: String, configured_peer: Peer = null) -> Dictionary:
+func _fixture(context: RefCounted, uuid: String, configured_peer: Peer = null, record_replay: bool = false) -> Dictionary:
 	var client: Client = Client.new()
 	client.local = uuid
 	var mesh: DirectFixture.FakeMesh = DirectFixture.FakeMesh.new()
@@ -326,6 +326,7 @@ func _fixture(context: RefCounted, uuid: String, configured_peer: Peer = null) -
 	if configured_peer != null:
 		game_match.peer = configured_peer
 	game_match.game = ObservedGame.new()
+	game_match.record_replay = record_replay
 	context.equal(game_match.freeze(client, mesh, PackedStringArray([V, U]), PackedByteArray([1, 2, 3, 4, 5, 6, 7, 8])), OK, "freeze real game membership")
 	var plan: MembershipFixture.Plan = MembershipFixture.Plan.new()
 	plan.data.peers = [{"player_id": V if uuid == U else U, "initiate": uuid == U}]
@@ -739,6 +740,12 @@ func _delay_actions(context: RefCounted) -> void:
 				game_match.tick(100 * 16667, 0)
 		var actionable: bool = phase in ["live", "stale_suggestion"]
 		node.call("_update_status")
+		var raise_button: Button = node.get("raise_delay_button")
+		var suggestion_button: Button = node.get("apply_delay_button")
+		context.equal(raise_button != null and suggestion_button != null, true, "visible delay controls are available")
+		if raise_button != null and suggestion_button != null:
+			context.equal(raise_button.disabled, not actionable, phase + " manual button readiness")
+			context.equal(suggestion_button.disabled, phase != "live", phase + " suggestion button readiness")
 		context.equal(node._status.text.contains("= raises"), actionable, phase + " manual prompt readiness")
 		context.equal(node._status.text.contains("R applies"), phase == "live", phase + " suggestion prompt readiness")
 		if phase != "fresh_room":
@@ -777,6 +784,24 @@ func _delay_actions(context: RefCounted) -> void:
 			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay + 2, "stale suggestion does not block manual raise")
 		else:
 			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay, phase + " stale keys preserve delay")
+		if raise_button != null and suggestion_button != null:
+			var before_click: int = game_match.peer.input_delay(game_match.local_slot)
+			var before_message: String = lobby.message
+			if phase == "live":
+				game_match.suggested_delay = before_click + 2
+				node.call("_update_status")
+				suggestion_button.pressed.emit()
+				context.equal(game_match.peer.input_delay(game_match.local_slot), before_click + 2, "visible suggestion button applies actual delay")
+				context.equal(suggestion_button.disabled, true, "applied suggestion disables its control immediately")
+			raise_button.pressed.emit()
+			context.equal(
+				game_match.peer.input_delay(game_match.local_slot),
+				before_click + (3 if phase == "live" else 1 if actionable else 0),
+				"visible manual button shares actual match readiness"
+			)
+			if not actionable:
+				suggestion_button.pressed.emit()
+				context.equal(lobby.message, before_message, "stale button callbacks preserve recovery message")
 		node.free()
 		lobby.disconnect_room()
 		for fixture: Dictionary in fixtures:
