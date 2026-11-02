@@ -67,9 +67,13 @@ unlinking an idle lock can race with acquisition. Validate shared directory owne
 and permissions before opening its lock. Bound child readiness reads as well as exit waits.
 Verify owned descendants have exited before accepting final file inventories;
 parent exit alone does not establish process-group completion.
-Exercise cancellation while waiting, during an active worker wave and between process
-spawn and ownership registration. Verify real descendants stop, queued work stays
-fenced and the host lease becomes available only after active children retire.
+Exercise cancellation while waiting, during an active worker wave, between process
+spawn and ownership registration, and immediately after registration before body entry.
+Acquisition, registration and body entry must share the cleanup scope. Reap leaders
+and observe descendant retirement before returning host capacity; sending a kill
+signal alone does not prove cleanup. Repeated signals must not interrupt retirement.
+Verify queued work stays fenced and unresolved cleanup produces a failed receipt.
+A negative control that removes retirement observation must fail.
 Linux process-stat reads can raise `ProcessLookupError` after opening a disappearing process. Treat it and `FileNotFoundError` as absence; propagate unrelated errors.
 Parse process-stat metadata as bytes; process command names can contain non-UTF-8 bytes and closing parentheses.
 
