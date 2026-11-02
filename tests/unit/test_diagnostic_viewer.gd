@@ -247,14 +247,35 @@ func _scene_controls(context: RefCounted) -> void:
 	context.equal(node.viewer.message, "Could not open the diagnostic file.", "file read failure is visible")
 	# Value: protects=imported metadata cannot inject diagnostic status lines; fails_when=seed text is interpolated without escaping;
 	# why_new=metadata tests only check controller values and ordinary scene text; seam=none
-	for seed: String in ["9223372036854775808", "seed\nPlayback comparison failure: none\r\t\u0001\"\\", "x".repeat(300)]:
+	var metadata: Array[Dictionary] = [
+		{"seed": "9223372036854775808", "display": '"9223372036854775808"'},
+		{"seed": "x".repeat(300), "display": '"' + "x".repeat(256) + '"'},
+		{"seed": '"\\', "display": '"\\"\\\\"'},
+	]
+	var named: Dictionary = {8: "\\b", 9: "\\t", 10: "\\n", 11: "\\v", 12: "\\f", 13: "\\r"}
+	var controls: Array[int] = []
+	for code: int in range(1, 32):
+		controls.append(code)
+	for code: int in range(127, 160):
+		controls.append(code)
+	controls.append_array([0x2028, 0x2029])
+	for code: int in controls:
+		metadata.append({"seed": "x" + String.chr(code) + "y", "display": '"x' + str(named.get(code, "\\u%04x" % code)) + 'y"'})
+	for item: Dictionary in metadata:
 		var trace: Dictionary = capture()
-		trace.seed = seed
-		context.equal(node.viewer.open_bytes(encoded(trace)), true, "untrusted descriptive seed preserves valid diagnostic playback")
+		trace.seed = item.seed
+		trace.first_divergence = {"source": item.seed}
+		var payload: PackedByteArray = encoded(trace)
+		if str(item.seed).contains(String.chr(11)):
+			payload = payload.get_string_from_utf8().replace("\\v", "\\u000b").to_utf8_buffer()
+		context.equal(node.viewer.open_bytes(payload), true, "untrusted descriptive seed preserves valid diagnostic playback")
 		node._refresh()
-		context.equal(node._status.text.contains("captured seed: " + JSON.stringify(seed.substr(0, 256)) + "\nRetained boundaries:"), true,
-			"status quotes bounded recorded seed without introducing lines or control characters")
-		context.equal(node.viewer.status().seed, seed.substr(0, 256), "display escaping preserves the owned recorded metadata value")
+		context.equal(node._status.text.contains("captured seed: " + item.display + "\nRetained boundaries:"), true,
+			"status uses explicit escaped control representation: " + str(item.seed.to_utf8_buffer().hex_encode()))
+		var failure_display: String = item.display if str(item.seed).length() <= 128 else '"' + "x".repeat(128) + '"'
+		context.equal(node._status.text.contains('"source":' + failure_display), true, "captured failure strings use the same control escaping")
+		context.equal(node.viewer.status().seed, str(item.seed).substr(0, 256), "display escaping preserves the owned recorded metadata value")
+
 	node._exit_tree()
 	node.free()
 

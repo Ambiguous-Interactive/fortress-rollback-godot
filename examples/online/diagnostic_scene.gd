@@ -147,8 +147,8 @@ func _refresh() -> void:
 		"%s\nVersion: %s | captured seed: %s\nRetained boundaries: %d–%d | rows: %d / %d | next: %d"
 		% [
 			viewer.message,
-			JSON.stringify(status.application_version),
-			JSON.stringify(status.seed),
+			Viewer.display_json(status.application_version),
+			Viewer.display_json(status.seed),
 			status.first_boundary,
 			status.last_boundary,
 			status.rows_consumed,
@@ -157,9 +157,9 @@ func _refresh() -> void:
 		]
 	)
 	_status.text += "\nValidated states: %d | applied advances: %d | game frame: %d" % [status.validated_states, status.advanced_frames, status.game_frame]
-	_status.text += "\nSession callback failure: " + JSON.stringify(status.session_failure)
-	_status.text += "\nCapture's reported failure: " + JSON.stringify(status.capture_failure)
-	_status.text += "\nPlayback comparison failure: " + JSON.stringify(status.failure)
+	_status.text += "\nSession callback failure: " + Viewer.display_json(status.session_failure)
+	_status.text += "\nCapture's reported failure: " + Viewer.display_json(status.capture_failure)
+	_status.text += "\nPlayback comparison failure: " + Viewer.display_json(status.failure)
 	_status.text += "\nRestores captured RNG state. A matching window does not prove remote agreement or validate the original seed."
 	_play.text = "Pause" if viewer.is_playing else "Play"
 	_play.disabled = not viewer.can_step()

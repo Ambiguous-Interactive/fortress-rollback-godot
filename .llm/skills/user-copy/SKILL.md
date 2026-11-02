@@ -29,6 +29,7 @@ Keep API names exact. Remove filler and unexplained abbreviations.
 Product action text must share its control's readiness gates; retained replay data does not imply a live match.
 Label imported provenance as recorded metadata, separate from runtime identity and checksum coverage.
 Render caller-supplied metadata as bounded plain text; escape control characters before using it in labels or tooltips.
+Godot JSON quoting alone leaves some C0/C1 controls and Unicode line separators literal. Verify escaping against explicit codepoints and actual Label line counts.
 Spell out punctuation key names when adjacent separators could obscure them, such as Comma and Period before a colon.
 Explain why, how, and what in PRs and commit messages, with detail proportional to the change.
 Keep technical mechanisms and investigation evidence in commit bodies or linked issues unless needed by a required review format.
