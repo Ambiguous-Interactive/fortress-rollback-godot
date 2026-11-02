@@ -366,10 +366,10 @@ def _group_active(group: int) -> bool:
             if not entry.name.isdigit():
                 continue
             try:
-                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                fields = (entry / "stat").read_bytes().rsplit(b")", 1)[1].split()
             except (FileNotFoundError, ProcessLookupError):
                 continue
-            if int(fields[2]) == group and fields[0] not in ("Z", "X"):
+            if int(fields[2]) == group and fields[0] not in (b"Z", b"X"):
                 return True
         return False
     return True

@@ -29,6 +29,8 @@
 
 - The current main baseline spends 24m55s on the critical path, with browser verification dominating setup. Chromium now uses existing two-part inventories; selector forwarding and exact coverage union are tested.
 
+- Raw process names can contain non-UTF-8 bytes. Cleanup and fixture observers now parse stat records as bytes, preserving reporting through unrelated host processes.
+
 ## Curation and Pruning
 
 - Updated existing testing and copy guidance rather than adding a new skill.

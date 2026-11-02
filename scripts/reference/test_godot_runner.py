@@ -30,7 +30,7 @@ def valid_result() -> dict:
 
 def process_live(path: Path) -> bool:
     try:
-        return path.read_text().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
+        return path.read_bytes().rsplit(b')', 1)[1].split()[0] not in (b'Z', b'X')
     except (FileNotFoundError, ProcessLookupError):
         return False
 
@@ -140,6 +140,35 @@ class AbortAttribution(unittest.TestCase):
 
 
 class ReceiptControls(unittest.TestCase):
+    # Value: protects=cleanup observations with arbitrary process names; fails_when=proc comm requires UTF-8; why_new=ordinary process fixtures use ASCII; seam=proc inventory
+    def test_cleanup_proc_names_do_not_require_utf8(self) -> None:
+        if not Path('/proc').is_dir():
+            self.skipTest('requires Linux proc observations')
+        with tempfile.TemporaryDirectory() as directory:
+            entry = Path(directory) / '123'
+            entry.mkdir()
+            rows = [
+                (b'ordinary', b'S', 77, True),
+                (b'name\xff', b'S', 77, True),
+                (b'name) )\xff', b'R', 77, True),
+                (b'name\xff', b'Z', 77, False),
+                (b'name\xff', b'X', 77, False),
+                (b'name)\xff', b'S', 78, False),
+            ]
+            for name, state, group, expected in rows:
+                with self.subTest(name=name, state=state, group=group):
+                    (entry / 'stat').write_bytes(b'123 (' + name + b') ' + state + b' 1 ' + str(group).encode('ascii') + b' 0')
+                    with patch.object(RUNNER, '_group_exists', return_value=True), patch.object(Path, 'iterdir', return_value=iter([entry])):
+                        self.assertIs(RUNNER._group_active(77), expected)
+            for error in (FileNotFoundError(2, 'No such file'), ProcessLookupError(3, 'No such process')):
+                with self.subTest(error=type(error).__name__), patch.object(RUNNER, '_group_exists', return_value=True), \
+                        patch.object(Path, 'iterdir', return_value=iter([entry])), patch.object(Path, 'read_bytes', side_effect=error):
+                    self.assertFalse(RUNNER._group_active(77))
+            with patch.object(RUNNER, '_group_exists', return_value=True), patch.object(Path, 'iterdir', return_value=iter([entry])), \
+                    patch.object(Path, 'read_bytes', side_effect=PermissionError(13, 'Permission denied')):
+                with self.assertRaises(PermissionError):
+                    RUNNER._group_active(77)
+
     # Value: protects=group observation errors; fails_when=inventory falls back after failed supervision; why_new=ESRCH controls miss other OS errors; seam=killpg zero probe
     def test_group_observation_errors_cannot_start_unsupervised_inventory(self) -> None:
         if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
@@ -180,12 +209,12 @@ class ReceiptControls(unittest.TestCase):
     def test_process_stat_disappearance_is_not_a_live_child(self) -> None:
         path = Path('/proc/fixture/stat')
         for state in ('S', 'R', 'T', 'Z', 'X'):
-            with self.subTest(state=state), patch.object(Path, 'read_text', return_value=f'123 (fixture) {state} 1 2 3'):
+            with self.subTest(state=state), patch.object(Path, 'read_bytes', return_value=f'123 (fixture) {state} 1 2 3'.encode('ascii')):
                 self.assertEqual(process_live(path), state not in ('Z', 'X'))
         for error in (FileNotFoundError(2, 'No such file'), ProcessLookupError(3, 'No such process')):
-            with self.subTest(error=type(error).__name__), patch.object(Path, 'read_text', side_effect=error):
+            with self.subTest(error=type(error).__name__), patch.object(Path, 'read_bytes', side_effect=error):
                 self.assertFalse(process_live(path))
-        with patch.object(Path, 'read_text', side_effect=PermissionError(13, 'Permission denied')):
+        with patch.object(Path, 'read_bytes', side_effect=PermissionError(13, 'Permission denied')):
             with self.assertRaises(PermissionError):
                 process_live(path)
 
