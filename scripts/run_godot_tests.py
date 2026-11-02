@@ -51,6 +51,8 @@ _launching = False
 
 
 def cancel_execution(signum: int, _frame) -> None:
+    if _cancelled.is_set():
+        return
     _cancelled.set()
     with _process_lock:
         for process in tuple(_processes):
@@ -61,35 +63,49 @@ def cancel_execution(signum: int, _frame) -> None:
                     process.kill()
             except ProcessLookupError:
                 pass
+        retire_registered_processes()
         if _launching:
             return
     raise KeyboardInterrupt
 
 
+def retire_registered_processes() -> None:
+    failed = False
+    for process in tuple(_processes):
+        try:
+            _kill_group(process)
+            with _process_lock:
+                _processes.discard(process)
+        except (OSError, subprocess.SubprocessError):
+            failed = True
+    if failed:
+        raise ValueError("process_cleanup_failed")
+
+
 @contextmanager
 def owned_process(command: list[str], merge_output: bool):
     global _launching
-    with _process_lock:
-        if _cancelled.is_set():
-            raise ValueError("cancelled")
-        # A main-thread signal during Popen defers interruption until the new group is registered.
-        _launching = True
-        try:
-            process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT if merge_output else subprocess.PIPE,
-                                       start_new_session=True)
-            _processes.add(process)
-        finally:
-            _launching = False
+    process = None
     try:
+        with _process_lock:
+            if _cancelled.is_set():
+                raise ValueError("cancelled")
+            # A main-thread signal during Popen defers interruption until the new group is registered.
+            _launching = True
+            try:
+                process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT if merge_output else subprocess.PIPE,
+                                           start_new_session=True)
+                _processes.add(process)
+            finally:
+                _launching = False
         if _cancelled.is_set():
-            cancel_execution(0, None)
+            raise KeyboardInterrupt
         yield process
     finally:
-        try:
+        if process is not None:
             if _cancelled.is_set() or process.poll() is None:
                 _kill_group(process)
-        finally:
             with _process_lock:
                 _processes.discard(process)
 
@@ -435,6 +451,11 @@ def _kill_group(process: subprocess.Popen) -> None:
     elif process.poll() is None:
         process.kill()
     process.wait(timeout=5)
+    deadline = time.monotonic() + 5
+    while _group_active(process.pid):
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, 5)
+        time.sleep(0.01)
 
 
 def timed(command: list[str], timeout: float) -> tuple[dict, float]:
@@ -616,10 +637,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"passed": False, "results": str(args.results)}))
         return 1
     finally:
-        host_capacity.release()
-        for number, handler in handlers.items():
-            signal.signal(number, handler)
-        _cancelled.clear()
+        try:
+            retire_registered_processes()
+        except ValueError:
+            args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "process_cleanup_failed"}) + "\n", encoding="utf-8")
+            print(json.dumps({"passed": False, "results": str(args.results)}))
+            return 1
+        finally:
+            host_capacity.release()
+            for number, handler in handlers.items():
+                signal.signal(number, handler)
+            _cancelled.clear()
 
 
 def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot) -> int:
@@ -674,14 +702,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
         pending = [[None] * len(shards), [None] * len(shards)]
         # The wave keeps the development host, so a witness that starts later waits for it.
-        try:
-            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-                for index in order:
-                    for repetition in pending:
-                        repetition[index] = pool.submit(timed, shards[index], args.timeout)
-                completed = [[future.result() for future in repetition] for repetition in pending]
-        finally:
-            host_capacity.release()
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            for index in order:
+                for repetition in pending:
+                    repetition[index] = pool.submit(timed, shards[index], args.timeout)
+            completed = [[future.result() for future in repetition] for repetition in pending]
         runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
         if not args.filter and args.jobs > 1:
             times = [max(completed[0][index][1], completed[1][index][1]) for index in range(len(keys))]

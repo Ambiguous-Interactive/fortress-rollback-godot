@@ -219,6 +219,60 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
         with self.assertRaises(ProcessLookupError):
             os.kill(int((self.root / 'spawned-pid').read_text()), 0)
 
+    def test_signal_after_registration_reaps_before_returning_capacity(self):
+        self.registration_signal()
+
+    def test_unretired_group_fails_cancelled_receipt(self):
+        self.registration_signal(stuck=True)
+
+    def registration_signal(self, stuck=False):
+        script = (f"import sys, os, signal, json; sys.path.insert(0, {str(self.checkout / 'scripts')!r}); "
+                  "import run_godot_tests as runner\n"
+                  "original = runner.subprocess.Popen\n"
+                  "spawned = []\n"
+                  "def spawn(*args, **kwargs):\n"
+                  "    process = original(*args, **kwargs)\n"
+                  "    spawned.append(process)\n"
+                  "    return process\n"
+                  "runner.subprocess.Popen = spawn\n"
+                  "group_active = runner._group_active\n"
+                  "observations = []\n"
+                  f"stuck = {stuck!r}\n"
+                  "clock = runner.time.monotonic\n"
+                  "clock_shift = [0]\n"
+                  "runner.time.monotonic = lambda: clock() + clock_shift[0]\n"
+                  "def delayed_retirement(group):\n"
+                  "    if runner._cancelled.is_set() and (stuck or len(observations) < 3):\n"
+                  "        if stuck: clock_shift[0] += 6\n"
+                  "        observations.append(group)\n"
+                  "        os.kill(os.getpid(), signal.SIGTERM)\n"
+                  "        return True\n"
+                  "    return group_active(group)\n"
+                  "runner._group_active = delayed_retirement\n"
+                  "def trace(frame, event, arg):\n"
+                  "    if (frame.f_code is runner.owned_process.__wrapped__.__code__ and event == 'line'\n"
+                  "            and frame.f_locals.get('process') is not None and not runner._launching\n"
+                  "            and not runner._cancelled.is_set()):\n"
+                  "        os.kill(os.getpid(), signal.SIGTERM)\n"
+                  "    return trace\n"
+                  "sys.settrace(trace)\n"
+                  f"status = runner.main(['--godot', {str(self.engine)!r}, '--results', {str(self.root / 'result.json')!r}])\n"
+                  "sys.settrace(None)\n"
+                  "print(json.dumps(dict(registered=len(runner._processes), unreaped=sum(p.returncode is None for p in spawned), observations=len(observations))))\n"
+                  "raise SystemExit(status)")
+        process = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env=dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(host_capacity.LEASE_DIR)), text=True)
+        self.children.append(process)
+        output, error = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 1 if stuck else 130, (output, error))
+        state = json.loads(output.splitlines()[-1])
+        if stuck:
+            self.assertGreater(state['observations'], 0, 'cleanup must inspect group retirement before reporting failure')
+        else:
+            self.assertEqual(state, dict(registered=0, unreaped=0, observations=3))
+        self.assertEqual(json.loads((self.root / 'result.json').read_text()).get('failure'), 'process_cleanup_failed' if stuck else 'cancelled')
+        self.assertTrue(host_capacity.acquire('browser-after'))
+
     def test_execution_watchdog_reaps_owned_engine_children(self):
         process = self.start(timeout='.2')
         output, error = process.communicate(timeout=10)
