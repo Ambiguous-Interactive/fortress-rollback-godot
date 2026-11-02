@@ -95,8 +95,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {version: "4.3", browser: chromium, phase: both, suite_part: all, suffix: "", part_suffix: ""}
-          - {version: "4.7.2", browser: chromium, phase: both, suite_part: all, suffix: "", part_suffix: ""}
+          - {version: "4.3", browser: chromium, phase: both, suite_part: "1", suffix: " part 1", part_suffix: "-part-1"}
+          - {version: "4.3", browser: chromium, phase: both, suite_part: "2", suffix: " part 2", part_suffix: "-part-2"}
+          - {version: "4.7.2", browser: chromium, phase: both, suite_part: "1", suffix: " part 1", part_suffix: "-part-1"}
+          - {version: "4.7.2", browser: chromium, phase: both, suite_part: "2", suffix: " part 2", part_suffix: "-part-2"}
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
           - {version: "4.3", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
@@ -138,7 +140,8 @@ jobs:
             xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox \
               --version "${{ matrix.version }}" --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
           else
-            python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}"
+            python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}" \
+              --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
           fi
       - name: Verify late Firefox updater lock cleanup
         if: matrix.browser == 'firefox' && matrix.version == '4.3' && matrix.phase == 'positive' && matrix.suite_part == '1'
@@ -148,7 +151,7 @@ jobs:
             --work-dir .cache/scratch/firefox-shutdown-control \
             --output .cache/reference/results/firefox-shutdown-control
       - name: Verify spectator browser control origins
-        if: matrix.browser == 'chromium' && matrix.version == '4.3'
+        if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.suite_part == '1'
         env:
           PYTHONPATH: scripts/reference
           FORTRESS_PLAYWRIGHT_PACKAGE: ${{ github.workspace }}/.cache/reference/browser/node_modules/@playwright/test
@@ -233,6 +236,16 @@ jobs:
           python3 scripts/reference/test_package_audit.py --godot "$editor" -v
           python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
           python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
+          python3 scripts/reference/diagnostic_json.py --godot "$editor"
+          for round in 1 2; do
+            navigation_log=".cache/reference/results/replay-navigation-$version-$round.log"
+            navigation_status=0
+            timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1 || navigation_status=$?
+            cat "$navigation_log"
+            if (( navigation_status != 0 )); then exit "$navigation_status"; fi
+            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 15' "$navigation_log"
+            if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
+          done
           python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
           for case in default_single default_batched readiness_boundary aborted_wait; do
             case_timeout=120

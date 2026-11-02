@@ -2,6 +2,7 @@ class_name FortressOnlineReplayViewer
 extends RefCounted
 
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const DiagnosticTrace = preload("res://addons/fortress_rollback/core/diagnostic_trace.gd")
 const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const IntegrationGame = preload("res://examples/integration/game.gd")
@@ -483,7 +484,7 @@ func failure_report_bytes() -> PackedByteArray:
 		"observed_state": {"frame": current_frame(), "bytes": game.canonical_bytes().hex_encode()},
 		"coverage": {"checked": checked_checksum_count(), "recorded": recorded_checksum_count()},
 	}
-	var bytes: PackedByteArray = JSON.stringify(report, "\t").to_utf8_buffer()
+	var bytes: PackedByteArray = DiagnosticTrace.to_json(report).to_utf8_buffer()
 	return bytes if bytes.size() <= MAX_FAILURE_REPORT_BYTES else PackedByteArray()
 
 

@@ -61,6 +61,7 @@ var _play: Button
 var _step_button: Button
 var _validate_button: Button
 var _back_button: Button
+var _time_buttons: Array[Button] = []
 var _previous_checkpoint: Button
 var _next_checkpoint: Button
 var _previous_input_change: Button
@@ -110,6 +111,9 @@ func _ready() -> void:
 	var shortcuts: Label = Label.new()
 	shortcuts.text = "P play/pause | N next frame | B back one frame | R restart | Esc cancel seek"
 	panel.add_child(shortcuts)
+	var jumps: Label = Label.new()
+	jumps.text = "J/L: jump 5 seconds | Home/End: start/end"
+	panel.add_child(jumps)
 	var buttons: HBoxContainer = HBoxContainer.new()
 	panel.add_child(buttons)
 	_open_button = _button(buttons, "Open replay", _open)
@@ -139,6 +143,10 @@ func _ready() -> void:
 	navigation.add_child(_target)
 	_seek_button = _button(navigation, "Go", _seek)
 	_cancel_button = _button(navigation, "Cancel seek", _cancel_seek)
+	var time_navigation: HBoxContainer = HBoxContainer.new()
+	panel.add_child(time_navigation)
+	for jump_caption: String in ["Start", "Back 5 seconds", "Forward 5 seconds", "End"]:
+		_time_buttons.append(_button(time_navigation, jump_caption, _jump_time.bind(_time_buttons.size())))
 	var checkpoints: HBoxContainer = HBoxContainer.new()
 	panel.add_child(checkpoints)
 	_previous_checkpoint = _button(checkpoints, "Previous checkpoint", _jump_checkpoint.bind(false))
@@ -329,6 +337,15 @@ func _cancel_seek() -> void:
 	_refresh()
 
 
+## Coarse navigation uses the same verified, bounded seek as typed frame selection.
+func _jump_time(action: int) -> void:
+	if _is_scrubbing or viewer._is_busy() or viewer.is_seeking() or viewer.frame_count() == 0:
+		return
+	var targets: Array[int] = [0, maxi(0, viewer.current_frame() - 300), mini(viewer.frame_count(), viewer.current_frame() + 300), viewer.frame_count()]
+	viewer.seek(targets[action])
+	_refresh()
+
+
 func _jump_checkpoint(forward: bool) -> void:
 	if _is_scrubbing:
 		return
@@ -389,6 +406,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			action = _back_button
 		KEY_R:
 			action = _restart_button
+		KEY_HOME:
+			action = _time_buttons[0]
+		KEY_J:
+			action = _time_buttons[1]
+		KEY_L:
+			action = _time_buttons[2]
+		KEY_END:
+			action = _time_buttons[3]
 		KEY_ESCAPE:
 			action = _cancel_button
 	if action != null and not action.disabled:
@@ -446,6 +471,9 @@ func _refresh() -> void:
 	_target.editable = not held and viewer.frame_count() > 0
 	_seek_button.disabled = held or viewer.frame_count() == 0
 	_cancel_button.disabled = held or not viewer.is_seeking()
+	for index: int in _time_buttons.size():
+		var at_boundary: bool = viewer.current_frame() == (0 if index < 2 else viewer.frame_count())
+		_time_buttons[index].disabled = held or viewer.is_seeking() or viewer.frame_count() == 0 or at_boundary
 	_previous_checkpoint.disabled = held or viewer.checkpoint_target(false) < 0
 	_next_checkpoint.disabled = held or viewer.checkpoint_target(true) < 0
 	_previous_input_change.disabled = held or viewer.input_change_target(false) < 0

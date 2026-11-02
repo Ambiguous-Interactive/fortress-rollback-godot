@@ -3,6 +3,7 @@ extends Node2D
 const Lobby = preload("res://examples/online/lobby.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const DiagnosticTrace = preload("res://addons/fortress_rollback/core/diagnostic_trace.gd")
 const REPLAY_FILENAME: String = "fortress-online.frrp"
 const REPLAY_WARNING_FRAMES: int = 300
 const COLORS: Array[Color] = [Color.CORAL, Color.CORNFLOWER_BLUE, Color.GOLD, Color.MEDIUM_SEA_GREEN]
@@ -258,12 +259,17 @@ func diagnostic_report() -> Dictionary:
 	return report
 
 
+## Owned UTF-8 JSON used by the diagnostic download and native clipboard.
+func diagnostic_report_bytes() -> PackedByteArray:
+	return DiagnosticTrace.to_json(diagnostic_report()).to_utf8_buffer()
+
+
 func _export_diagnostics() -> void:
-	var text: String = JSON.stringify(diagnostic_report(), "\t")
+	var bytes: PackedByteArray = diagnostic_report_bytes()
 	if OS.has_feature("web"):
-		JavaScriptBridge.download_buffer(text.to_utf8_buffer(), "fortress-diagnostics.json", "application/json")
+		JavaScriptBridge.download_buffer(bytes, "fortress-diagnostics.json", "application/json")
 	else:
-		DisplayServer.clipboard_set(text)
+		DisplayServer.clipboard_set(bytes.get_string_from_utf8())
 
 
 func _finish_replay() -> void:

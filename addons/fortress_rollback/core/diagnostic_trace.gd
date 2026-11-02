@@ -12,6 +12,36 @@ var _frontier: int = -1
 var _failure: Dictionary = {}
 
 
+## Serialize JSON-compatible diagnostic dictionaries without Godot-only control escapes.
+## Preserve Unicode and decoded string values, including keys and literal backslash-v text.
+static func to_json(report: Dictionary, pretty: bool = true) -> String:
+	var serialized: String = JSON.stringify(report, "\t" if pretty else "")
+	var result: PackedStringArray = PackedStringArray()
+	var in_string: bool = false
+	var index: int = 0
+	var unchanged_start: int = 0
+	while index < serialized.length():
+		var codepoint: int = serialized.unicode_at(index)
+		if in_string and codepoint == 92:
+			index += 1
+			# Consume each escape once so literal backslashes cannot become controls.
+			if serialized.unicode_at(index) == 118:
+				result.append(serialized.substr(unchanged_start, index - 1 - unchanged_start))
+				result.append("\\u000b")
+				unchanged_start = index + 1
+		elif codepoint == 34:
+			in_string = not in_string
+		elif in_string and codepoint < 32:
+			result.append(serialized.substr(unchanged_start, index - unchanged_start))
+			result.append("\\u%04x" % codepoint)
+			unchanged_start = index + 1
+		index += 1
+	if unchanged_start == 0:
+		return serialized
+	result.append(serialized.substr(unchanged_start))
+	return "".join(result)
+
+
 func configure(config: RefCounted) -> void:
 	_limit = config.diagnostic_trace_frames
 	_max_payload = config.diagnostic_trace_payload_bytes()

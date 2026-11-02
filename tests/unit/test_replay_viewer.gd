@@ -390,6 +390,7 @@ func _scene_controls(context: RefCounted) -> void:
 
 
 func _navigation(context: RefCounted) -> void:
+	_time_navigation(context)
 	var viewer: Viewer = Viewer.new()
 	context.equal(viewer.has_method("seek"), true, "frame navigation is available")
 	if not viewer.has_method("seek"):
@@ -689,5 +690,72 @@ func _paused_validation(context: RefCounted) -> void:
 	context.equal(node.viewer._player.failure_code(), Types.Code.CALLBACK_FAILED, "malformed result retains callback failure")
 	context.equal(node.viewer._is_busy(), false, "malformed result releases the game guard")
 	context.equal(node.viewer.current_frame(), 0, "malformed result consumes no input")
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=coarse replay navigation checks every input and preserves held controls; fails_when=jumps skip validation or override ownership;
+# why_new=frame navigation tests exercise typed destinations only; seam=none
+func _time_navigation(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	var forward: Button = _button(node, "Forward 5 seconds")
+	context.equal(forward != null, true, "five-second navigation is available")
+	if forward == null:
+		node._exit_tree()
+		node.free()
+		return
+	context.equal(forward.disabled, true, "empty viewer disables jumps")
+	var replay: Replay = recording(650)
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	context.equal(_button(node, "Start").disabled, true, "initial boundary disables Start")
+	for target: int in [300, 600, 650]:
+		forward.pressed.emit()
+		context.equal(node.viewer.is_playing, false, "jump pauses playback")
+		var previous: int = node.viewer.current_frame()
+		while node.viewer.is_seeking():
+			node._physics_process(0.0)
+			context.equal(node.viewer.current_frame() - previous <= Viewer.SEEK_FRAMES_PER_TICK, true, "time jumps retain bounded service")
+			previous = node.viewer.current_frame()
+		var expected: Simulation = Simulation.new()
+		for frame: int in target:
+			expected.simulate_frame(frame, replay.inputs(frame))
+		context.equal(node.viewer.current_frame(), target, "jump clamps to recorded ending")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), expected.canonical_bytes(), target, "jump reproduces original canonical prefix")
+	context.equal(forward.disabled, true, "final boundary disables forward jumps")
+	_button(node, "Back 5 seconds").pressed.emit()
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 350, "backward jump is relative to displayed state")
+	node._timeline_drag_started()
+	for caption: String in ["Start", "End", "Back 5 seconds", "Forward 5 seconds"]:
+		context.equal(_button(node, caption).disabled, true, "timeline hold disables time navigation")
+		_button(node, caption).pressed.emit()
+	context.equal(node.viewer.current_frame(), 350, "direct signals preserve timeline hold")
+	node._timeline_drag_ended(false)
+	_button(node, "Start").pressed.emit()
+	context.equal(node.viewer.current_frame(), 0, "Start returns to initial state")
+	var right: InputEventKey = InputEventKey.new()
+	right.keycode = KEY_L
+	right.pressed = true
+	for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed", "shift_pressed", "echo"]:
+		right.set(modifier, true)
+		node._unhandled_key_input(right)
+		context.equal(node.viewer.is_seeking(), false, "modified and repeated jump shortcuts preserve playback")
+		right.set(modifier, false)
+	node._unhandled_key_input(right)
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 300, "L shortcut uses verified five-second navigation")
+	replay._inputs[2 * 7] ^= 1
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	_button(node, "End").pressed.emit()
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 7, "End cannot bypass corrupt input")
+	context.equal(node.viewer.has_failure(), true, "jump exposes owning validation failure")
+	context.state(7, node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()

@@ -77,17 +77,16 @@ class HostCapacityTest(unittest.TestCase):
         directory = Path(self.directory.name)
         durations, results = directory / "durations.json", directory / "results.json"
         durations.write_text(json.dumps({suite: 40}), encoding="utf-8")
-        run_command = subprocess.run
         executor = run_godot_tests.ThreadPoolExecutor
         observed = []
 
-        def command(command, **options):
+        def command(command, timeout, merge_output=True):
             if "--list-cases" in command:
                 self.assertIn(suite, command)
-                return SimpleNamespace(returncode=0, stdout=run_godot_tests.CASES_PREFIX + json.dumps({suite: names}))
+                return {"exit": 0, "stdout": run_godot_tests.CASES_PREFIX + json.dumps({suite: names}), "stderr": ""}
             if "--version" in command:
-                return SimpleNamespace(returncode=0, stdout=b"test-engine", stderr=b"")
-            return run_command(command, **options)
+                return {"exit": 0, "stdout": "test-engine", "stderr": ""}
+            self.fail("unexpected process phase")
 
         def timed(command, timeout):
             observed.append((command, timeout))
@@ -107,7 +106,7 @@ class HostCapacityTest(unittest.TestCase):
                         patch.object(run_godot_tests, "SourceSnapshot", return_value=nullcontext(SimpleNamespace(
                             path=SCRIPTS.parent, commit="host-capacity-control", dirty=False, evidence=lambda: {},
                             verify_image=lambda: None, changed=lambda: False))), \
-                        patch.object(run_godot_tests.subprocess, "run", side_effect=command), \
+                        patch.object(run_godot_tests, "capture", side_effect=command), \
                         patch.object(run_godot_tests, "timed", side_effect=timed), \
                         patch.object(run_godot_tests, "ThreadPoolExecutor", wraps=executor) as pool:
                     status = run_godot_tests.main(["--godot", sys.executable, "--suite", suite, "--jobs", "8", "--timeout", "30",

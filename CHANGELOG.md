@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add five-second and start/end replay jumps, with keyboard shortcuts and bounded checksum-validated navigation.
+
 - Add a Save viewed replay button to the local spectator, including retained recordings after viewing stops.
 
 - Add an exact frame and time preview while dragging the replay timeline. The displayed game and checksum status stay at their current frame.
@@ -258,6 +260,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix diagnostic JSON exports containing control characters while preserving Unicode metadata and recorded values.
 
 - Fix conflicting expert-staged input stopping online matches. Rejected keyboard samples preserve clocks and service state so the original input can be retried.
 

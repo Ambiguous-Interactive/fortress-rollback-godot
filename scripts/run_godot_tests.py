@@ -268,39 +268,57 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
     return result, aborted
 
 
-def invoke(command: list[str], timeout: float) -> dict:
-    # The engine runs in its own process group, so a timeout kills the engine and
-    # every process it started. A child that outlives its parent would keep the
-    # host busy and would own the result that the report names.
+def capture(command: list[str], timeout: float, merge_output: bool = True) -> dict:
+    """Collect bounded output only after the owned process group has stopped."""
     process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, start_new_session=True)
+                               stderr=subprocess.STDOUT if merge_output else subprocess.PIPE,
+                               start_new_session=True)
+    failure = None
+    cleanup_error = False
     try:
-        output, _ = process.communicate(timeout=timeout)
+        output, error = process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        group = os.getpgid(process.pid) if hasattr(os, "getpgid") else None
-        _kill_group(process)
-        # A process that escaped the group can still hold the pipe open, so the report
-        # uses the output read so far instead of waiting for the end of the stream.
-        output = exc.output or b""
-        if process.stdout is not None:
-            try:
-                process.stdout.close()
-            except OSError:
-                pass
-        report = {"command": command, "exit": None, "failure": "watchdog",
-                  "process_group": group, "stdout": _decode(output), "stderr": ""}
+        output, error = exc.output or b"", exc.stderr or b""
+        failure = "watchdog"
+    if failure is not None or _group_exists(process.pid):
+        failure = failure or "descendants_after_exit"
+        try:
+            _kill_group(process)
+        except (OSError, subprocess.SubprocessError):
+            cleanup_error = True
+        if failure == "watchdog":
+            # An escaped process may retain a pipe. Never wait on that pipe after timeout.
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+    report = {"command": command, "exit": None if failure == "watchdog" else process.returncode,
+              "stdout": _decode(output), "stderr": _decode(error)}
+    if failure is not None:
+        report.update(failure=failure, process_group=process.pid)
+        try:
+            deadline = time.monotonic() + 5
+            while _group_active(process.pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            report["cleanup_complete"] = not cleanup_error and not _group_active(process.pid)
+        except OSError:
+            report["cleanup_complete"] = False
+        if not report["cleanup_complete"]:
+            report["failure"] = "process_cleanup_failed"
+    if _invalid_utf8(output, error):
+        report.setdefault("failure", "invalid_utf8_output")
+    return report
+
+
+def invoke(command: list[str], timeout: float) -> dict:
+    report = capture(command, timeout)
+    if "failure" in report:
         progress = last_progress(report["stdout"])
         if progress is not None:
             report["progress"] = progress
         return report
-    report = {"command": command, "exit": process.returncode,
-              "stdout": _decode(output), "stderr": ""}
     progress = last_progress(report["stdout"])
     if progress is not None:
         report["progress"] = progress
-    if _invalid_utf8(output):
-        report["failure"] = "invalid_utf8_output"
-        return report
     lines = [line[len(PREFIX):] for line in report["stdout"].splitlines()
              if line.startswith(PREFIX)]
     errors = engine_errors(report["stdout"])
@@ -319,29 +337,54 @@ def invoke(command: list[str], timeout: float) -> dict:
             raise ValueError("case_aborted")
         if errors:
             raise ValueError("engine_error")
-        if process.returncode != 0 or not report["result"]["passed"]:
+        if report["exit"] != 0 or not report["result"]["passed"]:
             raise ValueError("test_failure")
     except (ValueError, TypeError) as exc:
         report["failure"] = str(exc)
     return report
 
 
-def _kill_group(process: subprocess.Popen) -> None:
-    """Kill the engine's whole process group, so no child outlives the timeout."""
-    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-    else:
-        # A platform without process groups only has the engine itself to stop.
-        process.kill()
+def _group_exists(group: int) -> bool:
+    """Conservatively refuse surviving groups without racing a PID enumeration."""
+    if not hasattr(os, "killpg"):
+        return False
     try:
-        # Waiting for the killed process does not wait for the pipe, so a process that
-        # escaped the group cannot keep this call open.
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
+        os.killpg(group, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _group_active(group: int) -> bool:
+    """Inspect cleanup after SIGKILL; this observation never qualifies a pass."""
+    if not _group_exists(group):
+        return False
+    if Path("/proc").is_dir():
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_bytes().rsplit(b")", 1)[1].split()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            if int(fields[2]) == group and fields[0] not in (b"Z", b"X"):
+                return True
+        return False
+    return True
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    """The new session's leader PID stays its group ID after the leader is reaped."""
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    elif process.poll() is None:
         process.kill()
+    process.wait(timeout=5)
 
 
 def timed(command: list[str], timeout: float) -> tuple[dict, float]:
@@ -357,14 +400,27 @@ def load_durations(path: Path) -> dict:
     return {key: seconds for key, seconds in value.items() if isinstance(seconds, (int, float))} if isinstance(value, dict) else {}
 
 
+class ProbeFailure(ValueError):
+    """Preserve the failed phase's complete supervision evidence in the receipt."""
+
+    def __init__(self, phase: str, report: dict):
+        super().__init__(phase + "_" + report["failure"])
+        self.phase = phase
+        self.report = report
+
+
 def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
     """List case names for slow suites. Any listing problem leaves them whole; the run itself reports it."""
     try:
-        process = subprocess.run(command + [part for suite in suites for part in ("--suite", suite)] + ["--list-cases"],
-                                 cwd=ROOT, capture_output=True, text=True, timeout=timeout)
-        lines = [line[len(CASES_PREFIX):] for line in process.stdout.splitlines() if line.startswith(CASES_PREFIX)]
-        inventory = json.loads(lines[0]) if process.returncode == 0 and len(lines) == 1 else {}
-    except (OSError, subprocess.SubprocessError, ValueError):
+        report = capture(command + [part for suite in suites for part in ("--suite", suite)] + ["--list-cases"], timeout)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if report.get("failure") in ("watchdog", "descendants_after_exit", "process_cleanup_failed"):
+        raise ProbeFailure("case_list", report)
+    try:
+        lines = [line[len(CASES_PREFIX):] for line in report["stdout"].splitlines() if line.startswith(CASES_PREFIX)]
+        inventory = json.loads(lines[0]) if report["exit"] == 0 and "failure" not in report and len(lines) == 1 else {}
+    except ValueError:
         return {}
     return {suite: names for suite, names in inventory.items() if suite in suites and isinstance(names, list) and len(names) > 1
             and all(isinstance(name, str) and name for name in names) and len(set(names)) == len(names)}
@@ -530,27 +586,24 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
     if shared_host:
         print(json.dumps({"host_capacity_lease": lease_holder, "jobs": 1}), file=sys.stderr)
         args.jobs = 1
-    if shared_host or args.jobs > 1:
-        slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
-        cases = split_cases(command, slow, args.timeout) if slow else {}
-        # Shards stay in suite order, then inventory order, so merged records match one process.
-        keys = [(suite, case) for suite in suites for case in cases.get(suite, [None])]
-        shards = [command + ["--suite", suite] + (["--case", case] if case else []) for suite, case in keys]
-    else:
-        keys = [("|".join(args.suite), None)]
-        shards = [command + [part for suite in args.suite for part in ("--suite", suite)]]
     version_probe = None
     try:
-        version_process = subprocess.run([str(executable), "--version"], capture_output=True,
-                                 timeout=args.timeout)
-        version_probe = {"command": [str(executable), "--version"],
-                         "exit": version_process.returncode,
-                         "stdout": _decode(version_process.stdout), "stderr": _decode(version_process.stderr)}
-        if _invalid_utf8(version_process.stdout, version_process.stderr):
-            raise ValueError("invalid_utf8_version_output")
-        if version_process.returncode != 0:
+        version_probe = capture([str(executable), "--version"], args.timeout, merge_output=False)
+        if "failure" in version_probe:
+            failure = version_probe["failure"]
+            raise ValueError("invalid_utf8_version_output" if failure == "invalid_utf8_output" else failure)
+        if version_probe["exit"] != 0:
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
+        if shared_host or args.jobs > 1:
+            slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
+            cases = split_cases(command, slow, args.timeout) if slow else {}
+            # Shards stay in suite order, then inventory order, so merged records match one process.
+            keys = [(suite, case) for suite in suites for case in cases.get(suite, [None])]
+            shards = [command + ["--suite", suite] + (["--case", case] if case else []) for suite, case in keys]
+        else:
+            keys = [("|".join(args.suite), None)]
+            shards = [command + [part for suite in args.suite for part in ("--suite", suite)]]
         # Start the slowest shards first, and both repetitions of each together, so no long shard starts last.
         # Shards with no recorded time count as slowest. Results are still merged in suite order.
         def estimate(key: tuple) -> float:
@@ -604,6 +657,8 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         report = {"format": 1, "passed": False, "failure": str(exc)}
         if version_probe is not None:
             report["version_probe"] = version_probe
+        if isinstance(exc, ProbeFailure):
+            report[exc.phase + "_probe"] = exc.report
         if isinstance(exc, subprocess.TimeoutExpired):
             report.update(stdout=_decode(exc.stdout), stderr=_decode(exc.stderr))
     report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence())

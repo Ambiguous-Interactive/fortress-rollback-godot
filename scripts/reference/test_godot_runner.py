@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("godot_runner", ROOT / "scripts/run_godot_tests.py")
@@ -25,6 +26,13 @@ def valid_result() -> dict:
     return {"format": 1, "complete": True, "passed": True, "count": 1,
             "errors": [], "records": [{"suite": "res://suite.gd", "case": "pass",
             "category": "unit", "seed": "1701", "runs": [run, copy.deepcopy(run)]}]}
+
+
+def process_live(path: Path) -> bool:
+    try:
+        return path.read_bytes().rsplit(b')', 1)[1].split()[0] not in (b'Z', b'X')
+    except (FileNotFoundError, ProcessLookupError):
+        return False
 
 
 class CompletionContract(unittest.TestCase):
@@ -132,6 +140,261 @@ class AbortAttribution(unittest.TestCase):
 
 
 class ReceiptControls(unittest.TestCase):
+    # Value: protects=cleanup observations with arbitrary process names; fails_when=proc comm requires UTF-8; why_new=ordinary process fixtures use ASCII; seam=proc inventory
+    def test_cleanup_proc_names_do_not_require_utf8(self) -> None:
+        if not Path('/proc').is_dir():
+            self.skipTest('requires Linux proc observations')
+        with tempfile.TemporaryDirectory() as directory:
+            entry = Path(directory) / '123'
+            entry.mkdir()
+            rows = [
+                (b'ordinary', b'S', 77, True),
+                (b'name\xff', b'S', 77, True),
+                (b'name) )\xff', b'R', 77, True),
+                (b'name\xff', b'Z', 77, False),
+                (b'name\xff', b'X', 77, False),
+                (b'name)\xff', b'S', 78, False),
+            ]
+            for name, state, group, expected in rows:
+                with self.subTest(name=name, state=state, group=group):
+                    (entry / 'stat').write_bytes(b'123 (' + name + b') ' + state + b' 1 ' + str(group).encode('ascii') + b' 0')
+                    with patch.object(RUNNER, '_group_exists', return_value=True), patch.object(Path, 'iterdir', return_value=iter([entry])):
+                        self.assertIs(RUNNER._group_active(77), expected)
+            for error in (FileNotFoundError(2, 'No such file'), ProcessLookupError(3, 'No such process')):
+                with self.subTest(error=type(error).__name__), patch.object(RUNNER, '_group_exists', return_value=True), \
+                        patch.object(Path, 'iterdir', return_value=iter([entry])), patch.object(Path, 'read_bytes', side_effect=error):
+                    self.assertFalse(RUNNER._group_active(77))
+            with patch.object(RUNNER, '_group_exists', return_value=True), patch.object(Path, 'iterdir', return_value=iter([entry])), \
+                    patch.object(Path, 'read_bytes', side_effect=PermissionError(13, 'Permission denied')):
+                with self.assertRaises(PermissionError):
+                    RUNNER._group_active(77)
+
+    # Value: protects=group observation errors; fails_when=inventory falls back after failed supervision; why_new=ESRCH controls miss other OS errors; seam=killpg zero probe
+    def test_group_observation_errors_cannot_start_unsupervised_inventory(self) -> None:
+        if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
+            self.skipTest('requires Linux process-group observations')
+        for error in (PermissionError(1, 'Operation not permitted'), OSError(5, 'Input/output error')):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as directory:
+                pid_file = Path(directory) / 'child.pid'
+                command = ("import pathlib,subprocess,sys;"
+                           "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
+                           "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+                           f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid));"
+                           "print('FORTRESS_TEST_CASES {\"res://suite.gd\":[\"one\",\"two\"]}')")
+                killpg = os.killpg
+                observed = [False]
+
+                def fail_probe(group, signal):
+                    if signal == 0 and not observed[0]:
+                        observed[0] = True
+                        raise error
+                    return killpg(group, signal)
+
+                try:
+                    with patch.object(os, 'killpg', fail_probe):
+                        with self.assertRaisesRegex(ValueError, '^case_list_descendants_after_exit$') as failure:
+                            RUNNER.split_cases([sys.executable, '-c', command], ['res://suite.gd'], 5)
+                    self.assertTrue(observed[0], 'group-observation error was not injected')
+                    self.assertIs(failure.exception.report['cleanup_complete'], True)
+                    self.assertIsInstance(failure.exception.report['process_group'], int)
+                    self.assertFalse(process_live(Path('/proc') / pid_file.read_text() / 'stat'))
+                finally:
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text()), 9)
+                        except ProcessLookupError:
+                            pass
+
+    # Value: protects=exiting process observations; fails_when=stat disappears during read; why_new=live child schedules rarely expose the race; seam=proc stat read
+    def test_process_stat_disappearance_is_not_a_live_child(self) -> None:
+        path = Path('/proc/fixture/stat')
+        for state in ('S', 'R', 'T', 'Z', 'X'):
+            with self.subTest(state=state), patch.object(Path, 'read_bytes', return_value=f'123 (fixture) {state} 1 2 3'.encode('ascii')):
+                self.assertEqual(process_live(path), state not in ('Z', 'X'))
+        for error in (FileNotFoundError(2, 'No such file'), ProcessLookupError(3, 'No such process')):
+            with self.subTest(error=type(error).__name__), patch.object(Path, 'read_bytes', side_effect=error):
+                self.assertFalse(process_live(path))
+        with patch.object(Path, 'read_bytes', side_effect=PermissionError(13, 'Permission denied')):
+            with self.assertRaises(PermissionError):
+                process_live(path)
+
+    # Value: protects=failed inventory cleanup; fails_when=a wait failure falls back to ordinary shards; why_new=successful kill controls miss cleanup errors; seam=cleanup wait
+    def test_case_listing_cleanup_failure_cannot_fall_back(self) -> None:
+        kill_group = RUNNER._kill_group
+
+        def fail_wait(process):
+            kill_group(process)
+            raise subprocess.TimeoutExpired('cleanup_wait', 5)
+
+        with patch.object(RUNNER, '_kill_group', fail_wait):
+            with self.assertRaisesRegex(ValueError, '^case_list_process_cleanup_failed$') as observed:
+                RUNNER.split_cases([sys.executable, '-c', 'import time;time.sleep(30)'], ['res://suite.gd'], 0.05)
+        report = observed.exception.report
+        self.assertEqual(report['failure'], 'process_cleanup_failed')
+        self.assertIsInstance(report['process_group'], int)
+        self.assertIs(report['cleanup_complete'], False)
+
+    # Value: protects=descendant replacement; fails_when=a new child survives completion; why_new=stationary children cannot expose churn; seam=group check order
+    def test_descendant_replacement_cannot_hide_from_completion(self) -> None:
+        self._replacement_completion(inventory_control=False)
+
+    # Value: protects=group-gate control; fails_when=fixture never creates the missed child; why_new=production gate avoids proc enumeration; seam=inventory gate mutation
+    def test_inventory_observation_can_miss_replacement(self) -> None:
+        self._replacement_completion(inventory_control=True)
+
+    def _replacement_completion(self, inventory_control: bool) -> None:
+        if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
+            self.skipTest('requires Linux process-group observations')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trigger, ready, leaf_pid, child_pid = [root / name for name in ('trigger', 'ready', 'leaf', 'child')]
+            child_code = ("import pathlib,subprocess,sys,time\n"
+                          f"trigger=pathlib.Path({str(trigger)!r})\n"
+                          f"pathlib.Path({str(ready)!r}).touch()\n"
+                          "while not trigger.exists(): time.sleep(0.001)\n"
+                          "leaf=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'])\n"
+                          f"pathlib.Path({str(leaf_pid)!r}).write_text(str(leaf.pid))\n")
+            parent_code = ("import pathlib,subprocess,sys,time\n"
+                           f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}],"
+                           "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+                           f"pathlib.Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+                           f"ready=pathlib.Path({str(ready)!r})\n"
+                           "while not ready.exists(): time.sleep(0.001)\n"
+                           f"print({(RUNNER.PREFIX + json.dumps(valid_result()))!r})\n")
+            iterdir = Path.iterdir
+            group_exists = RUNNER._group_exists
+            ordered = [False]
+            expected_group = [None]
+
+            def replace_child():
+                if ordered[0]:
+                    return
+                ordered[0] = True
+                process_state = Path('/proc') / child_pid.read_text() / 'stat'
+                self.assertTrue(process_live(process_state), 'replacement fixture parent exited too soon')
+                trigger.touch()
+                deadline = time.monotonic() + 5
+                while (not leaf_pid.exists() or process_live(process_state)) and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertTrue(leaf_pid.exists(), 'replacement fixture did not fork')
+                self.assertFalse(process_live(process_state), 'replacement fixture parent did not exit')
+                self.assertEqual(os.getpgid(int(leaf_pid.read_text())), expected_group[0], 'replacement escaped the owned group')
+
+            def observe_inventory(path: Path):
+                entries = list(iterdir(path))
+                if path == Path('/proc'):
+                    replace_child()
+                return iter(entries)
+
+            def observe_group(group: int):
+                expected_group[0] = group
+                if inventory_control:
+                    with patch.object(RUNNER, '_group_exists', group_exists):
+                        return RUNNER._group_active(group)
+                replace_child()
+                return group_exists(group)
+
+            try:
+                with patch.object(RUNNER, '_group_exists', observe_group):
+                    if inventory_control:
+                        with patch.object(Path, 'iterdir', observe_inventory):
+                            result = RUNNER.invoke([sys.executable, '-c', parent_code], 5)
+                    else:
+                        result = RUNNER.invoke([sys.executable, '-c', parent_code], 5)
+                self.assertTrue(ordered[0], 'replacement ordering hook did not execute')
+                self.assertTrue(leaf_pid.exists(), 'replacement fixture did not fork')
+                leaf_state = Path('/proc') / leaf_pid.read_text() / 'stat'
+                if inventory_control:
+                    self.assertNotIn('failure', result)
+                    self.assertIs(result['result']['passed'], True)
+                    self.assertTrue(process_live(leaf_state), 'inventory control did not expose a surviving replacement')
+                else:
+                    self.assertEqual(result.get('failure'), 'descendants_after_exit', result)
+                    self.assertIs(result['cleanup_complete'], True)
+                    self.assertFalse(process_live(leaf_state), 'owned replacement survived completion')
+            finally:
+                for identity in (child_pid, leaf_pid):
+                    if identity.exists():
+                        try:
+                            os.kill(int(identity.read_text()), 9)
+                        except ProcessLookupError:
+                            pass
+
+    # Value: protects=completed receipt child lifetime; fails_when=redirected child outlives a passing parent; why_new=watchdogs cover only live parents; seam=real Python child
+    def test_completed_parent_cannot_leave_owned_children(self) -> None:
+        if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
+            self.skipTest('requires Linux process-group observations')
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / 'child.pid'
+            script = ("import pathlib,subprocess,sys;"
+                      "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
+                      "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+                      f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid));"
+                      f"print({(RUNNER.PREFIX + json.dumps(valid_result()))!r})")
+            try:
+                result = RUNNER.invoke([sys.executable, '-c', script], 5)
+                self.assertEqual(result.get('failure'), 'descendants_after_exit', result)
+                child = int(pid_file.read_text())
+                state = Path(f'/proc/{child}/stat')
+                self.assertTrue(not process_live(state),
+                                'owned child remains executable after receipt completion')
+            finally:
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text()), 9)
+                    except ProcessLookupError:
+                        pass
+
+    # Value: protects=probe lifetime ownership; fails_when=version/list probes accept live children; why_new=execution supervision does not cover discovery; seam=real Python child
+    def test_probe_children_are_rejected_and_stopped(self) -> None:
+        if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
+            self.skipTest('requires Linux process-group observations')
+        for phase in ('version', 'case_list'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                pid_file = Path(directory) / 'child.pid'
+                engine = Path(directory) / 'engine'
+                engine.write_text('#!' + sys.executable + '\nimport pathlib,subprocess,sys\n'
+                                  + ("if '--version' in sys.argv: print('test-engine');sys.exit(0)\n" if phase == 'case_list' else '')
+                                  +
+                                  "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
+                                  "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+                                  f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid))\n"
+                                  "print('test-engine' if '--version' in sys.argv else 'FORTRESS_TEST_CASES {}')\n")
+                engine.chmod(0o755)
+                try:
+                    if phase == 'version':
+                        receipt = Path(directory) / 'receipt.json'
+                        receipt.write_text('{"passed":true}')
+                        self.assertEqual(RUNNER.main(['--godot', str(engine), '--results', str(receipt)]), 1)
+                        report = json.loads(receipt.read_text())
+                        self.assertIs(report['passed'], False)
+                        self.assertEqual(report['failure'], 'descendants_after_exit')
+                        self.assertIs(report['version_probe']['cleanup_complete'], True)
+                    else:
+                        with self.assertRaisesRegex(ValueError, '^case_list_descendants_after_exit$'):
+                            RUNNER.split_cases([str(engine)], ['res://suite.gd'], 5)
+                        receipt = Path(directory) / 'receipt.json'
+                        durations = Path(directory) / 'durations.json'
+                        durations.write_text(json.dumps({'res://suite.gd': 40}))
+                        receipt.write_text('{"passed":true}')
+                        self.assertEqual(RUNNER.main(['--godot', str(engine), '--results', str(receipt), '--suite', 'res://suite.gd',
+                                                      '--jobs', '2', '--durations', str(durations)]), 1)
+                        report = json.loads(receipt.read_text())
+                        self.assertIs(report['passed'], False)
+                        self.assertEqual(report['failure'], 'case_list_descendants_after_exit')
+                        self.assertIsInstance(report['case_list_probe']['process_group'], int)
+                        self.assertIs(report['case_list_probe']['cleanup_complete'], True)
+                        self.assertNotIn('runs', report, 'failed inventory cleanup must not start ordinary runs')
+                    child = int(pid_file.read_text())
+                    state = Path(f'/proc/{child}/stat')
+                    self.assertTrue(not process_live(state))
+                finally:
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text()), 9)
+                        except ProcessLookupError:
+                            pass
+
     # Value: a failed new engine probe must supersede prior success, including
     # before the external executable gets control and when its bytes are invalid.
     def test_failed_version_probe_cannot_preserve_success(self) -> None:
@@ -189,13 +452,21 @@ class ReceiptControls(unittest.TestCase):
         if not hasattr(os, 'killpg'):
             self.skipTest("this platform has no process groups")
         escape = ("import subprocess,sys,time;"
-                  "subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True);"
-                  "time.sleep(120)")
+                  "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(120)'],start_new_session=True);"
+                  "print(child.pid,flush=True);time.sleep(120)")
         started = time.monotonic()
         result = RUNNER.invoke([sys.executable, '-c', escape], 1)
-        elapsed = time.monotonic() - started
-        self.assertEqual(result.get('failure'), 'watchdog', result)
-        self.assertLess(elapsed, 20, f"the watchdog waited {elapsed:.1f}s for an escaped process")
+        try:
+            elapsed = time.monotonic() - started
+            self.assertEqual(result.get('failure'), 'watchdog', result)
+            self.assertLess(elapsed, 20, f"the watchdog waited {elapsed:.1f}s for an escaped process")
+        finally:
+            # The fixture deliberately escapes ownership; its test still owns cleanup.
+            if result['stdout'].strip():
+                try:
+                    os.kill(int(result['stdout'].strip()), 9)
+                except ProcessLookupError:
+                    pass
 
 
 class EngineControls(unittest.TestCase):
@@ -304,7 +575,7 @@ class EngineControls(unittest.TestCase):
         cases = [
             (["--suite", "res://tests/runner-controls/parse_error.gd"], "engine_error"),
             (["--suite", "res://tests/runner-controls/absent.gd"], "test_failure"),
-            (["--filter", "no-such-case"], "test_failure"),
+            (["--suite", "res://tests/runner-controls/control_suite.gd", "--filter", "no-such-case"], "test_failure"),
         ]
         for arguments, failure in cases:
             with self.subTest(arguments=arguments):

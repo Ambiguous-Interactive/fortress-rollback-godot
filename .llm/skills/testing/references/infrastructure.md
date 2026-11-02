@@ -26,6 +26,8 @@ parent decoder, including malformed stdout and stderr; mocks returning decoded
 strings cannot expose this boundary. Decoding failures must report sanitized
 errors without revealing captured CLI output or credentials.
 
+Fault fixtures must unconditionally assert that their injection ran and created the intended state. A production refactor can bypass an old observation hook while leaving its test green.
+
 Invalidate a prior success report before starting a new attempt, clear only the
 runner-owned logs, and preserve partial stdout/stderr on timeout. Identify the failed
 command with a fixed phase label; dumping arbitrary arguments or environment can expose credentials. Capture
@@ -52,6 +54,7 @@ Localize stalled package acquisition before changing budgets again; preserve rep
 Size harness command envelopes after encoding and serialization; a binary payload cap does not include hex expansion or JSON overhead.
 Dependency-only baseline refreshes must preserve readable recordings from known compatible source revisions.
 Exercise original provenance metadata as well as newly generated fixtures; regenerated fixtures alone hide rejection regressions.
+Verify that matrix selectors reach the actual command arguments; a declared partition alone can silently repeat the full workload.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
 Shared-host runs keep one worker and known slow-case isolation; serialization must
@@ -63,6 +66,8 @@ unlinking an idle lock can race with acquisition. Validate shared directory owne
 and permissions before opening its lock. Bound child readiness reads as well as exit waits.
 Verify owned descendants have exited before accepting final file inventories;
 parent exit alone does not establish process-group completion.
+Linux process-stat reads can raise `ProcessLookupError` after opening a disappearing process. Treat it and `FileNotFoundError` as absence; propagate unrelated errors.
+Parse process-stat metadata as bytes; process command names can contain non-UTF-8 bytes and closing parentheses.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent

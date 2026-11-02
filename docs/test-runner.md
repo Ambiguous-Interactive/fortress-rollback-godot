@@ -81,9 +81,16 @@ the successful controls do not erase the original watchdog failure.
 The slower integration category uses the budget below. Deliberate watchdog controls
 keep their short limits.
 
-Every engine runs in its own process group. A run that exceeds its timeout kills that whole
-group, so the engine and every process it started stop together and no process outlives the
-run that named it. The watchdog report names the group it killed.
+Every engine execution, version probe and case inventory probe runs in its own process group.
+The launcher kills that group on timeout. Before qualification, it conservatively refuses
+any surviving group, including children that redirected their output and would otherwise escape
+the output-pipe watchdog. Captured-pipe EOF is part of bounded completion; leader exit alone does not complete capture.
+Qualification uses group existence, avoiding a racing process inventory. Unknown group-probe errors require cleanup and refusal, not ordinary-suite fallback.
+Cleanup addresses the original group even after its leader exits. Failure reports name the group
+and whether cleanup completed. Linux cleanup observations exclude dead orphan zombies, which
+cannot execute or modify source files; that observation never qualifies a passing result.
+Other POSIX hosts require the group to disappear. Deliberately detached groups and platforms without process groups
+remain outside this ownership guarantee; this runner does not provide hostile-process containment.
 
 The integration category includes the slower eight-peer transport scheduling regression. Run each
 case separately. The single-poll workload uses 180 seconds; the other cases use 120 seconds.

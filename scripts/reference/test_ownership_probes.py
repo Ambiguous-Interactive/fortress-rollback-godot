@@ -93,6 +93,18 @@ class OwnershipBatchTests(unittest.TestCase):
             with self.subTest(part=part), self.assertRaises(ValueError):
                 probes.select_suites(part)
 
+    # Value: protects=Chromium CI retains every declared partition; fails_when=matrix drops a part or command ignores selection; why_new=Firefox-only CI splitting; seam=none
+    def test_chromium_ci_declares_both_parts_and_passes_the_selector(self):
+        workflow = (probes.ROOT / '.github/workflows/reference-baseline.yml').read_text()
+        pattern = (r'version: "([^"]+)", browser: chromium, phase: both, suite_part: "([12])", '
+                   r'suffix: " part [12]", part_suffix: "(-part-[12])"')
+        rows = re.findall(pattern, workflow)
+        self.assertEqual(set(rows), {(version, part, '-part-' + part) for version in ('4.3', '4.7.2') for part in ('1', '2')})
+        self.assertEqual(len(rows), 4)
+        command = workflow.split('          else\n            python3 scripts/reference/ownership_probes.py', 1)[1].split('          fi', 1)[0]
+        self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"', command)
+        self.assertIn("matrix.part_suffix", workflow)
+
     # Value: protects=declared partial receipts retain exact native/Web evidence; fails_when=scope or results lie; why_new=unpartitioned validation; seam=none
     def test_partition_coverage_rejects_missing_foreign_or_mismatched_evidence(self):
         selected = probes.select_suites('2')
@@ -853,17 +865,18 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     # Value: protects=CI parts run both real controls with exact declared native/Web coverage; fails_when=selector drops work; why_new=whole-run orchestration; seam=none
     def test_suite_parts_run_exact_declared_inventory_and_both_controls(self):
-        for part in ('1', '2'):
-            with self.subTest(part=part):
-                results = self.scenario(expected=None, selected='firefox', version='4.3', suite_part=part)
-                receipt = json.loads((results / 'ownership.json').read_text())
-                selected = probes.select_suites(part)
-                self.assertEqual(receipt['suite_part_requested'], part)
-                self.assertEqual(receipt['suites_requested'], {suite: sorted(cases) for suite, cases in selected.items()})
-                self.assertEqual([row['negative_control'] for row in receipt['records']], [True, False])
-                for row in receipt['records']:
-                    self.assertEqual(row['native']['count'], sum(map(len, selected.values())))
-                    self.assertEqual(row['browser']['result'], row['native'])
+        for browser in ('firefox', 'chromium'):
+            for part in ('1', '2'):
+                with self.subTest(browser=browser, part=part):
+                    results = self.scenario(expected=None, selected=browser, version='4.3', suite_part=part)
+                    receipt = json.loads((results / 'ownership.json').read_text())
+                    selected = probes.select_suites(part)
+                    self.assertEqual(receipt['suite_part_requested'], part)
+                    self.assertEqual(receipt['suites_requested'], {suite: sorted(cases) for suite, cases in selected.items()})
+                    self.assertEqual([row['negative_control'] for row in receipt['records']], [True, False])
+                    for row in receipt['records']:
+                        self.assertEqual(row['native']['count'], sum(map(len, selected.values())))
+                        self.assertEqual(row['browser']['result'], row['native'])
 
     # Value: protects=exact phase declarations; fails_when=missing, mismatched or alias inventory publishes; why_new=unpartitioned inventory; seam=none
     def test_requested_phase_inventory_rejects_missing_mismatched_unknown_and_alias_values(self):
