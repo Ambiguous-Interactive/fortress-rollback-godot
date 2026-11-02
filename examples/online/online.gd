@@ -100,6 +100,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 func _raise_input_delay() -> void:
 	if not _can_change_delay():
 		return
+	_release_gameplay_focus()
 	var code: int = controller.game_match.raise_input_delay()
 	controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
 	_update_status()
@@ -108,9 +109,15 @@ func _raise_input_delay() -> void:
 func _apply_suggested_delay() -> void:
 	if not _can_change_delay() or controller.game_match.suggested_delay < 0:
 		return
+	_release_gameplay_focus()
 	var code: int = controller.game_match.apply_suggested_delay()
 	controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
 	_update_status()
+
+
+func _release_gameplay_focus() -> void:
+	if is_inside_tree() and _can_change_delay():
+		get_viewport().gui_release_focus()
 
 
 func _can_change_delay() -> bool:
@@ -284,6 +291,7 @@ func diagnostic_report_bytes() -> PackedByteArray:
 
 
 func _export_diagnostics() -> void:
+	_release_gameplay_focus()
 	var bytes: PackedByteArray = diagnostic_report_bytes()
 	if OS.has_feature("web"):
 		JavaScriptBridge.download_buffer(bytes, "fortress-diagnostics.json", "application/json")
@@ -306,6 +314,7 @@ func replay_bytes() -> PackedByteArray:
 
 
 func _export_replay() -> void:
+	_release_gameplay_focus()
 	var bytes: PackedByteArray = replay_bytes()
 	if bytes.is_empty():
 		_replay_notice = "No confirmed replay frames are available yet."

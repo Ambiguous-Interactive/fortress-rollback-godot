@@ -267,6 +267,8 @@
 
 ### Fixed
 
+- Keep online arrow movement available after clicking input-delay and diagnostic/replay export buttons, preserving keyboard button access.
+
 - Fix diagnostic JSON exports containing control characters while preserving Unicode metadata and recorded values.
 
 - Fix conflicting expert-staged input stopping online matches. Rejected keyboard samples preserve clocks and service state so the original input can be retried.

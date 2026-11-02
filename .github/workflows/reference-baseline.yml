@@ -42,6 +42,10 @@ on:
       - ".github/workflows/reference-baseline.yml"
   workflow_dispatch:
 
+concurrency:
+  group: reference-baseline-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -249,7 +253,7 @@ jobs:
             timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1 || navigation_status=$?
             cat "$navigation_log"
             if (( navigation_status != 0 )); then exit "$navigation_status"; fi
-            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 15' "$navigation_log"
+            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 61' "$navigation_log"
             if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
           done
           python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"

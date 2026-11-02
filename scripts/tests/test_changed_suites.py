@@ -48,11 +48,12 @@ class SelectTests(unittest.TestCase):
             for changed, expected in rows:
                 with self.subTest(changed=changed):
                     self.assertEqual(select(SUITES, changed, root), expected)
+            substring = "res://tests/unit/test_substring.gd"
+            self.assertEqual(select([substring], ["addons/a.gd"], root), [])
             # A renamed or removed class name still reaches files that use the old name.
             (root / "addons/a.gd").write_text("class_name Renamed\n")
             self.assertEqual(select(SUITES, ["addons/a.gd"], root), SUITES[3:])
             self.assertEqual(select(SUITES, ["addons/a.gd"], root, {"Alpha"}), [SUITES[0], SUITES[3]])
-            substring = "res://tests/unit/test_substring.gd"
             self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [])
             (root / "tests/unit/test_substring.gd").write_text("# Alpha.member and (Alpha) both name a complete class\n")
             self.assertEqual(select([substring], ["addons/a.gd"], root, {"Alpha"}), [substring])
