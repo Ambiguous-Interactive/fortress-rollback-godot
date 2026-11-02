@@ -23,15 +23,31 @@ const ROOM: String = "10000000-0000-0000-0000-000000000001"
 
 class SceneClient:
 	extends Node
+
 	func get_room_code() -> String:
 		return "ROOM01"
+
 	func get_players() -> Array:
 		return []
+
+
+class PollingNode:
+	extends Node
+	var polls: int = 0
+	var closes: int = 0
+
+	func poll() -> void:
+		polls += 1
+
+	func close(_code: int, _reason: String) -> Error:
+		closes += 1
+		return OK
 
 
 class ObservedGame:
 	extends Simulation
 	var samples: Dictionary = {}
+
 	func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
 		if not super.simulate_frame(input_frame, inputs):
 			return false
@@ -43,6 +59,7 @@ class CallbackGame:
 	extends Bridge.ObservedGame
 	var core_ref: WeakRef
 	var callback_visible: int = -1
+
 	func save_state(saved_frame: int, writer: Bridge.Writer) -> Driver.SaveResult:
 		var result: Driver.SaveResult = super.save_state(saved_frame, writer)
 		callback_visible = Bridge.confirmed_snapshots(core_ref.get_ref(), saves).size()
@@ -54,11 +71,13 @@ class RefusedCoordinator:
 	var is_blocked: bool = true
 	var observed: Array[PackedByteArray] = []
 	var attempts: int = 0
+
 	func enqueue_batch(packets: Array[Peer.Packet]) -> int:
 		attempts += 1
 		for packet: Peer.Packet in packets:
 			observed.append(packet.bytes.duplicate())
 		return Code.BACKPRESSURE if is_blocked else Code.OK
+
 	func poll(_now_us: int, _factory: Callable = Callable()) -> Result:
 		return Result.new(Code.OK)
 
@@ -66,8 +85,10 @@ class RefusedCoordinator:
 class IdleCoordinator:
 	extends Fallback
 	var polls: int = 0
+
 	func enqueue_batch(_packets: Array[Peer.Packet]) -> int:
 		return Code.OK
+
 	func poll(_now_us: int, _factory: Callable = Callable()) -> Result:
 		polls += 1
 		return Result.new(Code.OK)
@@ -76,11 +97,14 @@ class IdleCoordinator:
 class BusyCoordinator:
 	extends Fallback
 	var polls: int = 0
+
 	func enqueue_batch(_packets: Array[Peer.Packet]) -> int:
 		return Code.OK
+
 	func poll(_now_us: int, _factory: Callable = Callable()) -> Result:
 		polls += 1
 		return Result.new(Code.OK)
+
 	# A route with queued work never reports itself idle.
 	func idle() -> bool:
 		return false
@@ -88,17 +112,34 @@ class BusyCoordinator:
 
 class Client:
 	extends MeshFixture.Client
+
 	func get_room_id() -> String:
 		return ROOM
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["identity", "optional_scene", "live_driver", "retained_batch", "idle_batch", "terminal_callbacks", "handshake_timeout",
-		"observer_history", "viewer_lifetime", "scheduling_gaps", "delay_actions"])
+	return PackedStringArray(
+		[
+			"identity",
+			"optional_scene",
+			"live_driver",
+			"retained_batch",
+			"idle_batch",
+			"terminal_callbacks",
+			"handshake_timeout",
+			"observer_history",
+			"viewer_lifetime",
+			"scheduling_gaps",
+			"delay_actions",
+			"staged_input"
+		]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"staged_input":
+			_staged_input(context)
 		"delay_actions":
 			_delay_actions(context)
 		"viewer_lifetime":
@@ -160,6 +201,118 @@ func run_case(name: String, context: RefCounted) -> void:
 		"scheduling_gaps":
 			_scheduling_gaps(context)
 	context.finish()
+
+
+# Value: protects=expert-staged local input ownership; fails_when=conflicting keys poll or stop the match; seam=public core submission.
+func _staged_input(context: RefCounted) -> void:
+	for facade: String in ["match", "lobby"]:
+		for selected: int in 2:
+			var fixtures: Array[Dictionary] = [_fixture(context, U), _fixture(context, V)]
+			for round_index: int in 100:
+				for fixture: Dictionary in fixtures:
+					fixture.driver.tick(round_index * 16667, 0)
+				_deliver(fixtures)
+			var target: Match = fixtures[selected].driver
+			var frame: int = target.peer.status().current_frame
+			var last_now: int = target._last_now
+			var lobby: Lobby = Lobby.new()
+			var sdk_client: PollingNode = PollingNode.new()
+			var sdk_mesh: PollingNode = PollingNode.new()
+			lobby.game_match = target
+			lobby.state = "playing"
+			lobby._last_now = last_now
+			lobby.client = sdk_client
+			lobby.mesh = sdk_mesh
+			context.equal(
+				target.peer._core.submit_local_input(target.local_slot, frame, PackedByteArray([Simulation.RIGHT])).code, Types.Code.OK, "expert retains next original input"
+			)
+			var before: Array = [target._last_now, target._tokens, target._held, target.stalls, target.game.canonical_bytes()]
+			var service: RefCounted = target if facade == "match" else lobby
+			service.tick(last_now + 100000, Simulation.LEFT)
+			context.equal(target.failure, "", "conflicting keyboard input preserves the healthy match")
+			context.equal(
+				[target._last_now, target._tokens, target._held, target.stalls, target.game.canonical_bytes()], before, "conflict refuses before clock, transport and local caching"
+			)
+			context.equal(lobby._last_now, last_now, "rejected lobby tick preserves accepted time")
+			context.equal(sdk_client.polls + sdk_mesh.polls, 0, "conflicting input does not poll the SDK")
+			context.equal(target.peer.scheduled_local_input(target.local_slot).bytes, PackedByteArray([Simulation.RIGHT]), "conflict preserves expert sample")
+			service.tick(last_now, Simulation.RIGHT)
+			context.equal(target.failure, "", "corrected retry at last accepted clock remains available")
+			context.equal(lobby.state, "playing", "corrected retry preserves active lobby")
+			context.equal(sdk_client.polls + sdk_mesh.polls, 2 if facade == "lobby" else 0, "accepted lobby service polls both SDK owners")
+			for round_index: int in range(100, 130):
+				for fixture: Dictionary in fixtures:
+					fixture.driver.tick(round_index * 16667, Simulation.RIGHT)
+				_deliver(fixtures)
+			context.equal(target.failure, "", "original-input service resumes after rejection")
+			context.equal(target.peer.status().current_frame > frame + 10, true, "ordinary gameplay continues")
+			var observed: ObservedGame = target.game
+			var row: PackedInt32Array = observed.samples.get(frame + 2, PackedInt32Array([-1, -1]))
+			context.equal(row[target.local_slot], Simulation.RIGHT, "scheduled expert value reaches the game")
+			lobby.client = null
+			lobby.mesh = null
+			sdk_client.free()
+			sdk_mesh.free()
+			for fixture: Dictionary in fixtures:
+				fixture.driver.detach()
+				fixture.mesh.free()
+				fixture.client.free()
+
+	_staged_input_terminal(context)
+
+
+func _staged_input_terminal(context: RefCounted) -> void:
+	for facade: String in ["match", "lobby"]:
+		for ending: String in ["terminated", "failed", "frame_limit", "request_limit"]:
+			for buttons: int in [Simulation.LEFT, Simulation.RIGHT]:
+				var fixtures: Array[Dictionary] = [_fixture(context, U), _fixture(context, V)]
+				for round_index: int in 20:
+					for fixture: Dictionary in fixtures:
+						fixture.driver._service(round_index)
+					_deliver(fixtures)
+				var target: Match = fixtures[0].driver
+				context.equal(
+					target.peer._core.submit_local_input(target.local_slot, 0, PackedByteArray([Simulation.RIGHT])).code, Types.Code.OK, "retain original before terminal preflight"
+				)
+				match ending:
+					"terminated":
+						target.peer._core.terminate()
+					"failed":
+						target.failure = "Original match failure."
+					"frame_limit":
+						target.peer._core._current = 2147483647
+					"request_limit":
+						target.peer._core._batch_id = 9223372036854775807
+				var lobby: Lobby = Lobby.new()
+				var sdk_client: PollingNode = PollingNode.new()
+				var sdk_mesh: PollingNode = PollingNode.new()
+				lobby.game_match = target
+				lobby.state = "playing"
+				lobby.client = sdk_client
+				lobby.mesh = sdk_mesh
+				var service: RefCounted = target if facade == "match" else lobby
+				service.tick(100, buttons)
+				context.equal(target.failure.is_empty(), false, "retained input cannot hide terminal preflight: " + ending)
+				if ending == "failed":
+					context.equal(target.failure, "Original match failure.", "preflight preserves existing first failure")
+				else:
+					context.equal(
+						target.peer.status().reason,
+						Types.Code.FRAME_EXHAUSTED if ending.ends_with("limit") else Types.Code.TERMINATED,
+						"shared first terminal reason survives input conflict"
+					)
+				if facade == "lobby":
+					context.equal(lobby.state, "failed", "lobby reports ended match despite conflicting buttons")
+					context.equal(target.has_started, false, "lobby retires ended transport ownership")
+					context.equal(sdk_client.closes, 1, "lobby closes SDK after terminal preflight")
+				lobby.client = null
+				lobby.mesh = null
+				sdk_client.free()
+				sdk_mesh.free()
+				for fixture: Dictionary in fixtures:
+					fixture.driver.detach()
+					fixture.mesh.free()
+					fixture.client.free()
 
 
 func _fixture(context: RefCounted, uuid: String, configured_peer: Peer = null) -> Dictionary:
@@ -365,6 +518,8 @@ func _scheduling_gaps(context: RefCounted) -> void:
 	context.equal(restarted.summary()["confirmed_frames"], 0, "a new room restarts the confirmed frames")
 	restarted.record_turn(0, 0, 1, 0)
 	context.equal(restarted.summary()["turns"], 1, "the restarted summary counts the new room")
+
+
 # Value: protects=idle service batches; fails_when=an idle route repeats the whole bounded batch; why_new=the retained case only covers refusal; seam=actual example tick
 func _idle_batch(context: RefCounted) -> void:
 	var fixture: Dictionary = _fixture(context, U)
@@ -389,8 +544,9 @@ func _idle_batch(context: RefCounted) -> void:
 # Value: protects=confirmed callback history; fails_when=render gaps evict evidence; why_new=browser load depends on host cadence; seam=actual session/driver
 func _observer_history(context: RefCounted) -> void:
 	var rejected: Bridge.ObservedGame = Bridge.ObservedGame.new()
-	var predicted_inputs: Types.FrameInputs = Types.FrameInputs.new([PackedByteArray([2]), PackedByteArray([0])],
-		PackedInt32Array([Bridge.Queue.Status.CONFIRMED, Bridge.Queue.Status.PREDICTED]))
+	var predicted_inputs: Types.FrameInputs = Types.FrameInputs.new(
+		[PackedByteArray([2]), PackedByteArray([0])], PackedInt32Array([Bridge.Queue.Status.CONFIRMED, Bridge.Queue.Status.PREDICTED])
+	)
 	context.equal(rejected.simulate_frame(2, predicted_inputs), false, "an invalid callback cannot prove prediction")
 	context.equal(rejected.predicted_frame, -1, "failed simulation leaves the prediction barrier closed")
 	var config: Config = Config.new()
@@ -589,6 +745,19 @@ func _delay_actions(context: RefCounted) -> void:
 			context.equal(node._status.text.contains("You: player"), true, phase + " retained observations remain visible")
 		var old_message: String = lobby.message
 		var old_delay: int = game_match.peer.input_delay(game_match.local_slot)
+		if phase == "live":
+			for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed", "shift_pressed"]:
+				for key: Key in [KEY_R, KEY_EQUAL, KEY_KP_ADD]:
+					if modifier == "shift_pressed" and key == KEY_EQUAL:
+						continue
+					var modified: InputEventKey = InputEventKey.new()
+					modified.keycode = key
+					modified.pressed = true
+					modified.set(modifier, true)
+					node.call("_unhandled_key_input", modified)
+					context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay, "modified shortcut cannot raise delay: " + modifier)
+					context.equal(game_match.suggested_delay, 4, "modified shortcut keeps the suggestion available")
+					context.equal(lobby.message, old_message, "modified shortcut preserves connection message")
 		for key: Key in [KEY_R, KEY_EQUAL, KEY_KP_ADD]:
 			var event: InputEventKey = InputEventKey.new()
 			event.keycode = key
@@ -598,6 +767,12 @@ func _delay_actions(context: RefCounted) -> void:
 				context.equal(lobby.message, old_message, phase + " rejected key preserves recovery message")
 		if phase == "live":
 			context.equal(game_match.peer.input_delay(game_match.local_slot), 6, "live suggestion and both raise keys work")
+			var plus: InputEventKey = InputEventKey.new()
+			plus.keycode = KEY_EQUAL
+			plus.pressed = true
+			plus.shift_pressed = true
+			node.call("_unhandled_key_input", plus)
+			context.equal(game_match.peer.input_delay(game_match.local_slot), 7, "Shift Equals preserves the ordinary plus shortcut")
 		elif phase == "stale_suggestion":
 			context.equal(game_match.peer.input_delay(game_match.local_slot), old_delay + 2, "stale suggestion does not block manual raise")
 		else:
@@ -613,15 +788,36 @@ func _delay_actions(context: RefCounted) -> void:
 # SDK resource doubles exercise the real Create/Join boundary without installing the optional SDK.
 func _fresh_room(context: RefCounted, node: Node, previous: Match) -> void:
 	var client: String = "extends Node\n"
-	for signal_name: String in ["protocol_info", "room_joined", "lobby_state_changed", "protocol_error", "connection_failed", "authentication_error",
-		"room_join_failed", "server_error", "reconnection_failed", "disconnected", "going_away", "room_left", "reconnected"]:
+	for signal_name: String in [
+		"protocol_info",
+		"room_joined",
+		"lobby_state_changed",
+		"protocol_error",
+		"connection_failed",
+		"authentication_error",
+		"room_join_failed",
+		"server_error",
+		"reconnection_failed",
+		"disconnected",
+		"going_away",
+		"room_left",
+		"reconnected"
+	]:
 		client += "signal " + signal_name + "\n"
 	client += "func set_auto_reconnect(_enabled: bool) -> void: pass\nfunc configure(_config: Object) -> Error: return OK\n"
 	client += "func connect_to_server() -> Error: return OK\nfunc close(_code: int, _reason: String) -> Error: return OK\n"
-	client += "func get_room_code() -> String: return \"\"\nfunc get_players() -> Array: return []\n"
+	client += 'func get_room_code() -> String: return ""\nfunc get_players() -> Array: return []\n'
 	var config: String = "extends RefCounted\n"
-	for property: String in ["app_id: String", "endpoint_url: String", "protocol_version: int", "supported_transports: PackedStringArray",
-		"supported_topologies: PackedStringArray", "game_data_format: String", "decode_msgpack_payloads: bool", "auto_poll: bool"]:
+	for property: String in [
+		"app_id: String",
+		"endpoint_url: String",
+		"protocol_version: int",
+		"supported_transports: PackedStringArray",
+		"supported_topologies: PackedStringArray",
+		"game_data_format: String",
+		"decode_msgpack_payloads: bool",
+		"auto_poll: bool"
+	]:
 		config += "var " + property + "\n"
 	var sources: Array[String] = [client, config, "extends Node\nvar multiplayer_peer_factory: Callable\nvar peer_connection_factory: Callable\n"]
 	var paths: Array[String] = [Lobby.SDK_PATH, Lobby.CONFIG_PATH, Lobby.MESH_PATH]

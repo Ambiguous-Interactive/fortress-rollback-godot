@@ -19,6 +19,17 @@ var _code: int = Types.Code.NOT_CONFIGURED
 var _servicing: bool = false
 
 
+## Escape controls left literal by Godot's JSON serializer before displaying imported metadata.
+static func display_json(value: Variant) -> String:
+	# Metadata contains both scalar text and bounded failure dictionaries.
+	var serialized: String = JSON.stringify(value)
+	var result: String = ""
+	for index: int in serialized.length():
+		var code: int = serialized.unicode_at(index)
+		result += "\\u%04x" % code if code < 32 or (code >= 127 and code <= 159) or code in [0x2028, 0x2029] else serialized[index]
+	return result
+
+
 ## Invalid imports preserve the current game, position and play state.
 func open_bytes(bytes: PackedByteArray) -> bool:
 	if _is_busy():

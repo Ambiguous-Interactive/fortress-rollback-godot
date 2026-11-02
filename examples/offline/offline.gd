@@ -63,7 +63,11 @@ func _process(_delta: float) -> void:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if event is InputEventKey and event.pressed and event.keycode == KEY_R:
+	if not event is InputEventKey or not event.pressed or event.echo:
+		return
+	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
+		return
+	if event.keycode == KEY_R:
 		get_tree().reload_current_scene()
 
 

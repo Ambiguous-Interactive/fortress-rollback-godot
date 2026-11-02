@@ -35,11 +35,11 @@ Local development contracts and evidence entry points:
 - [Native replay file drops, replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
 - [Actual received browser prefix files, production-picker reimport and remaining supervision qualification](docs/experiments/buffer-ownership.md#received-browser-replay-downloads).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
-- [Online delay shortcuts and action prompts gated by live gameplay](docs/online-example.md#install-and-run).
+- [Online input ownership retries, modifier guards and live delay readiness](docs/online-example.md#install-and-run).
 - [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
-- [Native/browser diagnostic file viewer, including saved callback failure names and frames](docs/diagnostic-viewer.md).
+- [Native/browser diagnostic file viewer, including escaped recorded metadata and saved callback failure names and frames](docs/diagnostic-viewer.md).
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).

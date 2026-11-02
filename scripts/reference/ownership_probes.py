@@ -198,6 +198,7 @@ EXPECTED['res://tests/unit/test_signalfish_adapter_reentry.gd'] = {
 EXPECTED['res://tests/unit/test_replay_viewer_prefix.gd'] = {'selected_prefix', 'prefix_boundaries', 'prefix_guards', 'prefix_controls'}
 EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {
     'replacement', 'rejected_configuration', 'completion_controls', 'manual_controls', 'callback_controls', 'input_preflight'}
+EXPECTED['res://tests/unit/test_example_shortcuts.gd'] = {'ignored_shortcuts', 'ordinary_shortcuts'}
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED['res://tests/unit/test_integration_restart.gd'] = {'restart_lifetime', 'restart_rejections', 'restart_callbacks'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
@@ -257,7 +258,7 @@ FILES += ['tests/unit/test_driver_input_policy.gd']
 FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_peer_example_ownership.gd', 'tests/unit/test_peer_example_lifecycle.gd',
           'examples/peer/match.gd', 'examples/offline/presentation.gd']
-FILES += ['tests/unit/test_example_scene_exit.gd']
+FILES += ['tests/unit/test_example_scene_exit.gd', 'tests/unit/test_example_shortcuts.gd']
 FILES += [f'examples/{name}/{name}.{suffix}' for name in ('offline', 'integration', 'peer') for suffix in ('gd', 'tscn')]
 FILES += ['tests/unit/test_driver_peer_parity.gd']
 FILES += ['tests/unit/test_driver_lifecycle_parity.gd']
@@ -358,6 +359,7 @@ const DropCommit = preload("res://tests/unit/test_peer_drop_commit.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const PeerExampleOwnership = preload("res://tests/unit/test_peer_example_ownership.gd")
+const ExampleShortcuts = preload("res://tests/unit/test_example_shortcuts.gd")
 const ExampleSceneExit = preload("res://tests/unit/test_example_scene_exit.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
 const DriverPeerParity = preload("res://tests/unit/test_driver_peer_parity.gd")
@@ -383,8 +385,8 @@ func _run_suites() -> void:
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
-		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation, FallbackFailure,
-		SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry]
+		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, ExampleShortcuts, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation,
+		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.
 \t# JSON decoding is a dynamic boundary; reject unknown or repeated paths.

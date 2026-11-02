@@ -189,6 +189,7 @@ func poll_protocol_time(now_us: int) -> bool:
 	return healthy
 
 
+## Conflicting retained local input leaves clocks and service unchanged; retry the original buttons.
 func tick(now_us: int, buttons: int) -> void:
 	if _is_busy():
 		return
@@ -202,6 +203,8 @@ func _tick(now_us: int, buttons: int) -> void:
 		return
 	if now_us < 0 or now_us < _last_now or buttons < 0 or buttons > 15:
 		failure = "Invalid clock or input. Leave and create a new room."
+		return
+	if _local_input_code(buttons) == Types.Code.INPUT_ALREADY_SUBMITTED:
 		return
 	_last_now = now_us
 	for _batch: int in SERVICE_ROUNDS:
@@ -235,6 +238,16 @@ func _tick(now_us: int, buttons: int) -> void:
 			_service(now_us)
 	if has_started:
 		_collect_events()
+
+
+func _local_input_code(buttons: int) -> int:
+	if not has_started or not failure.is_empty() or replay_finishing or buttons < 0 or buttons > 15:
+		return Types.Code.OK
+	var code: int = peer._core._check_advance_limits()
+	if code != Types.Code.OK:
+		return code
+	var candidate: int = _held if _held >= 0 else buttons
+	return peer._core.validate_local_input(local_slot, peer.status().current_frame, PackedByteArray([candidate]))
 
 
 ## Stop local gameplay and request final-state evidence while game callbacks remain legal.

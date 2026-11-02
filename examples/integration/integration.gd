@@ -62,6 +62,8 @@ func _process(_delta: float) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
+	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
+		return
 	match event.keycode:
 		KEY_1:
 			_demo.set_lag(0)
