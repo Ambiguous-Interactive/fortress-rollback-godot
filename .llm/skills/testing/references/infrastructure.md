@@ -76,6 +76,7 @@ Verify queued work stays fenced and unresolved cleanup produces a failed receipt
 A negative control that removes retirement observation must fail.
 Linux process-stat reads can raise `ProcessLookupError` after opening a disappearing process. Treat it and `FileNotFoundError` as absence; propagate unrelated errors.
 Parse process-stat metadata as bytes; process command names can contain non-UTF-8 bytes and closing parentheses.
+On Linux, inspect child lists across every `/proc/<pid>/task/*/children`; the main thread's list omits worker-thread launches.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent

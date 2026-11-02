@@ -82,6 +82,19 @@ measurements belong in the session log and linked issues.
 
 ## Outcome
 
+Final local verification at `2df09fd` passes 179 harness tests and all 779 unit
+cases in both fresh repetitions. Exact candidate contention takes 91.522 seconds
+versus the original 940.185; the uncontended control takes 82.710 seconds.
+The complete benchmark inventory, original GDScript hashes and semantic records match.
+These measurements qualify the declared native overlap workload, not CI speed.
+
+An actual Chromium-owned export consumes 120 animation frames without page errors
+while native engines wait, then the native launcher uses four workers and passes
+18 selected cases. Its first sampler undercounted workers by reading only the
+main thread's Linux child list. Inspecting all task child lists repairs the
+instrument; the existing infrastructure guidance now records this boundary.
+No product fix or new test scaffold was needed for the observation error.
+
 State: `findings-acted`.
 Broader spectator, replay, browser-workload and source-helper acceptance remains
 in the linked open roadmap issues. Final tests, fresh reviews, current-head CI,
