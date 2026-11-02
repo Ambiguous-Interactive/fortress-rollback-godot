@@ -38,10 +38,11 @@ This policy replaces the former permanent one-worker fallback after initial cont
 
 Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. The launcher joins
 the shard results in sorted suite order, so the record is the same as one process running every
-suite; `--jobs 1` keeps that single process. With `--filter`, suites with no matching case are
+suite; `--jobs 1` keeps that single process when the host starts free. With `--filter`, suites with no matching case are
 dropped, and the whole selection must still match at least one case.
 Use the default worker setting for full-suite verification. Explicit `--jobs 1`
-is useful for diagnosis, but puts the whole selection under one process budget.
+is useful for diagnosis, but normally puts the whole selection under one process budget.
+If it initially waits for the host, known slow suites retain their per-case watchdogs.
 
 Each run without `--filter` saves per-suite times to ignored `.cache/tests/durations.json`. The next
 run starts the slowest suites first, with both repetitions of a suite started together. A suite
@@ -151,6 +152,31 @@ Run the full affected categories before delivery; focused receipts establish onl
 Oracle launchers still run every scenario and negative control. Their verified source caches retain
 unchanged file timestamps, so warm Cargo builds reuse artifacts after content validation.
 Changed, missing, injected or symlinked source files trigger replacement from the verified archive.
+
+## Measured host contention
+
+The [host-capacity repair (#309)](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/309)
+was measured on 2026-11-02 using Godot 4.7.2 on a 16-logical-CPU aarch64 Linux host.
+The workload preserved all 261 GDScript files from `c93d1d1`: 779 unit cases and
+394 shards per fresh repetition. Both repetitions execute each case twice.
+
+| Scheduling control | Requested / observed workers | Elapsed seconds |
+| --- | --- | --- |
+| Original runner, ten-second initial contention | 16 / 1 | 940.185 |
+| Repaired runner, same ten-second contention | 16 / 16 | 91.942 |
+| Repaired runner, uncontended | 16 / 16 | 90.524 |
+
+For each contended run, an independent process held the shared lease for ten seconds after launch.
+Every run used seed 1701, identical initial duration bytes, the same engine digest and
+180-second per-process watchdogs. The repaired runner and helper were pinned at `482988b`.
+Only those two Python source files differed from the baseline workload.
+All runs passed with identical complete semantic records and ordered shard identities;
+the repaired runs also proved exclusive lease ownership while all 16 engine children ran.
+
+These are single local observations with ordinary host scheduling noise. Focused launcher
+controls also ran during the baseline. The measurements are not CI estimates, portable speed
+promises or regression thresholds. Separate process and browser contention controls remain
+required to verify that a responsive owner retains capacity.
 
 ## Suite interface
 
