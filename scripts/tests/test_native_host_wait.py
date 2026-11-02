@@ -163,8 +163,16 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
             self.assertTrue(all(shard['command'][-2] == '--case' for shard in run['shards']))
 
     def test_cancelled_active_wave_reaps_children_and_fences_queued_launches(self):
+        self.engine.write_text(self.engine.read_text().replace("(root / ('started-' + str(os.getpid()))).write_text('started')",
+            "import subprocess\n"
+            "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+            "(root / ('descendant-' + str(child.pid))).write_text('running')\n"
+            "(root / ('started-' + str(os.getpid()))).write_text('started')"))
         process = self.start()
         self.wait_for(lambda: len(list(self.root.glob('started-*'))) == 4, process)
+        descendants = [int(path.name.split('-')[1]) for path in self.root.glob('descendant-*')]
+        self.assertEqual(len(descendants), 4)
+        self.assertTrue(all(self.active(pid) for pid in descendants))
         process.terminate()
         process.communicate(timeout=10)
         self.assertEqual(process.returncode, 130)
@@ -176,6 +184,15 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
             with self.assertRaises(ProcessLookupError):
                 os.kill(int(started.name.split('-')[1]), 0)
         self.assertTrue(host_capacity.acquire('browser-after'))
+        self.assertFalse(any(self.active(pid) for pid in descendants), 'active descendants outlived the host lease')
+
+    @staticmethod
+    def active(pid: int) -> bool:
+        # Reparented zombies retain PIDs but cannot consume host capacity.
+        try:
+            return Path(f'/proc/{pid}/stat').read_bytes().rsplit(b')', 1)[1].split()[0] not in (b'Z', b'X')
+        except FileNotFoundError:
+            return False
 
     def test_signal_between_spawn_and_registration_reaps_the_new_group(self):
         self.engine.write_text(self.engine.read_text().replace("    print('control-engine')",
