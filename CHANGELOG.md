@@ -4,6 +4,10 @@
 
 ### Added
 
+- Add a Save viewed replay button to the local spectator, including retained recordings after viewing stops.
+
+- Add an exact frame and time preview while dragging the replay timeline. The displayed game and checksum status stay at their current frame.
+
 - Add End host and Restart match buttons to the local spectator, including recovery after host loss or completed playback.
 
 - Add a replay Validate state control to check a paused boundary without advancing input. Missing recorded checksums remain explicitly unverified.
@@ -254,6 +258,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix restarting the reusable integration loop to replace the game, session, driver, retained input and effect ledger together. Rejected replacements preserve the running match.
 
 - Fix replay controls appearing available while game callbacks or manual replay requests hold playback. Controls become available after completion.
 

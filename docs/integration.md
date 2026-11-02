@@ -33,6 +33,10 @@ The integration controller and loop reject buttons outside 0–7 with `INVALID_C
 Rejected buttons preserve queued deliveries, sampled input, accepted time and the running match.
 Stopping replay inside a callback keeps that ownership until the callback returns; live play can then resume.
 The scene retries temporary `BUSY` ticks after ownership releases, without restarting the match.
+Calling `loop.start()` again starts a fresh game, input sample and effects ledger, and retires the previous session and driver.
+The first call keeps a game or ledger assigned before startup. For later custom matches, pass fresh instances to
+`loop.start(custom_game, custom_effects)`; the game must be at frame zero and the ledger must have no played effects.
+Invalid settings or callbacks preserve the current match; active callbacks, notifications and expert batches return `BUSY`.
 The example also holds the shared session guard while calling confirmed `Effects.play()` hooks.
 Nested service, restart, replay and expert mutations return `BUSY` until those hooks return.
 An effect hook can terminate the match; the bounded batch of already-confirmed effects finishes,

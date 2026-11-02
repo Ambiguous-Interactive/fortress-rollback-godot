@@ -357,13 +357,31 @@ func _timeline(context: RefCounted) -> void:
 	timeline.drag_ended.emit(false)
 	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [1, false], "unchanged release remains paused")
 	timeline.drag_started.emit()
+	var selected_state: PackedByteArray = node.viewer.game.canonical_bytes()
+	var checked: int = node.viewer.checked_checksum_count()
+	for selected: int in [0, 1, 59, 60, 899, 900]:
+		timeline.set_value_no_signal(selected)
+		timeline.value_changed.emit(float(selected))
+		@warning_ignore("integer_division")
+		var seconds: int = selected / 60
+		@warning_ignore("integer_division")
+		var time: String = "%d:%02d" % [seconds / 60, seconds % 60]
+		context.equal(
+			node._status.text.begins_with("Selected frame %d (%s). Release to navigate." % [selected, time]), true, "drag immediately previews the selected frame and recorded time"
+		)
+		context.equal(node.viewer.current_frame(), 1, "selection preview does not move the displayed state")
+		context.bytes_equal(node.viewer.game.canonical_bytes(), selected_state, 1, "selection preview preserves canonical state")
+		context.equal(node._status.text.contains("Frame 1 / 900"), true, "playback status still identifies actual state rather than the preview")
+	context.equal(node.viewer.checked_checksum_count(), checked, "selection preview does not claim additional recorded checksum coverage")
 	timeline.set_value_no_signal(899)
 	timeline.value_changed.emit(float(899))
 	for tick: int in 3:
 		node._physics_process(0.0)
 	context.equal(node.viewer.current_frame(), 1, "dragging pauses playback before choosing a destination")
 	context.equal(timeline.value, 899.0, "refresh preserves drag destination")
+	context.equal(node._status.text.begins_with("Selected frame 899 (0:14). Release to navigate."), true, "service refresh preserves selection preview")
 	timeline.drag_ended.emit(true)
+	context.equal(node._timeline_label.text, "0:00 / 0:15", "release restores actual playback time while navigation runs")
 	context.equal(node.viewer.is_seeking(), true, "release starts ordinary verified navigation")
 	node._physics_process(0.0)
 	context.equal(node.viewer.current_frame(), 121, "timeline seek keeps per-tick budget")

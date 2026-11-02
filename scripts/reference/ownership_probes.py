@@ -179,7 +179,7 @@ EXPECTED['res://tests/unit/test_integration_controls.gd'] = {'live_controls', 'r
 EXPECTED['res://tests/unit/test_integration_effect_reentry.gd'] = {'effect_reentry', 'effect_cancellation'}
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
 EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries', 'incomplete_prefix_digests', 'incomplete_prefix_storage'}
-EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards'}
+EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards', 'save_pointer_control'}
 for _suite in ['host', 'relay']:
     EXPECTED[f'res://tests/unit/test_signalfish_spectator_{_suite}.gd'].add('sdk_numbers')
 EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
@@ -199,6 +199,7 @@ EXPECTED['res://tests/unit/test_replay_viewer_prefix.gd'] = {'selected_prefix', 
 EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {
     'replacement', 'rejected_configuration', 'completion_controls', 'manual_controls', 'callback_controls', 'input_preflight'}
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
+EXPECTED['res://tests/unit/test_integration_restart.gd'] = {'restart_lifetime', 'restart_rejections', 'restart_callbacks'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -263,7 +264,7 @@ FILES += ['tests/unit/test_driver_lifecycle_parity.gd']
 FILES += ['tests/unit/test_driver_drop_parity.gd']
 FILES += ['tests/unit/test_peer_notifications.gd']
 FILES += ['tests/unit/test_replay_configuration.gd']
-FILES += ['tests/unit/test_integration_controls.gd']
+FILES += ['tests/unit/test_integration_controls.gd', 'tests/unit/test_integration_restart.gd']
 FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd', 'tests/unit/test_integration_effect_reentry.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
           'addons/fortress_rollback/transport/signalfish_relay.gd', 'addons/fortress_rollback/transport/signalfish_relay_envelope.gd',
@@ -323,6 +324,7 @@ const ReplayInputNavigation = preload("res://tests/unit/test_replay_input_naviga
 const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
 const IntegrationControls = preload("res://tests/unit/test_integration_controls.gd")
 const IntegrationDemo = preload("res://tests/unit/test_integration_demo.gd")
+const IntegrationRestart = preload("res://tests/unit/test_integration_restart.gd")
 const IntegrationEffectReentry = preload("res://tests/unit/test_integration_effect_reentry.gd")
 const SnapshotHistory = preload("res://tests/unit/test_snapshot_history.gd")
 const ReplayConfiguration = preload("res://tests/unit/test_replay_configuration.gd")
@@ -377,7 +379,7 @@ func _run_suites() -> void:
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed, ReplayInputNavigation, ReplayViewerLifetime, ReplayViewerPrefix,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
-		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationEffectReentry, IntegrationControls, ReplayPrefix,
+		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationRestart, IntegrationEffectReentry, IntegrationControls, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,

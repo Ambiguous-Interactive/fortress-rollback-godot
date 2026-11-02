@@ -312,7 +312,7 @@ func _timeline_drag_ended(changed: bool) -> void:
 func _timeline_changed(value: float) -> void:
 	if not _is_scrubbing:
 		viewer.seek(int(value))
-		_refresh()
+	_refresh()
 
 
 func _time_label(frame: int) -> String:
@@ -412,9 +412,12 @@ func _refresh() -> void:
 		_prefix_game = null
 	if not viewer.has_failure():
 		_failure_notice = ""
+	var message: String = viewer.message
+	if _is_scrubbing:
+		message = "Selected frame %d (%s). Release to navigate." % [int(_timeline.value), _time_label(int(_timeline.value))]
 	_status.text = (
 		"%s\nFrame %d / %d | Checksums checked: %d / %d recorded"
-		% [viewer.message, viewer.current_frame(), viewer.frame_count(), viewer.checked_checksum_count(), viewer.recorded_checksum_count()]
+		% [message, viewer.current_frame(), viewer.frame_count(), viewer.checked_checksum_count(), viewer.recorded_checksum_count()]
 	)
 	_status.text += "\n" + viewer.current_state_coverage_message()
 	_status.text += "\n" + viewer.input_summary()
