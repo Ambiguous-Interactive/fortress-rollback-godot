@@ -72,6 +72,10 @@ Catch-up frees receive slots; later ticks can deliver more host rows.
 
 ![Paused spectator with a full input buffer and recovery controls](images/spectator-full-buffer.png)
 
+Stopped viewing names its cause. Game callback failures also show the failed operation and frame,
+when supplied by the session. Restart clears that failure and starts a fresh match; the host keeps playing
+while only viewing has failed. Retained viewed recordings remain available through **Save viewed replay**.
+
 A long viewer pause can exhaust retained host history. The viewer then stops
 with `HISTORY UNAVAILABLE` and the Restart match control; the host keeps playing. The example encodes and receives spectator byte packets
 in the same process, with an injected ten-second host deadline. It requires no server,

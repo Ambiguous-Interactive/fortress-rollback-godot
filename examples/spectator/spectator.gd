@@ -261,7 +261,7 @@ func _update_label() -> void:
 			state = "FINAL TAIL PAUSED | P: resume or N: step" if demo.is_paused else "DRAINING FINAL TAIL"
 	var status: Types.Status = demo.viewer.status()
 	if status.lifecycle == Types.Lifecycle.TERMINATED:
-		state = "COMPLETE | R: start again" if demo.viewer.is_complete() else "STOPPED: code %d | R: start again" % status.reason
+		state = "COMPLETE | R: start again" if demo.viewer.is_complete() else "STOPPED: %s | R: start again" % _stop_reason(status)
 		if status.reason == Types.Code.HISTORY_UNAVAILABLE:
 			state = "HISTORY UNAVAILABLE | R: start again"
 	if demo.is_host_connection_lost:
@@ -290,6 +290,25 @@ func _update_label() -> void:
 	_catchup_button.position = _step_button.position + Vector2(_step_button.get_minimum_size().x + 12, 0)
 	_policy_controls.position = _follow_live_button.position + Vector2(0, _follow_live_button.get_minimum_size().y + 8)
 	_host_controls.position = _policy_controls.position + Vector2(0, _policy_controls.get_minimum_size().y + 8)
+
+
+func _stop_reason(status: Types.Status) -> String:
+	if status.reason in [Types.Code.CALLBACK_FAILED, Types.Code.SNAPSHOT_FAILED]:
+		var operations: Dictionary = {Types.Kind.SAVE: "saving state", Types.Kind.LOAD: "loading state", Types.Kind.ADVANCE: "simulating input"}
+		var text: String = "failed while " + operations.get(status.failure_kind, "processing game state")
+		if status.failure_frame >= 0:
+			text += " at frame %d" % status.failure_frame
+		return text
+	var reasons: Dictionary = {
+		Types.Code.PROTOCOL_FAILED: "host stream failed",
+		Types.Code.TERMINATED: "viewing canceled",
+		Types.Code.FRAME_EXHAUSTED: "frame limit reached",
+		Types.Code.DESYNC: "state checksum mismatch",
+		Types.Code.INPUT_FAILED: "confirmed input failed",
+		Types.Code.STALE_REQUEST: "playback request expired",
+		Types.Code.EXPIRED_VIEW: "playback request expired",
+	}
+	return reasons.get(status.reason, "code %d" % status.reason)
 
 
 func _recording_feedback() -> String:

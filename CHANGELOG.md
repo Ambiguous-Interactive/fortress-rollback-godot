@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add readable spectator stop reasons, including failed game callbacks and their frames.
+
 - Add a replay status-only filter to inspect player disconnects without stopping at every control change.
 
 - Add online buttons to raise input delay or apply the current suggestion.
