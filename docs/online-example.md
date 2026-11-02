@@ -289,6 +289,12 @@ Advancing an input does not check its resulting state until you pause, step or f
 Input digests and cached snapshots do not count as recorded state checksums.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
+Replay controls scroll within the upper part of the window, leaving the displayed game visible even after a failure.
+Use vertical scrolling for later controls and error details; narrow windows also provide horizontal scrolling.
+Keyboard focus brings offscreen controls into view.
+
+![Short replay window keeps failure details and the failed game visible](images/replay-layout-after.png)
+
 Playback controls, file selection and downloads disable while a game callback or manual replay request is active.
 They become available again after the game releases its request; leaving the viewer remains available.
 Restarting or opening another recording terminates the previous player, including retained handles.

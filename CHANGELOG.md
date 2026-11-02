@@ -269,6 +269,8 @@
 
 ### Fixed
 
+- Fix replay controls and failure details pushing the displayed game outside short windows. Scroll controls vertically or horizontally in smaller windows. (#310)
+
 - Keep online arrow movement available after clicking input-delay and diagnostic/replay export buttons, preserving keyboard button access.
 
 - Fix diagnostic JSON exports containing control characters while preserving Unicode metadata and recorded values.
