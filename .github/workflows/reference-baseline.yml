@@ -190,6 +190,7 @@ jobs:
         with:
           python-version: "3.15.2"
       - uses: actions/setup-node@v7.1.0
+        if: matrix.part == 'suites'
         with:
           node-version: "26.12.1"
       - name: Select Ubuntu HTTPS mirror alternatives
@@ -222,6 +223,7 @@ jobs:
             .cache/reference/cargo/registry/index
           key: reference-godot-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
       - name: Install pinned browser runner and operating system dependencies
+        if: matrix.part == 'suites'
         run: |
           mkdir -p .cache/reference/browser
           cp scripts/reference/browser/package*.json .cache/reference/browser/
@@ -253,7 +255,7 @@ jobs:
             timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1 || navigation_status=$?
             cat "$navigation_log"
             if (( navigation_status != 0 )); then exit "$navigation_status"; fi
-            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 61' "$navigation_log"
+            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 150' "$navigation_log"
             if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
           done
           python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"

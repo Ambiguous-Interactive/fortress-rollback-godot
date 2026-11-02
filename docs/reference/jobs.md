@@ -118,6 +118,18 @@ It does not shorten a browser job. The reduction of the room and page work
 without weakening a gate is tracked in the follow-up issue linked from
 [#148](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/148).
 
+## Native-only oracle setup
+
+The `oracles` legs run native Godot smoke, Rust/Godot comparisons and Java model
+checks. Node and Playwright setup now run only on the `suites` legs, which own
+the exported Chromium probes. All native, differential and model commands remain.
+
+In main run [41496019984](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/41496019984),
+the unused Node/browser setup took 5+16 seconds for 4.3 and 5+14 seconds for
+4.7.2: 40 seconds of summed setup work. This measures removed work, not an
+observed reduction in overall workflow time. The broader browser-room savings
+and consecutive warm-run target remain open in #164.
+
 
 ## Current ownership wall-time partition
 

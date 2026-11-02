@@ -57,17 +57,26 @@ Exercise original provenance metadata as well as newly generated fixtures; regen
 Verify that matrix selectors reach the actual command arguments; a declared partition alone can silently repeat the full workload.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
-Shared-host runs keep one worker and known slow-case isolation; serialization must
-not merge individually bounded cases into an over-budget process. Determine lease
-ownership from successful lock acquisition, never from matching owner names.
+Native runs wait within their host-capacity budget before starting engine children,
+then retain requested parallelism and known slow-case isolation under the lease.
+Timeouts must fail explicitly without starting children. Determine lease ownership
+from successful lock acquisition, never from matching owner names.
 Host-wide locks must coordinate independent checkout roots by default. Exercise real
 cross-root contenders and keep the lock inode through pruning, even when idle;
 unlinking an idle lock can race with acquisition. Validate shared directory ownership
 and permissions before opening its lock. Bound child readiness reads as well as exit waits.
 Verify owned descendants have exited before accepting final file inventories;
 parent exit alone does not establish process-group completion.
+Exercise cancellation while waiting, during an active worker wave, between process
+spawn and ownership registration, and immediately after registration before body entry.
+Acquisition, registration and body entry must share the cleanup scope. Reap leaders
+and observe descendant retirement before returning host capacity; sending a kill
+signal alone does not prove cleanup. Repeated signals must not interrupt retirement.
+Verify queued work stays fenced and unresolved cleanup produces a failed receipt.
+A negative control that removes retirement observation must fail.
 Linux process-stat reads can raise `ProcessLookupError` after opening a disappearing process. Treat it and `FileNotFoundError` as absence; propagate unrelated errors.
 Parse process-stat metadata as bytes; process command names can contain non-UTF-8 bytes and closing parentheses.
+On Linux, inspect child lists across every `/proc/<pid>/task/*/children`; the main thread's list omits worker-thread launches.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent
@@ -108,6 +117,7 @@ nodes acquire live GUI focus. Direct handler calls can verify action gates, but
 cannot prove viewport routing, editable focus, popup consumption or tooltip delivery. Exercise those
 contracts in a deferred live scene with real input events; inspect rendering after
 layout settles. Keep native/Web assertion inventories equal when platform UI differs.
+Exercise wheel propagation over sliders when adding scroll containers; verify scrolling preserves unrelated playback and failure evidence.
 Browser test hosts must also defer scene-creating suites until their own `_ready` returns.
 A root already inside the tree can still reject `add_child` while setting up children;
 native initialization and an independently deferred witness do not exercise that host boundary.
@@ -118,6 +128,7 @@ native initialization and an independently deferred witness do not exercise that
 suites over four seconds run one pair per case. Its record matches `--jobs 1`. `make test-focus SUITE=res://tests/unit/x.gd`
 selects one suite. `make test-changed` runs only suites reaching files changed since `origin/main`. Deliver all suites.
 Direct launcher calls default to 30 seconds; pass `--timeout 180` when selecting long stress or full-duration replay cases, as the full Makefile target does.
+Scope tool installation to the matrix legs that actually invoke it; preserve every verification command when removing unused setup.
 The oracle launcher defaults to four independent scenario workers; `--jobs 1`
 selects serial diagnosis. Preserve deterministic receipt order and unique logs.
 Concurrent native launchers must use distinct `--results` paths: a focused review

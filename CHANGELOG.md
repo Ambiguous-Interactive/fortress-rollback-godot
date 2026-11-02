@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add readable spectator stop reasons, including failed game callbacks and their frames.
+
 - Add a replay status-only filter to inspect player disconnects without stopping at every control change.
 
 - Add online buttons to raise input delay or apply the current suggestion.
@@ -266,6 +268,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix replay controls and failure details pushing the game outside short windows. Scroll controls in smaller windows; wheel scrolling over the timeline preserves playback and failure evidence. (#310)
 
 - Keep online arrow movement available after clicking input-delay and diagnostic/replay export buttons, preserving keyboard button access.
 

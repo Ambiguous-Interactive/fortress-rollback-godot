@@ -419,6 +419,7 @@ class ReceiptControls(unittest.TestCase):
     # Value: a rejected attempt must not leave an earlier pass at the results it names; help writes nothing.
     def test_rejected_arguments_invalidate_selected_results(self) -> None:
         for arguments, invalidated in [(['--category', 'bogus'], True), (['--timeout', '-1'], True), (['--jobs', '0'], True),
+                                       (['--host-wait', '-1'], True), (['--host-wait', 'nan'], True), (['--host-wait', 'inf'], True),
                                        (['--seed', str(2**63)], True), (['--bogus'], True), (['--help'], False)]:
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
                 receipt = Path(directory) / 'receipt.json'

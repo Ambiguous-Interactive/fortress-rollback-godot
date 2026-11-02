@@ -1,6 +1,6 @@
 extends SceneTree
 
-# Value: protects=replay shortcut routing and online movement after GUI actions; fails_when=focus steals navigation or movement; seam=none.
+# Value: protects=replay navigation, visible gameplay and online movement after GUI actions; fails_when=focus or control layout hides gameplay; seam=none.
 const Scene = preload("res://examples/online/replay.tscn")
 const Fixture = preload("res://tests/unit/test_replay_viewer.gd")
 const OnlineScene = preload("res://examples/online/online.tscn")
@@ -120,15 +120,111 @@ func _run() -> void:
 	await _key(KEY_J)
 	_check(scene.viewer.current_frame() == 650 and not scene.viewer.is_seeking(), "timeline hold refuses routed jump")
 	scene._timeline_drag_ended(false)
+	await _replay_layout()
+	await _replay_wheel()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
-	if checks == 61 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 61")
+	if checks == 150 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 150")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
 		quit(1)
+
+
+func _replay_layout() -> void:
+	for dimensions: Vector2i in [Vector2i(960, 540), Vector2i(640, 360), Vector2i(1280, 720)]:
+		root.size = dimensions
+		for playback_failed: bool in [false, true]:
+			root.gui_release_focus()
+			var recording: RefCounted = Fixture.recording(24)
+			if playback_failed:
+				recording._inputs[14] ^= 1
+			_check(scene.viewer.open_bytes(recording.to_bytes()), "layout recording imports")
+			if playback_failed:
+				scene.viewer.seek(24)
+				scene.viewer.tick()
+			scene._refresh()
+			await process_frame
+			await process_frame
+			_check(scene.viewer.has_failure() == playback_failed, "layout uses healthy playback and actual input-integrity failure")
+			var controls: ScrollContainer = scene.get_node_or_null("ReplayControls")
+			_check(controls != null, "replay actions have a bounded scrolling viewport")
+			if controls == null:
+				continue
+			var bounds: Rect2 = controls.get_global_rect()
+			_check(bounds.end.x <= dimensions.x and bounds.end.y + 100.0 < dimensions.y, "controls fit viewport and leave visible game space")
+			var game_bounds: Rect2 = scene.get_global_transform() * scene._game_rect()
+			_check(root.get_visible_rect().encloses(game_bounds) and game_bounds.position.y > bounds.end.y, "actual game draw geometry remains below controls inside viewport")
+			controls.ensure_control_visible(scene._status)
+			await process_frame
+			_check(controls.scroll_vertical > 0, "real content scrolls to status and failure details")
+			var status_bounds: Rect2 = scene._status.get_global_rect()
+			_check(status_bounds.position.y >= bounds.position.y and status_bounds.end.y <= bounds.end.y, "status details fit vertically after scrolling")
+			controls.scroll_horizontal = 10000
+			_check(dimensions.x >= 700 or controls.scroll_horizontal > 0, "narrow viewport scrolls wide controls horizontally")
+			controls.scroll_horizontal = 0
+			scene._restart_button.grab_focus()
+			await process_frame
+			await process_frame
+			_check(controls.follow_focus, "scroll viewport follows keyboard focus")
+			_check(bounds.encloses(scene._restart_button.get_global_rect()), "keyboard focus reveals actual restart control")
+			_check(root.gui_get_focus_owner() == scene._restart_button, "scrolling preserves the focused control")
+			await _key(KEY_P)
+			_check(scene.viewer.is_playing == (not playback_failed), "scrolled button focus preserves replay play routing and failure gates")
+			await _key(KEY_P)
+			_check(not scene.viewer.is_playing, "scrolled button focus preserves replay pause routing")
+	root.size = Vector2i(960, 800)
+
+
+func _replay_wheel() -> void:
+	root.size = Vector2i(960, 540)
+	for playback_failed: bool in [false, true]:
+		var recording: RefCounted = Fixture.recording(24)
+		if playback_failed:
+			recording._inputs[14] ^= 1
+		scene.viewer.open_bytes(recording.to_bytes())
+		if playback_failed:
+			scene.viewer.seek(24)
+			scene.viewer.tick()
+		else:
+			scene.viewer.toggle_play()
+		scene._refresh()
+		await process_frame
+		await process_frame
+		var controls: ScrollContainer = scene._controls_view
+		controls.scroll_vertical = 150
+		await process_frame
+		var before: Array = [scene.viewer.current_frame(), scene.viewer.is_playing, scene.viewer.has_failure(), scene.viewer.failure_report_bytes(), scene._timeline.value]
+		for button: MouseButton in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			var scroll_before: int = controls.scroll_vertical
+			await _pointer(scene._timeline.get_global_rect().get_center(), true, button)
+			_check(controls.scroll_vertical != scroll_before, "wheel over timeline scrolls parent controls")
+			_check(
+				before == [scene.viewer.current_frame(), scene.viewer.is_playing, scene.viewer.has_failure(), scene.viewer.failure_report_bytes(), scene._timeline.value],
+				"wheel preserves playback and failure evidence"
+			)
+		if not playback_failed:
+			await _pointer(scene._timeline.get_global_rect().get_center(), true)
+			await _pointer(scene._timeline.get_global_rect().get_center(), false)
+			_settle()
+			_check(scene.viewer.current_frame() > 0 and not scene.viewer.is_playing, "timeline pointer selection still seeks and pauses")
+			var frame_before: int = scene.viewer.current_frame()
+			var timeline: Rect2 = scene._timeline.get_global_rect()
+			await _pointer(timeline.position + timeline.size * Vector2(0.25, 0.5), true)
+			var motion: InputEventMouseMotion = InputEventMouseMotion.new()
+			motion.position = timeline.position + timeline.size * Vector2(0.75, 0.5)
+			motion.global_position = motion.position
+			motion.relative = Vector2(timeline.size.x * 0.5, 0)
+			motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+			Input.parse_input_event(motion)
+			await process_frame
+			_check(scene._is_scrubbing and scene.viewer.current_frame() == frame_before, "timeline drag previews without advancing displayed game")
+			await _pointer(motion.position, false)
+			_settle()
+			_check(scene.viewer.current_frame() > frame_before and not scene.viewer.is_playing, "timeline drag release still seeks and pauses")
+	root.size = Vector2i(960, 800)
 
 
 # Real GUI event dispatch needs a deferred live tree; initialization-only suites cannot focus controls.
@@ -221,10 +317,14 @@ func _online_controls() -> void:
 func _click(button: Button) -> void:
 	var point: Vector2 = button.get_global_rect().get_center()
 	for pressed: bool in [true, false]:
-		var event: InputEventMouseButton = InputEventMouseButton.new()
-		event.position = point
-		event.global_position = point
-		event.button_index = MOUSE_BUTTON_LEFT
-		event.pressed = pressed
-		Input.parse_input_event(event)
-		await process_frame
+		await _pointer(point, pressed)
+
+
+func _pointer(point: Vector2, pressed: bool, button: MouseButton = MOUSE_BUTTON_LEFT) -> void:
+	var event: InputEventMouseButton = InputEventMouseButton.new()
+	event.position = point
+	event.global_position = point
+	event.button_index = button
+	event.pressed = pressed
+	Input.parse_input_event(event)
+	await process_frame

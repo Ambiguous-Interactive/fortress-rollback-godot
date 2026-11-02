@@ -54,6 +54,7 @@ class MetadataLabel:
 
 var viewer: Viewer = Viewer.new()
 var _panel: VBoxContainer
+var _controls_view: ScrollContainer
 var _status: Label
 var _recording_metadata: Label
 var _open_button: Button
@@ -96,11 +97,16 @@ func _enter_tree() -> void:
 
 
 func _ready() -> void:
+	_controls_view = ScrollContainer.new()
+	_controls_view.name = "ReplayControls"
+	_controls_view.position = Vector2(24, 16)
+	_controls_view.follow_focus = true
+	add_child(_controls_view)
 	var panel: VBoxContainer = VBoxContainer.new()
 	_panel = panel
-	panel.position = Vector2(24, 16)
 	panel.custom_minimum_size = Vector2(680, 0)
-	add_child(panel)
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_controls_view.add_child(panel)
 	var title: Label = Label.new()
 	title.text = "Watch an online or spectator recording | no server required"
 	panel.add_child(title)
@@ -180,6 +186,7 @@ func _ready() -> void:
 	_timeline.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_timeline.tooltip_text = "Drag to choose a recorded moment; release to navigate and pause."
 	_timeline.step = 1
+	_timeline.scrollable = false
 	_timeline.value_changed.connect(_timeline_changed)
 	_timeline.drag_started.connect(_timeline_drag_started)
 	_timeline.drag_ended.connect(_timeline_drag_ended)
@@ -498,14 +505,22 @@ func _refresh() -> void:
 	_next_input_change.disabled = held or (viewer.status_change_target(true) if status_only else viewer.input_change_target(true)) < 0
 	_previous_recorded_checksum.disabled = held or viewer.recorded_checksum_target(false) < 0
 	_next_recorded_checksum.disabled = held or viewer.recorded_checksum_target(true) < 0
+	var viewport: Viewport = get_viewport() if is_inside_tree() else (Engine.get_main_loop() as SceneTree).root
+	var viewport_size: Vector2 = viewport.get_visible_rect().size
+	_controls_view.size = Vector2(maxf(1.0, viewport_size.x - 48.0), minf(_panel.get_combined_minimum_size().y, maxf(1.0, viewport_size.y * 0.55)))
 	queue_redraw()
 
 
-func _draw() -> void:
-	var origin: Vector2 = Vector2(24, maxf(225.0, _panel.position.y + _panel.size.y + 16.0))
+func _game_rect() -> Rect2:
+	var origin: Vector2 = Vector2(24, _controls_view.position.y + _controls_view.size.y + 16.0)
 	var available: Vector2 = get_viewport_rect().size - origin - Vector2(16, 16)
 	var fit: float = clampf(minf(available.x / 480.0, available.y / 300.0), 0.1, 1.0)
-	draw_set_transform(origin, 0.0, Vector2.ONE * fit)
+	return Rect2(origin, Vector2(480, 300) * fit)
+
+
+func _draw() -> void:
+	var bounds: Rect2 = _game_rect()
+	draw_set_transform(bounds.position, 0.0, Vector2.ONE * (bounds.size.x / 480.0))
 	draw_rect(Rect2(Vector2.ZERO, Vector2(480, 300)), Color(0.08, 0.10, 0.15))
 	if viewer.is_integration_game():
 		_draw_integration_game(viewer.game)

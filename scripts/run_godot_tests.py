@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import hashlib
 import json
 import math
@@ -15,6 +16,7 @@ import signal
 import subprocess
 import sys
 import time
+import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -40,6 +42,72 @@ SCRIPT_ERROR_LINE = re.compile(r"^\s*(?:SCRIPT ERROR:|Parse Error:)\s*(?P<messag
 ENGINE_ERROR_AT = re.compile(r"^\s*at:\s[^(]*\((?P<file>[^()]+):(?P<line>\d+)\)")
 # The lease names this runner as the owner of the development host's CPU capacity.
 LEASE_NAME = "godot-tests"
+
+# Cancellation fences every queued launch before retiring already owned process groups.
+_cancelled = threading.Event()
+_process_lock = threading.RLock()
+_processes: set[subprocess.Popen] = set()
+_launching = False
+
+
+def cancel_execution(signum: int, _frame) -> None:
+    if _cancelled.is_set():
+        return
+    _cancelled.set()
+    with _process_lock:
+        for process in tuple(_processes):
+            try:
+                if hasattr(os, "killpg"):
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+        retire_registered_processes()
+        if _launching:
+            return
+    raise KeyboardInterrupt
+
+
+def retire_registered_processes() -> None:
+    failed = False
+    for process in tuple(_processes):
+        try:
+            _kill_group(process)
+            with _process_lock:
+                _processes.discard(process)
+        except (OSError, subprocess.SubprocessError):
+            failed = True
+    if failed:
+        raise ValueError("process_cleanup_failed")
+
+
+@contextmanager
+def owned_process(command: list[str], merge_output: bool):
+    global _launching
+    process = None
+    try:
+        with _process_lock:
+            if _cancelled.is_set():
+                raise ValueError("cancelled")
+            # A main-thread signal during Popen defers interruption until the new group is registered.
+            _launching = True
+            try:
+                process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT if merge_output else subprocess.PIPE,
+                                           start_new_session=True)
+                _processes.add(process)
+            finally:
+                _launching = False
+        if _cancelled.is_set():
+            raise KeyboardInterrupt
+        yield process
+    finally:
+        if process is not None:
+            if _cancelled.is_set() or process.poll() is None:
+                _kill_group(process)
+            with _process_lock:
+                _processes.discard(process)
 
 
 def validate_result(value: object) -> dict:
@@ -270,43 +338,41 @@ def apply_aborts(result: object, errors: list[dict]) -> tuple[object, bool]:
 
 def capture(command: list[str], timeout: float, merge_output: bool = True) -> dict:
     """Collect bounded output only after the owned process group has stopped."""
-    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT if merge_output else subprocess.PIPE,
-                               start_new_session=True)
-    failure = None
-    cleanup_error = False
-    try:
-        output, error = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        output, error = exc.output or b"", exc.stderr or b""
-        failure = "watchdog"
-    if failure is not None or _group_exists(process.pid):
-        failure = failure or "descendants_after_exit"
+    with owned_process(command, merge_output) as process:
+        failure = None
+        cleanup_error = False
         try:
-            _kill_group(process)
-        except (OSError, subprocess.SubprocessError):
-            cleanup_error = True
-        if failure == "watchdog":
-            # An escaped process may retain a pipe. Never wait on that pipe after timeout.
-            for stream in (process.stdout, process.stderr):
-                if stream is not None:
-                    stream.close()
-    report = {"command": command, "exit": None if failure == "watchdog" else process.returncode,
-              "stdout": _decode(output), "stderr": _decode(error)}
-    if failure is not None:
-        report.update(failure=failure, process_group=process.pid)
-        try:
-            deadline = time.monotonic() + 5
-            while _group_active(process.pid) and time.monotonic() < deadline:
-                time.sleep(0.01)
-            report["cleanup_complete"] = not cleanup_error and not _group_active(process.pid)
-        except OSError:
-            report["cleanup_complete"] = False
-        if not report["cleanup_complete"]:
-            report["failure"] = "process_cleanup_failed"
-    if _invalid_utf8(output, error):
-        report.setdefault("failure", "invalid_utf8_output")
-    return report
+            output, error = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            output, error = exc.output or b"", exc.stderr or b""
+            failure = "watchdog"
+        if failure is not None or _group_exists(process.pid):
+            failure = failure or "descendants_after_exit"
+            try:
+                _kill_group(process)
+            except (OSError, subprocess.SubprocessError):
+                cleanup_error = True
+            if failure == "watchdog":
+                # An escaped process may retain a pipe. Never wait on that pipe after timeout.
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+        report = {"command": command, "exit": None if failure == "watchdog" else process.returncode,
+                  "stdout": _decode(output), "stderr": _decode(error)}
+        if failure is not None:
+            report.update(failure=failure, process_group=process.pid)
+            try:
+                deadline = time.monotonic() + 5
+                while _group_active(process.pid) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                report["cleanup_complete"] = not cleanup_error and not _group_active(process.pid)
+            except OSError:
+                report["cleanup_complete"] = False
+            if not report["cleanup_complete"]:
+                report["failure"] = "process_cleanup_failed"
+        if _invalid_utf8(output, error):
+            report.setdefault("failure", "invalid_utf8_output")
+        return report
 
 
 def invoke(command: list[str], timeout: float) -> dict:
@@ -385,6 +451,11 @@ def _kill_group(process: subprocess.Popen) -> None:
     elif process.poll() is None:
         process.kill()
     process.wait(timeout=5)
+    deadline = time.monotonic() + 5
+    while _group_active(process.pid):
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, 5)
+        time.sleep(0.01)
 
 
 def timed(command: list[str], timeout: float) -> tuple[dict, float]:
@@ -534,11 +605,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
+    parser.add_argument("--host-wait", type=float, default=600, help="seconds to wait for exclusive host capacity before engine execution")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
     if not -(2**63) <= args.seed < 2**63:
         parser.error("seed must fit a signed 64-bit integer")
+    if not math.isfinite(args.host_wait) or args.host_wait < 0:
+        parser.error("host-wait must be finite and nonnegative")
     if args.jobs < 1:
         parser.error("jobs must be positive")
     if args.changed and args.suite:
@@ -548,15 +622,32 @@ def main(argv: list[str] | None = None) -> int:
     args.results.write_text(json.dumps({"format": 1, "passed": False,
                                        "failure": "in_progress"}) + "\n", encoding="utf-8")
     executable = resolve_engine(args.godot)
+    handlers = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
+    for number in handlers:
+        signal.signal(number, cancel_execution)
     try:
         with SourceSnapshot(ROOT) as snapshot:
             return execute(args, executable, snapshot)
+    except KeyboardInterrupt:
+        args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "cancelled"}) + "\n", encoding="utf-8")
+        print(json.dumps({"passed": False, "results": str(args.results)}))
+        return 130
     except (OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": str(exc)}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
         return 1
     finally:
-        host_capacity.release()
+        try:
+            retire_registered_processes()
+        except ValueError:
+            args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "process_cleanup_failed"}) + "\n", encoding="utf-8")
+            print(json.dumps({"passed": False, "results": str(args.results)}))
+            return 1
+        finally:
+            host_capacity.release()
+            for number, handler in handlers.items():
+                signal.signal(number, handler)
+            _cancelled.clear()
 
 
 def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot) -> int:
@@ -578,16 +669,17 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             return 0
     suites = sorted(args.suite) or discover(args.category, snapshot.path)
     durations = load_durations(args.durations)
-    # Take the development host for this run. Another owner means a browser witness needs a
-    # responsive host, so this run executes one process at a time while retaining
-    # per-case isolation for known slow suites.
-    shared_host = not host_capacity.acquire(LEASE_NAME)
-    lease_holder = host_capacity.holder()
-    if shared_host:
-        print(json.dumps({"host_capacity_lease": lease_holder, "jobs": 1}), file=sys.stderr)
-        args.jobs = 1
     version_probe = None
     try:
+        # Wait before starting engine children; a competing owner must retain responsive capacity.
+        host_deadline = time.monotonic() + args.host_wait
+        contended = not host_capacity.acquire(LEASE_NAME)
+        if contended:
+            print(json.dumps({"host_capacity_lease": host_capacity.holder(), "waiting_seconds": args.host_wait,
+                              "requested_jobs": args.jobs}), file=sys.stderr)
+            remaining = host_deadline - time.monotonic()
+            if remaining <= 0 or not host_capacity.acquire_when_free(LEASE_NAME, remaining) or time.monotonic() >= host_deadline:
+                raise ValueError("host_capacity_timeout")
         version_probe = capture([str(executable), "--version"], args.timeout, merge_output=False)
         if "failure" in version_probe:
             failure = version_probe["failure"]
@@ -595,7 +687,7 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         if version_probe["exit"] != 0:
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
-        if shared_host or args.jobs > 1:
+        if contended or args.jobs > 1:
             slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
             cases = split_cases(command, slow, args.timeout) if slow else {}
             # Shards stay in suite order, then inventory order, so merged records match one process.
@@ -612,14 +704,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         order = sorted(range(len(shards)), key=lambda index: -estimate(keys[index]))
         pending = [[None] * len(shards), [None] * len(shards)]
         # The wave keeps the development host, so a witness that starts later waits for it.
-        try:
-            with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-                for index in order:
-                    for repetition in pending:
-                        repetition[index] = pool.submit(timed, shards[index], args.timeout)
-                completed = [[future.result() for future in repetition] for repetition in pending]
-        finally:
-            host_capacity.release()
+        with ThreadPoolExecutor(max_workers=args.jobs) as pool:
+            for index in order:
+                for repetition in pending:
+                    repetition[index] = pool.submit(timed, shards[index], args.timeout)
+            completed = [[future.result() for future in repetition] for repetition in pending]
         runs = [merge([report for report, _ in repetition], bool(args.filter)) for repetition in completed]
         if not args.filter and args.jobs > 1:
             times = [max(completed[0][index][1], completed[1][index][1]) for index in range(len(keys))]
