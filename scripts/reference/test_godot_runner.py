@@ -140,6 +140,42 @@ class AbortAttribution(unittest.TestCase):
 
 
 class ReceiptControls(unittest.TestCase):
+    # Value: protects=group observation errors; fails_when=inventory falls back after failed supervision; why_new=ESRCH controls miss other OS errors; seam=killpg zero probe
+    def test_group_observation_errors_cannot_start_unsupervised_inventory(self) -> None:
+        if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
+            self.skipTest('requires Linux process-group observations')
+        for error in (PermissionError(1, 'Operation not permitted'), OSError(5, 'Input/output error')):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as directory:
+                pid_file = Path(directory) / 'child.pid'
+                command = ("import pathlib,subprocess,sys;"
+                           "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
+                           "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL);"
+                           f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid));"
+                           "print('FORTRESS_TEST_CASES {\"res://suite.gd\":[\"one\",\"two\"]}')")
+                killpg = os.killpg
+                observed = [False]
+
+                def fail_probe(group, signal):
+                    if signal == 0 and not observed[0]:
+                        observed[0] = True
+                        raise error
+                    return killpg(group, signal)
+
+                try:
+                    with patch.object(os, 'killpg', fail_probe):
+                        with self.assertRaisesRegex(ValueError, '^case_list_descendants_after_exit$') as failure:
+                            RUNNER.split_cases([sys.executable, '-c', command], ['res://suite.gd'], 5)
+                    self.assertTrue(observed[0], 'group-observation error was not injected')
+                    self.assertIs(failure.exception.report['cleanup_complete'], True)
+                    self.assertIsInstance(failure.exception.report['process_group'], int)
+                    self.assertFalse(process_live(Path('/proc') / pid_file.read_text() / 'stat'))
+                finally:
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text()), 9)
+                        except ProcessLookupError:
+                            pass
+
     # Value: protects=exiting process observations; fails_when=stat disappears during read; why_new=live child schedules rarely expose the race; seam=proc stat read
     def test_process_stat_disappearance_is_not_a_live_child(self) -> None:
         path = Path('/proc/fixture/stat')

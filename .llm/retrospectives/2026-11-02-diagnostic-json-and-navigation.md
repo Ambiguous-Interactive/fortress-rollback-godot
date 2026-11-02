@@ -24,6 +24,9 @@
 
 - CI exposed `ProcessLookupError` during fixture process-stat reads after open. All fixture observations now share a helper that handles disappearance without hiding permission failures.
 
+- Non-ESRCH process-group probe errors now enter cleanup and failure; they cannot fall back to unsupervised inventory execution.
+- A real inherited-pipe witness confirmed capture waits until children finish before qualification. Independent review rejected an unnecessary parent-exit cutoff.
+
 ## Curation and Pruning
 
 - Updated existing testing and copy guidance rather than adding a new skill.

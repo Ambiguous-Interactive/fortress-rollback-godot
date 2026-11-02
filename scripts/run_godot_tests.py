@@ -352,6 +352,8 @@ def _group_exists(group: int) -> bool:
         os.killpg(group, 0)
     except ProcessLookupError:
         return False
+    except OSError:
+        return True
     return True
 
 

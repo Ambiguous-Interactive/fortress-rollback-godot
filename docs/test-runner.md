@@ -82,9 +82,10 @@ The slower integration category uses the budget below. Deliberate watchdog contr
 keep their short limits.
 
 Every engine execution, version probe and case inventory probe runs in its own process group.
-The launcher kills that group on timeout. It also conservatively refuses a completed parent with
+The launcher kills that group on timeout. Before qualification, it conservatively refuses
 any surviving group, including children that redirected their output and would otherwise escape
-the output-pipe watchdog. Qualification uses group existence, avoiding a racing process inventory.
+the output-pipe watchdog. Captured-pipe EOF is part of bounded completion; leader exit alone does not complete capture.
+Qualification uses group existence, avoiding a racing process inventory. Unknown group-probe errors require cleanup and refusal, not ordinary-suite fallback.
 Cleanup addresses the original group even after its leader exits. Failure reports name the group
 and whether cleanup completed. Linux cleanup observations exclude dead orphan zombies, which
 cannot execute or modify source files; that observation never qualifies a passing result.
