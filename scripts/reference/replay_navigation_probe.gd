@@ -72,15 +72,15 @@ func _run() -> void:
 	scene.add_child(line)
 	var text: TextEdit = TextEdit.new()
 	scene.add_child(text)
+	line.text = "entry"
+	line.caret_column = 5
+	text.text = "entry"
+	text.set_caret_column(5)
 	for editor: Control in [line, text]:
-		editor.text = "entry"
 		editor.grab_focus()
-		if editor is LineEdit:
-			editor.caret_column = 5
-		else:
-			editor.set_caret_column(5)
 		await _key(KEY_L)
-		_check(scene.viewer.current_frame() == 300 and not scene.viewer.is_seeking() and editor.text == "entryl", "editable control receives text without navigation")
+		var edited_text: String = line.text if editor == line else text.text
+		_check(scene.viewer.current_frame() == 300 and not scene.viewer.is_seeking() and edited_text == "entryl", "editable control receives text without navigation")
 	scene._target.get_line_edit().grab_focus()
 	await _key(KEY_L)
 	_check(scene.viewer.current_frame() == 300 and not scene.viewer.is_seeking(), "SpinBox text focus preserves playback")

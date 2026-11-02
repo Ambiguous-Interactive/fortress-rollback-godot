@@ -236,8 +236,10 @@ jobs:
           python3 scripts/reference/diagnostic_json.py --godot "$editor"
           for round in 1 2; do
             navigation_log=".cache/reference/results/replay-navigation-$version-$round.log"
-            timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1
+            navigation_status=0
+            timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1 || navigation_status=$?
             cat "$navigation_log"
+            if (( navigation_status != 0 )); then exit "$navigation_status"; fi
             grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 15' "$navigation_log"
             if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
           done
