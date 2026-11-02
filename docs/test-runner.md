@@ -163,12 +163,12 @@ The workload preserved all 261 GDScript files from `c93d1d1`: 779 unit cases and
 | Scheduling control | Requested / observed workers | Elapsed seconds |
 | --- | --- | --- |
 | Original runner, ten-second initial contention | 16 / 1 | 940.185 |
-| Repaired runner, same ten-second contention | 16 / 16 | 91.942 |
-| Repaired runner, uncontended | 16 / 16 | 90.524 |
+| Repaired runner, same ten-second contention | 16 / 16 | 91.522 |
+| Repaired runner, uncontended | 16 / 16 | 82.710 |
 
 For each contended run, an independent process held the shared lease for ten seconds after launch.
 Every run used seed 1701, identical initial duration bytes, the same engine digest and
-180-second per-process watchdogs. The repaired runner and helper were pinned at `482988b`.
+180-second per-process watchdogs. The repaired runner and helper were pinned at `0a99b8a`.
 Only those two Python source files differed from the baseline workload.
 All runs passed with identical complete semantic records and ordered shard identities;
 the repaired runs also proved exclusive lease ownership while all 16 engine children ran.
