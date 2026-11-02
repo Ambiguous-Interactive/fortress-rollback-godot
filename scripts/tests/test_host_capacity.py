@@ -21,6 +21,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -106,6 +108,61 @@ class HostCapacityTest(unittest.TestCase):
         self.assertTrue(host_capacity.wait_for_free(0.0))
         self.assertTrue(host_capacity.acquire_when_free("online-witness", 0.0))
         self.assertEqual(host_capacity.holder(), "online-witness")
+
+    # Value: ownership waits must not claim capacity after their budget, even when polling oversleeps.
+    def test_wait_budgets_preserve_immediate_attempt_and_expiration(self):
+        cases = [(0, 0, 0, True), (0, 1, 0, False), (.1, .2, 0, False),
+                 (.5, .6, .2, False), (1, .2, 0, True), (.5, .5, 0, False)]
+        for operation in ('wait_for_free', 'acquire_when_free'):
+            for budget, release, oversleep, expected in cases:
+                with self.subTest(operation=operation, budget=budget, release=release, oversleep=oversleep):
+                    clock, sleeps, attempts = [0.0], [], []
+
+                    def sleep(seconds):
+                        sleeps.append((clock[0], seconds))
+                        clock[0] += seconds + oversleep
+
+                    def acquire(_name):
+                        attempts.append(clock[0])
+                        return clock[0] >= release
+
+                    with patch.object(host_capacity, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep)), \
+                            patch.object(host_capacity, '_ours', return_value=False), \
+                            patch.object(host_capacity, 'holder', side_effect=lambda: None if clock[0] >= release else 'other'), \
+                            patch.object(host_capacity, 'acquire', side_effect=acquire):
+                        result = (host_capacity.wait_for_free(budget) if operation == 'wait_for_free'
+                                  else host_capacity.acquire_when_free('next', budget))
+                    self.assertEqual(result, expected)
+                    for started, duration in sleeps:
+                        self.assertLessEqual(duration, min(.5, budget - started), 'polling sleep must fit remaining budget')
+                    self.assertTrue(all(attempt == 0 or attempt < budget for attempt in attempts), 'expired waits cannot acquire capacity')
+
+    # Value: a real owner leaving after expiration must not convert a timed-out wait into successful ownership.
+    def test_owner_exit_after_budget_cannot_grant_capacity(self):
+        for operation in ('wait_for_free', 'acquire_when_free'):
+            with self.subTest(operation=operation):
+                owner = self.hold_in_subprocess()
+                clock, sleeps = [0.0], []
+
+                def sleep(seconds):
+                    sleeps.append(seconds)
+                    clock[0] += seconds + .2
+                    owner.terminate()
+                    owner.wait(timeout=5)
+
+                try:
+                    with patch.object(host_capacity, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep)):
+                        result = (host_capacity.wait_for_free(.1) if operation == 'wait_for_free'
+                                  else host_capacity.acquire_when_free('next', .1))
+                    self.assertFalse(result, 'capacity released after expiration cannot satisfy the old wait')
+                    self.assertEqual(sleeps, [.1])
+                    self.assertTrue(host_capacity.acquire_when_free('fresh-attempt', 0), 'a fresh immediate attempt can acquire the released host')
+                    host_capacity.release()
+                finally:
+                    if owner.poll() is None:
+                        owner.terminate()
+                    owner.wait(timeout=5)
+                    (Path(self.directory.name) / 'ready').unlink(missing_ok=True)
 
     def test_worker_count_rejects_a_non_positive_request(self):
         with self.assertRaises(ValueError):

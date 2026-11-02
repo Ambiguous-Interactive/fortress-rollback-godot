@@ -141,23 +141,33 @@ def wait_for_free(timeout_seconds: float) -> bool:
     host does not wait for it.
     """
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    if _ours() or holder() is None:
+        return True
     while True:
-        if _ours() or holder() is None:
-            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.5, remaining))
         if time.monotonic() >= deadline:
             return False
-        time.sleep(0.5)
+        if _ours() or holder() is None:
+            return True
 
 
 def acquire_when_free(name: str, timeout_seconds: float) -> bool:
     """Wait for the host and take it. False when the wait ran out."""
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    if acquire(name):
+        return True
     while True:
-        if wait_for_free(0.0) and acquire(name):
-            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.5, remaining))
         if time.monotonic() >= deadline:
             return False
-        time.sleep(0.5)
+        if acquire(name):
+            return True
 
 
 def worker_count(requested: int) -> int:
