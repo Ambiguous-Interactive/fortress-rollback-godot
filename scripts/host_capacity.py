@@ -8,10 +8,9 @@ deadline, and its session ends with `PROTOCOL_FAILED`. The failure looks like
 a transport fault, but a scheduling pause causes it.
 
 A probe that needs a responsive host takes the host before it starts. The
-runner reads the owner before it starts its parallel wave and runs that wave
-serially while another owner holds the host. The runner takes the host of its
-own while its wave runs, so a witness that starts later waits for it instead
-of competing for it.
+runner waits within a bounded budget before starting its engine children, then
+keeps its requested parallel capacity while it owns the host. A witness that
+starts later waits for it instead of competing for it.
 
 The host is one exclusive file lock, so exactly one process owns it. The
 operating system releases the lock when its owner ends, so a lease of a

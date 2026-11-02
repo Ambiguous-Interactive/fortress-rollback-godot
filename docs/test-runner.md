@@ -23,7 +23,18 @@ receives the same explicit seed (default `1701`, signed 64-bit).
 
 Options: `--category unit|determinism|integration`, `--filter <case-substring>`,
 `--suite res://path.gd` (repeatable), `--seed <integer>`, `--timeout <seconds>`
-(per process, default 30), `--jobs <count>` (default: CPU count), `--durations <path>` and `--results <path>`.
+(per process, default 30), `--jobs <count>` (default: CPU count), `--host-wait <seconds>` (default: 600),
+`--durations <path>` and `--results <path>`.
+
+The native launcher takes the shared machine-wide host-capacity lease before starting any engine
+processes. A competing native run or browser witness makes it wait, up to `--host-wait` seconds.
+After the owner exits or releases the lease, the launcher keeps the requested worker count for its
+complete wave. A browser witness starting later waits for that wave. A timed-out wait publishes a
+failed `host_capacity_timeout` receipt without starting engine children; use zero to refuse immediately
+when the host is busy. Canceling a waiting launcher leaves the current owner's lease intact.
+SIGINT and SIGTERM stop already owned engine groups, fence queued launches, and publish a failed
+`cancelled` receipt before releasing the native lease. Each engine watchdog keeps its own cleanup gate.
+This policy replaces the former permanent one-worker fallback after initial contention.
 
 Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. The launcher joins
 the shard results in sorted suite order, so the record is the same as one process running every

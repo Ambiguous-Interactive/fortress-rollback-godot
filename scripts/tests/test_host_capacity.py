@@ -5,8 +5,8 @@ on a many core host. A browser witness that runs at the same time then stops
 delivering packets inside the two second production deadline, and its session
 ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 
-* exactly one process holds the host, and the runner's wave runs serially
-  while another owner holds it;
+* exactly one process holds the host, and the runner waits before engine
+  execution while another owner holds it;
 * a second owner cannot take the host while the first one holds it;
 * the lock ends with its owner, so the host of a process that is gone never
   blocks the next probe;
@@ -14,24 +14,17 @@ ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 """
 
 import ast
-import copy
-from contextlib import nullcontext
-import fcntl
 import json
-import os
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import host_capacity
-import run_godot_tests
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 
@@ -69,57 +62,6 @@ class HostCapacityTest(unittest.TestCase):
             time.sleep(0.05)
         self.assertTrue(ready.exists(), "the other owner did not take the host")
         return process
-
-    # Value: a shared host serializes execution without merging known slow cases into one watchdog.
-    def test_shared_host_keeps_slow_cases_isolated_with_one_worker(self):
-        suite = "res://tests/unit/slow.gd"
-        names = ["first", "second"]
-        directory = Path(self.directory.name)
-        durations, results = directory / "durations.json", directory / "results.json"
-        durations.write_text(json.dumps({suite: 40}), encoding="utf-8")
-        executor = run_godot_tests.ThreadPoolExecutor
-        observed = []
-
-        def command(command, timeout, merge_output=True):
-            if "--list-cases" in command:
-                self.assertIn(suite, command)
-                return {"exit": 0, "stdout": run_godot_tests.CASES_PREFIX + json.dumps({suite: names}), "stderr": ""}
-            if "--version" in command:
-                return {"exit": 0, "stdout": "test-engine", "stderr": ""}
-            self.fail("unexpected process phase")
-
-        def timed(command, timeout):
-            observed.append((command, timeout))
-            if "--case" not in command:
-                return {"failure": "watchdog_expired"}, 40
-            case = command[command.index("--case") + 1]
-            state = {"assertions": 1, "failures": [], "states": [{"frame": 0, "bytes": "01"}]}
-            record = {"suite": suite, "case": case, "category": "unit", "seed": "1701", "runs": [state, copy.deepcopy(state)]}
-            return {"result": {"format": 1, "complete": True, "passed": True, "count": 1, "errors": [], "records": [record]}}, 20
-
-        for owner_name in ("browser-witness", run_godot_tests.LEASE_NAME):
-            observed.clear()
-            host_capacity.LEASE_FILE.write_text(json.dumps({"name": owner_name}), encoding="utf-8")
-            with host_capacity.LEASE_FILE.open("a+") as owner:
-                fcntl.flock(owner.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                with patch.object(run_godot_tests, "resolve_engine", return_value=Path(sys.executable)), \
-                        patch.object(run_godot_tests, "SourceSnapshot", return_value=nullcontext(SimpleNamespace(
-                            path=SCRIPTS.parent, commit="host-capacity-control", dirty=False, evidence=lambda: {},
-                            verify_image=lambda: None, changed=lambda: False))), \
-                        patch.object(run_godot_tests, "capture", side_effect=command), \
-                        patch.object(run_godot_tests, "timed", side_effect=timed), \
-                        patch.object(run_godot_tests, "ThreadPoolExecutor", wraps=executor) as pool:
-                    status = run_godot_tests.main(["--godot", sys.executable, "--suite", suite, "--jobs", "8", "--timeout", "30",
-                                                  "--durations", str(durations), "--results", str(results)])
-                pool.assert_called_once_with(max_workers=1)
-                self.assertEqual(host_capacity.holder(), owner_name)
-            self.assertEqual(status, 0)
-            self.assertEqual(len(observed), 4)
-            self.assertTrue(all(timeout == 30 for command, timeout in observed))
-            report = json.loads(results.read_text(encoding="utf-8"))
-            self.assertTrue(report["passed"])
-            for repetition in report["runs"]:
-                self.assertEqual([record["case"] for record in repetition["result"]["records"]], names)
 
     def test_free_host_keeps_the_requested_worker_count(self):
         self.assertIsNone(host_capacity.holder())
@@ -218,12 +160,11 @@ class HostSensitiveLauncherTest(unittest.TestCase):
                         self.assertGreater(timeout.value, 0, f'{relative} waits a positive time')
                     self.assertFalse(call.keywords, f'{relative} passes the name and budget positionally')
 
-    def test_the_local_runner_takes_the_host_without_waiting(self):
-        # The runner must never block on the host: it takes it when free and
-        # runs serially otherwise, so it takes it with the non-waiting call.
+    def test_the_local_runner_takes_the_host_with_a_bounded_wait(self):
+        # A competing owner must not permanently lower the requested native capacity.
         source = (SCRIPTS.parent / 'scripts/run_godot_tests.py').read_text(encoding='utf-8')
         self.assertTrue(self._calls(source, 'acquire'), 'the local runner no longer takes the host')
-        self.assertFalse(self._calls(source, 'acquire_when_free'), 'the local runner must not wait for the host')
+        self.assertTrue(self._calls(source, 'acquire_when_free'), 'the local runner must acquire before starting children')
 
     def test_the_transport_witness_leases_after_cheap_argument_checks(self):
         # A rejected invocation (an unknown pin, a bad --version) must fail
