@@ -64,9 +64,12 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
             if child.poll() is None:
                 child.terminate()
             child.wait(timeout=10)
-        for started in self.root.glob('started-*'):
+        groups = [int(started.name.split('-')[1]) for started in self.root.glob('started-*')]
+        if (self.root / 'spawned-pid').exists():
+            groups.append(int((self.root / 'spawned-pid').read_text()))
+        for group in groups:
             try:
-                os.killpg(int(started.name.split('-')[1]), signal.SIGKILL)
+                os.killpg(group, signal.SIGKILL)
             except ProcessLookupError:
                 pass
         for stream in self.streams:
