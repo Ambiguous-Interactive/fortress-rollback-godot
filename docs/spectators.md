@@ -43,8 +43,8 @@ and the four-frame catch-up limit.
 The label also counts contiguous buffered confirmed frames and later rows beyond gaps,
 including while paused. Later rows become buffered only after their missing earlier inputs arrive;
 they cannot be played yet. These counts show the current backlog independently of the selected delay.
-The host continues playing during inspection. E stops the host at its current
-frame, waits for outstanding actual inputs, repairs its final state and sends a clean end.
+The host continues playing during inspection. Press E or click **End host** to stop the host at its current frame.
+It waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
 After the last frame, press N once more to report completion. C drains the buffered final
 tail and reports completion in the same action when the complete tail has arrived.
@@ -52,7 +52,8 @@ The viewer shows `BUFFERING` at startup while it waits for enough confirmed inpu
 its delay. A paused final tail shows `FINAL TAIL PAUSED` and the resume/step controls.
 Press L to simulate a known loss of the viewer's host connection. Buffered viewer
 frames stop immediately, including while paused, and the last displayed state remains.
-The host keeps playing. R starts a fresh game after completion or connection loss.
+The host keeps playing. Press R or click **Restart match** to start a fresh game after completion or connection loss.
+Both host buttons wait while callbacks or expert requests own the match. End host also disables after an ending is queued.
 Viewer failures keep their original reason through later ticks, single-frame inspection,
 completion callbacks and independent host failures. A failed viewer never displays a clean
 completion message just because its next operation reports a generic stopped result.
@@ -71,7 +72,7 @@ Catch-up frees receive slots; later ticks can deliver more host rows.
 ![Paused spectator with a full input buffer and recovery controls](images/spectator-full-buffer.png)
 
 A long viewer pause can exhaust retained host history. The viewer then stops
-with `HISTORY UNAVAILABLE` and the R restart control; the host keeps playing. The example encodes and receives spectator byte packets
+with `HISTORY UNAVAILABLE` and the Restart match control; the host keeps playing. The example encodes and receives spectator byte packets
 in the same process, with an injected ten-second host deadline. It requires no server,
 SDK or native extension. The example negotiates the envelope version before its
 first row and sends keepalives on ticks without accepted rows,

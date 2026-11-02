@@ -18,6 +18,9 @@ var _pause_button: Button
 var _step_button: Button
 var _catchup_button: Button
 var _policy_controls: HBoxContainer
+var _host_controls: HBoxContainer
+var _end_host_button: Button
+var _restart_button: Button
 
 
 func _ready() -> void:
@@ -62,6 +65,22 @@ func _ready() -> void:
 		button.focus_mode = Control.FOCUS_NONE
 		button.pressed.connect(_adjust_policy.bind(index))
 		_policy_controls.add_child(button)
+	_host_controls = HBoxContainer.new()
+	_host_controls.name = "HostControls"
+	_host_controls.add_theme_constant_override("separation", 12)
+	add_child(_host_controls)
+	_end_host_button = Button.new()
+	_end_host_button.name = "EndHost"
+	_end_host_button.text = "End host (E)"
+	_end_host_button.focus_mode = Control.FOCUS_NONE
+	_end_host_button.pressed.connect(_finish_host)
+	_host_controls.add_child(_end_host_button)
+	_restart_button = Button.new()
+	_restart_button.name = "RestartMatch"
+	_restart_button.text = "Restart match (R)"
+	_restart_button.focus_mode = Control.FOCUS_NONE
+	_restart_button.pressed.connect(_restart)
+	_host_controls.add_child(_restart_button)
 	_code = demo.start()
 	_update_label()
 
@@ -106,11 +125,22 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_L:
 		demo.lose_host_connection()
 	elif event.keycode == KEY_E:
-		demo.finish_host()
+		_finish_host()
 	elif event.keycode == KEY_V:
 		_export_replay()
 	elif event.keycode == KEY_R:
-		_code = demo.start()
+		_restart()
+	_update_label()
+
+
+func _finish_host() -> void:
+	demo.finish_host()
+	_update_label()
+
+
+func _restart() -> void:
+	_code = demo.start()
+	if _code == Types.Code.OK:
 		_replay_notice = ""
 	_update_label()
 
@@ -156,6 +186,8 @@ func _process(_delta: float) -> void:
 
 
 func _update_label() -> void:
+	_restart_button.disabled = demo._mutation_code() == Types.Code.BUSY
+	_end_host_button.disabled = (_restart_button.disabled or demo.host == null or demo.is_finishing or demo.host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED)
 	_follow_live_button.disabled = demo.viewer == null or demo._mutation_code() == Types.Code.BUSY or demo.viewer._mutation_code() != Types.Code.OK
 	_pause_button.disabled = _follow_live_button.disabled
 	_step_button.disabled = _follow_live_button.disabled
@@ -215,6 +247,7 @@ func _update_label() -> void:
 	_step_button.position = _pause_button.position + Vector2(_pause_button.get_minimum_size().x + 12, 0)
 	_catchup_button.position = _step_button.position + Vector2(_step_button.get_minimum_size().x + 12, 0)
 	_policy_controls.position = _follow_live_button.position + Vector2(0, _follow_live_button.get_minimum_size().y + 8)
+	_host_controls.position = _policy_controls.position + Vector2(0, _policy_controls.get_minimum_size().y + 8)
 
 
 func _recording_feedback() -> String:
@@ -254,7 +287,7 @@ func _export_replay() -> void:
 
 
 func _board_top() -> float:
-	return _policy_controls.position.y + _policy_controls.get_minimum_size().y + 16.0
+	return _host_controls.position.y + _host_controls.get_minimum_size().y + 16.0
 
 
 func _draw() -> void:

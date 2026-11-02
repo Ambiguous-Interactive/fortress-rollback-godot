@@ -272,7 +272,8 @@ Advancing an input does not check its resulting state until you pause, step or f
 Input digests and cached snapshots do not count as recorded state checksums.
 **Checksums checked** reports distinct matching state boundaries, the number of recorded checksums, and the recording length.
 Repeated navigation does not count the same boundary twice; restart begins a fresh verification count.
-Playback controls refuse changes while a game callback or manual replay request is active.
+Playback controls, file selection and downloads disable while a game callback or manual replay request is active.
+They become available again after the game releases its request; leaving the viewer remains available.
 Restarting or opening another recording terminates the previous player, including retained handles.
 Leaving either replay or diagnostic viewer also terminates its player and expires pending request views.
 An earlier playback failure remains available; cancellation does not replace its cause.

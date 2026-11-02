@@ -185,7 +185,7 @@ for _suite in ['host', 'relay']:
 EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
     'send_failure', 'receive_failure', 'latched_failure', 'busy_control', 'failed_configuration', 'healthy_configuration'}
 EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {
-    'replacement', 'callback_controls', 'callback_termination', 'expert_controls', 'scene_exit', 'scene_exit_callbacks'}
+    'replacement', 'callback_controls', 'callback_termination', 'expert_controls', 'scene_busy_controls', 'scene_exit', 'scene_exit_callbacks'}
 EXPECTED['res://tests/unit/test_replay_input_navigation.gd'] = {'input_change_navigation', 'input_change_integrity', 'input_change_controls',
     'checksum_navigation', 'checksum_navigation_integrity', 'checksum_navigation_controls'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'catchup_control', 'catchup_once', 'catchup_once_control'})

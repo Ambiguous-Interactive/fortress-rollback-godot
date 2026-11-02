@@ -76,7 +76,7 @@ class ReentrantGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["replacement", "callback_controls", "callback_termination", "expert_controls", "scene_exit", "scene_exit_callbacks"])
+	return PackedStringArray(["replacement", "callback_controls", "callback_termination", "expert_controls", "scene_busy_controls", "scene_exit", "scene_exit_callbacks"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -90,9 +90,56 @@ func run_case(name: String, context: RefCounted) -> void:
 		_scene_exit_callbacks(context)
 	elif name == "scene_exit":
 		_scene_exit(context)
+	elif name == "scene_busy_controls":
+		_scene_busy_controls(context)
 	else:
 		_expert_controls(context)
 	context.finish()
+
+
+# Value: protects=visible replay actions agree with retained game ownership; fails_when=busy controls look usable;
+# why_new=expert control tests assert controller refusal but never inspect scene readiness; seam=none
+func _scene_busy_controls(context: RefCounted) -> void:
+	for seeking: bool in [false, true]:
+		var node: Node2D = Scene.instantiate()
+		(Engine.get_main_loop() as SceneTree).root.add_child(node)
+		if not node.is_node_ready():
+			node._ready()
+		node.viewer.open_bytes(Fixture.recording(8).to_bytes())
+		for frame: int in 4:
+			node.viewer.step()
+		node._refresh()
+		context.equal(Fixture._button(node, "Open replay").disabled, false, "idle replay permits another file")
+		context.equal(node._restart_button.disabled, false, "idle replay permits restart")
+		context.equal(node._speed.disabled, false, "idle replay permits cadence changes")
+		if seeking:
+			node.viewer.seek(7)
+		var player: Player = node.viewer._player
+		var result: Types.Result = player.begin_advance()
+		context.equal(result.code, Types.Code.READY, "actual expert batch holds game ownership")
+		var request: Types.Request = result.batch.next_request()
+		node._refresh()
+		for child: Node in node._panel.find_children("*", "Button", true, false):
+			if child is Button and child.text != "Back to online":
+				context.equal(child.disabled, true, "held game work disables %s" % child.text)
+		context.equal(node._target.editable, false, "held game work disables typed frame navigation")
+		context.equal(node._timeline.editable, false, "held game work disables timeline navigation")
+		context.equal(player._batch, result.batch, "disabled controls preserve the retained batch")
+		var saved: Driver.SaveResult = node.viewer.game.save_state(request.frame, request.writer)
+		context.equal(player.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "held SAVE remains usable")
+		request = result.batch.next_request()
+		var ok: bool = node.viewer.game.simulate_frame(request.frame, request.inputs)
+		context.equal(player.complete_request(request.batch_id, request.request_id, ok).code, Types.Code.OK, "held ADVANCE remains usable")
+		if seeking:
+			node.viewer.tick()
+		node._refresh()
+		context.equal(Fixture._button(node, "Open replay").disabled, false, "completed game work restores file selection")
+		context.equal(node._restart_button.disabled, false, "completed game work restores restart")
+		context.equal(node._speed.disabled, false, "completed game work restores cadence selection")
+		context.equal(node._target.editable, true, "completed game work restores typed navigation")
+		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+		node._exit_tree()
+		node.free()
 
 
 func _replacement(context: RefCounted) -> void:
