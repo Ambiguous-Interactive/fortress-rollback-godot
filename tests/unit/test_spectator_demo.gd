@@ -1584,62 +1584,76 @@ func _pointer_policy_controls(context: RefCounted) -> void:
 # why_new=terminal feedback checks history and completion but not callback diagnostics; seam=none
 func _failure_feedback(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.ADVANCE]:
-		var scene: Node2D = Scene.new()
-		scene._ready()
-		scene.demo.set_paused(true)
-		for tick: int in range(40):
-			scene.demo.tick(Game.RIGHT)
-		var game: FailingViewerGame = FailingViewerGame.new()
-		scene.demo.game = game
-		context.equal(scene.demo.driver.configure(scene.demo.viewer, game), Types.Code.OK, "replace viewer callbacks before first playback")
-		var original: Game = Game.new()
-		for frame: int in range(5):
-			context.equal(scene.demo.step_viewer(), Types.Code.OK, "view confirmed input before callback failure")
-			var rows: Array[PackedByteArray] = [PackedByteArray([Game.RIGHT]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
-			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
-			context.equal(original.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent original viewed prefix")
-		context.bytes_equal(game.canonical_bytes(), original.canonical_bytes(), 5, "successful viewing preserves original canonical prefix")
-		var prefix: PackedByteArray = scene.demo.replay_bytes()
-		context.equal(prefix.is_empty(), false, "healthy viewed prefix can be saved before failure")
-		game.fail_kind = kind
-		var code: int = scene.demo.driver.capture_replay_boundary().reason if kind == Types.Kind.SAVE else scene.demo.step_viewer()
-		context.equal(code, Types.Code.CALLBACK_FAILED, "actual game callback stops viewing")
-		var status: Types.Status = scene.demo.viewer.status()
-		context.equal(status.failure_kind, kind, "stopped session retains actual failed request kind")
-		context.equal(status.failure_frame, 5, "stopped session retains exact failed callback frame")
-		scene._update_label()
-		var operation: String = "saving state" if kind == Types.Kind.SAVE else "simulating input"
-		var expected: String = "STOPPED: failed while %s at frame 5 | R: start again" % operation
-		context.equal(scene._label.text.contains(expected), true, "viewer explains failed operation, frame and restart")
-		context.equal(scene.get_node("HostControls/RestartMatch").disabled, false, "failed callback permits fresh match recovery")
-		context.bytes_equal(scene.demo.replay_bytes(), prefix, 5, "callback failure preserves exact saved viewed prefix")
-		context.equal(scene._can_export_replay(), true, "failed viewer keeps its viewed recording saveable")
-		var recording: Replay = Replay.new()
-		context.equal(recording.decode(scene.demo.replay_bytes()), Replay.DecodeCode.OK, "failed viewer exports portable retained input")
-		context.equal(recording.frame_count(), 5, "failed input is excluded from retained viewed recording")
-		var replay_game: Game = Game.new()
-		var replay_player: Player = Player.new()
-		context.equal(replay_player.configure(recording, replay_game, Game.SNAPSHOT_BYTES), Types.Code.OK, "retained failure prefix can replay independently")
-		for _step: int in range(7):
-			var replay_code: int = replay_player.step()
-			context.equal(replay_code in [Types.Code.OK, Types.Code.FRAME_EXHAUSTED], true, "retained failure prefix validates every played boundary")
-			if replay_player.is_complete():
-				break
-		context.equal(replay_player.is_final_state_validated(), true, "retained prefix preserves its successful final checksum")
-		context.bytes_equal(replay_game.canonical_bytes(), original.canonical_bytes(), 5, "failed viewer replay matches independent original prefix")
-		var canonical: PackedByteArray = game.canonical_bytes()
-		var host_frame: int = scene.demo.host.loop.game.frame
-		scene.demo.tick(Game.LEFT)
-		scene.demo.lose_host_connection()
-		scene._update_label()
-		context.equal(scene._label.text.contains(expected), true, "later host service and loss preserve first failure diagnostics")
-		context.equal(scene.demo.host.loop.game.frame, host_frame + 1, "failed viewer does not stop host gameplay")
-		context.bytes_equal(game.canonical_bytes(), canonical, game.frame, "failed callback cannot consume more buffered input")
-		context.bytes_equal(scene.demo.replay_bytes(), prefix, 5, "later host play and loss preserve exact viewed replay bytes")
-		context.equal(scene._can_export_replay(), true, "later host activity preserves retained replay save readiness")
-		scene._restart()
-		context.equal(scene._label.text.contains("STOPPED"), false, "fresh match clears old failure diagnostics")
-		scene.free()
+		for captured_before_failure: bool in [false, true]:
+			var scene: Node2D = Scene.new()
+			scene._ready()
+			scene.demo.set_paused(true)
+			for tick: int in range(40):
+				scene.demo.tick(Game.RIGHT)
+			var game: FailingViewerGame = FailingViewerGame.new()
+			scene.demo.game = game
+			context.equal(scene.demo.driver.configure(scene.demo.viewer, game), Types.Code.OK, "replace viewer callbacks before first playback")
+			var original: Game = Game.new()
+			for frame: int in range(5):
+				context.equal(scene.demo.step_viewer(), Types.Code.OK, "view confirmed input before callback failure")
+				var rows: Array[PackedByteArray] = [PackedByteArray([Game.RIGHT]), PackedByteArray([Demo.Host.remote_buttons(frame)])]
+				var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+				context.equal(original.simulate_frame(frame, Types.FrameInputs.new(rows, statuses)), true, "independent original viewed prefix")
+			context.bytes_equal(game.canonical_bytes(), original.canonical_bytes(), 5, "successful viewing preserves original canonical prefix")
+			var prefix: PackedByteArray = PackedByteArray()
+			if captured_before_failure:
+				prefix = scene.demo.replay_bytes()
+				context.equal(prefix.is_empty(), false, "healthy viewed prefix can be saved before failure")
+			game.fail_kind = kind
+			var code: int = scene.demo.driver.capture_replay_boundary().reason if kind == Types.Kind.SAVE else scene.demo.step_viewer()
+			context.equal(code, Types.Code.CALLBACK_FAILED, "actual game callback stops viewing")
+			var status: Types.Status = scene.demo.viewer.status()
+			context.equal(status.failure_kind, kind, "stopped session retains actual failed request kind")
+			context.equal(status.failure_frame, 5, "stopped session retains exact failed callback frame")
+			scene._update_label()
+			var operation: String = "saving state" if kind == Types.Kind.SAVE else "simulating input"
+			var expected: String = "STOPPED: failed while %s at frame 5 | R: start again" % operation
+			context.equal(scene._label.text.contains(expected), true, "viewer explains failed operation, frame and restart")
+			context.equal(scene.get_node("HostControls/RestartMatch").disabled, false, "failed callback permits fresh match recovery")
+			var failed_export: PackedByteArray = scene.demo.replay_bytes()
+			context.equal(failed_export.is_empty(), false, "callback failure preserves viewed input before its first export")
+			if captured_before_failure:
+				context.bytes_equal(failed_export, prefix, 5, "callback failure preserves exact saved viewed prefix")
+			context.equal(scene._can_export_replay(), true, "failed viewer keeps its viewed recording saveable")
+			var recording: Replay = Replay.new()
+			context.equal(recording.decode(failed_export), Replay.DecodeCode.OK, "failed viewer exports portable retained input")
+			context.equal(recording.frame_count(), 5, "failed input is excluded from retained viewed recording")
+			for frame: int in range(5):
+				var inputs: Types.FrameInputs = recording.inputs(frame)
+				context.equal(inputs != null, true, "retained replay contains every successfully viewed row")
+				if inputs != null:
+					context.bytes_equal(inputs.read(0).bytes, PackedByteArray([Game.RIGHT]), frame, "retained replay preserves original local input")
+					context.bytes_equal(inputs.read(1).bytes, PackedByteArray([Demo.Host.remote_buttons(frame)]), frame, "retained replay preserves original remote input")
+					for player: int in range(2):
+						context.equal(inputs.input_status(player), Queue.Status.CONFIRMED, "retained replay preserves finalized player status")
+			var replay_game: Game = Game.new()
+			var replay_player: Player = Player.new()
+			context.equal(replay_player.configure(recording, replay_game, Game.SNAPSHOT_BYTES), Types.Code.OK, "retained failure prefix can replay independently")
+			for _step: int in range(7):
+				var replay_code: int = replay_player.step()
+				context.equal(replay_code in [Types.Code.OK, Types.Code.FRAME_EXHAUSTED], true, "retained failure prefix validates every played boundary")
+				if replay_player.is_complete():
+					break
+			context.equal(replay_player.is_final_state_validated(), captured_before_failure, "retained prefix preserves existing checksum coverage without inventing a final checksum")
+			context.bytes_equal(replay_game.canonical_bytes(), original.canonical_bytes(), 5, "failed viewer replay matches independent original prefix")
+			var canonical: PackedByteArray = game.canonical_bytes()
+			var host_frame: int = scene.demo.host.loop.game.frame
+			scene.demo.tick(Game.LEFT)
+			scene.demo.lose_host_connection()
+			scene._update_label()
+			context.equal(scene._label.text.contains(expected), true, "later host service and loss preserve first failure diagnostics")
+			context.equal(scene.demo.host.loop.game.frame, host_frame + 1, "failed viewer does not stop host gameplay")
+			context.bytes_equal(game.canonical_bytes(), canonical, game.frame, "failed callback cannot consume more buffered input")
+			context.bytes_equal(scene.demo.replay_bytes(), failed_export, 5, "later host play and loss preserve exact viewed replay bytes")
+			context.equal(scene._can_export_replay(), true, "later host activity preserves retained replay save readiness")
+			scene._restart()
+			context.equal(scene._label.text.contains("STOPPED"), false, "fresh match clears old failure diagnostics")
+			scene.free()
 	for code: int in [Types.Code.PROTOCOL_FAILED, Types.Code.SNAPSHOT_FAILED, Types.Code.TERMINATED, Types.Code.DESYNC]:
 		var scene: Node2D = Scene.new()
 		scene._ready()
