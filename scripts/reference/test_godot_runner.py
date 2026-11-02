@@ -28,6 +28,13 @@ def valid_result() -> dict:
             "category": "unit", "seed": "1701", "runs": [run, copy.deepcopy(run)]}]}
 
 
+def process_live(path: Path) -> bool:
+    try:
+        return path.read_text().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
 class CompletionContract(unittest.TestCase):
     # Value: prevents green on truncated/unknown/vacuous structured evidence.
     def test_invalid_evidence(self) -> None:
@@ -133,6 +140,19 @@ class AbortAttribution(unittest.TestCase):
 
 
 class ReceiptControls(unittest.TestCase):
+    # Value: protects=exiting process observations; fails_when=stat disappears during read; why_new=live child schedules rarely expose the race; seam=proc stat read
+    def test_process_stat_disappearance_is_not_a_live_child(self) -> None:
+        path = Path('/proc/fixture/stat')
+        for state in ('S', 'R', 'T', 'Z', 'X'):
+            with self.subTest(state=state), patch.object(Path, 'read_text', return_value=f'123 (fixture) {state} 1 2 3'):
+                self.assertEqual(process_live(path), state not in ('Z', 'X'))
+        for error in (FileNotFoundError(2, 'No such file'), ProcessLookupError(3, 'No such process')):
+            with self.subTest(error=type(error).__name__), patch.object(Path, 'read_text', side_effect=error):
+                self.assertFalse(process_live(path))
+        with patch.object(Path, 'read_text', side_effect=PermissionError(13, 'Permission denied')):
+            with self.assertRaises(PermissionError):
+                process_live(path)
+
     # Value: protects=failed inventory cleanup; fails_when=a wait failure falls back to ordinary shards; why_new=successful kill controls miss cleanup errors; seam=cleanup wait
     def test_case_listing_cleanup_failure_cannot_fall_back(self) -> None:
         kill_group = RUNNER._kill_group
@@ -181,24 +201,18 @@ class ReceiptControls(unittest.TestCase):
             ordered = [False]
             expected_group = [None]
 
-            def live(path: Path) -> bool:
-                try:
-                    return path.read_text().rsplit(')', 1)[1].split()[0] not in ('Z', 'X')
-                except FileNotFoundError:
-                    return False
-
             def replace_child():
                 if ordered[0]:
                     return
                 ordered[0] = True
                 process_state = Path('/proc') / child_pid.read_text() / 'stat'
-                self.assertTrue(live(process_state), 'replacement fixture parent exited too soon')
+                self.assertTrue(process_live(process_state), 'replacement fixture parent exited too soon')
                 trigger.touch()
                 deadline = time.monotonic() + 5
-                while (not leaf_pid.exists() or live(process_state)) and time.monotonic() < deadline:
+                while (not leaf_pid.exists() or process_live(process_state)) and time.monotonic() < deadline:
                     time.sleep(0.001)
                 self.assertTrue(leaf_pid.exists(), 'replacement fixture did not fork')
-                self.assertFalse(live(process_state), 'replacement fixture parent did not exit')
+                self.assertFalse(process_live(process_state), 'replacement fixture parent did not exit')
                 self.assertEqual(os.getpgid(int(leaf_pid.read_text())), expected_group[0], 'replacement escaped the owned group')
 
             def observe_inventory(path: Path):
@@ -228,11 +242,11 @@ class ReceiptControls(unittest.TestCase):
                 if inventory_control:
                     self.assertNotIn('failure', result)
                     self.assertIs(result['result']['passed'], True)
-                    self.assertTrue(live(leaf_state), 'inventory control did not expose a surviving replacement')
+                    self.assertTrue(process_live(leaf_state), 'inventory control did not expose a surviving replacement')
                 else:
                     self.assertEqual(result.get('failure'), 'descendants_after_exit', result)
                     self.assertIs(result['cleanup_complete'], True)
-                    self.assertFalse(live(leaf_state), 'owned replacement survived completion')
+                    self.assertFalse(process_live(leaf_state), 'owned replacement survived completion')
             finally:
                 for identity in (child_pid, leaf_pid):
                     if identity.exists():
@@ -257,7 +271,7 @@ class ReceiptControls(unittest.TestCase):
                 self.assertEqual(result.get('failure'), 'descendants_after_exit', result)
                 child = int(pid_file.read_text())
                 state = Path(f'/proc/{child}/stat')
-                self.assertTrue(not state.exists() or state.read_text().rsplit(')', 1)[1].split()[0] in ('Z', 'X'),
+                self.assertTrue(not process_live(state),
                                 'owned child remains executable after receipt completion')
             finally:
                 if pid_file.exists():
@@ -308,7 +322,7 @@ class ReceiptControls(unittest.TestCase):
                         self.assertNotIn('runs', report, 'failed inventory cleanup must not start ordinary runs')
                     child = int(pid_file.read_text())
                     state = Path(f'/proc/{child}/stat')
-                    self.assertTrue(not state.exists() or state.read_text().rsplit(')', 1)[1].split()[0] in ('Z', 'X'))
+                    self.assertTrue(not process_live(state))
                 finally:
                     if pid_file.exists():
                         try:

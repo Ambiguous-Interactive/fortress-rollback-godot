@@ -65,6 +65,7 @@ unlinking an idle lock can race with acquisition. Validate shared directory owne
 and permissions before opening its lock. Bound child readiness reads as well as exit waits.
 Verify owned descendants have exited before accepting final file inventories;
 parent exit alone does not establish process-group completion.
+Linux process-stat reads can raise `ProcessLookupError` after opening a disappearing process. Treat it and `FileNotFoundError` as absence; propagate unrelated errors.
 
 Keep a copied probe's exact case inventory, native selection and Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent

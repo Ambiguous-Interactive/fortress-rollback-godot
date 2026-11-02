@@ -22,6 +22,8 @@
 - Persisted viewport-dispatched focus checks in CI; local-only GUI evidence did not protect future routing changes.
 - Both repairs passed fresh adversarial review. Testing guidance now requires fault fixtures to prove their injection ran.
 
+- CI exposed `ProcessLookupError` during fixture process-stat reads after open. All fixture observations now share a helper that handles disappearance without hiding permission failures.
+
 ## Curation and Pruning
 
 - Updated existing testing and copy guidance rather than adding a new skill.
