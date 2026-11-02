@@ -174,6 +174,31 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
                 os.kill(int(started.name.split('-')[1]), 0)
         self.assertTrue(host_capacity.acquire('browser-after'))
 
+    def test_signal_between_spawn_and_registration_reaps_the_new_group(self):
+        self.engine.write_text(self.engine.read_text().replace("    print('control-engine')",
+            "    (root / ('started-' + str(os.getpid()))).write_text('version')\n"
+            "    while not (root / 'finish').exists(): time.sleep(.01)\n    print('control-engine')"))
+        script = (f"import sys, os, signal; sys.path.insert(0, {str(self.checkout / 'scripts')!r}); "
+                  "import run_godot_tests as runner\n"
+                  "original = runner.subprocess.Popen\n"
+                  "def spawn(command, *args, **kwargs):\n"
+                  "    process = original(command, *args, **kwargs)\n"
+                  "    if '--version' in command:\n"
+                  f"        open({str(self.root / 'spawned-pid')!r}, 'w').write(str(process.pid))\n"
+                  "        os.kill(os.getpid(), signal.SIGTERM)\n"
+                  "    return process\n"
+                  "runner.subprocess.Popen = spawn\n"
+                  f"raise SystemExit(runner.main(['--godot', {str(self.engine)!r}, '--results', {str(self.root / 'result.json')!r}]))")
+        process = subprocess.Popen([sys.executable, '-c', script], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   env=dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(host_capacity.LEASE_DIR)), text=True)
+        self.children.append(process)
+        output, error = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 130, (output, error))
+        self.assertEqual(json.loads((self.root / 'result.json').read_text()).get('failure'), 'cancelled')
+        self.assertTrue(host_capacity.acquire('browser-after'))
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / 'spawned-pid').read_text()), 0)
+
     def test_execution_watchdog_reaps_owned_engine_children(self):
         process = self.start(timeout='.2')
         output, error = process.communicate(timeout=10)
