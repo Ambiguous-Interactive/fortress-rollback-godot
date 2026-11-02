@@ -180,7 +180,9 @@ func _save_pointer_control(context: RefCounted) -> void:
 func _save_from_button(context: RefCounted, scene: SaveScene, button: Button, frames: int) -> void:
 	var host_frame: int = scene.demo.host.loop.game.frame
 	var canonical: PackedByteArray = scene.demo.game.canonical_bytes()
+	var before_calls: int = scene.export_calls
 	button.pressed.emit()
+	context.equal(scene.export_calls, before_calls + 1, "each successful pointer save invokes a fresh export")
 	context.equal(scene._label.text.contains("Viewed replay captured."), true, "pointer save immediately displays export feedback")
 	var bytes: PackedByteArray = scene.exported_bytes
 	_check(context, bytes, canonical, frames)

@@ -17,6 +17,8 @@ Before attributing a missed canvas click to browser activation, compare a bounde
 pointer press/release across render turns with a trusted DOM control using the same importer.
 Return command observations synchronously and check them in the same page evaluation;
 a repeated case label can satisfy a readiness wait using stale state from a prior import.
+Require a fresh observed effect for each accepted repeated action. Retained export bytes or an earlier success notice
+cannot prove that a later Save handler ran; check the export invocation or received-download count too.
 Validate displayed state boundaries through every action that pauses playback,
 including Step and Pause, not only seeking and cancellation. A departing-boundary
 check can leave a corrupt destination displayed until playback resumes.
