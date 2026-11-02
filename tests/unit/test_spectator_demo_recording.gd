@@ -131,7 +131,7 @@ func _capture_guards(context: RefCounted) -> void:
 # Value: protects=pointer users can save viewed recordings; fails_when=save is keyboard-only or bypasses owned playback;
 # why_new=existing capture tests do not exercise scene pointer wiring; seam=existing export method override avoids shared user files
 func _save_pointer_control(context: RefCounted) -> void:
-	var scene: Node2D = SaveScene.new()
+	var scene: SaveScene = SaveScene.new()
 	scene._ready()
 	var button: Button = scene.get_node_or_null("HostControls/SaveViewedReplay")
 	context.equal(button != null, true, "pointer users can save their viewed replay")
@@ -177,7 +177,7 @@ func _save_pointer_control(context: RefCounted) -> void:
 	scene.free()
 
 
-func _save_from_button(context: RefCounted, scene: Node2D, button: Button, frames: int) -> void:
+func _save_from_button(context: RefCounted, scene: SaveScene, button: Button, frames: int) -> void:
 	var host_frame: int = scene.demo.host.loop.game.frame
 	var canonical: PackedByteArray = scene.demo.game.canonical_bytes()
 	button.pressed.emit()
