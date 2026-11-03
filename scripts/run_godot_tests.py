@@ -612,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--filter", default="", help="select case names containing this text, not suite filenames")
     parser.add_argument("--seed", type=int, default=1701)
     parser.add_argument("--timeout", type=float, default=30)
+    parser.add_argument("--inventory-timeout", type=float, default=120, help="seconds for each combined case listing, separate from test execution")
     parser.add_argument("--results", type=Path, default=DEFAULT_RESULTS)
     parser.add_argument("--changed", metavar="BASE", help="run only suites that load files changed since BASE (e.g. origin/main)")
     parser.add_argument("--durations", type=Path, default=DURATIONS, help="per-suite times that order and split shards")
@@ -621,6 +622,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
+    if not math.isfinite(args.inventory_timeout) or args.inventory_timeout <= 0:
+        parser.error("inventory-timeout must be finite and positive")
     if not -(2**63) <= args.seed < 2**63:
         parser.error("seed must fit a signed 64-bit integer")
     if not math.isfinite(args.host_wait) or args.host_wait < 0:
@@ -701,12 +704,12 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         version = version_probe["stdout"].strip()
         if contended or args.jobs > 1:
             if args.filter and len(suites) > 1:
-                inventory = case_inventory(command, suites, args.timeout)
+                inventory = case_inventory(command, suites, args.inventory_timeout)
                 matching = [suite for suite in suites if any(args.filter in name for name in inventory.get(suite, []))]
                 # Empty or invalid listings retain the original failure path, including zero matches.
                 suites = matching or suites
             slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
-            cases = split_cases(command, slow, args.timeout) if slow else {}
+            cases = split_cases(command, slow, args.inventory_timeout) if slow else {}
             # Shards stay in suite order, then inventory order, so merged records match one process.
             keys = [(suite, case) for suite in suites for case in cases.get(suite, [None])]
             shards = [command + ["--suite", suite] + (["--case", case] if case else []) for suite, case in keys]

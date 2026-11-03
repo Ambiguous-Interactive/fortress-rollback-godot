@@ -36,6 +36,33 @@ sample, with identical results. Host-capacity waiting is excluded. Raw local
 measurements live at `.cache/scratch/session146-filter-benchmark/measurements.json`.
 No portable timing threshold or broad CI speedup is claimed.
 
+## Review repairs
+
+Automatic review identified a combined-inventory timeout that reused a single
+shard's deadline. A scripted two-second listing fails the previous one-second
+budget while its instant test executions fit it; the same probe passes with a
+sufficient control budget. A separate bounded `--inventory-timeout` preserves
+execution limits and still rejects an explicitly short listing budget.
+
+Executable fixture shebangs also split interpreter paths containing spaces.
+The shared quoted fixture writer replaces every such occurrence and preserves
+`__file__`, `sys.argv[0]` and literal arguments, including engine self-mutation
+controls. Relative and symlink invocation identities are checked separately.
+The wrapper adoption exposed raw-script replacement controls; those now mutate
+the saved Python program and require each fault target exactly once. The
+execution-budget negative control also proves that a larger discovery deadline
+cannot lengthen actual test execution or preserve a prior success receipt.
+Isolated ordinary/spaced interpreter controls establish the old
+failure; the new spaced-and-quoted path control passes. Early scratch probes
+reused a path prefix and produced a different startup error; isolated directories
+corrected the instrument before interpreting that failure.
+
+Replay acceptance now requires the exact diagnostic for every width mutation.
+An unrelated-error control passes the former broad assertion and fails all 24
+new assertions. Documentation distinguishes recoverable listing errors from
+supervision failures. The existing infrastructure reference captures the
+inventory-budget and executable-fixture lessons without adding another skill.
+
 ## Prune ledger
 
 Extend the existing testing infrastructure reference in place. No new skill or

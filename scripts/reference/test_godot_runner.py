@@ -14,6 +14,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+from python_fixture import write_executable
+
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("godot_runner", ROOT / "scripts/run_godot_tests.py")
 RUNNER = importlib.util.module_from_spec(SPEC)
@@ -364,6 +366,54 @@ class ReceiptControls(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
+    # Value: protects=inventory loading has its own budget; fails_when=combined discovery consumes a shard timeout; why_new=fast listings hide the regression; seam=scripted engine
+    def test_filtered_inventory_has_independent_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Path(directory) / 'engine'
+            inventory = {'res://suite.gd': ['pass'], 'res://unmatched.gd': ['other']}
+            slow_execution = Path(directory) / 'slow-execution'
+            program = ("import json,pathlib,sys,time\n"
+                       "if '--version' in sys.argv: print('test-engine');sys.exit(0)\n"
+                       "if '--list-cases' in sys.argv:\n time.sleep(2)\n"
+                       f" print('FORTRESS_TEST_CASES '+{json.dumps(json.dumps(inventory))})\n sys.exit(0)\n"
+                       f"if pathlib.Path({str(slow_execution)!r}).exists(): time.sleep(2)\n"
+                       f"print('FORTRESS_TEST_RESULT '+{json.dumps(json.dumps(valid_result()))})\n")
+            write_executable(engine, program)
+            receipt = Path(directory) / 'receipt.json'
+            arguments = ['--godot', str(engine), '--results', str(receipt), '--jobs', '2', '--timeout', '1',
+                         '--suite', 'res://suite.gd', '--suite', 'res://unmatched.gd', '--filter', 'pass']
+            self.assertEqual(RUNNER.main(arguments), 0, json.loads(receipt.read_text()).get('failure'))
+            self.assertTrue(json.loads(receipt.read_text())['passed'])
+            self.assertEqual(RUNNER.main(arguments + ['--inventory-timeout', '1']), 1)
+            report = json.loads(receipt.read_text())
+            self.assertEqual(report['failure'], 'case_list_watchdog')
+            self.assertIs(report['passed'], False)
+            slow_execution.touch()
+            self.assertEqual(RUNNER.main(arguments), 1)
+            report = json.loads(receipt.read_text())
+            self.assertIs(report['passed'], False)
+            for run in report['runs']:
+                self.assertEqual(run['failure'], 'watchdog')
+                self.assertTrue(all(shard['cleanup_complete'] for shard in run['shards']))
+
+    # Value: protects=fixture execution through spaced interpreter paths; fails_when=shebang splits paths or argv identity changes; why_new=ordinary Python paths hide it; seam=none
+    def test_python_fixture_preserves_script_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            interpreter = root / "Python environment's interpreter"
+            interpreter.symlink_to(sys.executable)
+            engine = root / "engine fixture's script"
+            program = "import json,sys;print(json.dumps([__file__,sys.argv]))"
+            write_executable(engine, program, str(interpreter))
+            arguments = ['argument with spaces', '$(literal)']
+            alias = root / "alias's script"
+            alias.symlink_to(engine)
+            for invocation in [str(engine), "./" + engine.name, str(alias)]:
+                with self.subTest(invocation=invocation):
+                    process = subprocess.run([invocation, *arguments], cwd=root, capture_output=True, text=True, check=True)
+                    filename = invocation if Path(invocation).is_absolute() else str(root) + "/" + invocation
+                    self.assertEqual(json.loads(process.stdout), [filename, [invocation, *arguments]])
+
     # Value: protects=probe lifetime ownership; fails_when=version/list probes accept live children; why_new=execution supervision does not cover discovery; seam=real Python child
     def test_probe_children_are_rejected_and_stopped(self) -> None:
         if not Path('/proc').is_dir() or not hasattr(os, 'killpg'):
@@ -372,14 +422,13 @@ class ReceiptControls(unittest.TestCase):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
                 pid_file = Path(directory) / 'child.pid'
                 engine = Path(directory) / 'engine'
-                engine.write_text('#!' + sys.executable + '\nimport pathlib,subprocess,sys\n'
+                write_executable(engine, 'import pathlib,subprocess,sys\n'
                                   + ("if '--version' in sys.argv: print('test-engine');sys.exit(0)\n" if phase == 'case_list' else '')
                                   +
                                   "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
                                   "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
                                   f"pathlib.Path({str(pid_file)!r}).write_text(str(child.pid))\n"
                                   "print('test-engine' if '--version' in sys.argv else 'FORTRESS_TEST_CASES {}')\n")
-                engine.chmod(0o755)
                 try:
                     if phase == 'version':
                         receipt = Path(directory) / 'receipt.json'
@@ -424,10 +473,9 @@ class ReceiptControls(unittest.TestCase):
                 observed = Path(directory) / 'observed.json'
                 receipt.write_text('{"passed":true}')
                 engine = Path(directory) / 'engine'
-                engine.write_text('#!' + sys.executable + '\nimport json,pathlib,sys\n'
+                write_executable(engine, 'import json,pathlib,sys\n'
                                   + f'pathlib.Path({str(observed)!r}).write_text(json.dumps(json.loads(pathlib.Path({str(receipt)!r}).read_text())["passed"]))\n'
                                   + f'sys.stdout.buffer.write({output!r})\nsys.exit({exit_code})\n')
-                engine.chmod(0o755)
                 self.assertEqual(RUNNER.main(['--godot', str(engine), '--results', str(receipt)]), 1)
                 report = json.loads(receipt.read_text())
                 self.assertIs(report['passed'], False)
@@ -437,7 +485,8 @@ class ReceiptControls(unittest.TestCase):
 
     # Value: a rejected attempt must not leave an earlier pass at the results it names; help writes nothing.
     def test_rejected_arguments_invalidate_selected_results(self) -> None:
-        for arguments, invalidated in [(['--category', 'bogus'], True), (['--timeout', '-1'], True), (['--jobs', '0'], True),
+        for arguments, invalidated in [(['--category', 'bogus'], True), (['--timeout', '-1'], True), (['--inventory-timeout', '0'], True),
+                                       (['--inventory-timeout', 'nan'], True), (['--inventory-timeout', 'inf'], True), (['--jobs', '0'], True),
                                        (['--host-wait', '-1'], True), (['--host-wait', 'nan'], True), (['--host-wait', 'inf'], True),
                                        (['--seed', str(2**63)], True), (['--bogus'], True), (['--help'], False)]:
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
@@ -679,10 +728,9 @@ class EngineControls(unittest.TestCase):
                         launches = Path(directory) / "launches.jsonl"
                         launches.write_text("")
                         engine = Path(directory) / "engine"
-                        engine.write_text("#!" + sys.executable + "\nimport json,os,sys\n" +
+                        write_executable(engine, "import json,os,sys\n" +
                                           f"with open({str(launches)!r}, 'a') as stream: stream.write(json.dumps(sys.argv[1:])+'\\n')\n" +
                                           f"os.execv({str(GODOT)!r}, [{str(GODOT)!r}, *sys.argv[1:]])\n")
-                        engine.chmod(0o755)
                         process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(engine),
                             *suites, *arguments, "--jobs", jobs, "--results", str(output), "--durations", str(timing)],
                             cwd=ROOT, capture_output=True, text=True)

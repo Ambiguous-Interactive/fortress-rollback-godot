@@ -23,7 +23,8 @@ receives the same explicit seed (default `1701`, signed 64-bit).
 
 Options: `--category unit|determinism|integration`, `--filter <case-substring>`,
 `--suite res://path.gd` (repeatable), `--seed <integer>`, `--timeout <seconds>`
-(per process, default 30), `--jobs <count>` (default: CPU count), `--host-wait <seconds>` (default: 600),
+(per test process, default 30), `--inventory-timeout <seconds>` (per combined listing, default 120),
+`--jobs <count>` (default: CPU count), `--host-wait <seconds>` (default: 600),
 `--durations <path>` and `--results <path>`.
 
 The native launcher takes the shared machine-wide host-capacity lease before starting any engine
@@ -40,8 +41,10 @@ Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. Th
 the shard results in sorted suite order, so the record is the same as one process running every
 suite; `--jobs 1` keeps that single process when the host starts free. With `--filter`, suites with no matching case are
 dropped, and the whole selection must still match at least one case. Parallel filtered runs first list every selected suite's cases
-in one engine process, then launch fresh-process pairs only for matching suites. Partial, malformed or error-producing listings
-fall back to ordinary execution so broken suites cannot disappear from verification.
+in one engine process, then launch fresh-process pairs only for matching suites.
+Malformed, non-zero-exit or engine-error listings fall back to ordinary execution so broken suites cannot disappear from verification.
+Watchdog expiry, surviving descendants and cleanup failures abort qualification instead of falling back.
+Combined listings use their own `--inventory-timeout`; `--timeout` still bounds each test execution.
 
 A local 4.7.2 comparison used the same frozen source tree, four workers and `--filter fixture_reset`.
 The previous launcher started 262 suite executions in 55.6s; inventory selection started two in 7.3s.

@@ -57,6 +57,9 @@ Exercise original provenance metadata as well as newly generated fixtures; regen
 Verify that matrix selectors reach the actual command arguments; a declared partition alone can silently repeat the full workload.
 When optimizing away child work, assert actual process launches as well as result parity; aggregation may already discard empty work.
 Report host-capacity waiting separately from execution time, unless explicitly measuring end-to-end latency.
+Give combined discovery an independent bounded budget; one shard's execution deadline does not cover every selected suite.
+Executable Python fixtures must quote interpreter paths and preserve invocation identity when controls mutate their own executable.
+Apply fault mutations to the Python program before rendering wrappers, and assert each mutation target exists.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
 Native runs wait within their host-capacity budget before starting engine children,
