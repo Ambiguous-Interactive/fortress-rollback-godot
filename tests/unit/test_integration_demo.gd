@@ -443,6 +443,7 @@ func _pause_and_step(context: RefCounted) -> void:
 	context.equal(scene._demo.tick_count, live_tick + 1, "resume restores ordinary live service")
 	_paused_manual_work(context, scene)
 	_stalled_inspection(context, scene)
+	_inspection_lifetimes(context, scene)
 	context.state(scene._demo.loop.game.frame, scene._demo.loop.game.canonical_bytes())
 	scene._exit_tree()
 	scene.free()
@@ -500,3 +501,56 @@ func _stalled_inspection(context: RefCounted, scene: Node2D) -> void:
 		context.equal(scene._demo.tick_count, tick + 1, "paused physics never services an extra stalled tick")
 	context.equal(stalled_steps > 0, true, "long-delay inspection exercises prediction stalls")
 	context.equal(scene._demo.load_count() > 0, true, "long-delay inspection repairs original history")
+
+
+# Value: protects=temporary playback ownership and terminal live-state presentation; fails_when=BUSY looks stopped or dead match looks paused;
+# why_new=live manual-batch coverage does not exercise replay batches or external termination; seam=none
+func _inspection_lifetimes(context: RefCounted, scene: Node2D) -> void:
+	scene._restart()
+	scene._set_lag(0)
+	for tick: int in range(6):
+		context.equal(scene._demo.tick(Game.RIGHT), Types.Code.OK, "healthy live fixture records original inputs")
+	scene._toggle_replay()
+	var player: RefCounted = scene._demo.replay_player
+	var opened: Types.Result = player.begin_advance()
+	context.equal(opened.code, Types.Code.READY, "expert owns actual replay batch")
+	var live_tick: int = scene._demo.tick_count
+	for attempt: int in range(2):
+		scene._physics_process(1.0 / 60.0)
+		context.equal(scene._replay_code, Types.Code.BUSY, "playback reports temporary expert ownership")
+		context.equal(scene._label.text.contains("WAITING FOR ACTIVE REPLAY WORK"), true, "owned playback describes waiting")
+		context.equal(scene._label.text.contains("REPLAY STOPPED"), false, "owned playback does not claim terminal failure")
+		context.equal(player.current_frame(), 0, "busy playback preserves original exposed frame")
+	while true:
+		var request: Types.Request = opened.batch.next_request()
+		if request == null:
+			break
+		var ok: bool = false
+		var checksum: PackedByteArray = PackedByteArray()
+		if request.kind == Types.Kind.SAVE:
+			var saved: RefCounted = scene._demo.replay_game.save_state(request.frame, request.writer)
+			ok = saved.ok
+			checksum = saved.checksum
+		elif request.kind == Types.Kind.ADVANCE:
+			ok = scene._demo.replay_game.simulate_frame(request.frame, request.inputs)
+		context.equal(player.complete_request(request.batch_id, request.request_id, ok, checksum).code, Types.Code.OK, "expert completes original replay request")
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._replay_code, Types.Code.OK, "playback resumes after original expert work")
+	context.equal(player.current_frame(), 2, "automatic playback follows the expert's original frame")
+	context.equal(scene._demo.tick_count, live_tick, "replay ownership never services live input")
+	var reference: Game = Game.new()
+	for frame: int in range(2):
+		var remote: int = (Game.FIRE if frame % 8 < 4 else 0) | (Game.LEFT if frame % 7 < 3 else Game.RIGHT)
+		var original: Types.FrameInputs = Types.FrameInputs.new([PackedByteArray([Game.RIGHT]), PackedByteArray([remote])], PackedInt32Array([0, 0]))
+		context.equal(reference.simulate_frame(frame, original), true, "reference executes original recorded inputs")
+	context.bytes_equal(scene._demo.replay_game.canonical_bytes(), reference.canonical_bytes(), 2, "released replay preserves original canonical history")
+	scene._toggle_replay()
+	scene._toggle_pause()
+	context.equal(scene._label.text.contains("PAUSED"), true, "healthy live control remains paused")
+	var frame: int = scene._demo.loop.game.frame
+	scene._demo.loop.session.terminate(Types.Code.DESYNC, frame)
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._code, Types.Code.DESYNC, "paused physics observes the first terminal cause")
+	context.equal(scene._label.text.contains("STOPPED: code %d, failure frame %d" % [Types.Code.DESYNC, frame]), true, "externally stopped match identifies its exact cause")
+	context.equal(scene._label.text.contains("PAUSED"), false, "terminated match does not claim resumable pause")
+	context.equal(scene._demo.tick_count, live_tick, "terminal status refresh never services the live match")

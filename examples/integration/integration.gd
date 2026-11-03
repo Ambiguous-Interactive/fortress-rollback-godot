@@ -76,7 +76,10 @@ func _physics_process(_delta: float) -> void:
 		_replay_code = _demo.replay_tick()
 		_update_label()
 		return
-	if _demo._mutation_code() == Types.Code.BUSY:
+	var status: Types.Status = _demo.loop.session.status()
+	if status.lifecycle == Types.Lifecycle.TERMINATED:
+		_code = status.reason
+	elif _demo._mutation_code() == Types.Code.BUSY:
 		_code = Types.Code.BUSY
 	if not _can_service_match() or _is_paused:
 		_update_label()
@@ -205,6 +208,8 @@ func _update_label() -> void:
 		state = "REPLAY frame %d of %d" % [_demo.replay_player.current_frame(), _demo.replay_frames]
 		if _replay_code == Types.Code.FRAME_EXHAUSTED:
 			state = "REPLAY FINISHED, %d frames | P: back to the match" % _demo.replay_frames
+		elif _replay_code == Types.Code.BUSY:
+			state = "WAITING FOR ACTIVE REPLAY WORK"
 		elif _replay_code != Types.Code.OK:
 			state = "REPLAY STOPPED: code %d at frame %d" % [_replay_code, _demo.replay_player.failure_frame()]
 	_label.text = (
