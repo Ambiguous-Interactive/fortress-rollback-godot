@@ -254,13 +254,21 @@ func _tick(buttons: int, single_host_step: bool) -> int:
 		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
+	var host_status: Types.Status = host.loop.session.status()
+	if not is_host_finished and host_status.lifecycle == Types.Lifecycle.TERMINATED:
+		viewer.terminate(host_status.reason)
+		viewer_code = _viewer_result(host_status.reason)
+		return host_status.reason
 	if not is_host_finished and host.replay_player != null:
 		return Types.Code.BUSY
 	if single_host_step:
-		if is_finishing or is_host_finished or host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+		if is_finishing or is_host_finished:
 			return Types.Code.TERMINATED
 		var sample_code: int = host.loop._tick_code(host.tick_count * Host.TICK_US, buttons)
 		if sample_code != Types.Code.OK:
+			if host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+				viewer.terminate(sample_code)
+				viewer_code = _viewer_result(sample_code)
 			return sample_code
 		is_host_paused = true
 	if not is_host_paused and not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:

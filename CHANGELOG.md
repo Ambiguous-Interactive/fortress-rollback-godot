@@ -291,7 +291,7 @@
 
 ### Fixed
 
-- Fix spectator host-step failure feedback to retain the failed host callback and frame.
+- Fix spectator host-step failure feedback to retain the failed host callback and frame. Stop buffered viewing when host preflight terminates.
 
 - Fix peer-example fault shortcuts changing packet policy during active game operations.
 

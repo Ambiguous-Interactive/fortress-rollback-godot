@@ -179,3 +179,39 @@ func _host_failure_feedback(context: RefCounted) -> void:
 			context.equal(scene._label.text.contains("Host stopped:"), false, "healthy host has no failure report")
 		scene._exit_tree()
 		scene.free()
+	for limit: String in ["frame", "batch"]:
+		for entry: String in ["pointer", "controller"]:
+			var scene: Node = Scene.new()
+			scene._ready()
+			scene.demo.set_paused(true)
+			for tick: int in 20:
+				scene.demo.tick(Game.RIGHT)
+			context.equal(scene.demo.viewer.playback_status().buffered_frames > 0, true, "preflight fixture retains real confirmed viewer rows")
+			var bytes: PackedByteArray = scene.demo.game.canonical_bytes()
+			var host: RefCounted = scene.demo.host.loop.session
+			if limit == "frame":
+				host._current = Queue.FRAME_MAX
+			else:
+				host._batch_id = 9223372036854775807
+			if entry == "pointer":
+				scene._step_host_button.pressed.emit()
+				context.equal(scene._code, Types.Code.FRAME_EXHAUSTED, "pointer retains preflight exhaustion")
+			else:
+				context.equal(scene.demo.step_host(Game.RIGHT), Types.Code.FRAME_EXHAUSTED, "controller reports preflight exhaustion")
+			context.equal(host.status().reason, Types.Code.FRAME_EXHAUSTED, "host really terminates during preflight")
+			context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.TERMINATED, "preflight host termination also retires buffered viewer")
+			context.equal(scene.demo.viewer_code, Types.Code.FRAME_EXHAUSTED, "forwarding preserves terminal cause")
+			context.equal(scene.demo.step_viewer(), Types.Code.FRAME_EXHAUSTED, "manual viewer cannot consume buffered rows after host exhaustion")
+			context.bytes_equal(scene.demo.game.canonical_bytes(), bytes, scene.demo.game.frame, "terminal preflight preserves displayed viewer history")
+			scene._exit_tree()
+			scene.free()
+	for entry: String in ["tick", "step"]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "fresh externally stopped host")
+		demo.host.loop.session.terminate(Types.Code.FRAME_EXHAUSTED)
+		var code: int = demo.tick(0) if entry == "tick" else demo.step_host(0)
+		context.equal(code, Types.Code.FRAME_EXHAUSTED, "already stopped host preserves its first cause through " + entry)
+		context.equal(demo.viewer.status().reason, Types.Code.FRAME_EXHAUSTED, "already stopped host immediately retires viewer through " + entry)
+		context.equal(demo.viewer_code, Types.Code.FRAME_EXHAUSTED, "already stopped host updates viewer result through " + entry)
+		demo.viewer.terminate()
+		demo.host.loop.session.terminate()

@@ -43,3 +43,16 @@ native run was canceled with exit 130 and is not qualification evidence.
 ## Outcome
 
 State: findings-acted. Broader #34, #40 and #47 acceptance stays open.
+
+
+## Terminal preflight forwarding
+
+Automatic review identified a host-step preflight exit that terminated the host
+without retiring the viewer. The new scene failure latch made that omission
+persistent. Frame and request-counter exhaustion controls reproduced active
+buffered playback after host termination, with no engine errors. The repair
+forwards terminal preflight results in the shared spectator demo and preserves
+a previously stopped host's first cause through both tick entry points.
+Existing nonterminal input/ownership refusals remain retryable, and clean endings
+retain final-tail service. This applies the existing wrapper terminal-preflight
+guidance; no additional overlapping rule was added.
