@@ -23,6 +23,8 @@ The shipped addon and this scene require no Rust or development oracle.
 | 1 / 2 | Raise peer 1's or peer 2's input delay by one frame |
 | R | Reset sessions, snapshots, packets and counters |
 
+Number-row shortcuts use physical key positions, so 1/2 work without Shift on AZERTY layouts.
+
 ![Two byte sessions with active packet faults](peer-example.png)
 
 The left arena shows peer 1's corrected state; the right shows peer 2's.

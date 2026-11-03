@@ -1,6 +1,7 @@
 extends RefCounted
 
 # Value: protects=playable lag changes, stalls, reset and bounded effects; fails_when=inputs resample or phantom shots play; why_new=controller owns scheduling; seam=none
+const Scene = preload("res://examples/integration/integration.gd")
 const Demo = preload("res://examples/integration/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -23,11 +24,15 @@ class StopReplayGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match", "restart_lifetimes"])
+	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match", "restart_lifetimes", "pointer_controls", "restart_presentation"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"restart_presentation":
+			_restart_presentation(context)
+		"pointer_controls":
+			_pointer_controls(context)
 		"delayed_matches":
 			_delayed_matches(context)
 		"reset_and_validation":
@@ -273,3 +278,84 @@ func _stopped_replay_callbacks(context: RefCounted) -> void:
 		context.equal(previous.step(), Types.Code.TERMINATED, "stopped replay stays retired")
 		context.equal(demo.start_replay(), Types.Code.OK, "replacement replay works after stopped callback returns")
 		context.equal(demo.reset(), Types.Code.OK, "new match works after stopped callback returns")
+
+
+# Value: protects=pointer controls share keyboard ownership and preserve refused restart effects;
+# fails_when=buttons are absent or a BUSY reset clears pulses; why_new=controller tests omit scene state; seam=none
+func _pointer_controls(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	for action: String in ["NoLag", "ShortLag", "LongLag", "Replay", "Restart"]:
+		context.equal(scene.get_node_or_null("MatchControls/" + action) != null, true, "pointer match action exists")
+		if scene.get_node_or_null("MatchControls/" + action) == null:
+			scene._exit_tree()
+			scene.free()
+			return
+	for index: int in range(3):
+		var button: Button = scene.get_node("MatchControls/" + ["NoLag", "ShortLag", "LongLag"][index])
+		var frame: int = scene._demo.loop.game.frame
+		button.pressed.emit()
+		context.equal(scene._demo.lag_ticks, [0, 3, 12][index], "pointer changes future sample delay")
+		context.equal(scene._demo.loop.game.frame, frame, "lag action never advances the game")
+		context.equal(button.focus_mode, Control.FOCUS_NONE, "click preserves movement focus")
+	for tick: int in range(40):
+		scene._demo.tick(Game.RIGHT | Game.FIRE)
+	var replay: Button = scene.get_node("MatchControls/Replay")
+	replay.pressed.emit()
+	context.equal(scene._demo.replay_player != null, true, "pointer starts corrected replay")
+	context.equal(replay.text, "Back to match (P)", "pointer action describes returning to match")
+	var lag: int = scene._demo.lag_ticks
+	var lag_button: Button = scene.get_node("MatchControls/NoLag")
+	context.equal(lag_button.disabled, true, "replay holds live delay settings")
+	lag_button.pressed.emit()
+	context.equal(scene._demo.lag_ticks, lag, "direct signal preserves paused live match policy")
+	replay.pressed.emit()
+	context.equal(scene._demo.replay_player, null, "pointer returns to retained match")
+	scene._demo.reset()
+	scene._pulses.append(Vector2i(7, 9))
+	scene._last_effect = 7
+	context.equal(scene._demo.loop.session.begin_capture_replay_boundary().code, Types.Code.READY, "manual work owns live match")
+	scene._update_label()
+	var restart: Button = scene.get_node("MatchControls/Restart")
+	context.equal(restart.disabled, true, "owned match disables restart")
+	var old_session: RefCounted = scene._demo.loop.session
+	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_R
+	scene._unhandled_key_input(key)
+	restart.pressed.emit()
+	context.equal(scene._demo.loop.session, old_session, "refused restarts preserve active match")
+	context.equal(scene._pulses, [Vector2i(7, 9)], "refused restarts preserve confirmed presentation history")
+	context.equal(scene._last_effect, 7, "refused restarts preserve effect deduplication frontier")
+	old_session.terminate()
+	scene._update_label()
+	restart.pressed.emit()
+	context.equal(scene._demo.loop.game.frame, 0, "idle restart creates initial state")
+	context.equal(scene._pulses.is_empty(), true, "successful restart clears old pulses")
+	context.equal(scene._last_effect, 0, "successful restart clears old effect frontier")
+	context.state(0, scene._demo.loop.game.canonical_bytes())
+	scene._exit_tree()
+	scene.free()
+
+
+# Value: protects=refused keyboard restart retains confirmed effect presentation;
+# fails_when=reset clears scene history before its controller succeeds; why_new=controller tests cannot see scene pulses; seam=none
+func _restart_presentation(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	scene._pulses.append(Vector2i(7, 9))
+	scene._last_effect = 7
+	context.equal(scene._demo.loop.session.begin_capture_replay_boundary().code, Types.Code.READY, "manual snapshot owns initial boundary")
+	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_R
+	scene._unhandled_key_input(key)
+	context.equal(scene._pulses, [Vector2i(7, 9)], "BUSY restart retains pulses")
+	context.equal(scene._last_effect, 7, "BUSY restart retains confirmed effect frontier")
+	scene._demo.loop.session.terminate()
+	scene._unhandled_key_input(key)
+	context.equal(scene._pulses.is_empty(), true, "successful restart clears pulses")
+	context.equal(scene._last_effect, 0, "successful restart clears effect frontier")
+	context.state(0, scene._demo.loop.game.canonical_bytes())
+	scene._exit_tree()
+	scene.free()

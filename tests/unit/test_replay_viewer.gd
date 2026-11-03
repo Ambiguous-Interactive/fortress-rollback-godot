@@ -36,13 +36,16 @@ func cases() -> PackedStringArray:
 			"input_inspection",
 			"dropped_file",
 			"recording_metadata",
-			"paused_validation"
+			"paused_validation",
+			"frame_submit"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"frame_submit":
+			_frame_submit(context)
 		"paused_validation":
 			_paused_validation(context)
 		"recording_metadata":
@@ -757,5 +760,43 @@ func _time_navigation(context: RefCounted) -> void:
 	context.equal(node.viewer.current_frame(), 7, "End cannot bypass corrupt input")
 	context.equal(node.viewer.has_failure(), true, "jump exposes owning validation failure")
 	context.state(7, node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=typed frame selection commits on Enter with normal verified navigation;
+# fails_when=Enter only edits a number or bypasses ownership; why_new=Go button tests omit submission; seam=none
+func _frame_submit(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.viewer.open_bytes(recording(400).to_bytes()), true, "load typed navigation recording")
+	node._refresh()
+	var editor: LineEdit = node._target.get_line_edit()
+	editor.text = "301"
+	editor.text_submitted.emit(editor.text)
+	context.equal(node.viewer.is_seeking(), true, "Enter starts bounded navigation")
+	context.equal(node.viewer.current_frame(), 0, "Enter does not synchronously simulate a long prefix")
+	for tick: int in range(4):
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 301, "typed target commits exact frame")
+	context.equal(node.viewer.is_playing, false, "typed navigation ends paused")
+	var expected: Viewer = Viewer.new()
+	expected.open_bytes(recording(400).to_bytes())
+	for frame: int in range(301):
+		expected.step()
+	context.bytes_equal(node.viewer.game.canonical_bytes(), expected.game.canonical_bytes(), 301, "typed seek matches sequential original playback")
+	for held: bool in [false, true]:
+		if held:
+			context.equal(node.viewer._player.begin_advance().code, Types.Code.READY, "expert request owns displayed state")
+		else:
+			node._is_scrubbing = true
+		node._refresh()
+		editor.text = "20"
+		editor.text_submitted.emit(editor.text)
+		context.equal(node.viewer.current_frame(), 301, "held state refuses typed navigation")
+		context.equal(node.viewer.is_seeking(), false, "held submission creates no deferred seek")
+		node._is_scrubbing = false
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	expected.terminate()
 	node._exit_tree()
 	node.free()

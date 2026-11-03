@@ -147,6 +147,8 @@ func _ready() -> void:
 	_target = SpinBox.new()
 	_target.step = 1
 	_target.custom_minimum_size.x = 130
+	_target.get_line_edit().text_submitted.connect(_frame_submitted)
+	_target.tooltip_text = "Type a frame and press Enter or Go. Navigation checks the preceding recorded history."
 	navigation.add_child(_target)
 	_seek_button = _button(navigation, "Go", _seek)
 	_cancel_button = _button(navigation, "Cancel seek", _cancel_seek)
@@ -299,12 +301,18 @@ func _back_one_frame() -> void:
 	_refresh()
 
 
-func _seek() -> void:
-	if _is_scrubbing:
-		return
+func _seek() -> bool:
+	if _is_scrubbing or viewer._is_busy() or viewer.frame_count() == 0:
+		return false
 	_target.apply()
-	viewer.seek(int(_target.value))
+	var accepted: bool = viewer.seek(int(_target.value))
 	_refresh()
+	return accepted and not viewer.has_failure()
+
+
+func _frame_submitted(_text: String) -> void:
+	if _seek() and is_inside_tree():
+		_target.get_line_edit().release_focus()
 
 
 func _timeline_drag_started() -> void:

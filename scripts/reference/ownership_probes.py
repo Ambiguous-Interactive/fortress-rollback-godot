@@ -151,7 +151,7 @@ EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused
 EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler', 'manual_configuration'}
-EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata'})
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata', 'frame_submit'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
@@ -176,10 +176,11 @@ EXPECTED['res://tests/unit/test_replay_configuration.gd'] = {
 EXPECTED['res://tests/unit/test_peer_expert.gd'] = {'public_api', 'batch_ownership', 'callback_failures', 'recovery', 'pressure', 'capture'}
 EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures', 'ownership', 'validation', 'misuse', 'wide_writes', 'reusable_reads'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy', 'service_busy'})
-EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback', 'terminal_feedback'})
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback', 'terminal_feedback', 'host_delay_controls'})
 EXPECTED['res://tests/unit/test_integration_controls.gd'] = {'live_controls', 'replay_controls', 'stopped_controls'}
 EXPECTED['res://tests/unit/test_integration_effect_reentry.gd'] = {'effect_reentry', 'effect_cancellation'}
-EXPECTED['res://tests/unit/test_integration_demo.gd'] = {'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes'}
+EXPECTED['res://tests/unit/test_integration_demo.gd'] = {
+    'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes', 'pointer_controls', 'restart_presentation'}
 EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries', 'incomplete_prefix_digests', 'incomplete_prefix_storage'}
 EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards', 'save_pointer_control'}
 for _suite in ['host', 'relay']:
@@ -268,7 +269,8 @@ FILES += ['tests/unit/test_driver_drop_parity.gd']
 FILES += ['tests/unit/test_peer_notifications.gd']
 FILES += ['tests/unit/test_replay_configuration.gd']
 FILES += ['tests/unit/test_integration_controls.gd', 'tests/unit/test_integration_restart.gd']
-FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd', 'tests/unit/test_integration_effect_reentry.gd']
+FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd',
+          'tests/unit/test_integration_effect_reentry.gd', 'examples/integration/integration.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
           'addons/fortress_rollback/transport/signalfish_relay.gd', 'addons/fortress_rollback/transport/signalfish_relay_envelope.gd',
           'addons/fortress_rollback/transport/signalfish_relay_types.gd', 'addons/fortress_rollback/transport/signalfish_spectator_relay.gd',

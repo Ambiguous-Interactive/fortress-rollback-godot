@@ -18,11 +18,16 @@ godot --path . res://examples/integration/integration.tscn
 ```
 
 Move with **A/D** or the **arrow keys** and hold **Space** to fire. The blue player follows scripted inputs.
-Press **1**, **2** or **3** for remote-input delivery delays of **0**, **3** or **12** physics ticks.
+Press the physical number-row **1**, **2** or **3** keys for remote-input delivery delays of **0**, **3** or **12** physics ticks.
 Press **R** to restart with the selected delay and a fresh effects ledger.
 Press **P** to pause and watch a replay of the confirmed frames so far. It starts from a fresh game,
 checks every recorded checksum and ends on the corrected state. Press **P** again to return to the match.
+The buttons below the instructions provide the same delay, replay and restart actions.
+Clicks preserve movement focus. Delay buttons wait while replay is open; all buttons wait during active game work.
+A refused restart preserves the current match and its confirmed-effect pulses.
 This example delivers input in process and needs no server or SignalFish SDK.
+
+![Pointer controls above the effects game](images/integration-controls.png)
 
 The controller keeps live input and final-tail recovery paused while replay mode is open.
 Its service and lag controls return `BUSY` during live callbacks, completion handlers or open expert batches,
