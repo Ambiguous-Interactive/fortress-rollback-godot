@@ -18,8 +18,9 @@ The healthy host-step control passes before and after the repair. No historicall
 correct version of the longstanding host-report omission was identified.
 New capability controls fail on main at their explicit missing-control assertions.
 Focused candidate suites pass nine cases with repeated fresh processes.
-Full native and candidate/main CI evidence remains in the session log and linked issues;
-these focused results do not establish complete browser or upstream parity.
+Full native and candidate/main CI checks remain pending at this writing.
+The session log and linked issues retain their later results. These focused
+results do not establish complete browser or upstream parity.
 
 ## Prune ledger
 
