@@ -410,7 +410,7 @@ class ReceiptControls(unittest.TestCase):
             alias.symlink_to(engine)
             for invocation in [str(engine), "./" + engine.name, str(alias)]:
                 with self.subTest(invocation=invocation):
-                    process = subprocess.run([invocation, *arguments], cwd=root, capture_output=True, text=True, check=True)
+                    process = subprocess.run([invocation, *arguments], cwd=root, capture_output=True, text=True, check=True, timeout=5)
                     filename = invocation if Path(invocation).is_absolute() else str(root) + "/" + invocation
                     self.assertEqual(json.loads(process.stdout), [filename, [invocation, *arguments]])
 
