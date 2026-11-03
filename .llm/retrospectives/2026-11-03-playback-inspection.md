@@ -23,6 +23,23 @@ zero engine errors. The deferred live GUI probe passes exactly 210 checks,
 including real focus, pointer and keyboard dispatch for the new controls.
 Screenshots show all three controls with the game boards visible.
 
+Evidence: `.cache/session148-driver-refresh-red.log:5` records the two expected
+readiness failures. `.cache/session148-driver-refresh-43.log:18` and
+`.cache/session148-driver-refresh-472.log:17` record the seven passing integration
+cases. `.cache/session148-replay-iteration3.log:45` records the 21 replay cases;
+`.cache/session148-gui-iteration3.log:3` records `FORTRESS_REPLAY_NAVIGATION_OK 210`.
+Reproduce the selections with the pinned engine as `godot`:
+
+```sh
+godot --headless --path . --script tests/runner/run_tests.gd -- --suite res://tests/unit/test_integration_demo.gd
+godot --headless --path . --script tests/runner/run_tests.gd -- --suite res://tests/unit/test_replay_viewer.gd --suite res://tests/unit/test_replay_viewer_lifetime.gd
+godot --headless --path . --script scripts/reference/replay_navigation_probe.gd
+```
+
+Screenshots: [effects](../../docs/images/session148-integration.png),
+[spectator](../../docs/images/session148-spectator.png), and
+[replay](../../docs/images/session148-replay.png).
+
 Full frozen-source native and current-head browser/CI delivery remain pending
 at artifact authoring. Final evidence belongs in the machine-local session log
 and linked issue comments, not in a preemptive success claim here.
