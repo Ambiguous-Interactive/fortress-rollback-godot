@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add pause and single-tick controls to offline and two-peer examples, including packet-service inspection.
+
 - Add pointer controls for peer-example packet faults, input delays and reset.
 
 - Add player selection to replay input and status change navigation.
@@ -288,6 +290,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator host-step failure feedback to retain the failed host callback and frame.
 
 - Fix peer-example fault shortcuts changing packet policy during active game operations.
 

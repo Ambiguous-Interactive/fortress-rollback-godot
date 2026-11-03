@@ -4,11 +4,21 @@ const Scene = preload("res://examples/spectator/spectator.gd")
 const Demo = preload("res://examples/spectator/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+
+
+class FailedAdvance:
+	extends Game
+
+	func simulate_frame(_frame: int, _inputs: Types.FrameInputs) -> bool:
+		return false
+
+
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["host_step", "host_step_ownership"])
+	return PackedStringArray(["host_step", "host_step_ownership", "host_failure_feedback"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -76,8 +86,10 @@ func _host_step(context: RefCounted) -> void:
 	context.equal(scene.demo.host.loop.game.frame, frame + 1, "ordinary T steps exactly one host frame")
 	context.equal(scene.demo.finish_host(), Types.Code.OK, "clean ending can follow host inspection")
 	context.equal(scene.demo.step_host(Game.RIGHT), Types.Code.TERMINATED, "single-step cannot extend declared final boundary")
+	scene._unhandled_key_input(key)
+	context.equal(scene._code, Types.Code.OK, "refused T cannot stop clean tail service")
 	for tick: int in range(20):
-		scene.demo.tick(0)
+		scene._physics_process(0.0)
 	context.equal(scene.demo.viewer.is_complete(), true, "single-stepped match drains a complete clean tail")
 	scene._update_label()
 	context.equal(button.disabled, true, "finished host disables step control")
@@ -143,3 +155,27 @@ func _host_step_ownership(context: RefCounted) -> void:
 			context.equal(observations[index + 1], 0, "nested host step preserves running host through callback")
 	demo.viewer.terminate()
 	demo.host.loop.session.terminate()
+
+
+# Value: protects=spectator reports the originating host callback and frame; fails_when=forwarded viewer failure loses host evidence;
+# why_new=viewer callback reports do not cover host failure forwarding; seam=real driver callback
+func _host_failure_feedback(context: RefCounted) -> void:
+	for failed: bool in [false, true]:
+		var scene: Node = Scene.new()
+		scene._ready()
+		if failed:
+			context.equal(scene.demo.host.loop.driver.configure(scene.demo.host.loop.session, FailedAdvance.new()), Types.Code.OK, "install failing host game")
+		scene._step_host_button.pressed.emit()
+		if failed:
+			context.equal(scene._code, Types.Code.CALLBACK_FAILED, "single host step retains its actual failure code")
+			context.equal(scene.demo.host.loop.session.status().failure_kind, Types.Kind.ADVANCE, "real host ADVANCE failed")
+			context.equal(scene._label.text.contains("Host stopped: failed while simulating input at frame 0"), true, "host callback evidence remains visible after viewer forwarding")
+			context.equal(scene._step_host_button.disabled, true, "failed host cannot step again")
+			scene._restart_button.pressed.emit()
+			context.equal(scene._code, Types.Code.OK, "restart clears host failure")
+			context.equal(scene._label.text.contains("Host stopped:"), false, "fresh match clears failure notice")
+		else:
+			context.equal(scene._code, Types.Code.OK, "healthy host step remains successful")
+			context.equal(scene._label.text.contains("Host stopped:"), false, "healthy host has no failure report")
+		scene._exit_tree()
+		scene.free()

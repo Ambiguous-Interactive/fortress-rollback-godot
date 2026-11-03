@@ -852,3 +852,10 @@ and live SignalFish acceptance remain in #47 and #131. This fixes the scoped
 startup relation in [#203](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/203)
 without changing reviewed pins or production playback. Omit `--godot` from the
 direct `scripts/oracle/spectator_launch.py` invocation to run only the upstream model.
+
+### Local host failure feedback
+
+The local example reports a failed host callback separately from viewer status,
+including the host operation and frame. A failed manual host step updates that
+report immediately. Refused steps during a clean ending leave final-tail service
+running; shared active work remains visible while controls wait for ownership.
