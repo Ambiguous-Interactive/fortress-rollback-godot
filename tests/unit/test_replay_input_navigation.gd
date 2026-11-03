@@ -13,6 +13,7 @@ func cases() -> PackedStringArray:
 	return PackedStringArray(
 		[
 			"status_navigation",
+			"player_navigation",
 			"input_change_navigation",
 			"input_change_integrity",
 			"input_change_controls",
@@ -338,6 +339,101 @@ func _status_navigation(context: RefCounted) -> void:
 			context.equal(node.viewer.current_frame(), 600, "held timeline refuses navigation")
 			node._timeline_drag_ended(false)
 			context.equal(filter_button.disabled, false, "released timeline restores the filter")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=inspection isolates one player's controls and disconnects without skipping verification;
+# fails_when=another player's changes obscure the selected player; why_new=existing filters select event type only; seam=none
+func _player_navigation(context: RefCounted) -> void:
+	var viewer: Viewer = Viewer.new()
+	context.equal(viewer.has_method("set_change_player"), true, "viewer can isolate one player's recorded changes")
+	if not viewer.has_method("set_change_player"):
+		return
+	var replay: Replay = _recording()
+	context.equal(viewer.open_bytes(replay.to_bytes()), true, "two-player navigation fixture opens")
+	context.equal(viewer.call("change_player"), -1, "navigation initially includes every player")
+	for slot: int in [0, 1]:
+		context.equal(viewer.call("set_change_player", slot), true, "either recorded player can be selected")
+		context.equal(viewer.input_change_target(true), 450 if slot == 0 else 700, "other player's controls are excluded")
+		context.equal(viewer.status_change_target(true), 600 if slot == 0 else -1, "status-only navigation intersects the player selection")
+	for invalid: int in [-2, 2, 2147483647]:
+		context.equal(viewer.call("set_change_player", invalid), false, "out-of-range player filter refuses")
+		context.equal(viewer.call("change_player"), 1, "invalid selection preserves the accepted player")
+	context.equal(viewer.seek_input_change(true), true, "selected player uses ordinary verified navigation")
+	context.equal(viewer.call("set_change_player", 0), false, "active seeking preserves selected player")
+	_finish(context, viewer, replay, 700)
+	context.equal(viewer.input_change_target(false), 0, "selected player skips the other's earlier changes")
+	context.equal(viewer.call("set_change_player", 0), true, "idle inspection changes selected player without moving state")
+	context.equal(viewer.input_change_target(false), 600, "selected player's disconnect counts as an input change")
+	context.equal(viewer.seek_status_change(false), true, "selected status navigation reaches its own disconnect")
+	_finish(context, viewer, replay, 600)
+	context.equal(viewer.input_summary().contains("P1 Left (disconnected)"), true, "full selected input remains visible")
+	context.equal(viewer.open_bytes(PackedByteArray([0])), false, "invalid replacement refuses")
+	context.equal(viewer.call("change_player"), 0, "failed import preserves selected player")
+	context.equal(viewer.status_change_target(false), 0, "failed import preserves player-specific indexes")
+	viewer.restart()
+	context.equal(viewer.call("change_player"), 0, "restart retains inspection preference")
+	viewer.open_bytes(_recording(100).to_bytes())
+	context.equal(viewer.input_change_target(true), -1, "new recording replaces player-specific indexes")
+	context.equal(viewer.call("set_change_player", -1), true, "all-player navigation can be restored")
+	var single: Replay = _recording(1)
+	viewer.open_bytes(single.to_bytes())
+	for slot: int in [-1, 0, 1]:
+		viewer.call("set_change_player", slot)
+		context.equal(viewer.input_change_target(true), -1, "single-row recording has no later player change")
+		viewer.step()
+		context.equal(viewer.input_change_target(false), 0, "final state can return to either player's first input")
+		viewer.restart()
+	var initial_only: Replay = Fixture.recording(0)
+	initial_only._format_version = Replay.TERMINAL_VERSION
+	initial_only._terminal_checksum = Simulation.checksum(Simulation.new().canonical_bytes())
+	viewer.open_bytes(initial_only.to_bytes())
+	for slot: int in [-1, 0, 1]:
+		viewer.call("set_change_player", slot)
+		context.equal(viewer.input_change_target(false), -1, "initial-state-only recording has no player's input")
+		context.equal(viewer.status_change_target(true), -1, "initial-state-only recording has no player's status")
+	var damaged: Replay = _recording()
+	damaged._digests[120 * Replay.DIGEST_BYTES] ^= 1
+	viewer.open_bytes(damaged.to_bytes())
+	viewer.call("set_change_player", 1)
+	viewer.seek_input_change(true)
+	while viewer.is_seeking():
+		viewer.tick()
+	context.equal([viewer.current_frame(), viewer.has_failure()], [120, true], "player filter cannot skip corrupt preceding input")
+	context.equal(viewer.input_change_target(true), -1, "failed playback exposes no player destination")
+	var node: Node2D = Fixture.Scene.instantiate()
+	node._ready()
+	var selector: OptionButton = node.find_child("ChangePlayer", true, false) as OptionButton
+	context.equal(selector != null, true, "scene exposes the recorded-player selector")
+	if selector != null:
+		node.viewer.open_bytes(replay.to_bytes())
+		node._refresh()
+		context.equal(selector.item_count, 3, "selector includes all players and both recorded slots")
+		selector.select(2)
+		selector.item_selected.emit(2)
+		context.equal(node.viewer.call("change_player"), 1, "visible selector chooses Player 2")
+		node._next_input_change.pressed.emit()
+		context.equal(selector.disabled, true, "active navigation disables the player selector")
+		while node.viewer.is_seeking():
+			node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 700, "visible action reaches selected player's controls")
+		node._status_changes_only.button_pressed = true
+		context.equal(node._next_input_change.disabled, true, "selected player with no disconnect has no status destination")
+		node._timeline_drag_started()
+		selector.select(1)
+		selector.item_selected.emit(1)
+		context.equal(node.viewer.call("change_player"), 1, "held timeline preserves player selection")
+		context.equal(selector.selected, 2, "refused selector change restores its visible accepted value")
+		node._timeline_drag_ended(false)
+		selector.select(1)
+		selector.item_selected.emit(1)
+		context.equal(node._previous_input_change.disabled, false, "other player's disconnect becomes available after release")
+		node._previous_input_change.pressed.emit()
+		while node.viewer.is_seeking():
+			node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 600, "player and status filters combine through actual scene controls")
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()

@@ -68,6 +68,7 @@ var _next_checkpoint: Button
 var _previous_input_change: Button
 var _next_input_change: Button
 var _status_changes_only: CheckButton
+var _change_player: OptionButton
 var _previous_recorded_checksum: Button
 var _next_recorded_checksum: Button
 var _failure_download: Button
@@ -184,6 +185,13 @@ func _ready() -> void:
 	_status_changes_only.tooltip_text = "Skip changing controls and inspect confirmed/disconnected status changes. Frame zero establishes the initial statuses."
 	_status_changes_only.toggled.connect(_status_filter_changed)
 	changes.add_child(_status_changes_only)
+	_change_player = OptionButton.new()
+	_change_player.name = "ChangePlayer"
+	for player_name: String in ["All players", "Player 1", "Player 2"]:
+		_change_player.add_item(player_name)
+	_change_player.tooltip_text = "Find input or status changes for one recorded player. Playback still verifies both players' complete history."
+	_change_player.item_selected.connect(_change_player_selected)
+	changes.add_child(_change_player)
 	var checksums: HBoxContainer = HBoxContainer.new()
 	panel.add_child(checksums)
 	_previous_recorded_checksum = _button(checksums, "Previous recorded checksum", _jump_recorded_checksum.bind(false))
@@ -398,6 +406,12 @@ func _jump_input_change(forward: bool) -> void:
 	_refresh()
 
 
+func _change_player_selected(index: int) -> void:
+	if not _is_scrubbing:
+		viewer.set_change_player(index - 1)
+	_refresh()
+
+
 func _status_filter_changed(_enabled: bool) -> void:
 	_refresh()
 
@@ -522,6 +536,8 @@ func _refresh() -> void:
 	_next_checkpoint.disabled = held or viewer.checkpoint_target(true) < 0
 	var status_only: bool = _status_changes_only.button_pressed
 	_status_changes_only.disabled = held or viewer.is_seeking() or viewer.frame_count() == 0
+	_change_player.disabled = held or viewer.is_seeking() or viewer.frame_count() == 0
+	_change_player.select(viewer.change_player() + 1)
 	_previous_input_change.text = "Previous status change" if status_only else "Previous input change"
 	_next_input_change.text = "Next status change" if status_only else "Next input change"
 	_previous_input_change.disabled = held or (viewer.status_change_target(false) if status_only else viewer.input_change_target(false)) < 0

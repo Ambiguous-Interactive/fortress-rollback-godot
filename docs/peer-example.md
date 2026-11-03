@@ -23,6 +23,11 @@ The shipped addon and this scene require no Rust or development oracle.
 | 1 / 2 | Raise peer 1's or peer 2's input delay by one frame |
 | R | Reset sessions, snapshots, packets and counters |
 
+Visible buttons provide the same packet faults, wrong-game-rules, delay and reset actions.
+Their labels show the current fault settings. They leave keyboard movement and shortcuts available.
+Fault controls are available during startup; delay and wrong-game-rules actions wait for both peers to run.
+All controls wait while either peer owns game work. A stopped match keeps only reset available.
+
 Number-row shortcuts use physical key positions, so 1/2 work without Shift on AZERTY layouts.
 
 ![Two byte sessions with active packet faults](peer-example.png)
@@ -76,6 +81,8 @@ connection discovery and membership repair remain separate work.
 short-partition recovery, terminal long partitions, restart and real game desync.
 `tests/unit/test_peer_example_ownership.gd` covers retained old handles, rejected
 replacement and shared callback/expert ownership of the example controls.
+`tests/unit/test_peer_scene_controls.gd` checks pointer/keyboard parity, startup and stopped
+readiness, and safe retry after shared expert and completion ownership releases.
 
 Delay shortcuts and their prompt are available only while both peer sessions run.
 Reset remains available after a match stops; retained observations still describe the previous gameplay.

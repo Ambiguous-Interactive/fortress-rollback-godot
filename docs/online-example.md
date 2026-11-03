@@ -237,6 +237,10 @@ Select **Status only** to skip ordinary control changes and jump directly to pla
 The actions become **Previous status change** and **Next status change**. Frame zero establishes
 initial statuses; each later destination identifies a confirmed/disconnected transition for either player.
 The filter preserves the same bounded verification and pause behavior as ordinary input-change navigation.
+Select **Player 1** or **Player 2** beside it to inspect only that player's changes.
+This also filters **Status only** destinations; **All players** restores the combined history.
+The input display still shows both players, and navigation verifies the complete preceding history.
+Player selection survives restart and file replacement. Seeking, timeline dragging and active game work hold the selector.
 
 ![Inspect a player disconnect without stopping at every control change](images/replay-status-navigation.png)
 

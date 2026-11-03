@@ -240,19 +240,36 @@ func finish_host() -> int:
 
 ## Host continues when the viewer pauses, falls behind or fails. All loops have explicit work bounds.
 func tick(buttons: int) -> int:
+	return _tick(buttons, false)
+
+
+## Pause continuous host sampling and attempt one ordinary host tick, including delivery and rollback.
+## The viewer keeps its independent policy. Prediction stalls retain the original sampled buttons.
+func step_host(buttons: int) -> int:
+	return _tick(buttons, true)
+
+
+func _tick(buttons: int, single_host_step: bool) -> int:
 	if _mutation_code() == Types.Code.BUSY:
 		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
 	if not is_host_finished and host.replay_player != null:
 		return Types.Code.BUSY
+	if single_host_step:
+		if is_finishing or is_host_finished or host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+			return Types.Code.TERMINATED
+		var sample_code: int = host.loop._tick_code(host.tick_count * Host.TICK_US, buttons)
+		if sample_code != Types.Code.OK:
+			return sample_code
+		is_host_paused = true
 	if not is_host_paused and not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:
 		if buttons < 0 or buttons > (Game.LEFT | Game.RIGHT | Game.FIRE):
 			return Types.Code.INVALID_CONFIGURATION
 	_tick_count += 1
 	var code: int = Types.Code.OK
 	if not is_host_finished:
-		code = host.finish_tick() if is_finishing or is_host_paused else host.tick(buttons)
+		code = host.finish_tick() if is_finishing or (is_host_paused and not single_host_step) else host.tick(buttons)
 		if is_finishing and code == Types.Code.OK:
 			code = publisher.finish_host()
 			is_host_finished = code == Types.Code.OK

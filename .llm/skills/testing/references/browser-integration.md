@@ -18,6 +18,8 @@ Test numeric shortcuts with differing logical glyphs and physical number-row cod
 Cross shortcut routing with focused buttons as well as text editors. Godot GUI focus navigation consumes arrow keys before `_unhandled_key_input`; use nonconflicting action keys.
 Cross match shortcuts with Ctrl, Alt, Meta, Shift, release and echo events. Preserve intentional shifted punctuation,
 such as Plus, and verify that ordinary reset still replaces the match.
+After an action changes label height or scene scale, settle layout before measuring the next pointer target.
+A press/release across a moving button can miss even when its handler and enabled state are correct.
 Before attributing a missed canvas click to browser activation, compare a bounded
 pointer press/release across render turns with a trusted DOM control using the same importer.
 Return command observations synchronously and check them in the same page evaluation;
