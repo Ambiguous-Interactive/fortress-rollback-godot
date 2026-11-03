@@ -55,6 +55,16 @@ and integration cases in `.cache/session148-driver-busy-43.log` and
 `.cache/session148-driver-busy-472.log`. This reinforces existing full-suite
 verification guidance; no additional overlapping procedure is needed.
 
+The adjacent-consumer sweep reproduced temporary replay ownership labeled as
+stopped and external termination labeled as a paused live match. The existing
+inspection case adds real replay request completion and paused external DESYNC.
+`.cache/session148-driver-lifetimes-red.log` records the seven expected failures;
+`.cache/session148-driver-lifetimes-43.log` and
+`.cache/session148-driver-lifetimes-472.log` pass all eleven affected cases with
+zero engine errors. The repaired scene reads terminal status before skipping
+live service and distinguishes temporary replay ownership from a stopped replay.
+The same scene guidance now covers these observed status-consumer failures.
+
 ## Harvest and curation
 
 | Finding | Action |
