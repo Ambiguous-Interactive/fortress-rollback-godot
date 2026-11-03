@@ -33,12 +33,22 @@ measuring the next target fixes the click. See
 The repaired live probe passes exactly 237 checks with no engine errors in
 `.cache/session149-gui-second.log`.
 
+CI then exposed a missed consumer: the suites job passed the complete GUI
+probe with 237 checks, but the workflow still required its old 210-check marker.
+Run 41706160728, jobs 126161925238 and 126161925277, identify the failure after
+`FORTRESS_REPLAY_NAVIGATION_OK 237`. The source sweep found the sole remaining
+old marker at `.github/workflows/reference-baseline.yml:258`. Its exact match
+now requires 237. The original grep fails against the successful local GUI log;
+the updated grep passes. Full native qualification was interrupted deliberately
+(exit130) before editing this source; its old receipt is not qualification.
+
 ## Harvest and actions
 
 | Finding | Action |
 | --- | --- |
 | Keyboard fault assignments lacked the composed mutation gate. | Route pointer and keyboard actions through one guarded handler; add real callback and expert regressions. |
 | Consecutive pointer actions measured a target before prior layout settled. | Extend the existing browser integration testing guidance with this measured timing boundary. |
+| Probe inventory changes also alter CI marker consumers. | Update the exact workflow marker and extend the existing inventory-alignment guidance. |
 | Reset intentionally retains selected fault policy. | Correct the live probe; preserve the documented product contract. |
 
 No separate runner, skill or simulation algorithm was added. Existing GUI focus,
