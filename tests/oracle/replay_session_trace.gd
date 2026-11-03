@@ -16,6 +16,7 @@ class Game:
 	extends RefCounted
 	var state: PackedInt64Array = PackedInt64Array([0, 0, 0, 0])
 	var records: Array[Dictionary] = []
+	var input_width: int = 4
 
 	func bytes() -> PackedByteArray:
 		var result: PackedByteArray = PackedByteArray()
@@ -44,9 +45,9 @@ class Game:
 		var observed: Array[Dictionary] = []
 		for slot: int in range(inputs.size().value):
 			var input: Types.InputResult = inputs.read(slot)
-			if input.code != Types.Code.OK or input.bytes.size() != 4:
+			if input.code != Types.Code.OK or input.bytes.size() != input_width:
 				return false
-			var value: int = input.bytes.decode_u32(0)
+			var value: int = input.bytes.decode_u8(0) if input_width == 1 else (input.bytes.decode_u16(0) if input_width == 2 else input.bytes.decode_u32(0))
 			var status: String = "unknown:%d" % input.status
 			match input.status:
 				Queue.Status.CONFIRMED:
@@ -119,7 +120,7 @@ func _initialize() -> void:
 				_fail("invalid replay hex")
 				return
 			var replay: Replay = Replay.new()
-			if replay.decode(text.hex_decode()) != Replay.DecodeCode.OK or replay.frame_count() > 64 or replay.input_width() != 4:
+			if replay.decode(text.hex_decode()) != Replay.DecodeCode.OK or replay.frame_count() > 64 or replay.input_width() not in [1, 2, 4]:
 				_fail("invalid replay")
 				return
 			if replay._format_version != version:
@@ -130,6 +131,8 @@ func _initialize() -> void:
 				if result.is_empty():
 					_fail("configure failed")
 					return
+				if replay.input_width() != 4:
+					result.input_width = replay.input_width()
 				result.name = value.name + ("-v%d" % version if version != 5 else "") + ("-expert" if expert else "")
 				results.append(result)
 	print("FORTRESS_REPLAY_RESULT " + JSON.stringify({"format": 1, "cases": results}))
@@ -138,6 +141,7 @@ func _initialize() -> void:
 
 func _play(replay: Replay, seed: int, validate: bool, expert: bool) -> Dictionary:
 	var game: Game = Game.new()
+	game.input_width = replay.input_width()
 	game.state[1] = seed
 	game.state[2] = seed
 	var player: Player = Player.new()
@@ -149,7 +153,7 @@ func _play(replay: Replay, seed: int, validate: bool, expert: bool) -> Dictionar
 		code = _expert_step(player, game) if expert else player.step()
 		if code != Types.Code.OK:
 			break
-	return {
+	var result: Dictionary = {
 		"initial_frame": 0,
 		"current_frame": player.current_frame(),
 		"complete": player.is_complete(),
@@ -159,6 +163,10 @@ func _play(replay: Replay, seed: int, validate: bool, expert: bool) -> Dictionar
 		"records": game.records,
 		"bytes": game.bytes().hex_encode()
 	}
+
+	if replay.input_width() != 4:
+		result.failure_comparison = player.failure_comparison()
+	return result
 
 
 func _expert_step(player: Player, game: Game) -> int:

@@ -36,6 +36,25 @@ def process_live(path: Path) -> bool:
 
 
 class CompletionContract(unittest.TestCase):
+    # Value: protects=filtered execution retains broken suites; fails_when=partial/error listings skip tests; why_new=shard parity covers valid inventory; seam=none
+    def test_case_inventory_requires_complete_error_free_output(self) -> None:
+        suites = ["res://one.gd", "res://two.gd"]
+        valid = {suites[0]: ["match"], suites[1]: ["other"]}
+        cases = [
+            (valid, "", 0, valid),
+            ({suites[0]: ["match"]}, "", 0, {}),
+            ({suites[0]: ["match"], suites[1]: []}, "", 0, {}),
+            ({suites[0]: ["match"], suites[1]: ["other", "other"]}, "", 0, {}),
+            ([], "", 0, {}),
+            (valid, "SCRIPT ERROR: invalid suite", 0, {}),
+            (valid, "", 1, {}),
+        ]
+        for inventory, error, status, expected in cases:
+            with self.subTest(inventory=inventory, error=error, status=status):
+                text = RUNNER.CASES_PREFIX + json.dumps(inventory)
+                program = f"import sys; print({text!r}); print({error!r}); sys.exit({status})"
+                self.assertEqual(RUNNER.case_inventory([sys.executable, '-c', program], suites, 5), expected)
+
     # Value: prevents green on truncated/unknown/vacuous structured evidence.
     def test_invalid_evidence(self) -> None:
         mutations = {
@@ -657,12 +676,24 @@ class EngineControls(unittest.TestCase):
                         output = Path(directory) / f"{label}-{jobs}-{durations is None}.json"
                         timing = Path(directory) / f"{label}-{jobs}-timing.json"
                         timing.write_bytes(slow.read_bytes() if durations else b"{}")
-                        process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(GODOT),
+                        launches = Path(directory) / "launches.jsonl"
+                        launches.write_text("")
+                        engine = Path(directory) / "engine"
+                        engine.write_text("#!" + sys.executable + "\nimport json,os,sys\n" +
+                                          f"with open({str(launches)!r}, 'a') as stream: stream.write(json.dumps(sys.argv[1:])+'\\n')\n" +
+                                          f"os.execv({str(GODOT)!r}, [{str(GODOT)!r}, *sys.argv[1:]])\n")
+                        engine.chmod(0o755)
+                        process = subprocess.run([sys.executable, str(ROOT / "scripts/run_godot_tests.py"), "--godot", str(engine),
                             *suites, *arguments, "--jobs", jobs, "--results", str(output), "--durations", str(timing)],
                             cwd=ROOT, capture_output=True, text=True)
                         self.assertEqual(process.returncode, 0 if passed else 1, process.stdout + process.stderr)
                         report = json.loads(output.read_text())
                         results.append(report["runs"][0].get("result"))
+                        if label == "filtered" and jobs == "4":
+                            executions = [json.loads(line) for line in launches.read_text().splitlines()]
+                            executions = [command for command in executions if "--suite" in command and "--list-cases" not in command]
+                            self.assertEqual(len(executions), 2, "filter launched a nonmatching suite")
+                            self.assertTrue(all("res://tests/runner/self_suite.gd" in command for command in executions))
                         if durations and not arguments:
                             self.assertGreater(len(report["runs"][0]["shards"]), 2, "slow suite was not split by case")
                     self.assertEqual(results[0], results[1])

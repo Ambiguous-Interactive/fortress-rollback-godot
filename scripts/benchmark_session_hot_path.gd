@@ -105,6 +105,7 @@ func _initialize() -> void:
 					"players": players,
 					"steady": _steady(players),
 					"driver": _driver(players),
+					"driver_local": _driver(players, true),
 					"local_preflight": _local_preflight(players),
 					"rollback": _rollback(players),
 					"codec": _codec(players),
@@ -135,7 +136,7 @@ func _steady(players: int) -> Dictionary:
 
 
 # The public driver runs the same inputs and game work as the expert steady workload.
-func _driver(players: int) -> Dictionary:
+func _driver(players: int, byte_only: bool = false) -> Dictionary:
 	var samples: Array[int] = []
 	var checksum: int = 0
 	for sample: int in range(SAMPLES):
@@ -143,6 +144,7 @@ func _driver(players: int) -> Dictionary:
 		var game: DriverGame = DriverGame.new()
 		var driver: RefCounted = Driver.new(session, game)
 		var local: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, 0, PackedByteArray(LOCAL))]
+		var local_bytes: Array[PackedByteArray] = [PackedByteArray(LOCAL)]
 		var start: int = Time.get_ticks_usec()
 		for frame: int in range(FRAMES):
 			for player: int in range(1, players):
@@ -150,7 +152,7 @@ func _driver(players: int) -> Dictionary:
 					_fail("driver remote input rejected")
 					return {}
 			local[0].sample_frame = frame
-			var result: RefCounted = driver.step(frame, local)
+			var result: RefCounted = driver.step_local(frame, local_bytes) if byte_only else driver.step(frame, local)
 			if result.code != Types.Code.OK or result.frame_before != frame or result.frame_after != frame + 1:
 				_fail("driver frame did not complete")
 				return {}
@@ -476,7 +478,7 @@ func _matches_baseline(report: Dictionary) -> bool:
 				var expected: int = Types.Code.MISSING_LOCAL_INPUT if state == "missing" else Types.Code.OK
 				if measurement.iterations != 10000 * players or measurement.checksum != expected * 10000 * players:
 					return false
-		if entry["driver"]["checksum"] != BASELINE["steady"][players]:
+		if entry["driver"]["checksum"] != BASELINE["steady"][players] or entry["driver_local"]["checksum"] != BASELINE["steady"][players]:
 			return false
 		for name: String in ["steady", "rollback", "codec"]:
 			if entry[name]["checksum"] != BASELINE[name][players]:

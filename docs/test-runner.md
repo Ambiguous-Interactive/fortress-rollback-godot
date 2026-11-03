@@ -39,7 +39,14 @@ This policy replaces the former permanent one-worker fallback after initial cont
 Each suite runs in its own pair of fresh processes, up to `--jobs` at a time. The launcher joins
 the shard results in sorted suite order, so the record is the same as one process running every
 suite; `--jobs 1` keeps that single process when the host starts free. With `--filter`, suites with no matching case are
-dropped, and the whole selection must still match at least one case.
+dropped, and the whole selection must still match at least one case. Parallel filtered runs first list every selected suite's cases
+in one engine process, then launch fresh-process pairs only for matching suites. Partial, malformed or error-producing listings
+fall back to ordinary execution so broken suites cannot disappear from verification.
+
+A local 4.7.2 comparison used the same frozen source tree, four workers and `--filter fixture_reset`.
+The previous launcher started 262 suite executions in 55.6s; inventory selection started two in 7.3s.
+Both returned the same single case with identical repeated results. Timing starts at the version probe,
+excluding host-capacity waiting. This is one local sample, not a portable CI threshold.
 Use the default worker setting for full-suite verification. Explicit `--jobs 1`
 is useful for diagnosis, but normally puts the whole selection under one process budget.
 If it initially waits for the host, known slow suites retain their per-case watchdogs.

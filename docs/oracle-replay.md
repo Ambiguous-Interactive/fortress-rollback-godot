@@ -36,7 +36,7 @@ requests, events or frame observations.
 
 ## Evidence boundaries
 
-The 55 scenarios retain the two/eight-player zero, one and seven-frame controls,
+The 63 scenarios retain the two/eight-player zero, one and seven-frame controls,
 then exercise every supported count from two through eight players for 64 frames.
 Each full-roster workload runs unvalidated playback, sparse checksums and an
 interior mismatch at frame 32 after a checksum-free frame. Rust must report that
@@ -54,6 +54,13 @@ as these sparse workloads.
 Seed `4294967295` exercises unsigned input/state boundaries. Ordered integer
 updates include a PRNG state and pending value in canonical 16-byte snapshots.
 
+Eight additional 64-frame workloads use actual pinned `ReplaySession<u8>` and `ReplaySession<u16>` inputs,
+with two/eight players and sparse checksums or a frame-32 mismatch. Values exercise each width's full range.
+All three Godot file versions and both playback interfaces must report the decoded width and original canonical history.
+An actual high-byte edit in a 16-bit sample must stop every Godot path at frame 32 with `input_digest`.
+The pinned-source controls reject unsupported widths and values outside the selected input type.
+The receipt binds these workloads separately from the original 32-bit acceptance inventory.
+
 Python generates original inputs and independently computes every canonical
 state boundary. Rust consumes the original rows; Godot decodes independently
 packed version-4, version-5 and version-6 FRRP files. The observed decoded version must
@@ -63,8 +70,8 @@ events, completion and failure frames must match their full expected traces.
 Comparisons validate exact fields and numeric types before comparing values.
 Both engines run in two fresh processes with identical results. Every scenario
 runs through callback playback and separately through `configure_expert`,
-`begin_advance`, batch consumption and `complete_request`: 330 Godot observations
-against 55 pinned Rust scenarios. The corpus uses confirmed player statuses;
+`begin_advance`, batch consumption and `complete_request`: 378 Godot observations
+against 63 pinned Rust scenarios. The corpus uses confirmed player statuses;
 Godot's finalized disconnected-status playback has separate deterministic
 coverage in `tests/unit/test_replay_drop.gd`. This comparison does not establish
 upstream status-sensitive recording parity. At the pinned revision,

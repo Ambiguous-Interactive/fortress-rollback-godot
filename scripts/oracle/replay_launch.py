@@ -55,17 +55,38 @@ def corpus():
             state = advance(state, row)
         cases.append(dict(name=f'{players}p-{count}-{mode}', players=players, seed=seed,
                           validate=mode != 'plain', frames=rows, checksums=checksums))
-    return cases
+    return cases + width_corpus()
+
+
+def width_corpus():
+    return [width_case(players, width, mode) for players in (2, 8) for width in (1, 2)
+            for mode in ("sparse", "middle-mismatch")]
+
+
+def width_case(players, width, mode):
+    mask = (1 << (width * 8)) - 1
+    rows = [[(mask - frame * 37 - slot * 131) & mask for slot in range(players)] for frame in range(64)]
+    state = (0, 0xffffffff, 0xffffffff, 0)
+    checksums = []
+    for frame, row in enumerate(rows):
+        saved = bytearray(state_bytes(state))
+        if mode == "middle-mismatch" and frame == 32:
+            saved[15] ^= 0x80
+        checksums.append(saved.hex() if frame % 2 == 0 else None)
+        state = advance(state, row)
+    return dict(name=f"{players}p-64-u{width * 8}-{mode}", players=players, width=width, seed=0xffffffff,
+                validate=True, frames=rows, checksums=checksums)
 
 
 def encoded(case, version=5):
     """Independent FRRP packing; Rust consumes the original rows, Godot the actual file bytes."""
-    data = b'FRRP' + struct.pack('<HBIIIHBB', version, case['players'], 4, len(case['frames']), 0, 0, 8, 0)
-    data += b'\0' * 4
+    width = case.get('width', 4)
+    data = b'FRRP' + struct.pack('<HBIIIHBB', version, case['players'], width, len(case['frames']), 0, 0, 8, 0)
+    data += b'\0' * width
     for text in ('oracle', '0.1.0', 'fortress-rollback ' + REVISION, str(case['seed']), 'replay-parity-v1'):
         data += bytes([len(text)]) + text.encode('ascii')
     for row, checksum in zip(case['frames'], case['checksums']):
-        packed = struct.pack('<' + 'I' * case['players'], *row)
+        packed = b''.join(value.to_bytes(width, 'little') for value in row)
         statuses = bytes([1] * case['players']) if version >= 5 else b''
         data += packed + statuses + bytes([checksum is not None])
         if checksum is not None:
@@ -110,6 +131,10 @@ def expected(case, rust, expert=False, version=5):
         result.update(exhausted=True, events=events)
     else:
         result.update(code=16 if failure < 0 else 18, failure_frame=failure, format_version=version)
+    if case.get('width', 4) != 4:
+        result['input_width'] = case['width']
+        if not rust:
+            result['failure_comparison'] = 'state_checksum' if failure >= 0 else ''
     return result
 
 
@@ -176,6 +201,25 @@ def acceptance_evidence(observed):
                     if runtime == 'rust' and [event['frame'] for event in case['events']] != ([32] if mode == 'middle-mismatch' else []):
                         raise ValueError(f'{runtime}:{name + suffix}: missing interior event')
             evidence.append(name)
+    return evidence
+
+
+def width_acceptance_evidence(observed):
+    """Bind typed source widths and actual decoded widths to original intermediate histories."""
+    evidence = []
+    for players in (2, 8):
+        for width in (1, 2):
+            for mode in ('sparse', 'middle-mismatch'):
+                case = width_case(players, width, mode)
+                for runtime in ('rust', 'godot'):
+                    for version, expert in ((5, False),) if runtime == 'rust' else (
+                            (version, expert) for version in (4, 5, 6) for expert in (False, True)):
+                        wanted = expected(case, runtime == 'rust', expert, version)
+                        matches = [item for item in observed[runtime]['cases'] if item['name'] == wanted['name']]
+                        if len(matches) != 1:
+                            raise ValueError('missing or duplicate width workload')
+                        compare(matches[0], wanted, 'width.' + runtime + '.' + wanted['name'])
+                evidence.append(case['name'])
     return evidence
 
 
@@ -397,6 +441,9 @@ def main():
     compare(observations[0], observations[1])
     acceptance = acceptance_evidence(observations[0])
     terminal_acceptance = terminal_acceptance_evidence(observations[0])
+    width_acceptance = width_acceptance_evidence(observations[0])
+    from replay_width import controls as width_controls
+    width_negative = width_controls(binary, engine, args.output, execute)
     negative = controls(observations[0]['rust'], wanted)
     negative += expert_controls(observations[0]['godot'], godot_expected(cases))
     rejected = rejection_controls(binary, engine, cases, args.output)
@@ -410,7 +457,8 @@ def main():
         engine_sha256=engine_hash, engine_path=str(engine), binary_sha256=binary_hash, upstream_revision=manifest['sources']['fortress']['revision'],
         upstream_lock_sha256=digest(trees['fortress'] / 'Cargo.lock'), source_sha256=frozen,
         cases_sha256=digest(args.output / 'cases.json'), files_sha256=digest(fixture),
-        acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, negative_controls=negative,
+        acceptance_workloads=acceptance, terminal_acceptance_workloads=terminal_acceptance, width_acceptance_workloads=width_acceptance,
+        width_negative_controls=width_negative, negative_controls=negative,
         standalone_rejections=rejected, observations=observations[0], recording=recording, remote_recording=remote_recording,
         limitations=['All-local and two-peer symmetric/asymmetric recording; pinned source cannot repair/export final rows without new local input.',
                      'Native sequential version-4/version-5/version-6 replay; browser replay coverage is in ownership and online probes.',

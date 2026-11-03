@@ -55,6 +55,8 @@ Size harness command envelopes after encoding and serialization; a binary payloa
 Dependency-only baseline refreshes must preserve readable recordings from known compatible source revisions.
 Exercise original provenance metadata as well as newly generated fixtures; regenerated fixtures alone hide rejection regressions.
 Verify that matrix selectors reach the actual command arguments; a declared partition alone can silently repeat the full workload.
+When optimizing away child work, assert actual process launches as well as result parity; aggregation may already discard empty work.
+Report host-capacity waiting separately from execution time, unless explicitly measuring end-to-end latency.
 Bind each partition to its inventory, engine, phase and source/tool identities;
 require the complete union and reject gaps or undeclared overlaps before qualification.
 Native runs wait within their host-capacity budget before starting engine children,

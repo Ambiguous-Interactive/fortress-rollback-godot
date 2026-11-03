@@ -184,7 +184,13 @@ Complete that batch before replacing callbacks or attaching another driver.
 ## The frame loop
 
 Call `driver.step(now_us, samples)` once per physics frame with one `Driver.LocalInput` per local player.
-Peer sessions call `FortressPeerSession.step` with the same arguments and add two results.
+For a driver attached directly to a session, `step_local(now_us, byte_rows)` infers the current sample frame.
+Supply one fixed-width `PackedByteArray` per configured local player, in ascending player-slot order.
+An empty row omits that slot's already retained stalled sample; a missing required sample is still rejected.
+The integration loop uses this convenience API with a reusable array. The driver reuses bounded input wrappers;
+this is not an allocation-free or faster execution guarantee. Use `step` when supplying explicit player/frame metadata.
+
+Peer sessions call `FortressPeerSession.step` with the same arguments as `driver.step` and add two results.
 `now_us` comes from `Time.get_ticks_usec()` and only drives session timers. The simulation never sees it.
 
 | Step result | Meaning and what to do |

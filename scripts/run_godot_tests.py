@@ -480,8 +480,8 @@ class ProbeFailure(ValueError):
         self.report = report
 
 
-def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
-    """List case names for slow suites. Any listing problem leaves them whole; the run itself reports it."""
+def case_inventory(command: list[str], suites: list[str], timeout: float) -> dict:
+    """Use only a complete, error-free listing; otherwise preserve ordinary execution."""
     try:
         report = capture(command + [part for suite in suites for part in ("--suite", suite)] + ["--list-cases"], timeout)
     except (OSError, subprocess.SubprocessError):
@@ -490,11 +490,23 @@ def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
         raise ProbeFailure("case_list", report)
     try:
         lines = [line[len(CASES_PREFIX):] for line in report["stdout"].splitlines() if line.startswith(CASES_PREFIX)]
-        inventory = json.loads(lines[0]) if report["exit"] == 0 and "failure" not in report and len(lines) == 1 else {}
+        if report["exit"] != 0 or "failure" in report or engine_errors(report["stdout"]) or len(lines) != 1:
+            return {}
+        inventory = json.loads(lines[0])
     except ValueError:
         return {}
-    return {suite: names for suite, names in inventory.items() if suite in suites and isinstance(names, list) and len(names) > 1
-            and all(isinstance(name, str) and name for name in names) and len(set(names)) == len(names)}
+    if not isinstance(inventory, dict) or set(inventory) != set(suites):
+        return {}
+    if any(not isinstance(names, list) or not names or
+           any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names)
+           for names in inventory.values()):
+        return {}
+    return inventory
+
+
+def split_cases(command: list[str], suites: list[str], timeout: float) -> dict:
+    """List slow suites without splitting single-case suites."""
+    return {suite: names for suite, names in case_inventory(command, suites, timeout).items() if len(names) > 1}
 
 
 def discover(category: str, root: Path = ROOT) -> list[str]:
@@ -688,6 +700,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             raise ValueError("version_probe_failed")
         version = version_probe["stdout"].strip()
         if contended or args.jobs > 1:
+            if args.filter and len(suites) > 1:
+                inventory = case_inventory(command, suites, args.timeout)
+                matching = [suite for suite in suites if any(args.filter in name for name in inventory.get(suite, []))]
+                # Empty or invalid listings retain the original failure path, including zero matches.
+                suites = matching or suites
             slow = [] if args.filter else [suite for suite in suites if durations.get(suite, 0) >= SPLIT_SECONDS]
             cases = split_cases(command, slow, args.timeout) if slow else {}
             # Shards stay in suite order, then inventory order, so merged records match one process.

@@ -141,6 +141,33 @@ class ReplayAcceptanceTest(unittest.TestCase):
             with self.subTest(fault=fault), self.assertRaises(ValueError):
                 replay.terminal_acceptance_evidence(changed)
 
+    # Value: protects=non-u32 widths execute original canonical prefixes; fails_when=widths narrow, workloads vanish or interior validation skips;
+    # why_new=existing source playback fixes all samples to u32; seam=none
+    def test_width_acceptance_rejects_weakened_observations(self):
+        original = self.observed()
+        self.assertEqual(len(replay.width_acceptance_evidence(original)), 8)
+        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-v4-expert'), ('godot', '-v6-expert')]:
+            for fault in ('missing', 'duplicate', 'width', 'sample', 'prefix', 'validation'):
+                changed = copy.deepcopy(original)
+                cases = changed[runtime]['cases']
+                case = next(item for item in cases if item['name'] == '8p-64-u16-middle-mismatch' + suffix)
+                if fault == 'missing':
+                    cases.remove(case)
+                elif fault == 'duplicate':
+                    cases.append(copy.deepcopy(case))
+                elif fault == 'width':
+                    case['input_width'] = 1
+                elif fault == 'sample':
+                    next(item for item in case['records'] if item['kind'] == 'advance')['inputs'][4]['value'] &= 255
+                elif fault == 'prefix':
+                    next(item for item in case['records'] if item['kind'] == 'advance')['bytes'] = '00' * 16
+                elif runtime == 'rust':
+                    case['events'] = []
+                else:
+                    case['failure_frame'] = 33
+                with self.subTest(runtime=runtime, suffix=suffix, fault=fault), self.assertRaises(ValueError):
+                    replay.width_acceptance_evidence(changed)
+
     @staticmethod
     def observed(cases=None):
         cases = replay.corpus() if cases is None else cases
