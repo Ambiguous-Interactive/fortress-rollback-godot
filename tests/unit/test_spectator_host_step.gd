@@ -5,6 +5,8 @@ const Demo = preload("res://examples/spectator/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
+const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
 
 
 class FailedAdvance:
@@ -12,6 +14,29 @@ class FailedAdvance:
 
 	func simulate_frame(_frame: int, _inputs: Types.FrameInputs) -> bool:
 		return false
+
+
+class StoppingGame:
+	extends Game
+	var owner: WeakRef
+	var failure_kind: int
+	var stopped: bool = false
+
+	func _stop(kind: int) -> bool:
+		if kind != failure_kind:
+			return false
+		stopped = true
+		owner.get_ref().terminate(Types.Code.PROTOCOL_FAILED)
+		return true
+
+	func save_state(frame: int, writer: Writer) -> Driver.SaveResult:
+		return Driver.SaveResult.new(false) if _stop(Types.Kind.SAVE) else super.save_state(frame, writer)
+
+	func load_state(frame: int, reader: Reader) -> bool:
+		return false if _stop(Types.Kind.LOAD) else super.load_state(frame, reader)
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		return false if _stop(Types.Kind.ADVANCE) else super.simulate_frame(frame, inputs)
 
 
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
@@ -215,3 +240,32 @@ func _host_failure_feedback(context: RefCounted) -> void:
 		context.equal(demo.viewer_code, Types.Code.FRAME_EXHAUSTED, "already stopped host updates viewer result through " + entry)
 		demo.viewer.terminate()
 		demo.host.loop.session.terminate()
+
+	for entry: String in ["tick", "step"]:
+		for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
+			for prior_viewer_failure: bool in [false, true]:
+				var scene: Node = Scene.new()
+				scene._ready()
+				scene.demo.set_paused(true)
+				var game: StoppingGame = StoppingGame.new()
+				game.owner = weakref(scene.demo.host.loop.session)
+				game.failure_kind = kind
+				scene.demo.host.loop.game = game
+				context.equal(scene.demo.host.loop.driver.configure(scene.demo.host.loop.session, game), Types.Code.OK, "install callback termination fixture")
+				if prior_viewer_failure:
+					scene.demo.viewer.terminate(Types.Code.DESYNC)
+				for tick: int in 24:
+					if entry == "tick":
+						scene._physics_process(0.0)
+					else:
+						scene._step_host_button.pressed.emit()
+					if game.stopped:
+						break
+				context.equal(game.stopped, true, "actual selected host callback terminates its session")
+				context.equal(scene.demo.host.loop.session.status().reason, Types.Code.PROTOCOL_FAILED, "host retains callback termination cause")
+				context.equal(scene._code, Types.Code.PROTOCOL_FAILED, "scene receives original callback termination cause")
+				var viewer_reason: int = Types.Code.DESYNC if prior_viewer_failure else Types.Code.PROTOCOL_FAILED
+				context.equal(scene.demo.viewer.status().reason, viewer_reason, "forwarded callback termination preserves viewer's first cause")
+				context.equal(scene.demo.viewer_code, viewer_reason, "viewer result preserves its first cause after callback termination")
+				scene._exit_tree()
+				scene.free()

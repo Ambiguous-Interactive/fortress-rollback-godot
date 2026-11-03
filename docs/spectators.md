@@ -858,5 +858,5 @@ direct `scripts/oracle/spectator_launch.py` invocation to run only the upstream 
 The local example reports a failed host callback separately from viewer status,
 including the host operation and frame. A failed manual host step updates that
 report immediately. Host preflight exhaustion also stops buffered viewing and
-preserves the original terminal cause. Refused steps during a clean ending leave final-tail service
+preserves the original terminal cause, including termination inside a game callback. Refused steps during a clean ending leave final-tail service
 running; shared active work remains visible while controls wait for ownership.

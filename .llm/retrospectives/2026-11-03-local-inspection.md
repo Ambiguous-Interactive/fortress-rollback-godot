@@ -60,3 +60,12 @@ The related scene-service assertions now require the original `PROTOCOL_FAILED`
 cause in scene, viewer and result state, replacing the old generic `TERMINATED`
 expectation. The focused host, viewer and recording suites pass with that stronger
 contract; fresh adversarial review finds no remaining preflight issue.
+
+
+Callback-request completion can also return generic `TERMINATED` after the game
+explicitly terminates its host with another reason. Table controls cover SAVE,
+LOAD and ADVANCE through ordinary and single-step service, with a healthy or
+previously failed viewer. The red case loses the original host cause, with no
+engine errors. Both host-operation boundaries now normalize from retained host
+status, matching the existing viewer-result pattern. The existing style rule
+now names the first terminal cause as well as callback/frame provenance.
