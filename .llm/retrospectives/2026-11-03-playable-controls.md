@@ -31,6 +31,7 @@ removed. Current source-width and harness checks validate the guidance edit.
 
 ## Outcome
 
-State: findings-acted. Full native/Web, candidate CI, feedback and merge/main
-results are recorded in the local session log and linked issue delivery notes.
+State: findings-acted. Native/Web qualification, candidate CI, final feedback
+and merge/main verification were pending when this artifact was written.
+The local session log and linked issue delivery notes maintain current evidence.
 Original broad release, parity and spectator transport acceptance remains open.
