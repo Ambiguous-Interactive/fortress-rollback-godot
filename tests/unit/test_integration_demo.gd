@@ -441,6 +441,57 @@ func _pause_and_step(context: RefCounted) -> void:
 	scene._physics_process(1.0 / 60.0)
 	scene._demo.loop.driver.step_completed.disconnect(on_completed)
 	context.equal(scene._demo.tick_count, live_tick + 1, "resume restores ordinary live service")
+	_paused_manual_work(context, scene)
+	_stalled_inspection(context, scene)
 	context.state(scene._demo.loop.game.frame, scene._demo.loop.game.canonical_bytes())
 	scene._exit_tree()
 	scene.free()
+
+
+# Value: protects=paused pointer controls recover after manual ownership; fails_when=paused physics skips refresh;
+# why_new=initial inspection coverage terminates the blocked session; seam=none
+func _paused_manual_work(context: RefCounted, scene: Node2D) -> void:
+	scene._restart()
+	scene._toggle_pause()
+	var session: RefCounted = scene._demo.loop.session
+	var opened: Types.Result = session.begin_capture_replay_boundary()
+	context.equal(opened.code, Types.Code.READY, "manual save owns paused initial boundary")
+	scene._toggle_pause()
+	context.equal(scene._pause_button.disabled and scene._step_button.disabled, true, "stale click refreshes BUSY controls")
+	var request: Types.Request = opened.batch.next_request()
+	context.equal(request.kind, Types.Kind.SAVE, "manual boundary supplies one save")
+	var saved: RefCounted = scene._demo.loop.game.save_state(request.frame, request.writer)
+	context.equal(session.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "expert finishes original save")
+	context.equal(opened.batch.next_request(), null, "manual save completes its batch")
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._pause_button.disabled, false, "paused physics restores pointer resume after manual work")
+	context.equal(scene._step_button.disabled, false, "paused physics restores pointer step after manual work")
+	context.equal(scene._demo.tick_count, 0, "ownership refresh never services the paused match")
+	context.equal(scene._is_paused, true, "ownership refresh retains pause")
+
+
+func _stalled_inspection(context: RefCounted, scene: Node2D) -> void:
+	scene._restart()
+	scene._set_lag(12)
+	scene._toggle_pause()
+	var reference: Demo = Demo.new()
+	reference.start(12)
+	var stalled_steps: int = 0
+	for tick: int in range(50):
+		var frame: int = scene._demo.loop.game.frame
+		scene._step_button.pressed.emit()
+		var code: int = reference.tick(0)
+		context.equal(scene._code, code, "long-delay inspection preserves actual step result")
+		context.equal(scene._demo.tick_count, tick + 1, "long-delay step services exactly one delivery tick")
+		context.equal(scene._is_paused, true, "long-delay step retains pause")
+		if code == Types.Code.PREDICTION_STALL:
+			stalled_steps += 1
+			context.equal(scene._demo.loop.game.frame, frame, "stalled step does not invent a forward frame")
+		context.bytes_equal(
+			scene._demo.loop.game.canonical_bytes(), reference.loop.game.canonical_bytes(), reference.loop.game.frame, "stalled inspection matches ordinary canonical history"
+		)
+		context.equal(scene._demo.effects.recent_ids, reference.effects.recent_ids, "stalled inspection preserves confirmed effects")
+		scene._physics_process(1.0 / 60.0)
+		context.equal(scene._demo.tick_count, tick + 1, "paused physics never services an extra stalled tick")
+	context.equal(stalled_steps > 0, true, "long-delay inspection exercises prediction stalls")
+	context.equal(scene._demo.load_count() > 0, true, "long-delay inspection repairs original history")

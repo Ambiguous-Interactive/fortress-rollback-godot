@@ -77,6 +77,7 @@ func _physics_process(_delta: float) -> void:
 		_update_label()
 		return
 	if not _can_service_match() or _is_paused:
+		_update_label()
 		return
 	_advance_match()
 
