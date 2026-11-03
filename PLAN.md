@@ -128,6 +128,9 @@ Typed replay destinations submit on Enter through bounded verified navigation, r
 Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending, known host-link loss, fresh match restart and viewed-replay save actions.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Restarting the reusable integration loop stages a complete fresh game, session, driver and effects ledger before retiring its prior match.
+The local byte-peer example exposes pointer fault, delay and restart controls through the same shared-ownership gates as its shortcuts.
+Replay inspection can isolate either recorded player's control and status changes while verifying complete preceding history.
+The local spectator can single-step paused host input while ordinary delivery and rollback continue; viewer policy remains independent.
 The local peer example prepares replacement sessions before retiring the old match and preserves active shared game operations during reset.
 Online room and match service also preserve callback, notification and manual ownership before committing clocks or replay finishing.
 Visible online input-delay controls share keyboard readiness checks and show when a suggested delay is available.

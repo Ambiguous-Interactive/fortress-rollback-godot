@@ -53,6 +53,10 @@ The host continues playing during viewer inspection. Press **H** or click **Paus
 Pending inputs still arrive and repair the host; the viewer keeps playing independently.
 Use **Follow live** to remove viewing delay and consume the available confirmed history.
 Press **H** again to resume the host. Restart clears both pauses.
+Press **T** or click **Step host** to pause continuous host input and attempt one ordinary host tick with the currently held movement/fire controls.
+A prediction stall keeps the original sampled buttons for the next attempt. Each action services one delivery tick and advances at most one new host frame;
+rollback can still correct earlier frames. Later physics ticks continue delivering pending input while the host stays paused.
+The viewer keeps its own pause, delay and catch-up policy. Host stepping waits during active game work or embedded host replay and disables after clean ending starts.
 Press E or click **End host** to stop the host at its current frame.
 It waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.

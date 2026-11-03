@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add pointer controls for peer-example packet faults, input delays and reset.
+
+- Add player selection to replay input and status change navigation.
+
+- Add single-tick host inspection to the spectator example while preserving independent viewer playback.
+
 - Add pause and single-tick inspection to the playable effects example, including delayed delivery, rollback and confirmed effects.
 
 - Add independent host pause to the spectator example. Pending inputs settle while viewers continue watching.
@@ -282,6 +288,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix peer-example fault shortcuts changing packet policy during active game operations.
 
 - Fix number-row shortcuts in the effects, spectator and peer examples on AZERTY layouts, without requiring Shift.
 

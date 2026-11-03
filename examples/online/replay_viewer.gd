@@ -30,6 +30,9 @@ var _seek_target: int = -1
 var _recorded_checksums: PackedInt64Array = PackedInt64Array()
 var _input_changes: PackedInt64Array = PackedInt64Array()
 var _status_changes: PackedInt64Array = PackedInt64Array()
+var _player_input_changes: Array[PackedInt64Array] = []
+var _player_status_changes: Array[PackedInt64Array] = []
+var _change_player: int = -1
 var _recording_sha256: String = ""
 var _recording_bytes: int = 0
 var _recording: Replay
@@ -48,7 +51,9 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 		return false
 	var changes: Array[int] = []
 	var status_changes: Array[int] = []
-	if not _compatible(recording, changes, status_changes):
+	var player_changes: Array[PackedInt64Array] = [PackedInt64Array(), PackedInt64Array()]
+	var player_status_changes: Array[PackedInt64Array] = [PackedInt64Array(), PackedInt64Array()]
+	if not _compatible(recording, changes, status_changes, player_changes, player_status_changes):
 		message = "This viewer needs an identified online or spectator game recording (up to ten minutes)."
 		return false
 	var hash: HashingContext = HashingContext.new()
@@ -61,6 +66,8 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 		_repeat_playback = false
 	_input_changes = PackedInt64Array(changes)
 	_status_changes = PackedInt64Array(status_changes)
+	_player_input_changes = player_changes
+	_player_status_changes = player_status_changes
 	_recorded_checksums.clear()
 	for frame: int in range(recording.frame_count() + 1):
 		if not recording.checksum(frame).is_empty():
@@ -80,7 +87,9 @@ func _open_failure_message(code: int) -> String:
 			return "Could not open replay: this file is malformed or incomplete."
 
 
-func _compatible(recording: Replay, changes: Array[int], status_changes: Array[int]) -> bool:
+func _compatible(
+	recording: Replay, changes: Array[int], status_changes: Array[int], player_changes: Array[PackedInt64Array], player_status_changes: Array[PackedInt64Array]
+) -> bool:
 	if recording.player_count() != 2 or recording.input_width() != 1 or recording.frame_count() > MAX_FRAMES:
 		return false
 	if recording.frame_count() == 0 and recording.checksum(0).is_empty():
@@ -102,10 +111,18 @@ func _compatible(recording: Replay, changes: Array[int], status_changes: Array[i
 			var sample: Types.InputResult = inputs.read(slot)
 			if sample.bytes[0] > (7 if is_integration else 15):
 				return false
+			var player_changed: bool = frame == 0
+			var player_status_changed: bool = frame == 0
 			if previous != null:
 				var prior: Types.InputResult = previous.read(slot)
-				changed = changed or sample.bytes != prior.bytes or sample.status != prior.status
-				status_changed = status_changed or sample.status != prior.status
+				player_status_changed = sample.status != prior.status
+				player_changed = sample.bytes != prior.bytes or player_status_changed
+			if player_changed:
+				player_changes[slot].append(frame)
+			if player_status_changed:
+				player_status_changes[slot].append(frame)
+			changed = changed or player_changed
+			status_changed = status_changed or player_status_changed
 		if changed:
 			changes.append(frame)
 		if status_changed:
@@ -397,12 +414,31 @@ func checkpoint_target(forward: bool) -> int:
 ## The index is built during bounded file import. Lookup is logarithmic and does not claim input verification.
 ## The final state has no input. Active seeks and failures expose no input-change destination.
 func input_change_target(forward: bool) -> int:
-	if is_seeking() or has_failure() or _input_changes.is_empty():
+	if _recording == null:
 		return -1
-	var index: int = _input_changes.bsearch(current_frame(), not forward)
+	return _change_target(_input_changes if _change_player == -1 else _player_input_changes[_change_player], forward)
+
+
+## Select all players (-1) or one recorded slot (0/1) for input/status-change navigation.
+## This inspection preference survives restart and import; active game work and seeking preserve it.
+func set_change_player(slot: int) -> bool:
+	if _is_busy() or is_seeking() or slot not in [-1, 0, 1]:
+		return false
+	_change_player = slot
+	return true
+
+
+func change_player() -> int:
+	return _change_player
+
+
+func _change_target(changes: PackedInt64Array, forward: bool) -> int:
+	if is_seeking() or has_failure() or changes.is_empty():
+		return -1
+	var index: int = changes.bsearch(current_frame(), not forward)
 	if not forward:
 		index -= 1
-	return _input_changes[index] if index >= 0 and index < _input_changes.size() else -1
+	return changes[index] if index >= 0 and index < changes.size() else -1
 
 
 ## Inspect the nearest input change through normal verified navigation, finishing paused.
@@ -415,12 +451,9 @@ func seek_input_change(forward: bool) -> bool:
 ## Nearest earlier/later finalized player-status change, excluding ordinary control changes.
 ## Frame zero establishes initial statuses. Discovery does not validate recorded input integrity.
 func status_change_target(forward: bool) -> int:
-	if is_seeking() or has_failure() or _status_changes.is_empty():
+	if _recording == null:
 		return -1
-	var index: int = _status_changes.bsearch(current_frame(), not forward)
-	if not forward:
-		index -= 1
-	return _status_changes[index] if index >= 0 and index < _status_changes.size() else -1
+	return _change_target(_status_changes if _change_player == -1 else _player_status_changes[_change_player], forward)
 
 
 ## Reach a status change through ordinary bounded, verified navigation and finish paused.

@@ -25,6 +25,7 @@ var _restart_button: Button
 var _save_replay_button: Button
 var _host_delay_controls: HBoxContainer
 var _pause_host_button: Button
+var _step_host_button: Button
 var _host_delay: OptionButton
 
 
@@ -117,6 +118,12 @@ func _ready() -> void:
 	_pause_host_button.focus_mode = Control.FOCUS_NONE
 	_pause_host_button.pressed.connect(_toggle_host_pause)
 	_host_delay_controls.add_child(_pause_host_button)
+	_step_host_button = Button.new()
+	_step_host_button.name = "StepHost"
+	_step_host_button.text = "Step host (T)"
+	_step_host_button.focus_mode = Control.FOCUS_NONE
+	_step_host_button.pressed.connect(_step_host)
+	_host_delay_controls.add_child(_step_host_button)
 	_code = demo.start()
 	_update_label()
 
@@ -132,6 +139,11 @@ func _exit_tree() -> void:
 func _physics_process(_delta: float) -> void:
 	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		return
+	_code = demo.tick(_host_buttons())
+	_update_label()
+
+
+func _host_buttons() -> int:
 	var buttons: int = 0
 	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
 		buttons |= Game.LEFT
@@ -139,8 +151,7 @@ func _physics_process(_delta: float) -> void:
 		buttons |= Game.RIGHT
 	if Input.is_physical_key_pressed(KEY_SPACE):
 		buttons |= Game.FIRE
-	_code = demo.tick(buttons)
-	_update_label()
+	return buttons
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -153,6 +164,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_set_host_delay([KEY_1, KEY_2, KEY_3].find(number_key))
 	elif event.keycode == KEY_H:
 		_toggle_host_pause()
+	elif event.keycode == KEY_T:
+		_step_host()
 	elif event.keycode == KEY_P:
 		_toggle_pause()
 	elif event.keycode == KEY_N:
@@ -195,6 +208,11 @@ func _restart() -> void:
 
 func _toggle_host_pause() -> void:
 	demo.set_host_paused(not demo.is_host_paused)
+	_update_label()
+
+
+func _step_host() -> void:
+	demo.step_host(_host_buttons())
 	_update_label()
 
 
@@ -276,6 +294,7 @@ func _process(_delta: float) -> void:
 func _update_label() -> void:
 	_host_delay.disabled = not _can_set_host_delay()
 	_pause_host_button.disabled = _host_delay.disabled
+	_step_host_button.disabled = _host_delay.disabled or (demo.host != null and demo.host.replay_player != null)
 	_pause_host_button.text = "Resume host (H)" if demo.is_host_paused else "Pause host (H)"
 	if demo.host != null:
 		_host_delay.select(_host_delay.get_item_index(demo.host.lag_ticks))
@@ -325,7 +344,7 @@ func _update_label() -> void:
 	_label.text = (
 		"Delayed spectator | %s\n" % state
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
-		+ "1/2/3: host delivery 0/3/12 ticks | H: pause/resume host\n"
+		+ "1/2/3: host delivery 0/3/12 ticks | H: pause/resume host | T: step host\n"
 		+ "E: end host\n[: less delay | ]: more delay\nComma: slower catch-up | Period: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ (

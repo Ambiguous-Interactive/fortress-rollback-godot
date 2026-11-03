@@ -83,7 +83,7 @@ Linux process-stat reads can raise `ProcessLookupError` after opening a disappea
 Parse process-stat metadata as bytes; process command names can contain non-UTF-8 bytes and closing parentheses.
 On Linux, inspect child lists across every `/proc/<pid>/task/*/children`; the main thread's list omits worker-thread launches.
 
-Keep a copied probe's exact case inventory, native selection and Web host selection
+Keep a copied probe's exact case inventory, native selection, Web host selection and CI success-marker counts
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent
 contracts with equal assertion counts when full native/Web records are compared. Verify preload dependencies are copied;
 exercise the affected probe, since the root unit runner cannot prove its staging.

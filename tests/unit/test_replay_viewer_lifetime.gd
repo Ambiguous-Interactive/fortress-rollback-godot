@@ -52,6 +52,8 @@ class ReentrantGame:
 				accepted = owner.set_repeat_playback(true)
 			"speed":
 				accepted = owner.set_playback_speed(16)
+			"change_player":
+				accepted = owner.set_change_player(1)
 			"play":
 				owner.toggle_play()
 				is_playing_after_control = owner.is_playing
@@ -169,7 +171,7 @@ func _replacement(context: RefCounted) -> void:
 
 func _callback_controls(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "callback fixture imports")
@@ -192,6 +194,7 @@ func _callback_controls(context: RefCounted) -> void:
 			context.equal(viewer._player, player, "callback cannot replace owned player")
 			context.equal(viewer.game, game, "callback cannot replace game state")
 			context.equal(viewer.playback_speed_quarters(), 4, "callback cannot change playback cadence")
+			context.equal(viewer.change_player(), -1, "callback cannot change selected recorded player")
 			var target: int = 1 if kind == Types.Kind.LOAD else 7
 			context.equal(viewer.current_frame(), target, "outer navigation reaches its original target")
 			context.equal(viewer.is_seeking(), false, "outer navigation finishes")
@@ -204,7 +207,7 @@ func _callback_controls(context: RefCounted) -> void:
 			context.state(target, game.original.canonical_bytes())
 
 	for cancelled: bool in [false, true]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(3)
 			viewer.open_bytes(recording.to_bytes())
@@ -244,6 +247,7 @@ func _expert_controls(context: RefCounted) -> void:
 	viewer.toggle_play()
 	context.equal(viewer.set_playback_speed(16), false, "retained work refuses cadence changes")
 	context.equal(viewer.set_repeat_playback(true), false, "retained work refuses repeat changes")
+	context.equal(viewer.set_change_player(1), false, "retained work refuses player selection")
 	context.equal(viewer.seek(0), false, "retained work refuses navigation")
 	viewer.cancel_seek()
 	context.equal(viewer.validate_state(), false, "retained work refuses paused validation")
@@ -267,7 +271,7 @@ func _expert_controls(context: RefCounted) -> void:
 
 func _callback_termination(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "termination fixture imports")
@@ -289,6 +293,7 @@ func _callback_termination(context: RefCounted) -> void:
 			context.equal(viewer._player, player, "terminated callback cannot replace player before returning")
 			context.equal(viewer.game, game, "terminated callback cannot replace game before returning")
 			context.equal(viewer.playback_speed_quarters(), 4, "terminated callback cannot change cadence")
+			context.equal(viewer.change_player(), -1, "terminated callback cannot change selected recorded player")
 			context.equal(player.failure_code(), Types.Code.TERMINATED, "original cancellation remains first cause")
 			context.equal(viewer.current_frame(), 4, "cancelled work preserves exposed player boundary")
 			context.equal([viewer.is_seeking(), viewer.is_playing], [false, false], "cancelled work stops outer navigation")

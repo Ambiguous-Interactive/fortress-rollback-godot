@@ -2,6 +2,8 @@ extends SceneTree
 
 # Value: protects=replay navigation, visible gameplay and online movement after GUI actions; fails_when=focus or control layout hides gameplay; seam=none.
 const EffectsScene = preload("res://examples/integration/integration.gd")
+const PeerScene = preload("res://examples/peer/peer.tscn")
+const InputNavigationFixture = preload("res://tests/unit/test_replay_input_navigation.gd")
 const SpectatorScene = preload("res://examples/spectator/spectator.gd")
 const CheckpointFixture = preload("res://tests/unit/test_replay_checkpoints.gd")
 const ViewerTypes = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -148,13 +150,15 @@ func _run() -> void:
 	await _submitted_restore_failure()
 	await _submitted_current_failure()
 	await _repeat_controls()
+	await _player_change_controls()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
 	await _spectator_shortcuts()
 	await _effects_controls()
-	if checks == 210 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 210")
+	await _peer_controls()
+	if checks == 237 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 237")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -437,6 +441,16 @@ func _spectator_shortcuts() -> void:
 	_check(local.demo.host.loop.game.frame == 0, "paused host samples no new live input")
 	await _click(local._pause_host_button)
 	_check(not local.demo.is_host_paused, "pointer resumes host independently")
+	await process_frame
+	await process_frame
+	var host_frame: int = local.demo.host.loop.game.frame
+	await _click(local._step_host_button)
+	_check(local.demo.is_host_paused and local.demo.host.loop.game.frame == host_frame + 1, "real pointer steps paused host once")
+	local._physics_process(0.0)
+	_check(local.demo.host.loop.game.frame == host_frame + 1, "ordinary physics preserves stepped host pause")
+	await _key(KEY_T)
+	_check(local.demo.is_host_paused and local.demo.host.loop.game.frame == host_frame + 2, "T steps host independently of viewer")
+	await _key(KEY_H)
 	await _key(KEY_H, true)
 	_check(not local.demo.is_host_paused, "modified H preserves host pause state")
 	local.demo.set_paused(true)
@@ -500,5 +514,75 @@ func _effects_controls() -> void:
 	await _key(KEY_O)
 	_check(not local._is_paused, "O resumes match after pointer inspection")
 	_check(local._board_top() * local.scale.y < root.size.y - 200.0 * local.scale.y, "inspection controls preserve visible effects board")
+	local.queue_free()
+	await process_frame
+
+
+func _player_change_controls() -> void:
+	_check(scene.viewer.open_bytes(InputNavigationFixture.new()._recording().to_bytes()), "player-filter recording opens")
+	scene._refresh()
+	await process_frame
+	scene._controls_view.ensure_control_visible(scene._change_player)
+	scene._change_player.grab_focus()
+	await _key(KEY_SPACE)
+	await _key(KEY_DOWN)
+	await _key(KEY_ENTER)
+	_check(scene.viewer.change_player() == 0, "real selector chooses first recorded player")
+	await _click(scene._next_input_change)
+	_settle()
+	_check(scene.viewer.current_frame() == 450, "pointer reaches first player's control change")
+	scene._refresh()
+	scene._change_player.grab_focus()
+	await _key(KEY_SPACE)
+	await _key(KEY_DOWN)
+	await _key(KEY_ENTER)
+	_check(scene.viewer.change_player() == 1, "real selector chooses second recorded player")
+	await _click(scene._next_input_change)
+	_settle()
+	_check(scene.viewer.current_frame() == 700, "player filter skips other player's status change")
+	scene._refresh()
+	await _click(scene._status_changes_only)
+	_check(scene._next_input_change.disabled, "status-only and player filters intersect")
+	await _click(scene._previous_input_change)
+	_settle()
+	_check(scene.viewer.current_frame() == 0, "player with no status transition returns to initial statuses")
+	scene._refresh()
+	_check(scene.viewer._player.begin_advance().code == ViewerTypes.Code.READY, "expert request owns selected replay")
+	scene._refresh()
+	_check(scene._change_player.disabled, "live selector disables during expert ownership")
+	scene.viewer._player.terminate()
+
+
+func _peer_controls() -> void:
+	root.size = Vector2i(1040, 720)
+	var local: Node2D = PeerScene.instantiate()
+	root.add_child(local)
+	local.set_physics_process(false)
+	for tick: int in 60:
+		local._physics_process(0.0)
+	await process_frame
+	await process_frame
+	_check(not local._actions.delay_first.disabled, "peer pointer delay waits for both live peers")
+	for action: String in ["loss", "latency", "reorder", "block"]:
+		var before: Array = [local._match.drop_every, local._match.latency_ticks, local._match.reorder, local._match.is_partitioned]
+		await _click(local._actions[action])
+		var after: Array = [local._match.drop_every, local._match.latency_ticks, local._match.reorder, local._match.is_partitioned]
+		_check(before != after, "real peer fault click changes " + action)
+		_check(root.gui_get_focus_owner() == null, "peer pointer preserves movement focus")
+	var before_delay: int = local._match.sessions[0].input_delay(0)
+	await _click(local._actions.delay_first)
+	_check(local._match.sessions[0].input_delay(0) == before_delay + 1, "real pointer raises peer input delay")
+	for dimensions: Vector2i in [Vector2i(1040, 720), Vector2i(640, 360)]:
+		root.size = dimensions
+		await process_frame
+		await process_frame
+		_check(root.get_visible_rect().encloses(local._controls.get_global_rect()), "peer controls fit resized viewport")
+		var arena: Rect2 = local.get_global_transform() * Rect2(Vector2(24, local._board_top()), Vector2(992, 300))
+		_check(root.get_visible_rect().encloses(arena), "both peer arenas remain visible below controls")
+	await _click(local._actions.reset)
+	_check(
+		local._match.games[0].frame == 0 and local._match.latency_ticks == 12 and not local._match.is_partitioned,
+		"pointer reset starts a fresh peer match preserving fault policy"
+	)
 	local.queue_free()
 	await process_frame

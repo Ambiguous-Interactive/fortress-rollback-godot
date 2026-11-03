@@ -191,7 +191,7 @@ EXPECTED['res://tests/unit/test_signalfish_fallback_failure.gd'] = {
 EXPECTED['res://tests/unit/test_replay_viewer_lifetime.gd'] = {
     'replacement', 'callback_controls', 'callback_termination', 'expert_controls', 'scene_busy_controls', 'scene_exit', 'scene_exit_callbacks'}
 EXPECTED['res://tests/unit/test_replay_input_navigation.gd'] = {'status_navigation', 'input_change_navigation', 'input_change_integrity', 'input_change_controls',
-    'checksum_navigation', 'checksum_navigation_integrity', 'checksum_navigation_controls'}
+    'checksum_navigation', 'checksum_navigation_integrity', 'checksum_navigation_controls', 'player_navigation'}
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'catchup_speed', 'catchup_control', 'catchup_once', 'catchup_once_control'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'follow_live', 'follow_live_controls'})
 EXPECTED['res://tests/unit/test_spectator_replay_viewer.gd'] = {'round_trip', 'compatibility', 'checksum_failure', 'scene_controls'}
@@ -205,6 +205,8 @@ EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {
 EXPECTED['res://tests/unit/test_example_shortcuts.gd'] = {'ignored_shortcuts', 'ordinary_shortcuts'}
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED['res://tests/unit/test_integration_restart.gd'] = {'restart_lifetime', 'restart_rejections', 'restart_callbacks'}
+EXPECTED['res://tests/unit/test_peer_scene_controls.gd'] = {'pointer_controls', 'owned_controls', 'stopped_controls'}
+EXPECTED['res://tests/unit/test_spectator_host_step.gd'] = {'host_step', 'host_step_ownership'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',
@@ -263,6 +265,7 @@ FILES += ['tests/unit/test_driver_termination.gd']
 FILES += ['tests/unit/test_peer_example_ownership.gd', 'tests/unit/test_peer_example_lifecycle.gd',
           'examples/peer/match.gd', 'examples/offline/presentation.gd']
 FILES += ['tests/unit/test_example_scene_exit.gd', 'tests/unit/test_example_shortcuts.gd']
+FILES += ['tests/unit/test_peer_scene_controls.gd', 'tests/unit/test_spectator_host_step.gd']
 FILES += [f'examples/{name}/{name}.{suffix}' for name in ('offline', 'integration', 'peer') for suffix in ('gd', 'tscn')]
 FILES += ['tests/unit/test_driver_peer_parity.gd']
 FILES += ['tests/unit/test_driver_lifecycle_parity.gd']
@@ -366,6 +369,8 @@ const DropCommit = preload("res://tests/unit/test_peer_drop_commit.gd")
 const DriverInputPolicy = preload("res://tests/unit/test_driver_input_policy.gd")
 const DriverTermination = preload("res://tests/unit/test_driver_termination.gd")
 const PeerExampleOwnership = preload("res://tests/unit/test_peer_example_ownership.gd")
+const PeerSceneControls = preload("res://tests/unit/test_peer_scene_controls.gd")
+const SpectatorHostStep = preload("res://tests/unit/test_spectator_host_step.gd")
 const ExampleShortcuts = preload("res://tests/unit/test_example_shortcuts.gd")
 const ExampleSceneExit = preload("res://tests/unit/test_example_scene_exit.gd")
 const DriverParity = preload("res://tests/unit/test_driver_external_parity.gd")
@@ -394,7 +399,7 @@ func _run_suites() -> void:
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
 		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, ExampleShortcuts, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation,
-		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry]
+		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry, PeerSceneControls, SpectatorHostStep]
 \tscripts.sort_custom(func(first: Script, second: Script) -> bool: return first.resource_path < second.resource_path)
 \t# The launcher sends a bounded set of suites in URL parameters.
 \t# JSON decoding is a dynamic boundary; reject unknown or repeated paths.
