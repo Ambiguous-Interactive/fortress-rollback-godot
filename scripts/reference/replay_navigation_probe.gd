@@ -1,6 +1,7 @@
 extends SceneTree
 
 # Value: protects=replay navigation, visible gameplay and online movement after GUI actions; fails_when=focus or control layout hides gameplay; seam=none.
+const EffectsScene = preload("res://examples/integration/integration.gd")
 const SpectatorScene = preload("res://examples/spectator/spectator.gd")
 const CheckpointFixture = preload("res://tests/unit/test_replay_checkpoints.gd")
 const ViewerTypes = preload("res://addons/fortress_rollback/core/session_types.gd")
@@ -146,12 +147,14 @@ func _run() -> void:
 	await _replay_wheel()
 	await _submitted_restore_failure()
 	await _submitted_current_failure()
+	await _repeat_controls()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
 	await _spectator_shortcuts()
-	if checks == 193 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 193")
+	await _effects_controls()
+	if checks == 210 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 210")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -427,6 +430,15 @@ func _spectator_shortcuts() -> void:
 		_check(root.gui_get_focus_owner() == null, "host policy shortcut preserves movement focus")
 	await _key(KEY_1, true)
 	_check(local.demo.host.lag_ticks == 12, "modified host delivery shortcut is refused")
+	await _key(KEY_H)
+	_check(local.demo.is_host_paused, "H pauses live host independently")
+	for tick: int in 5:
+		local._physics_process(0.0)
+	_check(local.demo.host.loop.game.frame == 0, "paused host samples no new live input")
+	await _click(local._pause_host_button)
+	_check(not local.demo.is_host_paused, "pointer resumes host independently")
+	await _key(KEY_H, true)
+	_check(not local.demo.is_host_paused, "modified H preserves host pause state")
 	local.demo.set_paused(true)
 	for tick: int in range(40):
 		local.demo.tick(0)
@@ -442,5 +454,51 @@ func _spectator_shortcuts() -> void:
 	_check(local.demo.host.lag_ticks == 3, "routed restart restores host delivery default")
 	await _key(KEY_1)
 	_check(local.demo.host.lag_ticks == 0, "host delivery shortcut resumes after restart")
+	local.queue_free()
+	await process_frame
+
+
+func _repeat_controls() -> void:
+	_check(scene.viewer.open_bytes(Fixture.recording(3).to_bytes()), "open live repeat fixture")
+	scene._refresh()
+	await process_frame
+	await process_frame
+	scene._controls_view.ensure_control_visible(scene._repeat)
+	scene._repeat.grab_focus()
+	await _key(KEY_SPACE)
+	_check(scene.viewer.repeat_playback() and scene._repeat.button_pressed, "focused Repeat has real keyboard activation")
+	scene.viewer.set_playback_speed(16)
+	scene.viewer.toggle_play()
+	scene._physics_process(0.0)
+	_check(scene.viewer.current_frame() == 3 and scene.viewer.is_playing, "repeat leaves completed state visible for one tick")
+	var retired: RefCounted = scene.viewer._player
+	scene._physics_process(0.0)
+	_check(scene.viewer.current_frame() == 3 and scene.viewer._player != retired, "repeat creates another validated playback lifetime")
+	_check(retired.step() == ViewerTypes.Code.TERMINATED and retired.failure_code() == ViewerTypes.Code.TERMINATED, "repeated playback retires original player")
+	await _key(KEY_P)
+	_check(not scene.viewer.is_playing, "focused repeat control preserves pause shortcut at ending")
+	scene.viewer.set_repeat_playback(false)
+	scene.viewer.set_playback_speed(4)
+
+
+func _effects_controls() -> void:
+	root.size = Vector2i(760, 560)
+	var local: Node2D = EffectsScene.new()
+	root.add_child(local)
+	local.set_physics_process(false)
+	await process_frame
+	await process_frame
+	_check(local._demo.tick_count == 0 and not local._is_paused, "live effects fixture starts without sampled input")
+	await _click(local._pause_button)
+	_check(local._is_paused, "pointer pauses live effects match")
+	local._physics_process(0.0)
+	_check(local._demo.tick_count == 0, "paused physics preserves service clock")
+	await _key(KEY_N)
+	_check(local._is_paused and local._demo.tick_count == 1, "N services exactly one paused tick")
+	await _click(local._step_button)
+	_check(local._is_paused and local._demo.tick_count == 2, "pointer services exactly one paused tick")
+	await _key(KEY_O)
+	_check(not local._is_paused, "O resumes match after pointer inspection")
+	_check(local._board_top() * local.scale.y < root.size.y - 200.0 * local.scale.y, "inspection controls preserve visible effects board")
 	local.queue_free()
 	await process_frame

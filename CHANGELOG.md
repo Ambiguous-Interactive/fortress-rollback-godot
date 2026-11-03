@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add pause and single-tick inspection to the playable effects example, including delayed delivery, rollback and confirmed effects.
+
+- Add independent host pause to the spectator example. Pending inputs settle while viewers continue watching.
+
+- Add replay Repeat playback. Each lap starts from the initial state and checks original evidence; playback failures stop repetition.
+
 - Add delay, replay and restart buttons to the effects example, with movement focus preserved.
 
 - Add host input delivery controls and 1/2/3 shortcuts to the local spectator to explore prediction stalls and buffering independently of viewing delay.

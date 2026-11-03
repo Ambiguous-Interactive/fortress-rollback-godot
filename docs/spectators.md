@@ -22,7 +22,7 @@ This changes future remote-input delivery at the playable host, independently of
 Already queued deliveries retain their schedule. Active host/viewer game work and clean host ending hold the selector.
 Restart restores the default three-tick host delivery delay.
 
-![Host delivery controls above both local views](images/spectator-host-delay.png)
+![Independent host pause above both local views](images/session148-spectator.png)
 Move with A/D or arrows and fire with Space. Press P or click **Pause viewer** to pause only the viewer;
 press P again or click **Resume viewer** to catch up at most four frames per physics tick by default.
 Playback buttons wait while an active request or callback owns playback, and disable after playback stops.
@@ -49,7 +49,11 @@ and the four-frame catch-up limit.
 The label also counts contiguous buffered confirmed frames and later rows beyond gaps,
 including while paused. Later rows become buffered only after their missing earlier inputs arrive;
 they cannot be played yet. These counts show the current backlog independently of the selected delay.
-The host continues playing during inspection. Press E or click **End host** to stop the host at its current frame.
+The host continues playing during viewer inspection. Press **H** or click **Pause host** to stop sampling host input.
+Pending inputs still arrive and repair the host; the viewer keeps playing independently.
+Use **Follow live** to remove viewing delay and consume the available confirmed history.
+Press **H** again to resume the host. Restart clears both pauses.
+Press E or click **End host** to stop the host at its current frame.
 It waits for outstanding actual inputs, repairs its final state and sends a clean end.
 A paused viewer can resume or press N through the final tail to display that exact final state.
 After the last frame, press N once more to report completion. C drains the buffered final

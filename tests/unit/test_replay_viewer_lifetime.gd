@@ -48,6 +48,8 @@ class ReentrantGame:
 				accepted = owner.seek(0)
 			"validate":
 				accepted = owner.validate_state()
+			"repeat":
+				accepted = owner.set_repeat_playback(true)
 			"speed":
 				accepted = owner.set_playback_speed(16)
 			"play":
@@ -167,7 +169,7 @@ func _replacement(context: RefCounted) -> void:
 
 func _callback_controls(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "callback fixture imports")
@@ -202,7 +204,7 @@ func _callback_controls(context: RefCounted) -> void:
 			context.state(target, game.original.canonical_bytes())
 
 	for cancelled: bool in [false, true]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(3)
 			viewer.open_bytes(recording.to_bytes())
@@ -241,6 +243,7 @@ func _expert_controls(context: RefCounted) -> void:
 	viewer.restart()
 	viewer.toggle_play()
 	context.equal(viewer.set_playback_speed(16), false, "retained work refuses cadence changes")
+	context.equal(viewer.set_repeat_playback(true), false, "retained work refuses repeat changes")
 	context.equal(viewer.seek(0), false, "retained work refuses navigation")
 	viewer.cancel_seek()
 	context.equal(viewer.validate_state(), false, "retained work refuses paused validation")
@@ -264,7 +267,7 @@ func _expert_controls(context: RefCounted) -> void:
 
 func _callback_termination(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate"]:
+		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat"]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "termination fixture imports")

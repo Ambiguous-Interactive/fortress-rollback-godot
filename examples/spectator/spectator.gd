@@ -24,6 +24,7 @@ var _lose_host_button: Button
 var _restart_button: Button
 var _save_replay_button: Button
 var _host_delay_controls: HBoxContainer
+var _pause_host_button: Button
 var _host_delay: OptionButton
 
 
@@ -111,6 +112,11 @@ func _ready() -> void:
 		_host_delay.add_item("%d ticks" % ticks, ticks)
 	_host_delay.item_selected.connect(_set_host_delay)
 	_host_delay_controls.add_child(_host_delay)
+	_pause_host_button = Button.new()
+	_pause_host_button.name = "PauseHost"
+	_pause_host_button.focus_mode = Control.FOCUS_NONE
+	_pause_host_button.pressed.connect(_toggle_host_pause)
+	_host_delay_controls.add_child(_pause_host_button)
 	_code = demo.start()
 	_update_label()
 
@@ -145,6 +151,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var number_key: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
 	if number_key in [KEY_1, KEY_2, KEY_3]:
 		_set_host_delay([KEY_1, KEY_2, KEY_3].find(number_key))
+	elif event.keycode == KEY_H:
+		_toggle_host_pause()
 	elif event.keycode == KEY_P:
 		_toggle_pause()
 	elif event.keycode == KEY_N:
@@ -182,6 +190,11 @@ func _restart() -> void:
 	_code = demo.start()
 	if _code == Types.Code.OK:
 		_replay_notice = ""
+	_update_label()
+
+
+func _toggle_host_pause() -> void:
+	demo.set_host_paused(not demo.is_host_paused)
 	_update_label()
 
 
@@ -262,6 +275,8 @@ func _process(_delta: float) -> void:
 
 func _update_label() -> void:
 	_host_delay.disabled = not _can_set_host_delay()
+	_pause_host_button.disabled = _host_delay.disabled
+	_pause_host_button.text = "Resume host (H)" if demo.is_host_paused else "Pause host (H)"
 	if demo.host != null:
 		_host_delay.select(_host_delay.get_item_index(demo.host.lag_ticks))
 	_restart_button.disabled = demo._mutation_code() == Types.Code.BUSY
@@ -310,18 +325,19 @@ func _update_label() -> void:
 	_label.text = (
 		"Delayed spectator | %s\n" % state
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
-		+ "1/2/3: host delivery 0/3/12 ticks\n"
+		+ "1/2/3: host delivery 0/3/12 ticks | H: pause/resume host\n"
 		+ "E: end host\n[: less delay | ]: more delay\nComma: slower catch-up | Period: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ (
 			"Host frame %d | Confirmed %d | Viewer frame %d | Host delivery %d ticks\n\n"
 			% [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame, demo.host.lag_ticks]
 		)
+		+ ("Host paused. Outstanding inputs still confirm; viewer can catch up.\n" if demo.is_host_paused and not demo.is_finishing else "")
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
 		+ buffer_notice
 		+ _recording_feedback()
-		+ "A long pause can exceed retained history; the host keeps playing.\n"
+		+ "A long viewer pause can exceed retained history while the host runs.\n"
 		+ "Two local views. Live spectator networking is not connected."
 		+ ("\n" + _replay_notice if not _replay_notice.is_empty() else "")
 	)

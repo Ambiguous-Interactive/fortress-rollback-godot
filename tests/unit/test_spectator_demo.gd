@@ -60,13 +60,16 @@ func cases() -> PackedStringArray:
 			"service_busy",
 			"playback_feedback",
 			"terminal_feedback",
-			"host_delay_controls"
+			"host_delay_controls",
+			"host_pause"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "host_delay_controls":
+	if name == "host_pause":
+		_host_pause(context)
+	elif name == "host_delay_controls":
 		_host_delay_controls(context)
 	elif name == "corrected_viewing":
 		_corrected_viewing(context)
@@ -706,7 +709,7 @@ func _service_busy(context: RefCounted) -> void:
 	_scene_busy_retry(context)
 	_host_replay_tick_ownership(context)
 	for actor: String in ["host", "viewer", "batch", "game_callback"]:
-		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live", "set_paused"]:
+		for action: String in ["tick", "step_viewer", "catch_up_viewer", "finish_host", "set_viewing_delay", "set_catchup_speed", "follow_live", "set_paused", "set_host_paused"]:
 			var demo: Demo = Demo.new()
 			context.equal(demo.start(), Types.Code.OK, "start guarded service")
 			demo.is_paused = true
@@ -717,8 +720,9 @@ func _service_busy(context: RefCounted) -> void:
 			var attempt: Callable = func(_code: int = 0, _before: int = 0, _after: int = 0) -> void:
 				var target: RefCounted = owner.get_ref()
 				var before: Array = _service_observation(target)
+				var host_paused_before: bool = target.is_host_paused
 				var code: int
-				if action == "set_paused":
+				if action in ["set_paused", "set_host_paused"]:
 					code = target.call(action, false)
 				elif action in ["set_viewing_delay", "set_catchup_speed"]:
 					if not target.has_method(action):
@@ -730,6 +734,7 @@ func _service_busy(context: RefCounted) -> void:
 				attempts.append(code)
 				context.equal(code, Types.Code.BUSY, "active " + actor + " refuses " + action)
 				context.equal(_service_observation(target), before, "refused service preserves clocks, playback and host state")
+				context.equal(target.is_host_paused, host_paused_before, "refused service preserves host pause")
 			if actor == "batch":
 				context.equal(demo.viewer.begin_advance().code, Types.Code.READY, "retain ordinary viewer expert batch")
 				attempt.call()
@@ -1736,5 +1741,78 @@ func _host_delay_controls(context: RefCounted) -> void:
 	scene._unhandled_key_input(key)
 	context.equal(scene.demo.host.lag_ticks, 0, "ordinary host shortcut remains usable after refusals")
 	context.state(scene.demo.host.loop.game.frame, scene.demo.host.loop.game.canonical_bytes())
+	scene._exit_tree()
+	scene.free()
+
+
+# Value: protects=host pause drains corrections without new samples while viewer catches up;
+# fails_when=paused host advances or pause bypasses ownership; why_new=viewer pause leaves host running; seam=none
+func _host_pause(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	var button: Button = scene.get_node_or_null("HostDelay/PauseHost")
+	context.equal(button != null, true, "spectator exposes independent host pause")
+	if button == null:
+		scene._exit_tree()
+		scene.free()
+		return
+	context.equal(scene.demo.set_host_paused(false), Types.Code.OK, "healthy running control")
+	var reference: Game = Game.new()
+	for tick: int in range(40):
+		var before: int = scene.demo.host.loop.game.frame
+		var buttons: int = Game.RIGHT | (Game.FIRE if before % 3 == 0 else 0)
+		context.equal(scene.demo.tick(buttons) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "prepare delayed host")
+		if scene.demo.host.loop.game.frame > before:
+			var row: Array[PackedByteArray] = [PackedByteArray([buttons]), PackedByteArray([Demo.Host.remote_buttons(before)])]
+			var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+			context.equal(reference.simulate_frame(before, Types.FrameInputs.new(row, statuses)), true, "independent original host history")
+	context.equal(scene.demo.host.pending_input_count() > 0, true, "pause begins with real outstanding input")
+	var frame: int = scene.demo.host.loop.game.frame
+	var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
+	button.pressed.emit()
+	context.equal(scene.demo.is_host_paused, true, "pointer pauses host")
+	context.equal(scene.demo.viewer.playback_policy(), policy, "host pause preserves viewer policy")
+	context.equal(scene.demo.is_paused, false, "viewer continues independently")
+	context.equal(scene.demo.set_viewing_delay(0), Types.Code.OK, "viewer can drain confirmed cushion")
+	for tick: int in range(300):
+		context.equal(scene.demo.tick(Game.LEFT) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "paused host still services pending delivery")
+		context.equal(scene.demo.host.loop.game.frame, frame, "paused host never samples or simulates another frame")
+	context.equal(scene.demo.host.pending_input_count(), 0, "paused host drains original pending input")
+	context.equal(scene.demo.host.loop.session.status().confirmed_frame, frame - 1, "paused host final predictions repaired")
+	context.bytes_equal(scene.demo.host.loop.game.canonical_bytes(), reference.canonical_bytes(), frame, "paused host retains original canonical inputs")
+	context.equal(scene.demo.game.frame, frame, "viewer catches paused host without ending stream")
+	context.bytes_equal(scene.demo.game.canonical_bytes(), reference.canonical_bytes(), frame, "viewer matches repaired original history")
+	context.equal(scene.demo.viewer.status().lifecycle == Types.Lifecycle.TERMINATED, false, "long host pause preserves healthy viewing")
+	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_H
+	for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed", "shift_pressed", "echo"]:
+		key.set(modifier, true)
+		scene._unhandled_key_input(key)
+		context.equal(scene.demo.is_host_paused, true, "modified/repeated host pause shortcut refuses")
+		key.set(modifier, false)
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.is_host_paused, false, "ordinary H resumes host")
+	context.equal(scene.demo.tick(Game.LEFT), Types.Code.OK, "resumed host accepts next input")
+	context.equal(scene.demo.host.loop.game.frame, frame + 1, "host resumes from held boundary")
+	context.equal(scene.demo.host.loop.session.submit_local_input(0, frame + 1, PackedByteArray([Game.RIGHT])).code, Types.Code.OK, "submit sample for owned expert batch")
+	context.equal(scene.demo.host.loop.session.begin_advance().code, Types.Code.READY, "expert host work owns pause policy")
+	context.equal(scene.demo.set_host_paused(true), Types.Code.BUSY, "controller refuses active host work")
+	button.pressed.emit()
+	context.equal(scene.demo.is_host_paused, false, "stale pointer cannot bypass ownership")
+	scene._update_label()
+	context.equal(button.disabled, true, "active work disables host pause")
+	scene.demo.host.loop.session.terminate()
+	context.equal(scene.demo.set_host_paused(true), Types.Code.TERMINATED, "terminated host cannot resume")
+	scene._restart()
+	context.equal(scene.demo.is_host_paused, false, "restart resets host pause")
+	context.equal(scene.demo.set_host_paused(true), Types.Code.OK, "pause fresh host")
+	context.equal(scene.demo.finish_host(), Types.Code.OK, "clean ending allowed while paused")
+	context.equal(scene.demo.set_host_paused(false), Types.Code.TERMINATED, "ending host cannot resume")
+	scene._update_label()
+	context.equal(button.disabled, true, "ending host disables pause")
+	context.equal(scene.demo.tick(0), Types.Code.OK, "paused empty host ends normally")
+	context.equal(scene.demo.is_host_finished, true, "pause does not hold clean ending")
+	context.state(frame, reference.canonical_bytes())
 	scene._exit_tree()
 	scene.free()

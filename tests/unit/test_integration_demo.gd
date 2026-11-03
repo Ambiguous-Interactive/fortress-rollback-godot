@@ -24,11 +24,15 @@ class StopReplayGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["delayed_matches", "reset_and_validation", "replays_corrected_match", "restart_lifetimes", "pointer_controls", "restart_presentation"])
+	return PackedStringArray(
+		["delayed_matches", "reset_and_validation", "replays_corrected_match", "restart_lifetimes", "pointer_controls", "restart_presentation", "pause_and_step"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"pause_and_step":
+			_pause_and_step(context)
 		"restart_presentation":
 			_restart_presentation(context)
 		"pointer_controls":
@@ -359,3 +363,194 @@ func _restart_presentation(context: RefCounted) -> void:
 	context.state(0, scene._demo.loop.game.canonical_bytes())
 	scene._exit_tree()
 	scene.free()
+
+
+# Value: protects=paused match inspection and explicit one-tick delivery; fails_when=pause samples or advances;
+# why_new=existing controls cannot stop live service; seam=none
+func _pause_and_step(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	var pause: Button = scene.get_node_or_null("InspectionControls/Pause")
+	var step: Button = scene.get_node_or_null("InspectionControls/Step")
+	context.equal(pause != null and step != null, true, "live inspection controls exist")
+	if pause == null or step == null:
+		scene._exit_tree()
+		scene.free()
+		return
+	context.equal(step.disabled, true, "step requires a paused live match")
+	pause.pressed.emit()
+	context.equal(scene._is_paused, true, "pointer pauses match")
+	context.equal(step.disabled, false, "paused match enables one service tick")
+	var reference: Demo = Demo.new()
+	reference.start()
+	for tick: int in range(40):
+		var before: PackedByteArray = scene._demo.loop.game.canonical_bytes()
+		var queued: int = scene._demo.pending_input_count()
+		var effects: int = scene._demo.effects.total_count
+		for waiting: int in range(3):
+			scene._physics_process(1.0 / 60.0)
+		context.equal(scene._demo.tick_count, tick, "paused physics preserves delivery clock")
+		context.equal(scene._demo.pending_input_count(), queued, "paused physics preserves queued deliveries")
+		context.equal(scene._demo.effects.total_count, effects, "paused physics preserves confirmed effects")
+		context.bytes_equal(scene._demo.loop.game.canonical_bytes(), before, scene._demo.loop.game.frame, "paused physics preserves exact state")
+		step.pressed.emit()
+		reference.tick(0)
+		context.equal(scene._demo.tick_count, tick + 1, "step services exactly one controller tick")
+		context.equal(scene._is_paused, true, "step keeps automatic service paused")
+		context.equal(scene._demo.effects.recent_ids, reference.effects.recent_ids, "step preserves exact confirmed effects")
+		context.bytes_equal(scene._demo.loop.game.canonical_bytes(), reference.loop.game.canonical_bytes(), reference.loop.game.frame, "step matches ordinary driver history")
+	context.equal(scene._demo.load_count() > 0, true, "inspection crosses real rollback")
+	context.equal(scene._demo.loop.session.submit_local_input(0, scene._demo.loop.game.frame, PackedByteArray([0])).code, Types.Code.OK, "expert stages next local input")
+	context.equal(scene._demo.loop.session.begin_advance().code, Types.Code.READY, "expert request owns paused match")
+	scene._update_label()
+	context.equal(pause.disabled and step.disabled, true, "active work disables inspection controls")
+	pause.pressed.emit()
+	step.pressed.emit()
+	context.equal(scene._is_paused, true, "BUSY pause preserves inspection mode")
+	context.equal(scene._demo.tick_count, 40, "BUSY step preserves delivery clock")
+	scene._demo.loop.session.terminate()
+	scene._restart()
+	context.equal(scene._is_paused, false, "accepted restart resumes automatic live service")
+	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_O
+	scene._unhandled_key_input(key)
+	context.equal(scene._is_paused, true, "keyboard shares pause action")
+	key.echo = true
+	scene._unhandled_key_input(key)
+	context.equal(scene._is_paused, true, "repeated key cannot toggle pause")
+	key.echo = false
+	key.keycode = KEY_N
+	scene._unhandled_key_input(key)
+	context.equal(scene._demo.tick_count, 1, "keyboard shares single step")
+	scene._toggle_replay()
+	context.equal(scene._demo.replay_player != null, true, "paused match opens its recorded prefix")
+	var live_tick: int = scene._demo.tick_count
+	pause.pressed.emit()
+	step.pressed.emit()
+	context.equal(scene._is_paused, true, "replay preserves live pause policy")
+	context.equal(scene._demo.tick_count, live_tick, "replay refuses live stepping")
+	scene._toggle_replay()
+	pause.pressed.emit()
+	var on_completed: Callable = func(_code: int, _before: int, _after: int) -> void:
+		pause.pressed.emit()
+		step.pressed.emit()
+		context.equal(scene._is_paused, false, "completion callback cannot change pause policy")
+		context.equal(scene._demo.tick_count, live_tick, "completion callback cannot service another tick")
+	scene._demo.loop.driver.step_completed.connect(on_completed)
+	scene._physics_process(1.0 / 60.0)
+	scene._demo.loop.driver.step_completed.disconnect(on_completed)
+	context.equal(scene._demo.tick_count, live_tick + 1, "resume restores ordinary live service")
+	_paused_manual_work(context, scene)
+	_stalled_inspection(context, scene)
+	_inspection_lifetimes(context, scene)
+	context.state(scene._demo.loop.game.frame, scene._demo.loop.game.canonical_bytes())
+	scene._exit_tree()
+	scene.free()
+
+
+# Value: protects=paused pointer controls recover after manual ownership; fails_when=paused physics skips refresh;
+# why_new=initial inspection coverage terminates the blocked session; seam=none
+func _paused_manual_work(context: RefCounted, scene: Node2D) -> void:
+	scene._restart()
+	scene._toggle_pause()
+	var session: RefCounted = scene._demo.loop.session
+	var opened: Types.Result = session.begin_capture_replay_boundary()
+	context.equal(opened.code, Types.Code.READY, "manual save owns paused initial boundary")
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._code, Types.Code.BUSY, "paused physics reports temporary expert ownership")
+	context.equal(scene._label.text.contains("STOPPED"), false, "temporary ownership does not claim a stopped match")
+	scene._toggle_pause()
+	context.equal(scene._pause_button.disabled and scene._step_button.disabled, true, "stale click refreshes BUSY controls")
+	var request: Types.Request = opened.batch.next_request()
+	context.equal(request.kind, Types.Kind.SAVE, "manual boundary supplies one save")
+	var saved: RefCounted = scene._demo.loop.game.save_state(request.frame, request.writer)
+	context.equal(session.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum).code, Types.Code.OK, "expert finishes original save")
+	context.equal(opened.batch.next_request(), null, "manual save completes its batch")
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._pause_button.disabled, false, "paused physics restores pointer resume after manual work")
+	context.equal(scene._step_button.disabled, false, "paused physics restores pointer step after manual work")
+	context.equal(scene._demo.tick_count, 0, "ownership refresh never services the paused match")
+	context.equal(scene._is_paused, true, "ownership refresh retains pause")
+	context.equal(scene._label.text.contains("PAUSED"), true, "released expert work retains paused presentation")
+	context.equal(scene._label.text.contains("STOPPED"), false, "released temporary ownership is not a terminal failure")
+
+
+func _stalled_inspection(context: RefCounted, scene: Node2D) -> void:
+	scene._restart()
+	scene._set_lag(12)
+	scene._toggle_pause()
+	var reference: Demo = Demo.new()
+	reference.start(12)
+	var stalled_steps: int = 0
+	for tick: int in range(50):
+		var frame: int = scene._demo.loop.game.frame
+		scene._step_button.pressed.emit()
+		var code: int = reference.tick(0)
+		context.equal(scene._code, code, "long-delay inspection preserves actual step result")
+		context.equal(scene._demo.tick_count, tick + 1, "long-delay step services exactly one delivery tick")
+		context.equal(scene._is_paused, true, "long-delay step retains pause")
+		if code == Types.Code.PREDICTION_STALL:
+			stalled_steps += 1
+			context.equal(scene._demo.loop.game.frame, frame, "stalled step does not invent a forward frame")
+		context.bytes_equal(
+			scene._demo.loop.game.canonical_bytes(), reference.loop.game.canonical_bytes(), reference.loop.game.frame, "stalled inspection matches ordinary canonical history"
+		)
+		context.equal(scene._demo.effects.recent_ids, reference.effects.recent_ids, "stalled inspection preserves confirmed effects")
+		scene._physics_process(1.0 / 60.0)
+		context.equal(scene._demo.tick_count, tick + 1, "paused physics never services an extra stalled tick")
+	context.equal(stalled_steps > 0, true, "long-delay inspection exercises prediction stalls")
+	context.equal(scene._demo.load_count() > 0, true, "long-delay inspection repairs original history")
+
+
+# Value: protects=temporary playback ownership and terminal live-state presentation; fails_when=BUSY looks stopped or dead match looks paused;
+# why_new=live manual-batch coverage does not exercise replay batches or external termination; seam=none
+func _inspection_lifetimes(context: RefCounted, scene: Node2D) -> void:
+	scene._restart()
+	scene._set_lag(0)
+	for tick: int in range(6):
+		context.equal(scene._demo.tick(Game.RIGHT), Types.Code.OK, "healthy live fixture records original inputs")
+	scene._toggle_replay()
+	var player: RefCounted = scene._demo.replay_player
+	var opened: Types.Result = player.begin_advance()
+	context.equal(opened.code, Types.Code.READY, "expert owns actual replay batch")
+	var live_tick: int = scene._demo.tick_count
+	for attempt: int in range(2):
+		scene._physics_process(1.0 / 60.0)
+		context.equal(scene._replay_code, Types.Code.BUSY, "playback reports temporary expert ownership")
+		context.equal(scene._label.text.contains("WAITING FOR ACTIVE REPLAY WORK"), true, "owned playback describes waiting")
+		context.equal(scene._label.text.contains("REPLAY STOPPED"), false, "owned playback does not claim terminal failure")
+		context.equal(player.current_frame(), 0, "busy playback preserves original exposed frame")
+	while true:
+		var request: Types.Request = opened.batch.next_request()
+		if request == null:
+			break
+		var ok: bool = false
+		var checksum: PackedByteArray = PackedByteArray()
+		if request.kind == Types.Kind.SAVE:
+			var saved: RefCounted = scene._demo.replay_game.save_state(request.frame, request.writer)
+			ok = saved.ok
+			checksum = saved.checksum
+		elif request.kind == Types.Kind.ADVANCE:
+			ok = scene._demo.replay_game.simulate_frame(request.frame, request.inputs)
+		context.equal(player.complete_request(request.batch_id, request.request_id, ok, checksum).code, Types.Code.OK, "expert completes original replay request")
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._replay_code, Types.Code.OK, "playback resumes after original expert work")
+	context.equal(player.current_frame(), 2, "automatic playback follows the expert's original frame")
+	context.equal(scene._demo.tick_count, live_tick, "replay ownership never services live input")
+	var reference: Game = Game.new()
+	for frame: int in range(2):
+		var remote: int = (Game.FIRE if frame % 8 < 4 else 0) | (Game.LEFT if frame % 7 < 3 else Game.RIGHT)
+		var original: Types.FrameInputs = Types.FrameInputs.new([PackedByteArray([Game.RIGHT]), PackedByteArray([remote])], PackedInt32Array([0, 0]))
+		context.equal(reference.simulate_frame(frame, original), true, "reference executes original recorded inputs")
+	context.bytes_equal(scene._demo.replay_game.canonical_bytes(), reference.canonical_bytes(), 2, "released replay preserves original canonical history")
+	scene._toggle_replay()
+	scene._toggle_pause()
+	context.equal(scene._label.text.contains("PAUSED"), true, "healthy live control remains paused")
+	var frame: int = scene._demo.loop.game.frame
+	scene._demo.loop.session.terminate(Types.Code.DESYNC, frame)
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._code, Types.Code.DESYNC, "paused physics observes the first terminal cause")
+	context.equal(scene._label.text.contains("STOPPED: code %d, failure frame %d" % [Types.Code.DESYNC, frame]), true, "externally stopped match identifies its exact cause")
+	context.equal(scene._label.text.contains("PAUSED"), false, "terminated match does not claim resumable pause")
+	context.equal(scene._demo.tick_count, live_tick, "terminal status refresh never services the live match")

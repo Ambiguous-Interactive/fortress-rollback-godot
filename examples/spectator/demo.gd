@@ -20,6 +20,7 @@ var viewer: Spectator
 var game: Game
 var driver: Driver
 var is_paused: bool = false
+var is_host_paused: bool = false
 var viewer_code: int = Types.Code.OK
 var next_host_frame: int = 0
 var is_finishing: bool = false
@@ -86,6 +87,7 @@ func start() -> int:
 	game = next_game
 	driver = next_driver
 	is_paused = false
+	is_host_paused = false
 	viewer_code = Types.Code.OK
 	next_host_frame = 0
 	is_finishing = false
@@ -210,6 +212,19 @@ func lose_host_connection() -> int:
 	return viewer_code
 
 
+## Pause new host input while delivering and repairing already sampled frames.
+## The viewer keeps its independent pause, delay and catch-up policy.
+func set_host_paused(paused: bool) -> int:
+	if _mutation_code() == Types.Code.BUSY:
+		return Types.Code.BUSY
+	if host == null:
+		return Types.Code.NOT_CONFIGURED
+	if is_finishing or is_host_finished or host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+		return Types.Code.TERMINATED
+	is_host_paused = paused
+	return Types.Code.OK
+
+
 ## Stop at the current host frame, correct outstanding predictions and send the complete clean tail.
 ## A paused viewer can resume and drain that tail before its normal terminal notification.
 func finish_host() -> int:
@@ -231,13 +246,13 @@ func tick(buttons: int) -> int:
 		return Types.Code.NOT_CONFIGURED
 	if not is_host_finished and host.replay_player != null:
 		return Types.Code.BUSY
-	if not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:
+	if not is_host_paused and not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:
 		if buttons < 0 or buttons > (Game.LEFT | Game.RIGHT | Game.FIRE):
 			return Types.Code.INVALID_CONFIGURATION
 	_tick_count += 1
 	var code: int = Types.Code.OK
 	if not is_host_finished:
-		code = host.finish_tick() if is_finishing else host.tick(buttons)
+		code = host.finish_tick() if is_finishing or is_host_paused else host.tick(buttons)
 		if is_finishing and code == Types.Code.OK:
 			code = publisher.finish_host()
 			is_host_finished = code == Types.Code.OK

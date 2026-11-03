@@ -15,6 +15,10 @@ var _replay_code: int = Types.Code.OK
 var _controls: HBoxContainer
 var _replay_button: Button
 var _restart_button: Button
+var _inspection_controls: HBoxContainer
+var _pause_button: Button
+var _step_button: Button
+var _is_paused: bool = false
 
 
 func _ready() -> void:
@@ -41,6 +45,22 @@ func _ready() -> void:
 			_restart_button = button
 			button.pressed.connect(_restart)
 		_controls.add_child(button)
+	_inspection_controls = HBoxContainer.new()
+	_inspection_controls.name = "InspectionControls"
+	_inspection_controls.add_theme_constant_override("separation", 12)
+	add_child(_inspection_controls)
+	_pause_button = Button.new()
+	_pause_button.name = "Pause"
+	_pause_button.focus_mode = Control.FOCUS_NONE
+	_pause_button.pressed.connect(_toggle_pause)
+	_inspection_controls.add_child(_pause_button)
+	_step_button = Button.new()
+	_step_button.name = "Step"
+	_step_button.text = "Step tick (N)"
+	_step_button.tooltip_text = "Service one local tick, including delayed delivery and rollback. Prediction may stall without advancing a frame."
+	_step_button.focus_mode = Control.FOCUS_NONE
+	_step_button.pressed.connect(_step_match)
+	_inspection_controls.add_child(_step_button)
 	_code = _demo.start()
 	_update_label()
 
@@ -56,8 +76,39 @@ func _physics_process(_delta: float) -> void:
 		_replay_code = _demo.replay_tick()
 		_update_label()
 		return
-	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
+	var status: Types.Status = _demo.loop.session.status()
+	if status.lifecycle == Types.Lifecycle.TERMINATED:
+		_code = status.reason
+	elif _demo._mutation_code() == Types.Code.BUSY:
+		_code = Types.Code.BUSY
+	if not _can_service_match() or _is_paused:
+		_update_label()
 		return
+	_advance_match()
+
+
+func _can_service_match() -> bool:
+	return (
+		_demo.loop != null
+		and _demo.replay_player == null
+		and _demo._mutation_code() != Types.Code.BUSY
+		and _demo.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED
+		and _code in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]
+	)
+
+
+func _toggle_pause() -> void:
+	if _can_service_match():
+		_is_paused = not _is_paused
+	_update_label()
+
+
+func _step_match() -> void:
+	if _is_paused and _can_service_match():
+		_advance_match()
+
+
+func _advance_match() -> void:
 	var buttons: int = 0
 	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
 		buttons |= Game.LEFT
@@ -96,6 +147,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				_toggle_replay()
 			KEY_R:
 				_restart()
+			KEY_O:
+				_toggle_pause()
+			KEY_N:
+				_step_match()
 	_update_label()
 
 
@@ -123,6 +178,7 @@ func _restart() -> void:
 	_code = code
 	_replay_code = Types.Code.OK
 	_last_effect = 0
+	_is_paused = false
 	_pulses.clear()
 	_update_label()
 
@@ -130,6 +186,9 @@ func _restart() -> void:
 func _update_label() -> void:
 	var busy: bool = _demo._mutation_code() == Types.Code.BUSY
 	_restart_button.disabled = busy
+	_pause_button.disabled = not _can_service_match()
+	_pause_button.text = "Resume match (O)" if _is_paused else "Pause match (O)"
+	_step_button.disabled = _pause_button.disabled or not _is_paused
 	_replay_button.disabled = busy
 	_replay_button.text = "Back to match (P)" if _demo.replay_player != null else "Watch replay (P)"
 	for index: int in range(3):
@@ -137,7 +196,11 @@ func _update_label() -> void:
 		button.disabled = busy or _demo.replay_player != null
 	var status: Types.Status = _demo.loop.session.status()
 	var state: String = "WAITING FOR INPUT" if _code == Types.Code.PREDICTION_STALL else "RUNNING"
-	if _code != Types.Code.OK and _code != Types.Code.PREDICTION_STALL:
+	if _code == Types.Code.BUSY:
+		state = "WAITING FOR ACTIVE WORK"
+	if _is_paused:
+		state = "PAUSED | N: service one tick"
+	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		state = "STOPPED: code %d, failure frame %d" % [_code, status.failure_frame]
 	if _demo.replay_player == null and _replay_code != Types.Code.OK:
 		state += " | REPLAY UNAVAILABLE: code %d" % _replay_code
@@ -145,12 +208,15 @@ func _update_label() -> void:
 		state = "REPLAY frame %d of %d" % [_demo.replay_player.current_frame(), _demo.replay_frames]
 		if _replay_code == Types.Code.FRAME_EXHAUSTED:
 			state = "REPLAY FINISHED, %d frames | P: back to the match" % _demo.replay_frames
+		elif _replay_code == Types.Code.BUSY:
+			state = "WAITING FOR ACTIVE REPLAY WORK"
 		elif _replay_code != Types.Code.OK:
 			state = "REPLAY STOPPED: code %d at frame %d" % [_replay_code, _demo.replay_player.failure_frame()]
 	_label.text = (
 		"Rollback-safe shots | %s\n" % state
 		+ "A/D or arrows: move | Space: fire | P: watch replay | R: restart\n"
-		+ "Remote delay: 1 = 0 ticks | 2 = 3 ticks | 3 = 12 ticks\n\n"
+		+ "Remote delay: 1 = 0 ticks | 2 = 3 ticks | 3 = 12 ticks\n"
+		+ "O: pause match | N: step tick (delivery and prediction included)\n\n"
 		+ "Frame %d | Confirmed %d | Delay %d | Queued %d\n" % [status.current_frame, status.confirmed_frame, _demo.lag_ticks, _demo.pending_input_count()]
 		+ "Rollback loads %d | Stalled ticks %d | Confirmed effects %d\n\n" % [_demo.load_count(), _demo.stall_count, _demo.effects.total_count]
 		+ "Hollow flashes: recent shots in corrected state; prediction can remove them.\n"
@@ -158,6 +224,7 @@ func _update_label() -> void:
 		+ "Blue player is scripted. Delivery runs in this process."
 	)
 	_controls.position = Vector2(24, _label.position.y + _label.get_minimum_size().y + 8)
+	_inspection_controls.position = _controls.position + Vector2(0, _controls.get_minimum_size().y + 8)
 
 
 func _draw() -> void:
@@ -189,4 +256,4 @@ func _text(position: Vector2, value: String, tint: Color) -> void:
 
 
 func _board_top() -> float:
-	return _controls.position.y + _controls.get_minimum_size().y + 16.0
+	return _inspection_controls.position.y + _inspection_controls.get_minimum_size().y + 16.0

@@ -211,6 +211,12 @@ Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and 
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame and finishes paused. Step and Pause validate the displayed
 state boundary immediately, including sparse recorded checksums, without consuming its input.
+**Repeat** starts a fresh playback after each clean ending at the selected speed. Every lap validates the original recorded history.
+The final state remains visible until the next tick; Pause, Step and navigation finish paused.
+Checksum or input-integrity failures stop repetition. Initial-state-only recordings cannot repeat.
+
+![Replay Repeat control beside the speed selector](images/session148-replay.png)
+
 **Validate state** checks the paused boundary without advancing, including the initial or final state.
 It checks available recorded checksums and input integrity; absent state checksums remain unverified.
 Playback, seeking, held timeline controls and active game work disable this action.
