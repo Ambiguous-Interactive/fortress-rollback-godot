@@ -79,7 +79,9 @@ func _exit_tree() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if not _is_paused and _can_service():
+	if _session._mutation_code() == Types.Code.BUSY:
+		_code = Types.Code.BUSY
+	elif not _is_paused and _can_service():
 		_advance_match()
 	_update_label()
 

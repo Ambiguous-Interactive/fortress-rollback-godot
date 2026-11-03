@@ -29,6 +29,17 @@ No obsolete guidance or duplicate knowledge entry was found. The host-error rule
 extends the existing style skill; no new skill or generated discovery entry is needed.
 The old offline screenshot is replaced with the current paused controls.
 
+## Verification correction
+
+CI's existing scene-exit ownership test exposed a result-code regression:
+the new offline readiness preflight displayed waiting but left `_code` at OK.
+The same `active_batches` probe passes against main's offline scene, fails the
+initial candidate at exactly the expected BUSY assertions, and passes after
+restoring explicit BUSY observation before the service gate. The new paused
+ownership case now checks this result too. Shared integration/spectator loops
+already preserve BUSY; no test expectation was weakened. The initial full
+native run was canceled with exit 130 and is not qualification evidence.
+
 ## Outcome
 
 State: findings-acted. Broader #34, #40 and #47 acceptance stays open.

@@ -101,6 +101,7 @@ func _ownership(scene: Node, context: RefCounted) -> void:
 	_reject(scene, context)
 	scene._physics_process(0.0)
 	context.equal(scene._label.text.contains("WAITING FOR ACTIVE WORK"), true, "paused ownership is visible")
+	context.equal(scene._code, Types.Code.BUSY, "paused ownership preserves the existing BUSY result contract")
 	var request: RefCounted = opened.batch.next_request()
 	var saved: Driver.SaveResult = scene._simulation.save_state(request.frame, request.writer)
 	scene._session.complete_request(request.batch_id, request.request_id, saved.ok, saved.checksum)
