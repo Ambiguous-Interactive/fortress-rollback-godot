@@ -84,7 +84,7 @@ EXPECTED.update({
     'res://tests/unit/test_driver_callback_signatures.gd': {'arity', 'optional', 'diagnostic', 'argument_types'},
     'res://tests/unit/test_driver_script_view_types.gd': {'driver', 'diagnostic', 'replay'},
     'res://tests/unit/test_replay_diagnostics.gd': {'playback_evidence', 'restore_evidence', 'viewer_evidence', 'boundary_validation'},
-    'res://tests/unit/test_spectator_demo.gd': {'corrected_viewing', 'pause_and_catchup', 'lost_history', 'idle_host_liveness'},
+    'res://tests/unit/test_spectator_demo.gd': {'corrected_viewing', 'pause_and_catchup', 'lost_history', 'idle_host_liveness', 'host_pause'},
     'res://tests/unit/test_spectator_policy.gd': {
         'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status', 'gapped_end'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
@@ -151,7 +151,8 @@ EXPECTED['res://tests/unit/test_peer_drop_remote_donor_pressure.gd'] = {'refused
 EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 'late_ack_control', 'late_ack_participant_loss', 'late_ack_terminal', 'late_ack_partial'}
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler', 'manual_configuration'}
-EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata', 'frame_submit'})
+EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({
+    'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata', 'frame_submit', 'repeat_playback'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
@@ -180,7 +181,7 @@ EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback',
 EXPECTED['res://tests/unit/test_integration_controls.gd'] = {'live_controls', 'replay_controls', 'stopped_controls'}
 EXPECTED['res://tests/unit/test_integration_effect_reentry.gd'] = {'effect_reentry', 'effect_cancellation'}
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {
-    'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes', 'pointer_controls', 'restart_presentation'}
+    'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes', 'pointer_controls', 'restart_presentation', 'pause_and_step'}
 EXPECTED['res://tests/unit/test_replay_prefix.gd'] = {'captured_prefix_evidence', 'prefix_evidence_boundaries', 'incomplete_prefix_digests', 'incomplete_prefix_storage'}
 EXPECTED['res://tests/unit/test_spectator_demo_recording.gd'] = {'prefix_capture', 'clean_end_capture', 'capture_guards', 'save_pointer_control'}
 for _suite in ['host', 'relay']:
