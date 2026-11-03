@@ -76,6 +76,8 @@ func _physics_process(_delta: float) -> void:
 		_replay_code = _demo.replay_tick()
 		_update_label()
 		return
+	if _demo._mutation_code() == Types.Code.BUSY:
+		_code = Types.Code.BUSY
 	if not _can_service_match() or _is_paused:
 		_update_label()
 		return
@@ -191,9 +193,11 @@ func _update_label() -> void:
 		button.disabled = busy or _demo.replay_player != null
 	var status: Types.Status = _demo.loop.session.status()
 	var state: String = "WAITING FOR INPUT" if _code == Types.Code.PREDICTION_STALL else "RUNNING"
+	if _code == Types.Code.BUSY:
+		state = "WAITING FOR ACTIVE WORK"
 	if _is_paused:
 		state = "PAUSED | N: service one tick"
-	if _code != Types.Code.OK and _code != Types.Code.PREDICTION_STALL:
+	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		state = "STOPPED: code %d, failure frame %d" % [_code, status.failure_frame]
 	if _demo.replay_player == null and _replay_code != Types.Code.OK:
 		state += " | REPLAY UNAVAILABLE: code %d" % _replay_code

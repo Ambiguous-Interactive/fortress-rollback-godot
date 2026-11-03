@@ -456,6 +456,9 @@ func _paused_manual_work(context: RefCounted, scene: Node2D) -> void:
 	var session: RefCounted = scene._demo.loop.session
 	var opened: Types.Result = session.begin_capture_replay_boundary()
 	context.equal(opened.code, Types.Code.READY, "manual save owns paused initial boundary")
+	scene._physics_process(1.0 / 60.0)
+	context.equal(scene._code, Types.Code.BUSY, "paused physics reports temporary expert ownership")
+	context.equal(scene._label.text.contains("STOPPED"), false, "temporary ownership does not claim a stopped match")
 	scene._toggle_pause()
 	context.equal(scene._pause_button.disabled and scene._step_button.disabled, true, "stale click refreshes BUSY controls")
 	var request: Types.Request = opened.batch.next_request()
@@ -468,6 +471,8 @@ func _paused_manual_work(context: RefCounted, scene: Node2D) -> void:
 	context.equal(scene._step_button.disabled, false, "paused physics restores pointer step after manual work")
 	context.equal(scene._demo.tick_count, 0, "ownership refresh never services the paused match")
 	context.equal(scene._is_paused, true, "ownership refresh retains pause")
+	context.equal(scene._label.text.contains("PAUSED"), true, "released expert work retains paused presentation")
+	context.equal(scene._label.text.contains("STOPPED"), false, "released temporary ownership is not a terminal failure")
 
 
 func _stalled_inspection(context: RefCounted, scene: Node2D) -> void:
