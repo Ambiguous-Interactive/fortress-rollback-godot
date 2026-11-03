@@ -59,13 +59,16 @@ func cases() -> PackedStringArray:
 			"restart_busy",
 			"service_busy",
 			"playback_feedback",
-			"terminal_feedback"
+			"terminal_feedback",
+			"host_delay_controls"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "corrected_viewing":
+	if name == "host_delay_controls":
+		_host_delay_controls(context)
+	elif name == "corrected_viewing":
 		_corrected_viewing(context)
 	elif name == "pause_and_catchup":
 		_pause_and_catchup(context)
@@ -490,9 +493,7 @@ func _pointer_host_loss(context: RefCounted) -> void:
 # Value: protects=modified application shortcuts preserve the spectator match; fails_when=Ctrl+R restarts or Ctrl+P pauses;
 # why_new=ordinary shortcut tests omit modifier combinations; seam=scene input
 func _modified_shortcuts(context: RefCounted) -> void:
-	var shortcuts: PackedInt32Array = PackedInt32Array(
-		[KEY_P, KEY_N, KEY_C, KEY_F, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_COMMA, KEY_PERIOD, KEY_L, KEY_E, KEY_V, KEY_R]
-	)
+	var shortcuts: PackedInt32Array = PackedInt32Array([KEY_P, KEY_N, KEY_C, KEY_F, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_COMMA, KEY_PERIOD, KEY_L, KEY_E, KEY_V, KEY_R])
 	for modifier: String in ["alt_pressed", "ctrl_pressed", "meta_pressed", "shift_pressed"]:
 		var scene: Node2D = Scene.new()
 		scene._ready()
@@ -1639,7 +1640,9 @@ func _failure_feedback(context: RefCounted) -> void:
 				context.equal(replay_code in [Types.Code.OK, Types.Code.FRAME_EXHAUSTED], true, "retained failure prefix validates every played boundary")
 				if replay_player.is_complete():
 					break
-			context.equal(replay_player.is_final_state_validated(), captured_before_failure, "retained prefix preserves existing checksum coverage without inventing a final checksum")
+			context.equal(
+				replay_player.is_final_state_validated(), captured_before_failure, "retained prefix preserves existing checksum coverage without inventing a final checksum"
+			)
 			context.bytes_equal(replay_game.canonical_bytes(), original.canonical_bytes(), 5, "failed viewer replay matches independent original prefix")
 			var canonical: PackedByteArray = game.canonical_bytes()
 			var host_frame: int = scene.demo.host.loop.game.frame
@@ -1667,3 +1670,42 @@ func _failure_feedback(context: RefCounted) -> void:
 		}[code]
 		context.equal(scene._label.text.contains("STOPPED: " + reason + " | R: start again"), true, "stopped viewer gives a named cause without inventing a callback frame")
 		scene.free()
+
+
+# Value: protects=host delay controls expose prediction stalls without changing viewer policy or active work;
+# fails_when=clicks advance input or bypass viewer ownership; why_new=demo fixes host delay at startup; seam=none
+func _host_delay_controls(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	var controls: OptionButton = scene.get_node_or_null("HostDelay/Delay")
+	context.equal(controls != null, true, "spectator exposes host delivery delay")
+	if controls == null:
+		scene.free()
+		return
+	var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
+	for index: int in range(3):
+		var frame: int = scene.demo.host.loop.game.frame
+		controls.item_selected.emit(index)
+		context.equal(scene.demo.host.lag_ticks, [0, 3, 12][index], "host delay selects bounded future delivery")
+		context.equal(scene.demo.host.loop.game.frame, frame, "delay selection does not simulate input")
+		context.equal(scene.demo.viewer.playback_policy(), policy, "host lag leaves viewing policy intact")
+	for tick: int in range(40):
+		context.equal(scene.demo.tick(Game.RIGHT | Game.FIRE) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "long delay preserves host service")
+	context.equal(scene.demo.host.stall_count > 0, true, "long delay exposes actual prediction stalls")
+	context.equal(scene.demo.set_viewing_delay(0), Types.Code.OK, "release viewer cushion")
+	context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "viewer manual work owns composition")
+	controls.item_selected.emit(0)
+	context.equal(scene.demo.host.lag_ticks, 12, "current ownership gates stale enabled controls")
+	scene._update_label()
+	context.equal(controls.disabled, true, "viewer ownership disables host policy changes")
+	controls.item_selected.emit(0)
+	context.equal(scene.demo.host.lag_ticks, 12, "direct signal cannot bypass composed ownership")
+	scene.demo.viewer.terminate()
+	scene.demo.finish_host()
+	scene._update_label()
+	context.equal(controls.disabled, true, "finishing host disables delay changes")
+	controls.item_selected.emit(0)
+	context.equal(scene.demo.host.lag_ticks, 12, "final tail retains delivery schedule")
+	context.state(scene.demo.host.loop.game.frame, scene.demo.host.loop.game.canonical_bytes())
+	scene._exit_tree()
+	scene.free()

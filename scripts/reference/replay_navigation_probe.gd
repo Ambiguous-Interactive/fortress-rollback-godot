@@ -1,6 +1,8 @@
 extends SceneTree
 
 # Value: protects=replay navigation, visible gameplay and online movement after GUI actions; fails_when=focus or control layout hides gameplay; seam=none.
+const CheckpointFixture = preload("res://tests/unit/test_replay_checkpoints.gd")
+const ViewerTypes = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Scene = preload("res://examples/online/replay.tscn")
 const Fixture = preload("res://tests/unit/test_replay_viewer.gd")
 const OnlineScene = preload("res://examples/online/online.tscn")
@@ -95,6 +97,24 @@ func _run() -> void:
 	scene._target.get_line_edit().grab_focus()
 	await _key(KEY_L)
 	_check(scene.viewer.current_frame() == 300 and not scene.viewer.is_seeking(), "SpinBox text focus preserves playback")
+	var frame_editor: LineEdit = scene._target.get_line_edit()
+	frame_editor.text = "301"
+	await _key(KEY_ENTER)
+	_check(scene.viewer.is_seeking() and scene.viewer.current_frame() == 300, "actual Enter starts typed bounded navigation")
+	_settle()
+	_check(scene.viewer.current_frame() == 301 and not scene.viewer.is_playing, "actual Enter reaches exact frame paused")
+	_check(root.gui_get_focus_owner() == null, "accepted typed navigation releases editable focus")
+	await _key(KEY_N)
+	_check(scene.viewer.current_frame() == 302, "playback shortcut works after submitting a frame")
+	_check(scene.viewer._player.begin_advance().code == ViewerTypes.Code.READY, "manual request owns state before stale enabled submission")
+	frame_editor.grab_focus()
+	frame_editor.text = "10"
+	await _key(KEY_ENTER)
+	_check(scene.viewer.current_frame() == 302 and not scene.viewer.is_seeking(), "manual ownership refuses actual Enter without refresh")
+	_check(root.gui_get_focus_owner() == frame_editor, "refused submission preserves editable focus")
+	scene.viewer._player.terminate()
+	scene.viewer.restart()
+	scene._refresh()
 	scene._time_buttons[0].grab_focus()
 	await _key(KEY_HOME)
 	_settle()
@@ -122,11 +142,13 @@ func _run() -> void:
 	scene._timeline_drag_ended(false)
 	await _replay_layout()
 	await _replay_wheel()
+	await _submitted_restore_failure()
+	await _submitted_current_failure()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
-	if checks == 150 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 150")
+	if checks == 177 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 177")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -328,3 +350,59 @@ func _pointer(point: Vector2, pressed: bool, button: MouseButton = MOUSE_BUTTON_
 	event.pressed = pressed
 	Input.parse_input_event(event)
 	await process_frame
+
+
+func _submitted_restore_failure() -> void:
+	for damaged: bool in [false, true]:
+		scene.viewer.open_bytes(Fixture.recording(400).to_bytes())
+		var game: RefCounted = CheckpointFixture.FaultGame.new()
+		scene.viewer._player.terminate()
+		scene.viewer.game = game.game
+		_check(
+			scene.viewer._player.configure(scene.viewer._recording, game, Fixture.Simulation.SNAPSHOT_BYTES, 300, 121) == ViewerTypes.Code.OK,
+			"configure recorded cache restoration control"
+		)
+		for frame: int in range(302):
+			scene.viewer.step()
+		_check(scene.viewer.current_frame() == 302 and scene.viewer._player.checkpoint_frames().has(0), "original playback retains earlier checkpoint")
+		scene._refresh()
+		await process_frame
+		await process_frame
+		var editor: LineEdit = scene._target.get_line_edit()
+		editor.grab_focus()
+		await process_frame
+		editor.text = "10"
+		game.fault = "wrong state" if damaged else "none"
+		await _key(KEY_ENTER)
+		_check(scene.viewer.is_seeking() != damaged and scene.viewer.has_failure() == damaged, "Enter preserves accepted seek or exact restore failure")
+		_check(root.gui_get_focus_owner() == editor if damaged else root.gui_get_focus_owner() == null, "only accepted restoration releases editable focus")
+		if damaged:
+			_check(scene.viewer._player.failure_comparison() == "checkpoint_checksum", "rejected Enter retains checkpoint mismatch evidence")
+		else:
+			_settle()
+			_check(scene.viewer.current_frame() == 10, "accepted cache restore reaches typed destination")
+
+
+func _submitted_current_failure() -> void:
+	for damaged: bool in [false, true]:
+		scene.queue_free()
+		await process_frame
+		scene = Scene.instantiate()
+		root.add_child(scene)
+		scene.set_physics_process(false)
+		var recording: RefCounted = Fixture.recording(24)
+		if damaged:
+			recording._checksums[0] ^= 1
+		_check(scene.viewer.open_bytes(recording.to_bytes()), "open same-boundary Enter control")
+		scene._refresh()
+		await process_frame
+		await process_frame
+		var editor: LineEdit = scene._target.get_line_edit()
+		editor.grab_focus()
+		await process_frame
+		editor.text = "0"
+		await _key(KEY_ENTER)
+		_check(scene.viewer.current_frame() == 0 and not scene.viewer.is_seeking(), "same-boundary Enter never consumes input")
+		_check(scene.viewer.has_failure() == damaged, "same-boundary Enter validates actual current state")
+		_check(root.gui_get_focus_owner() == editor if damaged else root.gui_get_focus_owner() == null, "failed current-state validation retains editable focus")
+		_check(scene.viewer._player.failure_comparison() == ("state_checksum" if damaged else ""), "current-state Enter preserves exact validation evidence")

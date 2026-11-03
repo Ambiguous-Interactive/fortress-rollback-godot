@@ -264,7 +264,8 @@ checks actual prefix downloads and reopens their received bytes through this vie
 
 The time display shows elapsed and total recorded minutes and seconds at 60 frames per second.
 The timeline follows playback; dragging pauses it. You can select a new destination during a seek.
-Enter a frame number and press **Go** for an exact forward or backward destination. Navigation
+Enter a frame number and press **Enter** or **Go** for an exact forward or backward destination.
+Accepted Enter navigation releases the frame field so playback shortcuts work again; a refused seek preserves editing focus. Navigation
 uses bounded in-memory checkpoints from previously validated playback, then replays the
 remaining inputs and checksums. A first visit still validates the full preceding history. Each UI tick processes at most 120 frames, and **Cancel seek**
 pauses at the last validated boundary. Navigation finishes paused at the requested frame.

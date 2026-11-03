@@ -122,6 +122,9 @@ It also discovers preceding/following recorded checksum boundaries, including fi
 Spectator playback observations distinguish contiguous input waits, deliberate delay, final tails and committed termination.
 The local spectator names stopped-viewing causes and failed game operations with their recorded frame, preserving the first cause through later host events.
 The local spectator example adjusts its viewing delay without rewinding playback or changing its pause and catch-up policy.
+Its host-delivery selector exposes delayed confirmation and prediction stalls independently of viewer policy, preserving queued delivery times.
+The effects example provides pointer delay/replay/restart actions and preserves confirmed presentation when restart is refused.
+Typed replay destinations submit on Enter through bounded verified navigation, restoring playback shortcuts only after accepted navigation.
 Pointer controls share its keyboard pause, single-frame, bounded one-time catch-up, clean host ending, known host-link loss, fresh match restart and viewed-replay save actions.
 Integration controllers validate ownership, retained input and time before staging input or advancing clocks, and pause live service while replay is open.
 Restarting the reusable integration loop stages a complete fresh game, session, driver and effects ledger before retiring its prior match.

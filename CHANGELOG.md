@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add delay, replay and restart buttons to the effects example, with movement focus preserved.
+
+- Add host input delivery controls to the local spectator to explore prediction stalls and buffering independently of viewing delay.
+
+- Add Enter-to-go in the replay frame field. Accepted navigation restores playback shortcuts; refused navigation preserves editing focus.
+
 - Add `driver.step_local()` to submit local input bytes without constructing player/frame wrappers.
 
 - Add readable spectator stop reasons, including failed game callbacks and their frames.
@@ -270,6 +276,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix refused effects-example restarts clearing confirmed-effect pulses while a game callback or request still owns the match.
 
 - Fix replay controls and failure details pushing the game outside short windows. Scroll controls in smaller windows; wheel scrolling over the timeline preserves playback and failure evidence. (#310)
 

@@ -23,6 +23,8 @@ var _end_host_button: Button
 var _lose_host_button: Button
 var _restart_button: Button
 var _save_replay_button: Button
+var _host_delay_controls: HBoxContainer
+var _host_delay: OptionButton
 
 
 func _ready() -> void:
@@ -95,6 +97,20 @@ func _ready() -> void:
 	_save_replay_button.focus_mode = Control.FOCUS_NONE
 	_save_replay_button.pressed.connect(_save_replay)
 	_host_controls.add_child(_save_replay_button)
+	_host_delay_controls = HBoxContainer.new()
+	_host_delay_controls.name = "HostDelay"
+	_host_delay_controls.add_theme_constant_override("separation", 12)
+	add_child(_host_delay_controls)
+	var delay_label: Label = Label.new()
+	delay_label.text = "Host input delivery:"
+	_host_delay_controls.add_child(delay_label)
+	_host_delay = OptionButton.new()
+	_host_delay.name = "Delay"
+	_host_delay.focus_mode = Control.FOCUS_NONE
+	for ticks: int in [0, 3, 12]:
+		_host_delay.add_item("%d ticks" % ticks, ticks)
+	_host_delay.item_selected.connect(_set_host_delay)
+	_host_delay_controls.add_child(_host_delay)
 	_code = demo.start()
 	_update_label()
 
@@ -217,6 +233,22 @@ func _adjust_policy(action: int) -> void:
 	_update_label()
 
 
+func _set_host_delay(index: int) -> void:
+	if _can_set_host_delay() and index >= 0 and index < _host_delay.item_count:
+		demo.host.set_lag(_host_delay.get_item_id(index))
+	_update_label()
+
+
+func _can_set_host_delay() -> bool:
+	return (
+		demo.host != null
+		and demo._mutation_code() != Types.Code.BUSY
+		and not demo.is_finishing
+		and not demo.is_host_finished
+		and demo.host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED
+	)
+
+
 func _process(_delta: float) -> void:
 	var size: Vector2 = get_viewport_rect().size
 	var content_height: float = _board_top() + 150.0 + 125.0 + 24.0
@@ -226,6 +258,9 @@ func _process(_delta: float) -> void:
 
 
 func _update_label() -> void:
+	_host_delay.disabled = not _can_set_host_delay()
+	if demo.host != null:
+		_host_delay.select(_host_delay.get_item_index(demo.host.lag_ticks))
 	_restart_button.disabled = demo._mutation_code() == Types.Code.BUSY
 	_save_replay_button.disabled = not _can_export_replay()
 	_end_host_button.disabled = (_restart_button.disabled or demo.host == null or demo.is_finishing or demo.host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED)
@@ -274,7 +309,10 @@ func _update_label() -> void:
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
 		+ "E: end host\n[: less delay | ]: more delay\nComma: slower catch-up | Period: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
-		+ "Host frame %d | Confirmed %d | Viewer frame %d\n\n" % [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame]
+		+ (
+			"Host frame %d | Confirmed %d | Viewer frame %d | Host delivery %d ticks\n\n"
+			% [demo.host.loop.game.frame, demo.host.loop.session.status().confirmed_frame, demo.game.frame, demo.host.lag_ticks]
+		)
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
 		+ buffer_notice
@@ -290,6 +328,7 @@ func _update_label() -> void:
 	_catchup_button.position = _step_button.position + Vector2(_step_button.get_minimum_size().x + 12, 0)
 	_policy_controls.position = _follow_live_button.position + Vector2(0, _follow_live_button.get_minimum_size().y + 8)
 	_host_controls.position = _policy_controls.position + Vector2(0, _policy_controls.get_minimum_size().y + 8)
+	_host_delay_controls.position = _host_controls.position + Vector2(0, _host_controls.get_minimum_size().y + 8)
 
 
 func _stop_reason(status: Types.Status) -> String:
@@ -348,7 +387,7 @@ func _export_replay() -> void:
 
 
 func _board_top() -> float:
-	return _host_controls.position.y + _host_controls.get_minimum_size().y + 16.0
+	return _host_delay_controls.position.y + _host_delay_controls.get_minimum_size().y + 16.0
 
 
 func _draw() -> void:
