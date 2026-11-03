@@ -100,6 +100,9 @@ Issue creation does not establish implementation, test success or feature parity
 The game owns deterministic simulation and complete serialization.
 The library supplies orchestration, validation and sync-test tooling.
 Request-scoped inputs support owned reads or checked copies into exact-width game scratch buffers.
+The direct session driver also accepts local byte rows in ascending slot order through `step_local`,
+inferring the current sample frame and retaining the existing stalled-input and callback ownership rules.
+This convenience API reuses bounded wrappers; it is not a claim of faster or allocation-free execution.
 The scalar applied-status read preserves predicted and disconnected semantics alongside reusable input buffers.
 Queue history uses native byte copying with shared immutable private storage; submitted and returned buffers remain isolated.
 Rejected driver sample lists preserve the accepted poll time so corrected retries remain usable.
@@ -517,6 +520,8 @@ checksum of the following frame only covers a row when that following frame
 carries a checksum. Those digests are a Godot-side integrity extension; the pinned
 upstream session owns the input history.
 Public recording reads refuse incomplete or invalid input/status rows without hiding complete earlier rows; missing metadata and digest bytes remain unavailable.
+Actual pinned replay comparisons also cover `u8`/`u16` input at two/eight players for 64 frames,
+including sparse checksums, interior mismatches and high-byte corruption through all three portable formats and both interfaces.
 A recording carries the roster, sample width, neutral input, seed and game version
 of the session that produced it, and a player refuses a recording that does not
 match the running game. A recording with substituted inputs is reported as such
@@ -575,6 +580,9 @@ startup counterexample and explicit synthetic synchronization setup. Separate ac
 delay one and capacity-minus-one through ring reuse, including exact catch-up service cycles.
 The source comparison also exercises every roster size two through eight with changing input in
 every slot, complete ordered ring observations and a player-order mutation that preserves row sums.
+Authenticated publisher/stream/driver acceptance also compares independent canonical history for every roster two through eight,
+widths one/four and delay zero/two through ring reuse, reordered duplicates, exact pressure retries and clean endings.
+Finalized disconnected statuses survive playback and recording; authenticated status erasure is a separate negative control.
 Broader delay and tail policies, event/status,
 arbitrary-delivery and live acceptance remain in #47 and #131.
 Spectator rows preserve finalized confirmed/disconnected status through publication, authenticated

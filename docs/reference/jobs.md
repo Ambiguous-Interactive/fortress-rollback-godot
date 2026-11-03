@@ -151,6 +151,12 @@ Distinct job and artifact names preserve each part's evidence. The spectator
 origin check stays once on Chromium 4.3 part 1.
 
 This targets wall time by running smaller inventories concurrently. It repeats
-setup and export work, so summed runner time can increase. No observed speedup
-is claimed until the new complete current-head CI finishes. Reducing total
-work without removing coverage remains tracked in #148 and #164.
+setup and export work, so summed runner time can increase.
+
+Main run [41530525492](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/41530525492)
+qualified the partitioned inventory at `ab95f187a1e355da523c5e9a71172a02b627c655`.
+Chromium 4.3 parts 1/2 took 16m16s/9m46s; 4.7.2 parts 1/2 took 14m32s/7m32s.
+The longest ownership job was 16m16s, compared with 24m52s in the earlier run.
+These are observed job times across changing inventories, not a controlled speedup measurement.
+All 24 jobs summed to 233m58s. The expanded inventory is not comparable with the original 66-minute target.
+Reducing total work without removing coverage remains tracked in #148 and #164.

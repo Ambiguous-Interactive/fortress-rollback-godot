@@ -12,6 +12,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import host_capacity
+from reference.python_fixture import write_executable
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 
@@ -35,7 +36,7 @@ class NativeHostWaitTest(unittest.TestCase):
         subprocess.run(['git', '-C', str(self.checkout), '-c', 'user.name=Control', '-c', 'user.email=control@local',
                         'commit', '-qm', 'source control'], check=True)
         self.engine = self.root / 'engine'
-        self.engine.write_text(f'''#!{sys.executable}
+        self.engine_program = f'''
 import json, os, pathlib, sys, time
 root = pathlib.Path({str(self.root)!r})
 if '--version' in sys.argv:
@@ -52,8 +53,8 @@ suite = sys.argv[sys.argv.index('--suite') + 1]
 run = dict(assertions=1, failures=[], states=[])
 record = dict(suite=suite, case=sys.argv[sys.argv.index('--case') + 1], category='unit', seed='1701', runs=[run,run])
 print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=True, count=1, errors=[], records=[record])))
-''')
-        self.engine.chmod(0o755)
+'''
+        write_executable(self.engine, self.engine_program)
         (self.root / 'durations.json').write_text(json.dumps({'res://first.gd': 40, 'res://second.gd': 40}))
         self.children = []
         self.streams = []
@@ -77,6 +78,11 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
         host_capacity.release()
         host_capacity.LEASE_DIR, host_capacity.LEASE_FILE = self.previous
         self.temp.cleanup()
+
+    def replace_engine(self, before, after):
+        self.assertEqual(self.engine_program.count(before), 1, 'fault target must exist exactly once')
+        self.engine_program = self.engine_program.replace(before, after)
+        write_executable(self.engine, self.engine_program)
 
     def start(self, budget=None, timeout='5', jobs='4'):
         env = dict(os.environ, FORTRESS_HOST_CAPACITY_DIR=str(host_capacity.LEASE_DIR))
@@ -139,8 +145,8 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
 
     # Value: contention diagnostics consume the original wait budget instead of starting a fresh wait afterward.
     def test_contention_diagnostics_cannot_restart_the_wait_budget(self):
-        self.engine.write_text(self.engine.read_text().replace("if '--version' in sys.argv:",
-            "(root / 'any-engine-started').touch()\nif '--version' in sys.argv:"))
+        self.replace_engine("if '--version' in sys.argv:",
+            "(root / 'any-engine-started').touch()\nif '--version' in sys.argv:")
         (self.root / 'finish').touch()
         cases = [(0, 0, 0, False, [0]), (.1, .2, 0, False, [0]), (1, .2, 0, True, [0, .2]), (.1, 0, .2, False, [0, 0])]
         for budget, diagnostic_elapsed, acquisition_elapsed, success, expected_attempts in cases:
@@ -204,11 +210,11 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
             self.assertTrue(all(shard['command'][-2] == '--case' for shard in run['shards']))
 
     def test_cancelled_active_wave_reaps_children_and_fences_queued_launches(self):
-        self.engine.write_text(self.engine.read_text().replace("(root / ('started-' + str(os.getpid()))).write_text('started')",
+        self.replace_engine("(root / ('started-' + str(os.getpid()))).write_text('started')",
             "import subprocess\n"
             "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
             "(root / ('descendant-' + str(child.pid))).write_text('running')\n"
-            "(root / ('started-' + str(os.getpid()))).write_text('started')"))
+            "(root / ('started-' + str(os.getpid()))).write_text('started')")
         process = self.start()
         self.wait_for(lambda: len(list(self.root.glob('started-*'))) == 4, process)
         descendants = [int(path.name.split('-')[1]) for path in self.root.glob('descendant-*')]
@@ -236,9 +242,9 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
             return False
 
     def test_signal_between_spawn_and_registration_reaps_the_new_group(self):
-        self.engine.write_text(self.engine.read_text().replace("    print('control-engine')",
+        self.replace_engine("    print('control-engine')",
             "    (root / ('started-' + str(os.getpid()))).write_text('version')\n"
-            "    while not (root / 'finish').exists(): time.sleep(.01)\n    print('control-engine')"))
+            "    while not (root / 'finish').exists(): time.sleep(.01)\n    print('control-engine')")
         script = (f"import sys, os, signal; sys.path.insert(0, {str(self.checkout / 'scripts')!r}); "
                   "import run_godot_tests as runner\n"
                   "original = runner.subprocess.Popen\n"

@@ -19,6 +19,14 @@ impl Config for Cfg {
     type Address = String;
 }
 
+#[derive(Debug)]
+struct ByteCfg;
+impl Config for ByteCfg { type Input = u8; type State = [u32; 4]; type Address = String; }
+#[derive(Debug)]
+struct ShortCfg;
+impl Config for ShortCfg { type Input = u16; type State = [u32; 4]; type Address = String; }
+fn default_width() -> usize { 4 }
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Case {
@@ -26,6 +34,8 @@ struct Case {
     players: usize,
     seed: u32,
     validate: bool,
+    #[serde(default = "default_width")]
+    width: usize,
     frames: Vec<Vec<u32>>,
     checksums: Vec<Option<String>>,
 }
@@ -51,18 +61,36 @@ fn checksum(text: &str) -> Result<u128, String> {
 
 fn run(case: Case, limit: usize) -> Result<Value, String> {
     if !(2..=8).contains(&case.players) || case.frames.len() > limit || case.frames.len() != case.checksums.len()
-        || case.frames.iter().any(|row| row.len() != case.players) {
+        || ![1, 2, 4].contains(&case.width)
+        || case.frames.iter().any(|row| row.len() != case.players || row.iter().any(|value|
+            (*value as u64) >= (1u64 << (case.width * 8)))) {
         return Err("invalid replay dimensions".into());
     }
     let checksums = case.checksums.iter().map(|value| value.as_deref().map(checksum).transpose()).collect::<Result<Vec<_>, _>>()?;
     let replay = Replay { num_players: case.players, frames: case.frames, checksums,
         metadata: ReplayMetadata { library_version: "oracle".into(), num_players: case.players,
             total_frames: case.checksums.len(), skipped_frames: 0 } };
-    play_replay(case.name, case.seed, case.validate, replay)
+    let width = case.width;
+    let mut observed = match width {
+        1 => play_width::<ByteCfg>(case.name, case.seed, case.validate, Replay { num_players: replay.num_players,
+            frames: replay.frames.iter().map(|row| row.iter().map(|value| *value as u8).collect()).collect(),
+            checksums: replay.checksums, metadata: replay.metadata }),
+        2 => play_width::<ShortCfg>(case.name, case.seed, case.validate, Replay { num_players: replay.num_players,
+            frames: replay.frames.iter().map(|row| row.iter().map(|value| *value as u16).collect()).collect(),
+            checksums: replay.checksums, metadata: replay.metadata }),
+        _ => play_replay(case.name, case.seed, case.validate, replay),
+    }?;
+    if width != 4 { observed["input_width"] = json!(width); }
+    Ok(observed)
 }
 
 fn play_replay(name: String, seed: u32, validate: bool, replay: Replay<u32>) -> Result<Value, String> {
-    let mut session = if validate { ReplaySession::<Cfg>::new_with_validation(replay) } else { ReplaySession::<Cfg>::new(replay) }
+    play_width::<Cfg>(name, seed, validate, replay)
+}
+
+fn play_width<C: Config<Input: Into<u32>, State = [u32; 4]>>(name: String, seed: u32, validate: bool,
+    replay: Replay<C::Input>) -> Result<Value, String> {
+    let mut session = if validate { ReplaySession::<C>::new_with_validation(replay) } else { ReplaySession::<C>::new(replay) }
         .map_err(|e| e.to_string())?;
     let initial = session.current_frame().as_i32();
     let mut state = [0, seed, seed, 0];
@@ -77,10 +105,10 @@ fn play_replay(name: String, seed: u32, validate: bool, replay: Replay<u32>) -> 
                     cell.save(frame, Some(state), Some(u128::from_le_bytes(bytes(&state).try_into().map_err(|_| "state width")?)));
                 }
                 FortressRequest::AdvanceFrame { inputs } => {
-                    let observed: Vec<_> = inputs.iter().map(|(input, status)| json!({"value":input,
+                    let observed: Vec<_> = inputs.iter().map(|(input, status)| json!({"value":Into::<u32>::into(*input),
                         "status":if *status == InputStatus::Confirmed { "confirmed" } else { "unexpected" }})).collect();
                     for (slot, (input, _)) in inputs.iter().enumerate() {
-                        state[1] = state[1].wrapping_mul(33).wrapping_add(*input).wrapping_add(slot as u32);
+                        state[1] = state[1].wrapping_mul(33).wrapping_add((*input).into()).wrapping_add(slot as u32);
                         state[2] = state[2].wrapping_mul(1664525).wrapping_add(1013904223);
                         state[3] = state[3].wrapping_add(state[1]) ^ state[2];
                     }

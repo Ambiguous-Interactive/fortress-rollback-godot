@@ -57,6 +57,8 @@ var _game: RefCounted
 var _is_stepping: bool = false
 # Config validates at most eight player slots; indices borrow only this step's input list.
 var _sample_indices: PackedInt64Array = PackedInt64Array([-1, -1, -1, -1, -1, -1, -1, -1])
+var _local_samples: Array[LocalInput] = []
+var _local_supplied: Array[LocalInput] = []
 
 
 func _init(session: Session = null, game: RefCounted = null) -> void:
@@ -120,6 +122,53 @@ static func _accepts_view_class(view_class: StringName, method: String) -> bool:
 ## Rejected sample metadata, conflicts and incomplete lists leave the accepted poll time unchanged.
 func step(now_us: int, local_inputs: Array[LocalInput]) -> StepResult:
 	return _step(now_us, local_inputs, true)
+
+
+## Supply fixed-width bytes in ascending local-player order; frame metadata is inferred.
+## Empty bytes omit a retained stalled sample. Reuses bounded wrappers; submitted bytes remain owned by the session.
+func step_local(now_us: int, local_inputs: Array[PackedByteArray]) -> StepResult:
+	var before: int = _session.status().current_frame if _session != null else 0
+	if _is_stepping:
+		return _result(Types.Code.BUSY, before)
+	if _session == null or _game == null:
+		return _result(Types.Code.NOT_CONFIGURED, before)
+	var code: int = _session._poll_code(now_us)
+	if code != Types.Code.OK:
+		_is_stepping = true
+		return _finish(code, before)
+	code = _session._check_advance_limits()
+	if code != Types.Code.OK:
+		_is_stepping = true
+		return _finish(code, before)
+	var local_count: int = 0
+	for player: int in range(_sample_indices.size()):
+		if _session.input_delay(player) >= 0:
+			local_count += 1
+	if local_inputs.size() != local_count:
+		_is_stepping = true
+		return _finish(Types.Code.INVALID_CONFIGURATION, before)
+	while _local_samples.size() < local_count:
+		_local_samples.append(LocalInput.new(0, 0, PackedByteArray()))
+	var index: int = 0
+	for player: int in range(_sample_indices.size()):
+		if _session.input_delay(player) < 0:
+			continue
+		var sample: LocalInput = _local_samples[index]
+		sample.player = player
+		sample.sample_frame = before
+		sample.bytes = local_inputs[index]
+		index += 1
+	# Empty rows use the same omitted-slot and retained-input checks as step().
+	_local_supplied.clear()
+	for slot: int in range(local_count):
+		var sample: LocalInput = _local_samples[slot]
+		if not sample.bytes.is_empty():
+			_local_supplied.append(sample)
+	var result: StepResult = _step(now_us, _local_supplied, true)
+	_local_supplied.clear()
+	for sample: LocalInput in _local_samples:
+		sample.bytes = PackedByteArray()
+	return result
 
 
 ## Apply pending corrections and finalize confirmed recording history without advancing a new frame.

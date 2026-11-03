@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add `driver.step_local()` to submit local input bytes without constructing player/frame wrappers.
+
 - Add readable spectator stop reasons, including failed game callbacks and their frames.
 
 - Add a replay status-only filter to inspect player disconnects without stopping at every control change.

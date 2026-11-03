@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from python_fixture import write_executable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import native_source_snapshot as SNAPSHOT
@@ -39,8 +40,7 @@ class SourceImageControls(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             executable = root / "git"
-            executable.write_text("#!" + sys.executable + "\nimport time\ntime.sleep(0.5)\nprint('late')\n")
-            executable.chmod(0o755)
+            write_executable(executable, "import time\ntime.sleep(0.5)\nprint('late')\n")
             with (patch.dict(os.environ, {"PATH": str(root)}),
                   patch.object(SNAPSHOT, "GIT_TIMEOUT", 0.05, create=True),
                   self.assertRaises(subprocess.TimeoutExpired)):
@@ -105,8 +105,8 @@ class SourceReceiptControls(unittest.TestCase):
                 engine = root / ".cache/engine"
                 engine.parent.mkdir()
                 marker = root / ".cache/mutated"
-                engine.write_text(
-                    "#!" + sys.executable + "\nimport json,pathlib,subprocess,sys\n"
+                write_executable(engine,
+                    "import json,pathlib,subprocess,sys\n"
                     "if '--version' in sys.argv:\n print('test-engine');sys.exit(0)\n"
                     "project=pathlib.Path(sys.argv[sys.argv.index('--path')+1])\n"
                     "sample=project/'tests/unit/test_sample.gd'\n"
@@ -127,7 +127,6 @@ class SourceReceiptControls(unittest.TestCase):
                     "record={'suite':'res://tests/unit/test_sample.gd','case':'pass','category':'unit','seed':'1701','runs':[run,run]}\n"
                     "print('FORTRESS_TEST_RESULT '+json.dumps({'format':1,'complete':True,'passed':True,'count':1,'errors':[],'records':[record]}))\n"
                 )
-                engine.chmod(0o755)
                 receipt = root / ".cache/receipt.json"
                 receipt.write_text('{"passed":true}')
                 process = subprocess.run([sys.executable, str(root / "scripts/run_godot_tests.py"), "--godot", str(engine),

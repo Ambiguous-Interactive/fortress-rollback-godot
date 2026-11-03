@@ -1,5 +1,6 @@
 """Full-roster replay acceptance must survive accidental corpus reductions."""
 import copy
+import re
 import unittest
 
 import replay_launch as replay
@@ -140,6 +141,41 @@ class ReplayAcceptanceTest(unittest.TestCase):
                 cases.append(copy.deepcopy(terminal))
             with self.subTest(fault=fault), self.assertRaises(ValueError):
                 replay.terminal_acceptance_evidence(changed)
+
+    # Value: protects=non-u32 widths execute original canonical prefixes; fails_when=widths narrow, workloads vanish or interior validation skips;
+    # why_new=existing source playback fixes all samples to u32; seam=none
+    def test_width_acceptance_rejects_weakened_observations(self):
+        original = self.observed()
+        self.assertEqual(len(replay.width_acceptance_evidence(original)), 8)
+        for runtime, suffix in [('rust', ''), ('godot', ''), ('godot', '-v4-expert'), ('godot', '-v6-expert')]:
+            for fault in ('missing', 'duplicate', 'width', 'sample', 'prefix', 'validation'):
+                changed = copy.deepcopy(original)
+                cases = changed[runtime]['cases']
+                case = next(item for item in cases if item['name'] == '8p-64-u16-middle-mismatch' + suffix)
+                path = f'width.{runtime}.8p-64-u16-middle-mismatch{suffix}'
+                if fault == 'missing':
+                    cases.remove(case)
+                    diagnostic = 'missing or duplicate width workload'
+                elif fault == 'duplicate':
+                    cases.append(copy.deepcopy(case))
+                    diagnostic = 'missing or duplicate width workload'
+                elif fault == 'width':
+                    case['input_width'] = 1
+                    diagnostic = path + '.input_width: value mismatch: expected 2, actual 1'
+                elif fault == 'sample':
+                    next(item for item in case['records'] if item['kind'] == 'advance')['inputs'][4]['value'] &= 255
+                    diagnostic = path + '.records[1].inputs[4].value: value mismatch: expected 65011, actual 243'
+                elif fault == 'prefix':
+                    next(item for item in case['records'] if item['kind'] == 'advance')['bytes'] = '00' * 16
+                    diagnostic = path + ".records[1].bytes: value mismatch: expected '010000003fdf1da1875f50b9e0fb878d', actual '00000000000000000000000000000000'"
+                elif runtime == 'rust':
+                    case['events'] = []
+                    diagnostic = path + '.events: count mismatch'
+                else:
+                    case['failure_frame'] = 33
+                    diagnostic = path + '.failure_frame: value mismatch: expected 32, actual 33'
+                with self.subTest(runtime=runtime, suffix=suffix, fault=fault), self.assertRaisesRegex(ValueError, '^' + re.escape(diagnostic) + '$'):
+                    replay.width_acceptance_evidence(changed)
 
     @staticmethod
     def observed(cases=None):

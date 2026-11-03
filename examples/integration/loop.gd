@@ -20,6 +20,7 @@ var driver: Driver
 var local_player: int
 var _sample_frame: int = -1
 var _sample: PackedByteArray = PackedByteArray()
+var _inputs: Array[PackedByteArray] = [PackedByteArray()]
 
 
 func _init(player: int, ledger: Effects = null) -> void:
@@ -89,8 +90,8 @@ func tick(now_us: int, buttons: int) -> int:
 	if _sample_frame != frame:
 		_sample_frame = frame
 		_sample = PackedByteArray([buttons])
-	var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(local_player, frame, _sample)]
-	code = driver.step(now_us, samples).code
+	_inputs[0] = _sample
+	code = driver.step_local(now_us, _inputs).code
 	if code == Types.Code.OK or code == Types.Code.PREDICTION_STALL:
 		var effect_code: int = _reconcile_effects()
 		if effect_code != Types.Code.OK:

@@ -7,6 +7,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+from python_fixture import write_executable
 
 import signalfish_probe as probe
 
@@ -55,8 +56,7 @@ class SignalFishProbeControls(unittest.TestCase):
                 manifest = {'sources': {'sdk': {'root': 'sdk', 'revision': 'a' * 40,
                                               'archive': {'digest': hashlib.sha256(archive.read_bytes()).hexdigest()}}}}
                 engine = root / 'fake-engine'
-                engine.write_text('#!' + sys.executable + '\n' + script)
-                engine.chmod(0o755)
+                write_executable(engine, script)
                 output = root / 'results'
                 output.mkdir()
                 receipt = output / 'signalfish-sdk.json'
