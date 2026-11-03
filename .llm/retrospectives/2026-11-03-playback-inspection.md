@@ -44,6 +44,17 @@ Full frozen-source native and current-head browser/CI delivery remain pending
 at artifact authoring. Final evidence belongs in the machine-local session log
 and linked issue comments, not in a preemptive success claim here.
 
+CI then found an existing lifecycle regression at
+`tests/unit/test_example_scene_exit.gd:138`: skipping service preserved owned
+state but left the scene result at OK instead of BUSY. The retained CI artifact
+`ownership-reference-results-4.7.2-firefox-negative-part-2` in run 41685196214
+records the exact failure. `.cache/session148-driver-busy-red.log` reproduces it.
+The repair reports actual ownership without servicing simulation and keeps BUSY
+presentation separate from a terminal stop. Both pins pass all eleven scene-exit
+and integration cases in `.cache/session148-driver-busy-43.log` and
+`.cache/session148-driver-busy-472.log`. This reinforces existing full-suite
+verification guidance; no additional overlapping procedure is needed.
+
 ## Harvest and curation
 
 | Finding | Action |
