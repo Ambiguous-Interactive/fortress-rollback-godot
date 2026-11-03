@@ -1,6 +1,7 @@
 extends SceneTree
 
 # Value: protects=replay navigation, visible gameplay and online movement after GUI actions; fails_when=focus or control layout hides gameplay; seam=none.
+const SpectatorScene = preload("res://examples/spectator/spectator.gd")
 const CheckpointFixture = preload("res://tests/unit/test_replay_checkpoints.gd")
 const ViewerTypes = preload("res://addons/fortress_rollback/core/session_types.gd")
 const Scene = preload("res://examples/online/replay.tscn")
@@ -147,8 +148,9 @@ func _run() -> void:
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
-	if checks == 177 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 177")
+	await _spectator_shortcuts()
+	if checks == 192 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 192")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -406,3 +408,36 @@ func _submitted_current_failure() -> void:
 		_check(scene.viewer.has_failure() == damaged, "same-boundary Enter validates actual current state")
 		_check(root.gui_get_focus_owner() == editor if damaged else root.gui_get_focus_owner() == null, "failed current-state validation retains editable focus")
 		_check(scene.viewer._player.failure_comparison() == ("state_checksum" if damaged else ""), "current-state Enter preserves exact validation evidence")
+
+
+func _spectator_shortcuts() -> void:
+	root.size = Vector2i(760, 560)
+	var local: Node2D = SpectatorScene.new()
+	root.add_child(local)
+	local.set_physics_process(false)
+	await process_frame
+	await process_frame
+	for index: int in range(3):
+		await _key([KEY_1, KEY_2, KEY_3][index])
+		_check(local.demo.host.lag_ticks == [0, 3, 12][index], "routed number key selects host delivery")
+		_check(local.demo.host.loop.game.frame == 0 and local.demo.game.frame == 0, "routed host policy never samples either game")
+		_check(root.gui_get_focus_owner() == null, "host policy shortcut preserves movement focus")
+	await _key(KEY_1, true)
+	_check(local.demo.host.lag_ticks == 12, "modified host delivery shortcut is refused")
+	local.demo.set_paused(true)
+	for tick: int in range(40):
+		local.demo.tick(0)
+	local.demo.set_viewing_delay(0)
+	_check(local.demo.viewer.begin_advance().code == ViewerTypes.Code.READY, "actual viewer request owns host policy composition")
+	await _key(KEY_1)
+	_check(local.demo.host.lag_ticks == 12, "routed host shortcut preserves viewer ownership")
+	local.demo.viewer.terminate()
+	local.demo.finish_host()
+	await _key(KEY_1)
+	_check(local.demo.host.lag_ticks == 12, "routed host shortcut preserves final-tail schedule")
+	await _key(KEY_R)
+	_check(local.demo.host.lag_ticks == 3, "routed restart restores host delivery default")
+	await _key(KEY_1)
+	_check(local.demo.host.lag_ticks == 0, "host delivery shortcut resumes after restart")
+	local.queue_free()
+	await process_frame

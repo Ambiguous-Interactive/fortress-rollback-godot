@@ -14,6 +14,7 @@ rendered screenshots and fresh adversarial review.
 | A refused controller reset cleared scene effects | `examples/integration/integration.gd::_restart`; `test_integration_demo.gd::_restart_presentation` fails before repair | Reset presentation only after successful controller replacement; add this rule to the existing GDScript skill |
 | Preflight acceptance does not establish seek success | Fresh review reproduces `checkpoint_checksum` rejection through the frame field | Preserve seek's returned acceptance; retain editing focus on refusal; exercise actual GUI submission in the existing deferred probe |
 | Control layout must reserve actual game geometry | Rendered effects scene initially placed buttons across the board edge | Derive board placement and scaling from controls; inspect the rendered result |
+| A focusless selector omitted keyboard access | Automatic review; host-delay case fails before number-key handling | Add 1/2/3 through the shared handler, actual routed-key checks and the existing browser-integration test guidance |
 | GUI fixtures need settled layout before text replacement | Deferred SpinBox updates replaced injected text with its prior value | Await completed layout before typing; retain paired healthy and damaged-restore cases |
 
 The metadata-control hypothesis was discarded after inspecting the replay

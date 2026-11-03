@@ -17,7 +17,7 @@ godot --path . res://examples/spectator/spectator.tscn
 
 The upper board is a playable host with delayed remote input and actual rollback.
 The lower board follows its corrected input history, initially twelve confirmed frames behind.
-Choose **Host input delivery** of 0, 3 or 12 ticks to explore delayed confirmation, prediction stalls and viewer buffering.
+Choose **Host input delivery** of 0, 3 or 12 ticks, or press **1/2/3**, to explore delayed confirmation, prediction stalls and viewer buffering.
 This changes future remote-input delivery at the playable host, independently of the viewer's viewing delay.
 Already queued deliveries retain their schedule. Active host/viewer game work and clean host ending hold the selector.
 Restart restores the default three-tick host delivery delay.

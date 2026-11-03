@@ -142,7 +142,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
 		return
-	if event.keycode == KEY_P:
+	if event.keycode in [KEY_1, KEY_2, KEY_3]:
+		_set_host_delay([KEY_1, KEY_2, KEY_3].find(event.keycode))
+	elif event.keycode == KEY_P:
 		_toggle_pause()
 	elif event.keycode == KEY_N:
 		_step_viewer()
@@ -307,6 +309,7 @@ func _update_label() -> void:
 	_label.text = (
 		"Delayed spectator | %s\n" % state
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
+		+ "1/2/3: host delivery 0/3/12 ticks\n"
 		+ "E: end host\n[: less delay | ]: more delay\nComma: slower catch-up | Period: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ (

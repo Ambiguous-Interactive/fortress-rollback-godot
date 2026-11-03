@@ -1689,11 +1689,24 @@ func _host_delay_controls(context: RefCounted) -> void:
 		context.equal(scene.demo.host.lag_ticks, [0, 3, 12][index], "host delay selects bounded future delivery")
 		context.equal(scene.demo.host.loop.game.frame, frame, "delay selection does not simulate input")
 		context.equal(scene.demo.viewer.playback_policy(), policy, "host lag leaves viewing policy intact")
+		controls.item_selected.emit((index + 1) % 3)
+		var key: InputEventKey = InputEventKey.new()
+		key.pressed = true
+		key.keycode = [KEY_1, KEY_2, KEY_3][index]
+		scene._unhandled_key_input(key)
+		context.equal(scene.demo.host.lag_ticks, [0, 3, 12][index], "keyboard selects the same bounded host delivery")
+		context.equal(scene.demo.host.loop.game.frame, frame, "keyboard selection does not simulate input")
+		context.equal(scene.demo.viewer.playback_policy(), policy, "keyboard host lag preserves viewer policy")
 	for tick: int in range(40):
 		context.equal(scene.demo.tick(Game.RIGHT | Game.FIRE) in [Types.Code.OK, Types.Code.PREDICTION_STALL], true, "long delay preserves host service")
 	context.equal(scene.demo.host.stall_count > 0, true, "long delay exposes actual prediction stalls")
 	context.equal(scene.demo.set_viewing_delay(0), Types.Code.OK, "release viewer cushion")
 	context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "viewer manual work owns composition")
+	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_1
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.host.lag_ticks, 12, "keyboard cannot bypass current composed ownership")
 	controls.item_selected.emit(0)
 	context.equal(scene.demo.host.lag_ticks, 12, "current ownership gates stale enabled controls")
 	scene._update_label()
@@ -1706,6 +1719,20 @@ func _host_delay_controls(context: RefCounted) -> void:
 	context.equal(controls.disabled, true, "finishing host disables delay changes")
 	controls.item_selected.emit(0)
 	context.equal(scene.demo.host.lag_ticks, 12, "final tail retains delivery schedule")
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.host.lag_ticks, 12, "keyboard preserves final tail delivery schedule")
+	scene._restart()
+	for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed", "shift_pressed", "echo"]:
+		key.set(modifier, true)
+		scene._unhandled_key_input(key)
+		context.equal(scene.demo.host.lag_ticks, 3, "modified or repeated host shortcut preserves delivery")
+		key.set(modifier, false)
+	key.pressed = false
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.host.lag_ticks, 3, "released host shortcut preserves delivery")
+	key.pressed = true
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.host.lag_ticks, 0, "ordinary host shortcut remains usable after refusals")
 	context.state(scene.demo.host.loop.game.frame, scene.demo.host.loop.game.canonical_bytes())
 	scene._exit_tree()
 	scene.free()

@@ -6,7 +6,7 @@
 
 - Add delay, replay and restart buttons to the effects example, with movement focus preserved.
 
-- Add host input delivery controls to the local spectator to explore prediction stalls and buffering independently of viewing delay.
+- Add host input delivery controls and 1/2/3 shortcuts to the local spectator to explore prediction stalls and buffering independently of viewing delay.
 
 - Add Enter-to-go in the replay frame field. Accepted navigation restores playback shortcuts; refused navigation preserves editing focus.
 
