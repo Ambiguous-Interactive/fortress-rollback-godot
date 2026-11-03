@@ -9,6 +9,7 @@ var _label: Label
 var _delay_result: String = ""
 var _controls: VBoxContainer
 var _actions: Dictionary = {}
+var _is_paused: bool = false
 
 
 func _ready() -> void:
@@ -22,7 +23,7 @@ func _ready() -> void:
 	add_child(_controls)
 	for row: PackedStringArray in [
 		PackedStringArray(["loss", "latency", "reorder", "block", "desync"]),
-		PackedStringArray(["delay_first", "delay_second", "reset"])
+		PackedStringArray(["delay_first", "delay_second", "pause", "step", "reset"])
 	]:
 		var container: HBoxContainer = HBoxContainer.new()
 		container.add_theme_constant_override("separation", 8)
@@ -45,8 +46,15 @@ func _exit_tree() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	_match.tick(PackedInt32Array([_buttons(KEY_A, KEY_D, KEY_W, KEY_S), _buttons(KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN)]))
+	if not _is_paused:
+		_advance_match()
+	elif not _match._has_operation_guard():
+		_match._stop_terminal_match()
 	_update_label()
+
+
+func _advance_match() -> void:
+	_match.tick(PackedInt32Array([_buttons(KEY_A, KEY_D, KEY_W, KEY_S), _buttons(KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN)]))
 
 
 func _process(_delta: float) -> void:
@@ -65,7 +73,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if number_key in [KEY_1, KEY_2]:
 		_apply_action("delay_first" if number_key == KEY_1 else "delay_second")
 	else:
-		var actions: Dictionary = {KEY_R: "reset", KEY_L: "loss", KEY_T: "latency", KEY_O: "reorder", KEY_SPACE: "block", KEY_X: "desync"}
+		var actions: Dictionary = {KEY_R: "reset", KEY_L: "loss", KEY_T: "latency", KEY_O: "reorder", KEY_SPACE: "block", KEY_X: "desync", KEY_P: "pause", KEY_N: "step"}
 		if actions.has(event.keycode):
 			_apply_action(actions[event.keycode])
 
@@ -76,6 +84,13 @@ func _apply_action(action: String) -> void:
 	if action == "reset":
 		if _match.reset() == Match.I.Code.OK:
 			_delay_result = ""
+			_is_paused = false
+	elif action == "pause":
+		if _can_configure_faults():
+			_is_paused = not _is_paused
+	elif action == "step":
+		if _is_paused and _can_configure_faults():
+			_advance_match()
 	elif action in ["delay_first", "delay_second"]:
 		if not _can_change_delay():
 			return
@@ -130,6 +145,9 @@ func _update_label() -> void:
 	_actions.delay_first.text = "Peer 1 delay +1 (1)"
 	_actions.delay_second.text = "Peer 2 delay +1 (2)"
 	_actions.reset.text = "Reset match (R)"
+	_actions.pause.text = "Resume (P)" if _is_paused else "Pause (P)"
+	_actions.step.text = "Step tick (N)"
+	_actions.step.tooltip_text = "Service one packet tick and attempt one frame per peer. Prediction can stall without advancing."
 	for action: String in _actions:
 		var button: Button = _actions[action]
 		if action == "reset":
@@ -137,7 +155,7 @@ func _update_label() -> void:
 		elif action in ["delay_first", "delay_second", "desync"]:
 			button.disabled = not _can_change_delay()
 		else:
-			button.disabled = not _can_configure_faults()
+			button.disabled = not _can_configure_faults() or (action == "step" and not _is_paused)
 	_label.text = ("Two peer sessions | actual encoded bytes in this process | failure: %d\n"
 		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets | X: wrong game rules\n"
 		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s%s%s\n"
@@ -145,6 +163,9 @@ func _update_label() -> void:
 		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
 		" | 1/2: raise peer input delay" if _can_change_delay() else "", _delay_result,
 		_match.sent, _match.dropped, _match.delivered, _match.queued_packets()]
+	_label.text += "\nP: pause/resume | N: service one tick | " + ("PAUSED" if _is_paused else "RUNNING")
+	if _match._has_operation_guard():
+		_label.text += " | WAITING FOR ACTIVE WORK"
 	for player: int in range(_match.sessions.size()):
 		var session: Peer = _match.sessions[player]
 		var network: Dictionary = session.network_status()

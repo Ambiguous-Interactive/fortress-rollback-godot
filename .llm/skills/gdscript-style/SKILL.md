@@ -62,6 +62,7 @@ terminate retained `RefCounted` players, drivers or request views. Test retained
 Scene physics loops must retry temporary `BUSY` results after ownership releases; a controller's safe refusal must not become a permanent scene stop.
 Paused scenes must refresh control readiness and committed terminal status even when they skip simulation service.
 Display temporary `BUSY` ownership as waiting, separately from terminal failure, for live matches and replay.
+When forwarding failure, retain the originating callback kind, frame and first terminal cause; a facade may return only generic termination.
 Commit scene presentation resets only after the owning controller accepts replacement; `BUSY` preserves effect pulses and deduplication frontiers.
 Engine resource-leak errors fail verification even if structured assertions pass.
 Validate bounded view status separately from callback success and capture it before

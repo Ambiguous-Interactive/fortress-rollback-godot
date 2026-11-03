@@ -137,9 +137,8 @@ func _exit_tree() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
-		return
-	_code = demo.tick(_host_buttons())
+	if _code in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
+		_code = demo.tick(_host_buttons())
 	_update_label()
 
 
@@ -212,7 +211,10 @@ func _toggle_host_pause() -> void:
 
 
 func _step_host() -> void:
-	demo.step_host(_host_buttons())
+	if _can_set_host_delay():
+		var code: int = demo.step_host(_host_buttons())
+		if code in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY] or demo.host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+			_code = code
 	_update_label()
 
 
@@ -338,6 +340,12 @@ func _update_label() -> void:
 			state = "HISTORY UNAVAILABLE | R: start again"
 	if demo.is_host_connection_lost:
 		state = "HOST CONNECTION LOST | R: start again"
+	var host_notice: String = ""
+	var host_status: Types.Status = demo.host.loop.session.status()
+	if host_status.lifecycle == Types.Lifecycle.TERMINATED and not demo.is_host_finished:
+		host_notice = "Host stopped: " + _stop_reason(host_status) + "\n"
+	if demo._mutation_code() == Types.Code.BUSY:
+		state += " | WAITING FOR ACTIVE WORK"
 	var buffer_notice: String = ""
 	if demo.is_paused and status.lifecycle != Types.Lifecycle.TERMINATED and not playback.input_closed and playback.available_frames == 0:
 		buffer_notice = "Input buffer full. P: resume or C: catch up to receive more.\n"
@@ -354,6 +362,7 @@ func _update_label() -> void:
 		+ ("Host paused. Outstanding inputs still confirm; viewer can catch up.\n" if demo.is_host_paused and not demo.is_finishing else "")
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
+		+ host_notice
 		+ buffer_notice
 		+ _recording_feedback()
 		+ "A long viewer pause can exceed retained history while the host runs.\n"

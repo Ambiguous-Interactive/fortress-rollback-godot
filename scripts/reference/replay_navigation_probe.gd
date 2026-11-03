@@ -2,6 +2,7 @@ extends SceneTree
 
 # Value: protects=replay navigation, visible gameplay and online movement after GUI actions; fails_when=focus or control layout hides gameplay; seam=none.
 const EffectsScene = preload("res://examples/integration/integration.gd")
+const OfflineScene = preload("res://examples/offline/offline.tscn")
 const PeerScene = preload("res://examples/peer/peer.tscn")
 const InputNavigationFixture = preload("res://tests/unit/test_replay_input_navigation.gd")
 const SpectatorScene = preload("res://examples/spectator/spectator.gd")
@@ -157,8 +158,9 @@ func _run() -> void:
 	await _spectator_shortcuts()
 	await _effects_controls()
 	await _peer_controls()
-	if checks == 237 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 237")
+	await _offline_controls()
+	if checks == 255 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 255")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -569,6 +571,18 @@ func _peer_controls() -> void:
 		var after: Array = [local._match.drop_every, local._match.latency_ticks, local._match.reorder, local._match.is_partitioned]
 		_check(before != after, "real peer fault click changes " + action)
 		_check(root.gui_get_focus_owner() == null, "peer pointer preserves movement focus")
+	await _click(local._actions.pause)
+	_check(local._is_paused, "real pointer pauses peer packet service")
+	var now: int = local._match.now_us
+	local._physics_process(0.0)
+	_check(local._match.now_us == now, "paused peer GUI preserves packet clock")
+	await _key(KEY_N)
+	_check(local._match.now_us == now + local.Match.TICK_US, "routed N services one peer tick")
+	await _click(local._actions.step)
+	_check(local._match.now_us == now + 2 * local.Match.TICK_US, "real pointer services one peer tick")
+	_check(root.gui_get_focus_owner() == null, "inspection click preserves movement focus")
+	await _key(KEY_P)
+	_check(not local._is_paused and local._actions.step.disabled, "routed P resumes continuous peer service")
 	var before_delay: int = local._match.sessions[0].input_delay(0)
 	await _click(local._actions.delay_first)
 	_check(local._match.sessions[0].input_delay(0) == before_delay + 1, "real pointer raises peer input delay")
@@ -584,5 +598,37 @@ func _peer_controls() -> void:
 		local._match.games[0].frame == 0 and local._match.latency_ticks == 12 and not local._match.is_partitioned,
 		"pointer reset starts a fresh peer match preserving fault policy"
 	)
+	local.queue_free()
+	await process_frame
+
+
+func _offline_controls() -> void:
+	root.size = Vector2i(760, 560)
+	var local: Node2D = OfflineScene.instantiate()
+	root.add_child(local)
+	local.set_physics_process(false)
+	await process_frame
+	await process_frame
+	await _click(local._pause_button)
+	_check(local._is_paused, "real pointer pauses offline driver")
+	local._physics_process(0.0)
+	_check(local._simulation.frame == 0, "paused offline GUI samples no input")
+	await _key(KEY_N)
+	_check(local._simulation.frame == 1 and local._is_paused, "routed N advances one offline frame")
+	await _click(local._step_button)
+	_check(local._simulation.frame == 2 and local._is_paused, "real pointer advances one offline frame")
+	_check(root.gui_get_focus_owner() == null, "offline inspection preserves movement focus")
+	for dimensions: Vector2i in [Vector2i(760, 560), Vector2i(640, 360)]:
+		root.size = dimensions
+		await process_frame
+		await process_frame
+		_check(root.get_visible_rect().encloses(local._controls.get_global_rect()), "offline controls fit resized viewport")
+		var arena: Rect2 = local.get_global_transform() * Rect2(Vector2(24, local._board_top()), Vector2(480, 300))
+		_check(root.get_visible_rect().encloses(arena), "offline arena remains visible below controls")
+	await _key(KEY_P)
+	_check(not local._is_paused and local._step_button.disabled, "routed P resumes offline driver")
+	await _click(local._restart_button)
+	_check(local._simulation.frame == 0, "real pointer restarts offline game")
+	_check(root.get_visible_rect().encloses(local._label.get_global_rect()), "wrapped offline instructions fit actual viewport")
 	local.queue_free()
 	await process_frame

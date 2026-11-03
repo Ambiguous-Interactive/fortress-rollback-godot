@@ -21,9 +21,11 @@ The shipped addon and this scene require no Rust or development oracle.
 | Space | Block outgoing packets; press again before timeout to recover |
 | X | Change one peer's game rules to demonstrate a desync |
 | 1 / 2 | Raise peer 1's or peer 2's input delay by one frame |
+| P | Pause or resume both peers and packet delivery |
+| N | Service one ordinary packet/game tick while paused |
 | R | Reset sessions, snapshots, packets and counters |
 
-Visible buttons provide the same packet faults, wrong-game-rules, delay and reset actions.
+Visible buttons provide the same packet faults, wrong-game-rules, delay, inspection and reset actions.
 Their labels show the current fault settings. They leave keyboard movement and shortcuts available.
 Fault controls are available during startup; delay and wrong-game-rules actions wait for both peers to run.
 All controls wait while either peer owns game work. A stopped match keeps only reset available.
@@ -88,3 +90,10 @@ Delay shortcuts and their prompt are available only while both peer sessions run
 Reset remains available after a match stops; retained observations still describe the previous gameplay.
 
 Match shortcuts ignore Ctrl, Alt, Command and Shift combinations, released keys and held-key repeats.
+
+Use Pause (P) to inspect a packet fault without advancing either peer or the
+injected delivery clock. Step tick (N) services one ordinary tick while paused,
+including packet delivery, retries and an attempted frame for each peer.
+Prediction can stall without advancing; the held input stays unchanged until
+that frame succeeds. Reset resumes a fresh match. Active callbacks or expert
+requests disable inspection controls, and a stopped member ends the paused match.

@@ -254,13 +254,21 @@ func _tick(buttons: int, single_host_step: bool) -> int:
 		return Types.Code.BUSY
 	if host == null:
 		return Types.Code.NOT_CONFIGURED
+	var host_status: Types.Status = host.loop.session.status()
+	if not is_host_finished and host_status.lifecycle == Types.Lifecycle.TERMINATED:
+		viewer.terminate(host_status.reason)
+		viewer_code = _viewer_result(host_status.reason)
+		return host_status.reason
 	if not is_host_finished and host.replay_player != null:
 		return Types.Code.BUSY
 	if single_host_step:
-		if is_finishing or is_host_finished or host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+		if is_finishing or is_host_finished:
 			return Types.Code.TERMINATED
-		var sample_code: int = host.loop._tick_code(host.tick_count * Host.TICK_US, buttons)
+		var sample_code: int = _host_result(host.loop._tick_code(host.tick_count * Host.TICK_US, buttons))
 		if sample_code != Types.Code.OK:
+			if host.loop.session.status().lifecycle == Types.Lifecycle.TERMINATED:
+				viewer.terminate(sample_code)
+				viewer_code = _viewer_result(sample_code)
 			return sample_code
 		is_host_paused = true
 	if not is_host_paused and not is_finishing and not is_host_finished and host.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED:
@@ -269,7 +277,7 @@ func _tick(buttons: int, single_host_step: bool) -> int:
 	_tick_count += 1
 	var code: int = Types.Code.OK
 	if not is_host_finished:
-		code = host.finish_tick() if is_finishing or (is_host_paused and not single_host_step) else host.tick(buttons)
+		code = _host_result(host.finish_tick() if is_finishing or (is_host_paused and not single_host_step) else host.tick(buttons))
 		if is_finishing and code == Types.Code.OK:
 			code = publisher.finish_host()
 			is_host_finished = code == Types.Code.OK
@@ -339,6 +347,11 @@ func _advance_viewer(samples: Array[Driver.LocalInput]) -> int:
 		if captured.reason != Types.Code.OK:
 			return captured.reason
 	return _viewer_result(driver.step(_tick_count * Host.TICK_US, samples).code)
+
+
+func _host_result(code: int) -> int:
+	var status: Types.Status = host.loop.session.status()
+	return status.reason if status.lifecycle == Types.Lifecycle.TERMINATED else code
 
 
 func _viewer_result(code: int) -> int:

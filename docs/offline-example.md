@@ -15,6 +15,12 @@ godot --path . res://examples/offline/offline.tscn
 ```
 
 Move player 1 with WASD and player 2 with the arrow keys. Press R to restart.
+Use Pause (P) to hold the complete local match. Step frame (N) advances one
+frame through the real sync-test driver and stays paused, including rollback
+checks and corrected cosmetic pulses. Buttons provide the same actions.
+Restart replaces the match, clears pulses and resumes continuous play.
+Active callbacks or expert requests disable these controls until ownership releases.
+A paused scene still refreshes external termination and offers Restart.
 The arena scales to the window. The status displays the current frame,
 rewind distance, and number of unique color pulses.
 A stopped session displays its error code and failure frame.

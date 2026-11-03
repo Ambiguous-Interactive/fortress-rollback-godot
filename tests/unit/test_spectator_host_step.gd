@@ -4,11 +4,46 @@ const Scene = preload("res://examples/spectator/spectator.gd")
 const Demo = preload("res://examples/spectator/demo.gd")
 const Game = preload("res://examples/integration/game.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+const Writer = preload("res://addons/fortress_rollback/core/snapshot_writer.gd")
+const Reader = preload("res://addons/fortress_rollback/core/snapshot_reader.gd")
+
+
+class FailedAdvance:
+	extends Game
+
+	func simulate_frame(_frame: int, _inputs: Types.FrameInputs) -> bool:
+		return false
+
+
+class StoppingGame:
+	extends Game
+	var owner: WeakRef
+	var failure_kind: int
+	var stopped: bool = false
+
+	func _stop(kind: int) -> bool:
+		if kind != failure_kind:
+			return false
+		stopped = true
+		owner.get_ref().terminate(Types.Code.PROTOCOL_FAILED)
+		return true
+
+	func save_state(frame: int, writer: Writer) -> Driver.SaveResult:
+		return Driver.SaveResult.new(false) if _stop(Types.Kind.SAVE) else super.save_state(frame, writer)
+
+	func load_state(frame: int, reader: Reader) -> bool:
+		return false if _stop(Types.Kind.LOAD) else super.load_state(frame, reader)
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		return false if _stop(Types.Kind.ADVANCE) else super.simulate_frame(frame, inputs)
+
+
 const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["host_step", "host_step_ownership"])
+	return PackedStringArray(["host_step", "host_step_ownership", "host_failure_feedback"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -76,8 +111,10 @@ func _host_step(context: RefCounted) -> void:
 	context.equal(scene.demo.host.loop.game.frame, frame + 1, "ordinary T steps exactly one host frame")
 	context.equal(scene.demo.finish_host(), Types.Code.OK, "clean ending can follow host inspection")
 	context.equal(scene.demo.step_host(Game.RIGHT), Types.Code.TERMINATED, "single-step cannot extend declared final boundary")
+	scene._unhandled_key_input(key)
+	context.equal(scene._code, Types.Code.OK, "refused T cannot stop clean tail service")
 	for tick: int in range(20):
-		scene.demo.tick(0)
+		scene._physics_process(0.0)
 	context.equal(scene.demo.viewer.is_complete(), true, "single-stepped match drains a complete clean tail")
 	scene._update_label()
 	context.equal(button.disabled, true, "finished host disables step control")
@@ -143,3 +180,92 @@ func _host_step_ownership(context: RefCounted) -> void:
 			context.equal(observations[index + 1], 0, "nested host step preserves running host through callback")
 	demo.viewer.terminate()
 	demo.host.loop.session.terminate()
+
+
+# Value: protects=spectator reports the originating host callback and frame; fails_when=forwarded viewer failure loses host evidence;
+# why_new=viewer callback reports do not cover host failure forwarding; seam=real driver callback
+func _host_failure_feedback(context: RefCounted) -> void:
+	for failed: bool in [false, true]:
+		var scene: Node = Scene.new()
+		scene._ready()
+		if failed:
+			context.equal(scene.demo.host.loop.driver.configure(scene.demo.host.loop.session, FailedAdvance.new()), Types.Code.OK, "install failing host game")
+		scene._step_host_button.pressed.emit()
+		if failed:
+			context.equal(scene._code, Types.Code.CALLBACK_FAILED, "single host step retains its actual failure code")
+			context.equal(scene.demo.host.loop.session.status().failure_kind, Types.Kind.ADVANCE, "real host ADVANCE failed")
+			context.equal(scene._label.text.contains("Host stopped: failed while simulating input at frame 0"), true, "host callback evidence remains visible after viewer forwarding")
+			context.equal(scene._step_host_button.disabled, true, "failed host cannot step again")
+			scene._restart_button.pressed.emit()
+			context.equal(scene._code, Types.Code.OK, "restart clears host failure")
+			context.equal(scene._label.text.contains("Host stopped:"), false, "fresh match clears failure notice")
+		else:
+			context.equal(scene._code, Types.Code.OK, "healthy host step remains successful")
+			context.equal(scene._label.text.contains("Host stopped:"), false, "healthy host has no failure report")
+		scene._exit_tree()
+		scene.free()
+	for limit: String in ["frame", "batch"]:
+		for entry: String in ["pointer", "controller"]:
+			var scene: Node = Scene.new()
+			scene._ready()
+			scene.demo.set_paused(true)
+			for tick: int in 20:
+				scene.demo.tick(Game.RIGHT)
+			context.equal(scene.demo.viewer.playback_status().buffered_frames > 0, true, "preflight fixture retains real confirmed viewer rows")
+			var bytes: PackedByteArray = scene.demo.game.canonical_bytes()
+			var host: RefCounted = scene.demo.host.loop.session
+			if limit == "frame":
+				host._current = Queue.FRAME_MAX
+			else:
+				host._batch_id = 9223372036854775807
+			if entry == "pointer":
+				scene._step_host_button.pressed.emit()
+				context.equal(scene._code, Types.Code.FRAME_EXHAUSTED, "pointer retains preflight exhaustion")
+			else:
+				context.equal(scene.demo.step_host(Game.RIGHT), Types.Code.FRAME_EXHAUSTED, "controller reports preflight exhaustion")
+			context.equal(host.status().reason, Types.Code.FRAME_EXHAUSTED, "host really terminates during preflight")
+			context.equal(scene.demo.viewer.status().lifecycle, Types.Lifecycle.TERMINATED, "preflight host termination also retires buffered viewer")
+			context.equal(scene.demo.viewer_code, Types.Code.FRAME_EXHAUSTED, "forwarding preserves terminal cause")
+			context.equal(scene.demo.step_viewer(), Types.Code.FRAME_EXHAUSTED, "manual viewer cannot consume buffered rows after host exhaustion")
+			context.bytes_equal(scene.demo.game.canonical_bytes(), bytes, scene.demo.game.frame, "terminal preflight preserves displayed viewer history")
+			scene._exit_tree()
+			scene.free()
+	for entry: String in ["tick", "step"]:
+		var demo: Demo = Demo.new()
+		context.equal(demo.start(), Types.Code.OK, "fresh externally stopped host")
+		demo.host.loop.session.terminate(Types.Code.FRAME_EXHAUSTED)
+		var code: int = demo.tick(0) if entry == "tick" else demo.step_host(0)
+		context.equal(code, Types.Code.FRAME_EXHAUSTED, "already stopped host preserves its first cause through " + entry)
+		context.equal(demo.viewer.status().reason, Types.Code.FRAME_EXHAUSTED, "already stopped host immediately retires viewer through " + entry)
+		context.equal(demo.viewer_code, Types.Code.FRAME_EXHAUSTED, "already stopped host updates viewer result through " + entry)
+		demo.viewer.terminate()
+		demo.host.loop.session.terminate()
+
+	for entry: String in ["tick", "step"]:
+		for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
+			for prior_viewer_failure: bool in [false, true]:
+				var scene: Node = Scene.new()
+				scene._ready()
+				scene.demo.set_paused(true)
+				var game: StoppingGame = StoppingGame.new()
+				game.owner = weakref(scene.demo.host.loop.session)
+				game.failure_kind = kind
+				scene.demo.host.loop.game = game
+				context.equal(scene.demo.host.loop.driver.configure(scene.demo.host.loop.session, game), Types.Code.OK, "install callback termination fixture")
+				if prior_viewer_failure:
+					scene.demo.viewer.terminate(Types.Code.DESYNC)
+				for tick: int in 24:
+					if entry == "tick":
+						scene._physics_process(0.0)
+					else:
+						scene._step_host_button.pressed.emit()
+					if game.stopped:
+						break
+				context.equal(game.stopped, true, "actual selected host callback terminates its session")
+				context.equal(scene.demo.host.loop.session.status().reason, Types.Code.PROTOCOL_FAILED, "host retains callback termination cause")
+				context.equal(scene._code, Types.Code.PROTOCOL_FAILED, "scene receives original callback termination cause")
+				var viewer_reason: int = Types.Code.DESYNC if prior_viewer_failure else Types.Code.PROTOCOL_FAILED
+				context.equal(scene.demo.viewer.status().reason, viewer_reason, "forwarded callback termination preserves viewer's first cause")
+				context.equal(scene.demo.viewer_code, viewer_reason, "viewer result preserves its first cause after callback termination")
+				scene._exit_tree()
+				scene.free()

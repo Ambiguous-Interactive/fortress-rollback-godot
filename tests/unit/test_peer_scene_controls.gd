@@ -8,15 +8,22 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const SnapshotStatus = preload("res://addons/fortress_rollback/core/snapshot_status.gd")
 const ACTION_KEYS: Dictionary = {
 	"loss": KEY_L, "latency": KEY_T, "reorder": KEY_O, "block": KEY_SPACE,
-	"desync": KEY_X, "delay_first": KEY_1, "delay_second": KEY_2, "reset": KEY_R
+	"desync": KEY_X, "delay_first": KEY_1, "delay_second": KEY_2, "reset": KEY_R, "pause": KEY_P, "step": KEY_N
 }
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["pointer_controls", "owned_controls", "stopped_controls"])
+	return PackedStringArray(["pointer_controls", "owned_controls", "stopped_controls", "inspection"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
+	var probe: Node = _scene()
+	var available: bool = probe._actions.has("pause") and probe._actions.has("step")
+	probe.free()
+	context.equal(available, true, "peer example exposes pause and tick controls")
+	if not available:
+		context.finish()
+		return
 	call("_" + name, context)
 	context.finish()
 
@@ -61,7 +68,7 @@ func _pointer_controls(context: RefCounted) -> void:
 	var game: Match = scene._match
 	for action: String in ACTION_KEYS:
 		context.equal(scene._actions[action].focus_mode, Control.FOCUS_NONE, action + " leaves movement and Space shortcuts available")
-		context.equal(scene._actions[action].disabled, action in ["delay_first", "delay_second", "desync"], action + " reflects startup readiness")
+		context.equal(scene._actions[action].disabled, action in ["delay_first", "delay_second", "desync", "step"], action + " reflects startup readiness")
 	for action: String in ["loss", "latency", "reorder", "block"]:
 		var before: Array = _state(game)
 		scene._actions[action].pressed.emit()
@@ -156,3 +163,60 @@ func _stopped_controls(context: RefCounted) -> void:
 		context.equal(game.failure, Match.I.Code.OK, "stopped pointer reset clears terminal failure")
 		context.equal(game.games[0].frame, 0, "stopped pointer reset starts fresh gameplay")
 		scene.free()
+
+
+# Value: protects=peer inspection freezes packet time and uses actual delayed bytes; fails_when=pause polls or step skips held input;
+# why_new=match tick tests do not exercise scene pause; seam=none
+func _inspection(context: RefCounted) -> void:
+	var scene: Node = _scene()
+	var pause: Button = scene._actions.get("pause")
+	var step: Button = scene._actions.get("step")
+	context.equal(pause != null and step != null, true, "peer fault demo exposes pause and single-tick controls")
+	if pause == null or step == null:
+		scene.free()
+		return
+	_healthy(scene, context)
+	var game: Match = scene._match
+	pause.pressed.emit()
+	context.equal(scene._is_paused, true, "pointer pauses peer service")
+	var before: Array = _state(game)
+	for tick: int in 10:
+		scene._physics_process(0.0)
+	context.equal(_state(game), before, "pause freezes delivery clock, samples and transport")
+	for tick: int in 30:
+		var frames: PackedInt64Array = PackedInt64Array([game.games[0].frame, game.games[1].frame])
+		var now: int = game.now_us
+		if tick % 2 == 0:
+			step.pressed.emit()
+		else:
+			_key(scene, "step")
+		context.equal(game.now_us, now + Match.TICK_US, "step services exactly one injected packet tick")
+		for player: int in 2:
+			context.equal(game.games[player].frame, frames[player] + 1, "healthy step advances each byte session once")
+		context.equal(scene._is_paused, true, "single tick stays paused")
+	game.is_partitioned = true
+	for tick: int in 20:
+		step.pressed.emit()
+	context.equal(game.stalls[0] > 0 and game.stalls[1] > 0, true, "stepped partition reaches real prediction bound")
+	var held: PackedInt32Array = game._held.duplicate()
+	step.pressed.emit()
+	context.equal(game._held, held, "stalled inspection retains original samples")
+	game.is_partitioned = false
+	for tick: int in 30:
+		step.pressed.emit()
+	context.equal(game.failure, Match.I.Code.OK, "stepped packet healing resumes gameplay")
+	context.equal(game.games[0].frame > 80, true, "healed peers advance after prediction stall")
+	_key(scene, "pause")
+	context.equal(scene._is_paused, false, "keyboard resumes continuous service")
+	context.equal(step.disabled, true, "continuous service disables extra tick")
+	_key(scene, "pause")
+	scene._actions.reset.pressed.emit()
+	context.equal(scene._is_paused, false, "accepted reset resumes a fresh match")
+	pause.pressed.emit()
+	game.sessions[1].close(game.now_us)
+	scene._physics_process(0.0)
+	context.equal(game.sessions[0].status().lifecycle, Types.Lifecycle.TERMINATED, "paused refresh retires counterpart after peer ends")
+	context.equal(pause.disabled, true, "paused stopped match disables resume")
+	context.equal(step.disabled, true, "paused stopped match disables step")
+	context.equal(scene._actions.reset.disabled, false, "stopped match retains reset")
+	scene.free()

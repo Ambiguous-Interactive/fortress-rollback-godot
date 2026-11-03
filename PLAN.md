@@ -36,7 +36,7 @@ Local development contracts and evidence entry points:
 - [Actual received browser prefix files, production-picker reimport and remaining supervision qualification](docs/experiments/buffer-ownership.md#received-browser-replay-downloads).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
 - [Online input ownership retries, modifier guards and live delay readiness](docs/online-example.md#install-and-run).
-- [Local peer delay shortcuts gated by both live sessions](docs/peer-example.md).
+- [Local peer packet pause, single-tick inspection and delay shortcuts gated by both live sessions](docs/peer-example.md).
 - [Addon candidate packaging and clean installation](docs/package.md).
 - [Supported features, browsers, platforms and explicit exclusions](docs/supported.md).
 - [Native/browser diagnostic file viewer, including portable JSON export and escaped recorded metadata and saved callback failure names and frames](docs/diagnostic-viewer.md).
@@ -72,7 +72,7 @@ Local development contracts and evidence entry points:
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).
-- [Runnable offline driver and presentation example](docs/offline-example.md).
+- [Runnable offline driver with paused single-frame inspection and presentation](docs/offline-example.md).
 - `make test-reference` runs offline tooling negative controls;
   `make reference-baseline` reproduces the Rust reference, not the Godot port.
 
