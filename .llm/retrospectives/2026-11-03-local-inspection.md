@@ -56,3 +56,7 @@ a previously stopped host's first cause through both tick entry points.
 Existing nonterminal input/ownership refusals remain retryable, and clean endings
 retain final-tail service. This applies the existing wrapper terminal-preflight
 guidance; no additional overlapping rule was added.
+The related scene-service assertions now require the original `PROTOCOL_FAILED`
+cause in scene, viewer and result state, replacing the old generic `TERMINATED`
+expectation. The focused host, viewer and recording suites pass with that stronger
+contract; fresh adversarial review finds no remaining preflight issue.
