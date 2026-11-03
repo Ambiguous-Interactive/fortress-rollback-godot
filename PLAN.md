@@ -558,6 +558,7 @@ Driver-only clients can cancel through the same terminal lifecycle, including in
 Completion notifications guard the shared session, so another driver or expert facade cannot advance or reconfigure it between handlers.
 Remote-input sessions can recover and finalize confirmed replay history without another local sample
 or forward frame. The local spectator example exposes bounded catch-up rate controls independently of viewing delay.
+Its host can pause new input while pending delivery and correction settle; the viewer continues independently.
 Its identified saved recordings open in the shared replay viewer with their own game callbacks and control labels.
 The actual 36,000-frame spectator export round-trips through bounded seeking and complete playback against independently simulated original inputs.
 The spectator example uses that shared operation to settle its exact final host
@@ -692,6 +693,10 @@ It must not infer admission from SignalFish reconnection alone.
 Apply feature-specific upstream models and runtime fault tests at each step.
 The final advanced task audits all remaining applicable upstream behavior and
 creates residual tasks before any complete-parity claim.
+
+The playable effects example supports paused single-tick inspection through the actual driver, including prediction stalls and rollback.
+Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
+These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
 
 ## Upstream tracking and upgrades
 

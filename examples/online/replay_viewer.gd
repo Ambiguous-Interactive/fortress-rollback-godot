@@ -23,6 +23,7 @@ const GAME_VERSION: String = "fortress-online-integer-v1"
 var game: RefCounted = Simulation.new()
 var message: String = "Open an online or spectator .frrp recording."
 var is_playing: bool = false
+var _repeat_playback: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
@@ -56,6 +57,8 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	_recording_sha256 = hash.finish().hex_encode()
 	_recording_bytes = bytes.size()
 	_recording = recording
+	if recording.frame_count() == 0:
+		_repeat_playback = false
 	_input_changes = PackedInt64Array(changes)
 	_status_changes = PackedInt64Array(status_changes)
 	_recorded_checksums.clear()
@@ -146,7 +149,7 @@ func terminate() -> void:
 
 
 func toggle_play() -> void:
-	if _is_busy() or is_seeking() or not can_step():
+	if _is_busy() or is_seeking() or (not can_step() and not is_playing):
 		return
 	_playback_quarters = 0
 	is_playing = not is_playing
@@ -169,6 +172,19 @@ func set_playback_speed(quarters: int) -> bool:
 	return true
 
 
+## Repeat only nonempty, healthy recordings. Navigation and manual stepping still finish paused.
+## Every lap creates a fresh playback lifetime and validates the original recorded evidence again.
+func set_repeat_playback(enabled: bool) -> bool:
+	if _is_busy() or is_seeking() or _recording == null or frame_count() == 0 or has_failure():
+		return false
+	_repeat_playback = enabled
+	return true
+
+
+func repeat_playback() -> bool:
+	return _repeat_playback
+
+
 func playback_speed_quarters() -> int:
 	return _speed_quarters
 
@@ -187,10 +203,18 @@ func tick() -> void:
 			elif current_frame() == _seek_target:
 				_finish_seek()
 	elif is_playing:
+		if _player.is_complete():
+			if not _repeat_playback:
+				is_playing = false
+				return
+			restart()
+			toggle_play()
 		_playback_quarters += _speed_quarters
 		while _playback_quarters >= 4 and is_playing:
 			_playback_quarters -= 4
 			_advance()
+			if _player.is_complete():
+				break
 
 
 ## Pause after one input and validate the selected state boundary without consuming its input.
@@ -231,7 +255,7 @@ func _advance() -> void:
 		is_playing = false
 		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	elif _player.is_complete():
-		is_playing = false
+		is_playing = _repeat_playback and frame_count() > 0
 		message = _complete_message()
 
 

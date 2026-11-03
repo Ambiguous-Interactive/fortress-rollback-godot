@@ -337,7 +337,7 @@ func _update_label() -> void:
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
 		+ buffer_notice
 		+ _recording_feedback()
-		+ "A long pause can exceed retained history; the host keeps playing.\n"
+		+ "A long viewer pause can exceed retained history while the host runs.\n"
 		+ "Two local views. Live spectator networking is not connected."
 		+ ("\n" + _replay_notice if not _replay_notice.is_empty() else "")
 	)

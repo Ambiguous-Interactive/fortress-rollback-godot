@@ -37,13 +37,16 @@ func cases() -> PackedStringArray:
 			"dropped_file",
 			"recording_metadata",
 			"paused_validation",
-			"frame_submit"
+			"frame_submit",
+			"repeat_playback"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"repeat_playback":
+			_repeat_playback(context)
 		"frame_submit":
 			_frame_submit(context)
 		"paused_validation":
@@ -798,5 +801,129 @@ func _frame_submit(context: RefCounted) -> void:
 		node._is_scrubbing = false
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	expected.terminate()
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=repeated viewing revalidates original history and stops on corruption; fails_when=completion reuses state or skips validation;
+# why_new=existing controls cover one playback lifetime only; seam=none
+func _repeat_playback(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.viewer.has_method("set_repeat_playback"), true, "viewer supports repeated viewing")
+	if not node.viewer.has_method("set_repeat_playback"):
+		node._exit_tree()
+		node.free()
+		return
+	context.equal(node.viewer.set_repeat_playback(true), false, "empty viewer cannot repeat")
+	var source: Replay = recording(5)
+	context.equal(node.viewer.open_bytes(source.to_bytes()), true, "repeat fixture opens")
+	node._refresh()
+	context.equal(node._repeat.disabled, false, "nonempty recording offers repeat")
+	node._repeat.button_pressed = true
+	context.equal(node.viewer.repeat_playback(), true, "visible repeat control changes playback policy")
+	for speed: int in [1, 4, 16]:
+		node.viewer.restart()
+		node.viewer.set_playback_speed(speed)
+		node.viewer.toggle_play()
+		var completed: int = 0
+		var prior_frame: int = 0
+		for _tick: int in 60:
+			node.viewer.tick()
+			var frame: int = node.viewer.current_frame()
+			var expected: Simulation = Simulation.new()
+			for index: int in frame:
+				expected.simulate_frame(index, source.inputs(index))
+			context.bytes_equal(node.viewer.game.canonical_bytes(), expected.canonical_bytes(), frame, "every repeated frame matches original history")
+			context.equal(node.viewer.is_playing, true, "repeat remains playing across clean completion")
+			context.equal(node.viewer.playback_speed_quarters(), speed, "repeat preserves selected cadence")
+			if frame == source.frame_count() and prior_frame != frame:
+				completed += 1
+				context.equal(node.viewer.checked_checksum_count(), source.frame_count(), "each completed lap validates all recorded checksums")
+				if completed == 2:
+					break
+			prior_frame = frame
+		context.equal(completed, 2, "two full laps complete at every supported cadence extreme")
+		node._refresh()
+		context.equal(node._play.disabled, false, "final boundary can pause before repeating")
+		node._play.pressed.emit()
+		context.equal(node.viewer.is_playing, false, "pause cancels automatic repetition")
+		var final_bytes: PackedByteArray = node.viewer.game.canonical_bytes()
+		node.viewer.tick()
+		context.bytes_equal(node.viewer.game.canonical_bytes(), final_bytes, 5, "paused ending stays visible")
+		context.equal(node.viewer.set_repeat_playback(false), true, "repeat can be disabled at completion")
+		node.viewer.restart()
+		node.viewer.toggle_play()
+		for _tick: int in 25:
+			node.viewer.tick()
+		context.equal(node.viewer.current_frame(), 5, "ordinary playback retains final boundary")
+		context.equal(node.viewer.is_playing, false, "ordinary playback ends once")
+		node.viewer.set_repeat_playback(true)
+	node.viewer.restart()
+	node.viewer.set_repeat_playback(true)
+	node.viewer.toggle_play()
+	node.viewer.seek(3)
+	context.equal(node.viewer.set_repeat_playback(false), false, "active seek preserves repeat policy")
+	node.viewer.tick()
+	context.equal(node.viewer.current_frame(), 3, "seek reaches selected boundary")
+	context.equal(node.viewer.is_playing, false, "repeat does not restart manual navigation")
+	node.viewer.step()
+	context.equal(node.viewer.is_playing, false, "manual step remains paused with repeat enabled")
+	node._is_scrubbing = true
+	node._repeat.button_pressed = false
+	context.equal(node.viewer.repeat_playback(), true, "held timeline refuses repeat changes")
+	context.equal(node._repeat.button_pressed, true, "refused UI change restores actual repeat policy")
+	node._is_scrubbing = false
+	var damaged: Replay = recording(5)
+	damaged._checksums[4 * Replay.CHECKSUM_BYTES] ^= 1
+	node.viewer.open_bytes(damaged.to_bytes())
+	node.viewer.toggle_play()
+	for _tick: int in 25:
+		node.viewer.tick()
+	context.equal(node.viewer.current_frame(), 4, "repeat stops at corrupt boundary")
+	context.equal(node.viewer.has_failure(), true, "repeat preserves checksum failure")
+	context.equal(node.viewer.is_playing, false, "corruption cannot auto-restart")
+	context.equal(node.viewer.set_repeat_playback(true), false, "failed playback cannot enable repetition")
+	for fault: String in ["none", "terminal", "input_digest"]:
+		var terminal: Replay = recording(5)
+		var expected: Simulation = Simulation.new()
+		for frame: int in 5:
+			expected.simulate_frame(frame, terminal.inputs(frame))
+		terminal._format_version = Replay.TERMINAL_VERSION
+		terminal._terminal_checksum = Simulation.checksum(expected.canonical_bytes())
+		if fault == "terminal":
+			terminal._terminal_checksum[0] ^= 1
+		elif fault == "input_digest":
+			terminal._digests[4 * Replay.DIGEST_BYTES] ^= 1
+		context.equal(node.viewer.open_bytes(terminal.to_bytes()), true, "terminal repeat fixture opens")
+		context.equal(node.viewer.set_repeat_playback(true), true, "healthy imported lifetime enables repeat before validation")
+		node.viewer.toggle_play()
+		var laps: int = 0
+		for _tick: int in 40:
+			node.viewer.tick()
+			if node.viewer.has_failure():
+				break
+			if node.viewer._player.is_complete():
+				laps += 1
+				if laps == 2:
+					break
+		context.equal(node.viewer.has_failure(), fault != "none", "each repeated lifetime validates terminal and input evidence")
+		context.equal(node.viewer.is_playing, fault == "none", "only clean terminal completion repeats")
+		context.equal(node.viewer.current_frame(), 4 if fault == "input_digest" else 5, "corruption stops at exact owning boundary")
+		if fault != "none":
+			var report: Dictionary = JSON.parse_string(node.viewer.failure_report_bytes().get_string_from_utf8())
+			context.equal(report.failure.comparison, "input_digest" if fault == "input_digest" else "state_checksum", "repeat preserves exact failure diagnostics")
+		else:
+			context.equal(laps, 2, "two clean terminal laps complete")
+			context.equal(node.viewer.checked_checksum_count(), 6, "each clean lap includes terminal checksum")
+			context.bytes_equal(node.viewer.game.canonical_bytes(), expected.canonical_bytes(), 5, "clean terminal repeat preserves original final state")
+	var empty: Replay = recording(0)
+	empty._format_version = Replay.TERMINAL_VERSION
+	empty._terminal_checksum = Simulation.checksum(Simulation.new().canonical_bytes())
+	node.viewer.open_bytes(empty.to_bytes())
+	context.equal(node.viewer.repeat_playback(), false, "initial-only replacement clears repeat")
+	context.equal(node.viewer.set_repeat_playback(true), false, "initial-only recording cannot loop")
+	node._refresh()
+	context.equal(node._repeat.disabled, true, "initial-only repeat control is disabled")
 	node._exit_tree()
 	node.free()

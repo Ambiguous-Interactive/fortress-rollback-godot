@@ -77,6 +77,7 @@ var _prefix_notice: String = ""
 var _prefix_frame: int = -1
 var _prefix_game: RefCounted
 var _restart_button: Button
+var _repeat: CheckButton
 var _speed: OptionButton
 var _target: SpinBox
 var _seek_button: Button
@@ -138,6 +139,12 @@ func _ready() -> void:
 	_speed.select(2)
 	_speed.item_selected.connect(_speed_selected)
 	buttons.add_child(_speed)
+	_repeat = CheckButton.new()
+	_repeat.name = "RepeatPlayback"
+	_repeat.text = "Repeat"
+	_repeat.tooltip_text = "Play again after a clean ending. Each lap checks the recorded history; failures stop playback."
+	_repeat.toggled.connect(_repeat_toggled)
+	buttons.add_child(_repeat)
 	var navigation: HBoxContainer = HBoxContainer.new()
 	panel.add_child(navigation)
 	_back_button = _button(navigation, "Back one frame", _back_one_frame)
@@ -291,6 +298,12 @@ func _speed_selected(index: int) -> void:
 	if _is_scrubbing:
 		return
 	viewer.set_playback_speed([1, 2, 4, 8, 16][index])
+	_refresh()
+
+
+func _repeat_toggled(enabled: bool) -> void:
+	if not _is_scrubbing:
+		viewer.set_repeat_playback(enabled)
 	_refresh()
 
 
@@ -483,12 +496,14 @@ func _refresh() -> void:
 	_failure_download.disabled = held or not viewer.has_failure()
 	_prefix_download.disabled = _is_scrubbing or not viewer.can_export_prefix()
 	_play.text = "Pause" if viewer.is_playing else "Play"
-	_play.disabled = held or viewer.is_seeking() or not viewer.can_step()
-	_step_button.disabled = _play.disabled
+	_play.disabled = held or viewer.is_seeking() or (not viewer.can_step() and not viewer.is_playing)
+	_step_button.disabled = held or viewer.is_seeking() or not viewer.can_step()
 	_validate_button.disabled = _is_scrubbing or not viewer.can_validate_state()
 	_back_button.disabled = held or viewer.is_seeking() or viewer.current_frame() == 0
 	_restart_button.disabled = held or (viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0)
 	_speed.disabled = held
+	_repeat.disabled = held or viewer.is_seeking() or viewer.frame_count() == 0 or viewer.has_failure()
+	_repeat.set_pressed_no_signal(viewer.repeat_playback())
 	_timeline.set_block_signals(true)
 	_timeline.max_value = viewer.frame_count()
 	if not _is_scrubbing:
