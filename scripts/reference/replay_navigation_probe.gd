@@ -474,7 +474,7 @@ func _repeat_controls() -> void:
 	var retired: RefCounted = scene.viewer._player
 	scene._physics_process(0.0)
 	_check(scene.viewer.current_frame() == 3 and scene.viewer._player != retired, "repeat creates another validated playback lifetime")
-	_check(retired.step() == ViewerTypes.Code.FRAME_EXHAUSTED or retired.failure_code() == ViewerTypes.Code.TERMINATED, "repeated playback retires original player")
+	_check(retired.step() == ViewerTypes.Code.TERMINATED and retired.failure_code() == ViewerTypes.Code.TERMINATED, "repeated playback retires original player")
 	await _key(KEY_P)
 	_check(not scene.viewer.is_playing, "focused repeat control preserves pause shortcut at ending")
 	scene.viewer.set_repeat_playback(false)

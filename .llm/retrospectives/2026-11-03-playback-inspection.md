@@ -65,12 +65,22 @@ zero engine errors. The repaired scene reads terminal status before skipping
 live service and distinguishes temporary replay ownership from a stopped replay.
 The same scene guidance now covers these observed status-consumer failures.
 
+Automatic review independently found the paused termination issue and a weak
+retirement assertion in the live replay probe. The stricter assertion requires
+TERMINATED rather than accepting an exhausted but healthy old player.
+Removing restart's termination call passes the old assertion but fails the new
+assertion exactly at retirement. Restoring the call passes all 210 checks.
+Evidence: `.cache/session148-retirement-weak-mutant.log`,
+`.cache/session148-retirement-strict-mutant.log` and
+`.cache/session148-retirement-strict-clean.log`. Existing testing guidance already
+requires such removal controls; no new skill is needed.
+
 ## Harvest and curation
 
 | Finding | Action |
 | --- | --- |
 | Paused physics can strand controls disabled after expert ownership ends. | Extend GDScript style's scene ownership guidance to require readiness refresh without simulation service. |
-| Parallel edits invalidate source-bound receipts even when assertions pass. | Existing testing infrastructure guidance already requires a coordinated source freeze; retain it and use one final qualification. |
+| Parallel edits invalidated `.cache/session148-replay-red.json:1` with `source_changed_during_capture`. | Existing testing infrastructure guidance already requires a coordinated source freeze; retain it and use one final qualification. |
 | Repetition must cross terminal validation, not just the last input. | Keep terminal checksum and input-digest cases in the existing replay test table. |
 
 ## Prune and verification

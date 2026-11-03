@@ -22,7 +22,7 @@ Press the physical number-row **1**, **2** or **3** keys for remote-input delive
 Press **O** or click **Pause match** to hold the live match, queued deliveries and confirmed effects.
 While paused, press **N** or click **Step tick** to service one tick, including delayed delivery and rollback.
 A prediction stall can service a tick without advancing the game frame. Press **O** again to resume.
-Press **R** to restart with the selected delay and a fresh effects ledger; restart also resumes play.
+Restart with **R** to select a fresh effects ledger and resume play at the current delay.
 Press **P** to pause and watch a replay of the confirmed frames so far. It starts from a fresh game,
 checks every recorded checksum and ends on the corrected state. Press **P** again to return to the match.
 The buttons below the instructions provide the same delay, replay and restart actions.
