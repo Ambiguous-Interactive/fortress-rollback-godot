@@ -277,6 +277,8 @@
 
 ### Fixed
 
+- Fix number-row shortcuts in the effects, spectator and peer examples on AZERTY layouts, without requiring Shift.
+
 - Fix refused effects-example restarts clearing confirmed-effect pulses while a game callback or request still owns the match.
 
 - Fix replay controls and failure details pushing the game outside short windows. Scroll controls in smaller windows; wheel scrolling over the timeline preserves playback and failure evidence. (#310)

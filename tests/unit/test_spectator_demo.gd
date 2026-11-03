@@ -1692,7 +1692,8 @@ func _host_delay_controls(context: RefCounted) -> void:
 		controls.item_selected.emit((index + 1) % 3)
 		var key: InputEventKey = InputEventKey.new()
 		key.pressed = true
-		key.keycode = [KEY_1, KEY_2, KEY_3][index]
+		key.keycode = KEY_AMPERSAND
+		key.physical_keycode = [KEY_1, KEY_2, KEY_3][index]
 		scene._unhandled_key_input(key)
 		context.equal(scene.demo.host.lag_ticks, [0, 3, 12][index], "keyboard selects the same bounded host delivery")
 		context.equal(scene.demo.host.loop.game.frame, frame, "keyboard selection does not simulate input")
@@ -1704,7 +1705,8 @@ func _host_delay_controls(context: RefCounted) -> void:
 	context.equal(scene.demo.viewer.begin_advance().code, Types.Code.READY, "viewer manual work owns composition")
 	var key: InputEventKey = InputEventKey.new()
 	key.pressed = true
-	key.keycode = KEY_1
+	key.keycode = KEY_AMPERSAND
+	key.physical_keycode = KEY_1
 	scene._unhandled_key_input(key)
 	context.equal(scene.demo.host.lag_ticks, 12, "keyboard cannot bypass current composed ownership")
 	controls.item_selected.emit(0)

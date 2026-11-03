@@ -41,26 +41,28 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
 		return
-	match event.keycode:
-		KEY_R:
-			_match.reset()
-			_delay_result = ""
-		KEY_L:
-			_match.drop_every = 0 if _match.drop_every > 0 else 7
-		KEY_T:
-			_match.latency_ticks = 12 if _match.latency_ticks == 3 else 3
-		KEY_O:
-			_match.reorder = not _match.reorder
-		KEY_SPACE:
-			_match.is_partitioned = not _match.is_partitioned
-		KEY_X:
-			_match.inject_desync()
-		KEY_1, KEY_2:
-			if not _can_change_delay():
-				return
-			var player: int = 0 if event.keycode == KEY_1 else 1
-			var code: int = _match.raise_input_delay(player)
-			_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged (code %d)" % [player + 1, code]
+	var number_key: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	if number_key in [KEY_1, KEY_2]:
+		if not _can_change_delay():
+			return
+		var player: int = 0 if number_key == KEY_1 else 1
+		var code: int = _match.raise_input_delay(player)
+		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged (code %d)" % [player + 1, code]
+	else:
+		match event.keycode:
+			KEY_R:
+				_match.reset()
+				_delay_result = ""
+			KEY_L:
+				_match.drop_every = 0 if _match.drop_every > 0 else 7
+			KEY_T:
+				_match.latency_ticks = 12 if _match.latency_ticks == 3 else 3
+			KEY_O:
+				_match.reorder = not _match.reorder
+			KEY_SPACE:
+				_match.is_partitioned = not _match.is_partitioned
+			KEY_X:
+				_match.inject_desync()
 	_update_label()
 
 

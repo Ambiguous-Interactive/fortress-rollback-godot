@@ -19,6 +19,7 @@ func run_case(name: String, context: RefCounted) -> void:
 			_ignored(node, example, context)
 		else:
 			_ordinary(node, example, context)
+			_physical_numbers(node, example, context)
 		node.call("_exit_tree")
 		node.free()
 	context.finish()
@@ -55,6 +56,7 @@ func _ignored(node: Node, example: String, context: RefCounted) -> void:
 		for key: Key in keys:
 			var event: InputEventKey = InputEventKey.new()
 			event.keycode = key
+			event.physical_keycode = key
 			event.pressed = property != "released"
 			if property != "released":
 				event.set(property, true)
@@ -80,3 +82,36 @@ func _ordinary(node: Node, example: String, context: RefCounted) -> void:
 		12 if example == "integration" else 1,
 		example + " ordinary gameplay fault control remains available"
 	)
+
+
+# Value: protects=physical number-row actions remain accessible on non-US layouts;
+# fails_when=logical symbol keys suppress gameplay delay controls; why_new=US logical keys cannot expose layout differences; seam=none
+func _physical_numbers(node: Node, example: String, context: RefCounted) -> void:
+	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_AMPERSAND
+	if example == "integration":
+		var canonical: PackedByteArray = node._demo.loop.game.canonical_bytes()
+		for index: int in range(3):
+			key.physical_keycode = [KEY_1, KEY_2, KEY_3][index]
+			node._unhandled_key_input(key)
+			context.equal(node._demo.lag_ticks, [0, 3, 12][index], "physical effect delay ignores the logical glyph")
+			context.bytes_equal(node._demo.loop.game.canonical_bytes(), canonical, 0, "physical delay action never simulates input")
+		return
+	node._match.is_partitioned = false
+	node._match.drop_every = 0
+	node._match.latency_ticks = 0
+	node._match.reorder = false
+	for tick: int in range(60):
+		node._match.tick(PackedInt32Array([0, 0]))
+	context.equal(node._can_change_delay(), true, "physical peer actions have two synchronized live sessions")
+	for player: int in range(2):
+		var before: PackedInt32Array = PackedInt32Array([node._match.sessions[0].input_delay(0), node._match.sessions[1].input_delay(1)])
+		var bytes: PackedByteArray = node._match.games[player].canonical_bytes()
+		var time: int = node._match.now_us
+		key.physical_keycode = KEY_1 if player == 0 else KEY_2
+		node._unhandled_key_input(key)
+		context.equal(node._match.sessions[player].input_delay(player), before[player] + 1, "physical number selects its actual peer")
+		context.equal(node._match.sessions[1 - player].input_delay(1 - player), before[1 - player], "physical number preserves the other peer delay")
+		context.equal(node._match.now_us, time, "physical peer delay action preserves service time")
+		context.bytes_equal(node._match.games[player].canonical_bytes(), bytes, node._match.games[player].frame, "physical peer delay never advances game")

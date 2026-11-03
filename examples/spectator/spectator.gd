@@ -142,8 +142,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
 		return
-	if event.keycode in [KEY_1, KEY_2, KEY_3]:
-		_set_host_delay([KEY_1, KEY_2, KEY_3].find(event.keycode))
+	var number_key: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	if number_key in [KEY_1, KEY_2, KEY_3]:
+		_set_host_delay([KEY_1, KEY_2, KEY_3].find(number_key))
 	elif event.keycode == KEY_P:
 		_toggle_pause()
 	elif event.keycode == KEY_N:

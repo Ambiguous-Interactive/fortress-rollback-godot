@@ -87,17 +87,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if event.alt_pressed or event.ctrl_pressed or event.meta_pressed or event.shift_pressed:
 		return
-	match event.keycode:
-		KEY_1:
-			_set_lag(0)
-		KEY_2:
-			_set_lag(3)
-		KEY_3:
-			_set_lag(12)
-		KEY_P:
-			_toggle_replay()
-		KEY_R:
-			_restart()
+	var number_key: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
+	if number_key in [KEY_1, KEY_2, KEY_3]:
+		_set_lag([0, 3, 12][[KEY_1, KEY_2, KEY_3].find(number_key)])
+	else:
+		match event.keycode:
+			KEY_P:
+				_toggle_replay()
+			KEY_R:
+				_restart()
 	_update_label()
 
 

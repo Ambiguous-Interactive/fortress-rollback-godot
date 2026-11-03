@@ -44,9 +44,10 @@ func _check(value: bool, label: String) -> void:
 		print("FAILED: ", label)
 
 
-func _key(code: Key, modified: bool = false) -> void:
+func _key(code: Key, modified: bool = false, physical: Key = KEY_NONE) -> void:
 	var event: InputEventKey = InputEventKey.new()
 	event.keycode = code
+	event.physical_keycode = code if physical == KEY_NONE else physical
 	event.unicode = code + 32 if code in [KEY_J, KEY_L] else 0
 	event.pressed = true
 	event.ctrl_pressed = modified
@@ -149,8 +150,8 @@ func _run() -> void:
 	await process_frame
 	await _online_controls()
 	await _spectator_shortcuts()
-	if checks == 192 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 192")
+	if checks == 193 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 193")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -417,8 +418,10 @@ func _spectator_shortcuts() -> void:
 	local.set_physics_process(false)
 	await process_frame
 	await process_frame
+	await _key(KEY_3)
+	_check(local.demo.host.lag_ticks == 12, "ordinary US number row selects host delivery")
 	for index: int in range(3):
-		await _key([KEY_1, KEY_2, KEY_3][index])
+		await _key(KEY_AMPERSAND, false, [KEY_1, KEY_2, KEY_3][index])
 		_check(local.demo.host.lag_ticks == [0, 3, 12][index], "routed number key selects host delivery")
 		_check(local.demo.host.loop.game.frame == 0 and local.demo.game.frame == 0, "routed host policy never samples either game")
 		_check(root.gui_get_focus_owner() == null, "host policy shortcut preserves movement focus")
