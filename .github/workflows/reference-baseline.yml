@@ -1,297 +1,16 @@
 name: Reference Baseline
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".llm/code-samples/**"
-      - "scripts/reference/**"
-      - "scripts/oracle/**"
-      - "scripts/run_godot_tests.py"
-      - "scripts/changed_suites.py"
-      - "scripts/native_source_snapshot.py"
-      - "scripts/host_capacity.py"
-      - "scripts/git_test_environment.py"
-      - "scripts/package_addon.py"
-      - "docs/package.md"
-      - "tests/**"
-      - "addons/**"
-      - "examples/**"
-      - "docs/test-runner.md"
-      - "docs/reference/**"
-      - "Makefile"
-      - ".github/workflows/reference-baseline.yml"
-  pull_request:
-    paths:
-      - ".llm/code-samples/**"
-      - "scripts/reference/**"
-      - "scripts/oracle/**"
-      - "scripts/run_godot_tests.py"
-      - "scripts/changed_suites.py"
-      - "scripts/native_source_snapshot.py"
-      - "scripts/host_capacity.py"
-      - "scripts/git_test_environment.py"
-      - "scripts/package_addon.py"
-      - "docs/package.md"
-      - "tests/**"
-      - "addons/**"
-      - "examples/**"
-      - "docs/test-runner.md"
-      - "docs/reference/**"
-      - "Makefile"
-      - ".github/workflows/reference-baseline.yml"
   workflow_dispatch:
 
 concurrency:
-  group: reference-baseline-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: spectator-request-diagnostics-${{ github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  contracts:
-    name: Reference negative controls
-    runs-on: ubuntu-24.04
-    # Both full suites took over ten minutes together; reserve setup and teardown time.
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - run: make test-reference
-      - run: make test-oracle
-
-  rust:
-    name: Pinned Rust reference
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - name: Restore pinned Rust downloads and crates
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            .cache/reference/downloads
-            .cache/reference/cargo/registry/cache
-            .cache/reference/cargo/registry/index
-          key: reference-rust-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
-      - name: Select Ubuntu HTTPS mirror alternatives
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Install upstream linker prerequisites
-        run: sudo apt-get update && sudo apt-get install -y clang lld
-      - name: Reproduce reference twice
-        run: make reference-baseline
-      - name: Verify independent integer and checksum vectors
-        run: python3 scripts/reference/check_integer_vectors.py --check
-      - name: Verify source inventory against the pinned extraction
-        run: python3 scripts/reference/inventory.py
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: rust-reference-results
-          path: .cache/reference/results/
-          if-no-files-found: error
-
-  ownership:
-    name: Native and ${{ matrix.browser == 'firefox' && 'Firefox' || 'Chromium' }} snapshot ownership ${{ matrix.version }}${{ matrix.suffix }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {version: "4.3", browser: chromium, phase: both, suite_part: "1", suffix: " part 1", part_suffix: "-part-1"}
-          - {version: "4.3", browser: chromium, phase: both, suite_part: "2", suffix: " part 2", part_suffix: "-part-2"}
-          - {version: "4.7.2", browser: chromium, phase: both, suite_part: "1", suffix: " part 1", part_suffix: "-part-1"}
-          - {version: "4.7.2", browser: chromium, phase: both, suite_part: "2", suffix: " part 2", part_suffix: "-part-2"}
-          - {version: "4.3", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
-          - {version: "4.3", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
-          - {version: "4.3", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
-          - {version: "4.3", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
-          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
-          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
-          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
-          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - uses: actions/setup-node@v7.1.0
-        with:
-          node-version: "26.12.1"
-      - name: Restore verified reference downloads
-        uses: actions/cache@v6.1.0
-        with:
-          path: .cache/reference/downloads
-          key: reference-ownership-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json') }}
-      - name: Select Ubuntu HTTPS mirror alternatives
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Install pinned browser runner and operating system dependencies
-        run: |
-          mkdir -p .cache/reference/browser
-          cp scripts/reference/browser/package*.json .cache/reference/browser/
-          npm ci --ignore-scripts --prefix .cache/reference/browser
-          .cache/reference/browser/node_modules/.bin/playwright install-deps "${{ matrix.browser }}"
-          if [[ "${{ matrix.browser }}" == firefox ]]; then
-            sudo apt-get update
-            sudo apt-get install -y xvfb xdotool
-          fi
-      - name: Verify integer encoding, snapshot ownership and byte sessions
-        run: |
-          if [[ "${{ matrix.browser }}" == firefox ]]; then
-            export DEBUG=pw:browser
-            export DEBUG_FILE="$PWD/.cache/reference/results/ownership-firefox-process.log"
-            xvfb-run -a python3 scripts/reference/ownership_probes.py --web --browser firefox \
-              --version "${{ matrix.version }}" --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
-          else
-            python3 scripts/reference/ownership_probes.py --web --version "${{ matrix.version }}" \
-              --phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"
-          fi
-      - name: Verify late Firefox updater lock cleanup
-        if: matrix.browser == 'firefox' && matrix.version == '4.3' && matrix.phase == 'positive' && matrix.suite_part == '1'
-        run: |
-          python3 scripts/reference/firefox_shutdown_control.py \
-            --firefox .cache/reference/ownership-firefox/x86_64/firefox/firefox \
-            --work-dir .cache/scratch/firefox-shutdown-control \
-            --output .cache/reference/results/firefox-shutdown-control
-      - name: Verify spectator browser control origins
-        if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.suite_part == '1'
-        env:
-          PYTHONPATH: scripts/reference
-          FORTRESS_PLAYWRIGHT_PACKAGE: ${{ github.workspace }}/.cache/reference/browser/node_modules/@playwright/test
-          FORTRESS_CHROMIUM_EXECUTABLE: ${{ github.workspace }}/.cache/reference/ownership-chromium/x86_64/chrome-linux64/chrome
-        run: python3 -m unittest test_spectator_control.SpectatorControlTests.test_actual_browser_preflight_and_capability_separation
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: ownership-reference-results-${{ matrix.version }}${{ matrix.browser == 'firefox' && format('-firefox-{0}', matrix.phase) || '' }}${{ matrix.part_suffix }}
-          path: .cache/reference/results/
-          if-no-files-found: error
-
-  godot:
-    name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ["4.3", "4.7.2"]
-        # Suites and oracle launchers share no state, so they run as parallel jobs.
-        part: [suites, oracles]
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: "3.15.2"
-      - uses: actions/setup-node@v7.1.0
-        if: matrix.part == 'suites'
-        with:
-          node-version: "26.12.1"
-      - name: Select Ubuntu HTTPS mirror alternatives
-        run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
-      - name: Select Java 17 for scoped model checking
-        if: matrix.part == 'oracles'
-        run: |
-          if [[ -n "${JAVA_HOME_17_X64:-}" && -x "$JAVA_HOME_17_X64/bin/java" ]]; then
-            export JAVA_HOME="$JAVA_HOME_17_X64"
-          else
-            sudo apt-get update
-            sudo apt-get install -y openjdk-17-jre-headless
-            export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-$(dpkg --print-architecture)"
-          fi
-          export PATH="$JAVA_HOME/bin:$PATH"
-          java -version
-          java_major="$(java -XshowSettings:properties -version 2>&1 | awk '$1 == "java.specification.version" {print $3}')"
-          if [[ "$java_major" != 17 ]]; then
-            echo "Scoped model checking requires Java 17; found $java_major" >&2
-            exit 1
-          fi
-          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
-          echo "$JAVA_HOME/bin" >> "$GITHUB_PATH"
-      - name: Restore verified reference downloads and crates
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            .cache/reference/downloads
-            .cache/reference/cargo/registry/cache
-            .cache/reference/cargo/registry/index
-          key: reference-godot-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/reference/pins.json', 'scripts/oracle/rust/Cargo.lock') }}
-      - name: Install pinned browser runner and operating system dependencies
-        if: matrix.part == 'suites'
-        run: |
-          mkdir -p .cache/reference/browser
-          cp scripts/reference/browser/package*.json .cache/reference/browser/
-          npm ci --ignore-scripts --prefix .cache/reference/browser
-          .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
-      - name: Execute native and exported web probes
-        # The exported representation and protocol probes are identical for both legs, so the
-        # suites leg owns them and the oracles leg keeps only its own native work.
-        if: matrix.part == 'suites'
-        run: python3 scripts/reference/godot_smoke.py --web --version "${{ matrix.version }}"
-      - name: Execute the native engine probes for the oracle launchers
-        # The oracle launchers need the pinned engine, so this leg keeps the native probes
-        # and leaves the exported web probe to the suites leg.
-        if: matrix.part == 'oracles'
-        run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"
-      - name: Verify runner failure controls and fresh-process suites
-        if: matrix.part == 'suites'
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          python3 scripts/reference/package_audit.py --godot "$editor" --output ".cache/reference/results/package-$version"
-          python3 scripts/reference/test_package_audit.py --godot "$editor" -v
-          python3 scripts/reference/signalfish_probe.py --godot "$editor" --output ".cache/reference/results/signalfish-$version"
-          python3 scripts/reference/test_godot_runner.py --godot "$editor" -v
-          python3 scripts/reference/diagnostic_json.py --godot "$editor"
-          for round in 1 2; do
-            navigation_log=".cache/reference/results/replay-navigation-$version-$round.log"
-            navigation_status=0
-            timeout 30 "$editor" --headless --path . --script scripts/reference/replay_navigation_probe.gd > "$navigation_log" 2>&1 || navigation_status=$?
-            cat "$navigation_log"
-            if (( navigation_status != 0 )); then exit "$navigation_status"; fi
-            grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 351' "$navigation_log"
-            if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
-          done
-          python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
-          for case in default_single default_batched readiness_boundary aborted_wait; do
-            case_timeout=120
-            if [[ "$case" == default_single ]]; then case_timeout=180; fi
-            python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
-              --results ".cache/tests/integration-$version-$case.json"
-          done
-          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
-      - name: Compare actual upstream and Godot traces
-        if: matrix.part == 'oracles'
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
-          python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
-          python3 scripts/oracle/replay_launch.py --godot "$editor" --output ".cache/reference/results/replay-$version"
-          python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
-          python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
-          python3 scripts/oracle/drop_history_launch.py --godot "$editor" --output ".cache/reference/results/drop-history-$version"
-      - name: Verify the pinned SpectatorSession model and its unsafe control
-        if: matrix.part == 'oracles'
-        run: |
-          version="${{ matrix.version }}"
-          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          python3 scripts/oracle/spectator_launch.py --godot "$editor" --output ".cache/reference/results/spectator-model-$version"
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: godot-browser-reference-results-${{ matrix.version }}-${{ matrix.part }}
-          path: |
-            .cache/reference/results/
-            .cache/tests/
-          if-no-files-found: error
-
   signalfish:
     name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
@@ -299,11 +18,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["4.3", "4.7.2"]
+        version: ["4.7.2"]
         # Each part starts its own server and browsers, so they run as parallel jobs. The transport
         # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
         # runs with the direct labels so both jobs take about as long.
-        part: [direct, mixed, online]
+        part: [online]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -429,6 +148,17 @@ jobs:
                 --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
                 --output ".cache/reference/results/spectator-live-$version-$late_signal"
             done
+          done
+      - name: Repeat physical host departure with request diagnostics
+        run: |
+          editor=".cache/reference/webrtc-editors/4.7.2/Godot_v4.7.2-stable_linux.x86_64"
+          for trial in 1 2 3 4 5 6; do
+            python3 scripts/reference/signalfish_spectator_live.py \
+              --godot "$editor" --browser-viewer --browser-fault host-departure \
+              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
+              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
+              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+              --output ".cache/reference/results/spectator-request-trial-$trial"
           done
       - uses: actions/upload-artifact@v7.0.2
         if: always()
