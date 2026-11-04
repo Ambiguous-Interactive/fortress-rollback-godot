@@ -29,13 +29,16 @@ async function run() {
     await page.goto(process.argv[2] + '/index.html');
     let departureClosed=false;
     if (runtime.browser_fault==='viewer-departure') {
-      await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true,null,{timeout:45000});
+      await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true || window.fortressSpectatorResult!==undefined,null,{timeout:45000});
+      const applicationFailed=await page.evaluate(()=>window.fortressSpectatorResult?.passed===false);
+      if(!applicationFailed) {
       departureClosed=await page.evaluate(() => {
         const sockets=window.fortressSpectatorSockets;
         if(sockets.length!==1 || sockets[0].readyState!==1) return false;
         sockets[0].close(1000,'physical viewer departure'); return true;
       });
       if(!departureClosed) throw new Error('no live viewer socket at buffered departure');
+      }
     }
     await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
     const result = await page.evaluate(() => window.fortressSpectatorResult);
