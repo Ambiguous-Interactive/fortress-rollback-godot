@@ -726,7 +726,7 @@ func _inspection_shortcuts() -> void:
 		field.grab_focus()
 		for code: Key in [KEY_I, KEY_O]:
 			await _key(code)
-			var entered: String = field.text
+			var entered: String = (field as LineEdit).text if field is LineEdit else (field as TextEdit).text
 			_check(
 				scene.viewer.current_frame() == 600 and not scene.viewer.is_seeking() and entered.ends_with("i" if code == KEY_I else "io"),
 				"letter alternatives preserve actual LineEdit and TextEdit input"
