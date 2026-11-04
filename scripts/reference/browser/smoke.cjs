@@ -19,6 +19,7 @@ const path = require('node:path');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
+  const failures=[];
   try {
     browser = await chromium.launch({
       headless: true,
@@ -32,8 +33,9 @@ const path = require('node:path');
     await page.waitForFunction(() => document.body.dataset.fortressBaseline === '78563412', null, { timeout: 60000 });
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ browser: 'Chromium', version: browser.version(), marker: '78563412', errors }));
-  } finally {
-    if (browser) await browser.close();
-    server.close();
+  } catch(error) {failures.push(error);} finally {
+    try {if(browser) await browser.close();} catch(error) {failures.push(error);}
+    try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
+  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser smoke and cleanup failed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -40,6 +40,7 @@ const path = require('node:path');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
+  const failures=[];
   let observation;
   let verifyDownloads = () => {};
   try {
@@ -100,15 +101,18 @@ const path = require('node:path');
       observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result, errors };
       if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display });
     }
-  } finally {
-    try {
-      if (browser) {
-        // Closing owned windows releases Firefox's startup-idle wait before process shutdown.
-        try { await Promise.all(browser.contexts().map(context => context.close())); }
-        finally { await browser.close(); }
-      }
-    } finally { server.close(); }
+  } catch(error) {failures.push(error);} finally {
+    if(browser) {
+      // Wait for every owned window before Firefox process shutdown, including after rejection.
+      try {
+        const closed=await Promise.allSettled(browser.contexts().map(context=>Promise.resolve().then(()=>context.close())));
+        for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
+      } catch(error) {failures.push(error);}
+      try {await browser.close();} catch(error) {failures.push(error);}
+    }
+    try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
+  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'ownership and cleanup failed');
   verifyDownloads();
   if (errors.length) throw new Error(JSON.stringify(errors));
   console.log(JSON.stringify(observation));
