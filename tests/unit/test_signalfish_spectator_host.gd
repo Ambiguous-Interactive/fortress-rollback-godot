@@ -323,11 +323,17 @@ func _reordered_recorded_history(context: RefCounted, expert: bool) -> void:
 			reordered += 1
 			for index: int in [1, 0, 2]:
 				fixture.viewer.client.game_data_binary_received.emit(HOST, 1, packets[index])
-			duplicates += 1
 		else:
 			fixture.viewer.client.game_data_binary_received.emit(HOST, 1, packets[0])
-		for _poll: int in 2:
-			context.equal(fixture.viewer.relay.poll(now_us).code, HostRelay.Code.OK, "bounded receive service repairs original gap and retained duplicate")
+		var accepted: int = 0
+		for poll: int in 2:
+			var result: RefCounted = fixture.viewer.relay.poll(now_us)
+			context.equal(result.code, HostRelay.Code.OK, "bounded receive service repairs original gap and retained duplicate")
+			var expected_received: int = (2 if poll == 0 else 1) if count == 4 else (1 if poll == 0 else 0)
+			context.equal(result.received, expected_received, "each bounded poll accepts every original gap row and retained duplicate")
+			accepted += result.received
+		if count == 4 and accepted == 3:
+			duplicates += 1
 		context.equal(fixture.viewer.relay.status().received_packets, 0, "every received byte is accounted for")
 		_history_service(context, fixture, expected, expert, now_us)
 		context.equal(viewer.status().current_frame, base + count - 2, "delay preserves two original confirmed rows")
