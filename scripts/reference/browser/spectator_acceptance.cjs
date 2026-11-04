@@ -23,9 +23,10 @@ chromium.launch=async options=>{
       });
       await page.route('**/accept',async route=>{
         const response=await route.fetch();
-        await new Promise(resolve=>setTimeout(resolve,delay));
+        const deadline=performance.now()+delay;
+        while(performance.now()<deadline) await new Promise(resolve=>setTimeout(resolve,Math.max(1,deadline-performance.now())));
         if(page.isClosed()) return;
-        await page.evaluate(()=>{window.fortressAckReleased=true;});
+        await page.evaluate(hold=>{window.fortressAckHeldMs=hold;window.fortressAckReleases=(window.fortressAckReleases||0)+1;window.fortressAckReleased=true;},delay);
         await route.fulfill({response});
       });
       const evaluate=page.evaluate.bind(page);
@@ -33,9 +34,12 @@ chromium.launch=async options=>{
         const result=await evaluate(...args);
         if(result?.passed===true) {
           const order=await evaluate(()=>({released:window.fortressAckReleased===true,
+            heldMs:window.fortressAckHeldMs,releases:window.fortressAckReleases,
             earlyDeparture:window.fortressEarlyDeparture===true,earlySuccess:window.fortressEarlySuccess===true}));
           if(process.env.FORTRESS_ORDER_OUTPUT) fs.writeFileSync(process.env.FORTRESS_ORDER_OUTPUT,JSON.stringify(order));
-          if(!order.released || order.earlyDeparture || order.earlySuccess) throw Error('playback completed before acceptance acknowledgment');
+          if(!order.released || order.heldMs!==delay || order.releases!==1 || order.earlyDeparture || order.earlySuccess) {
+            throw Error('playback completed before acceptance acknowledgment');
+          }
         }
         return result;
       };
