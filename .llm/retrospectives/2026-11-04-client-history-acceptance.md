@@ -14,6 +14,7 @@ trigger this retrospective.
 | Input bytes alone cannot prove disconnect behavior survives playback | `test_peer_drop_replay.gd`, `RecordingGame` and `disconnect_status` control: a valid recomputed input digest reaches state-checksum failure | Extend existing oracle-validation guidance with status-sensitive canonical state |
 | An inherited fixture extension can break a different suite at parse time | Independent review of `test_peer_drop_backfill.gd` and the existing `_wide_mesh` override in `test_peer_drop_capacity.gd`; direct engine red control | Restore the shared entry point, separate the recording helper, and document override inspection in infrastructure guidance |
 | A short SDK witness misses ring reuse and repeated pressure | `test_signalfish_spectator_host.gd`, `_reordered_recorded_history`:257 rows, repeated refusal and reordered/duplicate packets | Extend the existing canonical case; retain real-server/browser acceptance boundaries |
+| Injected packet counts can overstate actual duplicate reception | PR #320 outside-diff review: duplicate emissions are counted before the receive polls | Assert both polls' received counts before counting the duplicate |
 
 ## Curation and pruning
 
@@ -23,6 +24,8 @@ The prior producer/decoder/player and source-freeze guidance remains correct.
 Removed the incompatible fixture signature rather than updating its descendant
 to accept unrelated replay arguments. No older knowledge claim became obsolete.
 The SDK fixture remains explicitly separate from real network qualification.
+Existing oracle guidance already requires counts from successful delivery operations;
+the duplicate-reception repair applies that rule without adding a second procedure.
 
 ## Verification and limits
 
