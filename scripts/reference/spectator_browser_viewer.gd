@@ -224,7 +224,9 @@ func _accept(packet: PackedByteArray) -> Error:
 
 
 func _post_accept(packet: PackedByteArray) -> void:
+	JavaScriptBridge.eval("window.fortressAcceptStarted=" + str(_now()))
 	var response: Dictionary = await _http("/accept", {"viewer": viewer_uuid, "room": admission.room, "identity": admission.identity, "packet": packet.hex_encode()})
+	JavaScriptBridge.eval("window.fortressAcceptCompleted=" + JSON.stringify({"now": _now(), "response": response}))
 	accept_delivered = response.status == 200
 	if not accept_delivered:
 		errors.append("browser control ACCEPT failure")
@@ -258,7 +260,7 @@ func _http(path: String, body: Dictionary = {}) -> Dictionary:
 		return {"status": 0}
 	var response: Array = await request.request_completed
 	request.queue_free()
-	return {"status": response[1], "body": JSON.parse_string(response[3].get_string_from_utf8())}
+	return {"result": response[0], "status": response[1], "body": JSON.parse_string(response[3].get_string_from_utf8())}
 
 
 func _wait(condition: Callable) -> bool:
