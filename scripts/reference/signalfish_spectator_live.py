@@ -104,6 +104,8 @@ def main():
     args = parser.parse_args()
     if args.acceptance_delay_ms is not None and (not args.browser_viewer or not 1 <= args.acceptance_delay_ms <= 5000):
         parser.error('--acceptance-delay-ms requires browser viewing and a hold from 1 through 5000 ms')
+    if args.acceptance_delay_ms is not None and args.browser_fault in ['initial-state', 'room-identity']:
+        parser.error('--acceptance-delay-ms cannot be combined with admission rejection faults')
     if args.browser_fault and not args.browser_viewer:
         parser.error('--browser-fault requires --browser-viewer')
     args.output.mkdir(parents=True, exist_ok=True)
