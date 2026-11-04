@@ -153,7 +153,8 @@ EXPECTED['res://tests/unit/test_peer_drop_late_ack.gd'] = {'late_ack_recovery', 
 EXPECTED['res://tests/unit/test_driver_input_policy.gd'] = {'stalled_retry', 'delay_policy', 'unconfigured', 'rejected_input_time'}
 EXPECTED['res://tests/unit/test_driver_termination.gd'] = {'client_stop', 'callbacks', 'completion_handler', 'manual_configuration'}
 EXPECTED['res://tests/unit/test_replay_viewer.gd'].update({
-    'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata', 'frame_submit', 'repeat_playback'})
+    'full_length_recording', 'empty_terminal', 'input_inspection', 'dropped_file', 'recording_metadata',
+    'frame_submit', 'repeat_playback', 'repeat_selection'})
 EXPECTED['res://tests/unit/test_signalfish_spectator_relay.gd'] = {
     'startup', 'playback', 'refusal', 'queue_pressure', 'expiry', 'lifetimes', 'configuration', 'busy',
     'blocked_liveness', 'retained_callbacks', 'busy_deadline', 'control_retry', 'control_invalid',
@@ -180,6 +181,7 @@ EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy', 'service_busy'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback', 'terminal_feedback', 'host_delay_controls'})
 EXPECTED['res://tests/unit/test_integration_controls.gd'] = {'live_controls', 'replay_controls', 'stopped_controls'}
+EXPECTED['res://tests/unit/test_integration_finish.gd'] = {'confirmed_ending', 'finish_ownership', 'empty_and_capped'}
 EXPECTED['res://tests/unit/test_integration_effect_reentry.gd'] = {'effect_reentry', 'effect_cancellation'}
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {
     'delayed_matches', 'reset_and_validation', 'replays_corrected_match', 'restart_lifetimes', 'pointer_controls', 'restart_presentation', 'pause_and_step'}
@@ -207,7 +209,7 @@ EXPECTED['res://tests/unit/test_example_shortcuts.gd'] = {'ignored_shortcuts', '
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED['res://tests/unit/test_integration_restart.gd'] = {'restart_lifetime', 'restart_rejections', 'restart_callbacks'}
 EXPECTED['res://tests/unit/test_peer_scene_controls.gd'] = {'pointer_controls', 'owned_controls', 'stopped_controls', 'inspection', 'focus_pause'}
-EXPECTED['res://tests/unit/test_spectator_host_step.gd'] = {'host_step', 'host_step_ownership', 'host_failure_feedback'}
+EXPECTED['res://tests/unit/test_spectator_host_step.gd'] = {'host_step', 'host_step_ownership', 'host_failure_feedback', 'focus_pause'}
 EXPECTED['res://tests/unit/test_offline_scene_controls.gd'] = {'inspection', 'ownership', 'focus_pause'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
@@ -274,7 +276,7 @@ FILES += ['tests/unit/test_driver_lifecycle_parity.gd']
 FILES += ['tests/unit/test_driver_drop_parity.gd']
 FILES += ['tests/unit/test_peer_notifications.gd']
 FILES += ['tests/unit/test_replay_configuration.gd']
-FILES += ['tests/unit/test_integration_controls.gd', 'tests/unit/test_integration_restart.gd']
+FILES += ['tests/unit/test_integration_controls.gd', 'tests/unit/test_integration_restart.gd', 'tests/unit/test_integration_finish.gd']
 FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd',
           'tests/unit/test_integration_effect_reentry.gd', 'examples/integration/integration.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
@@ -335,6 +337,7 @@ const ReplayViewerLifetime = preload("res://tests/unit/test_replay_viewer_lifeti
 const ReplayInputNavigation = preload("res://tests/unit/test_replay_input_navigation.gd")
 const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
 const IntegrationControls = preload("res://tests/unit/test_integration_controls.gd")
+const IntegrationFinish = preload("res://tests/unit/test_integration_finish.gd")
 const IntegrationDemo = preload("res://tests/unit/test_integration_demo.gd")
 const IntegrationRestart = preload("res://tests/unit/test_integration_restart.gd")
 const IntegrationEffectReentry = preload("res://tests/unit/test_integration_effect_reentry.gd")
@@ -398,7 +401,8 @@ func _run_suites() -> void:
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed, ReplayInputNavigation, ReplayViewerLifetime, ReplayViewerPrefix,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
-		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationRestart, IntegrationEffectReentry, IntegrationControls, ReplayPrefix,
+		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationFinish, IntegrationRestart, IntegrationEffectReentry, IntegrationControls,
+		ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, SpectatorHistory, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropReplay, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,

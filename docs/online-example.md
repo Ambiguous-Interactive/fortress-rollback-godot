@@ -215,9 +215,17 @@ Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and 
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame and finishes paused. Step and Pause validate the displayed
 state boundary immediately, including sparse recorded checksums, without consuming its input.
-**Repeat** starts a fresh playback after each clean ending at the selected speed. Every lap validates the original recorded history.
+Without a range selection, **Repeat** starts fresh playback after each clean ending at the selected speed.
+Each whole-recording lap validates the original recorded history.
 The final state remains visible until the next tick; Pause, Step and navigation finish paused.
 Checksum or input-integrity failures stop repetition. Initial-state-only recordings cannot repeat.
+
+To inspect a short sequence repeatedly, pause at its first frame and choose **Set repeat start**.
+Navigate to its ending state and choose **Set repeat end**, then enable **Repeat** and Play.
+The selection replays inputs from the start up to, but excluding, the end frame; the ending state is displayed and validated before rewinding.
+Rewinds use bounded verified navigation, so a long initial prefix can take several ticks; **Cancel seek** leaves it paused.
+Selection changes require paused playback. Ordinary navigation can still inspect any frame and finishes paused.
+**Clear selection** restores whole-recording repetition. Restart preserves the selection; opening another recording clears it.
 
 ![Replay Repeat control beside the speed selector](images/session148-replay.png)
 

@@ -708,6 +708,9 @@ Driver-only clients can discover ascending local slots and owned fixed-width neu
 Replay input-change and recorded-checksum navigation share pointer and keyboard readiness gates.
 Replay changes and spectator viewing-delay/catch-up controls also offer unshifted letter shortcuts across keyboard layouts.
 Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
+Selected replay ranges also repeat through bounded validated navigation, checking the end boundary before returning to the selected start.
+The effects example can stop sampling and confirm its final tail before replaying the complete match.
+The local spectator can freeze host, delivery and viewing together, including on focus loss, with explicit resume.
 These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
 
 ## Upstream tracking and upgrades

@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add Finish match to the effects demo. Confirm pending inputs and preserve final effects before watching the complete replay.
+
+- Add replay selection markers to repeat a chosen frame range with checksum validation.
+
+- Add a whole-demo pause to the spectator example. Focus loss freezes host, delivery and viewing until explicit resume.
+
 - Add owned neutral input bytes on the driver and expert session so clients can build input rows without retaining configuration.
 
 - Add driver local-player discovery in the byte-only input submission order.

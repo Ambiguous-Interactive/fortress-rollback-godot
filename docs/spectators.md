@@ -17,6 +17,10 @@ godot --path . res://examples/spectator/spectator.tscn
 
 The upper board is a playable host with delayed remote input and actual rollback.
 The lower board follows its corrected input history, initially twelve confirmed frames behind.
+The local demo pauses automatically when the application loses focus. Host input, queued delivery and viewer playback all freeze together.
+Returning to the window does not resume it. Click **Resume demo** or press **G** to continue; **Pause demo** / **G** also pauses manually.
+This complete pause preserves the independent host/viewer pauses, viewing delay and catch-up rate. Explicit host/viewer stepping remains available while paused.
+Restart clears the complete pause only after the replacement match is accepted. This local example policy does not apply to live network sessions.
 Choose **Host input delivery** of 0, 3 or 12 ticks, or press the physical number-row **1/2/3** keys, to explore delayed confirmation, prediction stalls and viewer buffering.
 This changes future remote-input delivery at the playable host, independently of the viewer's viewing delay.
 Already queued deliveries retain their schedule. Active host/viewer game work and clean host ending hold the selector.

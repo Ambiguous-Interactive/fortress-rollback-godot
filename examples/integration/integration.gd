@@ -19,6 +19,9 @@ var _inspection_controls: HBoxContainer
 var _pause_button: Button
 var _step_button: Button
 var _is_paused: bool = false
+var _is_finishing: bool = false
+var _is_finished: bool = false
+var _finish_button: Button
 
 
 func _ready() -> void:
@@ -61,6 +64,13 @@ func _ready() -> void:
 	_step_button.focus_mode = Control.FOCUS_NONE
 	_step_button.pressed.connect(_step_match)
 	_inspection_controls.add_child(_step_button)
+	_finish_button = Button.new()
+	_finish_button.name = "Finish"
+	_finish_button.text = "Finish match (E)"
+	_finish_button.tooltip_text = "Stop sampling and confirm the delayed tail without simulating another frame."
+	_finish_button.focus_mode = Control.FOCUS_NONE
+	_finish_button.pressed.connect(_finish_match)
+	_inspection_controls.add_child(_finish_button)
 	_code = _demo.start()
 	_update_label()
 
@@ -91,6 +101,7 @@ func _can_service_match() -> bool:
 	return (
 		_demo.loop != null
 		and _demo.replay_player == null
+		and not _is_finished
 		and _demo._mutation_code() != Types.Code.BUSY
 		and _demo.loop.session.status().lifecycle != Types.Lifecycle.TERMINATED
 		and _code in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]
@@ -108,15 +119,29 @@ func _step_match() -> void:
 		_advance_match()
 
 
+func _finish_match() -> void:
+	if _can_service_match():
+		_is_finishing = true
+	_update_label()
+
+
 func _advance_match() -> void:
-	var buttons: int = 0
-	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
-		buttons |= Game.LEFT
-	if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
-		buttons |= Game.RIGHT
-	if Input.is_physical_key_pressed(KEY_SPACE):
-		buttons |= Game.FIRE
-	_code = _demo.tick(buttons)
+	if _is_finishing:
+		_code = _demo.finish_tick()
+		if _code == Types.Code.OK:
+			var recording: Types.RecordingStatus = _demo.loop.driver.recording_status()
+			if recording.capacity_frames > 0 and recording.finalized_frames == _demo.loop.game.frame:
+				_code = _demo.loop.driver.capture_replay_boundary().code
+			_is_finished = _code == Types.Code.OK
+	else:
+		var buttons: int = 0
+		if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT):
+			buttons |= Game.LEFT
+		if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT):
+			buttons |= Game.RIGHT
+		if Input.is_physical_key_pressed(KEY_SPACE):
+			buttons |= Game.FIRE
+		_code = _demo.tick(buttons)
 	for id: int in _demo.effects.recent_ids:
 		if id > _last_effect:
 			_pulses.append(Vector2i(id, _demo.tick_count))
@@ -151,6 +176,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				_toggle_pause()
 			KEY_N:
 				_step_match()
+			KEY_E:
+				_finish_match()
 	_update_label()
 
 
@@ -179,6 +206,8 @@ func _restart() -> void:
 	_replay_code = Types.Code.OK
 	_last_effect = 0
 	_is_paused = false
+	_is_finishing = false
+	_is_finished = false
 	_pulses.clear()
 	_update_label()
 
@@ -189,6 +218,7 @@ func _update_label() -> void:
 	_pause_button.disabled = not _can_service_match()
 	_pause_button.text = "Resume match (O)" if _is_paused else "Pause match (O)"
 	_step_button.disabled = _pause_button.disabled or not _is_paused
+	_finish_button.disabled = _pause_button.disabled or _is_finishing
 	_replay_button.disabled = busy
 	_replay_button.text = "Back to match (P)" if _demo.replay_player != null else "Watch replay (P)"
 	for index: int in range(3):
@@ -198,8 +228,15 @@ func _update_label() -> void:
 	var state: String = "WAITING FOR INPUT" if _code == Types.Code.PREDICTION_STALL else "RUNNING"
 	if _code == Types.Code.BUSY:
 		state = "WAITING FOR ACTIVE WORK"
+	if _is_finishing:
+		state = "CONFIRMING FINAL INPUTS"
 	if _is_paused:
-		state = "PAUSED | N: service one tick"
+		state = "PAUSED | N: service one tick" + (" to confirm final inputs" if _is_finishing else "")
+	if _is_finished:
+		state = "MATCH COMPLETE | P: watch replay or R: restart"
+		var recorded: int = _demo.loop.driver.recording_status().finalized_frames
+		if recorded < _demo.loop.game.frame:
+			state += " | Replay holds the first %d frames" % recorded
 	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		state = "STOPPED: code %d, failure frame %d" % [_code, status.failure_frame]
 	if _demo.replay_player == null and _replay_code != Types.Code.OK:
@@ -216,7 +253,7 @@ func _update_label() -> void:
 		"Rollback-safe shots | %s\n" % state
 		+ "A/D or arrows: move | Space: fire | P: watch replay | R: restart\n"
 		+ "Remote delay: 1 = 0 ticks | 2 = 3 ticks | 3 = 12 ticks\n"
-		+ "O: pause match | N: step tick (delivery and prediction included)\n\n"
+		+ "O: pause match | N: step tick (delivery and prediction included) | E: finish match\n\n"
 		+ "Frame %d | Confirmed %d | Delay %d | Queued %d\n" % [status.current_frame, status.confirmed_frame, _demo.lag_ticks, _demo.pending_input_count()]
 		+ "Rollback loads %d | Stalled ticks %d | Confirmed effects %d\n\n" % [_demo.load_count(), _demo.stall_count, _demo.effects.total_count]
 		+ "Hollow flashes: recent shots in corrected state; prediction can remove them.\n"
