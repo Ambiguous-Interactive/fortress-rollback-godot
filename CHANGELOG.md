@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add owned neutral input bytes on the driver and expert session so clients can build input rows without retaining configuration.
+
 - Add driver local-player discovery in the byte-only input submission order.
 
 - Add replay shortcuts for previous/next input changes and recorded checksums.

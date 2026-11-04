@@ -165,6 +165,10 @@ through default queue reuse with independent canonical histories;
 A separate two-endpoint browser witness records 257 original frames through repeated injected direct/relay send-buffer refusal.
 Both engine pins verify exact retained retries, post-wrap canonical history and recovery-only decoded recordings, including the final checksum.
 Physical congestion, the complete asymmetric browser schedule and unchanged-source recovery-only export remain open in #256.
+Native coordinated-drop recordings cover remote donors and lost/reordered multi-slot history through decoded callback/expert playback,
+with original status-sensitive canonical boundaries and captured final-state checks. Source and live drop-recording acceptance remains open in #45.
+The spectator SDK-adapter witness spans 257 original rows with recurrent refusal, exact retries, reordered/duplicate ingress,
+callback/expert viewing and decoded status-sensitive recordings. Actual SDK/server/browser qualification remains in #131 and #245.
 The retained-history source comparison also exercises donor recovery after two queue capacities of original gameplay,
 with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
 Native development receipts execute a bounded private authored-source image and record its hashes and starting Git identity;
@@ -700,7 +704,7 @@ creates residual tasks before any complete-parity claim.
 The playable effects example supports paused single-tick inspection through the actual driver, including prediction stalls and rollback.
 The offline and in-process peer examples pause on application focus loss and require explicit resume,
 preserving simulation and injected packet time while inspecting another window.
-Driver-only clients can discover ascending local slots for byte-only input submission without retaining configuration order.
+Driver-only clients can discover ascending local slots and owned fixed-width neutral bytes for byte-only input submission without retaining configuration.
 Replay input-change and recorded-checksum navigation share pointer and keyboard readiness gates.
 Replay changes and spectator viewing-delay/catch-up controls also offer unshifted letter shortcuts across keyboard layouts.
 Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
