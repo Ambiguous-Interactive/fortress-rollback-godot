@@ -42,7 +42,7 @@ func run_case(name: String, context: RefCounted) -> void:
 	_reordered = false
 	_held.clear()
 	_donor_sources.clear()
-	var mesh: Dictionary = _wide_mesh(context, FRAMES, func(players: int) -> RefCounted: return RecordingGame.new(players))
+	var mesh: Dictionary = _recording_mesh(context, FRAMES, func(players: int) -> RefCounted: return RecordingGame.new(players))
 	_play(context, mesh, 6, true)
 	_leave(context, mesh, 2)
 	for slot: int in range(2 * _slots, 3 * _slots):

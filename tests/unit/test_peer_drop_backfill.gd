@@ -161,7 +161,11 @@ func _limits(count: int = 3) -> T.Limits:
 	return limits
 
 
-func _wide_mesh(context: RefCounted, replay_frames: int = 0, game_factory: Callable = Callable()) -> Dictionary:
+func _wide_mesh(context: RefCounted) -> Dictionary:
+	return _recording_mesh(context, 0, Callable())
+
+
+func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Callable) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	for player: int in range(3):
