@@ -2,7 +2,7 @@
 
 ## Work under review
 
-Session153 advances #40 driver-only input construction, #45 coordinated-drop
+Session 153 advances #40 driver-only input construction, #45 coordinated-drop
 recording acceptance and #47 long-lived spectator SDK-adapter acceptance.
 An additive client capability, cross-subsystem witnesses and a review correction
 trigger this retrospective.
