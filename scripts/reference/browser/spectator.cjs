@@ -5,7 +5,7 @@ function observeErrors(page,errors,isTearingDown) {
   page.on('console', message => {if (message.type() === 'error') errors.push(message.text());});
   page.on('requestfailed', () => {if (!isTearingDown()) errors.push('browser request failed');});
 }
-module.exports={observeErrors};
+module.exports={observeErrors,run};
 async function run() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
