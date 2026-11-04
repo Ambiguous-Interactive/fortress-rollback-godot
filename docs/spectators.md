@@ -760,6 +760,24 @@ control that changes disconnected statuses to confirmed statuses fails the canon
 and exported-status checks while preserving input bytes. This case uses SDK
 doubles; it does not establish socket, server or exported-browser drop acceptance.
 
+The `canonical_playback` SDK case also runs 257 original changing-input rows through
+both production spectator adapters, crossing two default 128-frame rings. Callback
+and expert viewers each face 130 actual SDK send refusals, 64 physically reordered
+four-row groups and 64 duplicate envelopes. Exact authenticated retries retain the
+source cursor. Missing-row observations prevent playback over the induced gaps.
+A finalized disconnected suffix begins after frame 96, and every played canonical
+boundary is checked against the original status-sensitive history while faults run.
+Player confirmation remains independent of spectator delivery and playback.
+
+Both viewers export all 257 rows to actual replay bytes. Decoding preserves every
+original input and finalized slot status. Ordinary replay compares all 258 state
+boundaries, including the clean ending. Serialized post-wrap input, status and
+checksum corruptions fail their exact digest/checksum comparisons at frame 129;
+a skipped application simulation at frame 129 fails the next state comparison at
+130. These controls use the installed decoder and player. This is native SDK-double
+acceptance; actual server sockets, browser delivery and pinned-source fault parity
+remain unqualified by this case.
+
 ## Check playback against the pinned spectator model
 
 `make spectator-model` records actual production viewer rings, input tags, host

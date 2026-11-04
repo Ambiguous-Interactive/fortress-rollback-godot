@@ -87,6 +87,8 @@ Keep a copied probe's exact case inventory, native selection, Web host selection
 aligned when extending a shared suite. Platform-specific I/O must assert equivalent
 contracts with equal assertion counts when full native/Web records are compared. Verify preload dependencies are copied;
 exercise the affected probe, since the root unit runner cannot prove its staging.
+Before adding arguments to an inherited fixture helper, inspect every override. A signature change can pass the new suite
+while making a different descendant fail to parse; use a separately named helper when call contracts differ.
 Freeze source/helper hashes before staging; verify copied and relocated authored bytes before adapting them.
 Verify tools before use and recheck sources/tools before publication; end-only hashes cannot identify executed bytes.
 When engine import creates metadata, first verify authored sources are unchanged.

@@ -146,10 +146,14 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _fixture(context: RefCounted, negotiate: bool = true, receives: int = 1, packets: int = 2) -> Dictionary:
+func _fixture(context: RefCounted, negotiate: bool = true, receives: int = 1, packets: int = 2, capacity: int = 5, replay_frames: int = 0) -> Dictionary:
 	var helper: RefCounted = StreamFixture.new()
 	var stream: Stream = Stream.new()
-	context.equal(stream.configure(Fixture.new()._config(), helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "viewer configured")
+	var playback_config: RefCounted = Fixture.new()._config()
+	playback_config.queue_capacity = capacity
+	playback_config.replay_max_frames = replay_frames
+	playback_config.storage_budget_bytes = playback_config.required_storage_bytes()
+	context.equal(stream.configure(playback_config, helper._identity(), helper._key(), helper._digest(), 0, 100, 128), Types.Code.OK, "viewer configured")
 	var client: Client = Client.new()
 	var config: RelayFixture.SDKConfig = RelayFixture.SDKConfig.new()
 	var info: Info = Info.new()

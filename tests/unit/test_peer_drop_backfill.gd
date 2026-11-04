@@ -162,6 +162,10 @@ func _limits(count: int = 3) -> T.Limits:
 
 
 func _wide_mesh(context: RefCounted) -> Dictionary:
+	return _recording_mesh(context, 0, Callable())
+
+
+func _recording_mesh(context: RefCounted, replay_frames: int, game_factory: Callable) -> Dictionary:
 	var peers: Array[Peer] = []
 	var games: Array[RefCounted] = []
 	for player: int in range(3):
@@ -180,6 +184,7 @@ func _wide_mesh(context: RefCounted) -> Dictionary:
 		config.sync_test = false
 		config.max_snapshot_bytes = 8 * (config.player_count + 1)
 		config.storage_budget_bytes = 4194304
+		config.replay_max_frames = replay_frames
 		var local: T.Message = T.Message.new()
 		local.kind = T.Kind.SYNC_REQUEST
 		local.sender_id = _id(player)
@@ -204,7 +209,7 @@ func _wide_mesh(context: RefCounted) -> Dictionary:
 		controls.keepalive_interval_us = 1000
 		controls.quality_report_interval_us = 1000
 		controls.disconnect_behavior = L.Disconnect.CONTINUE
-		var game: WideGame = WideGame.new(config.player_count)
+		var game: RefCounted = game_factory.call(config.player_count) if game_factory.is_valid() else WideGame.new(config.player_count)
 		var peer: Peer = Peer.new()
 		context.equal(peer.configure(config, local, game, handshake, I.Options.new(), controls), I.Code.OK, "configure wide-input production mesh")
 		peers.append(peer)

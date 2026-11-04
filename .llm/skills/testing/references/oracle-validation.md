@@ -86,6 +86,8 @@ Recording parity must exercise the source session's actual recording/export API;
 constructing a replay directly proves playback only. Compare exported rows and
 checksum presence against original delayed inputs and observed SAVE requests,
 then round-trip each runtime's own format without implying file interchangeability.
+For disconnected-history recordings, make status affect canonical game state. Repair a mutated status row's input digest
+when testing state-checksum validation; a digest rejection alone does not prove playback applies the recorded status.
 For mid-session extraction, retain the actual decoded early export through continued gameplay,
 then play that retained object. Observe subsequent extraction success or refusal and later recording
 contents independently; regenerating the early export after continuation cannot prove its ownership.

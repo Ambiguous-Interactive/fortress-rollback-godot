@@ -10,8 +10,20 @@ const GameFixture = preload("res://tests/unit/test_driver.gd")
 const StatusFixture = preload("res://tests/unit/test_spectator_status.gd")
 const Stream = preload("res://addons/fortress_rollback/core/spectator_stream.gd")
 const S = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Replay = preload("res://addons/fortress_rollback/core/replay.gd")
+const Player = preload("res://addons/fortress_rollback/core/replay_player.gd")
+const HISTORY_FRAMES: int = 257
+const HISTORY_CAPACITY: int = 128
+const DROP_FRAME: int = 96
 const HOST: String = Viewer.HOST
 const VIEWER: String = Viewer.FOREIGN
+
+
+class SkippingGame:
+	extends StatusFixture.Game
+
+	func simulate_frame(frame: int, inputs: S.FrameInputs) -> bool:
+		return true if frame == 129 else super.simulate_frame(frame, inputs)
 
 
 class Helper:
@@ -82,14 +94,19 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _fixture(context: RefCounted, negotiate: bool = true, sends: int = 2, predicting: bool = false) -> Dictionary:
+func _fixture(context: RefCounted, negotiate: bool = true, sends: int = 2, predicting: bool = false, history: bool = false) -> Dictionary:
 	var helper: RefCounted = Helper.new()
 	var host: RefCounted = Session.new()
 	var host_config: RefCounted = helper._config()
+	if history:
+		host_config.queue_capacity = HISTORY_CAPACITY
+		host_config.replay_max_frames = HISTORY_FRAMES
 	if predicting:
 		host_config.local_players = PackedInt32Array([0])
 		host_config.max_prediction_frames = 2
 		host_config.history_slots = 3
+	if history:
+		host_config.storage_budget_bytes = host_config.required_storage_bytes()
 	context.equal(host.configure(host_config), S.Code.OK, "configured unchanged player host")
 	var client: Client = Client.new()
 	var config: RefCounted = Viewer.RelayFixture.SDKConfig.new()
@@ -104,7 +121,7 @@ func _fixture(context: RefCounted, negotiate: bool = true, sends: int = 2, predi
 	context.equal(
 		relay.configure(client, config, info, host, VIEWER, helper._identity(), helper._key(), helper._digest(), options), HostRelay.Code.OK, "host publication configured"
 	)
-	var viewer: Dictionary = Viewer.new()._fixture(context, false, 2, 8)
+	var viewer: Dictionary = Viewer.new()._fixture(context, false, 2, 8, HISTORY_CAPACITY if history else 5, HISTORY_FRAMES if history else 0)
 	var fixture: Dictionary = {
 		"host": host,
 		"client": client,
@@ -183,6 +200,8 @@ func _canonical_playback(context: RefCounted) -> void:
 	context.equal(fixture.viewer.driver.step(12, Viewer.new()._empty()).code, S.Code.TERMINATED, "viewer drains exact final tail")
 	context.equal(fixture.relay.poll(100).sent, 0, "accepted END stops liveness")
 	_stop(fixture)
+	for expert: bool in [false, true]:
+		_reordered_recorded_history(context, expert)
 
 
 # Value: protects=corrected disconnected history across both SDK bridges; fails_when=statuses disappear under retained-row pressure;
@@ -250,6 +269,172 @@ func _corrected_drop_history(context: RefCounted) -> void:
 func _drop_boundary(previous: int, frame: int) -> int:
 	var value: int = (previous * 17 + frame + 1 + 31 + frame) % 1000000007
 	return (value * 17 + 7 + (1 if frame == 0 else 3) * 31 + frame) % 1000000007
+
+
+# Value: protects=original spectator history and decoded recordings through repeated SDK refusal and ring reuse;
+# fails_when=retry, reordered ingress or expert completion skips bytes/statuses; why_new=SDK history stops before default-ring wrap; seam=public SDK API
+func _reordered_recorded_history(context: RefCounted, expert: bool) -> void:
+	var fixture: Dictionary = _fixture(context, true, 1, true, true)
+	var viewer: RefCounted = fixture.viewer.stream.playback_session()
+	var host_game: RefCounted = StatusFixture.Game.new()
+	fixture.driver = Driver.new(fixture.host, host_game)
+	fixture.viewer.game = StatusFixture.Game.new()
+	fixture.viewer.driver = Driver.new(viewer, fixture.viewer.game)
+	context.equal(viewer.set_playback(2, 1, 3), S.Code.OK, "delayed bounded viewing across default rings")
+	context.equal(fixture.viewer.driver.capture_replay_boundary().code, S.Code.OK, "record initial canonical state")
+	var expected: PackedInt64Array = PackedInt64Array([0])
+	var refused: int = 0
+	var reordered: int = 0
+	var duplicates: int = 0
+	for base: int in range(0, HISTORY_FRAMES, 4):
+		var count: int = mini(4, HISTORY_FRAMES - base)
+		for frame: int in range(base, base + count):
+			if frame <= DROP_FRAME:
+				context.equal(fixture.host.receive_input(1, frame, _history_input(frame, 1)).code, S.Code.OK, "original actual remote sample")
+			var samples: Array[Driver.LocalInput] = [Driver.LocalInput.new(0, frame, _history_input(frame, 0))]
+			context.equal(fixture.driver.step(frame, samples).code, S.Code.OK, "player host progresses independently of spectator")
+			if frame == DROP_FRAME:
+				context.equal(fixture.host.freeze_player(1, frame), S.Code.OK, "preserve finalized disconnected suffix")
+			expected.append(_history_boundary(expected[-1], frame))
+			context.equal(host_game.value, expected[-1], "independent original host state")
+		var now_us: int = base + 2
+		fixture.client.outcome = ERR_BUSY
+		for _attempt: int in 2:
+			context.equal(fixture.relay.poll(now_us).code, HostRelay.Code.BACKPRESSURE, "recurrent SDK refusal retains pending source row")
+			refused += 1
+		var retained: PackedByteArray = fixture.client.attempted[-1].duplicate()
+		context.equal(retained[5], Stream.ROW, "the refused packet is original gameplay input")
+		context.equal(fixture.client.attempted[-2], retained, "repeated refusal retains exact authenticated bytes")
+		fixture.client.outcome = OK
+		for index: int in count:
+			context.equal(fixture.relay.poll(now_us).sent, 1, "bounded source publication accepts one exact row")
+			if index == 0:
+				context.equal(fixture.client.sent[0], retained, "accepted retry equals refused bytes")
+		var packets: Array[PackedByteArray] = fixture.client.sent.duplicate()
+		fixture.client.sent.clear()
+		context.equal(packets.size(), count, "no missing or duplicated source publication")
+		var confirmed: int = fixture.host.status().confirmed_frame
+		if count == 4:
+			for index: int in [3, 1]:
+				fixture.viewer.client.game_data_binary_received.emit(HOST, 1, packets[index])
+			context.equal(fixture.viewer.relay.poll(now_us).received, 2, "actual later envelopes precede the original gap")
+			context.equal(viewer.playback_status().missing_frame, base, "physical reordering exposes the exact missing row")
+			context.equal(viewer.recommended_steps(), 0, "unfilled gap cannot bypass viewing delay")
+			reordered += 1
+			for index: int in [1, 0, 2]:
+				fixture.viewer.client.game_data_binary_received.emit(HOST, 1, packets[index])
+		else:
+			fixture.viewer.client.game_data_binary_received.emit(HOST, 1, packets[0])
+		var accepted: int = 0
+		for poll: int in 2:
+			var result: RefCounted = fixture.viewer.relay.poll(now_us)
+			context.equal(result.code, HostRelay.Code.OK, "bounded receive service repairs original gap and retained duplicate")
+			var expected_received: int = (2 if poll == 0 else 1) if count == 4 else (1 if poll == 0 else 0)
+			context.equal(result.received, expected_received, "each bounded poll accepts every original gap row and retained duplicate")
+			accepted += result.received
+		if count == 4 and accepted == 3:
+			duplicates += 1
+		context.equal(fixture.viewer.relay.status().received_packets, 0, "every received byte is accounted for")
+		_history_service(context, fixture, expected, expert, now_us)
+		context.equal(viewer.status().current_frame, base + count - 2, "delay preserves two original confirmed rows")
+		context.equal(fixture.host.status().confirmed_frame, confirmed, "spectator controls cannot influence player confirmation")
+	context.equal(refused, 130, "both exact refusals ran on all 65 source groups")
+	context.equal(reordered, 64, "all full groups exercised physical gap reordering")
+	context.equal(duplicates, 64, "all full groups exercised retained duplicate delivery")
+	context.equal(fixture.host.confirmed_inputs(0), null, "source default ring physically reused")
+	context.equal(viewer.confirmed_inputs(0), null, "viewer default ring physically reused")
+	context.equal(fixture.relay.finish_host().code, HostRelay.Code.OK, "freeze complete original host boundary")
+	context.equal(fixture.relay.poll(HISTORY_FRAMES + 2).sent, 1, "authenticated END follows every accepted original row")
+	_deliver(fixture)
+	context.equal(fixture.viewer.relay.poll(HISTORY_FRAMES + 2).received, 1, "END releases both delayed rows")
+	_history_service(context, fixture, expected, expert, HISTORY_FRAMES + 2)
+	context.equal(viewer.is_complete(), true, "ordinary service completes entire delayed stream")
+	context.equal(viewer.status().current_frame, HISTORY_FRAMES, "final boundary includes every original row")
+	context.equal(fixture.viewer.game.value, expected[-1], "viewer reaches original final canonical state")
+	var recording: RefCounted = Replay.new()
+	context.equal(recording.decode(viewer.replay().to_bytes()), S.Code.OK, "decode actual viewed replay file")
+	context.equal(recording.frame_count(), HISTORY_FRAMES, "record every original row beyond two default capacities")
+	for frame: int in HISTORY_FRAMES:
+		for player: int in 2:
+			var input: S.InputResult = recording.inputs(frame).read(player)
+			context.equal(input.bytes, _history_input(mini(frame, DROP_FRAME) if player == 1 else frame, player), "decoded original input bytes")
+			context.equal(input.status, 3 if player == 1 and frame > DROP_FRAME else 1, "decoded finalized original slot status")
+	var replay_game: RefCounted = StatusFixture.Game.new()
+	var player: RefCounted = Player.new()
+	context.equal(player.configure(recording, replay_game, 8), S.Code.OK, "validate decoded viewed replay")
+	for frame: int in HISTORY_FRAMES:
+		context.equal(player.step(), S.Code.OK, "decoded playback verifies original recorded boundaries")
+		context.equal(replay_game.value, expected[frame + 1], "decoded playback agrees with every original state")
+	context.equal(player.step(), S.Code.OK, "decoded final original checksum validates")
+	context.equal(player.checked_checksum_count(), HISTORY_FRAMES + 1, "every original boundary including final state was actually compared")
+	context.equal(player.is_complete(), true, "decoded final boundary is verified before completion")
+	context.equal(player.step(), S.Code.FRAME_EXHAUSTED, "decoded replay contains no fabricated later row")
+	_history_recording_controls(context, recording)
+	_stop(fixture)
+
+
+func _history_recording_controls(context: RefCounted, original: RefCounted) -> void:
+	for mutation: String in ["input", "status", "checksum", "skipped_playback"]:
+		var recording: RefCounted = Replay.new()
+		context.equal(recording.decode(original.to_bytes()), S.Code.OK, "fresh original file for post-wrap control")
+		match mutation:
+			"input":
+				recording._inputs[129 * 2] ^= 1
+			"status":
+				recording._statuses[129 * 2 + 1] = 1
+			"checksum":
+				recording._checksums[129 * 16] ^= 1
+		var decoded: RefCounted = Replay.new()
+		context.equal(decoded.decode(recording.to_bytes()), S.Code.OK, "serialized corruption reaches installed playback validation")
+		var game: RefCounted = SkippingGame.new() if mutation == "skipped_playback" else StatusFixture.Game.new()
+		var player: RefCounted = Player.new()
+		context.equal(player.configure(decoded, game, 8), S.Code.OK, "valid layout cannot hide corrupted history")
+		var failure: int = 130 if mutation == "skipped_playback" else 129
+		for _frame: int in failure:
+			context.equal(player.step(), S.Code.OK, "unchanged prefix remains independently playable")
+		context.equal(player.step(), S.Code.DESYNC, "post-wrap corruption fails at its first affected comparison")
+		context.equal(player.failure_frame(), failure, "corruption names exact original boundary")
+		context.equal(player.failure_comparison(), "input_digest" if mutation in ["input", "status"] else "state_checksum", "corruption retains exact comparison domain")
+		context.equal(player.is_complete(), false, "corrupted history never qualifies completion")
+
+
+func _history_service(context: RefCounted, fixture: Dictionary, expected: PackedInt64Array, expert: bool, now_us: int) -> void:
+	var viewer: RefCounted = fixture.viewer.stream.playback_session()
+	for _work: int in HISTORY_CAPACITY + 1:
+		if viewer.recommended_steps() == 0:
+			return
+		var before: int = viewer.status().current_frame
+		var code: int
+		if expert:
+			var result: S.Result = viewer.begin_advance()
+			code = result.code
+			if code == S.Code.READY:
+				var request: S.Request = result.batch.next_request()
+				context.equal(request.kind, S.Kind.ADVANCE, "expert viewer consumes ordinary shared request")
+				code = viewer.complete_request(request.batch_id, request.request_id, fixture.viewer.game.simulate_frame(before, request.inputs)).code
+		else:
+			code = fixture.viewer.driver.step(now_us, Viewer.new()._empty()).code
+		if code == S.Code.TERMINATED:
+			context.equal(viewer.is_complete(), true, "only clean completion ends service")
+			return
+		context.equal(code, S.Code.OK, "ordinary viewer request consumes original row")
+		if code != S.Code.OK:
+			return
+		context.equal(fixture.viewer.game.value, expected[before + 1], "active-fault viewer matches original canonical boundary")
+		context.equal(fixture.viewer.driver.capture_replay_boundary().code, S.Code.OK, "retain exact canonical checksum for decoded playback")
+
+
+func _history_input(frame: int, player: int) -> PackedByteArray:
+	return PackedByteArray([(frame * (13 if player == 0 else 17) + (7 if player == 0 else 11)) % 256])
+
+
+func _history_boundary(previous: int, frame: int) -> int:
+	for player: int in 2:
+		var source: int = mini(frame, DROP_FRAME) if player == 1 else frame
+		var input: int = (source * (13 if player == 0 else 17) + (7 if player == 0 else 11)) % 256
+		var status: int = 3 if player == 1 and frame > DROP_FRAME else 1
+		previous = (previous * 17 + input + status * 31 + frame) % 1000000007
+	return previous
 
 
 # Value: protects=refused rows and liveness; fails_when=pressure loses history or suppresses pulse; why_new=core tests omit SDK policy; seam=SDK API

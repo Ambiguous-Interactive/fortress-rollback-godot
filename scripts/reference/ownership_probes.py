@@ -98,10 +98,11 @@ EXPECTED['res://tests/unit/test_peer_drop_commit.gd'] = {
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
+EXPECTED['res://tests/unit/test_peer_drop_replay.gd'] = {'remote_donor_recording', 'lost_reordered_history_recording'}
 EXPECTED['res://tests/unit/test_peer_replay_capture.gd'] = {'capture_final', 'capture_guards', 'capture_callbacks', 'capture_cap'}
 EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity', 'selected_state_status'}
 EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')
-EXPECTED['res://tests/unit/test_driver_local_bytes.gd'] = {'parity', 'validation', 'retained', 'reentry', 'local_players'}
+EXPECTED['res://tests/unit/test_driver_local_bytes.gd'] = {'parity', 'validation', 'retained', 'reentry', 'local_players', 'neutral_input'}
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'stepped_boundaries', 'paused_boundaries'})
 EXPECTED['res://tests/unit/test_spectator_model.gd'] = {
     'bounded_delivery_model', 'loss_and_conflict_model', 'transcript_mutation_control', 'caller_bounded_catchup_model'}
@@ -256,7 +257,7 @@ FILES += ['tests/unit/test_spectator_recording_feedback.gd', 'tests/unit/test_sp
 FILES += ['tests/unit/test_peer_drop_inventory.gd', 'tests/unit/test_peer_drop_history.gd',
           'tests/unit/test_peer_drop_barrier.gd', 'tests/unit/test_peer_drop.gd', 'tests/unit/test_peer_drop_multi_slot.gd']
 FILES += ['tests/unit/test_history_backfill.gd', 'tests/unit/test_driver_external_parity.gd', 'tests/unit/test_peer_drop_backfill.gd']
-FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd']
+FILES += ['tests/unit/test_peer_drop_capacity.gd', 'tests/unit/test_peer_drop_eviction.gd', 'tests/unit/test_peer_drop_replay.gd']
 FILES += ['tests/unit/test_peer_drop_history_pressure.gd', 'tests/unit/test_peer_drop_donor_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_plan_fairness.gd']
 FILES += ['tests/unit/test_peer_drop_ready_pressure.gd', 'tests/unit/test_peer_drop_remote_donor_pressure.gd']
@@ -359,6 +360,7 @@ const DropHistory = preload("res://tests/unit/test_peer_drop_history.gd")
 const HistoryBackfill = preload("res://tests/unit/test_history_backfill.gd")
 const DropCapacity = preload("res://tests/unit/test_peer_drop_capacity.gd")
 const DropBackfill = preload("res://tests/unit/test_peer_drop_backfill.gd")
+const DropReplay = preload("res://tests/unit/test_peer_drop_replay.gd")
 const DropEviction = preload("res://tests/unit/test_peer_drop_eviction.gd")
 const DropHistoryPressure = preload("res://tests/unit/test_peer_drop_history_pressure.gd")
 const DropDonorFairness = preload("res://tests/unit/test_peer_drop_donor_fairness.gd")
@@ -398,7 +400,7 @@ func _run_suites() -> void:
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
 		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationRestart, IntegrationEffectReentry, IntegrationControls, ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, SpectatorHistory, DropInventory, DropHistory, DropMultiSlot,
-		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
+		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropReplay, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
 		DropPlanFairness, DropReadyPressure, DropRemoteDonorPressure, DropLateAck, DropCommit,
 		DriverInputPolicy, DriverTermination, PeerExampleOwnership, ExampleSceneExit, ExampleShortcuts, SpectatorRelay, SpectatorHost, ReplayValidation, ReplayNavigation,
 		FallbackFailure, SpectatorRecordingFeedback, DriverLifecycleParity, AdapterReentry, OfflineSceneControls, PeerSceneControls, SpectatorHostStep]

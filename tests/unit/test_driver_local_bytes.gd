@@ -18,8 +18,28 @@ class MembershipGame:
 		return super.simulate_frame(frame, inputs)
 
 
+class NeutralGame:
+	extends Fixture.Game
+	var owner: WeakRef
+	var observed: Array[PackedByteArray] = []
+	var replacement_codes: PackedInt32Array = PackedInt32Array()
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		var driver: Driver = owner.get_ref()
+		observed.append(driver.neutral_input())
+		replacement_codes.append(driver.configure(Session.new(), Fixture.Game.new()))
+		var copied: PackedByteArray = driver.neutral_input()
+		copied.fill(99)
+		var ok: bool = super.simulate_frame(frame, inputs)
+		for player: int in range(inputs.size().value):
+			var bytes: PackedByteArray = inputs.read(player).bytes
+			for index: int in range(1, bytes.size()):
+				value += bytes[index]
+		return ok
+
+
 func cases() -> PackedStringArray:
-	return PackedStringArray(["parity", "validation", "retained", "reentry", "local_players"])
+	return PackedStringArray(["parity", "validation", "retained", "reentry", "local_players", "neutral_input"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -63,7 +83,9 @@ func _validation(context: RefCounted) -> void:
 		var session: RefCounted = fixture._session()
 		var driver: RefCounted = Driver.new(session, Fixture.Game.new())
 		context.equal(driver.step_local(0, _bytes(0)).code, Types.Code.OK, "accepted clock control")
-		context.equal(driver.step_local(100, invalid).code in [Types.Code.INVALID_CONFIGURATION, Types.Code.INPUT_WIDTH, Types.Code.MISSING_LOCAL_INPUT], true, "bad byte rows rejected")
+		context.equal(
+			driver.step_local(100, invalid).code in [Types.Code.INVALID_CONFIGURATION, Types.Code.INPUT_WIDTH, Types.Code.MISSING_LOCAL_INPUT], true, "bad byte rows rejected"
+		)
 		context.equal(session.scheduled_local_input(0).code, Types.Code.MISSING_LOCAL_INPUT, "rejection stages no valid prefix")
 		context.equal(driver.step_local(0, _bytes(1)).code, Types.Code.OK, "corrected retry preserves accepted clock")
 		context.equal(driver.step_local(-1, _bytes(2)).code, Types.Code.INVALID_TIME, "successful service retains monotonic clock")
@@ -156,3 +178,55 @@ func _local_players(context: RefCounted) -> void:
 			context.bytes_equal(driver.confirmed_inputs(0).read(player).bytes, PackedByteArray([player + 1]), 0, "confirmed row preserves discovered mapping")
 		driver.terminate()
 		context.equal(driver.local_players(), expected_slots, "terminal session retains its configured local membership")
+
+
+# Value: protects=driver-only wide neutral sampling; fails_when=shape or bytes require retained config; why_new=byte tests assume one-byte zero neutral; seam=none
+func _neutral_input(context: RefCounted) -> void:
+	var driver: RefCounted = Driver.new()
+	context.equal(driver.has_method("neutral_input"), true, "driver supplies configured neutral bytes")
+	if not driver.has_method("neutral_input"):
+		return
+	context.equal(driver.neutral_input(), PackedByteArray(), "unconfigured driver has no neutral sample")
+	context.equal(driver.configure(Session.new(), Fixture.Game.new()), Types.Code.OK, "unconfigured session can be attached")
+	context.equal(driver.neutral_input(), PackedByteArray(), "unconfigured session has no sample shape")
+	var config: Config = Config.new()
+	config.input_width = 3
+	config.neutral_input = PackedByteArray([12, 0, 255])
+	config.max_snapshot_bytes = 8
+	config.storage_budget_bytes = config.required_storage_bytes()
+	var session: Session = Session.new()
+	context.equal(session.configure(config), Types.Code.OK, "wide nonzero neutral session configured")
+	var game: NeutralGame = NeutralGame.new()
+	game.owner = weakref(driver)
+	context.equal(driver.configure(session, game), Types.Code.OK, "driver-only wide client attached")
+	config.neutral_input.fill(1)
+	context.equal(driver.neutral_input(), PackedByteArray([12, 0, 255]), "caller configuration does not own installed neutral bytes")
+	var owned: PackedByteArray = driver.neutral_input()
+	owned.fill(7)
+	context.equal(driver.neutral_input(), PackedByteArray([12, 0, 255]), "neutral sample read is owned")
+	var expected: int = 0
+	for frame: int in range(5):
+		var rows: Array[PackedByteArray] = []
+		for player: int in driver.local_players():
+			var sample: PackedByteArray = driver.neutral_input()
+			sample[1] = frame + player
+			rows.append(sample)
+			# The game consumes every byte; sync-test restores must preserve the full result.
+			expected = expected * 3 + 12 + frame
+		for player: int in driver.local_players():
+			expected += frame + player + 255
+		context.equal(driver.step_local(frame, rows).code, Types.Code.OK, "client builds wide rows using only the driver")
+		context.equal(game.value, expected, "wide samples reach actual callbacks and survive rewind")
+		for player: int in driver.local_players():
+			context.bytes_equal(driver.confirmed_inputs(frame).read(player).bytes, rows[player], frame, "confirmed wide row keeps every supplied byte")
+	context.equal("load:1" in game.trace, true, "wide rows exercise real sync-test rollback")
+	for sample: PackedByteArray in game.observed:
+		context.equal(sample, PackedByteArray([12, 0, 255]), "read remains safe during simulation callbacks")
+	for code: int in game.replacement_codes:
+		context.equal(code, Types.Code.BUSY, "callback read does not release replacement ownership")
+	context.equal(driver.configure(null, null), Types.Code.INVALID_CONFIGURATION, "invalid replacement rejected")
+	context.equal(driver.neutral_input(), PackedByteArray([12, 0, 255]), "invalid replacement preserves sample shape")
+	driver.terminate()
+	context.equal(driver.neutral_input(), PackedByteArray([12, 0, 255]), "terminal session preserves recorded sample shape")
+	context.equal(driver.configure(Fixture.new()._session(), Fixture.Game.new()), Types.Code.OK, "driver accepts a fresh one-byte session")
+	context.equal(driver.neutral_input(), PackedByteArray([0]), "replacement reads its own neutral sample")
