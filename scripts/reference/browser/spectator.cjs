@@ -44,7 +44,7 @@ function observeErrors(page,errors,isTearingDown,diagnostics) {
     } catch {}
   });
 }
-module.exports={observeErrors};
+module.exports={observeErrors,run};
 async function run() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));

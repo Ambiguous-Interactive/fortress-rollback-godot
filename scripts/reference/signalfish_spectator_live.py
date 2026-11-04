@@ -99,8 +99,11 @@ def main():
     scenario.add_argument('--late-signal', choices=LATE_SIGNALS)
     scenario.add_argument('--departure', choices=['host', 'viewer'])
     scenario.add_argument('--browser-viewer', action='store_true')
+    parser.add_argument('--acceptance-delay-ms', type=int)
     parser.add_argument('--browser-fault', choices=['initial-state', 'room-identity', 'viewer-departure', 'host-departure'])
     args = parser.parse_args()
+    if args.acceptance_delay_ms is not None and (not args.browser_viewer or not 1 <= args.acceptance_delay_ms <= 5000):
+        parser.error('--acceptance-delay-ms requires browser viewing and a hold from 1 through 5000 ms')
     if args.browser_fault and not args.browser_viewer:
         parser.error('--browser-fault requires --browser-viewer')
     args.output.mkdir(parents=True, exist_ok=True)
@@ -144,6 +147,8 @@ def run(args):
         sources.update({name: ROOT / 'scripts/reference' / name for name in spectator_browser.FILES})
         sources['browser_launcher'] = ROOT / 'scripts/reference/spectator_browser.py'
         sources['browser_controller'] = ROOT / 'scripts/reference/browser/spectator.cjs'
+        if args.acceptance_delay_ms is not None:
+            sources['acceptance_controller'] = ROOT / 'scripts/reference/browser/spectator_acceptance.cjs'
         sources['import_freezer'] = ROOT / 'scripts/reference/browser/webrtc_import.py'
         sources['godot_smoke'] = ROOT / 'scripts/reference/godot_smoke.py'
     for helper in ['engine_path.py', 'local_ownership.py', 'receipt_arguments.py', 'signalfish_live_probe.py', 'signalfish_probe.py', 'run.py']:
@@ -220,7 +225,8 @@ def run(args):
                 try:
                     wait_ready(server, port)
                     if args.browser_viewer:
-                        result = spectator_browser.execute(engine, project, runtime_path, export_server.url, browser_environment, args.output, control, args.browser_fault)
+                        result = spectator_browser.execute(
+                            engine, project, runtime_path, export_server.url, browser_environment, args.output, control, args.browser_fault, args.acceptance_delay_ms)
                         if args.browser_fault not in ['initial-state', 'room-identity'] and (control.received < 1 or control.done is None):
                             raise ValueError('browser authenticated acceptance or completion missing')
                     else:

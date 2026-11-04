@@ -143,6 +143,9 @@ func _run() -> void:
 		if polled.code not in [T.Code.OK, T.Code.BACKPRESSURE]:
 			_fail("browser relay poll")
 			return
+		if not accept_delivered:
+			await get_tree().process_frame
+			continue
 		if runtime.get("browser_fault") in ["viewer-departure", "host-departure"] and game.frame >= 8:
 			paused_rows = stream.playback_session().host_frontier() - game.frame + 1
 			if paused_rows >= 2:
@@ -258,6 +261,8 @@ func _http(path: String, body: Dictionary = {}) -> Dictionary:
 		return {"status": 0}
 	var response: Array = await request.request_completed
 	request.queue_free()
+	if response[0] != HTTPRequest.RESULT_SUCCESS:
+		return {"status": 0}
 	return {"status": response[1], "body": JSON.parse_string(response[3].get_string_from_utf8())}
 
 
