@@ -142,6 +142,29 @@ actually ran; Chromium results do not qualify Firefox. WebKit and the remaining
 cross-platform release gates in #45 remain separate.
 
 
+## Encoded donor-recovery recording witness
+
+`test_peer_drop_replay.gd` extends the real encoded three-peer donor fixture.
+One case requires the coordinator to recover a missing original target row from
+the other survivor. A second case uses six player slots, loses one history chunk,
+and delivers its retry after its successor. Both survivors certify cut eight,
+continue through input eleven, and finalize/capture boundary twelve without a
+new local sample. The game makes disconnected status affect canonical state.
+
+Each survivor's actual serialized recording passes the production decoder.
+Callback and expert playback compare every boundary with an independently
+summed original-input/status history, including the captured final state.
+Controls corrupt the last input, change a disconnected status while rebuilding
+its input digest, and corrupt the terminal checksum. They must stop at boundaries
+eleven, ten and twelve respectively, with the exact input/state comparison.
+The native runner and ownership inventory include both cases.
+
+Run `make test-focus SUITE=res://tests/unit/test_peer_drop_replay.gd` with either
+pinned engine. These cases establish scoped Godot recording/playback acceptance
+through the production drop barrier and donor packets. They do not compare the
+pinned upstream recorder, qualify physical network departure, exercise queue
+wrap, or close the broader #45 recording and platform release gates.
+
 ## Final-boundary captures on native and Web
 
 The ownership witness runs `test_replay_terminal.gd` and `test_replay_terminal_recovery.gd`
