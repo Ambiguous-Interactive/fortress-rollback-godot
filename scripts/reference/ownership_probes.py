@@ -101,7 +101,7 @@ EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'c
 EXPECTED['res://tests/unit/test_peer_replay_capture.gd'] = {'capture_final', 'capture_guards', 'capture_callbacks', 'capture_cap'}
 EXPECTED['res://tests/unit/test_replay_coverage.gd'] = {'coverage', 'counting', 'unchecked_seek', 'paused_input_integrity', 'selected_state_status'}
 EXPECTED['res://tests/unit/test_driver.gd'].add('input_exhaustion')
-EXPECTED['res://tests/unit/test_driver_local_bytes.gd'] = {'parity', 'validation', 'retained', 'reentry'}
+EXPECTED['res://tests/unit/test_driver_local_bytes.gd'] = {'parity', 'validation', 'retained', 'reentry', 'local_players'}
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'stepped_boundaries', 'paused_boundaries'})
 EXPECTED['res://tests/unit/test_spectator_model.gd'] = {
     'bounded_delivery_model', 'loss_and_conflict_model', 'transcript_mutation_control', 'caller_bounded_catchup_model'}
@@ -205,9 +205,9 @@ EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {
 EXPECTED['res://tests/unit/test_example_shortcuts.gd'] = {'ignored_shortcuts', 'ordinary_shortcuts'}
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED['res://tests/unit/test_integration_restart.gd'] = {'restart_lifetime', 'restart_rejections', 'restart_callbacks'}
-EXPECTED['res://tests/unit/test_peer_scene_controls.gd'] = {'pointer_controls', 'owned_controls', 'stopped_controls', 'inspection'}
+EXPECTED['res://tests/unit/test_peer_scene_controls.gd'] = {'pointer_controls', 'owned_controls', 'stopped_controls', 'inspection', 'focus_pause'}
 EXPECTED['res://tests/unit/test_spectator_host_step.gd'] = {'host_step', 'host_step_ownership', 'host_failure_feedback'}
-EXPECTED['res://tests/unit/test_offline_scene_controls.gd'] = {'inspection', 'ownership'}
+EXPECTED['res://tests/unit/test_offline_scene_controls.gd'] = {'inspection', 'ownership', 'focus_pause'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())
 FILES = [
     'tests/runner/scenario_runner.gd', 'tests/runner/test_context.gd', 'tests/runner/run_tests.gd',

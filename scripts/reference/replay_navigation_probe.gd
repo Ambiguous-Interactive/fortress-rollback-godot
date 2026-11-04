@@ -152,6 +152,7 @@ func _run() -> void:
 	await _submitted_current_failure()
 	await _repeat_controls()
 	await _player_change_controls()
+	await _inspection_shortcuts()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
@@ -159,8 +160,9 @@ func _run() -> void:
 	await _effects_controls()
 	await _peer_controls()
 	await _offline_controls()
-	if checks == 255 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 255")
+	await _local_focus_pause()
+	if checks == 282 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 282")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -632,3 +634,78 @@ func _offline_controls() -> void:
 	_check(root.get_visible_rect().encloses(local._label.get_global_rect()), "wrapped offline instructions fit actual viewport")
 	local.queue_free()
 	await process_frame
+
+
+func _local_focus_pause() -> void:
+	for packed: PackedScene in [OfflineScene, PeerScene]:
+		root.size = Vector2i(1040, 720)
+		var local: Node2D = packed.instantiate()
+		root.add_child(local)
+		local.set_physics_process(false)
+		local._physics_process(0.0)
+		await process_frame
+		await process_frame
+		var is_offline: bool = packed == OfflineScene
+		var before: PackedByteArray = local._simulation.canonical_bytes() if is_offline else local._match.games[0].canonical_bytes()
+		var frame: int = local._simulation.frame if is_offline else local._match.now_us
+		root.propagate_notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+		await process_frame
+		_check(local._is_paused and local._label.text.contains("PAUSED"), "application focus loss visibly pauses local example")
+		for tick: int in 150:
+			local._physics_process(0.0)
+		var after: PackedByteArray = local._simulation.canonical_bytes() if is_offline else local._match.games[0].canonical_bytes()
+		_check(before == after, "unfocused local example preserves complete canonical state")
+		_check((local._simulation.frame if is_offline else local._match.now_us) == frame, "unfocused example preserves frame or packet clock")
+		root.propagate_notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+		local._physics_process(0.0)
+		_check(local._is_paused, "application focus return does not resume local example")
+		await _click(local._pause_button if is_offline else local._actions.pause)
+		local._physics_process(0.0)
+		_check(not local._is_paused and (local._simulation.frame if is_offline else local._match.now_us) > frame,
+			"real pointer explicitly resumes after application focus returns")
+		_check(root.gui_get_focus_owner() == null, "focus-pause resume preserves movement keyboard routing")
+		local.queue_free()
+		await process_frame
+
+
+func _inspection_shortcuts() -> void:
+	var fixture: RefCounted = InputNavigationFixture.new()
+	_check(scene.viewer.open_bytes(fixture._recording().to_bytes()), "shortcut fixture opens")
+	scene._status_changes_only.button_pressed = false
+	scene.viewer.set_change_player(1)
+	scene._refresh()
+	scene._next_input_change.grab_focus()
+	await _key(KEY_PERIOD, true)
+	_check(not scene.viewer.is_seeking(), "modified inspection key preserves playback")
+	await _key(KEY_PERIOD)
+	_check(scene.viewer.is_seeking() and scene.viewer.current_frame() == 0, "real Period starts bounded input navigation")
+	await _key(KEY_COMMA)
+	_settle()
+	_check(scene.viewer.current_frame() == 700, "routed input shortcut honors selected player and active seek")
+	await _key(KEY_COMMA)
+	_check(scene.viewer.current_frame() == 0, "real Comma restores selected player's first input")
+	scene.viewer.set_change_player(0)
+	scene._status_changes_only.button_pressed = true
+	await _key(KEY_PERIOD)
+	_settle()
+	_check(scene.viewer.current_frame() == 600, "routed Period honors status filter")
+	var editor: LineEdit = scene._target.get_line_edit()
+	editor.grab_focus()
+	for code: Key in [KEY_COMMA, KEY_PERIOD, KEY_PAGEUP, KEY_PAGEDOWN]:
+		await _key(code)
+		_check(scene.viewer.current_frame() == 600 and not scene.viewer.is_seeking(), "editable focus preserves playback against inspection key")
+	editor.release_focus()
+	scene._timeline_drag_started()
+	await _key(KEY_COMMA)
+	_check(scene.viewer.current_frame() == 600 and not scene.viewer.is_seeking(), "held timeline refuses routed inspection key")
+	scene._timeline_drag_ended(false)
+	_check(scene.viewer.open_bytes(fixture._sparse_recording().to_bytes()), "sparse checksum shortcut fixture opens")
+	scene._refresh()
+	scene._next_recorded_checksum.grab_focus()
+	await _key(KEY_PAGEDOWN)
+	_settle()
+	_check(scene.viewer.current_frame() == 450, "real Page Down reaches next recorded checksum")
+	_check(scene.viewer.current_state_coverage_message() == "State at frame 450: recorded checksum matched.", "routed checksum navigation validates selected state")
+	await _key(KEY_PAGEUP)
+	_settle()
+	_check(scene.viewer.current_frame() == 0, "real Page Up restores preceding checksum")

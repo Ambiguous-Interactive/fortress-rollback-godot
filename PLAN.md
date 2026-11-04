@@ -698,6 +698,10 @@ The final advanced task audits all remaining applicable upstream behavior and
 creates residual tasks before any complete-parity claim.
 
 The playable effects example supports paused single-tick inspection through the actual driver, including prediction stalls and rollback.
+The offline and in-process peer examples pause on application focus loss and require explicit resume,
+preserving simulation and injected packet time while inspecting another window.
+Driver-only clients can discover ascending local slots for byte-only input submission without retaining configuration order.
+Replay input-change and recorded-checksum navigation share pointer and keyboard readiness gates.
 Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
 These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
 

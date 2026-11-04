@@ -45,6 +45,12 @@ func _exit_tree() -> void:
 			session._core.terminate()
 
 
+func _notification(what: int) -> void:
+	if what == MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT and _label != null:
+		_is_paused = true
+		_update_label()
+
+
 func _physics_process(_delta: float) -> void:
 	if not _is_paused:
 		_advance_match()

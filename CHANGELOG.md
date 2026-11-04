@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add driver local-player discovery in the byte-only input submission order.
+
+- Add replay shortcuts for previous/next input changes and recorded checksums.
+
+- Add automatic focus-loss pause to local offline and two-peer examples. Resume explicitly to continue.
+
 - Add pause and single-tick controls to offline and two-peer examples, including packet-service inspection.
 
 - Add pointer controls for peer-example packet faults, input delays and reset.

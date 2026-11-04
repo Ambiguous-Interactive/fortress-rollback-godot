@@ -8,8 +8,18 @@ const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 
 
+class MembershipGame:
+	extends Fixture.Game
+	var owner: WeakRef
+	var observed: PackedInt32Array = PackedInt32Array()
+
+	func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
+		observed = owner.get_ref().local_players()
+		return super.simulate_frame(frame, inputs)
+
+
 func cases() -> PackedStringArray:
-	return PackedStringArray(["parity", "validation", "retained", "reentry"])
+	return PackedStringArray(["parity", "validation", "retained", "reentry", "local_players"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -103,3 +113,46 @@ func _reentry(context: RefCounted) -> void:
 	context.equal(driver.step_local(0, _bytes(0)).code, Types.Code.OK, "outer byte-only call completes")
 	context.equal(attempts, PackedInt32Array([Types.Code.BUSY, Types.Code.BUSY]), "shared completion ownership prevents buffer mutation")
 	context.equal(driver.step_local(0, _bytes(1)).code, Types.Code.OK, "reentry leaves next bytes and clock usable")
+
+
+# Value: protects=driver-only row mapping; fails_when=membership order differs from byte submission; why_new=existing cases know the configured slot; seam=none
+func _local_players(context: RefCounted) -> void:
+	var driver: RefCounted = Driver.new()
+	context.equal(driver.has_method("local_players"), true, "driver reveals byte-row player order")
+	if not driver.has_method("local_players"):
+		return
+	context.equal(driver.local_players(), PackedInt32Array(), "unconfigured driver has no local slots")
+	for roster: PackedInt32Array in [PackedInt32Array([1]), PackedInt32Array([6, 1, 4]), PackedInt32Array([7, 6, 5, 4, 3, 2, 1, 0])]:
+		var config: Config = Config.new()
+		config.sync_test = false
+		config.player_count = 8
+		config.check_distance = 0
+		config.local_players = roster
+		config.max_snapshot_bytes = 8
+		config.storage_budget_bytes = config.required_storage_bytes()
+		var session: Session = Session.new()
+		context.equal(session.configure(config), Types.Code.OK, "arbitrary local membership configured")
+		var game: MembershipGame = MembershipGame.new()
+		game.owner = weakref(driver)
+		context.equal(driver.configure(session, game), Types.Code.OK, "driver switches membership")
+		var expected_slots: PackedInt32Array = roster.duplicate()
+		expected_slots.sort()
+		context.equal(driver.local_players(), expected_slots, "row order is ascending, independent of configuration order")
+		var owned: PackedInt32Array = driver.local_players()
+		owned.fill(0)
+		context.equal(driver.local_players(), expected_slots, "returned slots cannot change driver membership")
+		var rows: Array[PackedByteArray] = []
+		for player: int in driver.local_players():
+			rows.append(PackedByteArray([player + 1]))
+		var canonical: int = 0
+		for player: int in range(8):
+			if player not in expected_slots:
+				context.equal(session.receive_input(player, 0, PackedByteArray([0])).code, Types.Code.OK, "remote original row delivered")
+			canonical = canonical * 3 + (player + 1 if player in expected_slots else 0)
+		context.equal(driver.step_local(0, rows).code, Types.Code.OK, "client submits discovered row order")
+		context.equal(game.observed, expected_slots, "callback may observe local membership")
+		context.equal(game.value, canonical, "actual callback uses the intended local player bytes")
+		for player: int in expected_slots:
+			context.bytes_equal(driver.confirmed_inputs(0).read(player).bytes, PackedByteArray([player + 1]), 0, "confirmed row preserves discovered mapping")
+		driver.terminate()
+		context.equal(driver.local_players(), expected_slots, "terminal session retains its configured local membership")
