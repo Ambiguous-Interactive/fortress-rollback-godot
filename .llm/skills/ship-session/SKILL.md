@@ -20,6 +20,12 @@ Use authenticated `gh` CLI for capability gaps, following
 [GitHub operations](../github-operations/SKILL.md). Missing credentials block
 the fallback; never print tokens or silently use unauthenticated requests.
 
+The shipping grant covers this session's PR and merge. Apply GitHub operations'
+repository and outside-input gates before acting on feedback or involving other
+people. Read and report outside input; prepare concrete local work and obtain
+specific direction where required. Existing direction remains valid. A pending
+outside-input decision is not addressed feedback and must remain explicit.
+
 ## Verify the candidate
 
 1. Read current `GOAL.md`, `PLAN.md`, issues, worktree and open PRs. Carry forward

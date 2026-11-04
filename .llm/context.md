@@ -78,7 +78,10 @@ until a skill is activated, so keep bodies focused and link to
 
 Use authenticated GitHub MCP first; use authenticated `gh` CLI for capability gaps.
 Follow [GitHub operations](./skills/github-operations/SKILL.md) for credentials,
-pagination and fallback limits. Missing credentials block the fallback; never
+repository scope, outside-person interactions, pagination and fallback limits.
+Task-related writes in `wallstop` and `Ambiguous-Interactive` repos are in scope;
+outside input and other owners follow that skill's specific-authorization gates.
+Missing credentials block the fallback; never
 print tokens or silently use unauthenticated GitHub requests.
 
 Follow [ship-session](./skills/ship-session/SKILL.md) after every push and before

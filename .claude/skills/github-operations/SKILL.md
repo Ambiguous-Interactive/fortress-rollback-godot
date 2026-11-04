@@ -1,6 +1,6 @@
 ---
 name: github-operations
-description: "Use authenticated GitHub MCP for issues, PRs, reviews, checks and repository operations; use authenticated gh CLI for capability gaps. Applies to remote GitHub reads and writes, not local Git or pinned archive downloads."
+description: "GitHub reads and writes: repository scope, outside contributors, trusted bots, authorization, authenticated MCP and gh fallback. Use for issues, PRs, comments, reviews, checks and other hosted content."
 ---
 
 # Github Operations
