@@ -242,6 +242,7 @@ func _checksum_navigation_integrity(context: RefCounted) -> void:
 
 
 func _checksum_navigation_controls(context: RefCounted) -> void:
+	_inspection_shortcuts(context)
 	var node: Node2D = Fixture.Scene.instantiate()
 	node._ready()
 	var previous: Button = Fixture._button(node, "Previous recorded checksum")
@@ -434,6 +435,77 @@ func _player_navigation(context: RefCounted) -> void:
 		while node.viewer.is_seeking():
 			node._physics_process(0.0)
 		context.equal(node.viewer.current_frame(), 600, "player and status filters combine through actual scene controls")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=keyboard inspection uses active player/status filters and verified navigation;
+# fails_when=shortcuts ignore filters or bypass seek/work ownership; why_new=buttons do not exercise key routing; seam=none
+func _inspection_shortcuts(context: RefCounted) -> void:
+	var node: Node2D = Fixture.Scene.instantiate()
+	node._ready()
+	var speed_fixture: RefCounted = load("res://tests/unit/test_replay_speed.gd").new()
+	var replay: Replay = _recording()
+	node.viewer.open_bytes(replay.to_bytes())
+	node.viewer.set_change_player(1)
+	node._refresh()
+	for key: Key in [KEY_PERIOD, KEY_I, KEY_O]:
+		for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
+			speed_fixture._key(node, key, modified)
+			context.equal(node.viewer.is_seeking(), false, "modified inspection shortcut leaves playback unchanged")
+	speed_fixture._key(node, KEY_PERIOD)
+	context.equal(node.viewer.is_seeking(), true, "Period starts selected-player navigation")
+	speed_fixture._key(node, KEY_COMMA)
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 700, "Period honors selected player and seeking ignores another key")
+	speed_fixture._key(node, KEY_COMMA)
+	context.equal(node.viewer.current_frame(), 0, "Comma returns to selected player's first input")
+	speed_fixture._key(node, KEY_O)
+	context.equal(node.viewer.is_seeking(), true, "unshifted O starts selected-player navigation on QWERTY and AZERTY")
+	speed_fixture._key(node, KEY_I)
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 700, "O honors selected player and active seeking refuses I")
+	for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
+		speed_fixture._key(node, KEY_I, modified)
+		context.equal(node.viewer.current_frame(), 700, "modified I preserves a boundary with an enabled previous action")
+	speed_fixture._key(node, KEY_I)
+	context.equal(node.viewer.current_frame(), 0, "unshifted I restores selected player's first input")
+	node.viewer.set_change_player(0)
+	node._status_changes_only.button_pressed = true
+	speed_fixture._key(node, KEY_O)
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 600, "O honors status-only filter")
+	node._timeline_drag_started()
+	speed_fixture._key(node, KEY_I)
+	context.equal(node.viewer.current_frame(), 600, "held timeline refuses shortcut navigation")
+	node._timeline_drag_ended(false)
+	context.equal(node.viewer._player.begin_advance().code, Fixture.Types.Code.READY, "manual work owns displayed state")
+	node._refresh()
+	speed_fixture._key(node, KEY_I)
+	context.equal(node.viewer.current_frame(), 600, "manual work refuses shortcut navigation")
+	node.viewer._player.terminate()
+	replay = _sparse_recording()
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	for key: Key in [KEY_PAGEUP, KEY_PAGEDOWN]:
+		speed_fixture._key(node, key)
+		while node.viewer.is_seeking():
+			node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 0 if key == KEY_PAGEUP else 450, "Page keys follow available recorded checksums")
+	context.equal(node.viewer.current_state_coverage_message(), "State at frame 450: recorded checksum matched.", "shortcut validates the selected checksum")
+	speed_fixture._key(node, KEY_PAGEUP)
+	context.equal(node.viewer.current_frame(), 0, "Page Up restores earlier recorded checksum")
+	replay._digests[120 * Replay.DIGEST_BYTES] ^= 1
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	speed_fixture._key(node, KEY_PAGEDOWN)
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal([node.viewer.current_frame(), node.viewer.has_failure()], [120, true], "checksum shortcut cannot skip damaged input")
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
 	node._exit_tree()
 	node.free()

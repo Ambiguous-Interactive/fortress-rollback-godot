@@ -11,7 +11,7 @@ Networked P2P and browser release gates remain in the [plan](../PLAN.md).
 
 ## Setup and callbacks
 
-Preload `addons/fortress_rollback/core/config.gd`, `session.gd` and `driver.gd`.
+Preload `addons/fortress_rollback/core/config.gd`, `session.gd`, `driver.gd` and `session_types.gd`.
 Configure input width and same-width neutral bytes, ascending dense player slots,
 local slot membership, delay and prediction limits. Every sync-test slot is local.
 Supply `max_snapshot_bytes` and `storage_budget_bytes` explicitly. `validate()`
@@ -43,6 +43,27 @@ A rejected configuration leaves the previous session and game installed.
 
 `Driver.LocalInput(player, sample_frame, bytes)` copies one local sample.
 Construct `Driver.new(session, game)` and call `step(now_us, samples)` per tick.
+For byte-only clients, `step_local(now_us, rows)` infers the current sample frame
+and reuses bounded input wrappers. `local_players()` returns owned ascending slots
+in exactly the order expected by those rows, even when configuration membership
+was supplied in another order. Query it again after replacing the driver's session.
+Supply one row per local slot. Each nonempty row must match the configured input
+width; an empty row reuses that slot's retained sample after a prediction stall.
+An empty row without a retained sample returns `MISSING_LOCAL_INPUT`.
+Rejected row counts, widths or conflicts preserve the last accepted poll time.
+
+```gdscript
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+
+var rows: Array[PackedByteArray] = []
+for player: int in driver.local_players():
+	var retained: RefCounted = driver.scheduled_local_input(player)
+	rows.append(PackedByteArray() if retained.code == Types.Code.OK else sample_buttons(player))
+var result: RefCounted = driver.step_local(now_us, rows)
+```
+
+Here `sample_buttons(player)` is the application's fixed-width input sampler.
+The driver copies accepted bytes; callers may reuse their buffers after the call.
 `StepResult` reports code, before/after frame, drained events, the session's terminal
 `reason` and its `failure_frame`. The driver consumes the expert engine's requests in
 order; it has no rollback algorithm. `driver.status()` and `driver.statistics()` report

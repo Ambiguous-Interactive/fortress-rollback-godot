@@ -10,7 +10,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["inspection", "ownership"])
+	return PackedStringArray(["inspection", "ownership", "focus_pause"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -121,3 +121,30 @@ func _ownership(scene: Node, context: RefCounted) -> void:
 	context.equal(scene.get_node("OfflineControls/Restart").disabled, false, "terminal reset remains available")
 	_key(scene, KEY_R)
 	context.equal(scene._simulation.frame, 0, "keyboard restart replaces stopped match")
+
+
+# Value: protects=focus loss holds local simulation; fails_when=unattended ticks advance or focus gain resumes; why_new=manual pause misses lifecycle; seam=none
+func _focus_pause(scene: Node, context: RefCounted) -> void:
+	scene._physics_process(0.0)
+	var bytes: PackedByteArray = scene._simulation.canonical_bytes()
+	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	for tick: int in 3:
+		scene._physics_process(0.0)
+	context.equal(scene._is_paused, true, "application focus loss pauses local match")
+	context.bytes_equal(scene._simulation.canonical_bytes(), bytes, scene._simulation.frame, "unfocused ticks preserve canonical state")
+	context.equal(scene._label.text.contains("PAUSED"), true, "focus pause is visible")
+	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+	scene._physics_process(0.0)
+	context.bytes_equal(scene._simulation.canonical_bytes(), bytes, scene._simulation.frame, "focus return requires explicit resume")
+	_key(scene, KEY_P)
+	scene._physics_process(0.0)
+	context.equal(scene._is_paused, false, "ordinary pause control resumes after focus returns")
+	context.equal(scene._simulation.frame, 2, "resumed simulation continues exactly one frame")
+	var scene_ref: WeakRef = weakref(scene)
+	scene._driver.step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
+		scene_ref.get_ref().notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT), CONNECT_ONE_SHOT)
+	scene._physics_process(0.0)
+	context.equal(scene._simulation.frame, 3, "focus loss during completion preserves accepted step")
+	bytes = scene._simulation.canonical_bytes()
+	scene._physics_process(0.0)
+	context.bytes_equal(scene._simulation.canonical_bytes(), bytes, 3, "focus pause takes effect before next service")

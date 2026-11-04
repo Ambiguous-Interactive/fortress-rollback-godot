@@ -222,6 +222,17 @@ func input_delay(player: int) -> int:
 	return _session.input_delay(player) if _session != null else -1
 
 
+## Owned local-player slots in the ascending order accepted by step_local().
+## Empty before configuration or for receive-only playback; safe during callbacks.
+func local_players() -> PackedInt32Array:
+	var players: PackedInt32Array = PackedInt32Array()
+	if _session != null:
+		for player: int in range(_sample_indices.size()):
+			if _session.input_delay(player) >= 0:
+				players.append(player)
+	return players
+
+
 ## Change local delay between driver calls, including while stalled. See the session's delay limits.
 ## Call the peer session's setter instead when it owns network publication.
 func set_input_delay(player: int, delay: int) -> Types.Result:

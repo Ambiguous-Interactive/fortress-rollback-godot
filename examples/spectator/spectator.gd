@@ -63,7 +63,7 @@ func _ready() -> void:
 	_policy_controls.add_theme_constant_override("separation", 12)
 	add_child(_policy_controls)
 	var names: PackedStringArray = PackedStringArray(["LessDelay", "MoreDelay", "SlowerCatchUp", "FasterCatchUp"])
-	var labels: PackedStringArray = PackedStringArray(["Less delay ([)", "More delay (])", "Slower catch-up (,)", "Faster catch-up (.)"])
+	var labels: PackedStringArray = PackedStringArray(["Less delay (Y)", "More delay (U)", "Slower catch-up (I)", "Faster catch-up (O)"])
 	for index: int in range(names.size()):
 		var button: Button = Button.new()
 		button.name = names[index]
@@ -173,10 +173,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_catch_up_viewer()
 	elif event.keycode == KEY_F:
 		_follow_live()
-	elif event.keycode in [KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
-		_adjust_policy(0 if event.keycode == KEY_BRACKETLEFT else 1)
-	elif event.keycode in [KEY_COMMA, KEY_PERIOD] and demo.viewer != null:
-		_adjust_policy(2 if event.keycode == KEY_COMMA else 3)
+	elif event.keycode in [KEY_Y, KEY_U, KEY_BRACKETLEFT, KEY_BRACKETRIGHT] and demo.viewer != null:
+		_adjust_policy(0 if event.keycode in [KEY_Y, KEY_BRACKETLEFT] else 1)
+	elif event.keycode in [KEY_I, KEY_O, KEY_COMMA, KEY_PERIOD] and demo.viewer != null:
+		_adjust_policy(2 if event.keycode in [KEY_I, KEY_COMMA] else 3)
 	elif event.keycode == KEY_L:
 		_lose_host_connection()
 	elif event.keycode == KEY_E:
@@ -353,7 +353,7 @@ func _update_label() -> void:
 		"Delayed spectator | %s\n" % state
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
 		+ "1/2/3: host delivery 0/3/12 ticks | H: pause/resume host | T: step host\n"
-		+ "E: end host\n[: less delay | ]: more delay\nComma: slower catch-up | Period: faster catch-up\n"
+		+ "E: end host\nY / [: less delay | U / ]: more delay\nI / Comma: slower catch-up | O / Period: faster catch-up\n"
 		+ "L: lose host link | V: save viewed replay | R: restart\n"
 		+ (
 			"Host frame %d | Confirmed %d | Viewer frame %d | Host delivery %d ticks\n\n"

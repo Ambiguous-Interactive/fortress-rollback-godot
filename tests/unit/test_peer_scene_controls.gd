@@ -13,7 +13,7 @@ const ACTION_KEYS: Dictionary = {
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["pointer_controls", "owned_controls", "stopped_controls", "inspection"])
+	return PackedStringArray(["pointer_controls", "owned_controls", "stopped_controls", "inspection", "focus_pause"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -219,4 +219,35 @@ func _inspection(context: RefCounted) -> void:
 	context.equal(pause.disabled, true, "paused stopped match disables resume")
 	context.equal(step.disabled, true, "paused stopped match disables step")
 	context.equal(scene._actions.reset.disabled, false, "stopped match retains reset")
+	scene.free()
+
+
+# Value: protects=focus loss holds local packet time; fails_when=background ticks time out or focus gain resumes; why_new=manual controls miss lifecycle; seam=none
+func _focus_pause(context: RefCounted) -> void:
+	var scene: Node = _scene()
+	_healthy(scene, context)
+	var game: Match = scene._match
+	var before: Array = _state(game)
+	var bytes: PackedByteArray = game.games[0].canonical_bytes()
+	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	for tick: int in 150:
+		scene._physics_process(0.0)
+	context.equal(scene._is_paused, true, "application focus loss pauses local packet demo")
+	context.equal(_state(game), before, "background service preserves clock, held samples and packets")
+	context.bytes_equal(game.games[0].canonical_bytes(), bytes, game.games[0].frame, "focus pause preserves game state")
+	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+	scene._physics_process(0.0)
+	context.equal(_state(game), before, "focus return keeps both peers paused")
+	_key(scene, "pause")
+	scene._physics_process(0.0)
+	context.equal(scene._is_paused, false, "explicit resume restores packet service")
+	context.equal(game.now_us, before[2] + Match.TICK_US, "resume services one ordinary tick")
+	var scene_ref: WeakRef = weakref(scene)
+	game.sessions[0].step_completed.connect(func(_code: int, _before: int, _after: int) -> void:
+		scene_ref.get_ref().notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT), CONNECT_ONE_SHOT)
+	scene._physics_process(0.0)
+	context.equal(game.failure, Match.I.Code.OK, "focus loss during completion preserves accepted composed work")
+	before = _state(game)
+	scene._physics_process(0.0)
+	context.equal(_state(game), before, "next tick honors focus pause after callback unwinds")
 	scene.free()

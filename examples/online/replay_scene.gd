@@ -121,7 +121,7 @@ func _ready() -> void:
 	shortcuts.text = "P play/pause | N next frame | B back one frame | R restart | Esc cancel seek"
 	panel.add_child(shortcuts)
 	var jumps: Label = Label.new()
-	jumps.text = "J/L: jump 5 seconds | Home/End: start/end"
+	jumps.text = "J/L: jump 5 seconds | Home/End: start/end\nI/Comma: previous change | O/Period: next change | Page Up/Down: recorded checksum"
 	panel.add_child(jumps)
 	var buttons: HBoxContainer = HBoxContainer.new()
 	panel.add_child(buttons)
@@ -470,6 +470,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			action = _time_buttons[2]
 		KEY_END:
 			action = _time_buttons[3]
+		KEY_COMMA, KEY_I:
+			action = _previous_input_change
+		KEY_PERIOD, KEY_O:
+			action = _next_input_change
+		KEY_PAGEUP:
+			action = _previous_recorded_checksum
+		KEY_PAGEDOWN:
+			action = _next_recorded_checksum
 		KEY_ESCAPE:
 			action = _cancel_button
 	if action != null and not action.disabled:

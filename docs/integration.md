@@ -116,6 +116,8 @@ Never send floats, strings or engine objects as input. Quantize analog sticks to
 For small samples, reuse an input buffer instead of creating an owned read result for every player:
 
 ```gdscript
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+
 var input_sample: PackedByteArray = PackedByteArray([0])  # one-byte configured input width
 
 func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:

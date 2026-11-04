@@ -97,3 +97,8 @@ including packet delivery, retries and an attempted frame for each peer.
 Prediction can stall without advancing; the held input stays unchanged until
 that frame succeeds. Reset resumes a fresh match. Active callbacks or expert
 requests disable inspection controls, and a stopped member ends the paused match.
+
+Losing application focus pauses both peers and the injected packet clock.
+Returning to the window keeps them paused; use
+Resume (P) when ready. A focus change during a callback lets that accepted tick
+finish and pauses before the next one. Reset starts a running match.

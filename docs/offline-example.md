@@ -2,7 +2,8 @@
 
 Run a two-player sync-test using the shipped GDScript addon and Godot 4.3 or newer.
 No Rust, native extension, network service, test runner, or oracle is required.
-This example tests local rollback. Online play and browser networking remain planned.
+This example tests local rollback. Use the [online example](online-example.md)
+for SignalFish setup and browser multiplayer.
 
 ## Run from this repository
 
@@ -114,3 +115,8 @@ including pending pulses and history wraps. It verifies exactly 16 unique pulses
 and repeated reconciliation without duplicates. Deliberately omitting PRNG state
 or pending pulses must terminate through the production sync-test desync check.
 The runner executes each case twice and repeats it in fresh processes.
+
+Losing application focus pauses this local example automatically.
+Returning to the window keeps it paused; use
+Resume (P) when ready. A focus change during a callback lets that accepted tick
+finish and pauses before the next one. Reset starts a running match.

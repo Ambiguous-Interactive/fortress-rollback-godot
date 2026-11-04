@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add driver local-player discovery in the byte-only input submission order.
+
+- Add replay shortcuts for previous/next input changes and recorded checksums.
+
+- Add automatic focus-loss pause to local offline and two-peer examples. Resume explicitly to continue.
+
 - Add pause and single-tick controls to offline and two-peer examples, including packet-service inspection.
 
 - Add pointer controls for peer-example packet faults, input delays and reset.
@@ -290,6 +296,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix spectator delay and catch-up shortcuts on layouts with shifted punctuation. Use Y/U and I/O without modifiers.
 
 - Fix spectator host-step failure feedback to retain the failed host callback and frame. Host termination also stops buffered viewing with its original cause.
 

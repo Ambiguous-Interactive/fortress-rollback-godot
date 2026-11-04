@@ -69,6 +69,9 @@ several players. Remote or invalid slots return `INVALID_PLAYER`, and an
 unconfigured peer returns `NOT_CONFIGURED`.
 
 ```gdscript
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+
 var retained: Types.InputResult = peer.scheduled_local_input(player)
 if retained.code == Types.Code.MISSING_LOCAL_INPUT:
 	samples.append(Driver.LocalInput.new(player, peer.status().current_frame, read_buttons()))
