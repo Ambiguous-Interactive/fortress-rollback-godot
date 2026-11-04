@@ -43,7 +43,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["host_step", "host_step_ownership", "host_failure_feedback"])
+	return PackedStringArray(["host_step", "host_step_ownership", "host_failure_feedback", "focus_pause"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -269,3 +269,69 @@ func _host_failure_feedback(context: RefCounted) -> void:
 				context.equal(scene.demo.viewer_code, viewer_reason, "viewer result preserves its first cause after callback termination")
 				scene._exit_tree()
 				scene.free()
+
+
+# Value: protects=focus loss freezes complete local service; fails_when=unattended input delivery or playback advances;
+# why_new=independent host/viewer pauses still service transport; seam=none
+func _focus_pause(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	for tick: int in 20:
+		scene._physics_process(0.0)
+	context.equal(scene.demo.host.pending_input_count() > 0, true, "focus witness retains real delayed input")
+	var before: Array = _service_state(scene)
+	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	for tick: int in 150:
+		scene._physics_process(0.0)
+	context.equal(_service_state(scene), before, "focus loss preserves canonical games, delivery clocks and queued inputs")
+	context.equal(scene._label.text.contains("DEMO PAUSED"), true, "focus pause names explicit resume action")
+	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+	scene._physics_process(0.0)
+	context.equal(_service_state(scene), before, "focus gain cannot resume local service")
+	var button: Button = scene.get_node_or_null("PauseDemo")
+	context.equal(button != null, true, "demo has explicit pointer resume")
+	if button != null:
+		context.equal(button.text, "Resume demo (G)", "paused pointer names resume shortcut")
+		context.equal(button.focus_mode, Control.FOCUS_NONE, "resume preserves host movement routing")
+		button.pressed.emit()
+		scene._physics_process(0.0)
+		context.equal(scene.demo.host.tick_count, int(before[2]) + 1, "pointer resumes exactly one delivery tick")
+		context.equal(scene.demo.is_host_paused, false, "global pause preserves host policy")
+		context.equal(scene.demo.is_paused, false, "global pause preserves viewer policy")
+		var key: InputEventKey = InputEventKey.new()
+		key.pressed = true
+		key.keycode = KEY_G
+		scene._unhandled_key_input(key)
+		before = _service_state(scene)
+		for modifier: String in ["ctrl_pressed", "alt_pressed", "meta_pressed", "shift_pressed", "echo"]:
+			key.set(modifier, true)
+			scene._unhandled_key_input(key)
+			scene._physics_process(0.0)
+			context.equal(_service_state(scene), before, "modified or repeated G cannot resume service")
+			key.set(modifier, false)
+		scene.demo.set_host_paused(true)
+		scene.demo.set_paused(true)
+		scene._unhandled_key_input(key)
+		context.equal(scene.demo.is_host_paused, true, "G preserves independent host pause")
+		context.equal(scene.demo.is_paused, true, "G preserves independent viewer pause")
+		scene.demo.set_viewing_delay(0)
+		var batch: Types.Result = scene.demo.viewer.begin_advance()
+		context.equal(batch.code, Types.Code.READY, "real expert batch owns service")
+		scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+		button.pressed.emit()
+		scene._unhandled_key_input(key)
+		context.equal(button.disabled, true, "resume waits for active ownership")
+		before = _service_state(scene)
+		scene._physics_process(0.0)
+		context.equal(_service_state(scene), before, "ownership cannot bypass global pause")
+		scene.demo.viewer.terminate()
+		scene._restart()
+		context.equal(button.text, "Pause demo (G)", "successful restart clears focus pause")
+		context.equal(scene.demo.host.tick_count, 0, "restart creates fresh delivery clock")
+	scene._exit_tree()
+	scene.free()
+
+
+func _service_state(scene: Node2D) -> Array:
+	return [scene.demo.host.loop.game.canonical_bytes(), scene.demo.game.canonical_bytes(), scene.demo.host.tick_count,
+		scene.demo._tick_count, scene.demo.host.pending_input_count(), scene.demo.next_host_frame]

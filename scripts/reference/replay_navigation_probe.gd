@@ -151,18 +151,20 @@ func _run() -> void:
 	await _submitted_restore_failure()
 	await _submitted_current_failure()
 	await _repeat_controls()
+	await _repeat_selection_controls()
 	await _player_change_controls()
 	await _inspection_shortcuts()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
 	await _spectator_shortcuts()
+	await _spectator_focus_pause()
 	await _effects_controls()
 	await _peer_controls()
 	await _offline_controls()
 	await _local_focus_pause()
-	if checks == 310 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 310")
+	if checks == 351 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 351")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -230,12 +232,15 @@ func _replay_wheel() -> void:
 		await process_frame
 		await process_frame
 		var controls: ScrollContainer = scene._controls_view
-		controls.scroll_vertical = 150
+		controls.scroll_vertical += int(scene._timeline.get_global_rect().get_center().y - controls.get_global_rect().get_center().y)
+		await process_frame
 		await process_frame
 		var before: Array = [scene.viewer.current_frame(), scene.viewer.is_playing, scene.viewer.has_failure(), scene.viewer.failure_report_bytes(), scene._timeline.value]
 		for button: MouseButton in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 			var scroll_before: int = controls.scroll_vertical
+			_check(controls.get_global_rect().encloses(scene._timeline.get_global_rect()), "wheel target remains inside the actual scrolling viewport")
 			await _pointer(scene._timeline.get_global_rect().get_center(), true, button)
+			await process_frame
 			_check(controls.scroll_vertical != scroll_before, "wheel over timeline scrolls parent controls")
 			_check(
 				before == [scene.viewer.current_frame(), scene.viewer.is_playing, scene.viewer.has_failure(), scene.viewer.failure_report_bytes(), scene._timeline.value],
@@ -432,14 +437,15 @@ func _spectator_shortcuts() -> void:
 	for alias: Key in [KEY_U, KEY_Y, KEY_I, KEY_O]:
 		await _key(alias)
 		var expected: PackedInt64Array = {
-			KEY_U: PackedInt64Array([13, 4, 4]), KEY_Y: PackedInt64Array([12, 4, 4]),
-			KEY_I: PackedInt64Array([12, 4, 3]), KEY_O: PackedInt64Array([12, 4, 4])
+			KEY_U: PackedInt64Array([13, 4, 4]), KEY_Y: PackedInt64Array([12, 4, 4]), KEY_I: PackedInt64Array([12, 4, 3]), KEY_O: PackedInt64Array([12, 4, 4])
 		}[alias]
 		_check(local.demo.viewer.playback_policy() == expected, "unshifted spectator policy alias routes through GUI")
 		await _key(alias, true)
 		_check(local.demo.viewer.playback_policy() == expected, "modified spectator policy alias preserves policy")
-	_check(local.demo.host.loop.game.frame == 0 and local.demo.game.frame == 0 and root.gui_get_focus_owner() == null,
-		"policy aliases preserve both game boundaries and movement focus")
+	_check(
+		local.demo.host.loop.game.frame == 0 and local.demo.game.frame == 0 and root.gui_get_focus_owner() == null,
+		"policy aliases preserve both game boundaries and movement focus"
+	)
 	await _key(KEY_3)
 	_check(local.demo.host.lag_ticks == 12, "ordinary US number row selects host delivery")
 	for index: int in range(3):
@@ -536,6 +542,23 @@ func _effects_controls() -> void:
 	await _key(KEY_O)
 	_check(not local._is_paused, "O resumes match after pointer inspection")
 	_check(local._board_top() * local.scale.y < root.size.y - 200.0 * local.scale.y, "inspection controls preserve visible effects board")
+	await _click(local._pause_button)
+	var ending: int = local._demo.loop.game.frame
+	await _click(local._finish_button)
+	_check(local._is_paused and local._is_finishing, "real pointer finishes without resuming paused effects match")
+	for _tick: int in 20:
+		if local._is_finished:
+			break
+		await _key(KEY_N)
+	_check(local._is_finished and local._demo.loop.game.frame == ending, "paused finalization confirms tail without another game frame")
+	_check(not local._demo.loop.driver.replay().checksum(ending).is_empty(), "finished effects replay includes its final boundary")
+	_check(local._finish_button.disabled, "completed effects match disables repeated finish")
+	await _key(KEY_R)
+	_check(not local._is_finished and not local._is_finishing, "actual restart clears completed finish state")
+	await _key(KEY_E, true)
+	_check(not local._is_finishing, "modified E preserves live match")
+	await _key(KEY_E)
+	_check(local._is_finishing, "actual E begins clean effects finishing")
 	local.queue_free()
 	await process_frame
 
@@ -748,3 +771,112 @@ func _inspection_shortcuts() -> void:
 	await _key(KEY_PAGEUP)
 	_settle()
 	_check(scene.viewer.current_frame() == 0, "real Page Up restores preceding checksum")
+
+
+func _spectator_focus_pause() -> void:
+	root.size = Vector2i(1040, 920)
+	var local: Node2D = SpectatorScene.new()
+	root.add_child(local)
+	local.set_physics_process(false)
+	for tick: int in 20:
+		local._physics_process(0.0)
+	await process_frame
+	await process_frame
+	var before: PackedByteArray = local.demo.host.loop.game.canonical_bytes()
+	var viewed: PackedByteArray = local.demo.game.canonical_bytes()
+	var clock: int = local.demo._tick_count
+	_check(local.demo.host.pending_input_count() > 0, "focus witness has actual delayed host inputs")
+	root.propagate_notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	await process_frame
+	_check(local._label.text.contains("DEMO PAUSED"), "spectator focus loss visibly pauses complete local demo")
+	for tick: int in 150:
+		local._physics_process(0.0)
+	_check(local.demo.host.loop.game.canonical_bytes() == before and local.demo.game.canonical_bytes() == viewed, "spectator focus pause preserves both canonical games")
+	_check(local.demo._tick_count == clock and local.demo.host.tick_count == clock, "spectator focus pause preserves both injected clocks")
+	root.propagate_notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+	local._physics_process(0.0)
+	_check(local._is_service_paused, "spectator focus gain needs explicit resume")
+	await process_frame
+	await process_frame
+	_check(root.get_visible_rect().encloses(local._service_pause_button.get_global_rect()), "spectator global resume remains in viewport")
+	await _click(local._service_pause_button)
+	local._physics_process(0.0)
+	_check(not local._is_service_paused and local.demo._tick_count == clock + 1, "real pointer resumes spectator delivery explicitly")
+	_check(root.gui_get_focus_owner() == null, "spectator global resume preserves movement focus")
+	await _key(KEY_G)
+	_check(local._is_service_paused, "routed G pauses complete spectator demo")
+	await _key(KEY_G, true)
+	_check(local._is_service_paused, "modified G cannot resume spectator demo")
+	await _key(KEY_G)
+	_check(not local._is_service_paused, "routed G resumes complete spectator demo")
+	local.demo.set_viewing_delay(0)
+	_check(local.demo.viewer.begin_advance().code == ViewerTypes.Code.READY, "actual spectator request owns resume controls")
+	root.propagate_notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	await _key(KEY_G)
+	_check(local._is_service_paused and local._service_pause_button.disabled, "routed G waits for active spectator request")
+	local.demo.viewer.terminate()
+	local._restart()
+	_check(not local._is_service_paused and local.demo._tick_count == 0, "accepted restart clears global focus pause")
+	local.queue_free()
+	await process_frame
+
+
+func _repeat_selection_controls() -> void:
+	_check(scene.viewer.open_bytes(Fixture.recording(8).to_bytes()), "open selected repeat GUI fixture")
+	scene.viewer.seek(2)
+	_settle()
+	scene._refresh()
+	await process_frame
+	scene._controls_view.ensure_control_visible(scene._repeat_start)
+	await process_frame
+	await _click(scene._repeat_start)
+	_check(scene.viewer.repeat_range() == PackedInt64Array([2, 8]), "real pointer sets displayed repeat start")
+	scene.viewer.seek(5)
+	_settle()
+	scene._refresh()
+	await process_frame
+	scene._repeat_end.grab_focus()
+	await _key(KEY_ENTER)
+	_check(scene.viewer.repeat_range() == PackedInt64Array([2, 5]), "focused button sets displayed repeat end")
+	scene._repeat.grab_focus()
+	await _key(KEY_SPACE)
+	_check(scene.viewer.repeat_playback(), "real repeat toggle enables selected segment")
+	scene.viewer.toggle_play()
+	scene._physics_process(0.0)
+	_settle()
+	_check(scene.viewer.current_frame() == 2 and scene.viewer.is_playing, "repeat restores selected start through verified navigation")
+	for _tick: int in 3:
+		scene._physics_process(0.0)
+	_check(scene.viewer.current_frame() == 5 and scene.viewer.is_playing, "selection stops at exact ending before rewind")
+	_check(scene.viewer.current_state_coverage_message().contains("recorded checksum matched"), "selected ending is visibly validated")
+	_check(scene._repeat_start.disabled and scene._repeat_end.disabled and scene._repeat_clear.disabled, "playing selection refuses boundary changes")
+	scene.viewer.toggle_play()
+	scene._refresh()
+	await _click(scene._repeat_clear)
+	_check(not scene.viewer.has_repeat_range(), "real pointer clears selected segment")
+
+	scene.viewer.set_repeat_range(2, 8)
+	scene.viewer.seek(8)
+	_settle()
+	scene._refresh()
+	_check(scene.viewer.current_frame() == 8 and not scene.viewer.can_step(), "recording ending remains paused without another input step")
+	_check(not scene._play.disabled, "selected repeat offers Play at completed recording boundary")
+	scene._controls_view.ensure_control_visible(scene._play)
+	await process_frame
+	await _click(scene._play)
+	_check(scene.viewer.is_playing and scene.viewer.current_frame() == 8, "real pointer resumes repeat from completed ending")
+	scene._physics_process(0.0)
+	_settle()
+	_check(scene.viewer.is_playing and scene.viewer.current_frame() == 2, "pointer resumed repeat restores selected original start")
+	scene.viewer.open_bytes(Fixture.recording(650).to_bytes())
+	scene.viewer.set_repeat_range(602, 605)
+	scene.viewer.toggle_play()
+	scene._physics_process(0.0)
+	_check(scene.viewer.is_seeking(), "distant selected start uses bounded seek")
+	scene._cancel_button.grab_focus()
+	await _key(KEY_ESCAPE)
+	_check(not scene.viewer.is_seeking() and not scene.viewer.is_playing, "actual Escape cancels automatic range seek paused")
+	scene._physics_process(0.0)
+	_check(scene.viewer.current_frame() == 0 and not scene.viewer.is_playing, "canceled repeat seek cannot resume later")
+	scene.viewer.set_repeat_playback(false)
+	scene.viewer.clear_repeat_range()

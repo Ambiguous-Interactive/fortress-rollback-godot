@@ -48,6 +48,10 @@ class ReentrantGame:
 				accepted = owner.seek(0)
 			"validate":
 				accepted = owner.validate_state()
+			"repeat_range":
+				accepted = owner.set_repeat_range(1, 2)
+			"clear_repeat_range":
+				accepted = owner.clear_repeat_range()
 			"repeat":
 				accepted = owner.set_repeat_playback(true)
 			"speed":
@@ -171,7 +175,9 @@ func _replacement(context: RefCounted) -> void:
 
 func _callback_controls(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player"]:
+		for operation: String in [
+			"open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player", "repeat_range", "clear_repeat_range"
+		]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "callback fixture imports")
@@ -207,7 +213,9 @@ func _callback_controls(context: RefCounted) -> void:
 			context.state(target, game.original.canonical_bytes())
 
 	for cancelled: bool in [false, true]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player"]:
+		for operation: String in [
+			"open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player", "repeat_range", "clear_repeat_range"
+		]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(3)
 			viewer.open_bytes(recording.to_bytes())
@@ -247,6 +255,8 @@ func _expert_controls(context: RefCounted) -> void:
 	viewer.toggle_play()
 	context.equal(viewer.set_playback_speed(16), false, "retained work refuses cadence changes")
 	context.equal(viewer.set_repeat_playback(true), false, "retained work refuses repeat changes")
+	context.equal(viewer.set_repeat_range(1, 2), false, "retained work refuses selected repeat")
+	context.equal(viewer.clear_repeat_range(), false, "retained work refuses clearing selected repeat")
 	context.equal(viewer.set_change_player(1), false, "retained work refuses player selection")
 	context.equal(viewer.seek(0), false, "retained work refuses navigation")
 	viewer.cancel_seek()
@@ -271,7 +281,9 @@ func _expert_controls(context: RefCounted) -> void:
 
 func _callback_termination(context: RefCounted) -> void:
 	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
-		for operation: String in ["open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player"]:
+		for operation: String in [
+			"open", "restart", "seek", "speed", "play", "step", "back", "tick", "cancel", "validate", "repeat", "change_player", "repeat_range", "clear_repeat_range"
+		]:
 			var viewer: Viewer = Viewer.new()
 			var recording: Replay = Fixture.recording(8)
 			context.equal(viewer.open_bytes(recording.to_bytes()), true, "termination fixture imports")

@@ -24,6 +24,9 @@ var game: RefCounted = Simulation.new()
 var message: String = "Open an online or spectator .frrp recording."
 var is_playing: bool = false
 var _repeat_playback: bool = false
+var _repeat_start: int = -1
+var _repeat_end: int = -1
+var _resume_after_seek: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
@@ -62,6 +65,8 @@ func open_bytes(bytes: PackedByteArray) -> bool:
 	_recording_sha256 = hash.finish().hex_encode()
 	_recording_bytes = bytes.size()
 	_recording = recording
+	_repeat_start = -1
+	_repeat_end = -1
 	if recording.frame_count() == 0:
 		_repeat_playback = false
 	_input_changes = PackedInt64Array(changes)
@@ -141,6 +146,7 @@ func restart() -> void:
 	if _is_busy() or _recording == null:
 		return
 	_seek_target = -1
+	_resume_after_seek = false
 	_playback_quarters = 0
 	_player.terminate()
 	game = IntegrationGame.new() if is_integration_game() else Simulation.new()
@@ -160,13 +166,23 @@ func terminate() -> void:
 	_player.terminate()
 	is_playing = false
 	_seek_target = -1
+	_resume_after_seek = false
 	_playback_quarters = 0
 	if _recording != null and not had_failure:
 		message = "Playback stopped. Restart to watch again."
 
 
+## Playing can resume a completed nonempty recording when Repeat is enabled; single-step still refuses its final boundary.
+func can_toggle_play() -> bool:
+	return (
+		not _is_busy()
+		and not is_seeking()
+		and (can_step() or is_playing or (_repeat_playback and frame_count() > 0 and _player.is_complete()))
+	)
+
+
 func toggle_play() -> void:
-	if _is_busy() or is_seeking() or (not can_step() and not is_playing):
+	if not can_toggle_play():
 		return
 	_playback_quarters = 0
 	is_playing = not is_playing
@@ -190,12 +206,51 @@ func set_playback_speed(quarters: int) -> bool:
 
 
 ## Repeat only nonempty, healthy recordings. Navigation and manual stepping still finish paused.
-## Every lap creates a fresh playback lifetime and validates the original recorded evidence again.
+## Whole-file laps create fresh players; selected laps restore verified history and check their ending.
 func set_repeat_playback(enabled: bool) -> bool:
 	if _is_busy() or is_seeking() or _recording == null or frame_count() == 0 or has_failure():
 		return false
 	_repeat_playback = enabled
 	return true
+
+
+## Repeat inputs in [start, end), displaying and validating the end state before each rewind.
+## Selection changes require paused, healthy playback. Selection affects Repeat only and resets on file import.
+func set_repeat_range(start: int, end: int) -> bool:
+	if not can_set_repeat_range() or start < 0 or start >= end or end > frame_count():
+		return false
+	_repeat_start = start
+	_repeat_end = end
+	return true
+
+
+func can_set_repeat_range() -> bool:
+	return _recording != null and not _is_busy() and not is_seeking() and not is_playing and not has_failure()
+
+
+func clear_repeat_range() -> bool:
+	if not can_set_repeat_range():
+		return false
+	_repeat_start = -1
+	_repeat_end = -1
+	return true
+
+
+func has_repeat_range() -> bool:
+	return _repeat_start >= 0
+
+
+func repeat_range() -> PackedInt64Array:
+	return PackedInt64Array([_repeat_start, _repeat_end]) if has_repeat_range() else PackedInt64Array([0, frame_count()])
+
+
+func _begin_selected_repeat() -> void:
+	if not seek(_repeat_start) or has_failure():
+		return
+	if is_seeking():
+		_resume_after_seek = true
+	else:
+		toggle_play()
 
 
 func repeat_playback() -> bool:
@@ -220,6 +275,9 @@ func tick() -> void:
 			elif current_frame() == _seek_target:
 				_finish_seek()
 	elif is_playing:
+		if _repeat_playback and has_repeat_range() and (current_frame() < _repeat_start or current_frame() >= _repeat_end):
+			_begin_selected_repeat()
+			return
 		if _player.is_complete():
 			if not _repeat_playback:
 				is_playing = false
@@ -230,6 +288,10 @@ func tick() -> void:
 		while _playback_quarters >= 4 and is_playing:
 			_playback_quarters -= 4
 			_advance()
+			if _repeat_playback and has_repeat_range() and current_frame() == _repeat_end and not has_failure():
+				_finish_seek()
+				is_playing = not has_failure()
+				break
 			if _player.is_complete():
 				break
 
@@ -374,6 +436,7 @@ func can_step() -> bool:
 func seek(frame: int) -> bool:
 	if _is_busy() or _recording == null or frame < 0 or frame > frame_count():
 		return false
+	_resume_after_seek = false
 	_playback_quarters = 0
 	if _player.failure_frame() >= 0:
 		restart()
@@ -492,10 +555,13 @@ func is_seeking() -> bool:
 
 func cancel_seek() -> void:
 	if not _is_busy() and is_seeking():
+		_resume_after_seek = false
 		_finish_seek()
 
 
 func _finish_seek() -> void:
+	var resume: bool = _resume_after_seek
+	_resume_after_seek = false
 	_seek_target = -1
 	is_playing = false
 	var code: int = _player.validate_current_frame()
@@ -503,6 +569,8 @@ func _finish_seek() -> void:
 		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	else:
 		message = _complete_message() if _player.is_complete() else "Paused."
+		if resume:
+			toggle_play()
 
 
 func _complete_message() -> String:

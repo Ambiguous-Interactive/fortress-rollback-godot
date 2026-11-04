@@ -38,13 +38,16 @@ func cases() -> PackedStringArray:
 			"recording_metadata",
 			"paused_validation",
 			"frame_submit",
-			"repeat_playback"
+			"repeat_playback",
+			"repeat_selection"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
+		"repeat_selection":
+			_repeat_selection(context)
 		"repeat_playback":
 			_repeat_playback(context)
 		"frame_submit":
@@ -927,3 +930,140 @@ func _repeat_playback(context: RefCounted) -> void:
 	context.equal(node._repeat.disabled, true, "initial-only repeat control is disabled")
 	node._exit_tree()
 	node.free()
+
+
+# Value: protects=repeating an inspected segment validates each selected ending and original prefix;
+# fails_when=loop rewinds skip checks or navigation resumes unexpectedly; why_new=whole-file repeat has no selected boundaries; seam=none
+func _repeat_selection(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	context.equal(node.viewer.has_method("set_repeat_range"), true, "viewer supports repeating a selected segment")
+	if not node.viewer.has_method("set_repeat_range"):
+		node._exit_tree()
+		node.free()
+		return
+	context.equal(node.viewer.set_repeat_range(0, 1), false, "unloaded viewer refuses selection")
+	_repeat_final_boundary(context, node)
+	var source: Replay = recording(310)
+	node.viewer.open_bytes(source.to_bytes())
+	for invalid: PackedInt64Array in [PackedInt64Array([-1, 5]), PackedInt64Array([5, 5]), PackedInt64Array([6, 5]), PackedInt64Array([0, 311])]:
+		context.equal(node.viewer.set_repeat_range(invalid[0], invalid[1]), false, "invalid selection is refused")
+	for speed: int in [1, 4, 16]:
+		node.viewer.restart()
+		context.equal(node.viewer.set_repeat_range(302, 305), true, "selected boundary range is accepted")
+		node.viewer.set_repeat_playback(true)
+		node.viewer.set_playback_speed(speed)
+		node.viewer.toggle_play()
+		var endings: int = 0
+		var previous: int = -1
+		for _tick: int in 80:
+			node.viewer.tick()
+			var frame: int = node.viewer.current_frame()
+			var expected: Simulation = Simulation.new()
+			for input_frame: int in frame:
+				expected.simulate_frame(input_frame, source.inputs(input_frame))
+			context.bytes_equal(node.viewer.game.canonical_bytes(), expected.canonical_bytes(), frame, "selection playback retains original canonical history")
+			context.equal(frame <= 305, true, "fast cadence cannot pass selection ending")
+			if frame == 305 and previous != frame:
+				endings += 1
+				context.equal(node.viewer.current_state_coverage_message().contains("recorded checksum matched"), true, "each selected ending is validated before rewind")
+				if endings == 2:
+					break
+			previous = frame
+		context.equal(endings, 2, "two selection laps finish at each cadence")
+		node.viewer.toggle_play()
+		context.equal(node.viewer.is_playing, false, "selected ending can pause")
+		node.viewer.seek(2)
+		node.viewer.tick()
+		context.equal(node.viewer.is_playing, false, "manual seek stays paused despite selection")
+		context.equal(node.viewer.current_frame(), 2, "manual seek can inspect outside selected segment")
+		context.equal(node.viewer.repeat_range(), PackedInt64Array([302, 305]), "navigation preserves selection")
+		node.viewer.set_repeat_playback(false)
+		node.viewer.clear_repeat_range()
+	context.equal(node.viewer.set_repeat_range(2, 4), true, "short selection is accepted")
+	node.viewer.seek(2)
+	node.viewer.tick()
+	node._refresh()
+	node._repeat_start.pressed.emit()
+	context.equal(node.viewer.repeat_range()[0], 2, "pointer marks displayed start boundary")
+	node.viewer.seek(5)
+	node.viewer.tick()
+	node._refresh()
+	node._repeat_end.pressed.emit()
+	context.equal(node.viewer.repeat_range()[1], 5, "pointer marks displayed end boundary")
+	node._repeat_clear.pressed.emit()
+	context.equal(node.viewer.has_repeat_range(), false, "pointer returns to whole-file repeat")
+	node.viewer.set_repeat_range(2, 5)
+	node._is_scrubbing = true
+	node._repeat_clear.pressed.emit()
+	context.equal(node.viewer.has_repeat_range(), true, "timeline hold preserves selection")
+	node._is_scrubbing = false
+	node.viewer.open_bytes(recording(4).to_bytes())
+	context.equal(node.viewer.has_repeat_range(), false, "replacement clears old file boundaries")
+	for corrupt_frame: int in [1, 5]:
+		var damaged: Replay = recording(8)
+		damaged._checksums[corrupt_frame * Replay.CHECKSUM_BYTES] ^= 1
+		node.viewer.open_bytes(damaged.to_bytes())
+		node.viewer.set_repeat_range(2, 5)
+		node.viewer.set_repeat_playback(true)
+		node.viewer.toggle_play()
+		for _tick: int in 20:
+			node.viewer.tick()
+		context.equal(node.viewer.has_failure(), true, "corrupt prefix or selected ending stops repetition")
+		context.equal(node.viewer.current_frame(), corrupt_frame, "failure stays at exact original boundary")
+		context.equal(node.viewer.is_playing, false, "corruption cannot trigger another lap")
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=Play resumes enabled repeat at a completed boundary; fails_when=single-step readiness blocks a new lap;
+# why_new=selection tests stop before the file ending and whole-file tests pause without resuming; seam=none
+func _repeat_final_boundary(context: RefCounted, node: Node2D) -> void:
+	var source: Replay = recording(8)
+	var expected: Simulation = Simulation.new()
+	for frame: int in source.frame_count():
+		expected.simulate_frame(frame, source.inputs(frame))
+	source._format_version = Replay.TERMINAL_VERSION
+	source._terminal_checksum = Simulation.checksum(expected.canonical_bytes())
+	for end: int in [7, 8]:
+		for selected: bool in [false, true]:
+			for enabled: bool in [false, true]:
+				context.equal(node.viewer.open_bytes(source.to_bytes()), true, "resume fixture opens")
+				node.viewer.set_playback_speed(4)
+				node.viewer.set_repeat_playback(enabled)
+				if selected:
+					context.equal(node.viewer.set_repeat_range(2, end), true, "selection includes chosen ending")
+				context.equal(node.viewer.seek(end), true, "inspect ending before playback")
+				while node.viewer.is_seeking():
+					node.viewer.tick()
+				context.equal(node.viewer.current_frame(), end, "chosen ending is displayed")
+				context.equal(node.viewer.is_playing, false, "ending inspection stays paused")
+				node._refresh()
+				var can_resume: bool = end < 8 or enabled
+				context.equal(node._play.disabled, not can_resume, "Play shares repeat-aware readiness at ending")
+				context.equal(node._step_button.disabled, end == 8, "final boundary still refuses a single input step")
+				node._play.pressed.emit()
+				context.equal(node.viewer.is_playing, can_resume, "Play starts enabled repeat from final boundary")
+				if can_resume:
+					node.viewer.tick()
+					while node.viewer.is_seeking():
+						node.viewer.tick()
+					if selected and enabled:
+						context.equal(node.viewer.current_frame(), 2, "selected repeat returns to original start")
+					elif end == 8:
+						context.equal(node.viewer.current_frame(), 1, "whole-file repeat begins a fresh lap")
+					var reference: Simulation = Simulation.new()
+					for frame: int in node.viewer.current_frame():
+						reference.simulate_frame(frame, source.inputs(frame))
+					context.bytes_equal(node.viewer.game.canonical_bytes(), reference.canonical_bytes(), node.viewer.current_frame(), "resumed lap preserves original canonical history")
+					context.equal(node.viewer.has_failure(), false, "healthy repeat preserves validation")
+	node.viewer.open_bytes(source.to_bytes())
+	node.viewer.set_repeat_playback(true)
+	node.viewer.seek(8)
+	while node.viewer.is_seeking():
+		node.viewer.tick()
+	node.viewer.terminate()
+	node._refresh()
+	context.equal(node._play.disabled, true, "termination cannot resume repeat")
+	node.viewer.toggle_play()
+	context.equal(node.viewer.is_playing, false, "terminated lifetime remains stopped")

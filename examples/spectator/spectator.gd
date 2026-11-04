@@ -13,6 +13,8 @@ var demo: Demo = Demo.new()
 var _code: int = Types.Code.OK
 var _replay_notice: String = ""
 var _label: Label
+var _service_pause_button: Button
+var _is_service_paused: bool = false
 var _follow_live_button: Button
 var _pause_button: Button
 var _step_button: Button
@@ -124,6 +126,11 @@ func _ready() -> void:
 	_step_host_button.focus_mode = Control.FOCUS_NONE
 	_step_host_button.pressed.connect(_step_host)
 	_host_delay_controls.add_child(_step_host_button)
+	_service_pause_button = Button.new()
+	_service_pause_button.name = "PauseDemo"
+	_service_pause_button.focus_mode = Control.FOCUS_NONE
+	_service_pause_button.pressed.connect(_toggle_service_pause)
+	add_child(_service_pause_button)
 	_code = demo.start()
 	_update_label()
 
@@ -136,8 +143,20 @@ func _exit_tree() -> void:
 		demo.host.stop_replay()
 
 
+func _notification(what: int) -> void:
+	if what == MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT and _service_pause_button != null:
+		_is_service_paused = true
+		_update_label()
+
+
+func _toggle_service_pause() -> void:
+	if demo._mutation_code() != Types.Code.BUSY:
+		_is_service_paused = not _is_service_paused
+	_update_label()
+
+
 func _physics_process(_delta: float) -> void:
-	if _code in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
+	if not _is_service_paused and _code in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
 		_code = demo.tick(_host_buttons())
 	_update_label()
 
@@ -161,6 +180,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var number_key: Key = event.physical_keycode if event.physical_keycode != KEY_NONE else event.keycode
 	if number_key in [KEY_1, KEY_2, KEY_3]:
 		_set_host_delay([KEY_1, KEY_2, KEY_3].find(number_key))
+	elif event.keycode == KEY_G:
+		_toggle_service_pause()
 	elif event.keycode == KEY_H:
 		_toggle_host_pause()
 	elif event.keycode == KEY_T:
@@ -202,6 +223,7 @@ func _restart() -> void:
 	_code = demo.start()
 	if _code == Types.Code.OK:
 		_replay_notice = ""
+		_is_service_paused = false
 	_update_label()
 
 
@@ -294,6 +316,8 @@ func _process(_delta: float) -> void:
 
 
 func _update_label() -> void:
+	_service_pause_button.text = "Resume demo (G)" if _is_service_paused else "Pause demo (G)"
+	_service_pause_button.disabled = demo._mutation_code() == Types.Code.BUSY
 	_host_delay.disabled = not _can_set_host_delay()
 	_pause_host_button.disabled = _host_delay.disabled
 	_step_host_button.disabled = _host_delay.disabled or (demo.host != null and demo.host.replay_player != null)
@@ -350,7 +374,8 @@ func _update_label() -> void:
 	if demo.is_paused and status.lifecycle != Types.Lifecycle.TERMINATED and not playback.input_closed and playback.available_frames == 0:
 		buffer_notice = "Input buffer full. P: resume or C: catch up to receive more.\n"
 	_label.text = (
-		"Delayed spectator | %s\n" % state
+		("DEMO PAUSED | G: resume host, delivery and viewer\n" if _is_service_paused else "")
+		+ "Delayed spectator | %s\n" % state
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
 		+ "1/2/3: host delivery 0/3/12 ticks | H: pause/resume host | T: step host\n"
 		+ "E: end host\nY / [: less delay | U / ]: more delay\nI / Comma: slower catch-up | O / Period: faster catch-up\n"
@@ -377,6 +402,7 @@ func _update_label() -> void:
 	_policy_controls.position = _follow_live_button.position + Vector2(0, _follow_live_button.get_minimum_size().y + 8)
 	_host_controls.position = _policy_controls.position + Vector2(0, _policy_controls.get_minimum_size().y + 8)
 	_host_delay_controls.position = _host_controls.position + Vector2(0, _host_controls.get_minimum_size().y + 8)
+	_service_pause_button.position = _host_delay_controls.position + Vector2(0, _host_delay_controls.get_minimum_size().y + 8)
 
 
 func _stop_reason(status: Types.Status) -> String:
@@ -435,7 +461,7 @@ func _export_replay() -> void:
 
 
 func _board_top() -> float:
-	return _host_delay_controls.position.y + _host_delay_controls.get_minimum_size().y + 16.0
+	return _service_pause_button.position.y + _service_pause_button.get_minimum_size().y + 16.0
 
 
 func _draw() -> void:

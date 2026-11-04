@@ -78,6 +78,10 @@ var _prefix_notice: String = ""
 var _prefix_frame: int = -1
 var _prefix_game: RefCounted
 var _restart_button: Button
+var _repeat_start: Button
+var _repeat_end: Button
+var _repeat_clear: Button
+var _repeat_label: Label
 var _repeat: CheckButton
 var _speed: OptionButton
 var _target: SpinBox
@@ -146,6 +150,13 @@ func _ready() -> void:
 	_repeat.tooltip_text = "Play again after a clean ending. Each lap checks the recorded history; failures stop playback."
 	_repeat.toggled.connect(_repeat_toggled)
 	buttons.add_child(_repeat)
+	var selection: HBoxContainer = HBoxContainer.new()
+	panel.add_child(selection)
+	_repeat_start = _button(selection, "Set repeat start", _mark_repeat.bind(true))
+	_repeat_end = _button(selection, "Set repeat end", _mark_repeat.bind(false))
+	_repeat_clear = _button(selection, "Clear selection", _clear_repeat)
+	_repeat_label = Label.new()
+	selection.add_child(_repeat_label)
 	var navigation: HBoxContainer = HBoxContainer.new()
 	panel.add_child(navigation)
 	_back_button = _button(navigation, "Back one frame", _back_one_frame)
@@ -312,6 +323,19 @@ func _speed_selected(index: int) -> void:
 func _repeat_toggled(enabled: bool) -> void:
 	if not _is_scrubbing:
 		viewer.set_repeat_playback(enabled)
+	_refresh()
+
+
+func _mark_repeat(start: bool) -> void:
+	if not _is_scrubbing:
+		var bounds: PackedInt64Array = viewer.repeat_range()
+		viewer.set_repeat_range(viewer.current_frame() if start else bounds[0], bounds[1] if start else viewer.current_frame())
+	_refresh()
+
+
+func _clear_repeat() -> void:
+	if not _is_scrubbing:
+		viewer.clear_repeat_range()
 	_refresh()
 
 
@@ -518,7 +542,7 @@ func _refresh() -> void:
 	_failure_download.disabled = held or not viewer.has_failure()
 	_prefix_download.disabled = _is_scrubbing or not viewer.can_export_prefix()
 	_play.text = "Pause" if viewer.is_playing else "Play"
-	_play.disabled = held or viewer.is_seeking() or (not viewer.can_step() and not viewer.is_playing)
+	_play.disabled = held or not viewer.can_toggle_play()
 	_step_button.disabled = held or viewer.is_seeking() or not viewer.can_step()
 	_validate_button.disabled = _is_scrubbing or not viewer.can_validate_state()
 	_back_button.disabled = held or viewer.is_seeking() or viewer.current_frame() == 0
@@ -526,6 +550,13 @@ func _refresh() -> void:
 	_speed.disabled = held
 	_repeat.disabled = held or viewer.is_seeking() or viewer.frame_count() == 0 or viewer.has_failure()
 	_repeat.set_pressed_no_signal(viewer.repeat_playback())
+	var bounds: PackedInt64Array = viewer.repeat_range()
+	var selection_held: bool = _is_scrubbing or not viewer.can_set_repeat_range()
+	_repeat_start.disabled = selection_held or viewer.current_frame() >= bounds[1]
+	_repeat_end.disabled = selection_held or viewer.current_frame() <= bounds[0]
+	_repeat_clear.disabled = selection_held or not viewer.has_repeat_range()
+	_repeat_label.text = "Frames %d–%d (end state included)" % [bounds[0], bounds[1]] if viewer.has_repeat_range() else "Whole recording"
+
 	_timeline.set_block_signals(true)
 	_timeline.max_value = viewer.frame_count()
 	if not _is_scrubbing:
