@@ -217,6 +217,12 @@ func scheduled_local_input(player: int) -> Types.InputResult:
 	return _session.scheduled_local_input(player)
 
 
+## Owned fixed-width neutral sample for constructing local input rows without retaining configuration.
+## Empty before the session is configured; safe during callbacks and after termination.
+func neutral_input() -> PackedByteArray:
+	return _session.neutral_input() if _session != null else PackedByteArray()
+
+
 ## Local delay now in effect, or -1 before configuration or for a nonlocal slot.
 func input_delay(player: int) -> int:
 	return _session.input_delay(player) if _session != null else -1

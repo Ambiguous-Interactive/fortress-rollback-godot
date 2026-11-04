@@ -240,6 +240,11 @@ func _scheduled_local_input_code(player: int) -> int:
 	return Code.MISSING_LOCAL_INPUT if _samples[player].is_empty() else Code.OK
 
 
+## Owned fixed-width neutral sample. Empty before configuration; readable during callbacks and after termination.
+func neutral_input() -> PackedByteArray:
+	return _config.neutral_input.duplicate() if _config != null else PackedByteArray()
+
+
 ## Local delay now in effect, or -1 for an unconfigured session or a slot that is not local.
 func input_delay(player: int) -> int:
 	if _config == null or player < 0 or player >= _queues.size() or player not in _config.local_players:

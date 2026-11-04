@@ -196,6 +196,8 @@ Complete that batch before replacing callbacks or attaching another driver.
 Call `driver.step(now_us, samples)` once per physics frame with one `Driver.LocalInput` per local player.
 For a driver attached directly to a session, `step_local(now_us, byte_rows)` infers the current sample frame.
 Supply one fixed-width `PackedByteArray` per configured local player, in ascending player-slot order.
+`driver.local_players()` discovers that order, and `driver.neutral_input()` supplies an owned,
+correctly sized neutral row for your input encoder. Neither read requires retaining the configuration object.
 An empty row omits that slot's already retained stalled sample; a missing required sample is still rejected.
 The integration loop uses this convenience API with a reusable array. The driver reuses bounded input wrappers;
 this is not an allocation-free or faster execution guarantee. Use `step` when supplying explicit player/frame metadata.

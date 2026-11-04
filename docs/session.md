@@ -47,6 +47,12 @@ For byte-only clients, `step_local(now_us, rows)` infers the current sample fram
 and reuses bounded input wrappers. `local_players()` returns owned ascending slots
 in exactly the order expected by those rows, even when configuration membership
 was supplied in another order. Query it again after replacing the driver's session.
+`neutral_input()` returns owned neutral bytes at the configured input width. Use
+that row as the starting buffer for application input encoding without keeping
+the configuration object. Editing it cannot change future samples or input-delay
+padding. The read is safe during callbacks and after termination; it returns an
+empty array before the attached session is configured. `Session.neutral_input()`
+provides the same read to expert clients.
 Supply one row per local slot. Each nonempty row must match the configured input
 width; an empty row reuses that slot's retained sample after a prediction stall.
 An empty row without a retained sample returns `MISSING_LOCAL_INPUT`.
