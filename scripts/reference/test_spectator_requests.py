@@ -159,8 +159,13 @@ module.exports={chromium:{launch:async()=>browser}};
                             self.assertEqual(report['requestFailures'], [])
                         self.assertNotIn('password', result.stdout)
                         self.assertNotIn('private', result.stdout)
-                        if phase or close_failure:
-                            self.assertTrue('failed' in result.stderr or 'timeout' in result.stderr)
+                        if phase:
+                            expected = 'result timeout' if stage == 'delayed-timeout' else stage + ' failed'
+                            self.assertIn('Error: ' + expected, result.stderr, 'cleanup must preserve the original operation error')
+                        if close_failure:
+                            self.assertIn('Error: close failed', result.stderr, 'cleanup failure must remain independently visible')
+                        if not phase and not close_failure:
+                            self.assertEqual(result.stderr, '')
                         if stage == 'rejected-result':
                             self.assertIs(report['result']['passed'], False)
 

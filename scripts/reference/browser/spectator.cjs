@@ -51,6 +51,7 @@ async function run() {
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
     args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   let tearingDown=false,phase='startup',result,state,departureClosed=false,published=false,version='unknown';
+  let operationFailed=false,operationError;
   const errors=[],requestFailures=[];
   const publish=failedPhase=>{
     if(published) return;
@@ -97,9 +98,18 @@ async function run() {
     publish();
     if (errors.length || result.passed !== true) process.exitCode=1;
   } catch(error) {
+    operationFailed=true;
+    operationError=error;
     process.exitCode=1;
     publish(phase);
     throw error;
-  } finally {clearTimeout(watchdog);tearingDown=true;await browser.close();}
+  } finally {
+    clearTimeout(watchdog);
+    tearingDown=true;
+    try {await browser.close();} catch(cleanupError) {
+      if(operationFailed) throw new AggregateError([operationError,cleanupError],'browser operation and cleanup failed');
+      throw cleanupError;
+    }
+  }
 }
 if (require.main===module) run().catch(error => {console.error(error);process.exitCode=1;});
