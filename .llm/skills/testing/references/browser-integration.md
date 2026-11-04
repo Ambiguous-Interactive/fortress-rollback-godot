@@ -13,6 +13,7 @@ Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 Keep bounded request origin/path, method, resource type, failure code and phase alongside fatal request errors.
 Strip URL credentials, query strings and fragments; malformed diagnostic fields must never suppress the original failure.
+Preserve those observations when browser operations reject, including later result timeouts; publish one failure artifact before owned cleanup.
 
 Exercise actual UI controls during playback, after failure and at completion.
 Assert immediately after each inverse control action; checking only the final state can hide paired unauthorized changes.

@@ -50,13 +50,20 @@ async function run() {
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
     args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
-  let tearingDown=false;
+  let tearingDown=false,phase='startup',result,state,departureClosed=false,published=false,version='unknown';
+  const errors=[],requestFailures=[];
+  const publish=failedPhase=>{
+    if(published) return;
+    const report={browser:'Chromium',version,result,state,errors,requestFailures,departureClosed};
+    if(failedPhase) report.runnerFailurePhase=failedPhase;
+    const output=JSON.stringify(report);
+    published=true;
+    process.stdout.write(output);
+  };
   const watchdog = setTimeout(async () => {try {tearingDown=true;await browser.close();} finally {process.exitCode=1;}},70000);
   try {
     const context = await browser.newContext();
     const page = await context.newPage();
-    const errors = [],requestFailures=[];
-    let phase='startup';
     observeErrors(page,errors,()=>tearingDown,{requestFailures,phase:()=>phase});
     await page.addInitScript(data => {
       window.fortressSpectatorRuntime=data;
@@ -68,7 +75,6 @@ async function run() {
       {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault});
     phase='navigation';
     await page.goto(process.argv[2] + '/index.html');
-    let departureClosed=false;
     if (runtime.browser_fault==='viewer-departure') {
       phase='departure';
       await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true,null,{timeout:45000});
@@ -81,14 +87,19 @@ async function run() {
     }
     phase='result';
     await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
-    const result = await page.evaluate(() => window.fortressSpectatorResult);
+    result = await page.evaluate(() => window.fortressSpectatorResult);
     phase='state';
-    const state = await page.evaluate(() => window.fortressSpectatorState);
+    state = await page.evaluate(() => window.fortressSpectatorState);
     phase='socket-drain';
     await page.waitForFunction(() => window.fortressSpectatorSockets.length>0 && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000});
     phase='final';
-    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,state,errors,requestFailures,departureClosed}));
+    version=browser.version();
+    publish();
     if (errors.length || result.passed !== true) process.exitCode=1;
+  } catch(error) {
+    process.exitCode=1;
+    publish(phase);
+    throw error;
   } finally {clearTimeout(watchdog);tearingDown=true;await browser.close();}
 }
 if (require.main===module) run().catch(error => {console.error(error);process.exitCode=1;});
