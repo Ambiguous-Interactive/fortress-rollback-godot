@@ -450,9 +450,10 @@ func _inspection_shortcuts(context: RefCounted) -> void:
 	node.viewer.open_bytes(replay.to_bytes())
 	node.viewer.set_change_player(1)
 	node._refresh()
-	for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
-		speed_fixture._key(node, KEY_PERIOD, modified)
-		context.equal(node.viewer.is_seeking(), false, "modified inspection shortcut leaves playback unchanged")
+	for key: Key in [KEY_PERIOD, KEY_I, KEY_O]:
+		for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
+			speed_fixture._key(node, key, modified)
+			context.equal(node.viewer.is_seeking(), false, "modified inspection shortcut leaves playback unchanged")
 	speed_fixture._key(node, KEY_PERIOD)
 	context.equal(node.viewer.is_seeking(), true, "Period starts selected-player navigation")
 	speed_fixture._key(node, KEY_COMMA)
@@ -461,19 +462,30 @@ func _inspection_shortcuts(context: RefCounted) -> void:
 	context.equal(node.viewer.current_frame(), 700, "Period honors selected player and seeking ignores another key")
 	speed_fixture._key(node, KEY_COMMA)
 	context.equal(node.viewer.current_frame(), 0, "Comma returns to selected player's first input")
-	node.viewer.set_change_player(0)
-	node._status_changes_only.button_pressed = true
-	speed_fixture._key(node, KEY_PERIOD)
+	speed_fixture._key(node, KEY_O)
+	context.equal(node.viewer.is_seeking(), true, "unshifted O starts selected-player navigation on QWERTY and AZERTY")
+	speed_fixture._key(node, KEY_I)
 	while node.viewer.is_seeking():
 		node._physics_process(0.0)
-	context.equal(node.viewer.current_frame(), 600, "Period honors status-only filter")
+	context.equal(node.viewer.current_frame(), 700, "O honors selected player and active seeking refuses I")
+	for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
+		speed_fixture._key(node, KEY_I, modified)
+		context.equal(node.viewer.current_frame(), 700, "modified I preserves a boundary with an enabled previous action")
+	speed_fixture._key(node, KEY_I)
+	context.equal(node.viewer.current_frame(), 0, "unshifted I restores selected player's first input")
+	node.viewer.set_change_player(0)
+	node._status_changes_only.button_pressed = true
+	speed_fixture._key(node, KEY_O)
+	while node.viewer.is_seeking():
+		node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 600, "O honors status-only filter")
 	node._timeline_drag_started()
-	speed_fixture._key(node, KEY_COMMA)
+	speed_fixture._key(node, KEY_I)
 	context.equal(node.viewer.current_frame(), 600, "held timeline refuses shortcut navigation")
 	node._timeline_drag_ended(false)
 	context.equal(node.viewer._player.begin_advance().code, Fixture.Types.Code.READY, "manual work owns displayed state")
 	node._refresh()
-	speed_fixture._key(node, KEY_COMMA)
+	speed_fixture._key(node, KEY_I)
 	context.equal(node.viewer.current_frame(), 600, "manual work refuses shortcut navigation")
 	node.viewer._player.terminate()
 	replay = _sparse_recording()

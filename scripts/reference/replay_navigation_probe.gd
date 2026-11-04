@@ -52,7 +52,7 @@ func _key(code: Key, modified: bool = false, physical: Key = KEY_NONE) -> void:
 	var event: InputEventKey = InputEventKey.new()
 	event.keycode = code
 	event.physical_keycode = code if physical == KEY_NONE else physical
-	event.unicode = code + 32 if code in [KEY_J, KEY_L] else 0
+	event.unicode = code + 32 if code in [KEY_I, KEY_J, KEY_L, KEY_O] else 0
 	event.pressed = true
 	event.ctrl_pressed = modified
 	Input.parse_input_event(event)
@@ -161,8 +161,8 @@ func _run() -> void:
 	await _peer_controls()
 	await _offline_controls()
 	await _local_focus_pause()
-	if checks == 282 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 282")
+	if checks == 304 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 304")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -429,6 +429,17 @@ func _spectator_shortcuts() -> void:
 	local.set_physics_process(false)
 	await process_frame
 	await process_frame
+	for alias: Key in [KEY_U, KEY_Y, KEY_I, KEY_O]:
+		await _key(alias)
+		var expected: PackedInt64Array = {
+			KEY_U: PackedInt64Array([13, 4, 4]), KEY_Y: PackedInt64Array([12, 4, 4]),
+			KEY_I: PackedInt64Array([12, 4, 3]), KEY_O: PackedInt64Array([12, 4, 4])
+		}[alias]
+		_check(local.demo.viewer.playback_policy() == expected, "unshifted spectator policy alias routes through GUI")
+		await _key(alias, true)
+		_check(local.demo.viewer.playback_policy() == expected, "modified spectator policy alias preserves policy")
+	_check(local.demo.host.loop.game.frame == 0 and local.demo.game.frame == 0 and root.gui_get_focus_owner() == null,
+		"policy aliases preserve both game boundaries and movement focus")
 	await _key(KEY_3)
 	_check(local.demo.host.lag_ticks == 12, "ordinary US number row selects host delivery")
 	for index: int in range(3):
@@ -462,10 +473,17 @@ func _spectator_shortcuts() -> void:
 		local.demo.tick(0)
 	local.demo.set_viewing_delay(0)
 	_check(local.demo.viewer.begin_advance().code == ViewerTypes.Code.READY, "actual viewer request owns host policy composition")
+	var held_policy: PackedInt64Array = local.demo.viewer.playback_policy()
+	for alias: Key in [KEY_Y, KEY_U, KEY_I, KEY_O]:
+		await _key(alias)
+	_check(local.demo.viewer.playback_policy() == held_policy, "policy aliases preserve actual viewer request ownership")
 	await _key(KEY_1)
 	_check(local.demo.host.lag_ticks == 12, "routed host shortcut preserves viewer ownership")
 	local.demo.viewer.terminate()
 	local.demo.finish_host()
+	for alias: Key in [KEY_Y, KEY_U, KEY_I, KEY_O]:
+		await _key(alias)
+	_check(local.demo.viewer.playback_policy() == held_policy, "policy aliases preserve terminated viewer policy")
 	await _key(KEY_1)
 	_check(local.demo.host.lag_ticks == 12, "routed host shortcut preserves final-tail schedule")
 	await _key(KEY_R)
@@ -597,8 +615,7 @@ func _peer_controls() -> void:
 		_check(root.get_visible_rect().encloses(arena), "both peer arenas remain visible below controls")
 	await _click(local._actions.reset)
 	_check(
-		local._match.games[0].frame == 0 and local._match.latency_ticks == 12 and not local._match.is_partitioned,
-		"pointer reset starts a fresh peer match preserving fault policy"
+		local._match.games[0].frame == 0 and local._match.latency_ticks == 12 and not local._match.is_partitioned, "pointer reset starts a fresh peer match preserving fault policy"
 	)
 	local.queue_free()
 	await process_frame
@@ -661,8 +678,7 @@ func _local_focus_pause() -> void:
 		_check(local._is_paused, "application focus return does not resume local example")
 		await _click(local._pause_button if is_offline else local._actions.pause)
 		local._physics_process(0.0)
-		_check(not local._is_paused and (local._simulation.frame if is_offline else local._match.now_us) > frame,
-			"real pointer explicitly resumes after application focus returns")
+		_check(not local._is_paused and (local._simulation.frame if is_offline else local._match.now_us) > frame, "real pointer explicitly resumes after application focus returns")
 		_check(root.gui_get_focus_owner() == null, "focus-pause resume preserves movement keyboard routing")
 		local.queue_free()
 		await process_frame
@@ -684,19 +700,42 @@ func _inspection_shortcuts() -> void:
 	_check(scene.viewer.current_frame() == 700, "routed input shortcut honors selected player and active seek")
 	await _key(KEY_COMMA)
 	_check(scene.viewer.current_frame() == 0, "real Comma restores selected player's first input")
+	for code: Key in [KEY_I, KEY_O]:
+		await _key(code, true)
+		_check(not scene.viewer.is_seeking() and scene.viewer.current_frame() == 0, "modified letter alternative preserves playback")
+	await _key(KEY_O)
+	_check(scene.viewer.is_seeking() and scene.viewer.current_frame() < 700, "unshifted O starts bounded selected-player navigation")
+	await _key(KEY_I)
+	_settle()
+	_check(scene.viewer.current_frame() == 700, "routed O honors selected player and active seeking refuses I")
+	await _key(KEY_I)
+	_check(scene.viewer.current_frame() == 0, "unshifted I restores selected player's first input")
 	scene.viewer.set_change_player(0)
 	scene._status_changes_only.button_pressed = true
-	await _key(KEY_PERIOD)
+	await _key(KEY_O)
 	_settle()
-	_check(scene.viewer.current_frame() == 600, "routed Period honors status filter")
+	_check(scene.viewer.current_frame() == 600, "routed O honors status filter")
 	var editor: LineEdit = scene._target.get_line_edit()
 	editor.grab_focus()
-	for code: Key in [KEY_COMMA, KEY_PERIOD, KEY_PAGEUP, KEY_PAGEDOWN]:
+	for code: Key in [KEY_COMMA, KEY_PERIOD, KEY_I, KEY_O, KEY_PAGEUP, KEY_PAGEDOWN]:
 		await _key(code)
 		_check(scene.viewer.current_frame() == 600 and not scene.viewer.is_seeking(), "editable focus preserves playback against inspection key")
 	editor.release_focus()
+	for field: Control in [LineEdit.new(), TextEdit.new()]:
+		scene.add_child(field)
+		field.grab_focus()
+		for code: Key in [KEY_I, KEY_O]:
+			await _key(code)
+			var entered: String = field.text
+			_check(
+				scene.viewer.current_frame() == 600 and not scene.viewer.is_seeking() and entered.ends_with("i" if code == KEY_I else "io"),
+				"letter alternatives preserve actual LineEdit and TextEdit input"
+			)
+		field.release_focus()
+		field.queue_free()
+		await process_frame
 	scene._timeline_drag_started()
-	await _key(KEY_COMMA)
+	await _key(KEY_I)
 	_check(scene.viewer.current_frame() == 600 and not scene.viewer.is_seeking(), "held timeline refuses routed inspection key")
 	scene._timeline_drag_ended(false)
 	_check(scene.viewer.open_bytes(fixture._sparse_recording().to_bytes()), "sparse checksum shortcut fixture opens")

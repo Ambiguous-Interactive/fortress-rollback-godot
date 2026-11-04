@@ -3,7 +3,7 @@
 ## Work under review
 
 Session 151 advances driver-only input submission, local-example focus handling
-and replay keyboard inspection under #40, #41 and #45. New user interactions and
+and replay/spectator keyboard inspection under #40, #41, #45 and #47. New user interactions and
 cross-area verification trigger this retrospective.
 
 ## Evidence and findings
@@ -14,14 +14,17 @@ cross-area verification trigger this retrospective.
 | Local inspection needs application lifecycle coverage | Both scene `focus_pause` cases compare canonical state and injected clock before/after focus loss, including completion callbacks | Pause local demos until explicit resume; add deferred pointer-resume coverage |
 | Handler calls do not prove GUI routing | `replay_navigation_probe.gd`, `_inspection_shortcuts`: real dispatched keys cross editing focus, filters and seeking | Extend the existing deferred witness and its CI inventory |
 | Concurrent author edits invalidate qualification | Focused launcher receipts reject source changes while direct selected cases pass | Freeze sources before final full qualification; retain rejected receipts as rejected |
+| US punctuation alone can hide an unreachable shortcut | PR #318 review and spectator sweep: Shift-required punctuation conflicts with the modifier guard | Add unshifted alternatives and expand existing browser-testing guidance |
+| Guide setup must define aliases used by snippets | PR #318 review and guide sweep: `Types` expressions lack a declared alias | Declare preloads across affected guides and clarify the existing copy skill |
 
 ## Curation and pruning
 
 The existing testing skill already requires a coordinated source freeze, actual
-GUI routing and matched CI inventories. No additional rule or duplicate knowledge
-entry is needed. The existing rollback skill already covers ownership and stalled
-samples. Verified those instructions against the new cases rather than expanding
-them. Removed the offline guide's stale claim that online networking is planned;
+GUI routing and matched CI inventories. Expanded its keyboard-layout guidance to
+cover Shift-required punctuation alongside numeric glyphs. The existing rollback
+skill already covers ownership and stalled samples; no duplicate entry is needed.
+Added alias setup to the existing copy skill instead of creating another skill.
+Removed the offline guide's stale claim that online networking is planned;
 its replacement links the existing online setup guide.
 
 ## Verification and limits

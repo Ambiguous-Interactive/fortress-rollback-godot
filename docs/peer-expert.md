@@ -24,6 +24,9 @@ to retrieve the active request. Repeated reads return that same request until
 acknowledged. Dispatch it using the request's kind and frame:
 
 ```gdscript
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
+
 var opened: Types.Result = peer.begin_step(now_us, samples)
 if opened.code == Types.Code.READY:
     while true:

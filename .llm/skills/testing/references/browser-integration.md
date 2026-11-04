@@ -15,6 +15,7 @@ with no success marker. Correct game state can outlive a late connection failure
 Exercise actual UI controls during playback, after failure and at completion.
 Controls that suppress GUI focus to preserve movement need equivalent keyboard actions; exercise both routes through the same ownership gates.
 Test numeric shortcuts with differing logical glyphs and physical number-row codes; US key-only events hide AZERTY failures under modifier guards.
+Punctuation that requires Shift on another layout needs an unshifted alternative when the handler rejects Shift; exercise that alternative through real GUI routing.
 Cross shortcut routing with focused buttons as well as text editors. Godot GUI focus navigation consumes arrow keys before `_unhandled_key_input`; use nonconflicting action keys.
 Cross match shortcuts with Ctrl, Alt, Meta, Shift, release and echo events. Preserve intentional shifted punctuation,
 such as Plus, and verify that ordinary reset still replaces the match.

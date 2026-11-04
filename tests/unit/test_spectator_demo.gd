@@ -334,11 +334,17 @@ func _single_frame_control(context: RefCounted) -> void:
 	context.equal(scene.demo.is_paused, false, "P resumes playback after inspection")
 	var host_frame: int = scene.demo.host.loop.game.frame
 	frame = scene.demo.game.frame
+	key.keycode = KEY_U
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[0], 13, "unshifted U raises delay without layout punctuation")
+	key.keycode = KEY_Y
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[0], 12, "unshifted Y lowers delay without layout punctuation")
 	key.keycode = KEY_BRACKETRIGHT
 	scene._unhandled_key_input(key)
 	context.equal(scene.demo.viewer.playback_policy()[0], 13, "right bracket raises cushion one confirmed frame")
 	context.equal(scene._label.text.contains("Viewer holds 13 confirmed frames"), true, "delay feedback reflects selected policy")
-	context.equal(scene._label.text.contains("[: less delay | ]: more delay"), true, "help exposes delay controls")
+	context.equal(scene._label.text.contains("Y / [: less delay | U / ]: more delay"), true, "help exposes delay controls")
 	key.keycode = KEY_BRACKETLEFT
 	for press: int in range(15):
 		scene._unhandled_key_input(key)
@@ -496,7 +502,9 @@ func _pointer_host_loss(context: RefCounted) -> void:
 # Value: protects=modified application shortcuts preserve the spectator match; fails_when=Ctrl+R restarts or Ctrl+P pauses;
 # why_new=ordinary shortcut tests omit modifier combinations; seam=scene input
 func _modified_shortcuts(context: RefCounted) -> void:
-	var shortcuts: PackedInt32Array = PackedInt32Array([KEY_P, KEY_N, KEY_C, KEY_F, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_COMMA, KEY_PERIOD, KEY_L, KEY_E, KEY_V, KEY_R])
+	var shortcuts: PackedInt32Array = PackedInt32Array(
+		[KEY_P, KEY_N, KEY_C, KEY_F, KEY_BRACKETLEFT, KEY_BRACKETRIGHT, KEY_COMMA, KEY_PERIOD, KEY_Y, KEY_U, KEY_I, KEY_O, KEY_L, KEY_E, KEY_V, KEY_R]
+	)
 	for modifier: String in ["alt_pressed", "ctrl_pressed", "meta_pressed", "shift_pressed"]:
 		var scene: Node2D = Scene.new()
 		scene._ready()
@@ -1045,6 +1053,13 @@ func _catchup_control(context: RefCounted) -> void:
 	scene.demo.is_paused = true
 	var before: Array = _service_observation(scene.demo)
 	var key: InputEventKey = InputEventKey.new()
+	key.pressed = true
+	key.keycode = KEY_O
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[2], 5, "unshifted O raises catch-up without layout punctuation")
+	key.keycode = KEY_I
+	scene._unhandled_key_input(key)
+	context.equal(scene.demo.viewer.playback_policy()[2], 4, "unshifted I lowers catch-up without layout punctuation")
 	key.keycode = KEY_COMMA
 	key.pressed = false
 	scene._unhandled_key_input(key)
@@ -1063,7 +1078,7 @@ func _catchup_control(context: RefCounted) -> void:
 	for press: int in range(140):
 		scene._unhandled_key_input(key)
 	context.equal(scene.demo.viewer.playback_policy()[2], Demo.Config.new().queue_capacity, "faster key stops at bounded ring capacity")
-	context.equal(scene._label.text.contains("Comma: slower catch-up | Period: faster catch-up"), true, "help exposes catch-up controls")
+	context.equal(scene._label.text.contains("I / Comma: slower catch-up | O / Period: faster catch-up"), true, "help exposes catch-up controls")
 	before[10] = scene.demo.viewer.playback_policy()
 	context.equal(_service_observation(scene.demo), before, "catch-up keys do not service or resume viewing")
 	scene.free()

@@ -702,6 +702,7 @@ The offline and in-process peer examples pause on application focus loss and req
 preserving simulation and injected packet time while inspecting another window.
 Driver-only clients can discover ascending local slots for byte-only input submission without retaining configuration order.
 Replay input-change and recorded-checksum navigation share pointer and keyboard readiness gates.
+Replay changes and spectator viewing-delay/catch-up controls also offer unshifted letter shortcuts across keyboard layouts.
 Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
 These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
 

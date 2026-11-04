@@ -37,8 +37,9 @@ Press F or click **Follow live** to clear the viewing delay and resume continuou
 This selects the maximum bounded catch-up rate and allows catch-up whenever input waits.
 Later ticks consume all delivered contiguous confirmed rows, with at most one queue capacity of input work per tick.
 The action itself never skips history or advances either game. Comma and Period can adjust the rate afterward.
-Press [ or ] or click **Less delay** or **More delay** to change the viewing delay by one confirmed frame, including while paused.
-Press Comma or Period or click **Slower catch-up** or **Faster catch-up** to change the catch-up limit by one frame per tick.
+The letter shortcuts need no Shift or AltGr on common keyboard layouts.
+Press Y or U (also [ or ]) or click **Less delay** or **More delay** to change the viewing delay by one confirmed frame, including while paused.
+Press I or O (also Comma or Period) or click **Slower catch-up** or **Faster catch-up** to change the catch-up limit by one frame per tick.
 Policy buttons disable at their respective limits and while a request, callback or stopped viewer prevents changes.
 The limit ranges from one frame through the configured queue capacity; it changes neither
 viewing delay nor pause. The label shows the selected limit.
@@ -269,6 +270,7 @@ The local example uses this publisher for its byte delivery.
 
 ```gdscript
 const Publisher = preload("res://addons/fortress_rollback/core/spectator_publisher.gd")
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
 var publisher: Publisher = Publisher.new()
 var code: int = publisher.configure(host_session, agreed_identity, agreed_key, agreed_digest, 65536)
 # The startup exchange comes first.

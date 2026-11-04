@@ -11,7 +11,7 @@ Networked P2P and browser release gates remain in the [plan](../PLAN.md).
 
 ## Setup and callbacks
 
-Preload `addons/fortress_rollback/core/config.gd`, `session.gd` and `driver.gd`.
+Preload `addons/fortress_rollback/core/config.gd`, `session.gd`, `driver.gd` and `session_types.gd`.
 Configure input width and same-width neutral bytes, ascending dense player slots,
 local slot membership, delay and prediction limits. Every sync-test slot is local.
 Supply `max_snapshot_bytes` and `storage_budget_bytes` explicitly. `validate()`
@@ -53,6 +53,8 @@ An empty row without a retained sample returns `MISSING_LOCAL_INPUT`.
 Rejected row counts, widths or conflicts preserve the last accepted poll time.
 
 ```gdscript
+const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+
 var rows: Array[PackedByteArray] = []
 for player: int in driver.local_players():
 	var retained: RefCounted = driver.scheduled_local_input(player)

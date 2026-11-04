@@ -297,6 +297,8 @@
 
 ### Fixed
 
+- Fix spectator delay and catch-up shortcuts on layouts with shifted punctuation. Use Y/U and I/O without modifiers.
+
 - Fix spectator host-step failure feedback to retain the failed host callback and frame. Host termination also stops buffered viewing with its original cause.
 
 - Fix peer-example fault shortcuts changing packet policy during active game operations.

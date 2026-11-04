@@ -32,6 +32,7 @@ Render caller-supplied metadata as bounded plain text; escape control characters
 Godot JSON quoting alone leaves some C0/C1 controls and Unicode line separators literal. Verify escaping against explicit codepoints and actual Label line counts.
 Serialize diagnostic files through `FortressDiagnosticTrace.to_json`; a Godot parser round trip alone does not prove standards-valid JSON.
 Spell out punctuation key names when adjacent separators could obscure them, such as Comma and Period before a colon.
+Code examples must declare their script aliases in the example or its explicit setup; a global class name does not define a shorter alias.
 Explain why, how, and what in PRs and commit messages, with detail proportional to the change.
 Keep technical mechanisms and investigation evidence in commit bodies or linked issues unless needed by a required review format.
 
