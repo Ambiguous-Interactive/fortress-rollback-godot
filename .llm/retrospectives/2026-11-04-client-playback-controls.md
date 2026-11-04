@@ -17,6 +17,21 @@ with the original issues.
 | Finalization must describe the retained recording separately from the completed match. | `tests/unit/test_integration_finish.gd`: empty and capped recordings retain only existing evidence. | Show omitted-ending feedback; capture terminal checksums only when the recording covers that boundary. |
 | Concurrent authored-source edits invalidate an otherwise unrelated native run. | Native launcher refused a mixed-source focused attempt during GUI edits. | Preserve the refusal and qualify the final combined source after all edits stop. |
 
+## Acceptance acknowledgment investigation
+
+The actual `--acceptance-delay-ms 1500` browser control holds the response after
+server acceptance. The old viewer departs and publishes success before release;
+the repaired viewer waits, then preserves the same original canonical history.
+The native sibling already waits, but its HTTP result also needs validation.
+A 3500 ms hold produces a distinct pending timeout; it does not reproduce the
+intermittent browser `ERR_ABORTED` cause tracked in #322. No error is suppressed.
+
+Extended existing browser-testing guidance with the server-receipt versus client-
+acknowledgment distinction. The retained regression controller verifies its actual
+single held response, and both engine CI cells execute it. Admission-rejection
+faults cannot combine with that hold because they never reach ACCEPT. The CLI
+matrix fails before that guard and passes afterward.
+
 ## Curation and pruning
 
 Existing testing guidance already covers source freezing, actual GUI routing,
