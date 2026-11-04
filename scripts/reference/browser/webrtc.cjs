@@ -346,6 +346,7 @@ async function main() {
       const contexts = [];
       const pages = [];
       const displays = [];
+      const roomFailures=[];
       try {
         await boundedRoom(async () => {
         await boundedRoom(async () => {
@@ -434,11 +435,17 @@ async function main() {
         records.push({ players: count, peers });
         });
       } catch (error) {
+        roomFailures.push(error);
         // Preserve live socket evidence before context.close destroys the failed room.
         failed_rooms.push({ players: count, peers: await captureFailure(pages, count) });
         throw error;
       } finally {
-        await Promise.all(contexts.map(context => context.close()));
+        const closed=await Promise.allSettled(contexts.map(context=>Promise.resolve().then(()=>context.close())));
+        const failures=closed.filter(result=>result.status==='rejected').map(result=>result.reason);
+        if(failures.length) {
+          failures.unshift(...roomFailures);
+          throw new AggregateError(failures,'room cleanup failed: '+failures.map(String).join('; '));
+        }
       }
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
@@ -453,8 +460,11 @@ async function main() {
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })) }));
     throw error;
   } finally {
-    await Promise.all(browsers.map(browser => browser.close()));
-    server.close();
+    const failures=[];
+    const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
+    for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
+    try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
+    if(failures.length) throw new AggregateError(failures,'browser cleanup failed: '+failures.map(String).join('; '));
   }
 }
 

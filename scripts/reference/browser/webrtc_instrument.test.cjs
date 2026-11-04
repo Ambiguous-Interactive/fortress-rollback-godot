@@ -149,7 +149,7 @@ async function failedRoom(hung = false, pair = ['chromium', 'chromium']) {
   const browser = { version() { return '141.0.7390.37'; }, async close() {}, async newContext() {
     return { async newPage() { return page; }, async close() { closed = true; } };
   } };
-  const server = { on() {}, listen(port, host, ready) { ready(); }, address() { return { port: 123 }; }, close() {} };
+  const server = { on() {}, listen(port, host, ready) { ready(); }, address() { return { port: 123 }; }, close(done) { done(); } };
   const moduleValue = { exports: {} };
   const fakeRequire = name => {
     if (name === './webrtc_display.cjs') return { async placeFirefox() { return { x: 0, y: 0 }; } };

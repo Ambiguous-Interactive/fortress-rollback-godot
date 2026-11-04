@@ -636,8 +636,11 @@ async function main() {
     console.error(JSON.stringify({ failure: String(error), states, resources, errors, logs }));
     throw error;
   } finally {
-    await Promise.all(browsers.map(browser => browser.close()));
-    await new Promise(resolve => server.close(resolve));
+    const failures=[];
+    const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
+    for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
+    try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
+    if(failures.length) throw new AggregateError(failures,'browser cleanup failed: '+failures.map(String).join('; '));
   }
 }
 module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics, measured, elapsedMicros };
