@@ -16,6 +16,7 @@ cross-area verification trigger this retrospective.
 | Concurrent author edits invalidate qualification | Focused launcher receipts reject source changes while direct selected cases pass | Freeze sources before final full qualification; retain rejected receipts as rejected |
 | US punctuation alone can hide an unreachable shortcut | PR #318 review and spectator sweep: Shift-required punctuation conflicts with the modifier guard | Add unshifted alternatives and expand existing browser-testing guidance |
 | Guide setup must define aliases used by snippets | PR #318 review and guide sweep: `Types` expressions lack a declared alias | Declare preloads across affected guides and clarify the existing copy skill |
+| Inverse controls can hide intermediate mutation | PR #318 follow-up: one check after Y/U/I/O lets paired changes cancel | Assert policy immediately after each protected keypress; extend existing browser-testing guidance |
 
 ## Curation and pruning
 

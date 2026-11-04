@@ -161,8 +161,8 @@ func _run() -> void:
 	await _peer_controls()
 	await _offline_controls()
 	await _local_focus_pause()
-	if checks == 304 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 304")
+	if checks == 310 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 310")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -476,14 +476,14 @@ func _spectator_shortcuts() -> void:
 	var held_policy: PackedInt64Array = local.demo.viewer.playback_policy()
 	for alias: Key in [KEY_Y, KEY_U, KEY_I, KEY_O]:
 		await _key(alias)
-	_check(local.demo.viewer.playback_policy() == held_policy, "policy aliases preserve actual viewer request ownership")
+		_check(local.demo.viewer.playback_policy() == held_policy, "policy aliases preserve actual viewer request ownership")
 	await _key(KEY_1)
 	_check(local.demo.host.lag_ticks == 12, "routed host shortcut preserves viewer ownership")
 	local.demo.viewer.terminate()
 	local.demo.finish_host()
 	for alias: Key in [KEY_Y, KEY_U, KEY_I, KEY_O]:
 		await _key(alias)
-	_check(local.demo.viewer.playback_policy() == held_policy, "policy aliases preserve terminated viewer policy")
+		_check(local.demo.viewer.playback_policy() == held_policy, "policy aliases preserve terminated viewer policy")
 	await _key(KEY_1)
 	_check(local.demo.host.lag_ticks == 12, "routed host shortcut preserves final-tail schedule")
 	await _key(KEY_R)

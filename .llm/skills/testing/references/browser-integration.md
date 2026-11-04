@@ -13,6 +13,7 @@ Inject each actual failure signal at that last boundary and require nonzero exit
 with no success marker. Correct game state can outlive a late connection failure.
 
 Exercise actual UI controls during playback, after failure and at completion.
+Assert immediately after each inverse control action; checking only the final state can hide paired unauthorized changes.
 Controls that suppress GUI focus to preserve movement need equivalent keyboard actions; exercise both routes through the same ownership gates.
 Test numeric shortcuts with differing logical glyphs and physical number-row codes; US key-only events hide AZERTY failures under modifier guards.
 Punctuation that requires Shift on another layout needs an unshifted alternative when the handler rejects Shift; exercise that alternative through real GUI routing.
