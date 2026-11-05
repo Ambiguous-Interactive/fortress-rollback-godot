@@ -195,6 +195,8 @@ automatic extra SAVE on ordinary ticks or downloads.
 After leaving the room, press **Watch replay**, then **Open replay** and choose your
 `fortress-online.frrp` or `fortress-spectator.frrp` file. Native builds use a file dialog; browsers use a local
 file chooser without uploading the file or using browser storage. Native windows also accept one dropped replay file.
+Opening the chooser pauses playback. Canceling or selecting an invalid file keeps the current recording paused; press **Play** to resume.
+An accepted seek finishes at its selected boundary, including a Repeat range's pending start seek.
 Dropped files use the same size and compatibility checks; failed imports preserve the previous recording.
 File-read completions preserve timeline dragging and active game requests. If a read finishes during either, open the file again after releasing the control.
 Playback needs

@@ -62,6 +62,7 @@ terminate retained `RefCounted` players, drivers or request views. Test retained
 Scene physics loops must retry temporary `BUSY` results after ownership releases; a controller's safe refusal must not become a permanent scene stop.
 Paused scenes must refresh control readiness and committed terminal status even when they skip simulation service.
 Local inspection focus pauses must preserve accepted callback work and require explicit resume.
+Opening an in-application replay chooser needs the same pause; a modal dialog does not imply application focus loss. Cancel and rejected selections preserve pause.
 Defer guarded playback mutations until ownership releases and bind that deferral to the exact player lifetime.
 Include queued automatic resume after internal navigation; an inactive play flag alone does not prove playback stays paused.
 At accelerated playback rates, apply deferred pauses before starting another frame request after the active owner releases.

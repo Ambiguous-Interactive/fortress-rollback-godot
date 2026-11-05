@@ -70,9 +70,9 @@ EXPECTED.update({
 })
 EXPECTED.update({
     'res://tests/unit/test_spectator_session.gd': {'configuration', 'confirmed_playback', 'buffering', 'delay_and_loss',
-        'expert_parity', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes',
+        'expert_parity', 'expert_failures', 'expert_failure_control', 'host_export', 'storage_budget', 'host_export_repair', 'exhaustion', 'shapes',
         'retained_row', 'delay_bounds', 'mesh_mutators'},
-    'res://tests/unit/test_driver_callback_results.gd': {'valid', 'malformed', 'termination', 'peer_failure'},
+    'res://tests/unit/test_driver_callback_results.gd': {'valid', 'malformed', 'termination', 'peer_failure', 'expert_failure_parity', 'expert_failure_control'},
 })
 EXPECTED.update({
     'res://tests/unit/test_driver.gd': {'parity', 'reentry', 'failure', 'validation', 'stall',
