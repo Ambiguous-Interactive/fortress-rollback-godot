@@ -154,6 +154,7 @@ func _run() -> void:
 	await _repeat_selection_controls()
 	await _player_change_controls()
 	await _inspection_shortcuts()
+	await _replay_import_pause()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
@@ -163,12 +164,74 @@ func _run() -> void:
 	await _peer_controls()
 	await _offline_controls()
 	await _local_focus_pause()
-	if checks == 351 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 351")
+	if checks == 401 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 401")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
 		quit(1)
+
+
+func _replay_import_pause() -> void:
+	var path: String = "user://replay-chooser-%d.frrp" % OS.get_process_id()
+	var file: FileAccess = FileAccess.open(path, FileAccess.WRITE)
+	_check(file != null, "selected replay fixture opens for writing")
+	if file == null:
+		return
+	file.store_buffer(Fixture.recording(5).to_bytes())
+	file.close()
+	for mode: String in ["play", "repeat", "repeat_seek"]:
+		_check(scene.viewer.open_bytes(Fixture.recording(900).to_bytes()), "chooser pause fixture opens")
+		scene.viewer.set_playback_speed(1)
+		scene.viewer.set_repeat_playback(mode != "play")
+		if mode == "repeat_seek":
+			scene.viewer.set_repeat_range(600, 850)
+		scene.viewer.toggle_play()
+		for tick: int in 3:
+			scene._physics_process(0.0)
+		scene._refresh()
+		scene._open_button.pressed.emit()
+		_check(scene._dialog.visible, "Open launches actual native file chooser")
+		_check(not scene.viewer.is_playing, "opening chooser pauses current playback")
+		scene._dialog.hide()
+		scene._dialog.canceled.emit()
+		_settle()
+		var selected: int = 600 if mode == "repeat_seek" else 0
+		_check(scene.viewer.current_frame() == selected and not scene.viewer.is_playing, "cancel preserves playback or accepted seek destination paused")
+		var original: PackedByteArray = scene.viewer.game.canonical_bytes()
+		for tick: int in 8:
+			scene._physics_process(0.0)
+		_check(scene.viewer.current_frame() == selected and scene.viewer.game.canonical_bytes() == original, "canceled chooser never resumes ordinary or repeating playback")
+		_check(scene.viewer.playback_speed_quarters() == 1, "chooser preserves playback speed")
+		scene._play.pressed.emit()
+		for tick: int in 3:
+			scene._physics_process(0.0)
+		_check(scene.viewer.current_frame() == selected, "explicit resume starts fresh fractional cadence")
+		scene._physics_process(0.0)
+		_check(scene.viewer.current_frame() == selected + 1, "explicit Play resumes selected original history")
+		scene._open_button.pressed.emit()
+		_check(scene._dialog.visible and not scene.viewer.is_playing, "second chooser invocation pauses again")
+		scene._dialog.hide()
+		scene._dialog.file_selected.emit("res://project.godot")
+		_check(scene.viewer.frame_count() == 900 and not scene.viewer.is_playing, "rejected selected file preserves paused recording")
+		scene._refresh()
+		_check(scene._status.text.contains("Could not open replay"), "selected-file refusal remains visible")
+		var prior: RefCounted = scene.viewer._player
+		scene._open_button.pressed.emit()
+		scene._dialog.hide()
+		scene._dialog.file_selected.emit(path)
+		_check(scene.viewer.frame_count() == 5 and scene.viewer.current_frame() == 0, "accepted selection replaces the recording at its initial state")
+		_check(not scene.viewer.is_playing and not scene.viewer.is_seeking(), "new selected recording waits for explicit Play")
+		_check(prior.failure_code() == ViewerTypes.Code.TERMINATED, "accepted selection retires prior playback lifetime")
+		var held: ViewerTypes.Result = scene.viewer._player.begin_advance()
+		_check(held.code == ViewerTypes.Code.READY, "expert playback owns chooser refusal control")
+		scene._open_button.pressed.emit()
+		_check(not scene._dialog.visible and scene.viewer._player._batch == held.batch, "owned replay refuses chooser without expiring work")
+		scene.viewer.restart()
+		scene.viewer.terminate()
+		scene.viewer.restart()
+	_check(DirAccess.remove_absolute(ProjectSettings.globalize_path(path)) == OK, "selected replay fixture is removed")
+	await process_frame
 
 
 func _replay_layout() -> void:

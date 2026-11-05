@@ -197,7 +197,7 @@ func toggle_play() -> void:
 		message = "Playing inputs; this recording has no checksums."
 
 
-## Request a lifecycle pause, including inside game callbacks or manual requests.
+## Request an inspection pause, including inside game callbacks or manual requests.
 ## The accepted player step finishes first; no later playback input starts. Selected seeks finish paused.
 func request_pause() -> void:
 	if _recording == null or (not _is_busy() and not is_playing and not _resume_after_seek):
@@ -217,7 +217,7 @@ func _apply_requested_pause() -> void:
 		is_playing = false
 		_finish_seek()
 	if paused_playback and not has_failure() and not is_seeking():
-		message = "Paused after leaving the application. Press Play to resume."
+		message = "Paused. Press Play to resume."
 
 
 ## Quarter-speed units: 1, 2, 4, 8, 16 select ¼×, ½×, 1×, 2×, 4×.

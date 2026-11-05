@@ -249,6 +249,8 @@ func _button(parent: Node, caption: String, callback: Callable) -> Button:
 func _open() -> void:
 	if _is_scrubbing or viewer._is_busy():
 		return
+	viewer.request_pause()
+	_refresh()
 	if OS.has_feature("web"):
 		_web_import.choose(_web_callback)
 	else:
