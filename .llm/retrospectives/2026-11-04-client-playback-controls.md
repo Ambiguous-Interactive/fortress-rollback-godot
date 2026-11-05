@@ -44,6 +44,23 @@ single held response, and both engine CI cells now select that regression. Admis
 faults cannot combine with that hold because they never reach ACCEPT. The CLI
 matrix fails before that guard and passes afterward.
 
+## Review of acceptance observations
+
+Trusted review found that final departure/success flags alone can miss gameplay
+while the response is held. Route fulfillment also precedes the application's
+HTTP completion callback. The real Node entrypoint matrix reproduces both
+false positives against the initial helper: held-frame progress and departure or
+success between response release and actual acknowledgment all pass incorrectly.
+
+Publish each actual driver-step frame and a separate successful-HTTP callback
+marker. Compare frames before forwarding ACCEPT and immediately before response
+fulfillment; read acknowledgment only from the callback marker. The healthy
+matrix progresses after acknowledgment, and a missing injection is rejected.
+Existing browser guidance already distinguishes server receipt from completed
+acknowledgment; this repair supplies the missing observation rather than another
+parallel rule. Actual frozen-source browser qualification remains separate from
+the Node process controls.
+
 ## Curation and pruning
 
 Existing testing guidance already covers source freezing, actual GUI routing,

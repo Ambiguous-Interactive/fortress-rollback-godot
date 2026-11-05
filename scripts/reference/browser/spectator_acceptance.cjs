@@ -12,32 +12,39 @@ chromium.launch=async options=>{
     const newPage=context.newPage.bind(context);
     context.newPage=async()=>{
       const page=await newPage();
+      let requests=0,baselineFrame,releaseFrame,heldMs;
       await page.addInitScript(()=>{
         let ready=false,result;
         Object.defineProperty(window,'fortressSpectatorDepartureReady',{
-          get:()=>ready,set:value=>{ready=value;if(value && !window.fortressAckReleased) window.fortressEarlyDeparture=true;}
+          get:()=>ready,set:value=>{ready=value;if(value && window.fortressSpectatorAcceptAcknowledged!==true) window.fortressEarlyDeparture=true;}
         });
         Object.defineProperty(window,'fortressSpectatorResult',{
-          get:()=>result,set:value=>{result=value;if(value?.passed && !window.fortressAckReleased) window.fortressEarlySuccess=true;}
+          get:()=>result,set:value=>{result=value;if(value?.passed && window.fortressSpectatorAcceptAcknowledged!==true) window.fortressEarlySuccess=true;}
         });
       });
       await page.route('**/accept',async route=>{
+        requests++;
+        baselineFrame=await page.evaluate(()=>window.fortressSpectatorFrame);
         const response=await route.fetch();
         const deadline=performance.now()+delay;
         while(performance.now()<deadline) await new Promise(resolve=>setTimeout(resolve,Math.max(1,deadline-performance.now())));
         if(page.isClosed()) return;
-        await page.evaluate(hold=>{window.fortressAckHeldMs=hold;window.fortressAckReleases=(window.fortressAckReleases||0)+1;window.fortressAckReleased=true;},delay);
+        releaseFrame=await page.evaluate(()=>window.fortressSpectatorFrame);
+        heldMs=delay;
         await route.fulfill({response});
       });
       const evaluate=page.evaluate.bind(page);
       page.evaluate=async(...args)=>{
         const result=await evaluate(...args);
         if(result?.passed===true) {
-          const order=await evaluate(()=>({released:window.fortressAckReleased===true,
-            heldMs:window.fortressAckHeldMs,releases:window.fortressAckReleases,
+          const order=await evaluate(()=>({acknowledged:window.fortressSpectatorAcceptAcknowledged===true,
             earlyDeparture:window.fortressEarlyDeparture===true,earlySuccess:window.fortressEarlySuccess===true}));
-          if(process.env.FORTRESS_ORDER_OUTPUT) fs.writeFileSync(process.env.FORTRESS_ORDER_OUTPUT,JSON.stringify(order));
-          if(!order.released || order.heldMs!==delay || order.releases!==1 || order.earlyDeparture || order.earlySuccess) {
+          if(process.env.FORTRESS_ORDER_OUTPUT) fs.writeFileSync(process.env.FORTRESS_ORDER_OUTPUT,JSON.stringify({...order,requests,baselineFrame,releaseFrame,heldMs}));
+          if(requests!==1 || heldMs!==delay || !Number.isSafeInteger(baselineFrame) || !Number.isSafeInteger(releaseFrame)) {
+            throw Error('acceptance response hold was not observed');
+          }
+          if(releaseFrame!==baselineFrame) throw Error('playback advanced while acceptance response was held');
+          if(!order.acknowledged || order.earlyDeparture || order.earlySuccess) {
             throw Error('playback completed before acceptance acknowledgment');
           }
         }

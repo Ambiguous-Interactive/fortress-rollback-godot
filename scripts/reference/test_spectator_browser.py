@@ -33,6 +33,64 @@ class SpectatorBrowserTests(unittest.TestCase):
                         launcher.main()
                         run.assert_called_once()
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for acceptance process controls')
+    # Value: real Node entrypoint rejects held-frame progress and completion before the application HTTP callback.
+    def test_acceptance_process_observes_frame_progress_and_actual_acknowledgment(self):
+        source = Path(__file__).parent / 'browser/spectator_acceptance.cjs'
+        stub = """
+const {EventEmitter}=require('node:events');
+const page=new EventEmitter();
+global.window={WebSocket:class {constructor(){this.readyState=1;}close(){this.readyState=3;}}};
+page.addInitScript=async(fn,data)=>fn(data);
+let route;
+page.route=async(_pattern,callback)=>{route=callback;};
+page.isClosed=()=>false;
+page.evaluate=async(fn,data)=>fn(data);
+page.waitForFunction=async fn=>{if(!fn())throw Error('fixture readiness failed');};
+page.goto=async()=>{
+  const mode=process.env.FORTRESS_TEST_ACCEPTANCE_MODE;
+  window.fortressSpectatorFrame=0;
+  window.fortressSpectatorAcceptAcknowledged=false;
+  new window.WebSocket();
+  const finish=()=>{
+    if(mode==='early-departure')window.fortressSpectatorDepartureReady=true;
+    if(mode==='early-success')window.fortressSpectatorResult={passed:true};
+    window.fortressSpectatorAcceptAcknowledged=true;
+    window.fortressSpectatorFrame=8;
+    window.fortressSpectatorDepartureReady=true;
+    window.fortressSpectatorResult={passed:true};
+  };
+  if(mode==='no-injection'){finish();return;}
+  await route({
+    fetch:async()=>{if(mode==='held-progress')window.fortressSpectatorFrame=1;return {};},
+    fulfill:async()=>finish()
+  });
+};
+const browser={newContext:async()=>({newPage:async()=>page}),version:()=> 'stub',close:async()=>{}};
+module.exports={chromium:{launch:async()=>browser}};
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            directory = Path(folder)
+            package = directory / 'playwright.cjs'
+            package.write_text(stub, encoding='utf-8')
+            runtime = directory / 'runtime.json'
+            runtime.write_text(json.dumps({'browser_fault': 'viewer-departure'}), encoding='utf-8')
+            for mode, expected_error in [('healthy', None), ('held-progress', 'playback advanced while acceptance response was held'),
+                                         ('early-departure', 'playback completed before acceptance acknowledgment'),
+                                         ('early-success', 'playback completed before acceptance acknowledgment'),
+                                         ('no-injection', 'acceptance response hold was not observed')]:
+                environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_ACCEPT_DELAY_MS': '1',
+                               'FORTRESS_TEST_ACCEPTANCE_MODE': mode}
+                result = subprocess.run(['node', str(source.resolve()), 'http://fixture.invalid', str(runtime)], env=environment,
+                                        capture_output=True, encoding='utf-8', timeout=10)
+                with self.subTest(mode=mode):
+                    self.assertEqual(result.returncode, 0 if expected_error is None else 1)
+                    if expected_error is None:
+                        self.assertEqual(result.stderr, '')
+                        self.assertEqual(json.loads(result.stdout)['errors'], [])
+                    else:
+                        self.assertIn(expected_error, result.stderr)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for browser process controls')
     def test_runner_process_rejects_active_request_failure(self):
         source = Path(__file__).parent / 'browser/spectator.cjs'

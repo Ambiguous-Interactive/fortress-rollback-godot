@@ -892,5 +892,6 @@ The exported spectator witness waits for its authenticated ACCEPT HTTP acknowled
 It continues draining bounded relay input while waiting. Failed HTTP results cannot count as acknowledgment or reach JSON parsing.
 Run the existing `scripts/reference/signalfish_spectator_live.py --browser-viewer` witness with
 `--browser-fault viewer-departure --acceptance-delay-ms 1500` to hold the response after server acceptance.
-The browser control rejects departure or success before that response releases; successful playback still checks original canonical history.
+The browser control compares actual viewed frames before the request forwards and immediately before its response releases.
+It also rejects departure or success before the application receives a successful HTTP acknowledgment; successful playback still checks original canonical history.
 CI exercises this delayed-response case on both engine pins. This gate does not establish the cause of the separately tracked aborted-request failure.
