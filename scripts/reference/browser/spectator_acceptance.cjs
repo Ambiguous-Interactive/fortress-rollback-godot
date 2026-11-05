@@ -63,4 +63,7 @@ chromium.launch=async options=>{
   };
   return browser;
 };
-require('./spectator.cjs').run().catch(error=>{console.error(error);process.exitCode=1;});
+require('./spectator.cjs').run().catch(error=>{
+  process.exitCode=1;
+  console.error(require('node:util').inspect(error,{customInspect:false,getters:false}));
+});

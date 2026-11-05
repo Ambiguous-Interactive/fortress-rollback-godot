@@ -39,6 +39,10 @@ class SpectatorBrowserTests(unittest.TestCase):
         source = Path(__file__).parent / 'browser/spectator_acceptance.cjs'
         stub = """
 const {EventEmitter}=require('node:events');
+const fs=require('node:fs');
+const failure={reason:'original acceptance operation failed',[require('node:util').inspect.custom](){
+  fs.writeFileSync(process.env.FORTRESS_INSPECT_MARKER,'executed');throw Error('custom inspection replaced original failure');
+}};
 const page=new EventEmitter();
 global.window={WebSocket:class {constructor(){this.readyState=1;}close(){this.readyState=3;}}};
 page.addInitScript=async(fn,data)=>fn(data);
@@ -80,13 +84,17 @@ page.goto=async()=>{
     }
   });
 };
-const browser={newContext:async()=>({newPage:async()=>page}),version:()=> 'stub',close:async()=>{}};
+const browser={newContext:async()=>{
+  if(process.env.FORTRESS_TEST_ACCEPTANCE_MODE==='malicious-inspect')throw failure;
+  return {newPage:async()=>page};
+},version:()=> 'stub',close:async()=>{}};
 module.exports={chromium:{launch:async()=>browser}};
 """
         with tempfile.TemporaryDirectory() as folder:
             directory = Path(folder)
             package = directory / 'playwright.cjs'
             package.write_text(stub, encoding='utf-8')
+            marker = directory / 'inspection-ran'
             runtime = directory / 'runtime.json'
             runtime.write_text(json.dumps({'browser_fault': 'viewer-departure'}), encoding='utf-8')
             for mode, expected_error in [('healthy', None), ('ack-progress-before-return', None),
@@ -94,12 +102,14 @@ module.exports={chromium:{launch:async()=>browser}};
                                          ('microtask-progress', 'playback advanced before acceptance acknowledgment'),
                                          ('early-departure', 'playback completed before acceptance acknowledgment'),
                                          ('early-success', 'playback completed before acceptance acknowledgment'),
-                                         ('no-injection', 'acceptance response hold was not observed')]:
+                                         ('no-injection', 'acceptance response hold was not observed'),
+                                         ('malicious-inspect', 'original acceptance operation failed')]:
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_ACCEPT_DELAY_MS': '1',
-                               'FORTRESS_TEST_ACCEPTANCE_MODE': mode}
+                               'FORTRESS_TEST_ACCEPTANCE_MODE': mode, 'FORTRESS_INSPECT_MARKER': str(marker)}
                 result = subprocess.run(['node', str(source.resolve()), 'http://fixture.invalid', str(runtime)], env=environment,
                                         capture_output=True, encoding='utf-8', timeout=10)
                 with self.subTest(mode=mode):
+                    self.assertFalse(marker.exists(), 'custom inspection hook must not run')
                     self.assertEqual(result.returncode, 0 if expected_error is None else 1)
                     if expected_error is None:
                         self.assertEqual(result.stderr, '')
