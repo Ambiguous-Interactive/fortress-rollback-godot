@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const requireState = (condition, message) => { if (!condition) throw new Error(message); };
 
-async function replayDownloads(page, url, output, errors, onLoaded = async () => null) {
+async function replayDownloads(page, url, output, errors, onLoaded = async () => null, acknowledgeLateError = () => {}) {
   fs.mkdirSync(output, { recursive: true });
   const records = [];
   let total = 0;
@@ -111,7 +111,10 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
   }
   const { inspectChooser } = require('./replay_chooser.cjs');
   const chooser = await inspectChooser(page, output, read, command, quiet);
-  if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') await page.evaluate(() => console.error('late replay download control'));
+  if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') {
+    await page.evaluate(() => console.error('late replay download control'));
+    acknowledgeLateError();
+  }
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-download') {
     await Promise.all([
       page.waitForEvent('download', { timeout: 15000 }),

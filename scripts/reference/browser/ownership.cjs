@@ -29,6 +29,9 @@ const path = require('node:path');
   const { placeFirefox } = require('./webrtc_display.cjs');
   const preferences = { 'webgl.force-enabled': true, 'webgl.disabled': false, 'toolkit.shutdown.fastShutdownStage': 0 };
   const errors = [];
+  const capturedErrors = [];
+  const captureError = (kind, message) => { errors.push(message); capturedErrors.push({ kind, message }); };
+  let lateErrorInjected = false;
   const server = http.createServer((request, response) => {
     const relative = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
     const filename = path.resolve(root, '.' + relative);
@@ -50,14 +53,14 @@ const path = require('node:path');
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
     } : { headless: false, executablePath: executable, firefoxUserPrefs: preferences });
     const page = await browser.newPage();
-    page.on('pageerror', error => errors.push(error.message));
-    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    page.on('pageerror', error => captureError('pageerror', error.message));
+    page.on('console', message => { if (message.type() === 'error') captureError('console', message.text()); });
     const url = new URL(`http://127.0.0.1:${server.address().port}/index.html`);
     if (downloadMode) {
       url.searchParams.append('replay-downloads', '1');
       const { replayDownloads } = require('./replay_download.cjs');
       const downloads = await replayDownloads(page, url.toString(), path.resolve(process.argv[4]), errors,
-        selected === 'firefox' ? () => placeFirefox(page, 0) : async () => null);
+        selected === 'firefox' ? () => placeFirefox(page, 0) : async () => null, () => { lateErrorInjected = true; });
       verifyDownloads = downloads.verify;
       observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result: downloads.result, errors };
       if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display: downloads.display });
@@ -116,8 +119,12 @@ const path = require('node:path');
     }
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
+  await new Promise(resolve => setImmediate(resolve));
+  try { verifyDownloads(); } catch(error) { failures.push(error); }
+  const expectedLateError = downloadMode && process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error' && lateErrorInjected
+    && capturedErrors.length === 1 && capturedErrors[0].kind === 'console' && capturedErrors[0].message === 'late replay download control';
+  if (capturedErrors.length && !expectedLateError) failures.push(new Error('captured browser failures: ' + JSON.stringify(capturedErrors)));
   if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'ownership and cleanup failed');
-  verifyDownloads();
   if (errors.length) throw new Error(JSON.stringify(errors));
   console.log(JSON.stringify(observation));
 })().catch(error => {

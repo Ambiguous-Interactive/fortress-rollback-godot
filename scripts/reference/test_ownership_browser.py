@@ -16,24 +16,37 @@ ROOT = Path(__file__).resolve().parents[2]
 RUNNER = ROOT / 'scripts/reference/browser/ownership.cjs'
 SUITES = [f'res://tests/unit/test_{name}.gd' for name in ('alpha', 'beta', 'gamma', 'delta')]
 MOCK = r"""
+let capture=()=>{};
+function inject(phase) {
+  if(!process.env.OWNERSHIP_TEST_CAPTURE_PHASE?.split(',').includes(phase))return;
+  const kind=process.env.OWNERSHIP_TEST_CAPTURE_KIND||'console';
+  const message=process.env.OWNERSHIP_TEST_CAPTURE_MESSAGE||'unexpected renderer failure';
+  for(let count=0;count<Number(process.env.OWNERSHIP_TEST_CAPTURE_COUNT||1);count++)
+    capture(kind,kind==='pageerror'?new Error(message):{type:()=> 'error',text:()=>message});
+}
+module.exports.inject=inject;
 for (const engine of ['chromium', 'firefox']) module.exports[engine] = { async launch(options) {
   const contexts = [];
   return {
   version: () => 'fixture', contexts: () => contexts,
   async close() {
+    inject('browser');
+    setImmediate(()=>inject('drain'));
     if (process.env.OWNERSHIP_TEST_CLEANUP) console.error(JSON.stringify({cleanup: 'browser', open_contexts: contexts.length}));
     if (process.env.OWNERSHIP_TEST_CLEANUP === 'browser-error') throw new Error('fixture browser close failure');
   },
   async newPage() {
     const context = { async close() {
       await Promise.resolve();
+      inject('context');
       contexts.splice(contexts.indexOf(context), 1);
       if (process.env.OWNERSHIP_TEST_CLEANUP) console.error(JSON.stringify({cleanup: 'context'}));
       if (process.env.OWNERSHIP_TEST_CLEANUP === 'context-error') throw new Error('fixture context close failure');
     } };
     contexts.push(context);
     let url;
-    return { on() {}, async goto(value) { url = value; },
+    const listeners={};capture=(kind,value)=>listeners[kind]?.(value);
+    return { on(kind,callback) {listeners[kind]=callback;}, inject, async goto(value) { url = value; },
       async waitForFunction(_operation, _argument, options) {
         if (options.timeout !== 180000) throw new Error('page watchdog changed');
         if (process.env.OWNERSHIP_TEST_TIMEOUT) throw new Error('fixture watchdog');
@@ -70,7 +83,7 @@ print(commands.get(sys.argv[1], ''))
 ''')
         self.xdotool.chmod(0o755)
 
-    def run_browser(self, selector, *, timeout=False, root=None, selected="chromium", verified=True, case_name=None, cleanup=False):
+    def run_browser(self, selector, *, timeout=False, root=None, selected="chromium", verified=True, case_name=None, cleanup=False, extra_env=None):
         env = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(self.mock),
                'FORTRESS_OWNERSHIP_BROWSER': selected, 'FORTRESS_XDOTOOL_EXECUTABLE': str(self.xdotool)}
         for name in ('chromium', 'firefox'):
@@ -83,12 +96,71 @@ print(commands.get(sys.argv[1], ''))
             env['OWNERSHIP_TEST_TIMEOUT'] = '1'
         else:
             env.pop('OWNERSHIP_TEST_TIMEOUT', None)
+        env.update(extra_env or {})
         command = ['node', str(RUNNER), str(root or self.export)]
         if selector is not None:
             command.append(selector)
         if case_name is not None:
             command.append(case_name)
         return subprocess.run(command, env=env, capture_output=True, encoding='utf-8', check=False, timeout=10)
+
+    # Value: protects=captured browser errors remain fatal after an expected operation failure;
+    # fails_when=chooser rejection skips latched renderer errors; why_new=cleanup checks only exercise rejected close promises; seam=owned runner double
+    def test_expected_download_failure_cannot_hide_captured_browser_errors(self):
+        hook = self.export / 'download-hook.cjs'
+        helper = ROOT / 'scripts/reference/browser/replay_download.cjs'
+        hook.write_text("""
+const helper=require(%s);
+const http=require('node:http');
+const createServer=http.createServer;
+http.createServer=(...args)=>{
+  const server=createServer(...args),close=server.close;
+  server.close=callback=>close.call(server,error=>{
+    require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE).inject('server');callback(error);
+  });
+  return server;
+};
+helper.replayDownloads=async(page,url,output,errors,onLoaded,acknowledge)=>{
+  page.inject('operation');
+  if(process.env.OWNERSHIP_TEST_ACK && typeof acknowledge==='function')acknowledge();
+  throw new Error(process.env.OWNERSHIP_TEST_OPERATION||'replay chooser failed to pause playback');
+};
+""" % json.dumps(str(helper)))
+        for phase in ('operation', 'context', 'browser', 'server', 'drain'):
+            for kind in ('console', 'pageerror'):
+                with self.subTest(phase=phase, kind=kind):
+                    child = self.run_browser('--replay-downloads', case_name=str(self.export / 'downloads'), extra_env={
+                        'NODE_OPTIONS': '--require=' + str(hook), 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': 'chooser-pause',
+                        'OWNERSHIP_TEST_CAPTURE_PHASE': phase, 'OWNERSHIP_TEST_CAPTURE_KIND': kind})
+                    self.assertEqual(child.returncode, 1)
+                    self.assertEqual(child.stdout, '')
+                    self.assertIn('AggregateError', child.stderr)
+                    self.assertIn('replay chooser failed to pause playback', child.stderr)
+                    self.assertIn('unexpected renderer failure', child.stderr)
+        for acknowledged, count, kind, accepted in [(True, 1, 'console', True), (False, 1, 'console', False),
+                                                    (True, 2, 'console', False), (True, 1, 'pageerror', False)]:
+            with self.subTest(acknowledged=acknowledged, count=count, kind=kind):
+                child = self.run_browser('--replay-downloads', case_name=str(self.export / 'downloads'), extra_env={
+                    'NODE_OPTIONS': '--require=' + str(hook), 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': 'late-error',
+                    'OWNERSHIP_TEST_CAPTURE_PHASE': 'operation', 'OWNERSHIP_TEST_CAPTURE_KIND': kind,
+                    'OWNERSHIP_TEST_CAPTURE_COUNT': str(count), 'OWNERSHIP_TEST_CAPTURE_MESSAGE': 'late replay download control',
+                    'OWNERSHIP_TEST_ACK': '1' if acknowledged else '',
+                    'OWNERSHIP_TEST_OPERATION': 'replay download forbidden events observed'})
+                self.assertEqual(child.returncode, 1)
+                self.assertEqual(child.stdout, '')
+                self.assertEqual(child.stderr.startswith('Error: replay download forbidden events observed\n'), accepted, child.stderr)
+                self.assertEqual('AggregateError' in child.stderr, not accepted, child.stderr)
+        for phase in ('context', 'browser', 'server', 'drain'):
+            with self.subTest(acknowledged=True, extra_phase=phase):
+                child = self.run_browser('--replay-downloads', case_name=str(self.export / 'downloads'), extra_env={
+                    'NODE_OPTIONS': '--require=' + str(hook), 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': 'late-error',
+                    'OWNERSHIP_TEST_CAPTURE_PHASE': 'operation,' + phase, 'OWNERSHIP_TEST_CAPTURE_KIND': 'console',
+                    'OWNERSHIP_TEST_CAPTURE_MESSAGE': 'late replay download control', 'OWNERSHIP_TEST_ACK': '1',
+                    'OWNERSHIP_TEST_OPERATION': 'replay download forbidden events observed'})
+                self.assertEqual(child.returncode, 1)
+                self.assertEqual(child.stdout, '')
+                self.assertIn('AggregateError', child.stderr)
+                self.assertIn('captured browser failures', child.stderr)
 
     # Value: protects=selected suite coverage; fails_when=URL omits/replaces/reorders selectors; why_new=Python mocks skip real Node CLI; seam=module double
     def test_every_suite_reaches_the_page_at_both_batch_boundaries(self):
