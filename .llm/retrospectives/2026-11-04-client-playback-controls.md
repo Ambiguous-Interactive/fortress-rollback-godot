@@ -17,6 +17,36 @@ with the original issues.
 | Finalization must describe the retained recording separately from the completed match. | `tests/unit/test_integration_finish.gd`: empty and capped recordings retain only existing evidence. | Show omitted-ending feedback; capture terminal checksums only when the recording covers that boundary. |
 | Concurrent authored-source edits invalidate an otherwise unrelated native run. | Native launcher refused a mixed-source focused attempt during GUI edits. | Preserve the refusal and qualify the final combined source after all edits stop. |
 
+## Experimental aborted-request investigation
+
+An isolated experiment branch retains source-only instrumentation; it is not a
+shipping candidate or a repair for #322. The installed Godot 4.7.2 template's
+actual `GodotFetch.free` removes its object and attempts `response.abort()` inside
+a swallowed catch. The extracted implementation SHA-256 is
+`f3c592d0423c06826e7844ac150a3c2144cff936aacb4390e37e50f6e0deeee5`.
+
+On Chromium 156, 300 fully drained requests followed by engine free and forced
+GC, plus partially read held-response free/retain controls, produce no request
+failures. The original viewer's real plain and forced-GC timelines both show
+reader EOF before successful HTTP result 0/status 200/body 17, followed by engine
+free, physical departure, application success and SDK cleanup. Both retain the
+original canonical histories with no browser errors. The plain timeline records
+EOF 3788.85 ms, HTTP success 3802.51, engine free 3808.60, departure 3936.11,
+application success 4118.99 and cleanup 4119.10. These timings describe this run,
+not required thresholds.
+
+Machine-local artifacts are `session154-fetch-lifecycle/result.log` and
+`session154-fetch-rca-results/{plain,forced-gc}/spectator-live.json` under
+`.cache/scratch`. The experiments run on arm64 and do not reproduce the failing
+x86_64 CI schedule. They narrow explicit cancellation and immediate SDK cleanup
+hypotheses; they do not prove that Chromium bookkeeping caused the observed
+`ERR_ABORTED`, justify suppressing it, or qualify a root-cause repair.
+
+Existing browser-testing guidance already separates correlated success from
+complete control acknowledgment and forbids suppressing real network failures.
+No new general rule follows from this non-reproduction; preserve the evidence
+and its remaining uncertainty instead.
+
 ## Curation and pruning
 
 Existing testing guidance already covers source freezing, actual GUI routing,

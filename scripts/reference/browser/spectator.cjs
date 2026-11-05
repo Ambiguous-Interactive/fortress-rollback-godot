@@ -10,7 +10,7 @@ async function run() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
-    args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+    args:['--js-flags=--expose-gc','--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   let tearingDown=false;
   const watchdog = setTimeout(async () => {try {tearingDown=true;await browser.close();} finally {process.exitCode=1;}},70000);
   try {
@@ -19,13 +19,47 @@ async function run() {
     const errors = [];
     observeErrors(page,errors,()=>tearingDown);
     await page.addInitScript(data => {
+      window.fortressFetchTimeline=[];
+      window.fortressFetchTrace=event=>{if(window.fortressFetchTimeline.length<128) window.fortressFetchTimeline.push({...event,at:performance.now()});};
+      const streams=new WeakMap(),readers=new WeakMap();
+      const originalFetch=window.fetch;
+      window.fetch=function(...args) {
+        const path=new URL(String(args[0]),location.href).pathname;
+        if(path!=='/accept') return originalFetch.apply(this,args);
+        window.fortressFetchTrace({kind:'js-fetch-start'});
+        return originalFetch.apply(this,args).then(response=>{
+          window.fortressFetchTrace({kind:'js-fetch-response',status:response.status});
+          if(response.body) streams.set(response.body,path);
+          return response;
+        });
+      };
+      const getReader=ReadableStream.prototype.getReader;
+      ReadableStream.prototype.getReader=function(...args) {
+        const reader=getReader.apply(this,args),path=streams.get(this);
+        if(path) readers.set(reader,path);
+        return reader;
+      };
+      const read=ReadableStreamDefaultReader.prototype.read;
+      ReadableStreamDefaultReader.prototype.read=function(...args) {
+        const path=readers.get(this),result=read.apply(this,args);
+        if(!path) return result;
+        return result.then(chunk=>{window.fortressFetchTrace({kind:'js-reader-read',done:chunk.done,size:chunk.value?.length||0});return chunk;},error=>{
+          window.fortressFetchTrace({kind:'js-reader-error',name:error.name});throw error;
+        });
+      };
+      Object.defineProperty(Response.prototype,'abort',{configurable:true,get(){
+        if(new URL(this.url,location.href).pathname==='/accept') window.fortressFetchTrace({kind:'js-engine-free-attempt'});
+        return undefined;
+      }});
+      if(data.forceGC) setInterval(()=>window.gc(),100);
+
       window.fortressSpectatorRuntime=data;
       window.fortressSpectatorSockets=[];
       window.WebSocket=new Proxy(window.WebSocket,{construct(target,args,newTarget) {
         const socket=Reflect.construct(target,args,newTarget); window.fortressSpectatorSockets.push(socket); return socket;
       }});
     },
-      {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault});
+      {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault,forceGC:process.env.FORTRESS_FORCE_GC==='1'});
     await page.goto(process.argv[2] + '/index.html');
     let departureClosed=false;
     if (runtime.browser_fault==='viewer-departure') {
@@ -40,8 +74,9 @@ async function run() {
     await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
     const result = await page.evaluate(() => window.fortressSpectatorResult);
     const state = await page.evaluate(() => window.fortressSpectatorState);
+    const acceptTimeline=await page.evaluate(()=>window.fortressFetchTimeline);
     await page.waitForFunction(() => window.fortressSpectatorSockets.length>0 && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000});
-    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,state,errors,departureClosed}));
+    process.stdout.write(JSON.stringify({browser:'Chromium',version:browser.version(),result,state,errors,departureClosed,acceptTimeline}));
     if (errors.length || result.passed !== true) process.exitCode=1;
   } finally {clearTimeout(watchdog);tearingDown=true;await browser.close();}
 }

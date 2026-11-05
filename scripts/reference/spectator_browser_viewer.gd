@@ -193,6 +193,7 @@ func _run() -> void:
 	if response.status != 200 or not errors.is_empty() or relay.status().code != T.Code.OK:
 		_fail("browser completion acknowledgment")
 		return
+	_trace_fetch("app-passed")
 	completed = true
 	JavaScriptBridge.eval(
 		(
@@ -243,7 +244,16 @@ func _until(path: String) -> Dictionary:
 	return {"status": 0}
 
 
+func _trace_fetch(kind: String, result: int = -1, status: int = -1, size: int = -1) -> void:
+	JavaScriptBridge.eval("window.fortressFetchTrace && window.fortressFetchTrace(" + JSON.stringify({
+		"kind": kind, "at_us": _now(), "result": result, "status": status, "size": size,
+		"frame": -1 if game == null else game.frame, "accept_delivered": accept_delivered
+	}) + ")")
+
+
 func _http(path: String, body: Dictionary = {}) -> Dictionary:
+	if path == "/accept":
+		_trace_fetch("app-accept-start")
 	var request: HTTPRequest = HTTPRequest.new()
 	add_child(request)
 	request.timeout = 3.0
@@ -257,7 +267,11 @@ func _http(path: String, body: Dictionary = {}) -> Dictionary:
 		request.queue_free()
 		return {"status": 0}
 	var response: Array = await request.request_completed
+	if path == "/accept":
+		_trace_fetch("app-accept-completed", response[0], response[1], response[3].size())
 	request.queue_free()
+	if path == "/accept":
+		_trace_fetch("app-accept-queued-free")
 	return {"status": response[1], "body": JSON.parse_string(response[3].get_string_from_utf8())}
 
 
@@ -301,6 +315,7 @@ func _fail(reason: String) -> void:
 
 
 func _cleanup() -> void:
+	_trace_fetch("app-cleanup")
 	if relay != null:
 		relay.detach()
 	if client != null:
@@ -318,6 +333,7 @@ func _error(reason: String) -> void:
 
 # Physical socket loss starts only after the viewer proves a canonical buffered pause.
 func _depart_buffered_viewer() -> void:
+	_trace_fetch("app-departure-start")
 	departure_started = true
 	var before: PackedByteArray = game.canonical_bytes()
 	var frame: int = game.frame
@@ -355,6 +371,7 @@ func _depart_buffered_viewer() -> void:
 	if response.status != 200 or not errors.is_empty():
 		_fail("browser departure acknowledgment")
 		return
+	_trace_fetch("app-passed")
 	completed = true
 	JavaScriptBridge.eval("window.fortressSpectatorResult=" + JSON.stringify({
 		"passed": true, "departure": "host" if lost_host else "viewer", "socket_departed": socket_departed,
