@@ -76,6 +76,44 @@ The guidance now requires the complete CI control command and a sweep of depende
 callback doubles. These corrections qualify the affected control gate; they do
 not claim the original spectator request failure has been resolved.
 
+## Acceptance route ownership
+
+The delayed-response controller's route callback could reject outside the runner's
+awaited stack. A real Chromium connection-reset control produced no runner report,
+bypassed owned shutdown and printed a dummy Authorization canary in Playwright's
+request log. Callback errors now enter the same owner stop state, and reports
+redact runtime capabilities and authorization headers while retaining raw causes.
+
+Promise ordering required checks at the actual action boundary: an async wrapper's
+check can finish before the caller resumes. Lazy actions, synchronous publication
+checks and a read-only owner guard fence setup, route and audit continuations.
+Started RPC failures observed through close, route retirement and one event-loop
+flush remain in the causal list, including independent undefined reasons. Aborted
+RPCs that never settle are not awaited indefinitely; later rejections stay handled.
+
+The new controls cover 32 route/error cases and eight Error/undefined stop orders.
+A real connection-reset control now reports failure, closes one browser and emits
+no canary. The frozen 4.7.2/Chromium held-response positive still validates the
+original host history and viewer departure. These controls do not identify the
+cause of the separate intermittent request abort in #322. The five-second helper
+budget bounds route retirement after close; the existing parent watchdog remains
+the limit for a browser close that never completes.
+
+The assembled Node gate also exposed two VM sandboxes missing Node's native
+`setImmediate` global after the retirement flush began using it. Supply the real
+global in those doubles and retain the close-induced pending-operation rejection
+in the exact causal assertion. The complete three-file gate still has 202 cases.
+
+## Hosted startup deadline
+
+Both stacked reference-control jobs timed out only on the first healthy smoke
+subprocess at the two-second limit in `test_browser_cleanup.py`. A controlled
+2100 ms startup pause reproduces that failure; the ten-second limit already used
+by sibling Node controls passes it and still terminates a permanently pending
+child. The ordinary 23-cell matrix passes with all cause and cleanup assertions
+unchanged. This establishes deadline sensitivity, not the exact hosted scheduling
+cause. Production code and its own deadlines are unchanged.
+
 ## Prefix shipping decision
 
 The root's 00:58 audit records that diagnostics PR #323 was merged while its

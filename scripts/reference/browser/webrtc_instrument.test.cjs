@@ -1009,7 +1009,7 @@ for(const publicationFails of [false,true])for(const cleanupFails of [false,true
       return require(name);
     };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname,'spectator.cjs'),'utf8')+'\nmodule.exports.run=run;',{
-      module:moduleValue,require:fakeRequire,console,setTimeout,clearTimeout,
+      module:moduleValue,require:fakeRequire,console,setTimeout,clearTimeout,setImmediate,
       JSON:{parse:JSON.parse,stringify(value){if(publicationFails)throw publication;return JSON.stringify(value);}},
       process:{argv:['node','probe','http://fixture','runtime.json'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'},stdout:{write(value){output.push(value);}}},
     });
@@ -1117,7 +1117,7 @@ const fakeRequire=name=>{
   return require(name);
 };
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nmodule.exports.run=run;',{
-  module:moduleValue,require:fakeRequire,console,clearTimeout,
+  module:moduleValue,require:fakeRequire,console,clearTimeout,setImmediate,
   setTimeout(callback,delay){return setTimeout(callback,delay===70000?10:delay);},
   Error:function(...arguments){const value=new Error(...arguments);constructed.push(value);return value;},
   process:{argv:['node','probe','http://fixture','runtime.json'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'},stdout:{write(value){output.push(value);}}},
@@ -1127,7 +1127,8 @@ const guard=setTimeout(()=>{console.error('OWNER_NOT_FINISHED');process.exitCode
   await assert.rejects(moduleValue.exports.run(),error=>{
     const primary=mode==='deadline'?constructed[0]:original;
     assert(primary,'deadline must have its own failure cause');
-    assert.deepEqual(error&&Array.isArray(error.errors)?Array.from(error.errors):[error],[primary,...(cleanupFails?[cleanup]:[])]);
+    const expected=[primary,...(cleanupFails?[cleanup]:[]),...(mode==='deadline'&&!cleanupFails?[interrupted]:[])];
+    assert.deepEqual(error&&Array.isArray(error.errors)?Array.from(error.errors):[error],expected);
     return true;
   });
   clearTimeout(guard);
