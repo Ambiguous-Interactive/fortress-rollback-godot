@@ -104,6 +104,16 @@ The assembled Node gate also exposed two VM sandboxes missing Node's native
 global in those doubles and retain the close-induced pending-operation rejection
 in the exact causal assertion. The complete three-file gate still has 202 cases.
 
+## Hosted startup deadline
+
+Both stacked reference-control jobs timed out only on the first healthy smoke
+subprocess at the two-second limit in `test_browser_cleanup.py`. A controlled
+2100 ms startup pause reproduces that failure; the ten-second limit already used
+by sibling Node controls passes it and still terminates a permanently pending
+child. The ordinary 23-cell matrix passes with all cause and cleanup assertions
+unchanged. This establishes deadline sensitivity, not the exact hosted scheduling
+cause. Production code and its own deadlines are unchanged.
+
 ## Prefix shipping decision
 
 The root's 00:58 audit records that diagnostics PR #323 was merged while its
