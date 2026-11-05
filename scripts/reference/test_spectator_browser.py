@@ -127,36 +127,51 @@ const reason=phase==='undefined'?undefined:Error('route-'+phase+'-safe\nAuthoriz
 const second=Error('second-route-safe');
 const cleanup=Error('cleanup-safe\nAuthorization: Bearer REVIEW_SENTINEL');
 const operation=Error('operation-safe');
-const stats={closes:0,finished:false};
+const stats={closes:0,finished:false,closing:false,lateRPCs:[]};
+const rpc=name=>{if(stats.closing)stats.lateRPCs.push(name);};
 global.fixture={reason,second,cleanup,operation,stats};
 global.window={WebSocket:class {}};
 const page=new EventEmitter();
-let handler,evaluations=0;
-page.addInitScript=async(fn,data)=>fn(data);
-page.route=async(_pattern,callback)=>{handler=callback;};
+let handler,evaluations=0,fetches=0;
+page.addInitScript=async(fn,data)=>{
+  rpc('addInitScript');
+  if(phase==='guard-init'){setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));}
+  return fn(data);
+};
+page.route=async(_pattern,callback)=>{rpc('route');handler=callback;};
 page.isClosed=()=>false;
 page.evaluate=async(fn,data)=>{
-  evaluations++;
+  rpc('evaluate');evaluations++;
+  if(phase==='guard-audit' && evaluations===1){setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));}
   if((phase==='evaluate' && evaluations===1) || (phase==='release' && evaluations===2))throw reason;
   return fn(data);
 };
-page.waitForFunction=()=>new Promise(()=>{});
+page.waitForFunction=()=>phase==='guard-audit'?Promise.resolve():new Promise(()=>{});
 page.goto=async()=>{
+  if(phase==='guard-audit'){window.fortressSpectatorResult={passed:true};return;}
   window.fortressSpectatorFrame=0;
   window.fortressSpectatorAcceptAcknowledged=false;
   const start=currentReason=>handler({fetch:async()=>{
+    rpc('fetch');fetches++;
+    if(phase==='guard-two' && fetches===1)throw reason;
+    if(phase==='guard-two'){await new Promise(resolve=>setTimeout(resolve,10));return {};}
     if(phase.startsWith('late'))await new Promise(resolve=>setTimeout(resolve,phase==='late-after-close'?30:8));
     if(['fetch','undefined','late','late-after-close','late-multiple'].includes(phase))throw currentReason;
     return {};
-  },fulfill:async()=>{if(phase==='fulfill')throw reason;}});
+  },fulfill:async()=>{rpc('fulfill');if(phase==='fulfill')throw reason;}});
   start(reason);
   if(phase==='late-multiple')start(second);
+  if(phase==='guard-two')start(reason);
   if(phase.startsWith('late'))throw operation;
   return new Promise(()=>{});
 };
-const browser={newContext:async()=>({newPage:async()=>page}),version:()=> 'stub',close:async()=>{
-  stats.closes++;
-  await new Promise(resolve=>setTimeout(resolve,phase==='late-after-close'?2:15));
+const browser={newContext:async()=>({newPage:async()=>{
+  rpc('newPage');
+  if(phase==='guard-page'){setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));}
+  return page;
+}}),version:()=> 'stub',close:async()=>{
+  stats.closes++;stats.closing=true;
+  await new Promise(resolve=>setTimeout(resolve,phase==='late-after-close'?2:phase.startsWith('guard-')?40:15));
   stats.finished=true;
   if(process.env.FORTRESS_ROUTE_CLOSE_FAILURE==='1')throw cleanup;
 }};
@@ -166,8 +181,9 @@ module.exports={chromium:{launch:async()=>browser}};
 const fs=require('node:fs'),path=require('node:path');
 const directory=process.argv[1],runtime=process.argv[2],report=process.argv[3];
 const runner=require(path.join(directory,'spectator.cjs')),run=runner.run;
-runner.run=async signal=>{
-  try {return await run(signal);} catch(error) {
+runner.run=async(signal,registerGuard)=>{
+  const auxiliary=new Promise((_resolve,reject)=>{global.rejectOwner=reject;});
+  try {return await run(Promise.race([signal,auxiliary]),registerGuard);} catch(error) {
     const values=[];
     const visit=value=>{if(value instanceof AggregateError)value.errors.forEach(visit);else values.push(value);};
     visit(error);
@@ -186,7 +202,8 @@ require(path.join(directory,'spectator_acceptance.cjs'));
             package.write_text(stub, encoding='utf-8')
             runtime = temporary / 'runtime.json'
             runtime.write_text(json.dumps({'viewer_token': 'RUNTIME_CAPABILITY_SENTINEL'}), encoding='utf-8')
-            for phase in ['fetch', 'evaluate', 'release', 'fulfill', 'undefined', 'late', 'late-after-close', 'late-multiple']:
+            for phase in ['fetch', 'evaluate', 'release', 'fulfill', 'undefined', 'late', 'late-after-close', 'late-multiple',
+                          'guard-two', 'guard-page', 'guard-init', 'guard-audit']:
                 for close_failure in [False, True]:
                     report = temporary / (phase + str(close_failure) + '.json')
                     environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_ACCEPT_DELAY_MS': '1',
@@ -203,6 +220,7 @@ require(path.join(directory,'spectator_acceptance.cjs'));
                         self.assertEqual(observed['second'], phase == 'late-multiple')
                         self.assertEqual(observed['closes'], 1)
                         self.assertTrue(observed['finished'])
+                        self.assertEqual(observed['lateRPCs'], [], 'helper continuations must not start RPCs after owner stop')
                         if not close_failure and not phase.startswith('late'):
                             self.assertTrue(observed['singleIdentity'])
                         self.assertIn('runnerFailurePhase', json.loads(result.stdout))

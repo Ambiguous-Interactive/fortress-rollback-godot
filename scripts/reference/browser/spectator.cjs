@@ -61,8 +61,8 @@ function reportFailure(error) {
   catch {console.error('Browser probe failed; diagnostic unavailable.');}
 }
 module.exports={observeErrors,run,reportFailure};
-async function run(failureSignal) {
-  const failures=[],stopState={stopped:false,reason:undefined,forwarded:false};
+async function run(failureSignal,registerGuard) {
+  const failures=[],stopState={stopped:false,reason:undefined,forwarded:false,active:true};
   const stop=reason=>{
     failures.push(reason);
     if(!stopState.stopped){stopState.stopped=true;stopState.reason=reason;}
@@ -71,6 +71,7 @@ async function run(failureSignal) {
     if(stopState.stopped){stopState.forwarded=true;throw stopState.reason;}
   };
   const external=failureSignal && Promise.resolve(failureSignal).then(()=>new Promise(()=>{}),stop);
+  if(registerGuard)registerGuard(()=>stopState.active && !stopState.stopped);
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -142,6 +143,7 @@ async function run(failureSignal) {
     process.exitCode=1;
     try {publish(phase);} catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
+    stopState.active=false;
     clearTimeout(watchdog);
     tearingDown=true;
     try {await browser.close();} catch(cleanupError) {failures.push(cleanupError);}

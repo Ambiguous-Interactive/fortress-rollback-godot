@@ -2,7 +2,7 @@
 const fs=require('node:fs');
 const {chromium}=require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
 const runner=require('./spectator.cjs');
-let rejectRoute;
+let rejectRoute,canAct=()=>false;
 const failureSignal=new Promise((_resolve,reject)=>{rejectRoute=reject;});
 failureSignal.catch(()=>{});
 const delay=Number(process.env.FORTRESS_ACCEPT_DELAY_MS);
@@ -26,10 +26,14 @@ chromium.launch=async options=>{
   };
   const newContext=browser.newContext.bind(browser);
   browser.newContext=async options=>{
+    if(!canAct())return;
     const context=await newContext(options);
+    if(!canAct())return context;
     const newPage=context.newPage.bind(context);
     context.newPage=async()=>{
+      if(!canAct())return;
       const page=await newPage();
+      if(!canAct())return page;
       let requests=0,baselineFrame,releaseFrame,heldMs;
       await page.addInitScript(()=>{
         let ready=false,result,frame=0;
@@ -46,15 +50,23 @@ chromium.launch=async options=>{
           get:()=>result,set:value=>{result=value;if(value?.passed && window.fortressSpectatorAcceptAcknowledged!==true) window.fortressEarlySuccess=true;}
         });
       });
+      if(!canAct())return page;
       await page.route('**/accept',route=>{
         const task=(async()=>{
+        if(!canAct())return;
         requests++;
         baselineFrame=await page.evaluate(()=>window.fortressSpectatorFrame);
+        if(!canAct())return;
         const response=await route.fetch();
+        if(!canAct())return;
         const deadline=performance.now()+delay;
-        while(performance.now()<deadline) await new Promise(resolve=>setTimeout(resolve,Math.max(1,deadline-performance.now())));
-        if(page.isClosed()) return;
+        while(performance.now()<deadline) {
+          if(!canAct())return;
+          await new Promise(resolve=>setTimeout(resolve,Math.max(1,deadline-performance.now())));
+        }
+        if(!canAct() || page.isClosed()) return;
         releaseFrame=await page.evaluate(()=>window.fortressSpectatorFrame);
+        if(!canAct())return;
         heldMs=delay;
         await route.fulfill({response});
         })().catch(error=>{routeErrors.push(error);if(routeErrors.length===1) rejectRoute(error);});
@@ -62,13 +74,17 @@ chromium.launch=async options=>{
         task.then(()=>routeTasks.delete(task));
         return task;
       });
+      if(!canAct())return page;
       const evaluate=page.evaluate.bind(page);
       page.evaluate=async(...args)=>{
+        if(!canAct())return;
         const result=await evaluate(...args);
+        if(!canAct())return result;
         if(result?.passed===true) {
           const order=await evaluate(()=>({acknowledged:window.fortressSpectatorAcceptAcknowledged===true,
             earlyPlayback:window.fortressEarlyPlayback===true,
             earlyDeparture:window.fortressEarlyDeparture===true,earlySuccess:window.fortressEarlySuccess===true}));
+          if(!canAct())return result;
           if(process.env.FORTRESS_ORDER_OUTPUT) fs.writeFileSync(process.env.FORTRESS_ORDER_OUTPUT,JSON.stringify({...order,requests,baselineFrame,releaseFrame,heldMs}));
           if(requests!==1 || heldMs!==delay || !Number.isSafeInteger(baselineFrame) || !Number.isSafeInteger(releaseFrame)) {
             throw Error('acceptance response hold was not observed');
@@ -86,4 +102,4 @@ chromium.launch=async options=>{
   };
   return browser;
 };
-runner.run(failureSignal).catch(runner.reportFailure);
+runner.run(failureSignal,guard=>{canAct=guard;}).catch(runner.reportFailure);
