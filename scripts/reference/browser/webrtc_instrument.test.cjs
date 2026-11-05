@@ -1096,3 +1096,49 @@ for(const runner of ['online','webrtc'])for(const cleanupFails of [false,true]) 
     assert.equal(trace.at(-1),'server');
   });
 }
+
+// Value: a native deadline interrupts held browser work while exactly one owner observes shutdown failure.
+for(const mode of ['deadline','ordinary'])for(const cleanupFails of [false,true]) {
+  test(`spectator native timer owns ${mode} failure with cleanup=${cleanupFails}`,()=>{
+    const program=String.raw`
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const mode=process.argv[2],cleanupFails=process.argv[3]==='true';
+const original=new Error('ordinary operation'),cleanup=new Error('owned cleanup'),interrupted=new Error('operation closed');
+const constructed=[],trace=[],output=[],moduleValue={exports:{}};
+let rejectHeld;
+const page={on(){},addInitScript:async()=>{},goto(){trace.push('goto');
+  return mode==='ordinary'?Promise.reject(original):new Promise((_resolve,reject)=>{rejectHeld=reject;});}};
+const browser={newContext:async()=>({newPage:async()=>page}),close:async()=>{
+  trace.push('close');if(cleanupFails)throw cleanup;if(rejectHeld)rejectHeld(interrupted);
+}};
+const fakeRequire=name=>{
+  if(name==='fake-playwright')return{chromium:{launch:async()=>browser}};
+  if(name==='node:fs')return{readFileSync:()=> '{}'};
+  return require(name);
+};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nmodule.exports.run=run;',{
+  module:moduleValue,require:fakeRequire,console,clearTimeout,
+  setTimeout(callback,delay){return setTimeout(callback,delay===70000?10:delay);},
+  Error:function(...arguments){const value=new Error(...arguments);constructed.push(value);return value;},
+  process:{argv:['node','probe','http://fixture','runtime.json'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'},stdout:{write(value){output.push(value);}}},
+});
+const guard=setTimeout(()=>{console.error('OWNER_NOT_FINISHED');process.exitCode=2;},1000);
+(async()=>{
+  await assert.rejects(moduleValue.exports.run(),error=>{
+    const primary=mode==='deadline'?constructed[0]:original;
+    assert(primary,'deadline must have its own failure cause');
+    assert.deepEqual(error&&Array.isArray(error.errors)?Array.from(error.errors):[error],[primary,...(cleanupFails?[cleanup]:[])]);
+    return true;
+  });
+  clearTimeout(guard);
+  assert.deepEqual(trace,['goto','close']);assert.equal(output.length,1);
+  assert.equal(JSON.parse(output[0]).runnerFailurePhase,'navigation');
+  await new Promise(resolve=>setTimeout(resolve,30));
+  console.log('OWNED_DEADLINE_OK');
+})().catch(error=>{clearTimeout(guard);console.error(error);process.exitCode=1;});
+`;
+    const child=require('node:child_process').spawnSync(process.execPath,['--unhandled-rejections=strict','-e',program,
+      path.join(__dirname,'spectator.cjs'),mode,String(cleanupFails)],{encoding:'utf8',timeout:3000});
+    assert.equal(child.status,0,child.stderr);assert.equal(child.stdout.trim(),'OWNED_DEADLINE_OK');
+  });
+}

@@ -62,38 +62,43 @@ async function run() {
     published=true;
     process.stdout.write(output);
   };
-  const watchdog = setTimeout(async () => {try {tearingDown=true;await browser.close();} finally {process.exitCode=1;}},70000);
+  const deadlineError=new Error('Spectator browser deadline exceeded.');
+  let watchdog;
+  const deadline=new Promise((_resolve,reject)=>{watchdog=setTimeout(()=>reject(deadlineError),70000);});
+  // After the deadline, no awaited browser call can resume this owner.
+  const wait=operation=>Promise.race([operation,deadline]);
   try {
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    const context = await wait(browser.newContext());
+    const page = await wait(context.newPage());
     observeErrors(page,errors,()=>tearingDown,{requestFailures,phase:()=>phase});
-    await page.addInitScript(data => {
+    await wait(page.addInitScript(data => {
       window.fortressSpectatorRuntime=data;
       window.fortressSpectatorSockets=[];
       window.WebSocket=new Proxy(window.WebSocket,{construct(target,args,newTarget) {
         const socket=Reflect.construct(target,args,newTarget); window.fortressSpectatorSockets.push(socket); return socket;
       }});
     },
-      {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault});
+      {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault}));
     phase='navigation';
-    await page.goto(process.argv[2] + '/index.html');
+    await wait(page.goto(process.argv[2] + '/index.html'));
     if (runtime.browser_fault==='viewer-departure') {
       phase='departure';
-      await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true,null,{timeout:45000});
-      departureClosed=await page.evaluate(() => {
+      await wait(page.waitForFunction(() => window.fortressSpectatorDepartureReady===true,null,{timeout:45000}));
+      departureClosed=await wait(page.evaluate(() => {
         const sockets=window.fortressSpectatorSockets;
         if(sockets.length!==1 || sockets[0].readyState!==1) return false;
         sockets[0].close(1000,'physical viewer departure'); return true;
-      });
+      }));
       if(!departureClosed) throw new Error('no live viewer socket at buffered departure');
     }
     phase='result';
-    await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
-    result = await page.evaluate(() => window.fortressSpectatorResult);
+    await wait(page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000}));
+    result = await wait(page.evaluate(() => window.fortressSpectatorResult));
     phase='state';
-    state = await page.evaluate(() => window.fortressSpectatorState);
+    state = await wait(page.evaluate(() => window.fortressSpectatorState));
     phase='socket-drain';
-    await page.waitForFunction(() => window.fortressSpectatorSockets.length>0 && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000});
+    await wait(page.waitForFunction(() => window.fortressSpectatorSockets.length>0
+      && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000}));
     phase='final';
     version=browser.version();
     publish();

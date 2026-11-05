@@ -60,7 +60,11 @@ the original rejection. CLI handlers set fatal exit status before reporting and
 inspect without custom hooks or getters. Console file-write failures remain
 owned fatal observations. Four command/event pairs now attach both rejection
 handlers before starting their command; real Node children prove late errors
-cannot escape cleanup. The final combined Node 26 gate passes 198 controls.
+cannot escape cleanup. The spectator deadline now rejects into the owner's awaited work. Its finally
+block alone closes the browser. Strict Node children use native timers to cover
+held navigation, successful/rejected close and pre-deadline operation failure;
+no timer-owned close or unhandled rejection remains. The final combined Node 26
+gate passes 202 controls.
 
 The full Python reference attempt completed 285 tests with 273 passes, ten skips
 and two source-drift failures. Source and HEAD changed while it was running;
@@ -71,6 +75,16 @@ only after the candidate commit freezes source and Git identity.
 The guidance now requires the complete CI control command and a sweep of dependent
 callback doubles. These corrections qualify the affected control gate; they do
 not claim the original spectator request failure has been resolved.
+
+## Prefix shipping decision
+
+The root's 00:58 audit records that diagnostics PR #323 was merged while its
+known report-publication repair remained queued in #324. Hosted green checks
+and approval did not address that locally known finding. Addon runtime files
+were unchanged. The existing shipping rule already requires every actionable
+finding to be addressed: apply that gate across all local review contexts before
+merging a prefix. A planned fixup in a later stack entry does not satisfy it.
+No duplicate skill rule was added.
 
 ## Outcome
 
