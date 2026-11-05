@@ -1,4 +1,5 @@
 // Execute a bounded ownership suite batch in a real release Web export.
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -69,32 +70,35 @@ const path = require('node:path');
         // Each batch keeps the existing page budget on bounded CI runners.
         await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
       } catch (error) {
-        // The watchdog rejected the run before the inventory could be
-        // printed. Report what the page saw, so an engine or script failure
-        // can be told apart from a run that was merely too slow. The
-        // inventory is printed first: reading the page can fail when the
-        // renderer is gone, and that failure must not hide this one.
-        const detail = { stage: 'ownership-result', suites, errors };
-        if (caseName !== null) detail.case = caseName;
-        console.error(JSON.stringify(detail));
+        const causes=[error];
         try {
-          detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
-        } catch (page_error) {
-          detail.reported = null;
-          detail.page_error = String(page_error).slice(0, 200);
-        }
-        // The page publishes the case that was executing, the number of
-        // completed cases and the time the last completed case took, so a
-        // rejected run names where it stopped and how long it took.
-        try {
-          const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
-          detail.progress = progress === undefined ? null : JSON.parse(progress);
-        } catch (progress_error) {
-          detail.progress = null;
-          detail.progress_error = String(progress_error).slice(0, 200);
-        }
-        console.error(JSON.stringify(detail));
-        throw error;
+          // The watchdog rejected the run before the inventory could be
+          // printed. Report what the page saw, so an engine or script failure
+          // can be told apart from a run that was merely too slow. The
+          // inventory is printed first: reading the page can fail when the
+          // renderer is gone, and that failure must not hide this one.
+          const detail = { stage: 'ownership-result', suites, errors };
+          if (caseName !== null) detail.case = caseName;
+          console.error(JSON.stringify(detail));
+          try {
+            detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
+          } catch (page_error) {
+            detail.reported = null;
+            detail.page_error = String(page_error).slice(0, 200);
+          }
+          // The page publishes the case that was executing, the number of
+          // completed cases and the time the last completed case took, so a
+          // rejected run names where it stopped and how long it took.
+          try {
+            const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
+            detail.progress = progress === undefined ? null : JSON.parse(progress);
+          } catch (progress_error) {
+            detail.progress = null;
+            detail.progress_error = String(progress_error).slice(0, 200);
+          }
+          console.error(JSON.stringify(detail));
+        } catch(diagnosticError) {causes.push(diagnosticError);}
+        throw causes.length===1?error:new AggregateError(causes,'ownership result and diagnostics failed');
       }
       if (errors.length) throw new Error(JSON.stringify(errors));
       const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
@@ -116,4 +120,7 @@ const path = require('node:path');
   verifyDownloads();
   if (errors.length) throw new Error(JSON.stringify(errors));
   console.log(JSON.stringify(observation));
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});

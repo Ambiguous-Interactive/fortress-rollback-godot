@@ -743,3 +743,402 @@ test('recording pressure follows service turns on both physical socket types thr
     delete global.document;
   }
 });
+
+// Value: main's rejection retains exact operation and cleanup objects; stderr alone can conceal a replaced rejection.
+for(const runner of ['online','webrtc']) for(const cleanup of ['none','browser','server','both']) {
+  test(`${runner} main retains operation identity with ${cleanup} cleanup failure`, async()=>{
+    const original=new Error('original operation');
+    const browserErrors=[new Error('browser zero cleanup'),new Error('browser one cleanup')];
+    const serverError=new Error('server cleanup');
+    const trace=[],moduleValue={exports:{}};
+    const server={on(){},listen(_port,_host,ready){ready();},address(){return{port:123};},close(done){
+      Promise.resolve().then(()=>{trace.push('server');done(['server','both'].includes(cleanup)?serverError:undefined);});
+    }};
+    let launched=0;
+    const engines={chromium:{async launch(){
+      const index=launched++;
+      return{version:()=> 'fixture',newContext:async()=>{throw original;},close:async()=>{
+        await Promise.resolve();trace.push('browser '+index);
+        if(['browser','both'].includes(cleanup))throw browserErrors[index];
+      }};
+    }}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return engines;
+      if(name==='node:https')return{createServer:()=>server};
+      if(name==='node:fs')return{readFileSync:()=>''};
+      if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+      if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
+      if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,runner+'.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(){}},
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    await assert.rejects(moduleValue.exports.main(),error=>{
+      if(cleanup==='none')assert.equal(error,original);
+      else{
+        const expected=[original];
+        if(['browser','both'].includes(cleanup))expected.push(...browserErrors.slice(0,launched));
+        if(['server','both'].includes(cleanup))expected.push(serverError);
+        assert.deepEqual(Array.from(error.errors),expected,'aggregate must retain every original object in causal order');
+      }
+      return true;
+    });
+    assert.deepEqual(trace,[...Array.from({length:launched},(_value,index)=>'browser '+index),'server']);
+  });
+}
+
+// Value: opaque rejections and failing diagnostic output must not replace operation or cleanup causes.
+for(const location of ['online','webrtc','room']) for(const kind of ['error','opaque','undefined','number','coercion']) {
+  for(const diagnosticFails of [false,true,'json']) for(const cleanupFails of [false,true]) {
+    test(`${location} preserves ${kind} causes with diagnostic=${diagnosticFails} cleanup=${cleanupFails}`,async()=>{
+      const originalFormatting=new Error('original formatting'),cleanupFormatting=new Error('cleanup formatting'),calls={original:0,cleanup:0};
+      const makeReason=label=>{
+        if(kind==='coercion')return{[Symbol.toPrimitive](){calls[label]++;throw label==='original'?originalFormatting:cleanupFormatting;}};
+        return kind==='opaque'?Object.create(null):(kind==='undefined'?undefined:(kind==='number'?7:new Error(label)));
+      };
+      const original=makeReason('original'),cleanup=makeReason('cleanup'),diagnostic=new Error('diagnostic');
+      const trace=[],moduleValue={exports:{}};
+      let serial=0;
+      const server={on(){},listen(_port,_host,ready){ready();},address(){return{port:123};},close(done){trace.push('server');done();}};
+      const engines={chromium:{async launch(){
+        const index=serial++;
+        return{version:()=> 'fixture',newContext:async()=>{
+          if(location!=='room')throw original;
+          return{newPage:async()=>{throw original;},close:async()=>{trace.push('context');if(cleanupFails)throw cleanup;}};
+        },close:async()=>{trace.push('browser '+index);if(location!=='room'&&cleanupFails)throw cleanup;}};
+      }}};
+      const fakeRequire=name=>{
+        if(name==='fake-playwright')return engines;
+        if(name==='node:https')return{createServer:()=>server};
+        if(name==='node:fs')return{readFileSync:()=>''};
+        if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+        if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
+        if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
+        return require(name);
+      };
+      const runner=location==='online'?'online':'webrtc';
+      vm.runInNewContext(fs.readFileSync(path.join(__dirname,runner+'.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+        module:moduleValue,require:fakeRequire,JSON:diagnosticFails==='json'?{parse:JSON.parse,stringify(){throw diagnostic;}}:JSON,
+        console:{log(){},error(){if(diagnosticFails===true)throw diagnostic;}},
+        process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+      });
+      const flatten=value=>value&&Array.isArray(value.errors)?Array.from(value.errors).flatMap(flatten):[value];
+      await assert.rejects(moduleValue.exports.main(),error=>{
+        const expected=[original];
+        if(location==='room'&&cleanupFails)expected.push(cleanup);
+        if(kind==='coercion') {
+          expected.push(originalFormatting);
+          if(location==='room'&&cleanupFails)expected.push(cleanupFormatting);
+        }
+        if(diagnosticFails)expected.push(diagnostic);
+        if(location!=='room'&&cleanupFails)expected.push(...Array(serial).fill(cleanup));
+        if(kind==='coercion'&&location!=='room'&&cleanupFails)expected.push(cleanupFormatting);
+        const observed=flatten(error);
+        const formatting=kind==='opaque'?observed.filter(value=>value!==original&&value!==cleanup&&value!==diagnostic):[];
+        if(kind==='opaque') {
+          assert.equal(formatting.length,cleanupFails?2:1,'each unprintable value is described only once');
+          for(const reason of formatting)assert.equal(reason.name,'TypeError');
+        }
+        assert.deepEqual(observed.filter(value=>!formatting.includes(value)),expected,'exact operation and cleanup causes must survive diagnostics');
+        if(kind==='coercion')assert.deepEqual(calls,{original:1,cleanup:cleanupFails?1:0});
+        return true;
+      });
+      assert.deepEqual(trace,[...(location==='room'?['context']:[]),...Array.from({length:serial},(_value,index)=>'browser '+index),'server']);
+    });
+  }
+}
+
+// Value: diagnostic read rejection is evidence, even while null metadata preserves the report shape.
+for(const mode of ['async','sync']) for(const cleanupFails of [false,true]) {
+  test(`online retains ${mode} diagnostic read causes with cleanup=${cleanupFails}`,async()=>{
+    const original=new Error('operation'),stateError=new Error('state read'),resourceError=new Error('resource read'),cleanup=new Error('cleanup');
+    const moduleValue={exports:{}},reports=[],trace=[];
+    let reads=0;
+    const page={on(){},addInitScript:async()=>{},goto:async()=>{throw original;},evaluate(){
+      const reason=++reads===1?stateError:resourceError;
+      trace.push('read '+reads);
+      if(mode==='sync')throw reason;
+      return Promise.reject(reason);
+    }};
+    const browser={version:()=> 'fixture',newContext:async()=>({newPage:async()=>page,newCDPSession:async()=>({send:async()=>{}})}),
+      close:async()=>{trace.push('browser');if(cleanupFails)throw cleanup;}};
+    const server={address:()=>({port:123}),close(done){trace.push('server');done();}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return{chromium:{launch:async()=>browser}};
+      if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+      if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'online.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(value){reports.push(JSON.parse(value));}},
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    await assert.rejects(moduleValue.exports.main(),error=>{
+      assert.deepEqual(Array.from(error.errors),[original,stateError,resourceError,...(cleanupFails?[cleanup]:[])]);
+      return true;
+    });
+    assert.deepEqual(reports[0].states,[null]);assert.deepEqual(reports[0].resources,[null]);
+    assert.deepEqual(trace,['read 1','read 2','browser','server']);
+  });
+}
+
+// Value: a failed resource-closure wait retains its identity through successful or rejected diagnostics and owned shutdown.
+for(const diagnosticFails of [false,true]) for(const cleanupFails of [false,true]) {
+  test(`resource wait preserves its cause with diagnostic=${diagnosticFails} cleanup=${cleanupFails}`,async()=>{
+    const original=new Error('resource closure wait'),diagnostic=new Error('resource diagnostic');
+    const contexts=[new Error('context zero'),new Error('context one')],browsers=[new Error('browser zero'),new Error('browser one')];
+    const trace=[],reports=[],moduleValue={exports:{}};let launched=0;
+    const engines={chromium:{async launch(){
+      const index=launched++;
+      const page={on(){},addInitScript:async()=>{},goto:async()=>{},waitForFunction:async operation=>{
+        if(operation.name==='resourcesClosed'&&index===0)throw original;
+      },evaluate:async operation=>{
+        if(operation.toString().includes('result: document.body.dataset.fortressWebrtc')) {
+          if(diagnosticFails&&index===0)throw diagnostic;
+          return{index};
+        }
+        return{index};
+      }};
+      return{version:()=> 'fixture',newContext:async()=>({newPage:async()=>page,close:async()=>{
+        trace.push('context '+index);if(cleanupFails)throw contexts[index];
+      }}),close:async()=>{trace.push('browser '+index);if(cleanupFails)throw browsers[index];}};
+    }}};
+    const server={on(){},listen(_port,_host,ready){ready();},address:()=>({port:123}),close(done){trace.push('server');done();}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return engines;
+      if(name==='node:https')return{createServer:()=>server};
+      if(name==='node:fs')return{readFileSync:()=>''};
+      if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation(),waitGameplay:async()=>{},waitDefaultSetup:async()=>{}};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'webrtc.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(value){reports.push(JSON.parse(value));}},setTimeout,clearTimeout,
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','default'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    const flatten=value=>value&&Array.isArray(value.errors)?Array.from(value.errors).flatMap(flatten):[value];
+    await assert.rejects(moduleValue.exports.main(),error=>{
+      assert.deepEqual(flatten(error),[original,...(diagnosticFails?[diagnostic]:[]),...(cleanupFails?[...contexts,...browsers]:[])]);
+      return true;
+    });
+    assert.deepEqual(reports[0].failed_rooms[0].teardown.resources,[diagnosticFails?null:{index:0},{index:1}]);
+    assert.deepEqual(trace,['context 0','context 1','browser 0','browser 1','server']);
+  });
+}
+
+// Value: resetting owned storage overrides cannot replace a failed diagnostic download.
+test('diagnostic export retains operation and storage-reset failures',async()=>{
+  const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'fortress-reset-'));
+  const filename=path.join(directory,'report.json');fs.writeFileSync(filename,'{}');
+  try {
+    for(const operationFails of [false,true])for(const cleanupFails of [false,true]) {
+      const original=new Error('diagnostic download'),cleanup=new Error('storage reset');
+      const native=()=>{};let stored=native;
+      const context=vm.createContext({window:{fortressOnline:{state:'offline',frame:8,restores:0}},Storage:class{},IDBFactory:class{}});
+      Object.defineProperty(context.Storage.prototype,'setItem',{get:()=>stored,set(value){
+        if(value===native&&cleanupFails)throw cleanup;stored=value;
+      }});
+      context.IDBFactory.prototype.open=native;
+      const page={evaluate:async operation=>vm.runInContext(`(${operation.toString()})()`,context),
+        waitForEvent:()=>Promise.resolve({path:async()=>filename,suggestedFilename:()=> 'report.json'})};
+      const running=collectDiagnostics([page],async()=>{if(operationFails)throw original;});
+      if(operationFails||cleanupFails)await assert.rejects(running,error=>{
+        if(operationFails&&cleanupFails)assert.deepEqual(Array.from(error.errors),[original,cleanup]);
+        else assert.equal(error,operationFails?original:cleanup);
+        return true;
+      });else assert.equal((await running).length,1);
+      if(!cleanupFails)assert.equal(stored,native);
+    }
+  } finally {fs.rmSync(directory,{recursive:true,force:true});}
+});
+
+// Value: named corrupt-control failures retain the rejected wait and any diagnostic serialization failure.
+for(const stage of ['restore','desync'])for(const diagnosticFails of [false,true])for(const cleanupFails of [false,true]) {
+  test(`corrupt ${stage} preserves wait causes with diagnostic=${diagnosticFails} cleanup=${cleanupFails}`,async()=>{
+    const original=[new Error('wait zero'),new Error('wait one')],diagnostic=new Error('corrupt diagnostic'),cleanup=new Error('browser cleanup');
+    const moduleValue={exports:{}},trace=[];let launched=0;
+    const engines={chromium:{async launch(){
+      const index=launched++;
+      const page={on(){},addInitScript:async()=>{},goto:async()=>{},keyboard:{up:async()=>{},down:async()=>{}},
+        waitForFunction:async operation=>{
+          const text=operation.toString();
+          if(stage==='restore'&&text.includes('restores >= 1')&&index===0)throw original[index];
+          if(stage==='desync'&&text.includes('terminal_reason === 18'))throw original[index];
+        },evaluate:async operation=>{
+          if(diagnosticFails&&operation.toString().includes('inputs: (window.fortressOnline?.inputs'))return{toJSON(){throw diagnostic;}};
+          return{room_id:'room'};
+        }};
+      return{version:()=> 'fixture',newContext:async()=>({newPage:async()=>page,newCDPSession:async()=>({send:async()=>{}})}),
+        close:async()=>{trace.push('browser '+index);if(cleanupFails)throw cleanup;}};
+    }}};
+    const server={address:()=>({port:123}),close(done){trace.push('server');done();}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return engines;
+      if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+      if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'online.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(){}},
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','corrupt'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    const flatten=value=>{
+      if(value&&Array.isArray(value.errors))return Array.from(value.errors).flatMap(flatten);
+      return value&&value.cause!==undefined?flatten(value.cause):[value];
+    };
+    await assert.rejects(moduleValue.exports.main(),error=>{
+      assert.deepEqual(flatten(error),[...(stage==='restore'?original.slice(0,1):original),...(diagnosticFails?[diagnostic]:[]),
+        ...(cleanupFails?[cleanup,cleanup]:[])]);
+      return true;
+    });
+    assert.deepEqual(trace,['browser 0','browser 1','server']);
+  });
+}
+
+// Value: failed observer publication cannot discard the original operation or browser cleanup rejection.
+for(const publicationFails of [false,true])for(const cleanupFails of [false,true]) {
+  test(`spectator preserves publication=${publicationFails} cleanup=${cleanupFails} causes`,async()=>{
+    const original=new Error('navigation'),publication=new Error('publication'),cleanup=new Error('browser cleanup');
+    const moduleValue={exports:{}},output=[],trace=[];
+    const page={on(){},addInitScript:async()=>{},goto:async()=>{throw original;}};
+    const browser={newContext:async()=>({newPage:async()=>page}),close:async()=>{trace.push('browser');if(cleanupFails)throw cleanup;}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return{chromium:{launch:async()=>browser}};
+      if(name==='node:fs')return{readFileSync:()=> '{}'};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'spectator.cjs'),'utf8')+'\nmodule.exports.run=run;',{
+      module:moduleValue,require:fakeRequire,console,setTimeout,clearTimeout,
+      JSON:{parse:JSON.parse,stringify(value){if(publicationFails)throw publication;return JSON.stringify(value);}},
+      process:{argv:['node','probe','http://fixture','runtime.json'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'},stdout:{write(value){output.push(value);}}},
+    });
+    await assert.rejects(moduleValue.exports.run(),error=>{
+      const expected=[original,...(publicationFails?[publication]:[]),...(cleanupFails?[cleanup]:[])];
+      assert.deepEqual(error&&Array.isArray(error.errors)?Array.from(error.errors):[error],expected);
+      return true;
+    });
+    assert.equal(output.length,publicationFails?0:1);assert.deepEqual(trace,['browser']);
+  });
+}
+
+// Value: event and command rejections are both observed before either can reject outside browser cleanup.
+for(const mode of ['healthy','command-first','event-first']) {
+  test(`diagnostic download owns both promises for ${mode}`,()=>{
+    const directory=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'fortress-events-'));
+    const filename=path.join(directory,'report.json');fs.writeFileSync(filename,'{}');
+    const program=String.raw`
+const assert=require('node:assert/strict');
+const {collectDiagnostics}=require(process.argv[1]);
+const filename=process.argv[2],mode=process.argv[3];
+const commandError=new Error('COMMAND_FAILURE'),eventError=new Error('EVENT_FAILURE');
+const snapshot={state:'offline',frame:8,restores:0,storage_calls:0};
+const page={evaluate:async()=>snapshot,waitForEvent:()=>mode==='healthy'?
+  Promise.resolve({path:async()=>filename,suggestedFilename:()=> 'report.json'}):
+  new Promise((_resolve,reject)=>setTimeout(()=>reject(eventError),mode==='command-first'?10:0))};
+(async()=>{
+  const command=async()=>{
+    if(mode==='healthy')return;
+    if(mode==='event-first')await new Promise(resolve=>setTimeout(resolve,10));
+    throw commandError;
+  };
+  if(mode==='healthy')assert.equal((await collectDiagnostics([page],command)).length,1);
+  else await assert.rejects(collectDiagnostics([page],command),error=>error===(mode==='command-first'?commandError:eventError));
+  await new Promise(resolve=>setTimeout(resolve,40));
+  console.log('EVENT_PAIR_OK '+mode);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+`;
+    try {
+      const child=require('node:child_process').spawnSync(process.execPath,['-e',program,path.join(__dirname,'online.cjs'),filename,mode],{
+        encoding:'utf8',timeout:3000,
+      });
+      assert.equal(child.status,0,child.stderr);assert.equal(child.stdout.trim(),'EVENT_PAIR_OK '+mode);
+    } finally {fs.rmSync(directory,{recursive:true,force:true});}
+  });
+}
+
+// Value: a console log disk failure outside awaited work stays fatal without escaping owned cleanup.
+for(const runner of ['online','webrtc'])for(const cleanupFails of [false,true]) {
+  test(`${runner} owns asynchronous console file failure with cleanup=${cleanupFails}`,async()=>{
+    const disk=new Error('ENOSPC'),operation=new Error('wait stopped'),cleanup=new Error('browser cleanup');
+    const moduleValue={exports:{}},trace=[];let handler,launched=0,started,release;
+    const ready=new Promise(resolve=>{started=resolve;}),held=new Promise(resolve=>{release=resolve;});
+    const page={on(name,value){if(name==='console')handler=value;},addInitScript:async()=>{},
+      goto:async()=>{started();await held;},waitForFunction:async()=>{throw operation;},evaluate:async()=>({})};
+    const engines={chromium:{async launch(){
+      const index=launched++;
+      return{version:()=> 'fixture',newContext:async()=>({newPage:async()=>page,newCDPSession:async()=>({send:async()=>{}}),
+        close:async()=>{trace.push('context '+index);}}),close:async()=>{trace.push('browser '+index);if(cleanupFails)throw cleanup;}};
+    }}};
+    const server={on(){},listen(_port,_host,done){done();},address:()=>({port:123}),close(done){trace.push('server');done();}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return engines;
+      if(name==='node:fs')return{readFileSync:()=>'',appendFileSync(){throw disk;}};
+      if(name==='node:https')return{createServer:()=>server};
+      if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+      if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
+      if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,runner+'.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(){}},
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean','events.log'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    const running=moduleValue.exports.main();await ready;
+    let escaped;
+    try {handler({type:()=> 'log',text:()=> 'observed browser message'});} catch(error) {escaped=error;} finally {release();}
+    await assert.rejects(running,error=>{
+      assert.equal(escaped,undefined,'callback must not throw outside the operation lifetime');
+      assert.equal(error.errors[0],disk);
+      if(cleanupFails)assert.equal(Array.from(error.errors).filter(value=>value===cleanup).length,launched);
+      return true;
+    });
+    assert.equal(trace.at(-1),'server');
+  });
+}
+
+// Value: a native deadline interrupts held browser work while exactly one owner observes shutdown failure.
+for(const mode of ['deadline','ordinary'])for(const cleanupFails of [false,true]) {
+  test(`spectator native timer owns ${mode} failure with cleanup=${cleanupFails}`,()=>{
+    const program=String.raw`
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const mode=process.argv[2],cleanupFails=process.argv[3]==='true';
+const original=new Error('ordinary operation'),cleanup=new Error('owned cleanup'),interrupted=new Error('operation closed');
+const constructed=[],trace=[],output=[],moduleValue={exports:{}};
+let rejectHeld;
+const page={on(){},addInitScript:async()=>{},goto(){trace.push('goto');
+  return mode==='ordinary'?Promise.reject(original):new Promise((_resolve,reject)=>{rejectHeld=reject;});}};
+const browser={newContext:async()=>({newPage:async()=>page}),close:async()=>{
+  trace.push('close');if(cleanupFails)throw cleanup;if(rejectHeld)rejectHeld(interrupted);
+}};
+const fakeRequire=name=>{
+  if(name==='fake-playwright')return{chromium:{launch:async()=>browser}};
+  if(name==='node:fs')return{readFileSync:()=> '{}'};
+  return require(name);
+};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8')+'\nmodule.exports.run=run;',{
+  module:moduleValue,require:fakeRequire,console,clearTimeout,
+  setTimeout(callback,delay){return setTimeout(callback,delay===70000?10:delay);},
+  Error:function(...arguments){const value=new Error(...arguments);constructed.push(value);return value;},
+  process:{argv:['node','probe','http://fixture','runtime.json'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'},stdout:{write(value){output.push(value);}}},
+});
+const guard=setTimeout(()=>{console.error('OWNER_NOT_FINISHED');process.exitCode=2;},1000);
+(async()=>{
+  await assert.rejects(moduleValue.exports.run(),error=>{
+    const primary=mode==='deadline'?constructed[0]:original;
+    assert(primary,'deadline must have its own failure cause');
+    assert.deepEqual(error&&Array.isArray(error.errors)?Array.from(error.errors):[error],[primary,...(cleanupFails?[cleanup]:[])]);
+    return true;
+  });
+  clearTimeout(guard);
+  assert.deepEqual(trace,['goto','close']);assert.equal(output.length,1);
+  assert.equal(JSON.parse(output[0]).runnerFailurePhase,'navigation');
+  await new Promise(resolve=>setTimeout(resolve,30));
+  console.log('OWNED_DEADLINE_OK');
+})().catch(error=>{clearTimeout(guard);console.error(error);process.exitCode=1;});
+`;
+    const child=require('node:child_process').spawnSync(process.execPath,['--unhandled-rejections=strict','-e',program,
+      path.join(__dirname,'spectator.cjs'),mode,String(cleanupFails)],{encoding:'utf8',timeout:3000});
+    assert.equal(child.status,0,child.stderr);assert.equal(child.stdout.trim(),'OWNED_DEADLINE_OK');
+  });
+}
