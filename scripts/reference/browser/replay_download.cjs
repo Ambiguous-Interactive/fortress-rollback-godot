@@ -42,9 +42,10 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
     await command('prepare_download');
     received = null;
     allowance = before.filename;
-    const event = page.waitForEvent('download', { timeout: 15000, predicate: download => download === received });
-    await page.mouse.click(before.x, before.y, { delay: 100 });
-    const download = await event;
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 15000, predicate: download => download === received }),
+      Promise.resolve().then(() => page.mouse.click(before.x, before.y, { delay: 100 })),
+    ]);
     const destination = path.join(output, name + '.frrp');
     await download.saveAs(destination);
     const bytes = fs.readFileSync(destination);
@@ -73,9 +74,10 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
       index === 1 ? 'interior' : 'terminal', { timeout: 30000 });
     await command('prepare_import');
     const original = await read();
-    const chooser = page.waitForEvent('filechooser', { timeout: 15000 });
-    await page.mouse.click(original.open_x, original.open_y, { delay: 100 });
-    const picker = await chooser;
+    const [picker] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 15000 }),
+      Promise.resolve().then(() => page.mouse.click(original.open_x, original.open_y, { delay: 100 })),
+    ]);
     const payload = process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'reject-reimport' ? Buffer.from([0]) : bytes;
     await picker.setFiles({ name: before.filename, mimeType: 'application/octet-stream', buffer: payload });
     await page.waitForFunction(value => {
@@ -109,15 +111,18 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
   }
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') await page.evaluate(() => console.error('late replay download control'));
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-download') {
-    const event = page.waitForEvent('download', { timeout: 15000 });
-    await page.evaluate(() => {
-      const link = document.createElement('a');
-      link.href = 'data:application/octet-stream;base64,AQ=='; link.download = 'forbidden.frrp';
-      link.textContent = 'forbidden'; link.style = 'position:fixed;top:0;left:0;z-index:2147483647;background:white';
-      document.body.appendChild(link);
-    });
-    await page.locator('a[download="forbidden.frrp"]').click({ force: true });
-    await event;
+    await Promise.all([
+      page.waitForEvent('download', { timeout: 15000 }),
+      Promise.resolve().then(async () => {
+        await page.evaluate(() => {
+          const link = document.createElement('a');
+          link.href = 'data:application/octet-stream;base64,AQ=='; link.download = 'forbidden.frrp';
+          link.textContent = 'forbidden'; link.style = 'position:fixed;top:0;left:0;z-index:2147483647;background:white';
+          document.body.appendChild(link);
+        });
+        await page.locator('a[download="forbidden.frrp"]').click({ force: true });
+      }),
+    ]);
   }
   await page.waitForTimeout(100);
   quiet();
