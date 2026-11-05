@@ -30,10 +30,34 @@ class WideGame:
 		return super.simulate_frame(frame, inputs)
 
 
+class FailureGame:
+	extends Fixture.Game
+	var retained_writer: RefCounted
+
+	func save_state(frame: int, writer: RefCounted) -> Driver.SaveResult:
+		retained_writer = writer
+		return super.save_state(frame, writer)
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(
-		["configuration", "confirmed_playback", "buffering", "delay_and_loss", "expert_parity", "host_export",
-			"storage_budget", "host_export_repair", "exhaustion", "shapes", "retained_row", "delay_bounds", "mesh_mutators"]
+		[
+			"configuration",
+			"confirmed_playback",
+			"buffering",
+			"delay_and_loss",
+			"expert_parity",
+			"expert_failures",
+			"expert_failure_control",
+			"host_export",
+			"storage_budget",
+			"host_export_repair",
+			"exhaustion",
+			"shapes",
+			"retained_row",
+			"delay_bounds",
+			"mesh_mutators"
+		]
 	)
 
 
@@ -442,3 +466,108 @@ func _mesh_mutators(context: RefCounted) -> void:
 			if exported != null:
 				for player: int in range(row.size()):
 					context.equal(exported.read(player).bytes, row[player], "exports retain original host bytes")
+
+
+# Value: protects=expert/driver spectator failures preserve prefix and first cause; fails_when=failed ACK resumes playback;
+# why_new=existing spectator parity runs successful ADVANCE-only rows; seam=none
+func _expert_failures(context: RefCounted) -> void:
+	for kind: int in [Types.Kind.SAVE, Types.Kind.ADVANCE]:
+		var manual: Dictionary = _failure_observation(context, true, kind)
+		var driven: Dictionary = _failure_observation(context, false, kind)
+		context.equal(driven, manual, "expert and driver preserve identical failure state, requests, events and replay")
+
+
+# Value: protects=healthy snapshot-capturing expert/driver completion; fails_when=the failure fixture rejects valid callbacks;
+# why_new=paired control distinguishes failure handling from a broken fixture; seam=none
+func _expert_failure_control(context: RefCounted) -> void:
+	var manual: Dictionary = _failure_observation(context, true, -1)
+	var driven: Dictionary = _failure_observation(context, false, -1)
+	context.equal(driven, manual, "healthy expert and driver complete the same confirmed tail")
+
+
+func _failure_observation(context: RefCounted, expert: bool, kind: int) -> Dictionary:
+	var config: RefCounted = _config()
+	config.capture_confirmed_snapshots = true
+	config.replay_max_frames = 16
+	var viewer: RefCounted = Spectator.new()
+	context.equal(viewer.configure(config), Types.Code.OK, "configure snapshot-capturing viewer")
+	var game: FailureGame = FailureGame.new()
+	var driver: Driver = Driver.new(viewer, game)
+	var events: Array = []
+	var expected: int = 0
+	for frame: int in range(9):
+		context.equal(viewer.receive_host_frame(frame, _row(frame)).code, Types.Code.OK, "receive original row across queue reuse")
+		if frame == 8:
+			context.equal(viewer.finish_host(), Types.Code.OK, "release the final confirmed tail before failure")
+			game.fail_kind = kind
+		var code: int = _failure_step(viewer, driver, game, expert, frame, events)
+		var failed: bool = frame == 8 and kind >= 0
+		context.equal(code, Types.Code.CALLBACK_FAILED if failed else Types.Code.OK, "callback result determines accepted playback")
+		if not failed or kind == Types.Kind.ADVANCE:
+			for bytes: PackedByteArray in _row(frame):
+				expected = expected * 3 + bytes[0] + frame
+		context.equal(game.value, expected, "game state equals independently applied original callback inputs")
+	var expected_trace: PackedStringArray = PackedStringArray()
+	for frame: int in range(9):
+		expected_trace.append("save:%d" % frame)
+		if frame < 8 or kind != Types.Kind.SAVE:
+			expected_trace.append("advance:%d" % frame)
+	context.equal(game.trace, expected_trace, "exact ordered snapshot/input callbacks stop at first failure")
+	var prefix: int = 9 if kind < 0 else 8
+	context.equal(viewer.status().current_frame, prefix, "failed callback never commits the attempted row")
+	context.equal(viewer.recording_status().finalized_frames, prefix, "portable recording excludes failed input")
+	var replay: PackedByteArray = viewer.replay().to_bytes()
+	for frame: int in range(prefix):
+		var row: Types.FrameInputs = viewer.replay().inputs(frame)
+		for player: int in range(2):
+			context.equal(row.read(player).bytes, _row(frame)[player], "retained recording preserves original rows after queue wrap")
+	var before_retry: PackedStringArray = game.trace.duplicate()
+	context.equal(_failure_step(viewer, driver, game, expert, 9, events), Types.Code.TERMINATED, "next service reports clean completion or retained failure")
+	context.equal(game.trace, before_retry, "terminal service invokes no additional game callbacks")
+	context.equal(viewer.status().reason, Types.Code.TERMINATED if kind < 0 else Types.Code.CALLBACK_FAILED, "first terminal reason remains exact")
+	context.equal(viewer.status().failure_kind, kind, "first failed operation remains exact")
+	context.equal(viewer.status().failure_frame, -1 if kind < 0 else 8, "failure identifies attempted frame")
+	context.equal(viewer.is_complete(), kind < 0, "callback failure cannot claim clean host completion")
+	context.equal(game.retained_writer.status(), game.retained_writer.Code.EXPIRED_VIEW, "last snapshot writer expires after success or failure")
+	context.equal(game.retained_inputs.read(0).code, Types.Code.EXPIRED_VIEW, "last input view expires after success or failure")
+	context.equal(events.size(), 4, "startup, synchronization, host ending and one terminal notification")
+	if events.size() == 4:
+		context.equal(
+			events[3], [Spectator.EventKind.TERMINATED, prefix, Types.Code.TERMINATED if kind < 0 else Types.Code.CALLBACK_FAILED], "terminal event matches committed lifecycle"
+		)
+	context.equal(viewer.drain_events().is_empty(), true, "terminal notification is delivered once")
+	context.equal(viewer.replay().to_bytes(), replay, "terminal retries preserve exact portable prefix")
+	return {"value": game.value, "trace": game.trace, "events": events, "replay": replay, "frame": prefix}
+
+
+func _failure_step(viewer: RefCounted, driver: Driver, game: FailureGame, expert: bool, now: int, events: Array) -> int:
+	var code: int
+	var received_events: Array[RefCounted]
+	if expert:
+		code = viewer.poll(now).code
+		if code == Types.Code.OK:
+			var advance: Types.Result = viewer.begin_advance()
+			code = advance.code
+			if code == Types.Code.READY:
+				var request: Types.Request = advance.batch.next_request()
+				while request != null:
+					var success: bool = false
+					var checksum: PackedByteArray = PackedByteArray()
+					if request.kind == Types.Kind.SAVE:
+						var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+						success = saved.ok
+						checksum = saved.checksum
+					elif request.kind == Types.Kind.ADVANCE:
+						success = game.simulate_frame(request.frame, request.inputs)
+					code = viewer.complete_request(request.batch_id, request.request_id, success, checksum).code
+					if code != Types.Code.OK:
+						break
+					request = advance.batch.next_request()
+		received_events = viewer.drain_events()
+	else:
+		var result: Driver.StepResult = driver.step(now, _empty())
+		code = result.code
+		received_events = result.events
+	for event: RefCounted in received_events:
+		events.append([event.kind, event.frame, event.reason])
+	return code
