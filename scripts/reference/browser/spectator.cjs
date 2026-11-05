@@ -62,7 +62,7 @@ function reportFailure(error) {
 }
 module.exports={observeErrors,run,reportFailure};
 async function run(failureSignal,registerGuard) {
-  const failures=[],stopState={stopped:false,reason:undefined,forwarded:false,active:true};
+  const failures=[],stopState={stopped:false,reason:undefined,forwarded:false,active:true,retired:false};
   const stop=reason=>{
     failures.push(reason);
     if(!stopState.stopped){stopState.stopped=true;stopState.reason=reason;}
@@ -91,7 +91,14 @@ async function run(failureSignal,registerGuard) {
   const deadline=new Promise(resolve=>{watchdog=setTimeout(()=>{stop(deadlineError);resolve();},70000);});
   // The owner can stop between an awaited result and the next RPC.
   const wait=async operation=>{
-    const pending=Promise.resolve().then(()=>{checkStopped();return operation();});
+    const pending=Promise.resolve().then(async()=>{
+      checkStopped();
+      try {return await operation();}
+      catch(error){
+        if(!stopState.retired){failures.push(error);stopState.forwarded=true;}
+        throw error;
+      }
+    });
     const value=await Promise.race(external?[pending,deadline,external]:[pending,deadline]);
     checkStopped();
     return value;
@@ -147,6 +154,9 @@ async function run(failureSignal,registerGuard) {
     clearTimeout(watchdog);
     tearingDown=true;
     try {await browser.close();} catch(cleanupError) {failures.push(cleanupError);}
+    // Flush pending rejection handlers before retiring the owner.
+    await new Promise(resolve=>setImmediate(resolve));
+    stopState.retired=true;
   }
   if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation, reporting and cleanup failed');
 }

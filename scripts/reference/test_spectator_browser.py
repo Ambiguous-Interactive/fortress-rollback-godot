@@ -123,9 +123,10 @@ module.exports={chromium:{launch:async()=>browser}};
         stub = r"""
 const fs=require('node:fs'),{EventEmitter}=require('node:events');
 const phase=process.env.FORTRESS_ROUTE_PHASE;
-const reason=phase==='undefined'?undefined:Error('route-'+phase+'-safe\nAuthorization: Bearer REVIEW_SENTINEL\nruntime RUNTIME_CAPABILITY_SENTINEL');
-const second=Error('second-route-safe');
-const cleanup=Error('cleanup-safe\nAuthorization: Bearer REVIEW_SENTINEL');
+const opaque=phase.endsWith('undefined');
+const reason=opaque?undefined:Error('route-'+phase+'-safe\nAuthorization: Bearer REVIEW_SENTINEL\nruntime RUNTIME_CAPABILITY_SENTINEL');
+const second=opaque && phase!=='undefined'?undefined:Error('second-route-safe');
+const cleanup=opaque && phase!=='undefined'?undefined:Error('cleanup-safe\nAuthorization: Bearer REVIEW_SENTINEL');
 const operation=Error('operation-safe');
 const stats={closes:0,finished:false,closing:false,lateRPCs:[]};
 const rpc=name=>{if(stats.closing)stats.lateRPCs.push(name);};
@@ -142,13 +143,16 @@ page.route=async(_pattern,callback)=>{rpc('route');handler=callback;};
 page.isClosed=()=>false;
 page.evaluate=async(fn,data)=>{
   rpc('evaluate');evaluations++;
-  if(phase==='guard-audit' && evaluations===1){setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));}
+  if(phase.startsWith('guard-audit') && evaluations===1){
+    setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));
+    if(phase.includes('reject'))throw second;
+  }
   if((phase==='evaluate' && evaluations===1) || (phase==='release' && evaluations===2))throw reason;
   return fn(data);
 };
-page.waitForFunction=()=>phase==='guard-audit'?Promise.resolve():new Promise(()=>{});
+page.waitForFunction=()=>phase.startsWith('guard-audit')?Promise.resolve():new Promise(()=>{});
 page.goto=async()=>{
-  if(phase==='guard-audit'){window.fortressSpectatorResult={passed:true};return;}
+  if(phase.startsWith('guard-audit')){window.fortressSpectatorResult={passed:true};return;}
   window.fortressSpectatorFrame=0;
   window.fortressSpectatorAcceptAcknowledged=false;
   const start=currentReason=>handler({fetch:async()=>{
@@ -167,7 +171,10 @@ page.goto=async()=>{
 };
 const browser={newContext:async()=>({newPage:async()=>{
   rpc('newPage');
-  if(phase==='guard-page'){setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));}
+  if(phase.startsWith('guard-page')){
+    setTimeout(()=>global.rejectOwner(reason),0);await new Promise(resolve=>setTimeout(resolve,10));
+    if(phase.includes('reject'))throw second;
+  }
   return page;
 }}),version:()=> 'stub',close:async()=>{
   stats.closes++;stats.closing=true;
@@ -189,7 +196,7 @@ runner.run=async(signal,registerGuard)=>{
     visit(error);
     const fixture=global.fixture;
     fs.writeFileSync(report,JSON.stringify({route:values.includes(fixture.reason),cleanup:values.includes(fixture.cleanup),
-      operation:values.includes(fixture.operation),second:values.includes(fixture.second),singleIdentity:error===fixture.reason,...fixture.stats}));
+      operation:values.includes(fixture.operation),second:values.includes(fixture.second),singleIdentity:error===fixture.reason,count:values.length,...fixture.stats}));
     throw error;
   }
 };
@@ -203,7 +210,8 @@ require(path.join(directory,'spectator_acceptance.cjs'));
             runtime = temporary / 'runtime.json'
             runtime.write_text(json.dumps({'viewer_token': 'RUNTIME_CAPABILITY_SENTINEL'}), encoding='utf-8')
             for phase in ['fetch', 'evaluate', 'release', 'fulfill', 'undefined', 'late', 'late-after-close', 'late-multiple',
-                          'guard-two', 'guard-page', 'guard-init', 'guard-audit']:
+                          'guard-two', 'guard-page', 'guard-init', 'guard-audit', 'guard-page-reject', 'guard-audit-reject',
+                          'guard-page-reject-undefined', 'guard-audit-reject-undefined']:
                 for close_failure in [False, True]:
                     report = temporary / (phase + str(close_failure) + '.json')
                     environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_ACCEPT_DELAY_MS': '1',
@@ -215,19 +223,24 @@ require(path.join(directory,'spectator_acceptance.cjs'));
                         self.assertTrue(report.exists(), 'the runner owner must receive the route failure')
                         observed = json.loads(report.read_text(encoding='utf-8'))
                         self.assertTrue(observed['route'], 'the original route reason must reach the owner unchanged')
-                        self.assertEqual(observed['cleanup'], close_failure)
+                        opaque = phase.endswith('undefined') and phase != 'undefined'
+                        if not opaque:
+                            self.assertEqual(observed['cleanup'], close_failure)
                         self.assertEqual(observed['operation'], phase.startswith('late'))
-                        self.assertEqual(observed['second'], phase == 'late-multiple')
+                        if not opaque:
+                            self.assertEqual(observed['second'], phase == 'late-multiple' or 'reject' in phase)
+                        causes = 1 + int(phase.startswith('late')) + int(phase == 'late-multiple' or 'reject' in phase)
+                        self.assertEqual(observed['count'], causes + int(close_failure), 'each independently rejected operation is retained once')
                         self.assertEqual(observed['closes'], 1)
                         self.assertTrue(observed['finished'])
                         self.assertEqual(observed['lateRPCs'], [], 'helper continuations must not start RPCs after owner stop')
-                        if not close_failure and not phase.startswith('late'):
+                        if not close_failure and causes == 1:
                             self.assertTrue(observed['singleIdentity'])
                         self.assertIn('runnerFailurePhase', json.loads(result.stdout))
                         self.assertNotIn('REVIEW_SENTINEL', result.stdout + result.stderr)
                         self.assertNotIn('RUNTIME_CAPABILITY_SENTINEL', result.stdout + result.stderr)
                         self.assertNotIn('triggerUncaughtException', result.stderr)
-                        self.assertIn('undefined' if phase == 'undefined' else 'route-' + phase + '-safe', result.stderr)
+                        self.assertIn('undefined' if phase.endswith('undefined') else 'route-' + phase + '-safe', result.stderr)
 
     @unittest.skipUnless(shutil.which('node'), 'Node is required for external failure process controls')
     def test_external_failure_prevents_ready_calls_publishing_success(self):
