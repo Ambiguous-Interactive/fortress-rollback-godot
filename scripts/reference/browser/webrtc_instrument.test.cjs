@@ -743,3 +743,48 @@ test('recording pressure follows service turns on both physical socket types thr
     delete global.document;
   }
 });
+
+// Value: main's rejection retains exact operation and cleanup objects; stderr alone can conceal a replaced rejection.
+for(const runner of ['online','webrtc']) for(const cleanup of ['none','browser','server','both']) {
+  test(`${runner} main retains operation identity with ${cleanup} cleanup failure`, async()=>{
+    const original=new Error('original operation');
+    const browserErrors=[new Error('browser zero cleanup'),new Error('browser one cleanup')];
+    const serverError=new Error('server cleanup');
+    const trace=[],moduleValue={exports:{}};
+    const server={on(){},listen(_port,_host,ready){ready();},address(){return{port:123};},close(done){
+      Promise.resolve().then(()=>{trace.push('server');done(['server','both'].includes(cleanup)?serverError:undefined);});
+    }};
+    let launched=0;
+    const engines={chromium:{async launch(){
+      const index=launched++;
+      return{version:()=> 'fixture',newContext:async()=>{throw original;},close:async()=>{
+        await Promise.resolve();trace.push('browser '+index);
+        if(['browser','both'].includes(cleanup))throw browserErrors[index];
+      }};
+    }}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return engines;
+      if(name==='node:https')return{createServer:()=>server};
+      if(name==='node:fs')return{readFileSync:()=>''};
+      if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+      if(name==='./webrtc.cjs')return{instrument(){}};
+      if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,runner+'.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(){}},
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    await assert.rejects(moduleValue.exports.main(),error=>{
+      if(cleanup==='none')assert.equal(error,original);
+      else{
+        const expected=[original];
+        if(['browser','both'].includes(cleanup))expected.push(...browserErrors.slice(0,launched));
+        if(['server','both'].includes(cleanup))expected.push(serverError);
+        assert.deepEqual(Array.from(error.errors),expected,'aggregate must retain every original object in causal order');
+      }
+      return true;
+    });
+    assert.deepEqual(trace,[...Array.from({length:launched},(_value,index)=>'browser '+index),'server']);
+  });
+}

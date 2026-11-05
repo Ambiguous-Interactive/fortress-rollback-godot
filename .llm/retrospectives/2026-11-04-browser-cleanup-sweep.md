@@ -29,6 +29,24 @@ Commands: Python unittest discovery for `test_browser_cleanup.py` and
 `test_ownership_browser.py`; `node --test scripts/reference/browser/webrtc_instrument.test.cjs`;
 source and harness lint. These controls prove cleanup behavior, not live browser qualification.
 
+## Follow-up from PR verification
+
+The initial local run selected only `webrtc_instrument.test.cjs`. Its server double
+was updated, but the sibling `webrtc_watchdog.test.cjs` still had `close() {}`.
+CI's combined three-file Node command therefore waited indefinitely for the
+new close callback. The fixture now calls the callback; the exact combined
+command passes 80 cases on pinned Node 26.12.1 and local Node 22.
+
+The first subprocess tests checked stderr, which could preserve an earlier
+operation log while `main()` rejected with cleanup errors alone. Eight VM cases
+now inspect exact rejection and AggregateError member identities. Six fail on
+the initial repair and pass when both runners retain the operation cause through
+complete cleanup. The outer logger still renders every cause in its text.
+
+The guidance now requires the complete CI control command and a sweep of dependent
+callback doubles. These corrections qualify the affected control gate; they do
+not claim the original spectator request failure has been resolved.
+
 ## Outcome
 
 State: findings-acted. No request failures were suppressed and no healthy receipt

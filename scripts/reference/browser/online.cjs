@@ -354,6 +354,7 @@ async function main() {
   const logs = [];
   const { server, proxyPairs, proxy } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const browsers = [], pages = [], sessions = [], rounds = [];
+  const failures=[];
   let nextCommand = 0;
   const command = async (page, kind, values = {}) => {
     const id = ++nextCommand;
@@ -631,17 +632,16 @@ async function main() {
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, diagnostic_viewer, timings, errors, teardown: true }));
   } catch (error) {
+    failures.push(error);
     const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
     const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));
     console.error(JSON.stringify({ failure: String(error), states, resources, errors, logs }));
-    throw error;
   } finally {
-    const failures=[];
     const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
     for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
-    if(failures.length) throw new AggregateError(failures,'browser cleanup failed: '+failures.map(String).join('; '));
   }
+  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation and cleanup failed: '+failures.map(String).join('; '));
 }
 module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics, measured, elapsedMicros };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

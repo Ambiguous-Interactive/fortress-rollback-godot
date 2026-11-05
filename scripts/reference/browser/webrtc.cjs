@@ -335,6 +335,7 @@ async function main() {
   const browsers = [];
   const records = [];
   const failed_rooms = [];
+  const failures=[];
   try {
     for (const name of browserPair) browsers.push(await engines[name].launch(name === 'chromium' ? {
       headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -455,17 +456,16 @@ async function main() {
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, dropAnswer, dropRelay, recordingPressure,
       records, errors }));
   } catch (error) {
+    failures.push(error);
     console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
       version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
       browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })) }));
-    throw error;
   } finally {
-    const failures=[];
     const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
     for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
-    if(failures.length) throw new AggregateError(failures,'browser cleanup failed: '+failures.map(String).join('; '));
   }
+  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation and cleanup failed: '+failures.map(String).join('; '));
 }
 
 module.exports = { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc };
