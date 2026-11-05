@@ -510,6 +510,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 
+func _notification(what: int) -> void:
+	if what == MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT and _status != null:
+		viewer.request_pause()
+		_refresh()
+
+
 func _physics_process(_delta: float) -> void:
 	if not _is_scrubbing:
 		viewer.tick()

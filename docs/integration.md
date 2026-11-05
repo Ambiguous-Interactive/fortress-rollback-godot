@@ -21,6 +21,7 @@ Move with **A/D** or the **arrow keys** and hold **Space** to fire. The blue pla
 Press the physical number-row **1**, **2** or **3** keys for remote-input delivery delays of **0**, **3** or **12** physics ticks.
 Press **O** or click **Pause match** to hold the live match, queued deliveries and confirmed effects.
 While paused, press **N** or click **Step tick** to service one tick, including delayed delivery and rollback.
+Leaving the application pauses the live match, including queued delivery and final-tail recovery. Return and press **O** to resume.
 A prediction stall can service a tick without advancing the game frame. Press **O** again to resume.
 Press **E** or click **Finish match** to stop sampling and confirm the final delayed inputs without advancing another game frame.
 Finishing preserves pause: use **N** to service each recovery tick or **O** to resume automatic delivery.

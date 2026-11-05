@@ -81,6 +81,12 @@ func _exit_tree() -> void:
 		_demo.loop.session.terminate()
 
 
+func _notification(what: int) -> void:
+	if what == MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT and _label != null:
+		_is_paused = true
+		_update_label()
+
+
 func _physics_process(_delta: float) -> void:
 	if _demo.replay_player != null:
 		_replay_code = _demo.replay_tick()

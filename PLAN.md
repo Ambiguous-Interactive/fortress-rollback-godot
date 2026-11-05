@@ -579,7 +579,7 @@ Stream delivery and expiry remain bound to the configured playback lifetime; dir
 Bounded typed spectator playback events distinguish contiguous host receipt, clean input closure and actual playback termination.
 Owned playback observations expose bounded row capacity and free slots alongside contiguous playable input and retained rows beyond a gap;
 paused local viewers show a resume/catch-up prompt when the live input buffer fills.
-The example names the first missing frame and shows both buffer counts while paused.
+The example names the first missing frame and shows both buffer counts while paused, including gaps beyond a retained contiguous prefix.
 These local events do not establish host authentication or a network handshake.
 `is_complete()` identifies serviced clean playback completion; cancellation and failures preserve their first cause without claiming completion.
 The spectator relay uses that completion authority even when cancellation occurs exactly at an authenticated final boundary or inside acceptance delivery.
@@ -710,6 +710,7 @@ Replay changes and spectator viewing-delay/catch-up controls also offer unshifte
 Replay viewing can repeat clean recordings through fresh validated playback lifetimes while preserving cadence and stopping on corruption.
 Selected replay ranges also repeat through bounded validated navigation, checking the end boundary before returning to the selected start.
 The effects example can stop sampling and confirm its final tail before replaying the complete match.
+Effects-match service and replay playback pause on application focus loss and require explicit resume; selected replay seeks finish paused.
 The local spectator can freeze host, delivery and viewing together, including on focus loss, with explicit resume.
 These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
 

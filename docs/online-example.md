@@ -319,6 +319,10 @@ Keyboard focus brings offscreen controls into view.
 
 ![Short replay window keeps failure details and the failed game visible](images/replay-layout-after.png)
 
+Leaving the application pauses replay playback, including Repeat, and validates the displayed state.
+Returning to the application does not resume automatically; press **Play** to continue.
+An active seek still finishes at its selected paused destination. If game work is active, the pause waits for its owner to finish.
+
 Playback controls, file selection and downloads disable while a game callback or manual replay request is active.
 They become available again after the game releases its request; leaving the viewer remains available.
 Restarting or opening another recording terminates the previous player, including retained handles.

@@ -370,6 +370,10 @@ func _update_label() -> void:
 		host_notice = "Host stopped: " + _stop_reason(host_status) + "\n"
 	if demo._mutation_code() == Types.Code.BUSY:
 		state += " | WAITING FOR ACTIVE WORK"
+	var gap_notice: String = ""
+	if demo.is_paused and status.lifecycle != Types.Lifecycle.TERMINATED and playback.missing_frame >= 0:
+		var later: int = playback.pending_frames - playback.buffered_frames
+		gap_notice = "Missing confirmed frame %d | %d later frame%s received.\n" % [playback.missing_frame, later, "" if later == 1 else "s"]
 	var buffer_notice: String = ""
 	if demo.is_paused and status.lifecycle != Types.Lifecycle.TERMINATED and not playback.input_closed and playback.available_frames == 0:
 		buffer_notice = "Input buffer full. P: resume or C: catch up to receive more.\n"
@@ -388,6 +392,7 @@ func _update_label() -> void:
 		+ "Viewer holds %d confirmed frames and catches up at most %d per tick.\n" % [policy[0], policy[2]]
 		+ "Buffered %d confirmed frames | Later rows %d\n" % [playback.buffered_frames, playback.pending_frames - playback.buffered_frames]
 		+ host_notice
+		+ gap_notice
 		+ buffer_notice
 		+ _recording_feedback()
 		+ "A long viewer pause can exceed retained history while the host runs.\n"
