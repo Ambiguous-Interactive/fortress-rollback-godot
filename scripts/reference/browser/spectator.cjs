@@ -62,11 +62,15 @@ function reportFailure(error) {
 }
 module.exports={observeErrors,run,reportFailure};
 async function run(failureSignal) {
-  const failures=[],externalEvent={};
-  let forwardedExternal=false,recordedExternal=false;
-  const external=failureSignal && Promise.resolve(failureSignal).then(()=>new Promise(()=>{}),reason=>{
-    recordedExternal=true;failures.push(reason);externalEvent.reason=reason;return externalEvent;
-  });
+  const failures=[],stopState={stopped:false,reason:undefined,forwarded:false};
+  const stop=reason=>{
+    failures.push(reason);
+    if(!stopState.stopped){stopState.stopped=true;stopState.reason=reason;}
+  };
+  const checkStopped=()=>{
+    if(stopState.stopped){stopState.forwarded=true;throw stopState.reason;}
+  };
+  const external=failureSignal && Promise.resolve(failureSignal).then(()=>new Promise(()=>{}),stop);
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -83,18 +87,19 @@ async function run(failureSignal) {
   };
   const deadlineError=new Error('Spectator browser deadline exceeded.');
   let watchdog;
-  const deadline=new Promise((_resolve,reject)=>{watchdog=setTimeout(()=>reject(deadlineError),70000);});
-  // After the deadline, no awaited browser call can resume this owner.
+  const deadline=new Promise(resolve=>{watchdog=setTimeout(()=>{stop(deadlineError);resolve();},70000);});
+  // The owner can stop between an awaited result and the next RPC.
   const wait=async operation=>{
-    const value=await Promise.race(external?[operation,deadline,external]:[operation,deadline]);
-    if(value===externalEvent || recordedExternal){forwardedExternal=true;throw externalEvent.reason;}
+    const pending=Promise.resolve().then(()=>{checkStopped();return operation();});
+    const value=await Promise.race(external?[pending,deadline,external]:[pending,deadline]);
+    checkStopped();
     return value;
   };
   try {
-    const context = await wait(browser.newContext());
-    const page = await wait(context.newPage());
+    const context = await wait(()=>browser.newContext());
+    const page = await wait(()=>context.newPage());
     observeErrors(page,errors,()=>tearingDown,{requestFailures,phase:()=>phase});
-    await wait(page.addInitScript(data => {
+    await wait(()=>page.addInitScript(data => {
       window.fortressSpectatorRuntime=data;
       window.fortressSpectatorSockets=[];
       window.WebSocket=new Proxy(window.WebSocket,{construct(target,args,newTarget) {
@@ -103,13 +108,13 @@ async function run(failureSignal) {
     },
       {endpoint:runtime.endpoint, control:runtime.control, viewer_token:runtime.viewer_token,browser_fault:runtime.browser_fault}));
     phase='navigation';
-    await wait(page.goto(process.argv[2] + '/index.html'));
+    await wait(()=>page.goto(process.argv[2] + '/index.html'));
     if (runtime.browser_fault==='viewer-departure') {
       phase='departure';
-      await wait(page.waitForFunction(() => window.fortressSpectatorDepartureReady===true || window.fortressSpectatorResult!==undefined,null,{timeout:45000}));
-      const applicationFailed=await wait(page.evaluate(()=>window.fortressSpectatorResult?.passed===false));
+      await wait(()=>page.waitForFunction(() => window.fortressSpectatorDepartureReady===true || window.fortressSpectatorResult!==undefined,null,{timeout:45000}));
+      const applicationFailed=await wait(()=>page.evaluate(()=>window.fortressSpectatorResult?.passed===false));
       if(!applicationFailed) {
-      departureClosed=await wait(page.evaluate(() => {
+      departureClosed=await wait(()=>page.evaluate(() => {
         const sockets=window.fortressSpectatorSockets;
         if(sockets.length!==1 || sockets[0].readyState!==1) return false;
         sockets[0].close(1000,'physical viewer departure'); return true;
@@ -118,20 +123,22 @@ async function run(failureSignal) {
       }
     }
     phase='result';
-    await wait(page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000}));
-    result = await wait(page.evaluate(() => window.fortressSpectatorResult));
+    await wait(()=>page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000}));
+    result = await wait(()=>page.evaluate(() => window.fortressSpectatorResult));
     phase='state';
-    state = await wait(page.evaluate(() => window.fortressSpectatorState));
+    state = await wait(()=>page.evaluate(() => window.fortressSpectatorState));
     phase='socket-drain';
-    await wait(page.waitForFunction(() => window.fortressSpectatorSockets.length>0
+    await wait(()=>page.waitForFunction(() => window.fortressSpectatorSockets.length>0
       && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000}));
     phase='final';
+    checkStopped();
     version=browser.version();
-    await wait(Promise.resolve());
+    await wait(()=>Promise.resolve());
+    checkStopped();
     publish();
     if (errors.length || result.passed !== true) process.exitCode=1;
   } catch(error) {
-    if(!forwardedExternal) failures.push(error);
+    if(!stopState.forwarded) failures.push(error);
     process.exitCode=1;
     try {publish(phase);} catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
