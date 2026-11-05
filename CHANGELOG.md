@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add a replay inspection pause when opening the file chooser. Canceling keeps the current recording paused until explicit Play.
+
 - Add focus-loss pause to the effects match and replay viewer. Resume explicitly; selected replay seeks still finish paused.
 
 - Add Finish match to the effects demo. Confirm pending inputs and preserve final effects before watching the complete replay.
