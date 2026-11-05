@@ -1,6 +1,7 @@
 extends RefCounted
 
 # Value: protects=callback result validation and lock release; fails_when=dynamic returns crash or coerce; why_new=typed fixtures only return valid types; seam=none
+const Collector = preload("res://tests/runner/test_context.gd")
 const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const Session = preload("res://addons/fortress_rollback/core/session.gd")
 const Config = preload("res://addons/fortress_rollback/core/config.gd")
@@ -45,7 +46,7 @@ class DynamicGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["valid", "malformed", "termination", "peer_failure"])
+	return PackedStringArray(["valid", "malformed", "termination", "peer_failure", "expert_failure_parity", "expert_failure_control"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -58,6 +59,14 @@ func run_case(name: String, context: RefCounted) -> void:
 			_local(context, true, true)
 		"peer_failure":
 			_peer_failure(context)
+		"expert_failure_parity":
+			_expert_failure_parity(context)
+		"expert_failure_control":
+			var control: RefCounted = Collector.new(context.seed)
+			_expert_failure_parity(control, true)
+			context.equal(control.failures.size(), 3, "accepting each failed callback is detected")
+			if not control.failures.is_empty():
+				context.equal(control.failures[0].label, "driver and expert preserve failed callback outcome", "control fails at rejected completion")
 	context.finish()
 
 
@@ -167,3 +176,82 @@ func _peer_callback_failure(context: RefCounted, kind: int) -> void:
 		context.equal(delivered in [I.Code.OK, I.Code.TERMINATED], true, "terminal exchange remains bounded")
 	context.equal(mesh.peers[1].network_status().state, "terminated", "goodbye stops remote match")
 	context.equal(mesh.peers[0].poll(3), I.Code.TERMINATED, "callback failure remains terminal")
+
+
+# Value: protects=expert/driver failure equivalence; fails_when=failed acknowledgement or terminal cause differs;
+# why_new=existing equivalence scenarios complete successful callbacks only; seam=none
+func _expert_failure_parity(context: RefCounted, ignore_failure: bool = false) -> void:
+	var fixture: RefCounted = Fixture.new()
+	for kind: int in [Types.Kind.SAVE, Types.Kind.LOAD, Types.Kind.ADVANCE]:
+		var manual: Session = fixture._session()
+		var driven: Session = fixture._session()
+		var games: Array[DynamicGame] = [DynamicGame.new(), DynamicGame.new()]
+		for game: DynamicGame in games:
+			game.game = Fixture.Game.new()
+		var driver: Driver = Driver.new(driven, games[1])
+		var frame: int = 3 if kind == Types.Kind.LOAD else 0
+		for setup: int in range(frame):
+			context.equal(driver.step(setup, fixture._samples(setup)).code, Types.Code.OK, "healthy driver setup")
+			context.equal(_expert_dispatch(manual, games[0], setup, fixture._samples(setup)), Types.Code.OK, "healthy independent expert setup")
+		for game: DynamicGame in games:
+			game.game.fail_kind = kind
+		var notices: Array[PackedInt64Array] = []
+		driver.step_completed.connect(func(code: int, before: int, after: int) -> void: notices.append(PackedInt64Array([code, before, after])))
+		var expected: int = _expert_dispatch(manual, games[0], frame, fixture._samples(frame), ignore_failure)
+		var result: Driver.StepResult = driver.step(frame, fixture._samples(frame))
+		context.equal(result.code, expected, "driver and expert preserve failed callback outcome")
+		if ignore_failure:
+			continue
+		context.equal(result.code, Types.Code.CALLBACK_FAILED, "failed application callback halts the driver")
+		context.equal(result.frame_after, frame, "failed frame remains unpublished")
+		context.equal(notices, [PackedInt64Array([Types.Code.CALLBACK_FAILED, frame, frame])], "one failed completion reports the original frontier")
+		context.equal(games[1].game.trace, games[0].game.trace, "same ordered callbacks stop at failure")
+		context.equal(games[1].game.snapshots, games[0].game.snapshots, "same canonical snapshots through failed dispatch")
+		context.equal(games[1].game.value, games[0].game.value, "same application state at failed callback")
+		context.equal(result.events, manual.drain_events(), "same terminal event history")
+		for session: Session in [manual, driven]:
+			var status: Types.Status = session.status()
+			context.equal(status.lifecycle, Types.Lifecycle.TERMINATED, "failed acknowledgement terminates each facade")
+			context.equal(status.reason, Types.Code.CALLBACK_FAILED, "first cause remains application failure")
+			context.equal(status.failure_frame, 1 if kind == Types.Kind.LOAD else frame, "failure locates actual ordered request")
+			context.equal(status.failure_kind, kind, "failure identifies actual callback kind")
+			context.equal(session.complete_request(1, 0, true).code, Types.Code.TERMINATED, "later successful acknowledgement cannot revive failed work")
+			context.equal(session.poll(frame + 1).code, Types.Code.TERMINATED, "expert mutation guard releases into terminal state")
+		for game: DynamicGame in games:
+			var expired: int = game.retained_view.size().code if kind == Types.Kind.ADVANCE else game.retained_view.status()
+			context.equal(expired, Types.Code.EXPIRED_VIEW if kind == Types.Kind.ADVANCE else SnapshotStatus.Code.EXPIRED_VIEW, "both facades expire the failed callback view")
+		var count: int = games[1].callbacks
+		context.equal(driver.step(frame + 1, fixture._samples(frame)).code, Types.Code.TERMINATED, "driver cannot retry a failed callback")
+		context.equal(games[1].callbacks, count, "terminal retry executes no additional game callbacks")
+
+
+func _expert_dispatch(session: Session, game: DynamicGame, frame: int, samples: Array[Driver.LocalInput], ignore_failure: bool = false) -> int:
+	var polled: int = session.poll(frame).code
+	if polled != Types.Code.OK:
+		return polled
+	for sample: Driver.LocalInput in samples:
+		var submitted: int = session.submit_local_input(sample.player, sample.sample_frame, sample.bytes).code
+		if submitted != Types.Code.OK:
+			return submitted
+	var opened: Types.Result = session.begin_advance()
+	if opened.code != Types.Code.READY:
+		return opened.code
+	while true:
+		var request: Types.Request = opened.batch.next_request()
+		if request == null:
+			return Types.Code.OK
+		var ok: bool = false
+		var checksum: PackedByteArray = PackedByteArray()
+		match request.kind:
+			Types.Kind.SAVE:
+				var saved: Driver.SaveResult = game.save_state(request.frame, request.writer)
+				ok = saved.ok
+				checksum = saved.checksum
+			Types.Kind.LOAD:
+				ok = game.load_state(request.frame, request.reader)
+			Types.Kind.ADVANCE:
+				ok = game.simulate_frame(request.frame, request.inputs)
+		var completed: int = session.complete_request(request.batch_id, request.request_id, ok or ignore_failure, checksum).code
+		if completed != Types.Code.OK:
+			return completed
+	return Types.Code.OK
