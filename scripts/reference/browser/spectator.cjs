@@ -45,20 +45,39 @@ function observeErrors(page,errors,isTearingDown,diagnostics) {
     } catch {}
   });
 }
-module.exports={observeErrors,run};
-async function run() {
+function redact(text) {
+  try {
+    const runtime=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+    for(const name of ['viewer_token','host_token','key']) {
+      if(typeof runtime[name]==='string' && runtime[name]) text=text.split(runtime[name]).join('[redacted]');
+    }
+  } catch {}
+  return text.replace(/\b(?:proxy-)?authorization["']?\s*[:=]\s*[^\r\n]*/gi,'Authorization: [redacted]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,'Bearer [redacted]');
+}
+function reportFailure(error) {
+  process.exitCode=1;
+  try {console.error(redact(inspect(error,{customInspect:false,getters:false,depth:8,maxStringLength:null})));}
+  catch {console.error('Browser probe failed; diagnostic unavailable.');}
+}
+module.exports={observeErrors,run,reportFailure};
+async function run(failureSignal) {
+  const failures=[],externalEvent={};
+  let forwardedExternal=false;
+  const external=failureSignal && Promise.resolve(failureSignal).then(()=>new Promise(()=>{}),reason=>{
+    failures.push(reason);externalEvent.reason=reason;return externalEvent;
+  });
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
     args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   let tearingDown=false,phase='startup',result,state,departureClosed=false,published=false,version='unknown';
-  const failures=[];
   const errors=[],requestFailures=[];
   const publish=failedPhase=>{
     if(published) return;
     const report={browser:'Chromium',version,result,state,errors,requestFailures,departureClosed};
     if(failedPhase) report.runnerFailurePhase=failedPhase;
-    const output=JSON.stringify(report);
+    const output=JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value);
     published=true;
     process.stdout.write(output);
   };
@@ -66,7 +85,11 @@ async function run() {
   let watchdog;
   const deadline=new Promise((_resolve,reject)=>{watchdog=setTimeout(()=>reject(deadlineError),70000);});
   // After the deadline, no awaited browser call can resume this owner.
-  const wait=operation=>Promise.race([operation,deadline]);
+  const wait=async operation=>{
+    const value=await Promise.race(external?[operation,deadline,external]:[operation,deadline]);
+    if(value===externalEvent){forwardedExternal=true;throw externalEvent.reason;}
+    return value;
+  };
   try {
     const context = await wait(browser.newContext());
     const page = await wait(context.newPage());
@@ -107,7 +130,7 @@ async function run() {
     publish();
     if (errors.length || result.passed !== true) process.exitCode=1;
   } catch(error) {
-    failures.push(error);
+    if(!forwardedExternal) failures.push(error);
     process.exitCode=1;
     try {publish(phase);} catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
@@ -117,7 +140,4 @@ async function run() {
   }
   if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation, reporting and cleanup failed');
 }
-if (require.main===module) run().catch(error => {
-  process.exitCode=1;
-  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
-});
+if (require.main===module) run().catch(reportFailure);

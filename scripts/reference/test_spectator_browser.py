@@ -117,6 +117,100 @@ module.exports={chromium:{launch:async()=>browser}};
                     else:
                         self.assertIn(expected_error, result.stderr)
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for route ownership process controls')
+    def test_acceptance_routes_remain_owned_and_redact_capabilities(self):
+        directory = Path(__file__).parent / 'browser'
+        stub = r"""
+const fs=require('node:fs'),{EventEmitter}=require('node:events');
+const phase=process.env.FORTRESS_ROUTE_PHASE;
+const reason=phase==='undefined'?undefined:Error('route-'+phase+'-safe\nAuthorization: Bearer REVIEW_SENTINEL\nruntime RUNTIME_CAPABILITY_SENTINEL');
+const second=Error('second-route-safe');
+const cleanup=Error('cleanup-safe\nAuthorization: Bearer REVIEW_SENTINEL');
+const operation=Error('operation-safe');
+const stats={closes:0,finished:false};
+global.fixture={reason,second,cleanup,operation,stats};
+global.window={WebSocket:class {}};
+const page=new EventEmitter();
+let handler,evaluations=0;
+page.addInitScript=async(fn,data)=>fn(data);
+page.route=async(_pattern,callback)=>{handler=callback;};
+page.isClosed=()=>false;
+page.evaluate=async(fn,data)=>{
+  evaluations++;
+  if((phase==='evaluate' && evaluations===1) || (phase==='release' && evaluations===2))throw reason;
+  return fn(data);
+};
+page.waitForFunction=()=>new Promise(()=>{});
+page.goto=async()=>{
+  window.fortressSpectatorFrame=0;
+  window.fortressSpectatorAcceptAcknowledged=false;
+  const start=currentReason=>handler({fetch:async()=>{
+    if(phase.startsWith('late'))await new Promise(resolve=>setTimeout(resolve,phase==='late-after-close'?30:8));
+    if(['fetch','undefined','late','late-after-close','late-multiple'].includes(phase))throw currentReason;
+    return {};
+  },fulfill:async()=>{if(phase==='fulfill')throw reason;}});
+  start(reason);
+  if(phase==='late-multiple')start(second);
+  if(phase.startsWith('late'))throw operation;
+  return new Promise(()=>{});
+};
+const browser={newContext:async()=>({newPage:async()=>page}),version:()=> 'stub',close:async()=>{
+  stats.closes++;
+  await new Promise(resolve=>setTimeout(resolve,phase==='late-after-close'?2:15));
+  stats.finished=true;
+  if(process.env.FORTRESS_ROUTE_CLOSE_FAILURE==='1')throw cleanup;
+}};
+module.exports={chromium:{launch:async()=>browser}};
+"""
+        script = """
+const fs=require('node:fs'),path=require('node:path');
+const directory=process.argv[1],runtime=process.argv[2],report=process.argv[3];
+const runner=require(path.join(directory,'spectator.cjs')),run=runner.run;
+runner.run=async signal=>{
+  try {return await run(signal);} catch(error) {
+    const values=[];
+    const visit=value=>{if(value instanceof AggregateError)value.errors.forEach(visit);else values.push(value);};
+    visit(error);
+    const fixture=global.fixture;
+    fs.writeFileSync(report,JSON.stringify({route:values.includes(fixture.reason),cleanup:values.includes(fixture.cleanup),
+      operation:values.includes(fixture.operation),second:values.includes(fixture.second),singleIdentity:error===fixture.reason,...fixture.stats}));
+    throw error;
+  }
+};
+process.argv=['node',path.join(directory,'spectator_acceptance.cjs'),'http://fixture.invalid',runtime];
+require(path.join(directory,'spectator_acceptance.cjs'));
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            temporary = Path(folder)
+            package = temporary / 'playwright.cjs'
+            package.write_text(stub, encoding='utf-8')
+            runtime = temporary / 'runtime.json'
+            runtime.write_text(json.dumps({'viewer_token': 'RUNTIME_CAPABILITY_SENTINEL'}), encoding='utf-8')
+            for phase in ['fetch', 'evaluate', 'release', 'fulfill', 'undefined', 'late', 'late-after-close', 'late-multiple']:
+                for close_failure in [False, True]:
+                    report = temporary / (phase + str(close_failure) + '.json')
+                    environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_ACCEPT_DELAY_MS': '1',
+                                   'FORTRESS_ROUTE_PHASE': phase, 'FORTRESS_ROUTE_CLOSE_FAILURE': str(int(close_failure))}
+                    result = subprocess.run(['node', '--unhandled-rejections=strict', '-e', script, str(directory.resolve()), str(runtime), str(report)],
+                                            env=environment, capture_output=True, encoding='utf-8', timeout=10)
+                    with self.subTest(phase=phase, close_failure=close_failure):
+                        self.assertEqual(result.returncode, 1)
+                        self.assertTrue(report.exists(), 'the runner owner must receive the route failure')
+                        observed = json.loads(report.read_text(encoding='utf-8'))
+                        self.assertTrue(observed['route'], 'the original route reason must reach the owner unchanged')
+                        self.assertEqual(observed['cleanup'], close_failure)
+                        self.assertEqual(observed['operation'], phase.startswith('late'))
+                        self.assertEqual(observed['second'], phase == 'late-multiple')
+                        self.assertEqual(observed['closes'], 1)
+                        self.assertTrue(observed['finished'])
+                        if not close_failure and not phase.startswith('late'):
+                            self.assertTrue(observed['singleIdentity'])
+                        self.assertIn('runnerFailurePhase', json.loads(result.stdout))
+                        self.assertNotIn('REVIEW_SENTINEL', result.stdout + result.stderr)
+                        self.assertNotIn('RUNTIME_CAPABILITY_SENTINEL', result.stdout + result.stderr)
+                        self.assertNotIn('triggerUncaughtException', result.stderr)
+                        self.assertIn('undefined' if phase == 'undefined' else 'route-' + phase + '-safe', result.stderr)
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for browser process controls')
     def test_runner_process_rejects_active_request_failure(self):
         source = Path(__file__).parent / 'browser/spectator.cjs'
