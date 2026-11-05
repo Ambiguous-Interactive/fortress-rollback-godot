@@ -88,7 +88,9 @@ EXPECTED.update({
     'res://tests/unit/test_spectator_policy.gd': {
         'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status', 'gapped_end'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
-    'res://tests/unit/test_replay_speed.gd': {'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls', 'timeline'},
+    'res://tests/unit/test_replay_speed.gd': {
+        'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls', 'focus_loss', 'timeline',
+    },
 })
 EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
     'final_history', 'staged_sample', 'failures', 'guards', 'expert_parity', 'matching_tail', 'boundary_checksum', 'client_history'}

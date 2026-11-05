@@ -35,7 +35,7 @@ class FocusGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "timeline"])
+	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "focus_loss", "timeline"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -43,6 +43,8 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.equal(viewer.has_method("set_playback_speed"), true, "playback speed can be selected")
 	if viewer.has_method("set_playback_speed"):
 		match name:
+			"focus_loss":
+				_focus_loss(context)
 			"timeline":
 				_timeline(context)
 			"keyboard_controls":
@@ -285,7 +287,6 @@ func _scene_backward_step(context: RefCounted) -> void:
 # Value: protects=keyboard inspection shares visible playback and navigation gates; fails_when=keys bypass checks or repeat unexpectedly;
 # why_new=button tests do not dispatch keyboard input; seam=none
 func _keyboard_controls(context: RefCounted) -> void:
-	_focus_loss(context)
 	var node: Node2D = Scene.instantiate()
 	node._ready()
 	context.equal(node.has_method("_unhandled_key_input"), true, "viewer offers keyboard inspection")

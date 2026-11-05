@@ -15,6 +15,7 @@ The trigger is a new client capability and regression investigation.
 | Parallel source editing can invalidate otherwise passing local probes. | Spectator and driver focused receipts report source drift or host-capacity contention. | Preserve disqualified receipts and run final aggregate tests after source freeze; existing infrastructure guidance already covers this. |
 | Repeat can own an automatic seek while ordinary playback is false. | Cold reviewer reproduced unfocused resume through a selected range; `tests/unit/test_replay_speed.gd` now crosses focus with the internal seek. | Extend the focus pause to cancel pending automatic resume; preserve explicit seek completion. |
 | Accelerated playback can begin several request lifetimes inside one UI tick. | Second cold review delivered focus inside the first 4× simulation callback and observed three extra advances. | Apply deferred pause at the request boundary, not only the next UI tick; extend style guidance. |
+| Independent focus checks were hidden inside the keyboard case. | CodeRabbit thread on PR #327; filtered focus selection could not reach a named focus case. | Register a separate focus case, update the browser inventory and extend existing testing guidance. |
 | Mutating the original recording does not corrupt an owned imported copy. | Replay negative control now corrupts serialized input before opening it. | Retain the installed-decoder control; existing infrastructure guidance already requires serialized corruption. |
 
 ## Prune Ledger
