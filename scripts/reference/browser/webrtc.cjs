@@ -1,4 +1,5 @@
 // Real independent exported Godot instances, with faults at the browser data-channel boundary.
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const https = require('node:https');
 const net = require('node:net');
@@ -283,6 +284,17 @@ async function captureFailure(pages, players) {
   }));
 }
 
+function describeFailure(value,failures,descriptions) {
+  if(descriptions.has(value))return descriptions.get(value);
+  let text;
+  try {text=String(value);} catch(error) {
+    text='unprintable failure';
+    if(!failures.includes(error))failures.push(error);
+  }
+  descriptions.set(value,text);
+  return text;
+}
+
 async function main() {
   const engines = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const browserPair = JSON.parse(process.env.FORTRESS_BROWSER_PAIR || '["chromium","chromium"]');
@@ -335,6 +347,8 @@ async function main() {
   const browsers = [];
   const records = [];
   const failed_rooms = [];
+  const failures=[];
+  const descriptions=new Map();
   try {
     for (const name of browserPair) browsers.push(await engines[name].launch(name === 'chromium' ? {
       headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -346,6 +360,8 @@ async function main() {
       const contexts = [];
       const pages = [];
       const displays = [];
+      const roomFailures=[];
+      let teardown;
       try {
         await boundedRoom(async () => {
         await boundedRoom(async () => {
@@ -359,7 +375,9 @@ async function main() {
           page.on('console', message => {
             const entry = { count, index, type: message.type(), text: message.text() };
             logs.push(entry);
-            if (diagnostic) fs.appendFileSync(diagnostic, JSON.stringify(entry) + '\n');
+            if(diagnostic)try {fs.appendFileSync(diagnostic,JSON.stringify(entry)+'\n');} catch(error) {
+              failures.push(error);errors.push({count,index,error:'browser diagnostic log write failed'});
+            }
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
@@ -401,14 +419,20 @@ async function main() {
         try {
           await Promise.all(pages.map(page => page.waitForFunction(resourcesClosed, peerDrop || recordingPressure, { timeout: 10000 })));
         } catch (error) {
-          const resources = await Promise.all(pages.map(page => page.evaluate(() => ({
-            result: document.body.dataset.fortressWebrtc,
-            connections: window.fortressResources.connections.map(connection => ({ state: connection.connectionState,
-              ice: connection.iceConnectionState, signaling: connection.signalingState })),
-            channels: window.fortressResources.channels.map(channel => ({ id: channel.id, state: channel.readyState })),
-            websockets: window.fortressSockets.map(record => record.socket.readyState),
-          }))));
-          throw new Error(JSON.stringify({ teardown: resources, cause: String(error) }));
+          const causes=[error];
+          teardown={resources:null};
+          try {
+            const observed=await Promise.allSettled(pages.map(async page=>page.evaluate(()=>({
+              result: document.body.dataset.fortressWebrtc,
+              connections: window.fortressResources.connections.map(connection=>({state:connection.connectionState,
+                ice:connection.iceConnectionState,signaling:connection.signalingState})),
+              channels: window.fortressResources.channels.map(channel=>({id:channel.id,state:channel.readyState})),
+              websockets: window.fortressSockets.map(record=>record.socket.readyState),
+            }))));
+            teardown.resources=observed.map(result=>result.status==='fulfilled'?result.value:null);
+            for(const result of observed)if(result.status==='rejected')causes.push(result.reason);
+          } catch(diagnosticError) {causes.push(diagnosticError);}
+          throw causes.length===1?error:new AggregateError(causes,'resource closure and diagnostics failed');
         }
         const peers = await Promise.all(pages.map(page => page.evaluate(() => ({
           result: JSON.parse(document.body.dataset.fortressWebrtc), rtc: { ...window.fortressRtc, teardown: {
@@ -434,11 +458,21 @@ async function main() {
         records.push({ players: count, peers });
         });
       } catch (error) {
+        roomFailures.push(error);
         // Preserve live socket evidence before context.close destroys the failed room.
-        failed_rooms.push({ players: count, peers: await captureFailure(pages, count) });
-        throw error;
+        try {
+          const record={players:count,peers:await captureFailure(pages,count)};
+          if(teardown!==undefined)record.teardown=teardown;
+          failed_rooms.push(record);
+        } catch(diagnosticError) {roomFailures.push(diagnosticError);}
       } finally {
-        await Promise.all(contexts.map(context => context.close()));
+        const closed=await Promise.allSettled(contexts.map(context=>Promise.resolve().then(()=>context.close())));
+        for(const result of closed) if(result.status==='rejected') roomFailures.push(result.reason);
+      }
+      if(roomFailures.length) {
+        if(roomFailures.length===1)throw roomFailures[0];
+        const messages=roomFailures.slice().map(value=>describeFailure(value,roomFailures,descriptions));
+        throw new AggregateError(roomFailures,'room operation and cleanup failed: '+messages.join('; '));
       }
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
@@ -448,15 +482,26 @@ async function main() {
       faults, corrupt, defaultFactory, mixed, mixedDefault, disableFallback, physicalClose, peerDrop, dropCorrupt, dropClose, dropAnswer, dropRelay, recordingPressure,
       records, errors }));
   } catch (error) {
-    console.error(JSON.stringify({ failure: String(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
-      version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
-      browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })) }));
-    throw error;
+    failures.push(error);
+    try {
+      console.error(JSON.stringify({ failure: describeFailure(error,failures,descriptions), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
+        version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
+        browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })) }));
+    } catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
-    await Promise.all(browsers.map(browser => browser.close()));
-    server.close();
+    const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
+    for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
+    try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
+  }
+  if(failures.length) {
+    if(failures.length===1)throw failures[0];
+    const messages=failures.slice().map(value=>describeFailure(value,failures,descriptions));
+    throw new AggregateError(failures,'browser operation and cleanup failed: '+messages.join('; '));
   }
 }
 
 module.exports = { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc };
-if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });
+if (require.main === module) main().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});

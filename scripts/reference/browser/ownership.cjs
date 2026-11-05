@@ -1,4 +1,5 @@
 // Execute a bounded ownership suite batch in a real release Web export.
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -40,6 +41,7 @@ const path = require('node:path');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   let browser;
+  const failures=[];
   let observation;
   let verifyDownloads = () => {};
   try {
@@ -68,48 +70,57 @@ const path = require('node:path');
         // Each batch keeps the existing page budget on bounded CI runners.
         await page.waitForFunction(() => document.body.dataset.fortressOwnership !== undefined, null, { timeout: 180000 });
       } catch (error) {
-        // The watchdog rejected the run before the inventory could be
-        // printed. Report what the page saw, so an engine or script failure
-        // can be told apart from a run that was merely too slow. The
-        // inventory is printed first: reading the page can fail when the
-        // renderer is gone, and that failure must not hide this one.
-        const detail = { stage: 'ownership-result', suites, errors };
-        if (caseName !== null) detail.case = caseName;
-        console.error(JSON.stringify(detail));
+        const causes=[error];
         try {
-          detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
-        } catch (page_error) {
-          detail.reported = null;
-          detail.page_error = String(page_error).slice(0, 200);
-        }
-        // The page publishes the case that was executing, the number of
-        // completed cases and the time the last completed case took, so a
-        // rejected run names where it stopped and how long it took.
-        try {
-          const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
-          detail.progress = progress === undefined ? null : JSON.parse(progress);
-        } catch (progress_error) {
-          detail.progress = null;
-          detail.progress_error = String(progress_error).slice(0, 200);
-        }
-        console.error(JSON.stringify(detail));
-        throw error;
+          // The watchdog rejected the run before the inventory could be
+          // printed. Report what the page saw, so an engine or script failure
+          // can be told apart from a run that was merely too slow. The
+          // inventory is printed first: reading the page can fail when the
+          // renderer is gone, and that failure must not hide this one.
+          const detail = { stage: 'ownership-result', suites, errors };
+          if (caseName !== null) detail.case = caseName;
+          console.error(JSON.stringify(detail));
+          try {
+            detail.reported = await page.evaluate(() => document.body.dataset.fortressOwnership !== undefined);
+          } catch (page_error) {
+            detail.reported = null;
+            detail.page_error = String(page_error).slice(0, 200);
+          }
+          // The page publishes the case that was executing, the number of
+          // completed cases and the time the last completed case took, so a
+          // rejected run names where it stopped and how long it took.
+          try {
+            const progress = await page.evaluate(() => document.body.dataset.fortressOwnershipProgress);
+            detail.progress = progress === undefined ? null : JSON.parse(progress);
+          } catch (progress_error) {
+            detail.progress = null;
+            detail.progress_error = String(progress_error).slice(0, 200);
+          }
+          console.error(JSON.stringify(detail));
+        } catch(diagnosticError) {causes.push(diagnosticError);}
+        throw causes.length===1?error:new AggregateError(causes,'ownership result and diagnostics failed');
       }
       if (errors.length) throw new Error(JSON.stringify(errors));
       const result = await page.evaluate(() => JSON.parse(document.body.dataset.fortressOwnership));
       observation = { browser: selected === 'chromium' ? 'Chromium' : 'Firefox', version: browser.version(), result, errors };
       if (selected === 'firefox') Object.assign(observation, { firefox_preferences: preferences, display });
     }
-  } finally {
-    try {
-      if (browser) {
-        // Closing owned windows releases Firefox's startup-idle wait before process shutdown.
-        try { await Promise.all(browser.contexts().map(context => context.close())); }
-        finally { await browser.close(); }
-      }
-    } finally { server.close(); }
+  } catch(error) {failures.push(error);} finally {
+    if(browser) {
+      // Wait for every owned window before Firefox process shutdown, including after rejection.
+      try {
+        const closed=await Promise.allSettled(browser.contexts().map(context=>Promise.resolve().then(()=>context.close())));
+        for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
+      } catch(error) {failures.push(error);}
+      try {await browser.close();} catch(error) {failures.push(error);}
+    }
+    try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
+  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'ownership and cleanup failed');
   verifyDownloads();
   if (errors.length) throw new Error(JSON.stringify(errors));
   console.log(JSON.stringify(observation));
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});

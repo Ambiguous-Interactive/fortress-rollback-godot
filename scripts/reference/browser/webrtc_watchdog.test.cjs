@@ -180,7 +180,7 @@ test('actual default main orchestration waits for delayed terminal setup before 
   const browser = { version: () => '141', async close() {}, async newContext() {
     return { async newPage() { return makePage(); }, async close() {} };
   } };
-  const server = { on() {}, listen(port, host, ready) { ready(); }, address() { return { port: 123 }; }, close() {} };
+  const server = { on() {}, listen(port, host, ready) { ready(); }, address() { return { port: 123 }; }, close(done) { done(); } };
   const mainModule = { exports: {} };
   const fakeRequire = name => {
     if (name === './webrtc_watchdog.cjs') return watchdogModule.exports;
