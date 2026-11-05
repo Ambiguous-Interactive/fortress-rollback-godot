@@ -11,6 +11,7 @@ class Game:
 	var transcript: Array[Array] = []
 	var records_statuses: bool = false
 	var state: int = 0
+	var canonical: Array[int] = []
 
 	func save_state(_frame: int, _writer: RefCounted) -> Driver.SaveResult:
 		return Driver.SaveResult.new(false)
@@ -33,17 +34,19 @@ class Game:
 			row.append(input.bytes[0])
 			if records_statuses:
 				row.append(input.status)
-				state = (state * 17 + input.bytes[0] + input.status * 31 + frame) % 1000000007
+			state = (state * 17 + input.bytes[0] + input.status * 31 + frame) % 1000000007
 		if records_statuses:
 			row.append(state)
 		transcript.append(row)
+		canonical.append(state)
 		return true
 
 
 func _initialize() -> void:
 	var traces: Array[Dictionary] = []
+	var reordered: bool = "--reordered" in OS.get_cmdline_user_args()
 	var statuses: bool = "--statuses" in OS.get_cmdline_user_args()
-	var roster: bool = statuses or "--roster" in OS.get_cmdline_user_args()
+	var roster: bool = reordered or statuses or "--roster" in OS.get_cmdline_user_args()
 	var delayed: bool = roster or "--delayed" in OS.get_cmdline_user_args()
 	var mutate_input: bool = "--mutate-input" in OS.get_cmdline_user_args()
 	var configurations: Array[Vector2i] = []
@@ -56,6 +59,8 @@ func _initialize() -> void:
 		var players: int = configurations[case_id / 8].x
 		var reserved_slot: int = configurations[case_id / 8].y
 		var workload: int = case_id % 8
+		if reordered and workload >= 4:
+			continue
 		var capacity: int = (4 if delayed else 2) + (workload / 2) % 2
 		var preplay: bool = workload < 4
 		var delay: int = (1 if preplay else capacity - 1) if delayed else 0
@@ -82,6 +87,8 @@ func _initialize() -> void:
 		var service_observations: Array[Dictionary] = [_policy(viewer)]
 		var cycles: Array[Dictionary] = []
 		var empty: Array[Driver.LocalInput] = []
+		var held_row: Array[PackedByteArray] = []
+		var deliveries: Array[Array] = []
 		for frame: int in range(12):
 			var sample: int = (1 - frame % 2) if mutate_input and frame < 2 else frame % 2
 			var row: Array[PackedByteArray] = []
@@ -107,7 +114,19 @@ func _initialize() -> void:
 				if viewer.receive_host_frame(0, first_row, row_statuses).code != Types.Code.OK:
 					quit(2)
 					return
-			if (not statuses or frame > 0) and viewer.receive_host_frame(frame, row, row_statuses).code != Types.Code.OK:
+			if reordered:
+				if frame % 2 == 0:
+					held_row = row
+				else:
+					var order: Array[int] = [frame, frame, frame - 1, frame - 1]
+					if "--mutate-delivery" in OS.get_cmdline_user_args():
+						order = [frame - 1, frame]
+					for delivered: int in order:
+						if viewer.receive_host_frame(delivered, row if delivered == frame else held_row).code != Types.Code.OK:
+							quit(2)
+							return
+						deliveries.append([delivered, 0])
+			elif (not statuses or frame > 0) and viewer.receive_host_frame(frame, row, row_statuses).code != Types.Code.OK:
 				quit(2)
 				return
 			observations.append(_observe(viewer))
@@ -115,7 +134,7 @@ func _initialize() -> void:
 			# Preserve preplay backlog; the second case starts before filling a complete ring.
 			var full: bool = viewer.host_frontier() - viewer.status().current_frame + 1 == capacity
 			var service: bool = full if delayed else ((preplay and frame % capacity == capacity - 1) or (not preplay and frame % capacity == 0))
-			if service or frame == 11:
+			if (frame % 2 == 1 if reordered else service) or frame == 11:
 				while viewer.recommended_steps() > 0:
 					var before: Dictionary = _policy(viewer)
 					var advice: int = viewer.recommended_steps()
@@ -147,6 +166,10 @@ func _initialize() -> void:
 			traces[-1]["players"] = players
 		if statuses:
 			traces[-1]["reserved_slot"] = reserved_slot
+		if reordered:
+			traces[-1]["reordered"] = true
+			traces[-1]["deliveries"] = deliveries
+			traces[-1]["canonical"] = game.canonical
 	print("FORTRESS_SPECTATOR_TRACE " + JSON.stringify(traces))
 	quit(0)
 

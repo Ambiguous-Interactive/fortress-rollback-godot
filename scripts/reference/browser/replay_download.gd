@@ -24,6 +24,8 @@ var _original_valid: bool = false
 var _download_original: Replay
 var _download_frame: int = -1
 var _disconnected_rows: int = 0
+var _inspection_original: PackedByteArray
+var _inspection_target: int = -1
 
 
 func _ready() -> void:
@@ -74,6 +76,36 @@ func _select(index: int) -> void:
 func _command(arguments: Array) -> void:
 	var command: String = str(arguments[0])
 	match command:
+		"inspection_prepare":
+			_select(0)
+			scene.viewer.restart()
+			scene.viewer.set_playback_speed(1)
+			_inspection_target = 300 if int(arguments[1]) == 1 else 2
+			if int(arguments[1]) == 1:
+				scene.viewer.set_repeat_range(300, 400)
+				scene.viewer.set_repeat_playback(true)
+			else:
+				scene.viewer.seek(2)
+				while scene.viewer.is_seeking():
+					scene.viewer.tick()
+				scene.viewer.set_repeat_playback(false)
+			scene.viewer.toggle_play()
+			for tick: int in 1 if int(arguments[1]) == 1 else 3:
+				scene.viewer.tick()
+			var inspected: Simulation = Simulation.new()
+			for frame: int in _inspection_target:
+				inspected.simulate_frame(frame, recording.inputs(frame))
+			_inspection_original = inspected.canonical_bytes()
+		"service":
+			for tick: int in int(arguments[1]):
+				scene._physics_process(0.0)
+		"play":
+			scene._toggle()
+		"expert":
+			scene.viewer._player.begin_advance()
+		"retire_expert":
+			scene.viewer._player.terminate()
+			scene.viewer.restart()
 		"prepare_download":
 			_download_original = recording
 			_download_frame = FRAMES[selected]
@@ -161,6 +193,13 @@ func _publish_state() -> void:
 	var button: Rect2 = scene._prefix_download.get_global_rect()
 	var open: Rect2 = _open_button.get_global_rect()
 	var state: Dictionary = {
+		"playing": scene.viewer.is_playing,
+		"speed": scene.viewer.playback_speed_quarters(),
+		"inspection_target": _inspection_target,
+		"inspection_original": _inspection_original.hex_encode(),
+		"open_disabled": _open_button.disabled,
+		"busy": scene.viewer._is_busy(),
+		"old_retired": _prior_player != null and _prior_player.failure_code() == Types.Code.TERMINATED,
 		"case": CASES[selected],
 		"target": FRAMES[selected],
 		"frame": scene.viewer.current_frame(),

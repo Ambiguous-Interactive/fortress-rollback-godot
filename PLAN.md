@@ -32,6 +32,7 @@ Local development contracts and evidence entry points:
 - [Game integration guide, frame loop and confirmed one-time effects](docs/integration.md).
 - [Match recording, replay files, verified captured prefixes and playback failure evidence](docs/integration.md#record-and-replay-a-match).
 - [Confirmed-input spectator playback, bounded envelopes, retained publication, viewed-history replay export and local buffering/pause/restart guidance](docs/spectators.md).
+- [Pinned-source spectator comparisons, including reordered and duplicated delivery](docs/spectators.md#check-playback-against-the-pinned-spectator-model).
 - [Native replay file drops, replay timeline and time navigation](docs/online-example.md#record-and-download-a-replay).
 - [Actual received browser prefix files, production-picker reimport and remaining supervision qualification](docs/experiments/buffer-ownership.md#received-browser-replay-downloads).
 - [Online match recording, downloads and online/spectator offline replay viewer with backward/input inspection and comparison-specific failure reports](docs/online-example.md#record-and-download-a-replay).
@@ -43,7 +44,7 @@ Local development contracts and evidence entry points:
 - [Offline canonical diagnostic reproduction](docs/diagnostic-reproduction.md).
 - [Runtime input-delay increases and their result codes](docs/integration.md#change-input-delay-during-a-match).
 - [Measured input-delay suggestions](docs/integration.md#suggested-input-delay).
-- [Playable input-driven shots, confirmation and prediction stalls](docs/integration.md#try-the-effects-example).
+- [Playable input-driven shots, confirmation, prediction stalls and independently paused replay inspection](docs/integration.md#try-the-effects-example).
 - [Playable online room setup and controls](docs/online-example.md).
 - [Online suspension, elapsed-time expiry and fresh-room restart](docs/online-example.md#suspension-and-expiry).
 - [Online terminal connection cleanup and fresh-room recovery](docs/online-example.md#leave-and-restart).

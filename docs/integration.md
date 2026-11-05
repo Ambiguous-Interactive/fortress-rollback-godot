@@ -29,7 +29,10 @@ The ending plays each final confirmed effect once and captures the replay’s te
 A recording that reached its ten-minute cap remains a shorter prefix; finishing does not pad it with missing gameplay.
 Restart with **R** to select a fresh effects ledger and resume play at the current delay.
 Press **P** to pause and watch a replay of the confirmed frames so far. It starts from a fresh game,
-checks every recorded checksum and ends on the corrected state. Press **P** again to return to the match.
+checks every recorded checksum and ends on the corrected state. During replay, **O** pauses or resumes playback;
+**N** plays one recorded frame while paused. The pointer buttons switch to the same replay controls.
+Leaving the application also pauses replay; returning requires explicit resume.
+Press **P** again to return to the match with its previous live pause state preserved.
 The buttons below the instructions provide the same delay, replay and restart actions.
 Clicks preserve movement focus. Delay buttons wait while replay is open; all buttons wait during active game work.
 A refused restart preserves the current match and its confirmed-effect pulses.

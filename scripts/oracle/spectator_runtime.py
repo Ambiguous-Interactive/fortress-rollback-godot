@@ -197,6 +197,8 @@ def check(engine, output, jar, root):
     roster = check_roster(engine, output / 'roster')
     from spectator_status import check as check_status
     statuses = check_status(engine, output / 'statuses')
+    from spectator_reordered import check as check_reordered
+    reordered = check_reordered(engine, output / 'reordered')
     evidence = []
     for trace in traces[0]:
         label = ('preplay-' if trace['preplay'] else 'started-') + str(trace['capacity']) + '-speed-' + str(trace['speed'])
@@ -224,7 +226,8 @@ def check(engine, output, jar, root):
         evidence.append(item)
     if digest(Path(engine)) != engine_hash:
         raise ValueError('spectator engine changed during observation')
-    return {'complete': True, 'traces': evidence, 'rust': rust, 'delayed': delayed, 'roster': roster, 'statuses': statuses, 'repetitions': 2, 'engine_version': version,
+    return {'complete': True, 'traces': evidence, 'rust': rust, 'delayed': delayed, 'roster': roster, 'statuses': statuses, 'reordered': reordered, 'repetitions': 2,
+            'engine_version': version,
             'engine_sha256': engine_hash, 'observations_sha256': digest(output / 'observed.json'),
             'pinned_runtime_sha256': digest(UPSTREAM / 'src/sessions/p2p_spectator_session.rs'),
             'limitations': ['Preplay backlog diverges from the pinned model at its NULL frame sentinel; see issue #203.',

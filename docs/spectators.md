@@ -824,6 +824,15 @@ Missing eight-player work, corrupted last-slot input and numeric type changes ar
 separate rejected controls. These workloads extend confirmed-input source coverage;
 they do not extend the binary two-player formal projection.
 
+Another 28 source workloads reverse pairs of distinct host emissions and deliver each emission twice.
+They cover two through eight players, capacities four/five, catch-up speeds one/two and delay one.
+Godot receives the corresponding reversed duplicate complete rows; Rust uses its original compressed protocol.
+Both runtimes must preserve every ordered callback row and each independently reconstructed canonical prefix.
+The gate checks actual emission/delivery identities, ring contents and complete service/request schedules twice.
+An executed healthy-delivery control preserves the canonical states but must fail the required fault inventory.
+An executed player-order control preserves each row's input sum but fails the ordered history comparison.
+These cases cover bounded pair reordering and duplication, without loss, host expiry or live transport claims.
+
 A separate 280-workload comparison reserves each slot position in turn in the pinned
 Rust host. Each trace names its reserved slot; every roster keeps the original last-slot controls. The actual source builder freezes that slot at its default input zero
 and supplies `Disconnected` status from frame zero. Other slots keep their changing

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -183,6 +184,8 @@ EXPECTED['res://tests/unit/test_snapshot_history.gd'] = {'round_trip', 'failures
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'restart_lifetimes', 'restart_busy', 'service_busy'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'playback_feedback', 'terminal_feedback', 'host_delay_controls'})
 EXPECTED['res://tests/unit/test_integration_controls.gd'] = {'live_controls', 'replay_controls', 'stopped_controls'}
+EXPECTED['res://tests/unit/test_integration_focus.gd'] = {
+    'live_focus_pause', 'finishing_focus_pause', 'completion_focus_pause', 'replay_focus_pause', 'replay_inspection'}
 EXPECTED['res://tests/unit/test_integration_finish.gd'] = {'confirmed_ending', 'finish_ownership', 'empty_and_capped'}
 EXPECTED['res://tests/unit/test_integration_effect_reentry.gd'] = {'effect_reentry', 'effect_cancellation'}
 EXPECTED['res://tests/unit/test_integration_demo.gd'] = {
@@ -278,7 +281,7 @@ FILES += ['tests/unit/test_driver_lifecycle_parity.gd']
 FILES += ['tests/unit/test_driver_drop_parity.gd']
 FILES += ['tests/unit/test_peer_notifications.gd']
 FILES += ['tests/unit/test_replay_configuration.gd']
-FILES += ['tests/unit/test_integration_controls.gd', 'tests/unit/test_integration_restart.gd', 'tests/unit/test_integration_finish.gd']
+FILES += ['tests/unit/test_integration_focus.gd', 'tests/unit/test_integration_controls.gd', 'tests/unit/test_integration_restart.gd', 'tests/unit/test_integration_finish.gd']
 FILES += ['tests/unit/test_peer_expert.gd', 'tests/unit/test_snapshot_history.gd', 'tests/unit/test_integration_demo.gd',
           'tests/unit/test_integration_effect_reentry.gd', 'examples/integration/integration.gd']
 FILES += ['addons/fortress_rollback/transport/signalfish_adapter.gd', 'addons/fortress_rollback/transport/signalfish_membership.gd',
@@ -338,6 +341,7 @@ const ReplayViewerPrefix = preload("res://tests/unit/test_replay_viewer_prefix.g
 const ReplayViewerLifetime = preload("res://tests/unit/test_replay_viewer_lifetime.gd")
 const ReplayInputNavigation = preload("res://tests/unit/test_replay_input_navigation.gd")
 const ReplayFinalCoverage = preload("res://tests/unit/test_replay_final_coverage.gd")
+const IntegrationFocus = preload("res://tests/unit/test_integration_focus.gd")
 const IntegrationControls = preload("res://tests/unit/test_integration_controls.gd")
 const IntegrationFinish = preload("res://tests/unit/test_integration_finish.gd")
 const IntegrationDemo = preload("res://tests/unit/test_integration_demo.gd")
@@ -403,7 +407,8 @@ func _run_suites() -> void:
 \t\tReplayTerminalRecovery, ReplayTerminal, ReplayCheckpoints, SpectatorStream, CallbackSignatures, ScriptViewTypes,
 \t\tReplayDiagnostics, SpectatorDemo, SpectatorDemoRecording, SpectatorPolicy, SpectatorPublisher, ReplaySpeed, ReplayInputNavigation, ReplayViewerLifetime, ReplayViewerPrefix,
 		DriverRecovery, PeerRecovery, PeerReplayCapture, PeerNotifications, ReplayFinalCoverage, ReplayCoverage, SpectatorModel, FrameInputs, InputQueue,
-		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationFinish, IntegrationRestart, IntegrationEffectReentry, IntegrationControls,
+		ReplayExpert, ReplayDrop, ReplayConfiguration, PeerExpert, SnapshotHistory, IntegrationDemo, IntegrationFinish, IntegrationRestart,
+		IntegrationEffectReentry, IntegrationControls, IntegrationFocus,
 		ReplayPrefix,
 		PeerChecksumRepair, SpectatorStatus, SpectatorHistory, DropInventory, DropHistory, DropMultiSlot,
 		HistoryBackfill, DriverParity, DriverPeerParity, DriverDropParity, DropBackfill, DropReplay, DropCapacity, DropEviction, DropHistoryPressure, DropDonorFairness,
@@ -501,6 +506,14 @@ def validate_browser(browser, identity, selected='chromium', pins=None):
     if identity is not None and observed != identity:
         raise ValueError('browser identity changed between batches')
     return observed
+
+
+def validate_download_control(code, text, control):
+    """Accept only the expected sole top-level Error and its ordinary stack frames."""
+    diagnostic = CONTROL_DIAGNOSTICS.get(control)
+    if (type(code) is not int or code != 1 or type(text) is not str or diagnostic is None
+            or re.fullmatch(r'Error: ' + re.escape(diagnostic) + r'(?:\r?\n    at [^\r\n]+)*\r?\n?', text) is None):
+        raise ValueError('replay download control failed outside its expected diagnostic: ' + control)
 
 
 def validate(result, negative, expected=None):
@@ -722,6 +735,7 @@ def rejected_state(progress):
 def source_inventory():
     helpers = ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
+               'scripts/reference/browser/replay_chooser.cjs',
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
                'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -770,6 +784,40 @@ def tool_inventory(paths):
             if source.is_file():
                 result[key] = digest(source)
     return result
+
+
+def export_chooser_control(project, staged_frozen, base, environment, export, tools, tools_frozen, log):
+    """Export the exact chooser-pause omission while preserving the healthy staged image."""
+    verify_staged(project, staged_frozen)
+    verify_tools(tools, tools_frozen)
+    relative = 'examples/online/replay_scene.gd'
+    source = project / relative
+    original = source.read_bytes()
+    before = digest(source)
+    target = b'func _open() -> void:\n\tif _is_scrubbing or viewer._is_busy():\n\t\treturn\n\tviewer.request_pause()\n'
+    # Match the whole entry point so other inspection pauses remain unchanged.
+    if original.count(target) != 1:
+        raise ValueError('chooser pause mutation target missing or ambiguous')
+    mutated = original.replace(target, target.removesuffix(b'\tviewer.request_pause()\n'), 1)
+    if export.is_symlink():
+        raise ValueError('chooser pause export is symlinked')
+    if export.exists():
+        shutil.rmtree(export)
+    export.mkdir(parents=True)
+    try:
+        source.write_bytes(mutated)
+        after = digest(source)
+        mutant_frozen = inventory(staged_paths(project))
+        run(base + ['--export-release', 'Web', str(export / 'index.html')], environment, log)
+        verify_tools(tools, tools_frozen)
+        verify_staged(project, mutant_frozen)
+        exported = tool_inventory({'export': export})
+        if not exported:
+            raise ValueError('chooser pause mutant export missing')
+        return {'path': relative, 'before_sha256': before, 'after_sha256': after, 'export_inventory': exported}
+    finally:
+        source.write_bytes(original)
+        verify_staged(project, staged_frozen)
 
 
 def prepare_browser(data, arch, offline, environment, selected):
@@ -1115,14 +1163,29 @@ def run_probes(args, results):
                         record['replay_downloads'] = validate_downloads(download['result'], download_output)
                         controls = []
                         for control, diagnostic in CONTROL_DIAGNOSTICS.items():
+                            control_export = export
+                            mutation = None
+                            if control == 'chooser-pause':
+                                control_export = export.with_name(label + '-chooser-pause')
+                                mutation = export_chooser_control(project, staged_frozen, base, environment, control_export,
+                                                                  export_paths, export_frozen,
+                                                                  results / ('ownership-' + label + '-chooser-pause-export.log'))
+                            control_inventory = exported_sources if mutation is None else mutation['export_inventory']
+                            verify_sources(frozen_sources)
+                            verify_staged(project, staged_frozen)
+                            verify_browser_inputs(browser_paths, browser_frozen, control_export, control_inventory)
                             code, text = capture([str(browser_paths['node']), str(ROOT / 'scripts/reference/browser/ownership.cjs'),
-                                                  str(export), '--replay-downloads', str(download_output / control)],
+                                                  str(control_export), '--replay-downloads', str(download_output / control)],
                                                  {**environment, 'FORTRESS_REPLAY_DOWNLOAD_CONTROL': control},
                                                  results / ('ownership-' + label + '-downloads-' + control + '.log'), timeout=240)
-                            if code != 1 or ('Error: ' + diagnostic + '\n') not in text or any(
-                                    line.startswith('{"browser":') for line in text.splitlines()):
-                                raise ValueError('replay download control failed outside its expected diagnostic: ' + control)
-                            controls.append({'control': control, 'exit_code': code, 'diagnostic': diagnostic})
+                            validate_download_control(code, text, control)
+                            verify_sources(frozen_sources)
+                            verify_staged(project, staged_frozen)
+                            verify_browser_inputs(browser_paths, browser_frozen, control_export, control_inventory)
+                            control_record = {'control': control, 'exit_code': code, 'diagnostic': diagnostic}
+                            if mutation is not None:
+                                control_record['mutation'] = mutation
+                            controls.append(control_record)
                         record['replay_download_controls'] = validate_controls(controls)
                         verify_sources(frozen_sources)
                         verify_staged(project, staged_frozen)

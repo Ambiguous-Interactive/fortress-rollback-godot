@@ -163,11 +163,12 @@ func _run() -> void:
 	await _spectator_shortcuts()
 	await _spectator_focus_pause()
 	await _effects_controls()
+	await _effects_replay_controls()
 	await _peer_controls()
 	await _offline_controls()
 	await _local_focus_pause()
-	if checks == 450 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 450")
+	if checks == 460 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 460")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
@@ -1060,5 +1061,53 @@ func _spectator_layout() -> void:
 		_check(local.demo.host.lag_ticks == lag, "wheel inspection preserves selected host delivery")
 		_check(controls.scroll_vertical < scroll_before, "wheel over host selector scrolls controls")
 
+	local.queue_free()
+	await process_frame
+
+
+func _effects_replay_controls() -> void:
+	root.size = Vector2i(760, 560)
+	var local: Node2D = EffectsScene.new()
+	root.add_child(local)
+	local.set_physics_process(false)
+	local._set_lag(0)
+	for tick: int in 20:
+		local._physics_process(0.0)
+	await process_frame
+	await _click(local._replay_button)
+	for tick: int in 3:
+		local._physics_process(0.0)
+	var live: PackedByteArray = local._demo.loop.game.canonical_bytes()
+	var clock: int = local._demo.tick_count
+	await _click(local._pause_button)
+	var saved: PackedByteArray = local._demo.replay_game.canonical_bytes()
+	local._physics_process(0.0)
+	_check(local._demo.replay_game.canonical_bytes() == saved and local._demo.replay_player.current_frame() == 3,
+		"real pointer pauses effects replay at exact canonical frame")
+	await _click(local._step_button)
+	_check(local._demo.replay_player.current_frame() == 4, "real pointer steps exactly one effects replay frame")
+	local._physics_process(0.0)
+	_check(local._demo.replay_player.current_frame() == 4, "pointer step keeps effects playback paused")
+	await _key(KEY_O)
+	local._physics_process(0.0)
+	_check(local._demo.replay_player.current_frame() == 5, "real O resumes effects playback")
+	local.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	saved = local._demo.replay_game.canonical_bytes()
+	for tick: int in 4:
+		local._physics_process(0.0)
+	_check(local._demo.replay_game.canonical_bytes() == saved and local._demo.replay_player.current_frame() == 5,
+		"focus loss holds effects replay canonical state")
+	local.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+	local._physics_process(0.0)
+	_check(local._demo.replay_game.canonical_bytes() == saved, "focus return requires explicit effects replay resume")
+	await _key(KEY_N)
+	_check(local._demo.replay_player.current_frame() == 6, "real N steps focus-paused effects replay")
+	await _click(local._pause_button)
+	local._physics_process(0.0)
+	_check(local._demo.replay_player.current_frame() == 7, "pointer resumes focus-paused effects replay")
+	_check(local._demo.loop.game.canonical_bytes() == live and local._demo.tick_count == clock,
+		"effects replay controls preserve the exact live match and delivery clock")
+	await _click(local._replay_button)
+	_check(local._is_paused, "returning from replay preserves focus-paused live match")
 	local.queue_free()
 	await process_frame

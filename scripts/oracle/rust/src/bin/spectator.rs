@@ -37,7 +37,8 @@ fn observe(viewer: &fortress_rollback::SpectatorSession<Profile>, speed: usize, 
     json!({"current": viewer.current_frame().as_i32(), "backlog": backlog,
         "advice": std::cmp::min(backlog.saturating_sub(delay), if backlog.saturating_sub(delay) > 1 { speed } else { 1 }), "catchup": backlog.saturating_sub(delay) > 1})
 }
-fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool, players: usize, roster: bool, statuses: bool, reserved_slot: usize) -> Result<Value, String> {
+fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool, players: usize, roster: bool, statuses: bool, reserved_slot: usize,
+    reordered: bool) -> Result<Value, String> {
     let queues = (0..(if statuses { 3 } else { 2 })).map(|_| Arc::new(Mutex::new(Queue::default()))).collect::<Vec<_>>();
     let mut host_builder = builder(1701, players);
     if statuses { host_builder = host_builder.with_max_prediction_window(1); }
@@ -65,6 +66,9 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
     let mut state = 0_i64;
     let mut observations = vec![observe(&viewer, speed, delay)];
     let mut cycles = Vec::new();
+    let mut held = Vec::<(usize, Message)>::new();
+    let mut deliveries = Vec::new();
+    let mut canonical = Vec::new();
     for frame in 0..12 {
         for attempt in 0..3 {
             if host.current_frame().as_i32() == frame as i32 + 1 { break; }
@@ -85,11 +89,26 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
                 }
             }
         }
-        host.poll_remote_clients(); transfer(&queues); viewer.poll_remote_clients(); transfer(&queues);
+        host.poll_remote_clients();
+        if reordered {
+            let outgoing = std::mem::take(&mut queues[0].lock().unwrap().outgoing);
+            if outgoing.len() != 1 || outgoing[0].0 != "1" { return Err("unexpected spectator gameplay emission inventory".into()); }
+            held.push((frame, outgoing[0].1.clone()));
+            if frame % 2 == 1 {
+                if held.len() != 2 || held[0].1 == held[1].1 { return Err("spectator reorder did not cross distinct emissions".into()); }
+                for (emitted, message) in held.drain(..).rev() {
+                    for _ in 0..2 {
+                        queues[1].lock().unwrap().incoming.push(("0".into(), message.clone()));
+                        deliveries.push(json!([emitted, 0]));
+                    }
+                }
+            }
+        }
+        transfer(&queues); viewer.poll_remote_clients(); transfer(&queues);
         observations.push(observe(&viewer, speed, delay));
         let service = if delayed { viewer.frames_behind_host() == capacity }
             else { (preplay && frame % capacity == capacity - 1) || (!preplay && frame % capacity == 0) };
-        if service || frame == 11 {
+        if (if reordered { frame % 2 == 1 } else { service }) || frame == 11 {
             while viewer.frames_behind_host() > delay {
                 let before = observe(&viewer, speed, delay);
                 let requests = viewer.advance_frame().map_err(|e| format!("{e:?}"))?;
@@ -101,14 +120,12 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
                             let expected = if statuses && player == reserved_slot { InputStatus::Disconnected } else { InputStatus::Confirmed };
                             if status != expected { return Err(format!("unexpected spectator status at slot {player}: {status:?}")); }
                             row.push(i32::from(input));
-                            if statuses {
-                                let code = if status == InputStatus::Disconnected { 3 } else { 1 };
-                                row.push(code);
-                                state = (state * 17 + i64::from(input) + i64::from(code) * 31 + transcript.len() as i64) % 1_000_000_007;
-                            }
+                            let code = if status == InputStatus::Disconnected { 3 } else { 1 };
+                            if statuses { row.push(code); }
+                            state = (state * 17 + i64::from(input) + i64::from(code) * 31 + transcript.len() as i64) % 1_000_000_007;
                         }
                         if statuses { row.push(state as i32); }
-                        transcript.push(row); count += 1;
+                        transcript.push(row); canonical.push(state); count += 1;
                     } else { return Err("unexpected spectator snapshot".into()); }
                 }
                 if count == 0 { return Err("spectator made no progress".into()); }
@@ -123,19 +140,21 @@ fn run(capacity: usize, preplay: bool, speed: usize, delay: usize, delayed: bool
     if delayed { result["delay"] = json!(delay); }
     if roster { result["players"] = json!(players); }
     if statuses { result["reserved_slot"] = json!(reserved_slot); }
+    if reordered { result["reordered"] = json!(true); result["deliveries"] = json!(deliveries); result["canonical"] = json!(canonical); }
     Ok(result)
 }
 fn main() {
     let result = (|| -> Result<Vec<Value>, String> {
         let mut traces = Vec::new();
+        let reordered = std::env::args().any(|argument| argument == "--reordered");
         let statuses = std::env::args().any(|argument| argument == "--statuses");
-        let roster = statuses || std::env::args().any(|argument| argument == "--roster");
+        let roster = reordered || statuses || std::env::args().any(|argument| argument == "--roster");
         let delayed = roster || std::env::args().any(|argument| argument == "--delayed");
         for players in if roster { (2..=8).collect::<Vec<_>>() } else { vec![2] } {
         for reserved_slot in if statuses { std::iter::once(players - 1).chain(0..players - 1).collect::<Vec<_>>() } else { vec![players - 1] } {
-        for preplay in [true, false] { for capacity in if delayed { [4, 5] } else { [2, 3] } { for speed in [1, 2] {
+        for preplay in if reordered { vec![true] } else { vec![true, false] } { for capacity in if delayed { [4, 5] } else { [2, 3] } { for speed in [1, 2] {
             let delay = if delayed { if preplay { 1 } else { capacity - 1 } } else { 0 };
-            traces.push(run(capacity, preplay, speed, delay, delayed, players, roster, statuses, reserved_slot)?);
+            traces.push(run(capacity, preplay, speed, delay, delayed, players, roster, statuses, reserved_slot, reordered)?);
         } } } } }
         Ok(traces)
     })();

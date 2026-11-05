@@ -61,6 +61,7 @@ Scenes that own a match or playback must retire it on exit; freeing a Node does 
 terminate retained `RefCounted` players, drivers or request views. Test retained handles after teardown.
 Scene physics loops must retry temporary `BUSY` results after ownership releases; a controller's safe refusal must not become a permanent scene stop.
 Paused scenes must refresh control readiness and committed terminal status even when they skip simulation service.
+Temporary ownership must not overwrite clean completion or failure; show waiting separately and retain terminal control gates after ownership releases.
 Local inspection focus pauses must preserve accepted callback work and require explicit resume.
 Dense example controls should retain readable text size in short windows; scroll controls separately from fitted game drawing.
 Verify actual pointer reachability after scrolling, including wheel events over selectors, in a deferred live scene.

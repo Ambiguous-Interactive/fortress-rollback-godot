@@ -157,12 +157,29 @@ a replaced player and exact recording identity, and compares playback with the
 original canonical state. Disabled seek and held-timeline clicks must emit no files.
 
 The round retains files and screenshots in `ownership-VERSION-positive-downloads/`
-beside the aggregate receipt. Four live controls reject altered decoded metadata, a refused second import,
-a console error after screenshot capture, and an unexpected late download.
-Receipt mutation tests reject wrong types, missing boundaries, changed files,
-missing screenshots and incomplete control inventories.
+beside the aggregate receipt. Five live controls reject altered decoded metadata, a refused second import,
+a console error after screenshot capture, an unexpected late download, and removal of the chooser pause.
+The same page observes actual trusted-click browser picker events during ordinary
+quarter-speed playback and a selected Repeat start seek. Explicit bounded scene
+service while each picker is pending must preserve the inspected canonical state;
+an accepted Repeat start seek finishes at frame 300 without resuming input.
+Empty selection exercises the browser file-input cancellation path. Malformed
+selection preserves the paused recording and displays its refusal. Explicit Play
+restarts fractional cadence, and accepted replacement retires the original player,
+keeps the selected speed and stays paused at the imported initial state. Actual
+pointer clicks during timeline dragging and expert ownership must open no picker.
+This observes Playwright's browser chooser event and file-input completion, not
+interaction with an operating-system file dialog.
 
-This advances [#290](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/290).
+The negative control exports a separate staged scene with only `_open()`'s
+`viewer.request_pause()` call removed. It must fail the ordinary playback pause
+assertion; the healthy export must pass explicit resume and replacement. Control
+receipts retain the original/mutated source hashes and complete mutant export
+inventory. Healthy staged source is restored and independently rechecked.
+Receipt mutation tests reject wrong types, missing boundaries, changed files,
+missing screenshots and incomplete chooser or control inventories.
+
+This advances [#329](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/329) and [#290](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/290).
 Its escaped-descendant adoption, pre-import Python helper/cache binding and
 interpreter provenance controls remain open. The gate does not establish the
 broader browser release matrix or complete replay parity.

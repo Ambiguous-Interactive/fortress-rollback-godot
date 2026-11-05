@@ -109,6 +109,8 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
       replaced: true, original_valid: reopened.original_valid, disconnected_rows: reopened.disconnected_rows, seek_disabled: seeking.disabled, held_disabled: held.disabled });
     quiet();
   }
+  const { inspectChooser } = require('./replay_chooser.cjs');
+  const chooser = await inspectChooser(page, output, read, command, quiet);
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') await page.evaluate(() => console.error('late replay download control'));
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-download') {
     await Promise.all([
@@ -127,7 +129,7 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
   await page.waitForTimeout(100);
   quiet();
   requireState(total === 3 && allowance === null && received !== null, 'replay download event inventory differs');
-  return { display, result: { cases: records, download_events: total, forbidden_events: forbidden, errors },
+  return { display, result: { cases: records, chooser, download_events: total, forbidden_events: forbidden, errors },
     verify: () => { quiet(); requireState(total === 3, 'replay download late event observed'); } };
 }
 
