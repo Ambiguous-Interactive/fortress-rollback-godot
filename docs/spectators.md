@@ -884,3 +884,14 @@ including the host operation and frame. A failed manual host step updates that
 report immediately. Host preflight exhaustion also stops buffered viewing and
 preserves the original terminal cause, including termination inside a game callback. Refused steps during a clean ending leave final-tail service
 running; shared active work remains visible while controls wait for ownership.
+
+
+## Delayed acceptance regression
+
+The exported spectator witness waits for its authenticated ACCEPT HTTP acknowledgment before playback or physical-departure testing.
+It continues draining bounded relay input while waiting. Failed HTTP results cannot count as acknowledgment or reach JSON parsing.
+Run the existing `scripts/reference/signalfish_spectator_live.py --browser-viewer` witness with
+`--browser-fault viewer-departure --acceptance-delay-ms 1500` to hold the response after server acceptance.
+The browser control compares actual viewed frames before the request forwards and immediately before its response releases.
+It also rejects departure or success before the application receives a successful HTTP acknowledgment; successful playback still checks original canonical history.
+CI exercises this delayed-response case on both engine pins. This gate does not establish the cause of the separately tracked aborted-request failure.

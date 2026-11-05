@@ -37,6 +37,7 @@ var selected_host_departed: bool = false
 
 func _ready() -> void:
 	started = Time.get_ticks_usec()
+	JavaScriptBridge.eval("window.fortressSpectatorFrame=0;window.fortressSpectatorAcceptAcknowledged=false")
 	runtime = JSON.parse_string(JavaScriptBridge.eval("JSON.stringify(window.fortressSpectatorRuntime)"))
 	_run()
 
@@ -143,6 +144,9 @@ func _run() -> void:
 		if polled.code not in [T.Code.OK, T.Code.BACKPRESSURE]:
 			_fail("browser relay poll")
 			return
+		if not accept_delivered:
+			await get_tree().process_frame
+			continue
 		if runtime.get("browser_fault") in ["viewer-departure", "host-departure"] and game.frame >= 8:
 			paused_rows = stream.playback_session().host_frontier() - game.frame + 1
 			if paused_rows >= 2:
@@ -165,6 +169,7 @@ func _run() -> void:
 			for _step: int in steps:
 				var empty: Array[Driver.LocalInput] = []
 				var result: RefCounted = driver.step(_now(), empty)
+				JavaScriptBridge.eval("window.fortressSpectatorFrame=" + str(game.frame))
 				if result.code not in [S.Code.OK, S.Code.TERMINATED]:
 					_fail("browser playback step")
 					return
@@ -226,6 +231,8 @@ func _accept(packet: PackedByteArray) -> Error:
 func _post_accept(packet: PackedByteArray) -> void:
 	var response: Dictionary = await _http("/accept", {"viewer": viewer_uuid, "room": admission.room, "identity": admission.identity, "packet": packet.hex_encode()})
 	accept_delivered = response.status == 200
+	if accept_delivered:
+		JavaScriptBridge.eval("window.fortressSpectatorAcceptAcknowledged=true")
 	if not accept_delivered:
 		errors.append("browser control ACCEPT failure")
 
@@ -258,6 +265,8 @@ func _http(path: String, body: Dictionary = {}) -> Dictionary:
 		return {"status": 0}
 	var response: Array = await request.request_completed
 	request.queue_free()
+	if response[0] != HTTPRequest.RESULT_SUCCESS:
+		return {"status": 0}
 	return {"status": response[1], "body": JSON.parse_string(response[3].get_string_from_utf8())}
 
 
@@ -337,6 +346,7 @@ func _depart_buffered_viewer() -> void:
 		return
 	var empty: Array[Driver.LocalInput] = []
 	var stopped: RefCounted = driver.step(_now(), empty)
+	JavaScriptBridge.eval("window.fortressSpectatorFrame=" + str(game.frame))
 	if (stopped.code != S.Code.TERMINATED or game.canonical_bytes() != before or game.frame != frame
 		or game.simulation_calls != simulations or relay.status().received_packets != 0 or not errors.is_empty()
 		or stream.playback_session().status().reason != S.Code.PROTOCOL_FAILED

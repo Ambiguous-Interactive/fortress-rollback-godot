@@ -115,13 +115,17 @@ def validate_fault(returncode, browser, host_alive, control, stderr=''):
     validate_no_acceptance(control)
 
 
-def execute(engine, project, runtime, url, environment, output, control, fault=None):
+def execute(engine, project, runtime, url, environment, output, control, fault=None, acceptance_delay_ms=None):
+    controller = ROOT / "scripts/reference/browser/spectator.cjs"
+    if acceptance_delay_ms is not None:
+        controller = controller.with_name("spectator_acceptance.cjs")
+        environment = {**environment, "FORTRESS_ACCEPT_DELAY_MS": str(acceptance_delay_ms)}
     with (output / 'native.log').open('wb') as log:
         host = subprocess.Popen([str(engine), '--headless', '--path', str(project), '--script', 'res://spectator_browser_host.gd', '--', str(runtime)],
                                 stdout=log, stderr=subprocess.STDOUT)
         try:
             try:
-                process = subprocess.run([environment['FORTRESS_NODE_EXECUTABLE'], str(ROOT / 'scripts/reference/browser/spectator.cjs'), url, str(runtime)],
+                process = subprocess.run([environment['FORTRESS_NODE_EXECUTABLE'], str(controller), url, str(runtime)],
                                      env=environment, capture_output=True, encoding='utf-8', timeout=80)
             except subprocess.TimeoutExpired as error:
                 (output / 'browser.log').write_bytes((error.stdout or b'') + (error.stderr or b''))
