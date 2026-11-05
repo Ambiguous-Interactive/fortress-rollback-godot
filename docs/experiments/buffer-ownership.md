@@ -88,7 +88,7 @@ phases must pass for every engine. Omitting `--phase` retains both phases.
 Firefox CI on both engine pins also selects `--suite-part 1` or `--suite-part 2` within
 each phase to fit the same 30-minute job cap. Parts alternate the sorted suite
 inventory and repeat the ownership-control suite in both parts. Their union
-covers all 67 suites and 426 cases; only the four control cases overlap.
+covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py); only the four control cases overlap.
 Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
 inventory. Both parts and both phases must pass for full qualification.

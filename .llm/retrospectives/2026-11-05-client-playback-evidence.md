@@ -30,8 +30,10 @@ changes and sibling source drift.
 
 Existing pause, source-freeze and browser evidence guidance was searched first.
 The new terminal-status line extends that guidance; no parallel skill was created.
-No prior operational claim was disproved or retired. Historical experiment and
-carry branches remain intact; cache growth is reported without deleting evidence.
+The ownership guide still named 67 suites and 426 cases; the executable inventory
+now contains 97 suites and 616 cases. Replace these stale counts with a link to
+the canonical inventory. Historical experiment and carry branches remain intact;
+cache growth is reported without deleting evidence.
 
 ## Outcome
 
