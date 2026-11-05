@@ -66,6 +66,16 @@ acknowledgment; this repair supplies the missing observation rather than another
 parallel rule. Actual frozen-source browser qualification remains separate from
 the Node process controls.
 
+The frozen `a07f2a1` actual-browser run passes on Godot 4.7.2 and Chromium 156:
+48 host frames, confirmed through 47, viewer frame 8, nine buffered rows and no
+browser errors. The retained `final-positive/spectator-live.json` receipt under
+`session154-accept-observation-results` has SHA-256
+`9cd274bba023b772b052bd859b676e0dbd8f43b4710499fd0d4968f20f662db2`.
+The same-helper gate-removal negative observes actual acknowledgment false and
+early playback true, but first rejects an incomplete hold because completion
+arrives before release. That run does not prove a frame-only rejection; the
+separate real Node matrix supplies the frame-only and microtask-gap evidence.
+
 ## Curation and pruning
 
 Existing testing guidance already covers source freezing, actual GUI routing,

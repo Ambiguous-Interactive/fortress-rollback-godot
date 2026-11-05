@@ -8,6 +8,8 @@ Expected provisioning waits use non-error HTTP pending responses; keep actual co
 Rejected startup also proves zero accepted controls and zero callback invocations; an expected error alone is insufficient.
 A server can receive authenticated acceptance before the viewer's HTTP acknowledgment settles.
 Hold that response after server acceptance and require playback, departure and success to wait while bounded relay polling continues.
+Endpoint samples can miss frame advancement queued between evaluation and response fulfillment.
+Latch frame changes until the client's successful acknowledgment callback. Allow progress after acknowledgment, even while the response handler still awaits completion.
 Validate the HTTPRequest result before parsing its body or accepting HTTP 200; failed requests can contain empty or partial bodies.
 A controlled completion-gap repair does not establish the cause of a separately observed aborted browser request.
 
