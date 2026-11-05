@@ -31,7 +31,8 @@ def expected_rust(traces):
          'observations': trace['service_observations'], 'cycles': trace['cycles'], 'transcript': trace['transcript'],
          **({'delay': trace['delay']} if 'delay' in trace else {}),
          **({'players': trace['players']} if 'players' in trace else {}),
-         **({'reserved_slot': trace['reserved_slot']} if 'reserved_slot' in trace else {})}
+         **({'reserved_slot': trace['reserved_slot']} if 'reserved_slot' in trace else {}),
+         **({field: trace[field] for field in ('reordered', 'deliveries', 'canonical')} if 'reordered' in trace else {})}
         for trace in traces]}
 
 
@@ -59,7 +60,7 @@ def negative_controls(observed, expected):
     return evidence
 
 
-def check_rust(traces, output, delayed=False, roster=False, statuses=False):
+def check_rust(traces, output, delayed=False, roster=False, statuses=False, reordered=False):
     manifest = load_manifest()
     cargo, _ = setup_rust(manifest, False)
     execute([str(cargo), '+' + manifest['rust']['version'], 'build', '--locked', *(['--features', 'spectator-status'] if statuses else []), '--bin', 'spectator',
@@ -68,7 +69,7 @@ def check_rust(traces, output, delayed=False, roster=False, statuses=False):
     fingerprint = digest(binary)
     expected = expected_rust(traces)
     observations = []
-    arguments = ['--statuses'] if statuses else (['--roster'] if roster else (['--delayed'] if delayed else []))
+    arguments = ['--reordered'] if reordered else (['--statuses'] if statuses else (['--roster'] if roster else (['--delayed'] if delayed else [])))
     for repetition in range(2):
         stdout, stderr = execute([str(binary), *arguments], output / f'rust-{repetition}.log', timeout=60)
         if stderr.strip():
@@ -80,7 +81,10 @@ def check_rust(traces, output, delayed=False, roster=False, statuses=False):
     if digest(binary) != fingerprint:
         raise ValueError('pinned spectator oracle changed during observation')
     (output / 'rust-observed.json').write_text(json.dumps(observations[0], indent=2) + '\n')
-    if statuses:
+    if reordered:
+        from spectator_reordered import controls
+        negative = controls(observations[0], expected)
+    elif statuses:
         from spectator_status import controls
         negative = controls(observations[0], expected)
     elif roster:

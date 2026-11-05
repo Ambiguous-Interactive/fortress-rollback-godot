@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const requireState = (condition, message) => { if (!condition) throw new Error(message); };
 
-async function replayDownloads(page, url, output, errors, onLoaded = async () => null) {
+async function replayDownloads(page, url, output, errors, onLoaded = async () => null, acknowledgeLateError = () => {}) {
   fs.mkdirSync(output, { recursive: true });
   const records = [];
   let total = 0;
@@ -109,7 +109,12 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
       replaced: true, original_valid: reopened.original_valid, disconnected_rows: reopened.disconnected_rows, seek_disabled: seeking.disabled, held_disabled: held.disabled });
     quiet();
   }
-  if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') await page.evaluate(() => console.error('late replay download control'));
+  const { inspectChooser } = require('./replay_chooser.cjs');
+  const chooser = await inspectChooser(page, output, read, command, quiet);
+  if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-error') {
+    await page.evaluate(() => console.error('late replay download control'));
+    acknowledgeLateError();
+  }
   if (process.env.FORTRESS_REPLAY_DOWNLOAD_CONTROL === 'late-download') {
     await Promise.all([
       page.waitForEvent('download', { timeout: 15000 }),
@@ -127,7 +132,7 @@ async function replayDownloads(page, url, output, errors, onLoaded = async () =>
   await page.waitForTimeout(100);
   quiet();
   requireState(total === 3 && allowance === null && received !== null, 'replay download event inventory differs');
-  return { display, result: { cases: records, download_events: total, forbidden_events: forbidden, errors },
+  return { display, result: { cases: records, chooser, download_events: total, forbidden_events: forbidden, errors },
     verify: () => { quiet(); requireState(total === 3, 'replay download late event observed'); } };
 }
 

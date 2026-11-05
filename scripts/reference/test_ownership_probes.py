@@ -48,6 +48,79 @@ def batch_value(command):
     return int(not value['passed']), value
 
 
+class DownloadControlTests(unittest.TestCase):
+    # Value: protects=only the intended sole failure qualifies; fails_when=unrelated errors or success share output; seam=none
+    def test_expected_error_accepts_only_its_top_level_message_and_stack(self):
+        for control, diagnostic in probes.CONTROL_DIAGNOSTICS.items():
+            message = 'Error: ' + diagnostic
+            healthy = [message, message + '\n', message + '\n    at operation (/fixture/replay_download.cjs:20:3)\n',
+                       message + '\r\n    at async run (file:///fixture/ownership.cjs:50:7)\r\n']
+            for output in healthy:
+                with self.subTest(control=control, output=output):
+                    probes.validate_download_control(1, output, control)
+            malformed = [message + ' unexpectedly\n', 'unrelated failure\n' + message + '\n',
+                         message + '\nError: cleanup failed\n', message + '\n    Error: cleanup failed\n',
+                         message + '\n    at operation (/fixture/run.cjs:1:1)\n  [cause]: Error: cleanup failed\n',
+                         message + '\n{"browser":"Chromium"}\n', message + '\n\n', None, 1]
+            for output in malformed:
+                with self.subTest(control=control, output=output), self.assertRaises(ValueError):
+                    probes.validate_download_control(1, output, control)
+            for code in (0, 2, -9, True, 1.0):
+                with self.subTest(control=control, code=code), self.assertRaises(ValueError):
+                    probes.validate_download_control(code, message + '\n', control)
+
+
+class ChooserMutationTests(unittest.TestCase):
+    # Value: protects=chooser control executes exactly the missing production pause; fails_when=export is healthy or siblings drift; seam=owned exporter
+    def test_export_mutation_is_exact_restored_and_fail_closed(self):
+        for fault in (None, 'export', 'sibling', 'tool', 'missing'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                project = root / 'project'
+                source = project / 'examples/online/replay_scene.gd'
+                source.parent.mkdir(parents=True)
+                original = ('extends Node\nfunc _open() -> void:\n\tif _is_scrubbing or viewer._is_busy():\n\t\treturn\n\tviewer.request_pause()\n\t_refresh()\n\n'
+                            'func _other() -> void:\n\tviewer.request_pause()\n')
+                if fault == 'missing':
+                    original = original.replace('func _open()', 'func _renamed()')
+                source.write_text(original)
+                sibling = project / 'sibling.gd'
+                sibling.write_text('original')
+                editor = root / 'editor'
+                editor.write_text('verified')
+                paths = {'editor': editor}
+                frozen = probes.tool_inventory(paths)
+                staged = probes.inventory(probes.staged_paths(project))
+                export = root / 'mutant-export'
+                calls = []
+
+                def execute(command, environment, log):
+                    calls.append(command)
+                    mutant = source.read_text()
+                    self.assertNotIn('viewer.request_pause()', mutant.split('func _other()')[0])
+                    self.assertIn('viewer.request_pause()', mutant.split('func _other()')[1])
+                    (export / 'index.html').write_text('mutant export')
+                    if fault == 'export':
+                        raise RuntimeError('export failed')
+                    if fault == 'sibling':
+                        sibling.write_text('changed')
+                    if fault == 'tool':
+                        editor.write_text('changed')
+
+                with mock.patch.object(probes, 'run', side_effect=execute):
+                    if fault:
+                        with self.assertRaises((ValueError, RuntimeError)):
+                            probes.export_chooser_control(project, staged, [str(editor)], {}, export, paths, frozen, root / 'export.log')
+                    else:
+                        receipt = probes.export_chooser_control(project, staged, [str(editor)], {}, export, paths, frozen, root / 'export.log')
+                        self.assertEqual(receipt['path'], 'examples/online/replay_scene.gd')
+                        self.assertNotEqual(receipt['before_sha256'], receipt['after_sha256'])
+                        self.assertEqual(receipt['export_inventory'], probes.tool_inventory({'export': export}))
+                        probes.verify_staged(project, staged)
+                self.assertEqual(source.read_text(), original)
+                self.assertEqual(len(calls), 0 if fault == 'missing' else 1)
+
+
 class OwnershipBatchTests(unittest.TestCase):
     # Value: protects=case pages retain the full native suite and order; fails_when=pages lose, repeat or alter evidence; why_new=suite-only aggregation; seam=none
     def test_case_pages_reassemble_exact_native_order_and_reject_incomplete_evidence(self):
@@ -115,9 +188,8 @@ class OwnershipBatchTests(unittest.TestCase):
             if not negative and 'res://tests/unit/test_replay_viewer_prefix.gd' in selected:
                 from test_replay_download import fixture
                 records[0]['replay_downloads'] = fixture()
-                records[0]['replay_download_controls'] = [
-                    {'control': name, 'exit_code': 1, 'diagnostic': diagnostic}
-                    for name, diagnostic in probes.CONTROL_DIAGNOSTICS.items()]
+                from test_replay_download import control_fixture
+                records[0]['replay_download_controls'] = control_fixture()
             probes.validate_coverage(records, '2', suites)
             for mutation in ('declaration', 'foreign', 'missing', 'browser', 'alias', 'control', 'order', 'cases', 'empty', 'part'):
                 with self.subTest(negative=negative, mutation=mutation):
@@ -326,6 +398,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                 cache = Path(directory) / 'cache'
                 files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
+                                'scripts/reference/browser/replay_chooser.cjs',
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                        'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -501,7 +574,7 @@ class OwnershipRejectionTests(unittest.TestCase):
 
     def scenario(self, browser_log=None, native_timeout=False, expected=RuntimeError, native_fault=None, browser_fault=None,
                  version=None, selected="chromium", runtime_fault=None, project_fault=None, node_alias=False, runtime_before=None, tool_fault=None,
-                 phase=None, suite_part='all', download_fault=None):
+                 phase=None, suite_part='all', download_fault=None, control_output=None):
         """Run the ownership launcher against mocked tools and return its results."""
         directory = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
@@ -509,6 +582,7 @@ class OwnershipRejectionTests(unittest.TestCase):
         cache = directory / 'cache'
         files = probes.FILES + ['scripts/reference/ownership_probes.py', 'scripts/reference/browser/ownership.cjs',
                                 'scripts/reference/replay_download.py', 'scripts/reference/browser/replay_download.cjs',
+                                'scripts/reference/browser/replay_chooser.cjs',
                                 'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                 'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
@@ -580,6 +654,7 @@ class OwnershipRejectionTests(unittest.TestCase):
                     changed_tool.append(True)
             if '--export-release' in command:
                 export_calls.append(command)
+                Path(command[-1]).write_text('fixture Web export')
                 if tool_fault == 'export':
                     template = Path(environment['XDG_DATA_HOME']) / 'godot/export_templates/4.3.stable/web_nothreads_release.zip'
                     template.write_text('mutated Web template during export')
@@ -659,6 +734,8 @@ class OwnershipRejectionTests(unittest.TestCase):
         def capture(command, environment, log, timeout):
             if str(command[1]).endswith('ownership.cjs'):
                 name = environment['FORTRESS_REPLAY_DOWNLOAD_CONTROL']
+                if control_output and name in control_output:
+                    return 1, control_output[name]
                 if download_fault == 'control-capture':
                     raise RuntimeError('download control capture failure')
                 if download_fault == 'control':
@@ -838,6 +915,27 @@ class OwnershipRejectionTests(unittest.TestCase):
                 self.assertTrue(entry['errors'])
                 self.assertEqual(entry['errors'], probes.bounded_errors(entry['errors']))
                 self.assertTrue(entry['errors'][0].startswith(diagnostic), entry['errors'])
+
+    # Value: protects=negative controls reject cleanup failure; fails_when=expected text inside AggregateError passes; seam=mocked owned-child output
+    def test_download_controls_reject_expected_error_with_cleanup_failure(self):
+        part = next(part for part in ('1', '2') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
+        for name, diagnostic in probes.CONTROL_DIAGNOSTICS.items():
+            with self.subTest(control=name):
+                output = ('AggregateError: ownership and cleanup failed\n'
+                          '    at main (/fixture/ownership.cjs:100:9)\n'
+                          '  [errors]: [\n'
+                          '    Error: ' + diagnostic + '\n'
+                          '        at operation (/fixture/replay_download.cjs:20:3),\n'
+                          '    Error: browser cleanup failed\n'
+                          '        at cleanup (/fixture/ownership.cjs:90:3)\n'
+                          '  ]\n')
+                results = self.scenario(expected=ValueError, version='4.3', phase='positive', suite_part=part,
+                                        control_output={name: output})
+                self.assertFalse((results / 'ownership.json').exists())
+                entry = self.rounds(results)[0]
+                self.assertEqual(entry['outcome'], 'failed')
+                self.assertIs(entry['alive'], False)
+                self.assertEqual(entry['errors'], ['replay download control failed outside its expected diagnostic: ' + name])
 
     # Value: protects=divergent case pages cannot publish or leave a running round; fails_when=assembly trusts repeats only; why_new=suite-level failures; seam=mocked browser
     def test_case_page_divergence_keeps_a_failed_round_and_no_receipt(self):

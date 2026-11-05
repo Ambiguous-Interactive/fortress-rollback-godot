@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add pause, resume and single-frame controls to the effects replay. Focus loss holds playback until explicit resume.
+
 - Add peer-example buttons and F/G shortcuts to apply fresh measured input-delay suggestions.
 
 - Add S/F replay shortcuts for slower/faster playback, with the accepted rate shown in the speed selector.

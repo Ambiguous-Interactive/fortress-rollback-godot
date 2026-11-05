@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from replay_download import CASES, CONTROL_DIAGNOSTICS, validate_controls, validate_downloads
+from replay_download import CASES, CONTROL_DIAGNOSTICS, validate_controls, validate_downloads, validate_chooser
 
 
 def fixture(output=None):
@@ -23,7 +23,21 @@ def fixture(output=None):
                         'sha256': hashlib.sha256(received).hexdigest(), 'filename': name + '.frrp',
                         'canonical': '010203', 'original': '010203', 'replaced': True, 'original_valid': True, 'disconnected_rows': max(0, frame - 17),
                         'seek_disabled': True, 'held_disabled': True})
-    return {'cases': records, 'download_events': 3, 'forbidden_events': 0, 'errors': []}
+    return {'cases': records, 'chooser': chooser_fixture(), 'download_events': 3, 'forbidden_events': 0, 'errors': []}
+
+
+def chooser_fixture():
+    return [{'mode': mode, 'paused_frame': frame, 'resumed_frame': frame + 1, 'speed': 1,
+             'canonical': '010203', 'original': '010203', 'canceled': True, 'rejected': True,
+             'replaced': True, 'old_retired': True, 'held_refused': True, 'expert_refused': True}
+            for mode, frame in [('ordinary', 2), ('repeat', 300)]]
+
+
+def control_fixture():
+    records = [{'control': name, 'exit_code': 1, 'diagnostic': diagnostic} for name, diagnostic in CONTROL_DIAGNOSTICS.items()]
+    records[-1]['mutation'] = {'path': 'examples/online/replay_scene.gd', 'before_sha256': 'a' * 64,
+                               'after_sha256': 'b' * 64, 'export_inventory': {'export/index.html': 'c' * 64}}
+    return records
 
 
 class ReplayDownloadTests(unittest.TestCase):
@@ -34,6 +48,8 @@ class ReplayDownloadTests(unittest.TestCase):
         script = """
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const {EventEmitter}=require('node:events');
+const chooserPath=path.join(path.dirname(process.argv[1]),'replay_chooser.cjs');
+require(chooserPath).inspectChooser=async()=>[];
 const {replayDownloads}=require(process.argv[1]);
 const output=process.argv[2],target=process.argv[3],scenario=process.argv[4];
 const page=new EventEmitter(),timeline=[];
@@ -186,7 +202,7 @@ page.screenshot=async options=>fs.writeFileSync(options.path,'fixture');
                         validate_downloads(altered, output)
 
     def test_controls_require_exact_complete_failing_inventories(self):
-        valid = [{'control': name, 'exit_code': 1, 'diagnostic': diagnostic} for name, diagnostic in CONTROL_DIAGNOSTICS.items()]
+        valid = control_fixture()
         self.assertEqual(validate_controls(valid), valid)
         for name in ('missing', 'duplicate', 'order', 'code', 'bool', 'diagnostic'):
             with self.subTest(name=name):
@@ -203,6 +219,58 @@ page.screenshot=async options=>fs.writeFileSync(options.path,'fixture');
                     altered[0]['diagnostic'] = 'unrelated failure'
                 with self.assertRaises(ValueError):
                     validate_controls(altered)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for observer publication control')
+    # Value: protects=picker events use current controller state; fails_when=Firefox's preceding render publication is mistaken for current playback; seam=browser double
+    def test_picker_event_refreshes_controller_before_pause_assertion(self):
+        source = Path(__file__).parent / 'browser/replay_chooser.cjs'
+        script = """
+const {EventEmitter}=require('node:events');
+const {inspectChooser}=require(process.argv[1]);
+const stale=process.argv[2]==='stale';
+let state={frame:0,frames:0,failure:false,canonical:'00'};
+const page=new EventEmitter();
+page.waitForEvent=async()=>({});
+page.mouse={click:async()=>{}};
+const read=async()=>state;
+const command=async(name)=>{
+  if(name==='inspection_prepare')state={speed:1,playing:true,seeking:false,open_x:1,open_y:2};
+  if(name==='observe' && !stale)state={...state,playing:false};
+  if(name==='service')throw Error('current controller observed');
+  return state;
+};
+inspectChooser(page,'unused',read,command,()=>{}).then(()=>{
+  console.error('unexpected completion');process.exitCode=2;
+},error=>console.log(error.message));
+"""
+        for scenario, expected in [('healthy', 'current controller observed'), ('stale', 'replay chooser failed to pause playback')]:
+            result = subprocess.run(['node', '--unhandled-rejections=strict', '-e', script, str(source.resolve()), scenario],
+                                    capture_output=True, encoding='utf-8', timeout=10)
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stderr, '')
+            self.assertEqual(result.stdout.strip(), expected)
+
+    def test_chooser_requires_each_observed_boundary_and_ownership_gate(self):
+        valid = chooser_fixture()
+        self.assertEqual(validate_chooser(valid), valid)
+        for index in range(2):
+            for field, value in [('mode', 'unknown'), ('paused_frame', True), ('paused_frame', -1),
+                                 ('resumed_frame', 0), ('speed', True), ('speed', 4), ('canonical', 'bad'),
+                                 ('original', '010204'), ('canceled', False), ('rejected', 1), ('replaced', False),
+                                 ('old_retired', False), ('held_refused', False), ('expert_refused', False)]:
+                with self.subTest(index=index, field=field, value=value):
+                    altered = copy.deepcopy(valid)
+                    altered[index][field] = value
+                    with self.assertRaises(ValueError):
+                        validate_chooser(altered)
+        for altered in [valid[:-1], valid[::-1], [valid[0], valid[0]], [*valid, valid[0]], None]:
+            with self.assertRaises(ValueError):
+                validate_chooser(altered)
+        for field, value in [('path', 'other.gd'), ('before_sha256', 'b' * 64), ('after_sha256', ''), ('export_inventory', {})]:
+            altered = control_fixture()
+            altered[-1]['mutation'][field] = value
+            with self.assertRaises(ValueError):
+                validate_controls(altered)
 
     def test_actual_received_artifact_and_screenshot_are_required(self):
         for mutation in ('missing', 'changed', 'symlink', 'screenshot-missing', 'screenshot-empty'):
