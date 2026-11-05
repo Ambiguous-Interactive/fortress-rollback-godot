@@ -99,6 +99,11 @@ cause of the separate intermittent request abort in #322. The five-second helper
 budget bounds route retirement after close; the existing parent watchdog remains
 the limit for a browser close that never completes.
 
+The assembled Node gate also exposed two VM sandboxes missing Node's native
+`setImmediate` global after the retirement flush began using it. Supply the real
+global in those doubles and retain the close-induced pending-operation rejection
+in the exact causal assertion. The complete three-file gate still has 202 cases.
+
 ## Prefix shipping decision
 
 The root's 00:58 audit records that diagnostics PR #323 was merged while its
