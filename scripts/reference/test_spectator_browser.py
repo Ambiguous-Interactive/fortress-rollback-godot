@@ -1,5 +1,8 @@
 """Value: reject exported qualification receipts without complete physical and canonical evidence."""
 import copy
+import io
+import sys
+from unittest import mock
 import unittest
 import subprocess
 import shutil
@@ -13,6 +16,23 @@ from spectator_browser import validate, validate_fault, validate_departure, vali
 
 
 class SpectatorBrowserTests(unittest.TestCase):
+    def test_acceptance_delay_requires_a_scenario_that_reaches_acceptance(self):
+        import signalfish_spectator_live as launcher
+        for fault in [None, 'viewer-departure', 'host-departure', 'initial-state', 'room-identity']:
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
+                arguments = ['spectator', '--godot', 'unused', '--server', 'unused', '--server-source', 'unused',
+                             '--build-receipt', 'unused', '--output', folder, '--browser-viewer', '--acceptance-delay-ms', '1500']
+                if fault is not None:
+                    arguments += ['--browser-fault', fault]
+                with mock.patch.object(sys, 'argv', arguments), mock.patch.object(launcher, 'run') as run, mock.patch('sys.stderr', io.StringIO()):
+                    if fault in ['initial-state', 'room-identity']:
+                        with self.assertRaisesRegex(SystemExit, '2'):
+                            launcher.main()
+                        run.assert_not_called()
+                    else:
+                        launcher.main()
+                        run.assert_called_once()
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for browser process controls')
     def test_runner_process_rejects_active_request_failure(self):
         source = Path(__file__).parent / 'browser/spectator.cjs'

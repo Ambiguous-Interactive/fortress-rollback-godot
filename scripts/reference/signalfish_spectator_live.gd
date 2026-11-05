@@ -466,8 +466,8 @@ func _send_accept(packet: PackedByteArray) -> Error:
 		accept_request.timeout = 3.0
 		root.add_child(accept_request)
 		accept_request.request_completed.connect(
-			func(_result: int, status: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
-				accept_delivered = status == 200
+			func(result: int, status: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
+				accept_delivered = result == HTTPRequest.RESULT_SUCCESS and status == 200
 				if not accept_delivered:
 					_error("control acceptance HTTP failure")
 				accept_request.queue_free()

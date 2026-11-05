@@ -44,7 +44,7 @@ function observeErrors(page,errors,isTearingDown,diagnostics) {
     } catch {}
   });
 }
-module.exports={observeErrors};
+module.exports={observeErrors,run};
 async function run() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
@@ -78,13 +78,16 @@ async function run() {
     await page.goto(process.argv[2] + '/index.html');
     if (runtime.browser_fault==='viewer-departure') {
       phase='departure';
-      await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true,null,{timeout:45000});
+      await page.waitForFunction(() => window.fortressSpectatorDepartureReady===true || window.fortressSpectatorResult!==undefined,null,{timeout:45000});
+      const applicationFailed=await page.evaluate(()=>window.fortressSpectatorResult?.passed===false);
+      if(!applicationFailed) {
       departureClosed=await page.evaluate(() => {
         const sockets=window.fortressSpectatorSockets;
         if(sockets.length!==1 || sockets[0].readyState!==1) return false;
         sockets[0].close(1000,'physical viewer departure'); return true;
       });
       if(!departureClosed) throw new Error('no live viewer socket at buffered departure');
+      }
     }
     phase='result';
     await page.waitForFunction(() => window.fortressSpectatorResult !== undefined, null, {timeout:60000});
