@@ -1,4 +1,5 @@
 // Real independent exported Godot instances, with faults at the browser data-channel boundary.
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const https = require('node:https');
 const net = require('node:net');
@@ -360,6 +361,7 @@ async function main() {
       const pages = [];
       const displays = [];
       const roomFailures=[];
+      let teardown;
       try {
         await boundedRoom(async () => {
         await boundedRoom(async () => {
@@ -373,7 +375,9 @@ async function main() {
           page.on('console', message => {
             const entry = { count, index, type: message.type(), text: message.text() };
             logs.push(entry);
-            if (diagnostic) fs.appendFileSync(diagnostic, JSON.stringify(entry) + '\n');
+            if(diagnostic)try {fs.appendFileSync(diagnostic,JSON.stringify(entry)+'\n');} catch(error) {
+              failures.push(error);errors.push({count,index,error:'browser diagnostic log write failed'});
+            }
             if (message.type() === 'error') errors.push({ count, index, error: message.text() });
           });
           await page.addInitScript(instrument, { endpoint: `wss://127.0.0.1:${server.address().port}/v3/ws`, count, index,
@@ -415,14 +419,20 @@ async function main() {
         try {
           await Promise.all(pages.map(page => page.waitForFunction(resourcesClosed, peerDrop || recordingPressure, { timeout: 10000 })));
         } catch (error) {
-          const resources = await Promise.all(pages.map(page => page.evaluate(() => ({
-            result: document.body.dataset.fortressWebrtc,
-            connections: window.fortressResources.connections.map(connection => ({ state: connection.connectionState,
-              ice: connection.iceConnectionState, signaling: connection.signalingState })),
-            channels: window.fortressResources.channels.map(channel => ({ id: channel.id, state: channel.readyState })),
-            websockets: window.fortressSockets.map(record => record.socket.readyState),
-          }))));
-          throw new Error(JSON.stringify({ teardown: resources, cause: String(error) }));
+          const causes=[error];
+          teardown={resources:null};
+          try {
+            const observed=await Promise.allSettled(pages.map(async page=>page.evaluate(()=>({
+              result: document.body.dataset.fortressWebrtc,
+              connections: window.fortressResources.connections.map(connection=>({state:connection.connectionState,
+                ice:connection.iceConnectionState,signaling:connection.signalingState})),
+              channels: window.fortressResources.channels.map(channel=>({id:channel.id,state:channel.readyState})),
+              websockets: window.fortressSockets.map(record=>record.socket.readyState),
+            }))));
+            teardown.resources=observed.map(result=>result.status==='fulfilled'?result.value:null);
+            for(const result of observed)if(result.status==='rejected')causes.push(result.reason);
+          } catch(diagnosticError) {causes.push(diagnosticError);}
+          throw causes.length===1?error:new AggregateError(causes,'resource closure and diagnostics failed');
         }
         const peers = await Promise.all(pages.map(page => page.evaluate(() => ({
           result: JSON.parse(document.body.dataset.fortressWebrtc), rtc: { ...window.fortressRtc, teardown: {
@@ -450,7 +460,11 @@ async function main() {
       } catch (error) {
         roomFailures.push(error);
         // Preserve live socket evidence before context.close destroys the failed room.
-        try {failed_rooms.push({players:count,peers:await captureFailure(pages,count)});} catch(diagnosticError) {roomFailures.push(diagnosticError);}
+        try {
+          const record={players:count,peers:await captureFailure(pages,count)};
+          if(teardown!==undefined)record.teardown=teardown;
+          failed_rooms.push(record);
+        } catch(diagnosticError) {roomFailures.push(diagnosticError);}
       } finally {
         const closed=await Promise.allSettled(contexts.map(context=>Promise.resolve().then(()=>context.close())));
         for(const result of closed) if(result.status==='rejected') roomFailures.push(result.reason);
@@ -487,4 +501,7 @@ async function main() {
 }
 
 module.exports = { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc };
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) main().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});

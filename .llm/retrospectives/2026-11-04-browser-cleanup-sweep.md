@@ -20,7 +20,7 @@ cause-preservation rule remains authoritative; no duplicate skill was added.
 ## Verification
 
 `test_browser_cleanup.py` executes the four actual Node entrypoints with browser
-module doubles and live local HTTP servers. Sixteen cases cover healthy smoke
+module doubles and live local HTTP servers. The entrypoint table covers 23 cases with healthy smoke
 and ownership, primary failures, cleanup-only failures, combined failures and
 slower siblings. Existing ownership tests retain Firefox shutdown ordering.
 The WebRTC instrumentation fixture now implements the real server close callback.
@@ -54,7 +54,13 @@ rejected online diagnostic reads with null metadata, capture a coercion failure
 once per value, and safely display opaque CLI rejections before resource ownership.
 Exact coercion/error-object controls fail 18 baseline cases; diagnostic-read
 controls fail four; early opaque CLI controls fail two with paired healthy runs.
-The final combined Node 26 gate passes all 174 controls.
+Further catch auditing covers resource-closure diagnostics, named corruption
+controls, spectator report publication and storage restoration without losing
+the original rejection. CLI handlers set fatal exit status before reporting and
+inspect without custom hooks or getters. Console file-write failures remain
+owned fatal observations. Four command/event pairs now attach both rejection
+handlers before starting their command; real Node children prove late errors
+cannot escape cleanup. The final combined Node 26 gate passes 198 controls.
 
 The full Python reference attempt completed 285 tests with 273 passes, ten skips
 and two source-drift failures. Source and HEAD changed while it was running;

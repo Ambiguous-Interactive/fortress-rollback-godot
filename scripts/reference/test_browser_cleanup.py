@@ -22,6 +22,11 @@ class BrowserCleanupTests(unittest.TestCase):
             preload.write_text(r"""
 const fs=require('node:fs'),http=require('node:http'),https=require('node:https');
 global.cleanupLog=value=>fs.appendFileSync(process.env.CLEANUP_LOG,value+'\n');
+const originalError=console.error;
+console.error=(...values)=>{
+  if(process.env.FAIL_CUSTOM_INSPECT==='1'&&process.exitCode!==1)throw Error('CLI_EXIT_CODE_NOT_SET');
+  originalError(...values);
+};
 const create=http.createServer;
 http.createServer=function(...args){const server=create.apply(this,args);
   server.on('close',()=>cleanupLog('server closed'));return server;};
@@ -30,6 +35,9 @@ https.createServer=(_options,listener)=>http.createServer(listener);
             package = directory / 'playwright.cjs'
             package.write_text(r"""
 if(process.env.FAIL_OPAQUE==='1')throw Object.create(null);
+const inspectionFailure={original:'ORIGINAL_CLI_FAILURE',get hidden(){throw Error('CLI_GETTER_FAILURE');},
+  [require('node:util').inspect.custom](){throw Error('CLI_FORMAT_FAILURE');}};
+if(process.env.FAIL_CUSTOM_INSPECT==='1'&&process.env.CUSTOM_INSPECT_ON_GOTO!=='1')throw inspectionFailure;
 let launched=0;
 module.exports.chromium={launch:async()=>{
   const index=launched++;
@@ -41,8 +49,11 @@ module.exports.chromium={launch:async()=>{
     await new Promise(resolve=>setTimeout(resolve,index===1?60:1));cleanupLog('browser closed '+index);
     if(process.env.FAIL_BROWSER==='1')throw Error('BROWSER_FAILURE_'+index);},
     newContext:async()=>{if(process.env.FAIL_CONTEXT==='1')return context;throw Error('PRIMARY_FAILURE');},
-    newPage:async()=>({on(){},goto:async()=>{if(process.env.FAIL_PRIMARY==='1')throw Error('PRIMARY_FAILURE');},
-      waitForFunction:async()=>{},evaluate:async()=>({passed:true})})};
+    newPage:async()=>({on(){},goto:async()=>{
+      if(process.env.CUSTOM_INSPECT_ON_GOTO==='1')throw inspectionFailure;
+      if(process.env.FAIL_PRIMARY==='1')throw Error('PRIMARY_FAILURE');},
+      waitForFunction:async()=>{if(process.env.FAIL_OWNERSHIP_DIAGNOSTIC==='1')throw Error('OWNERSHIP_WAIT_FAILURE');},
+      evaluate:async()=>{if(process.env.FAIL_OWNERSHIP_DIAGNOSTIC==='1')throw Object.create(null);return{passed:true};}})};
 }};
 """, encoding='utf-8')
             certificate = directory / 'tls'
@@ -53,21 +64,39 @@ module.exports.chromium={launch:async()=>{
                      ('online', True, False, False), ('online', True, True, False),
                      ('webrtc', True, False, False), ('webrtc', True, True, False),
                      ('webrtc', True, False, True), ('webrtc', True, True, True),
-                     ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False)]
+                     ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False),
+                     *[(name+'-inspect', True, False, False) for name in ['smoke', 'ownership', 'online', 'webrtc', 'spectator']],
+                     ('ownership-diagnostic', False, False, False), ('ownership-diagnostic', False, True, True)]
             for name, primary, browser_failure, context_failure in cases:
                 opaque = name.endswith('-opaque')
-                name = name.removesuffix('-opaque')
+                custom_inspect = name.endswith('-inspect')
+                diagnostic = name.endswith('-diagnostic')
+                name = name.removesuffix('-opaque').removesuffix('-inspect').removesuffix('-diagnostic')
                 log.unlink(missing_ok=True)
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_CHROMIUM_EXECUTABLE': '/fixture',
                                'FORTRESS_TLS_CERT': str(certificate), 'FORTRESS_TLS_KEY': str(certificate), 'CLEANUP_LOG': str(log),
                                'FAIL_PRIMARY': str(int(primary)), 'FAIL_OPAQUE': str(int(opaque)),
+                               'FAIL_CUSTOM_INSPECT': str(int(custom_inspect)), 'CUSTOM_INSPECT_ON_GOTO': str(int(custom_inspect and name == 'smoke')),
+                               'FAIL_OWNERSHIP_DIAGNOSTIC': str(int(diagnostic)),
                                'FAIL_BROWSER': str(int(browser_failure)), 'FAIL_CONTEXT': str(int(context_failure)),
                                'FORTRESS_OWNERSHIP_BROWSER': 'chromium', 'FORTRESS_BROWSER_PAIR': '["chromium","chromium"]'}
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
                 with self.subTest(name=name, primary=primary, browser_failure=browser_failure, context_failure=context_failure):
                     child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=2)
-                    self.assertEqual(child.returncode, int(primary or browser_failure or context_failure), child.stderr)
+                    self.assertEqual(child.returncode, int(primary or browser_failure or context_failure or diagnostic), child.stderr)
+                    if custom_inspect:
+                        if name == 'smoke':
+                            self.assertEqual(log.read_text().splitlines()[-1], 'server closed')
+                        else:
+                            self.assertFalse(log.exists(), 'early module rejection owns no server')
+                        self.assertIn('ORIGINAL_CLI_FAILURE', child.stderr)
+                        self.assertNotIn('Error: CLI_FORMAT_FAILURE', child.stderr)
+                        self.assertNotIn('Error: CLI_GETTER_FAILURE', child.stderr)
+                        self.assertEqual(child.stdout, '')
+                        continue
+                    if diagnostic:
+                        self.assertIn('OWNERSHIP_WAIT_FAILURE', child.stderr)
                     if opaque:
                         self.assertFalse(log.exists(), 'early module rejection owns no server')
                         self.assertIn('null prototype', child.stderr, 'CLI retains the original opaque rejection')
@@ -91,7 +120,7 @@ module.exports.chromium={launch:async()=>{
                         self.assertIn('browser closed 1', log.read_text())
                         if browser_failure:
                             self.assertIn('BROWSER_FAILURE_1', child.stderr)
-                    if not (primary or browser_failure or context_failure):
+                    if not (primary or browser_failure or context_failure or diagnostic):
                         json.loads(child.stdout)
 
 

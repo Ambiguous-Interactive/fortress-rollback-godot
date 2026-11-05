@@ -1,5 +1,6 @@
 // Run an actual exported Godot page; a HTTP 200 alone cannot satisfy this smoke.
 const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -38,4 +39,7 @@ const path = require('node:path');
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
   if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser smoke and cleanup failed');
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});

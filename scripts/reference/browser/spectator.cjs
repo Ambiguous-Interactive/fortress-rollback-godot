@@ -1,4 +1,5 @@
 // Run the exported viewer with only its own control capability in an isolated context.
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const REQUEST_FAILURE_LIMIT=32;
 const REQUEST_TEXT_LIMIT=256;
@@ -51,7 +52,7 @@ async function run() {
   const browser = await chromium.launch({headless:true, executablePath:process.env.FORTRESS_CHROMIUM_EXECUTABLE,
     args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   let tearingDown=false,phase='startup',result,state,departureClosed=false,published=false,version='unknown';
-  let operationFailed=false,operationError;
+  const failures=[];
   const errors=[],requestFailures=[];
   const publish=failedPhase=>{
     if(published) return;
@@ -98,18 +99,17 @@ async function run() {
     publish();
     if (errors.length || result.passed !== true) process.exitCode=1;
   } catch(error) {
-    operationFailed=true;
-    operationError=error;
+    failures.push(error);
     process.exitCode=1;
-    publish(phase);
-    throw error;
+    try {publish(phase);} catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
     clearTimeout(watchdog);
     tearingDown=true;
-    try {await browser.close();} catch(cleanupError) {
-      if(operationFailed) throw new AggregateError([operationError,cleanupError],'browser operation and cleanup failed');
-      throw cleanupError;
-    }
+    try {await browser.close();} catch(cleanupError) {failures.push(cleanupError);}
   }
+  if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation, reporting and cleanup failed');
 }
-if (require.main===module) run().catch(error => {console.error(error);process.exitCode=1;});
+if (require.main===module) run().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});

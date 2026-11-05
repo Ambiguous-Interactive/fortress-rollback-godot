@@ -1,4 +1,5 @@
 // Value: runs the shipped online scene; real keyboard, SDK sockets, recovery and new-room lifecycle.
+const { inspect } = require('node:util');
 const fs = require('node:fs');
 const https = require('node:https');
 const { createHost } = require('./online_host.cjs');
@@ -174,21 +175,22 @@ async function collectDiagnostics(pages, command) {
       Storage.prototype.setItem = unavailable;
       IDBFactory.prototype.open = unavailable;
     });
+    const failures=[];
     try {
       const pending = page.waitForEvent('download', { timeout: 10000 });
-      await command(page, 'diagnostics');
-      const download = await pending;
+      const [download] = await Promise.all([pending,Promise.resolve().then(()=>command(page, 'diagnostics'))]);
       const report = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
       const after = await page.evaluate(() => ({ state: window.fortressOnline.state, restores: window.fortressOnline.restores, frame: window.fortressOnline.frame,
         storage_calls: window.fortressStorageCalls }));
       if (after.state !== 'offline' || after.frame !== before.frame || after.restores !== before.restores)
         throw new Error('diagnostic export advanced or resumed an offline match');
       diagnostics.push({ before, after, filename: download.suggestedFilename(), report });
-    } finally {
-      await page.evaluate(() => {
+    } catch(error) {failures.push(error);} finally {
+      try {await page.evaluate(() => {
         [Storage.prototype.setItem, IDBFactory.prototype.open] = window.fortressStorageOriginals;
-      });
+      });} catch(error) {failures.push(error);}
     }
+    if(failures.length)throw failures.length===1?failures[0]:new AggregateError(failures,'diagnostic export and storage reset failed');
   }
   return diagnostics;
 }
@@ -199,8 +201,7 @@ async function watchReplay(page, command, recording, diagnostic, timings) {
   const control = button => command(page, 'viewer_control', { button });
   const choose = async buffer => {
     const pending = page.waitForEvent('filechooser', { timeout: 10000 });
-    await control('Open replay');
-    const chooser = await pending;
+    const [chooser] = await Promise.all([pending,Promise.resolve().then(()=>control('Open replay'))]);
     await chooser.setFiles({ name: 'fortress-online.frrp', mimeType: 'application/octet-stream', buffer });
   };
   const bytes = Buffer.from(recording.hex, 'hex');
@@ -254,8 +255,7 @@ async function inspectDiagnostic(page, command, report, diagnostic, timings) {
   const control = button => command(page, 'diagnostic_control', { button });
   const choose = async data => {
     const pending = page.waitForEvent('filechooser', { timeout: 10000 });
-    await control('Open diagnostic');
-    const chooser = await pending;
+    const [chooser] = await Promise.all([pending,Promise.resolve().then(()=>control('Open diagnostic'))]);
     await chooser.setFiles({ name: 'fortress-diagnostics.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(data)) });
   };
   const observe = () => page.evaluate(() => window.fortressOnline.diagnostic_viewer);
@@ -299,8 +299,7 @@ async function collectReplay(pages, command, diagnostic) {
   const disabledPeer = await pages[0].evaluate(() => !window.fortressOnline.replay_enabled);
   const peers = await Promise.all(pages.map(peer => peer.evaluate(() => ({ slot: window.fortressOnline.slot, inputs: window.fortressOnline.inputs }))));
   const pending = page.waitForEvent('download', { timeout: 10000 });
-  await command(page, 'replay');
-  const download = await pending;
+  const [download] = await Promise.all([pending,Promise.resolve().then(()=>command(page, 'replay'))]);
   const bytes = fs.readFileSync(await download.path());
   if (bytes.length <= 8192 || bytes.length > 16384) throw new Error('online witness replay must exceed 8 KiB within its 16 KiB short-match bound');
   await download.saveAs(diagnostic.replace('-events.log', '-replay.frrp'));
@@ -412,7 +411,9 @@ async function main() {
       page.on('pageerror', error => errors.push(String(error)));
       page.on('console', message => {
         const text = message.text();
-        fs.appendFileSync(diagnostic, JSON.stringify({ index, text }) + '\n');
+        try {fs.appendFileSync(diagnostic,JSON.stringify({index,text})+'\n');} catch(error) {
+          failures.push(error);errors.push('browser diagnostic log write failed');
+        }
         if (logs.length < 128) logs.push(text);
         if (text.includes('SCRIPT ERROR:') || text.startsWith('ERROR:')) errors.push(text);
       });
@@ -486,14 +487,24 @@ async function main() {
         // The corruption is applied while a peer restores a snapshot. Every peer must reach one restore
         // before the control judges the round, so the outcome never depends on when a remote input arrives.
         await Promise.all(pages.map(page => page.waitForFunction(() => window.fortressOnline?.restores >= 1, null, { timeout: 90000 })
-          .catch(async error => { throw new Error(`the corrupt control observed no restore: ${JSON.stringify(await observe())}`); })));
+          .catch(async error => {
+            let observation;
+            try {observation=JSON.stringify(await observe());} catch(diagnosticError) {
+              throw new AggregateError([error,diagnosticError],'corrupt restore observation failed');
+            }
+            throw new Error(`the corrupt control observed no restore: ${observation}`,{cause:error});
+          })));
         if (errors.length) throw new Error(JSON.stringify(errors));
         // The corrupted state must be caught by the production desync detection before the round is judged.
         desyncPage = await Promise.any(pages.map((page, position) => page.waitForFunction(() => {
           const value = window.fortressOnline;
           return value?.state === 'failed' && value?.terminal_reason === 18;
-        }, null, { timeout: 90000 }).then(() => position))).catch(async () => {
-          throw new Error(`the corrupt control observed no desync: ${JSON.stringify(await observe())}`);
+        }, null, { timeout: 90000 }).then(() => position))).catch(async error => {
+          let observation;
+          try {observation=JSON.stringify(await observe());} catch(diagnosticError) {
+            throw new AggregateError([error,diagnosticError],'corrupt desync observation failed');
+          }
+          throw new Error(`the corrupt control observed no desync: ${observation}`,{cause:error});
         });
         if (errors.length) throw new Error(JSON.stringify(errors));
       }
@@ -667,4 +678,7 @@ async function main() {
   }
 }
 module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics, measured, elapsedMicros };
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module) main().catch(error => {
+  process.exitCode=1;
+  try {console.error(inspect(error,{customInspect:false,getters:false,depth:8}));} catch {console.error('Browser probe failed; diagnostic unavailable.');}
+});
