@@ -63,9 +63,9 @@ function reportFailure(error) {
 module.exports={observeErrors,run,reportFailure};
 async function run(failureSignal) {
   const failures=[],externalEvent={};
-  let forwardedExternal=false;
+  let forwardedExternal=false,recordedExternal=false;
   const external=failureSignal && Promise.resolve(failureSignal).then(()=>new Promise(()=>{}),reason=>{
-    failures.push(reason);externalEvent.reason=reason;return externalEvent;
+    recordedExternal=true;failures.push(reason);externalEvent.reason=reason;return externalEvent;
   });
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const runtime = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
@@ -87,7 +87,7 @@ async function run(failureSignal) {
   // After the deadline, no awaited browser call can resume this owner.
   const wait=async operation=>{
     const value=await Promise.race(external?[operation,deadline,external]:[operation,deadline]);
-    if(value===externalEvent){forwardedExternal=true;throw externalEvent.reason;}
+    if(value===externalEvent || recordedExternal){forwardedExternal=true;throw externalEvent.reason;}
     return value;
   };
   try {
@@ -127,6 +127,7 @@ async function run(failureSignal) {
       && window.fortressSpectatorSockets.every(socket => socket.readyState===3),null,{timeout:5000}));
     phase='final';
     version=browser.version();
+    await wait(Promise.resolve());
     publish();
     if (errors.length || result.passed !== true) process.exitCode=1;
   } catch(error) {

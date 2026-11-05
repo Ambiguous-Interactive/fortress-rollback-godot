@@ -211,6 +211,47 @@ require(path.join(directory,'spectator_acceptance.cjs'));
                         self.assertNotIn('triggerUncaughtException', result.stderr)
                         self.assertIn('undefined' if phase == 'undefined' else 'route-' + phase + '-safe', result.stderr)
 
+    @unittest.skipUnless(shutil.which('node'), 'Node is required for external failure process controls')
+    def test_external_failure_prevents_ready_calls_publishing_success(self):
+        source = Path(__file__).parent / 'browser/spectator.cjs'
+        stub = """
+const {EventEmitter}=require('node:events');
+const page=new EventEmitter();
+page.addInitScript=async()=>{};page.goto=async()=>{};page.waitForFunction=async()=>{};
+let reads=0;
+page.evaluate=async()=>++reads===1?{passed:true}:undefined;
+const browser={newContext:async()=>({newPage:async()=>page}),
+  version:()=>{if(process.env.FORTRESS_EXTERNAL_PHASE.endsWith('report'))global.rejectExternal(global.originalReason);return 'stub';},
+  close:async()=>{global.closeCalls++;}};
+module.exports={chromium:{launch:async()=>browser}};
+"""
+        script = """
+const fs=require('node:fs'),source=process.argv[1],runtime=process.argv[2],report=process.argv[3];
+global.originalReason=process.env.FORTRESS_EXTERNAL_PHASE.startsWith('undefined')?undefined:Error('external operation failed');global.closeCalls=0;
+const signal=new Promise((_resolve,reject)=>{global.rejectExternal=reject;});
+if(process.env.FORTRESS_EXTERNAL_PHASE.endsWith('ready'))global.rejectExternal(global.originalReason);
+process.argv=['node',source,'http://fixture.invalid',runtime];
+require(source).run(signal).catch(error=>{
+  fs.writeFileSync(report,JSON.stringify({same:error===global.originalReason,closes:global.closeCalls}));process.exitCode=1;
+});
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            temporary = Path(folder)
+            package = temporary / 'playwright.cjs'
+            package.write_text(stub, encoding='utf-8')
+            runtime = temporary / 'runtime.json'
+            runtime.write_text('{}', encoding='utf-8')
+            for phase in ['ready', 'report', 'undefined-ready', 'undefined-report']:
+                identity = temporary / (phase + '.json')
+                result = subprocess.run(['node', '--unhandled-rejections=strict', '-e', script, str(source.resolve()), str(runtime), str(identity)],
+                                        env={**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_EXTERNAL_PHASE': phase},
+                                        capture_output=True, encoding='utf-8', timeout=10)
+                with self.subTest(phase=phase):
+                    self.assertEqual(result.returncode, 1)
+                    self.assertEqual(result.stderr, '')
+                    self.assertEqual(json.loads(identity.read_text(encoding='utf-8')), {'same': True, 'closes': 1})
+                    self.assertIn('runnerFailurePhase', json.loads(result.stdout))
+
     @unittest.skipUnless(shutil.which('node'), 'Node is required for browser process controls')
     def test_runner_process_rejects_active_request_failure(self):
         source = Path(__file__).parent / 'browser/spectator.cjs'
