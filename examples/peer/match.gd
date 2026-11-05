@@ -13,6 +13,7 @@ const Simulation = preload("res://examples/offline/simulation.gd")
 const Presentation = preload("res://examples/offline/presentation.gd")
 const MAX_PACKETS: int = 256
 const TICK_US: int = 16667
+const SUGGESTION_FRAMES: int = 600
 
 
 class Game:
@@ -54,8 +55,9 @@ var delivered: int = 0
 var failure: int = I.Code.OK
 var event_counts: Array[Dictionary] = [{}, {}]
 var latest_events: Array[Dictionary] = [{}, {}]
-## Each peer's input_delay_recommendation events, oldest first; the caller clears them.
+## Each peer's latest input_delay_recommendation event; callers may clear it.
 var recommendations: Array[Array] = [[], []]
+var _suggested_frames: PackedInt64Array = PackedInt64Array([0, 0])
 var _tokens: int = 0
 var _packets: Array[Dictionary] = []
 var _held: PackedInt32Array = PackedInt32Array([-1, -1])
@@ -122,6 +124,7 @@ func reset() -> int:
 	event_counts = [{}, {}]
 	latest_events = [{}, {}]
 	recommendations = [[], []]
+	_suggested_frames = PackedInt64Array([0, 0])
 	is_partitioned = false
 	_collect()
 	return failure
@@ -202,7 +205,9 @@ func _drain_events() -> void:
 			if kind != "inputs_received":
 				latest_events[player] = event.duplicate(true)
 			if kind == "input_delay_recommendation":
+				recommendations[player].clear()
 				recommendations[player].append(event.duplicate(true))
+				_suggested_frames[player] = session.status().current_frame
 		session.drain_transitions()
 
 
@@ -234,6 +239,32 @@ func raise_input_delay(player: int) -> int:
 	if player < 0 or player >= sessions.size():
 		return Types.Code.INVALID_PLAYER
 	return sessions[player].set_input_delay(player, sessions[player].input_delay(player) + 1)
+
+
+## Latest measured raise still useful for a running peer, or -1 when unavailable.
+func suggested_input_delay(player: int) -> int:
+	if player < 0 or player >= sessions.size() or failure != I.Code.OK or recommendations[player].is_empty():
+		return -1
+	for session: Peer in sessions:
+		if session.status().lifecycle != Types.Lifecycle.RUNNING or session.network_status().state != "running":
+			return -1
+	var suggested: int = recommendations[player][-1].suggested_delay
+	if suggested <= sessions[player].input_delay(player) or sessions[player].status().current_frame - _suggested_frames[player] > SUGGESTION_FRAMES:
+		return -1
+	return suggested
+
+
+## The game chooses whether to accept a measured delay; this never lowers the delay.
+func apply_suggested_delay(player: int) -> int:
+	if _has_operation_guard():
+		return Types.Code.BUSY
+	var suggested: int = suggested_input_delay(player)
+	if suggested < 0:
+		return Types.Code.INVALID_CONFIGURATION
+	var code: int = sessions[player].set_input_delay(player, suggested)
+	if code == Types.Code.OK:
+		recommendations[player].clear()
+	return code
 
 
 ## Deliberately use different game rules on peer one to demonstrate checksum failure.

@@ -17,6 +17,8 @@ godot --path . res://examples/spectator/spectator.tscn
 
 The upper board is a playable host with delayed remote input and actual rollback.
 The lower board follows its corrected input history, initially twelve confirmed frames behind.
+Instructions and controls scroll above both boards at their normal text size. Use the vertical scrollbar or mouse wheel for lower controls.
+Narrow windows also offer horizontal scrolling; scrolling preserves host input, viewer playback and the selected delivery policy.
 The local demo pauses automatically when the application loses focus. Host input, queued delivery and viewer playback all freeze together.
 Returning to the window does not resume it. Click **Resume demo** or press **G** to continue; **Pause demo** / **G** also pauses manually.
 This complete pause preserves the independent host/viewer pauses, viewing delay and catch-up rate. Explicit host/viewer stepping remains available while paused.

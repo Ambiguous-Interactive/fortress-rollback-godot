@@ -4,6 +4,12 @@
 
 ### Added
 
+- Add peer-example buttons and F/G shortcuts to apply fresh measured input-delay suggestions.
+
+- Add S/F replay shortcuts for slower/faster playback, with the accepted rate shown in the speed selector.
+
+- Keep spectator-example controls readable in short windows with scrolling and separately fitted game views.
+
 - Add a replay inspection pause when opening the file chooser. Canceling keeps the current recording paused until explicit Play.
 
 - Add focus-loss pause to the effects match and replay viewer. Resume explicitly; selected replay seeks still finish paused.

@@ -23,7 +23,8 @@ func _ready() -> void:
 	add_child(_controls)
 	for row: PackedStringArray in [
 		PackedStringArray(["loss", "latency", "reorder", "block", "desync"]),
-		PackedStringArray(["delay_first", "delay_second", "pause", "step", "reset"])
+		PackedStringArray(["delay_first", "delay_second", "pause", "step", "reset"]),
+		PackedStringArray(["suggest_first", "suggest_second"])
 	]:
 		var container: HBoxContainer = HBoxContainer.new()
 		container.add_theme_constant_override("separation", 8)
@@ -79,7 +80,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if number_key in [KEY_1, KEY_2]:
 		_apply_action("delay_first" if number_key == KEY_1 else "delay_second")
 	else:
-		var actions: Dictionary = {KEY_R: "reset", KEY_L: "loss", KEY_T: "latency", KEY_O: "reorder", KEY_SPACE: "block", KEY_X: "desync", KEY_P: "pause", KEY_N: "step"}
+		var actions: Dictionary = {
+			KEY_R: "reset", KEY_L: "loss", KEY_T: "latency", KEY_O: "reorder", KEY_SPACE: "block",
+			KEY_X: "desync", KEY_P: "pause", KEY_N: "step", KEY_F: "suggest_first", KEY_G: "suggest_second"
+		}
 		if actions.has(event.keycode):
 			_apply_action(actions[event.keycode])
 
@@ -103,6 +107,12 @@ func _apply_action(action: String) -> void:
 		var player: int = 0 if action == "delay_first" else 1
 		var code: int = _match.raise_input_delay(player)
 		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged (code %d)" % [player + 1, code]
+	elif action in ["suggest_first", "suggest_second"]:
+		var player: int = 0 if action == "suggest_first" else 1
+		if not _can_change_delay() or _match.suggested_input_delay(player) < 0:
+			return
+		var code: int = _match.apply_suggested_delay(player)
+		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d suggestion unchanged (code %d)" % [player + 1, code]
 	elif action == "desync":
 		if _can_change_delay():
 			_match.inject_desync()
@@ -150,6 +160,11 @@ func _update_label() -> void:
 	_actions.desync.text = "Wrong game rules (X)"
 	_actions.delay_first.text = "Peer 1 delay +1 (1)"
 	_actions.delay_second.text = "Peer 2 delay +1 (2)"
+	for player: int in 2:
+		var action: String = "suggest_first" if player == 0 else "suggest_second"
+		var suggested: int = _match.suggested_input_delay(player)
+		_actions[action].text = "Peer %d: %s (%s)" % [player + 1, "apply suggested delay %d" % suggested if suggested >= 0 else "no delay suggestion", "F" if player == 0 else "G"]
+		_actions[action].tooltip_text = "Delay local input to reduce corrections. This raise cannot be undone during the match."
 	_actions.reset.text = "Reset match (R)"
 	_actions.pause.text = "Resume (P)" if _is_paused else "Pause (P)"
 	_actions.step.text = "Step tick (N)"
@@ -158,6 +173,8 @@ func _update_label() -> void:
 		var button: Button = _actions[action]
 		if action == "reset":
 			button.disabled = _match._has_operation_guard()
+		elif action in ["suggest_first", "suggest_second"]:
+			button.disabled = not _can_change_delay() or _match.suggested_input_delay(0 if action == "suggest_first" else 1) < 0
 		elif action in ["delay_first", "delay_second", "desync"]:
 			button.disabled = not _can_change_delay()
 		else:

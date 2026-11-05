@@ -35,7 +35,9 @@ class FocusGame:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "focus_loss", "timeline"])
+	return PackedStringArray(
+		["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "keyboard_speed", "focus_loss", "timeline"]
+	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -49,6 +51,8 @@ func run_case(name: String, context: RefCounted) -> void:
 				_timeline(context)
 			"keyboard_controls":
 				_keyboard_controls(context)
+			"keyboard_speed":
+				_keyboard_speed(context)
 			"cadence":
 				_cadence(context)
 			"controls":
@@ -335,6 +339,63 @@ func _keyboard_controls(context: RefCounted) -> void:
 	node.free()
 
 
+# Value: protects=keyboard speed selection shares pointer cadence and ownership gates; fails_when=shortcuts bypass ownership or skip recorded inputs;
+# why_new=existing keyboard coverage has no speed action; seam=none
+func _keyboard_speed(context: RefCounted) -> void:
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	var replay: RefCounted = Fixture.recording(20)
+	node.viewer.open_bytes(replay.to_bytes())
+	node._refresh()
+	for key: int in [KEY_S, KEY_F]:
+		for modified: String in ["echo", "released", "ctrl", "alt", "meta", "shift"]:
+			_key(node, key, modified)
+			context.equal(node.viewer.playback_speed_quarters(), 4, "modified speed shortcut is ignored")
+	for row: Array in [[KEY_S, 2, 1], [KEY_S, 1, 0], [KEY_S, 1, 0], [KEY_F, 2, 1], [KEY_F, 4, 2], [KEY_F, 8, 3], [KEY_F, 16, 4], [KEY_F, 16, 4]]:
+		_key(node, row[0])
+		context.equal(node.viewer.playback_speed_quarters(), row[1], "speed shortcuts select adjacent supported rate without wrapping")
+		context.equal(node._speed.selected, row[2], "visible speed follows keyboard selection")
+		context.equal([node.viewer.current_frame(), node.viewer.is_playing], [0, false], "speed shortcuts preserve paused state")
+	node.viewer.set_playback_speed(1)
+	node._refresh()
+	context.equal(node._speed.selected, 0, "refresh shows accepted controller speed")
+	_key(node, KEY_P)
+	for _tick: int in 3:
+		node._physics_process(0.0)
+	_key(node, KEY_F)
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 0, "keyboard speed change restarts fractional cadence")
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 1, "changed keyboard speed resumes normal cadence")
+	_key(node, KEY_P)
+	node._timeline_drag_started()
+	_key(node, KEY_F)
+	context.equal(node.viewer.playback_speed_quarters(), 2, "timeline ownership refuses keyboard speed changes")
+	node._timeline_drag_ended(false)
+	node._refresh()
+	var pending: RefCounted = node.viewer._player.begin_advance()
+	context.equal(pending.batch != null, true, "expert work owns replay before stale enabled keyboard action")
+	_key(node, KEY_F)
+	context.equal(node.viewer.playback_speed_quarters(), 2, "active expert work refuses keyboard speed changes before refresh")
+	node.viewer._player.terminate()
+	node.viewer.restart()
+	node._refresh()
+	node._speed.select(4)
+	node._speed.item_selected.emit(4)
+	context.equal(node.viewer.playback_speed_quarters(), 16, "pointer selection retains the same supported speed")
+	_key(node, KEY_P)
+	for _tick: int in 5:
+		node._physics_process(0.0)
+	var expected: Simulation = Simulation.new()
+	for frame: int in 20:
+		expected.simulate_frame(frame, replay.inputs(frame))
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [20, false], "fast playback checks exact ending")
+	context.bytes_equal(node.viewer.game.canonical_bytes(), expected.canonical_bytes(), 20, "keyboard and pointer speed changes preserve original canonical playback")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
 func _key(node: Node, code: int, modified: String = "") -> void:
 	var event: InputEventKey = InputEventKey.new()
 	event.keycode = code
@@ -519,7 +580,9 @@ func _focus_loss(context: RefCounted) -> void:
 		callback_node.viewer.toggle_play()
 		callback_node._physics_process(0.0)
 		context.equal(game.notified, true, "actual game callback delivers focus loss")
-		context.equal([callback_node.viewer.current_frame(), callback_node.viewer.is_playing], [1, false], "focus pause finishes one accepted owner before another fast-playback frame")
+		context.equal(
+			[callback_node.viewer.current_frame(), callback_node.viewer.is_playing], [1, false], "focus pause finishes one accepted owner before another fast-playback frame"
+		)
 		context.equal(callback_node.viewer._player.is_current_state_validated(), true, "callback focus pause validates its completed displayed state")
 		callback_node._physics_process(0.0)
 		context.equal(callback_node.viewer.current_frame(), 1, "later background ticks retain the paused boundary")
@@ -545,7 +608,8 @@ func _focus_loss(context: RefCounted) -> void:
 			boundary_node._physics_process(0.0)
 		context.equal(boundary_game.notified, true, "actual selected-range boundary validation delivers focus loss")
 		context.equal(
-			[boundary_node.viewer.current_frame(), boundary_node.viewer.is_playing], [boundary_game.focus_frame, false],
+			[boundary_node.viewer.current_frame(), boundary_node.viewer.is_playing],
+			[boundary_game.focus_frame, false],
 			"focus during Repeat start or end validation prevents automatic resumption"
 		)
 		boundary_node._physics_process(0.0)
