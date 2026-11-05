@@ -29,6 +29,7 @@ https.createServer=(_options,listener)=>http.createServer(listener);
 """, encoding='utf-8')
             package = directory / 'playwright.cjs'
             package.write_text(r"""
+if(process.env.FAIL_OPAQUE==='1')throw Object.create(null);
 let launched=0;
 module.exports.chromium={launch:async()=>{
   const index=launched++;
@@ -51,18 +52,28 @@ module.exports.chromium={launch:async()=>{
                      ('ownership', True, False, True), ('ownership', False, True, True),
                      ('online', True, False, False), ('online', True, True, False),
                      ('webrtc', True, False, False), ('webrtc', True, True, False),
-                     ('webrtc', True, False, True), ('webrtc', True, True, True)]
+                     ('webrtc', True, False, True), ('webrtc', True, True, True),
+                     ('online-opaque', True, False, False), ('webrtc-opaque', True, False, False)]
             for name, primary, browser_failure, context_failure in cases:
+                opaque = name.endswith('-opaque')
+                name = name.removesuffix('-opaque')
                 log.unlink(missing_ok=True)
                 environment = {**os.environ, 'FORTRESS_PLAYWRIGHT_PACKAGE': str(package), 'FORTRESS_CHROMIUM_EXECUTABLE': '/fixture',
                                'FORTRESS_TLS_CERT': str(certificate), 'FORTRESS_TLS_KEY': str(certificate), 'CLEANUP_LOG': str(log),
-                               'FAIL_PRIMARY': str(int(primary)), 'FAIL_BROWSER': str(int(browser_failure)), 'FAIL_CONTEXT': str(int(context_failure)),
+                               'FAIL_PRIMARY': str(int(primary)), 'FAIL_OPAQUE': str(int(opaque)),
+                               'FAIL_BROWSER': str(int(browser_failure)), 'FAIL_CONTEXT': str(int(context_failure)),
                                'FORTRESS_OWNERSHIP_BROWSER': 'chromium', 'FORTRESS_BROWSER_PAIR': '["chromium","chromium"]'}
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
                 with self.subTest(name=name, primary=primary, browser_failure=browser_failure, context_failure=context_failure):
                     child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=2)
                     self.assertEqual(child.returncode, int(primary or browser_failure or context_failure), child.stderr)
+                    if opaque:
+                        self.assertFalse(log.exists(), 'early module rejection owns no server')
+                        self.assertIn('null prototype', child.stderr, 'CLI retains the original opaque rejection')
+                        self.assertNotIn('TypeError', child.stderr, 'CLI must not replace the opaque rejection during conversion')
+                        self.assertEqual(child.stdout, '')
+                        continue
                     self.assertEqual(log.read_text(encoding='utf-8').splitlines()[-1], 'server closed')
                     if primary:
                         self.assertIn('PRIMARY_FAILURE', child.stderr)

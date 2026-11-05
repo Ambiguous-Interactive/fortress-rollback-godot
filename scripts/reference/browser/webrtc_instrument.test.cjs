@@ -767,7 +767,7 @@ for(const runner of ['online','webrtc']) for(const cleanup of ['none','browser',
       if(name==='node:https')return{createServer:()=>server};
       if(name==='node:fs')return{readFileSync:()=>''};
       if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
-      if(name==='./webrtc.cjs')return{instrument(){}};
+      if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
       if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
       return require(name);
     };
@@ -790,10 +790,14 @@ for(const runner of ['online','webrtc']) for(const cleanup of ['none','browser',
 }
 
 // Value: opaque rejections and failing diagnostic output must not replace operation or cleanup causes.
-for(const location of ['online','webrtc','room']) for(const kind of ['error','opaque','undefined','number']) {
+for(const location of ['online','webrtc','room']) for(const kind of ['error','opaque','undefined','number','coercion']) {
   for(const diagnosticFails of [false,true,'json']) for(const cleanupFails of [false,true]) {
     test(`${location} preserves ${kind} causes with diagnostic=${diagnosticFails} cleanup=${cleanupFails}`,async()=>{
-      const makeReason=label=>kind==='opaque'?Object.create(null):(kind==='undefined'?undefined:(kind==='number'?7:new Error(label)));
+      const originalFormatting=new Error('original formatting'),cleanupFormatting=new Error('cleanup formatting'),calls={original:0,cleanup:0};
+      const makeReason=label=>{
+        if(kind==='coercion')return{[Symbol.toPrimitive](){calls[label]++;throw label==='original'?originalFormatting:cleanupFormatting;}};
+        return kind==='opaque'?Object.create(null):(kind==='undefined'?undefined:(kind==='number'?7:new Error(label)));
+      };
       const original=makeReason('original'),cleanup=makeReason('cleanup'),diagnostic=new Error('diagnostic');
       const trace=[],moduleValue={exports:{}};
       let serial=0;
@@ -810,7 +814,7 @@ for(const location of ['online','webrtc','room']) for(const kind of ['error','op
         if(name==='node:https')return{createServer:()=>server};
         if(name==='node:fs')return{readFileSync:()=>''};
         if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
-        if(name==='./webrtc.cjs')return{instrument(){}};
+        if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
         if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
         return require(name);
       };
@@ -824,12 +828,58 @@ for(const location of ['online','webrtc','room']) for(const kind of ['error','op
       await assert.rejects(moduleValue.exports.main(),error=>{
         const expected=[original];
         if(location==='room'&&cleanupFails)expected.push(cleanup);
+        if(kind==='coercion') {
+          expected.push(originalFormatting);
+          if(location==='room'&&cleanupFails)expected.push(cleanupFormatting);
+        }
         if(diagnosticFails)expected.push(diagnostic);
         if(location!=='room'&&cleanupFails)expected.push(...Array(serial).fill(cleanup));
-        assert.deepEqual(flatten(error),expected,'all exact causal values must survive diagnostics and cleanup');
+        if(kind==='coercion'&&location!=='room'&&cleanupFails)expected.push(cleanupFormatting);
+        const observed=flatten(error);
+        const formatting=kind==='opaque'?observed.filter(value=>value!==original&&value!==cleanup&&value!==diagnostic):[];
+        if(kind==='opaque') {
+          assert.equal(formatting.length,cleanupFails?2:1,'each unprintable value is described only once');
+          for(const reason of formatting)assert.equal(reason.name,'TypeError');
+        }
+        assert.deepEqual(observed.filter(value=>!formatting.includes(value)),expected,'exact operation and cleanup causes must survive diagnostics');
+        if(kind==='coercion')assert.deepEqual(calls,{original:1,cleanup:cleanupFails?1:0});
         return true;
       });
       assert.deepEqual(trace,[...(location==='room'?['context']:[]),...Array.from({length:serial},(_value,index)=>'browser '+index),'server']);
     });
   }
+}
+
+// Value: diagnostic read rejection is evidence, even while null metadata preserves the report shape.
+for(const mode of ['async','sync']) for(const cleanupFails of [false,true]) {
+  test(`online retains ${mode} diagnostic read causes with cleanup=${cleanupFails}`,async()=>{
+    const original=new Error('operation'),stateError=new Error('state read'),resourceError=new Error('resource read'),cleanup=new Error('cleanup');
+    const moduleValue={exports:{}},reports=[],trace=[];
+    let reads=0;
+    const page={on(){},addInitScript:async()=>{},goto:async()=>{throw original;},evaluate(){
+      const reason=++reads===1?stateError:resourceError;
+      trace.push('read '+reads);
+      if(mode==='sync')throw reason;
+      return Promise.reject(reason);
+    }};
+    const browser={version:()=> 'fixture',newContext:async()=>({newPage:async()=>page,newCDPSession:async()=>({send:async()=>{}})}),
+      close:async()=>{trace.push('browser');if(cleanupFails)throw cleanup;}};
+    const server={address:()=>({port:123}),close(done){trace.push('server');done();}};
+    const fakeRequire=name=>{
+      if(name==='fake-playwright')return{chromium:{launch:async()=>browser}};
+      if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+      if(name==='./webrtc.cjs')return{instrument:function instrument(){}};
+      return require(name);
+    };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname,'online.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+      module:moduleValue,require:fakeRequire,console:{log(){},error(value){reports.push(JSON.parse(value));}},
+      process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+    });
+    await assert.rejects(moduleValue.exports.main(),error=>{
+      assert.deepEqual(Array.from(error.errors),[original,stateError,resourceError,...(cleanupFails?[cleanup]:[])]);
+      return true;
+    });
+    assert.deepEqual(reports[0].states,[null]);assert.deepEqual(reports[0].resources,[null]);
+    assert.deepEqual(trace,['read 1','read 2','browser','server']);
+  });
 }

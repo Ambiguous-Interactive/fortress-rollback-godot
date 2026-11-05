@@ -344,8 +344,15 @@ async function collectReplay(pages, command, diagnostic) {
     playback: await page.evaluate(() => window.fortressOnline.replay_playback) };
 }
 
-function describeFailure(value) {
-  try {return String(value);} catch {return 'unprintable failure';}
+function describeFailure(value,failures,descriptions) {
+  if(descriptions.has(value))return descriptions.get(value);
+  let text;
+  try {text=String(value);} catch(error) {
+    text='unprintable failure';
+    if(!failures.includes(error))failures.push(error);
+  }
+  descriptions.set(value,text);
+  return text;
 }
 
 async function main() {
@@ -359,6 +366,7 @@ async function main() {
   const { server, proxyPairs, proxy } = await createHost(root, endpoint, process.env.FORTRESS_TLS_CERT, process.env.FORTRESS_TLS_KEY);
   const browsers = [], pages = [], sessions = [], rounds = [];
   const failures=[];
+  const descriptions=new Map();
   let nextCommand = 0;
   const command = async (page, kind, values = {}) => {
     const id = ++nextCommand;
@@ -638,16 +646,25 @@ async function main() {
   } catch (error) {
     failures.push(error);
     try {
-      const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
-      const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));
-      console.error(JSON.stringify({ failure: describeFailure(error), states, resources, errors, logs }));
+      const readDiagnostics=async operation=>{
+        const results=await Promise.allSettled(pages.map(page=>Promise.resolve().then(()=>page.evaluate(operation))));
+        for(const result of results)if(result.status==='rejected')failures.push(result.reason);
+        return results.map(result=>result.status==='fulfilled'?result.value:null);
+      };
+      const states=await readDiagnostics(()=>window.fortressOnline);
+      const resources=await readDiagnostics(resourceCounts);
+      console.error(JSON.stringify({ failure: describeFailure(error,failures,descriptions), states, resources, errors, logs }));
     } catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
     const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
     for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
-  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation and cleanup failed: '+failures.map(describeFailure).join('; '));
+  if(failures.length) {
+    if(failures.length===1)throw failures[0];
+    const messages=failures.slice().map(value=>describeFailure(value,failures,descriptions));
+    throw new AggregateError(failures,'browser operation and cleanup failed: '+messages.join('; '));
+  }
 }
 module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics, measured, elapsedMicros };
-if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });

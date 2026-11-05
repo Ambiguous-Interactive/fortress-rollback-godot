@@ -20,7 +20,7 @@ cause-preservation rule remains authoritative; no duplicate skill was added.
 ## Verification
 
 `test_browser_cleanup.py` executes the four actual Node entrypoints with browser
-module doubles and live local HTTP servers. Fourteen cases cover healthy smoke
+module doubles and live local HTTP servers. Sixteen cases cover healthy smoke
 and ownership, primary failures, cleanup-only failures, combined failures and
 slower siblings. Existing ownership tests retain Firefox shutdown ordering.
 The WebRTC instrumentation fixture now implements the real server close callback.
@@ -49,8 +49,18 @@ bypass the post-cleanup rejection. Diagnostic failures are now retained after
 the operation cause, and reason formatting has a nonthrowing fallback. Seventy-two
 VM cases cross both runners and nested room cleanup, Error/null-prototype/undefined/
 number reasons, clean/throwing-console/throwing-JSON diagnostics and cleanup
-success/failure. The initial 48-case matrix fails 30 cases before repair; the
-combined Node 26 gate passes all 152 controls after hardening.
+success/failure. The initial 48-case matrix fails 30 cases before repair. Follow-up controls retain
+rejected online diagnostic reads with null metadata, capture a coercion failure
+once per value, and safely display opaque CLI rejections before resource ownership.
+Exact coercion/error-object controls fail 18 baseline cases; diagnostic-read
+controls fail four; early opaque CLI controls fail two with paired healthy runs.
+The final combined Node 26 gate passes all 174 controls.
+
+The full Python reference attempt completed 285 tests with 273 passes, ten skips
+and two source-drift failures. Source and HEAD changed while it was running;
+`source_changed` and `source_changed_during_capture` correctly rejected those
+receipts. That attempt is not green evidence. Final focused verification runs
+only after the candidate commit freezes source and Git identity.
 
 The guidance now requires the complete CI control command and a sweep of dependent
 callback doubles. These corrections qualify the affected control gate; they do

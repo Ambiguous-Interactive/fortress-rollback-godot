@@ -283,8 +283,15 @@ async function captureFailure(pages, players) {
   }));
 }
 
-function describeFailure(value) {
-  try {return String(value);} catch {return 'unprintable failure';}
+function describeFailure(value,failures,descriptions) {
+  if(descriptions.has(value))return descriptions.get(value);
+  let text;
+  try {text=String(value);} catch(error) {
+    text='unprintable failure';
+    if(!failures.includes(error))failures.push(error);
+  }
+  descriptions.set(value,text);
+  return text;
 }
 
 async function main() {
@@ -340,6 +347,7 @@ async function main() {
   const records = [];
   const failed_rooms = [];
   const failures=[];
+  const descriptions=new Map();
   try {
     for (const name of browserPair) browsers.push(await engines[name].launch(name === 'chromium' ? {
       headless: true, timeout: 30000, executablePath: process.env.FORTRESS_CHROMIUM_EXECUTABLE,
@@ -447,8 +455,11 @@ async function main() {
         const closed=await Promise.allSettled(contexts.map(context=>Promise.resolve().then(()=>context.close())));
         for(const result of closed) if(result.status==='rejected') roomFailures.push(result.reason);
       }
-      if(roomFailures.length) throw roomFailures.length===1?roomFailures[0]:new AggregateError(
-        roomFailures,'room operation and cleanup failed: '+roomFailures.map(describeFailure).join('; '));
+      if(roomFailures.length) {
+        if(roomFailures.length===1)throw roomFailures[0];
+        const messages=roomFailures.slice().map(value=>describeFailure(value,roomFailures,descriptions));
+        throw new AggregateError(roomFailures,'room operation and cleanup failed: '+messages.join('; '));
+      }
     }
     if (errors.length) throw new Error(JSON.stringify(errors));
     console.log(JSON.stringify({ passed: true, browser: browserPair.join('/'),
@@ -459,7 +470,7 @@ async function main() {
   } catch (error) {
     failures.push(error);
     try {
-      console.error(JSON.stringify({ failure: describeFailure(error), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
+      console.error(JSON.stringify({ failure: describeFailure(error,failures,descriptions), errors, records, failed_rooms, logs, browser: browserPair.join('/'),
         version: browsers[0]?.version(), firefox_preferences: browserPair.includes('firefox') ? FIREFOX_PREFS : null,
         browsers: browsers.map((browser, index) => ({ name: browserPair[index], version: browser.version() })) }));
     } catch(diagnosticError) {failures.push(diagnosticError);}
@@ -468,8 +479,12 @@ async function main() {
     for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
-  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation and cleanup failed: '+failures.map(describeFailure).join('; '));
+  if(failures.length) {
+    if(failures.length===1)throw failures[0];
+    const messages=failures.slice().map(value=>describeFailure(value,failures,descriptions));
+    throw new AggregateError(failures,'browser operation and cleanup failed: '+messages.join('; '));
+  }
 }
 
 module.exports = { instrument, isDropCanonicalFailure, resourcesClosed, closeDepartingRtc };
-if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
