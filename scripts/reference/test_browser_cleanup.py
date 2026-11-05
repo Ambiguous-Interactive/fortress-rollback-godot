@@ -83,7 +83,8 @@ module.exports.chromium={launch:async()=>{
                 command = ['node', '--require', str(preload), str(ROOT / 'scripts/reference/browser' / (name + '.cjs')), str(directory)]
                 command += [json.dumps(['res://tests/unit/test_alpha.gd'])] if name == 'ownership' else ['ws://127.0.0.1:12345/v3/ws']
                 with self.subTest(name=name, primary=primary, browser_failure=browser_failure, context_failure=context_failure):
-                    child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=2)
+                    # Match sibling Node controls: allow hosted startup scheduling while still bounding hangs.
+                    child = subprocess.run(command, env=environment, capture_output=True, encoding='utf-8', timeout=10)
                     self.assertEqual(child.returncode, int(primary or browser_failure or context_failure or diagnostic), child.stderr)
                     if custom_inspect:
                         if name == 'smoke':
