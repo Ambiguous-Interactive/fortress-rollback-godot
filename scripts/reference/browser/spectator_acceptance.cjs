@@ -14,7 +14,13 @@ chromium.launch=async options=>{
       const page=await newPage();
       let requests=0,baselineFrame,releaseFrame,heldMs;
       await page.addInitScript(()=>{
-        let ready=false,result;
+        let ready=false,result,frame=0;
+        Object.defineProperty(window,'fortressSpectatorFrame',{
+          get:()=>frame,set:value=>{
+            if(value>frame && window.fortressSpectatorAcceptAcknowledged!==true) window.fortressEarlyPlayback=true;
+            frame=value;
+          }
+        });
         Object.defineProperty(window,'fortressSpectatorDepartureReady',{
           get:()=>ready,set:value=>{ready=value;if(value && window.fortressSpectatorAcceptAcknowledged!==true) window.fortressEarlyDeparture=true;}
         });
@@ -38,12 +44,13 @@ chromium.launch=async options=>{
         const result=await evaluate(...args);
         if(result?.passed===true) {
           const order=await evaluate(()=>({acknowledged:window.fortressSpectatorAcceptAcknowledged===true,
+            earlyPlayback:window.fortressEarlyPlayback===true,
             earlyDeparture:window.fortressEarlyDeparture===true,earlySuccess:window.fortressEarlySuccess===true}));
           if(process.env.FORTRESS_ORDER_OUTPUT) fs.writeFileSync(process.env.FORTRESS_ORDER_OUTPUT,JSON.stringify({...order,requests,baselineFrame,releaseFrame,heldMs}));
           if(requests!==1 || heldMs!==delay || !Number.isSafeInteger(baselineFrame) || !Number.isSafeInteger(releaseFrame)) {
             throw Error('acceptance response hold was not observed');
           }
-          if(releaseFrame!==baselineFrame) throw Error('playback advanced while acceptance response was held');
+          if(releaseFrame!==baselineFrame || order.earlyPlayback) throw Error('playback advanced before acceptance acknowledgment');
           if(!order.acknowledged || order.earlyDeparture || order.earlySuccess) {
             throw Error('playback completed before acceptance acknowledgment');
           }

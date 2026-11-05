@@ -56,6 +56,11 @@ Publish each actual driver-step frame and a separate successful-HTTP callback
 marker. Compare frames before forwarding ACCEPT and immediately before response
 fulfillment; read acknowledgment only from the callback marker. The healthy
 matrix progresses after acknowledgment, and a missing injection is rejected.
+Fresh review also reproduces progress in a microtask after the last sampled
+frame and before response delivery. A continuous frame setter now latches every
+advance before actual acknowledgment, while preserving legitimate progress after
+the callback even before the helper's fulfillment promise returns. The expanded
+real Node matrix exercises both sides of this asynchronous boundary.
 Existing browser guidance already distinguishes server receipt from completed
 acknowledgment; this repair supplies the missing observation rather than another
 parallel rule. Actual frozen-source browser qualification remains separate from

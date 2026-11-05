@@ -45,7 +45,17 @@ page.addInitScript=async(fn,data)=>fn(data);
 let route;
 page.route=async(_pattern,callback)=>{route=callback;};
 page.isClosed=()=>false;
-page.evaluate=async(fn,data)=>fn(data);
+let numericReads=0;
+page.evaluate=async(fn,data)=>{
+  const value=fn(data);
+  if(Number.isSafeInteger(value)) {
+    numericReads++;
+    if(process.env.FORTRESS_TEST_ACCEPTANCE_MODE==='microtask-progress' && numericReads===2) {
+      queueMicrotask(()=>{window.fortressSpectatorFrame=1;});
+    }
+  }
+  return value;
+};
 page.waitForFunction=async fn=>{if(!fn())throw Error('fixture readiness failed');};
 page.goto=async()=>{
   const mode=process.env.FORTRESS_TEST_ACCEPTANCE_MODE;
@@ -63,7 +73,11 @@ page.goto=async()=>{
   if(mode==='no-injection'){finish();return;}
   await route({
     fetch:async()=>{if(mode==='held-progress')window.fortressSpectatorFrame=1;return {};},
-    fulfill:async()=>finish()
+    fulfill:async()=>{
+      if(mode==='microtask-progress' && window.fortressSpectatorFrame!==1)throw Error('frame race injection did not run');
+      finish();
+      if(mode==='ack-progress-before-return')await new Promise(resolve=>setImmediate(resolve));
+    }
   });
 };
 const browser={newContext:async()=>({newPage:async()=>page}),version:()=> 'stub',close:async()=>{}};
@@ -75,7 +89,9 @@ module.exports={chromium:{launch:async()=>browser}};
             package.write_text(stub, encoding='utf-8')
             runtime = directory / 'runtime.json'
             runtime.write_text(json.dumps({'browser_fault': 'viewer-departure'}), encoding='utf-8')
-            for mode, expected_error in [('healthy', None), ('held-progress', 'playback advanced while acceptance response was held'),
+            for mode, expected_error in [('healthy', None), ('ack-progress-before-return', None),
+                                         ('held-progress', 'playback advanced before acceptance acknowledgment'),
+                                         ('microtask-progress', 'playback advanced before acceptance acknowledgment'),
                                          ('early-departure', 'playback completed before acceptance acknowledgment'),
                                          ('early-success', 'playback completed before acceptance acknowledgment'),
                                          ('no-injection', 'acceptance response hold was not observed')]:
