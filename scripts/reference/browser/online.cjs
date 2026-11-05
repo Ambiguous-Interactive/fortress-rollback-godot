@@ -344,6 +344,10 @@ async function collectReplay(pages, command, diagnostic) {
     playback: await page.evaluate(() => window.fortressOnline.replay_playback) };
 }
 
+function describeFailure(value) {
+  try {return String(value);} catch {return 'unprintable failure';}
+}
+
 async function main() {
   const { chromium } = require(process.env.FORTRESS_PLAYWRIGHT_PACKAGE);
   const root = path.resolve(process.argv[2]);
@@ -633,15 +637,17 @@ async function main() {
     console.log(JSON.stringify({ passed: true, corrupt, browser_instances: 2, rounds, viewer, diagnostic_viewer, timings, errors, teardown: true }));
   } catch (error) {
     failures.push(error);
-    const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
-    const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));
-    console.error(JSON.stringify({ failure: String(error), states, resources, errors, logs }));
+    try {
+      const states = await Promise.all(pages.map(page => page.evaluate(() => window.fortressOnline).catch(() => null)));
+      const resources = await Promise.all(pages.map(page => page.evaluate(resourceCounts).catch(() => null)));
+      console.error(JSON.stringify({ failure: describeFailure(error), states, resources, errors, logs }));
+    } catch(diagnosticError) {failures.push(diagnosticError);}
   } finally {
     const closed=await Promise.allSettled(browsers.map(browser=>Promise.resolve().then(()=>browser.close())));
     for(const result of closed) if(result.status==='rejected') failures.push(result.reason);
     try {await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));} catch(error) {failures.push(error);}
   }
-  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation and cleanup failed: '+failures.map(String).join('; '));
+  if(failures.length) throw failures.length===1?failures[0]:new AggregateError(failures,'browser operation and cleanup failed: '+failures.map(describeFailure).join('; '));
 }
 module.exports = { pauseElapsed, instrumentSockets, resourceCounts, registerOnlineInit, collectDiagnostics, measured, elapsedMicros };
 if (require.main === module) main().catch(error => { console.error(String(error)); process.exitCode = 1; });

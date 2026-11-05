@@ -788,3 +788,48 @@ for(const runner of ['online','webrtc']) for(const cleanup of ['none','browser',
     assert.deepEqual(trace,[...Array.from({length:launched},(_value,index)=>'browser '+index),'server']);
   });
 }
+
+// Value: opaque rejections and failing diagnostic output must not replace operation or cleanup causes.
+for(const location of ['online','webrtc','room']) for(const kind of ['error','opaque','undefined','number']) {
+  for(const diagnosticFails of [false,true,'json']) for(const cleanupFails of [false,true]) {
+    test(`${location} preserves ${kind} causes with diagnostic=${diagnosticFails} cleanup=${cleanupFails}`,async()=>{
+      const makeReason=label=>kind==='opaque'?Object.create(null):(kind==='undefined'?undefined:(kind==='number'?7:new Error(label)));
+      const original=makeReason('original'),cleanup=makeReason('cleanup'),diagnostic=new Error('diagnostic');
+      const trace=[],moduleValue={exports:{}};
+      let serial=0;
+      const server={on(){},listen(_port,_host,ready){ready();},address(){return{port:123};},close(done){trace.push('server');done();}};
+      const engines={chromium:{async launch(){
+        const index=serial++;
+        return{version:()=> 'fixture',newContext:async()=>{
+          if(location!=='room')throw original;
+          return{newPage:async()=>{throw original;},close:async()=>{trace.push('context');if(cleanupFails)throw cleanup;}};
+        },close:async()=>{trace.push('browser '+index);if(location!=='room'&&cleanupFails)throw cleanup;}};
+      }}};
+      const fakeRequire=name=>{
+        if(name==='fake-playwright')return engines;
+        if(name==='node:https')return{createServer:()=>server};
+        if(name==='node:fs')return{readFileSync:()=>''};
+        if(name==='./online_host.cjs')return{createHost:async()=>({server,proxyPairs:new Set(),proxy:{}})};
+        if(name==='./webrtc.cjs')return{instrument(){}};
+        if(name==='./webrtc_watchdog.cjs')return{boundedRoom:operation=>operation()};
+        return require(name);
+      };
+      const runner=location==='online'?'online':'webrtc';
+      vm.runInNewContext(fs.readFileSync(path.join(__dirname,runner+'.cjs'),'utf8')+'\nmodule.exports.main=main;',{
+        module:moduleValue,require:fakeRequire,JSON:diagnosticFails==='json'?{parse:JSON.parse,stringify(){throw diagnostic;}}:JSON,
+        console:{log(){},error(){if(diagnosticFails===true)throw diagnostic;}},
+        process:{argv:['node','probe','/export','ws://127.0.0.1:1/v3/ws','clean'],env:{FORTRESS_PLAYWRIGHT_PACKAGE:'fake-playwright'}},
+      });
+      const flatten=value=>value&&Array.isArray(value.errors)?Array.from(value.errors).flatMap(flatten):[value];
+      await assert.rejects(moduleValue.exports.main(),error=>{
+        const expected=[original];
+        if(location==='room'&&cleanupFails)expected.push(cleanup);
+        if(diagnosticFails)expected.push(diagnostic);
+        if(location!=='room'&&cleanupFails)expected.push(...Array(serial).fill(cleanup));
+        assert.deepEqual(flatten(error),expected,'all exact causal values must survive diagnostics and cleanup');
+        return true;
+      });
+      assert.deepEqual(trace,[...(location==='room'?['context']:[]),...Array.from({length:serial},(_value,index)=>'browser '+index),'server']);
+    });
+  }
+}

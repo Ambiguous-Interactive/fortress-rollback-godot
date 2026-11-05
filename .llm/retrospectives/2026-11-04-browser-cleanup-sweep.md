@@ -41,7 +41,16 @@ The first subprocess tests checked stderr, which could preserve an earlier
 operation log while `main()` rejected with cleanup errors alone. Eight VM cases
 now inspect exact rejection and AggregateError member identities. Six fail on
 the initial repair and pass when both runners retain the operation cause through
-complete cleanup. The outer logger still renders every cause in its text.
+complete cleanup. The outer logger still renders every printable cause in its text.
+
+A subsequent cold review found that diagnostic logging could throw and that
+String conversion of a null-prototype rejection also throws. Both paths could
+bypass the post-cleanup rejection. Diagnostic failures are now retained after
+the operation cause, and reason formatting has a nonthrowing fallback. Seventy-two
+VM cases cross both runners and nested room cleanup, Error/null-prototype/undefined/
+number reasons, clean/throwing-console/throwing-JSON diagnostics and cleanup
+success/failure. The initial 48-case matrix fails 30 cases before repair; the
+combined Node 26 gate passes all 152 controls after hardening.
 
 The guidance now requires the complete CI control command and a sweep of dependent
 callback doubles. These corrections qualify the affected control gate; they do

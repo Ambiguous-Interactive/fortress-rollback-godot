@@ -15,6 +15,7 @@ Keep bounded request origin/path, method, resource type, failure code and phase 
 Strip URL credentials, query strings and fragments; malformed diagnostic fields must never suppress the original failure.
 Preserve those observations when browser operations reject, including later result timeouts; publish one failure artifact before owned cleanup.
 If cleanup also rejects, retain both the operation and cleanup causes; test each independently.
+Diagnostic collection, serialization and formatting can also throw. Retain those errors without replacing earlier causes; test opaque and primitive rejections.
 Await all owned context and browser closures after sibling rejection, then await server closure. Preserve context-before-browser order for Firefox.
 When a cleanup callback contract changes, update every dependent test double and run the complete CI control command, including sibling test files.
 
