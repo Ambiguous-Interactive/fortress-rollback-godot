@@ -8,12 +8,13 @@ const Driver = preload("res://addons/fortress_rollback/core/driver.gd")
 const SnapshotStatus = preload("res://addons/fortress_rollback/core/snapshot_status.gd")
 const ACTION_KEYS: Dictionary = {
 	"loss": KEY_L, "latency": KEY_T, "reorder": KEY_O, "block": KEY_SPACE,
-	"desync": KEY_X, "delay_first": KEY_1, "delay_second": KEY_2, "reset": KEY_R, "pause": KEY_P, "step": KEY_N
+	"desync": KEY_X, "delay_first": KEY_1, "delay_second": KEY_2, "reset": KEY_R, "pause": KEY_P, "step": KEY_N,
+	"suggest_first": KEY_F, "suggest_second": KEY_G
 }
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["pointer_controls", "owned_controls", "stopped_controls", "inspection", "focus_pause"])
+	return PackedStringArray(["pointer_controls", "owned_controls", "stopped_controls", "inspection", "focus_pause", "suggested_delay"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -68,7 +69,8 @@ func _pointer_controls(context: RefCounted) -> void:
 	var game: Match = scene._match
 	for action: String in ACTION_KEYS:
 		context.equal(scene._actions[action].focus_mode, Control.FOCUS_NONE, action + " leaves movement and Space shortcuts available")
-		context.equal(scene._actions[action].disabled, action in ["delay_first", "delay_second", "desync", "step"], action + " reflects startup readiness")
+		var unavailable: bool = action in ["delay_first", "delay_second", "desync", "step", "suggest_first", "suggest_second"]
+		context.equal(scene._actions[action].disabled, unavailable, action + " reflects startup readiness")
 	for action: String in ["loss", "latency", "reorder", "block"]:
 		var before: Array = _state(game)
 		scene._actions[action].pressed.emit()
@@ -250,4 +252,84 @@ func _focus_pause(context: RefCounted) -> void:
 	before = _state(game)
 	scene._physics_process(0.0)
 	context.equal(_state(game), before, "next tick honors focus pause after callback unwinds")
+	scene.free()
+
+
+# Value: protects=actual measured peer suggestions can be accepted safely; fails_when=scene ignores suggestions or applies stale/owned work;
+# why_new=advisor tests bypass scene controls; seam=actual encoded peer traffic
+func _suggested_delay(context: RefCounted) -> void:
+	var scene: Node = _scene()
+	var available: bool = scene._actions.has("suggest_first") and scene._actions.has("suggest_second")
+	context.equal(available, true, "peer example exposes measured delay acceptance")
+	if not available:
+		scene.free()
+		return
+	var game: Match = scene._match
+	game.latency_ticks = 12
+	for tick: int in 600:
+		game.tick(PackedInt32Array([tick % 16, (tick * 3) % 16]))
+		if not game.recommendations[0].is_empty() and not game.recommendations[1].is_empty():
+			break
+	context.equal(game.failure, Match.I.Code.OK, "high-latency peers remain healthy")
+	for player: int in 2:
+		context.equal(game.recommendations[player].size(), 1, "actual measured suggestion retained once")
+		if game.recommendations[player].is_empty():
+			scene.free()
+			return
+		var action: String = "suggest_first" if player == 0 else "suggest_second"
+		var suggested: int = game.recommendations[player][0].suggested_delay
+		context.equal(game.sessions[player].input_delay(player), 2, "measured suggestion never applies automatically")
+		context.equal(suggested > game.sessions[player].input_delay(player), true, "actual event suggests a higher delay")
+		scene._update_label()
+		context.equal(scene._actions[action].disabled, false, "measured suggestion enables selected control")
+		context.equal(scene._actions[action].text.contains(str(suggested)), true, "selected control names actual delay")
+		game.sessions[1 - player]._core._begin_driver_notification()
+		scene._update_label()
+		context.equal(scene._actions[action].disabled, true, "other peer ownership blocks suggestion")
+		scene._actions[action].pressed.emit()
+		context.equal(game.sessions[player].input_delay(player) < suggested, true, "owned suggestion leaves delay unchanged")
+		game.sessions[1 - player]._core._end_driver_notification()
+		if player == 0:
+			scene._actions[action].pressed.emit()
+		else:
+			var event: InputEventKey = InputEventKey.new()
+			event.pressed = true
+			event.keycode = KEY_G
+			scene._unhandled_key_input(event)
+		context.equal(game.sessions[player].input_delay(player), suggested, "pointer or key applies measured delay")
+		context.equal(scene._actions[action].disabled, true, "accepted suggestion no longer offered")
+	for tick: int in 160:
+		game.tick(PackedInt32Array([tick % 16, (tick * 3) % 16]))
+	var common: int = mini(game.sessions[0].status().confirmed_frame, game.sessions[1].status().confirmed_frame)
+	var first: Types.FrameInputs = game.sessions[0].confirmed_inputs(common)
+	var second: Types.FrameInputs = game.sessions[1].confirmed_inputs(common)
+	context.equal(common > 100 and first != null and second != null, true, "both peers retain continued confirmed gameplay")
+	if first != null and second != null:
+		for player: int in 2:
+			context.bytes_equal(first.read(player).bytes, second.read(player).bytes, common, "confirmed input agrees after accepting suggestions")
+			context.equal(first.input_status(player), second.input_status(player), "confirmed statuses agree after accepting suggestions")
+	context.equal(game.failure, Match.I.Code.OK, "real byte peers continue after both suggestions")
+	for player: int in 2:
+		context.equal(game.event_counts[player].get("desync_detected", 0), 0, "delay acceptance preserves agreement")
+	scene._actions.reset.pressed.emit()
+	game.latency_ticks = 12
+	for tick: int in 600:
+		game.tick(PackedInt32Array([0, 0]))
+		if not game.recommendations[0].is_empty() and not game.recommendations[1].is_empty():
+			break
+	context.equal(game.suggested_input_delay(0) > 2 and game.suggested_input_delay(1) > 2, true, "fresh match obtains fresh measured offers")
+	game.latency_ticks = 0
+	game.drop_every = 0
+	game.reorder = false
+	for tick: int in 750:
+		game.tick(PackedInt32Array([0, 0]))
+	for player: int in 2:
+		context.equal(game.recommendations[player].size(), 1, "unused recommendation history remains bounded")
+		context.equal(game.suggested_input_delay(player), -1, "old recommendation expires during continued play")
+		context.equal(game.apply_suggested_delay(player), Types.Code.INVALID_CONFIGURATION, "expired recommendation cannot raise delay")
+		context.equal(game.sessions[player].input_delay(player), 2, "expired offer preserves selected delay")
+	scene._update_label()
+	context.equal(scene._actions.suggest_first.disabled and scene._actions.suggest_second.disabled, true, "expired suggestions disable both actions")
+	scene._actions.reset.pressed.emit()
+	context.equal(scene._actions.suggest_first.disabled and scene._actions.suggest_second.disabled, true, "reset clears old measured offers")
 	scene.free()

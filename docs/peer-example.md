@@ -21,6 +21,7 @@ The shipped addon and this scene require no Rust or development oracle.
 | Space | Block outgoing packets; press again before timeout to recover |
 | X | Change one peer's game rules to demonstrate a desync |
 | 1 / 2 | Raise peer 1's or peer 2's input delay by one frame |
+| F / G | Apply the measured delay suggestion for peer 1 or peer 2 |
 | P | Pause or resume both peers and packet delivery |
 | N | Service one ordinary packet/game tick while paused |
 | R | Reset sessions, snapshots, packets and counters |
@@ -102,3 +103,11 @@ Losing application focus pauses both peers and the injected packet clock.
 Returning to the window keeps them paused; use
 Resume (P) when ready. A focus change during a callback lets that accepted tick
 finish and pauses before the next one. Reset starts a running match.
+
+Measured delay buttons show each peer's latest suggested delay after sustained
+latency. F and G accept those suggestions; the scene never applies them automatically.
+A raise cannot be undone in the current match. Offers expire after 600 simulated
+frames, or when the current delay already covers them. Pointer and keyboard
+acceptance wait for both peers to run and for active game work to finish.
+Reset clears old offers. The match retains only the latest recommendation per
+peer, so unattended observations stay bounded.

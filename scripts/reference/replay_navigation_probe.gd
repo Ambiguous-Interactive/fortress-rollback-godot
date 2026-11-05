@@ -52,7 +52,7 @@ func _key(code: Key, modified: bool = false, physical: Key = KEY_NONE) -> void:
 	var event: InputEventKey = InputEventKey.new()
 	event.keycode = code
 	event.physical_keycode = code if physical == KEY_NONE else physical
-	event.unicode = code + 32 if code in [KEY_I, KEY_J, KEY_L, KEY_O] else 0
+	event.unicode = code + 32 if code in [KEY_I, KEY_J, KEY_L, KEY_O, KEY_S, KEY_F] else 0
 	event.pressed = true
 	event.ctrl_pressed = modified
 	Input.parse_input_event(event)
@@ -155,21 +155,84 @@ func _run() -> void:
 	await _player_change_controls()
 	await _inspection_shortcuts()
 	await _replay_import_pause()
+	await _replay_speed_keys()
 	scene.queue_free()
 	await process_frame
 	await _online_controls()
+	await _spectator_layout()
 	await _spectator_shortcuts()
 	await _spectator_focus_pause()
 	await _effects_controls()
 	await _peer_controls()
 	await _offline_controls()
 	await _local_focus_pause()
-	if checks == 401 and not failed:
-		print("FORTRESS_REPLAY_NAVIGATION_OK 401")
+	if checks == 450 and not failed:
+		print("FORTRESS_REPLAY_NAVIGATION_OK 450")
 		quit(0)
 	else:
 		print("FORTRESS_REPLAY_NAVIGATION_FAILED ", checks)
 		quit(1)
+
+
+func _replay_speed_keys() -> void:
+	scene.viewer.open_bytes(Fixture.recording(20).to_bytes())
+	scene.viewer.set_repeat_playback(false)
+	scene.viewer.set_playback_speed(4)
+	scene._refresh()
+	scene._play.grab_focus()
+	await _key(KEY_F, false, KEY_A)
+	_check(scene.viewer.playback_speed_quarters() == 8 and scene._speed.selected == 3, "logical F speeds playback with button focus across layouts")
+	await _key(KEY_S, false, KEY_Q)
+	_check(scene.viewer.playback_speed_quarters() == 4 and scene._speed.selected == 2, "logical S slows playback with button focus across layouts")
+	await _key(KEY_F, true)
+	_check(scene.viewer.playback_speed_quarters() == 4, "modified speed key preserves selected rate")
+	for slower: bool in [true, false]:
+		for _press: int in 5:
+			await _key(KEY_S if slower else KEY_F)
+		_check(scene.viewer.playback_speed_quarters() == (1 if slower else 16), "real speed shortcuts stop at supported rate boundary")
+	_check(scene.viewer.current_frame() == 0 and not scene.viewer.is_playing, "real speed shortcuts preserve inspected state")
+	var line: LineEdit = LineEdit.new()
+	scene.add_child(line)
+	var text: TextEdit = TextEdit.new()
+	scene.add_child(text)
+	for editor: Control in [line, text]:
+		editor.grab_focus()
+		await _key(KEY_S)
+		await _key(KEY_F)
+		var typed: String = line.text if editor == line else text.text
+		_check(typed == "sf" and scene.viewer.playback_speed_quarters() == 16, "editable focus receives speed letters without changing playback")
+	line.queue_free()
+	text.queue_free()
+	scene._play.grab_focus()
+	scene._timeline_drag_started()
+	await _key(KEY_S)
+	_check(scene.viewer.playback_speed_quarters() == 16, "real speed shortcut preserves held timeline ownership")
+	scene._timeline_drag_ended(false)
+	_check(scene.viewer._player.begin_advance().code == ViewerTypes.Code.READY, "manual request owns playback before real speed shortcut")
+	await _key(KEY_S)
+	_check(scene.viewer.playback_speed_quarters() == 16, "real speed shortcut preserves active expert ownership")
+	scene.viewer._player.terminate()
+	scene.viewer.restart()
+	scene._refresh()
+	await _key(KEY_P)
+	for _tick: int in 5:
+		scene._physics_process(0.0)
+	var expected: RefCounted = Fixture.Simulation.new()
+	var recording: RefCounted = Fixture.recording(20)
+	for frame: int in 20:
+		expected.simulate_frame(frame, recording.inputs(frame))
+	_check(scene.viewer.current_frame() == 20 and scene.viewer.game.canonical_bytes() == expected.canonical_bytes(), "real speed changes preserve original canonical final state")
+	var corrupt: RefCounted = Fixture.recording(20)
+	corrupt._inputs[14] ^= 1
+	scene.viewer.open_bytes(corrupt.to_bytes())
+	scene._refresh()
+	await _key(KEY_P)
+	for _tick: int in 2:
+		scene._physics_process(0.0)
+	_check(scene.viewer.current_frame() == 7 and scene.viewer.has_failure(), "fast keyboard playback cannot skip corrupt recorded input")
+	scene.viewer.open_bytes(Fixture.recording(650).to_bytes())
+	scene.viewer.set_playback_speed(4)
+	scene._refresh()
 
 
 func _replay_import_pause() -> void:
@@ -523,6 +586,9 @@ func _spectator_shortcuts() -> void:
 	for tick: int in 5:
 		local._physics_process(0.0)
 	_check(local.demo.host.loop.game.frame == 0, "paused host samples no new live input")
+	local._controls_view.ensure_control_visible(local._pause_host_button)
+	await process_frame
+	await process_frame
 	await _click(local._pause_host_button)
 	_check(not local.demo.is_host_paused, "pointer resumes host independently")
 	await process_frame
@@ -861,7 +927,10 @@ func _spectator_focus_pause() -> void:
 	_check(local._is_service_paused, "spectator focus gain needs explicit resume")
 	await process_frame
 	await process_frame
-	_check(root.get_visible_rect().encloses(local._service_pause_button.get_global_rect()), "spectator global resume remains in viewport")
+	local._controls_view.ensure_control_visible(local._service_pause_button)
+	await process_frame
+	await process_frame
+	_check(local._controls_view.get_global_rect().encloses(local._service_pause_button.get_global_rect()), "spectator global resume remains reachable through scrolling")
 	await _click(local._service_pause_button)
 	local._physics_process(0.0)
 	_check(not local._is_service_paused and local.demo._tick_count == clock + 1, "real pointer resumes spectator delivery explicitly")
@@ -943,3 +1012,53 @@ func _repeat_selection_controls() -> void:
 	_check(scene.viewer.current_frame() == 0 and not scene.viewer.is_playing, "canceled repeat seek cannot resume later")
 	scene.viewer.set_repeat_playback(false)
 	scene.viewer.clear_repeat_range()
+
+
+func _spectator_layout() -> void:
+	var local: Node2D = SpectatorScene.new()
+	root.add_child(local)
+	local.set_physics_process(false)
+	for dimensions: Vector2i in [Vector2i(760, 560), Vector2i(360, 300), Vector2i(1280, 960)]:
+		root.size = dimensions
+		await process_frame
+		await process_frame
+		var controls: ScrollContainer = local.get_node_or_null("SpectatorControls")
+		_check(controls != null and local.scale == Vector2.ONE, "spectator controls retain readable scale")
+		if controls == null:
+			continue
+		var bounds: Rect2 = controls.get_global_rect()
+		_check(root.get_visible_rect().encloses(bounds), "spectator scroll region fits viewport")
+		var board: Rect2 = local._game_rect(Vector2(dimensions))
+		_check(root.get_visible_rect().encloses(board) and board.position.y > bounds.end.y, "both spectator game panels remain visible below controls")
+		controls.scroll_vertical = 0
+		controls.scroll_horizontal = 0
+		await _pointer(bounds.position + Vector2(80, 80), true, MOUSE_BUTTON_WHEEL_DOWN)
+		await _pointer(bounds.position + Vector2(80, 80), false, MOUSE_BUTTON_WHEEL_DOWN)
+		_check(controls.scroll_vertical > 0, "actual wheel input scrolls spectator instructions")
+		controls.scroll_horizontal = 10000
+		_check(dimensions.x >= 760 or controls.scroll_horizontal > 0, "narrow spectator window exposes horizontal overflow")
+		await process_frame
+		controls.ensure_control_visible(local._service_pause_button)
+		await process_frame
+		await process_frame
+		_check(bounds.encloses(local._service_pause_button.get_global_rect()), "scrolling reveals the complete demo pause button")
+		var clock: int = local.demo._tick_count
+		await _click(local._service_pause_button)
+		_check(local._is_service_paused, "real scrolled pointer pauses local spectator service")
+		local._physics_process(0.0)
+		_check(local.demo._tick_count == clock, "scrolled pause retains delivery time")
+		await _key(KEY_G)
+		_check(not local._is_service_paused and root.gui_get_focus_owner() == null, "scrolled controls retain keyboard resume and movement routing")
+		controls.ensure_control_visible(local._host_delay)
+		await process_frame
+		await process_frame
+		_check(bounds.encloses(local._host_delay.get_global_rect()), "host delivery selector remains reachable after resize")
+		var lag: int = local.demo.host.lag_ticks
+		var scroll_before: int = controls.scroll_vertical
+		await _pointer(local._host_delay.get_global_rect().get_center(), true, MOUSE_BUTTON_WHEEL_UP)
+		await _pointer(local._host_delay.get_global_rect().get_center(), false, MOUSE_BUTTON_WHEEL_UP)
+		_check(local.demo.host.lag_ticks == lag, "wheel inspection preserves selected host delivery")
+		_check(controls.scroll_vertical < scroll_before, "wheel over host selector scrolls controls")
+
+	local.queue_free()
+	await process_frame

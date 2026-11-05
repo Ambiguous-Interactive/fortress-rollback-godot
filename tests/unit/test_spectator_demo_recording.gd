@@ -133,7 +133,7 @@ func _capture_guards(context: RefCounted) -> void:
 func _save_pointer_control(context: RefCounted) -> void:
 	var scene: SaveScene = SaveScene.new()
 	scene._ready()
-	var button: Button = scene.get_node_or_null("HostControls/SaveViewedReplay")
+	var button: Button = scene.get_node_or_null("SpectatorControls/Content/HostControls/SaveViewedReplay")
 	context.equal(button != null, true, "pointer users can save their viewed replay")
 	if button == null:
 		scene.free()

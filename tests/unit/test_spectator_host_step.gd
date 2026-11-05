@@ -59,7 +59,7 @@ func run_case(name: String, context: RefCounted) -> void:
 func _host_step(context: RefCounted) -> void:
 	var scene: Node2D = Scene.new()
 	scene._ready()
-	var button: Button = scene.get_node_or_null("HostDelay/StepHost")
+	var button: Button = scene.get_node_or_null("SpectatorControls/Content/HostDelay/StepHost")
 	context.equal(button != null, true, "pointer can step host")
 	if button == null:
 		scene._exit_tree()
@@ -288,7 +288,7 @@ func _focus_pause(context: RefCounted) -> void:
 	scene.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
 	scene._physics_process(0.0)
 	context.equal(_service_state(scene), before, "focus gain cannot resume local service")
-	var button: Button = scene.get_node_or_null("PauseDemo")
+	var button: Button = scene.get_node_or_null("SpectatorControls/Content/PauseDemo")
 	context.equal(button != null, true, "demo has explicit pointer resume")
 	if button != null:
 		context.equal(button.text, "Resume demo (G)", "paused pointer names resume shortcut")

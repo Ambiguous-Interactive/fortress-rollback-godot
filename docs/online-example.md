@@ -217,6 +217,8 @@ Use **Speed** to watch at ¼×, ½×, 1×, 2× or 4×. Every recorded frame and 
 is still processed; fast playback advances at most four frames per tick. **Step** always
 advances exactly one frame and finishes paused. Step and Pause validate the displayed
 state boundary immediately, including sparse recorded checksums, without consuming its input.
+Press **S** to select the next slower speed or **F** for the next faster speed; the selector shows the accepted rate.
+These unshifted shortcuts preserve text entry, file chooser input, held timeline controls and active game work.
 Without a range selection, **Repeat** starts fresh playback after each clean ending at the selected speed.
 Each whole-recording lap validates the original recorded history.
 The final state remains visible until the next tick; Pause, Step and navigation finish paused.

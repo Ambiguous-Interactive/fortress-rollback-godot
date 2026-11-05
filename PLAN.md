@@ -701,6 +701,9 @@ Apply feature-specific upstream models and runtime fault tests at each step.
 The final advanced task audits all remaining applicable upstream behavior and
 creates residual tasks before any complete-parity claim.
 
+The peer example can explicitly apply fresh measured input-delay suggestions through guarded pointer and keyboard actions.
+Replay speed shortcuts share the existing cadence, validation and ownership policy.
+The local spectator keeps its controls readable in short windows with scrolling, while fitting both game views below them.
 The playable effects example supports paused single-tick inspection through the actual driver, including prediction stalls and rollback.
 The offline and in-process peer examples pause on application focus loss and require explicit resume,
 preserving simulation and injected packet time while inspecting another window.

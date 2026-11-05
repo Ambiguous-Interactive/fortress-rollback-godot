@@ -89,7 +89,7 @@ EXPECTED.update({
         'confirmation_policy', 'playback_events', 'failure_events', 'empty_end_and_reentry', 'completion_status', 'gapped_end'},
     'res://tests/unit/test_spectator_publisher.gd': {'retained_publication', 'clean_end', 'lifetime_and_busy'},
     'res://tests/unit/test_replay_speed.gd': {
-        'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls', 'focus_loss', 'timeline',
+        'cadence', 'controls', 'failure', 'scene_speed', 'backward_step', 'scene_backward_step', 'keyboard_controls', 'keyboard_speed', 'focus_loss', 'timeline',
     },
 })
 EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
@@ -97,7 +97,7 @@ EXPECTED['res://tests/unit/test_driver_recovery.gd'] = {
 EXPECTED['res://tests/unit/test_peer_drop_commit.gd'] = {
     'clean_ack_quiescence', 'lost_first_ack_recommits', 'malformed_committed_ack', 'malformed_duplicate_commit',
     'early_committed_ack', 'wrong_sender_commit', 'commit_deadline', 'duplicate_ready_control', 'contradictory_ready_cut', 'contradictory_ready_digest'}
-EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail'})
+EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'clean_host_end', 'paused_final_tail', 'readable_layout'})
 EXPECTED['res://tests/unit/test_spectator_demo.gd'].update({'single_frame', 'single_frame_end', 'single_frame_control', 'host_loss', 'host_loss_control'})
 EXPECTED['res://tests/unit/test_peer_recovery.gd'] = {'final_mesh', 'guards', 'callbacks', 'timeout', 'idle_confirmation'}
 EXPECTED['res://tests/unit/test_peer_drop_replay.gd'] = {'remote_donor_recording', 'lost_reordered_history_recording'}
@@ -210,7 +210,7 @@ EXPECTED['res://tests/unit/test_peer_example_ownership.gd'] = {
 EXPECTED['res://tests/unit/test_example_shortcuts.gd'] = {'ignored_shortcuts', 'ordinary_shortcuts'}
 EXPECTED['res://tests/unit/test_example_scene_exit.gd'] = {'retained_handles', 'active_batches', 'active_callbacks', 'expert_gap_recovery'}
 EXPECTED['res://tests/unit/test_integration_restart.gd'] = {'restart_lifetime', 'restart_rejections', 'restart_callbacks'}
-EXPECTED['res://tests/unit/test_peer_scene_controls.gd'] = {'pointer_controls', 'owned_controls', 'stopped_controls', 'inspection', 'focus_pause'}
+EXPECTED['res://tests/unit/test_peer_scene_controls.gd'] = {'pointer_controls', 'owned_controls', 'stopped_controls', 'inspection', 'focus_pause', 'suggested_delay'}
 EXPECTED['res://tests/unit/test_spectator_host_step.gd'] = {'host_step', 'host_step_ownership', 'host_failure_feedback', 'focus_pause'}
 EXPECTED['res://tests/unit/test_offline_scene_controls.gd'] = {'inspection', 'ownership', 'focus_pause'}
 EXPECTED_COUNT = sum(len(cases) for cases in EXPECTED.values())

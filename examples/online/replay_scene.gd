@@ -122,7 +122,7 @@ func _ready() -> void:
 	_recording_metadata.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	panel.add_child(_recording_metadata)
 	var shortcuts: Label = Label.new()
-	shortcuts.text = "P play/pause | N next frame | B back one frame | R restart | Esc cancel seek"
+	shortcuts.text = "P play/pause | N next frame | B back one frame | R restart | Esc cancel seek\nS/F: slower/faster playback"
 	panel.add_child(shortcuts)
 	var jumps: Label = Label.new()
 	jumps.text = "J/L: jump 5 seconds | Home/End: start/end\nI/Comma: previous change | O/Period: next change | Page Up/Down: recorded checksum"
@@ -322,6 +322,14 @@ func _speed_selected(index: int) -> void:
 	_refresh()
 
 
+func _shift_speed(forward: bool) -> bool:
+	if _is_scrubbing or viewer._is_busy():
+		return false
+	var index: int = [1, 2, 4, 8, 16].find(viewer.playback_speed_quarters())
+	_speed_selected(clampi(index + (1 if forward else -1), 0, 4))
+	return true
+
+
 func _repeat_toggled(enabled: bool) -> void:
 	if not _is_scrubbing:
 		viewer.set_repeat_playback(enabled)
@@ -480,6 +488,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 	var action: Button
 	match event.keycode:
+		KEY_S, KEY_F:
+			if _shift_speed(event.keycode == KEY_F) and is_inside_tree():
+				get_viewport().set_input_as_handled()
+			return
 		KEY_P:
 			action = _play
 		KEY_N:
@@ -556,6 +568,7 @@ func _refresh() -> void:
 	_back_button.disabled = held or viewer.is_seeking() or viewer.current_frame() == 0
 	_restart_button.disabled = held or (viewer.frame_count() == 0 and viewer.recorded_checksum_count() == 0)
 	_speed.disabled = held
+	_speed.select([1, 2, 4, 8, 16].find(viewer.playback_speed_quarters()))
 	_repeat.disabled = held or viewer.is_seeking() or viewer.frame_count() == 0 or viewer.has_failure()
 	_repeat.set_pressed_no_signal(viewer.repeat_playback())
 	var bounds: PackedInt64Array = viewer.repeat_range()

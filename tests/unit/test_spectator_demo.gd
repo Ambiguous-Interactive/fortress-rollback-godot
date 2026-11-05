@@ -61,13 +61,16 @@ func cases() -> PackedStringArray:
 			"playback_feedback",
 			"terminal_feedback",
 			"host_delay_controls",
-			"host_pause"
+			"host_pause",
+			"readable_layout"
 		]
 	)
 
 
 func run_case(name: String, context: RefCounted) -> void:
-	if name == "host_pause":
+	if name == "readable_layout":
+		_readable_layout(context)
+	elif name == "host_pause":
 		_host_pause(context)
 	elif name == "host_delay_controls":
 		_host_delay_controls(context)
@@ -458,7 +461,7 @@ func _pointer_host_loss(context: RefCounted) -> void:
 	for owned_request: bool in [false, true]:
 		var scene: Node2D = Scene.new()
 		scene._ready()
-		var button: Button = scene.get_node_or_null("HostControls/LoseHostLink")
+		var button: Button = scene.get_node_or_null("SpectatorControls/Content/HostControls/LoseHostLink")
 		context.equal(button != null, true, "pointer users can simulate host-link loss")
 		if button == null:
 			scene.free()
@@ -536,8 +539,8 @@ func _pointer_host_controls(context: RefCounted) -> void:
 	for ending: String in ["clean", "loss"]:
 		var scene: Node2D = Scene.new()
 		scene._ready()
-		var end_button: Button = scene.get_node_or_null("HostControls/EndHost")
-		var restart_button: Button = scene.get_node_or_null("HostControls/RestartMatch")
+		var end_button: Button = scene.get_node_or_null("SpectatorControls/Content/HostControls/EndHost")
+		var restart_button: Button = scene.get_node_or_null("SpectatorControls/Content/HostControls/RestartMatch")
 		context.equal(end_button != null and restart_button != null, true, "pointer users can finish and restart the match")
 		if end_button == null or restart_button == null:
 			scene.free()
@@ -1298,7 +1301,7 @@ func _follow_live_controls(context: RefCounted) -> void:
 	if not scene.demo.has_method("follow_live"):
 		scene.free()
 		return
-	var button: Button = scene.get_node_or_null("FollowLive")
+	var button: Button = scene.get_node_or_null("SpectatorControls/Content/FollowLive")
 	context.equal(button != null, true, "scene exposes follow-live button")
 	if button == null:
 		scene.free()
@@ -1347,7 +1350,7 @@ func _pause_control_ownership(context: RefCounted) -> void:
 	var scene: Node2D = Scene.new()
 	scene._ready()
 	context.equal(scene.demo.set_paused(true), Types.Code.OK, "ordinary pause succeeds")
-	var button: Button = scene.get_node_or_null("PauseViewer")
+	var button: Button = scene.get_node_or_null("SpectatorControls/Content/PauseViewer")
 	context.equal(button != null, true, "pointer users have pause and resume control")
 	if button == null:
 		scene.free()
@@ -1515,7 +1518,7 @@ func _pointer_playback_controls(context: RefCounted) -> void:
 	for action: String in ["StepViewer", "CatchUpViewer"]:
 		var scene: Node2D = Scene.new()
 		scene._ready()
-		var button: Button = scene.get_node_or_null(action)
+		var button: Button = scene.get_node_or_null("SpectatorControls/Content/" + action)
 		context.equal(button != null, true, "pointer users can inspect and catch up viewing")
 		if button == null:
 			scene.free()
@@ -1585,15 +1588,15 @@ func _pointer_policy_controls(context: RefCounted) -> void:
 	scene._ready()
 	var actions: PackedStringArray = PackedStringArray(["LessDelay", "MoreDelay", "SlowerCatchUp", "FasterCatchUp"])
 	for action: String in actions:
-		context.equal(scene.get_node_or_null("PlaybackPolicy/" + action) != null, true, "pointer users can tune viewing policy")
-		if scene.get_node_or_null("PlaybackPolicy/" + action) == null:
+		context.equal(scene.get_node_or_null("SpectatorControls/Content/PlaybackPolicy/" + action) != null, true, "pointer users can tune viewing policy")
+		if scene.get_node_or_null("SpectatorControls/Content/PlaybackPolicy/" + action) == null:
 			scene.free()
 			return
 	scene.demo.set_paused(true)
 	for tick: int in range(40):
 		scene.demo.tick(Game.RIGHT | Game.FIRE)
 	for action: String in actions:
-		var button: Button = scene.get_node("PlaybackPolicy/" + action)
+		var button: Button = scene.get_node("SpectatorControls/Content/PlaybackPolicy/" + action)
 		context.equal(button.focus_mode, Control.FOCUS_NONE, "policy adjustment preserves host keyboard focus")
 		var before: Array = _service_observation(scene.demo)
 		var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
@@ -1608,7 +1611,7 @@ func _pointer_policy_controls(context: RefCounted) -> void:
 		scene.demo.viewer.set_playback(0 if boundary == 0 else capacity - 1, 4, 1 if boundary == 0 else capacity)
 		scene._update_label()
 		for action: String in actions:
-			var button: Button = scene.get_node("PlaybackPolicy/" + action)
+			var button: Button = scene.get_node("SpectatorControls/Content/PlaybackPolicy/" + action)
 			context.equal(button.disabled, (action in ["LessDelay", "SlowerCatchUp"]) == (boundary == 0), "policy buttons expose exact accepted bounds")
 			var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
 			if button.disabled:
@@ -1621,7 +1624,7 @@ func _pointer_policy_controls(context: RefCounted) -> void:
 			scene.demo.viewer.terminate(Types.Code.PROTOCOL_FAILED)
 		scene._update_label()
 		for action: String in actions:
-			var button: Button = scene.get_node("PlaybackPolicy/" + action)
+			var button: Button = scene.get_node("SpectatorControls/Content/PlaybackPolicy/" + action)
 			context.equal(button.disabled, true, "policy tuning disables while owned or stopped")
 			var before: Array = _service_observation(scene.demo)
 			var policy: PackedInt64Array = scene.demo.viewer.playback_policy()
@@ -1665,7 +1668,7 @@ func _failure_feedback(context: RefCounted) -> void:
 			var operation: String = "saving state" if kind == Types.Kind.SAVE else "simulating input"
 			var expected: String = "STOPPED: failed while %s at frame 5 | R: start again" % operation
 			context.equal(scene._label.text.contains(expected), true, "viewer explains failed operation, frame and restart")
-			context.equal(scene.get_node("HostControls/RestartMatch").disabled, false, "failed callback permits fresh match recovery")
+			context.equal(scene.get_node("SpectatorControls/Content/HostControls/RestartMatch").disabled, false, "failed callback permits fresh match recovery")
 			var failed_export: PackedByteArray = scene.demo.replay_bytes()
 			context.equal(failed_export.is_empty(), false, "callback failure preserves viewed input before its first export")
 			if captured_before_failure:
@@ -1727,7 +1730,7 @@ func _failure_feedback(context: RefCounted) -> void:
 func _host_delay_controls(context: RefCounted) -> void:
 	var scene: Node2D = Scene.new()
 	scene._ready()
-	var controls: OptionButton = scene.get_node_or_null("HostDelay/Delay")
+	var controls: OptionButton = scene.get_node_or_null("SpectatorControls/Content/HostDelay/Delay")
 	context.equal(controls != null, true, "spectator exposes host delivery delay")
 	if controls == null:
 		scene.free()
@@ -1795,7 +1798,7 @@ func _host_delay_controls(context: RefCounted) -> void:
 func _host_pause(context: RefCounted) -> void:
 	var scene: Node2D = Scene.new()
 	scene._ready()
-	var button: Button = scene.get_node_or_null("HostDelay/PauseHost")
+	var button: Button = scene.get_node_or_null("SpectatorControls/Content/HostDelay/PauseHost")
 	context.equal(button != null, true, "spectator exposes independent host pause")
 	if button == null:
 		scene._exit_tree()
@@ -1859,5 +1862,29 @@ func _host_pause(context: RefCounted) -> void:
 	context.equal(scene.demo.tick(0), Types.Code.OK, "paused empty host ends normally")
 	context.equal(scene.demo.is_host_finished, true, "pause does not hold clean ending")
 	context.state(frame, reference.canonical_bytes())
+	scene._exit_tree()
+	scene.free()
+
+
+# Value: protects=readable spectator controls in short and narrow windows; fails_when=whole scene shrinks to fit;
+# why_new=demo controls are tested without a constrained viewport; seam=none
+func _readable_layout(context: RefCounted) -> void:
+	var scene: Node2D = Scene.new()
+	scene._ready()
+	var scroll: ScrollContainer = scene.get_node_or_null("SpectatorControls")
+	context.equal(scroll != null, true, "spectator controls scroll instead of shrinking")
+	if scroll != null:
+		for viewport_size: Vector2 in [Vector2(760, 560), Vector2(360, 300), Vector2(1280, 960)]:
+			scene._layout_controls(viewport_size)
+			context.equal(scene.scale, Vector2.ONE, "text and pointer targets retain their readable scale")
+			context.equal(scroll.size.x <= viewport_size.x and scroll.size.y <= viewport_size.y * 0.55, true, "scroll region fits selected viewport")
+			context.equal(scene._controls_content.custom_minimum_size.y > scroll.size.y, true, "overflowing controls remain available through scrolling")
+			var board: Rect2 = scene._game_rect(viewport_size)
+			context.equal(board.position.y >= scroll.position.y + scroll.size.y, true, "game remains below scrolling controls")
+			context.equal(board.end.x <= viewport_size.x and board.end.y <= viewport_size.y, true, "both game panels fit the viewport")
+		var before: PackedInt64Array = scene.demo.viewer.playback_policy()
+		scene._controls_view.scroll_vertical = 100
+		scene._controls_view.scroll_horizontal = 100
+		context.equal(scene.demo.viewer.playback_policy(), before, "inspection scrolling preserves playback policy")
 	scene._exit_tree()
 	scene.free()

@@ -12,6 +12,8 @@ const REPLAY_WARNING_FRAMES: int = 600
 var demo: Demo = Demo.new()
 var _code: int = Types.Code.OK
 var _replay_notice: String = ""
+var _controls_view: ScrollContainer
+var _controls_content: Control
 var _label: Label
 var _service_pause_button: Button
 var _is_service_paused: bool = false
@@ -32,38 +34,46 @@ var _host_delay: OptionButton
 
 
 func _ready() -> void:
+	_controls_view = ScrollContainer.new()
+	_controls_view.name = "SpectatorControls"
+	_controls_view.follow_focus = true
+	add_child(_controls_view)
+	_controls_content = Control.new()
+	_controls_content.name = "Content"
+	_controls_content.custom_minimum_size.x = 760.0
+	_controls_view.add_child(_controls_content)
 	_label = Label.new()
 	_label.position = Vector2(24, 20)
 	_label.size.x = 712
 	_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	add_child(_label)
+	_controls_content.add_child(_label)
 	_follow_live_button = Button.new()
 	_follow_live_button.name = "FollowLive"
 	_follow_live_button.text = "Follow live (F)"
 	_follow_live_button.focus_mode = Control.FOCUS_NONE
 	_follow_live_button.pressed.connect(_follow_live)
-	add_child(_follow_live_button)
+	_controls_content.add_child(_follow_live_button)
 	_pause_button = Button.new()
 	_pause_button.name = "PauseViewer"
 	_pause_button.focus_mode = Control.FOCUS_NONE
 	_pause_button.pressed.connect(_toggle_pause)
-	add_child(_pause_button)
+	_controls_content.add_child(_pause_button)
 	_step_button = Button.new()
 	_step_button.name = "StepViewer"
 	_step_button.text = "Step viewer (N)"
 	_step_button.focus_mode = Control.FOCUS_NONE
 	_step_button.pressed.connect(_step_viewer)
-	add_child(_step_button)
+	_controls_content.add_child(_step_button)
 	_catchup_button = Button.new()
 	_catchup_button.name = "CatchUpViewer"
 	_catchup_button.text = "Catch up once (C)"
 	_catchup_button.focus_mode = Control.FOCUS_NONE
 	_catchup_button.pressed.connect(_catch_up_viewer)
-	add_child(_catchup_button)
+	_controls_content.add_child(_catchup_button)
 	_policy_controls = HBoxContainer.new()
 	_policy_controls.name = "PlaybackPolicy"
 	_policy_controls.add_theme_constant_override("separation", 12)
-	add_child(_policy_controls)
+	_controls_content.add_child(_policy_controls)
 	var names: PackedStringArray = PackedStringArray(["LessDelay", "MoreDelay", "SlowerCatchUp", "FasterCatchUp"])
 	var labels: PackedStringArray = PackedStringArray(["Less delay (Y)", "More delay (U)", "Slower catch-up (I)", "Faster catch-up (O)"])
 	for index: int in range(names.size()):
@@ -76,7 +86,7 @@ func _ready() -> void:
 	_host_controls = HBoxContainer.new()
 	_host_controls.name = "HostControls"
 	_host_controls.add_theme_constant_override("separation", 12)
-	add_child(_host_controls)
+	_controls_content.add_child(_host_controls)
 	_end_host_button = Button.new()
 	_end_host_button.name = "EndHost"
 	_end_host_button.text = "End host (E)"
@@ -104,7 +114,7 @@ func _ready() -> void:
 	_host_delay_controls = HBoxContainer.new()
 	_host_delay_controls.name = "HostDelay"
 	_host_delay_controls.add_theme_constant_override("separation", 12)
-	add_child(_host_delay_controls)
+	_controls_content.add_child(_host_delay_controls)
 	var delay_label: Label = Label.new()
 	delay_label.text = "Host input delivery:"
 	_host_delay_controls.add_child(delay_label)
@@ -130,7 +140,7 @@ func _ready() -> void:
 	_service_pause_button.name = "PauseDemo"
 	_service_pause_button.focus_mode = Control.FOCUS_NONE
 	_service_pause_button.pressed.connect(_toggle_service_pause)
-	add_child(_service_pause_button)
+	_controls_content.add_child(_service_pause_button)
 	_code = demo.start()
 	_update_label()
 
@@ -308,11 +318,20 @@ func _can_set_host_delay() -> bool:
 
 
 func _process(_delta: float) -> void:
-	var size: Vector2 = get_viewport_rect().size
-	var content_height: float = _board_top() + 150.0 + 125.0 + 24.0
-	var fit: float = minf(size.x / 760.0, size.y / maxf(560.0, content_height))
-	scale = Vector2(fit, fit)
+	_layout_controls(get_viewport_rect().size)
 	queue_redraw()
+
+
+func _layout_controls(viewport_size: Vector2) -> void:
+	_controls_content.custom_minimum_size.y = _service_pause_button.position.y + _service_pause_button.get_minimum_size().y + 16.0
+	_controls_view.size = Vector2(maxf(1.0, viewport_size.x), minf(_controls_content.custom_minimum_size.y, maxf(1.0, viewport_size.y * 0.55)))
+
+
+func _game_rect(viewport_size: Vector2) -> Rect2:
+	var origin: Vector2 = Vector2(24, _board_top())
+	var available: Vector2 = (viewport_size - origin - Vector2(24, 16)).max(Vector2.ZERO)
+	var fit: float = clampf(minf(available.x / 712.0, available.y / 275.0), 0.0, 1.0)
+	return Rect2(origin, Vector2(712, 275) * fit)
 
 
 func _update_label() -> void:
@@ -380,6 +399,7 @@ func _update_label() -> void:
 	_label.text = (
 		("DEMO PAUSED | G: resume host, delivery and viewer\n" if _is_service_paused else "")
 		+ "Delayed spectator | %s\n" % state
+		+ "Scroll for controls; both game views stay visible.\n"
 		+ "A/D or arrows: move host | Space: fire\nP: pause viewer | N: step viewer | C: catch up once\nF: follow live\n"
 		+ "1/2/3: host delivery 0/3/12 ticks | H: pause/resume host | T: step host\n"
 		+ "E: end host\nY / [: less delay | U / ]: more delay\nI / Comma: slower catch-up | O / Period: faster catch-up\n"
@@ -466,19 +486,21 @@ func _export_replay() -> void:
 
 
 func _board_top() -> float:
-	return _service_pause_button.position.y + _service_pause_button.get_minimum_size().y + 16.0
+	return _controls_view.position.y + _controls_view.size.y + 16.0
 
 
 func _draw() -> void:
 	if demo.game == null:
 		return
+	var bounds: Rect2 = _game_rect(get_viewport_rect().size)
+	draw_set_transform(bounds.position, 0.0, Vector2.ONE * (bounds.size.x / 712.0))
 	var games: Array[Game] = [demo.host.loop.game, demo.game]
 	for panel: int in range(2):
-		var top: float = _board_top() + 30.0 + panel * 150
-		draw_rect(Rect2(24, top - 30, 712, 125), Color(0.08, 0.10, 0.15))
-		draw_string(ThemeDB.fallback_font, Vector2(36, top), "HOST" if panel == 0 else "VIEWER", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
+		var top: float = 30.0 + panel * 150
+		draw_rect(Rect2(0, top - 30, 712, 125), Color(0.08, 0.10, 0.15))
+		draw_string(ThemeDB.fallback_font, Vector2(12, top), "HOST" if panel == 0 else "VIEWER", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color.WHITE)
 		for player: int in range(2):
-			var position: Vector2 = Vector2(120 + games[panel].x[player] * 1.35, top + 26 + player * 35)
+			var position: Vector2 = Vector2(96 + games[panel].x[player] * 1.35, top + 26 + player * 35)
 			draw_circle(position, 11, COLORS[player])
 			for index: int in range(maxi(0, games[panel].shot_total - Game.SHOT_SLOTS), games[panel].shot_total):
 				var id: int = games[panel].shot_ids[index % Game.SHOT_SLOTS]
