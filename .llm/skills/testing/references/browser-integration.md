@@ -25,6 +25,10 @@ Failure reporting must not replace owned-operation errors. Guard reporting and d
 Bounded optional observations may record unavailable metadata. Owned event waits must observe command and event rejections before starting the command.
 Await all owned context and browser closures after sibling rejection, then await server closure. Preserve context-before-browser order for Firefox.
 When a cleanup callback contract changes, update every dependent test double and run the complete CI control command, including sibling test files.
+Route callbacks run outside the runner's awaited stack. Forward their failures into the same owner and fence every callback continuation before starting another browser action.
+A check inside an async wrapper leaves a caller-resumption gap; use lazy action thunks and a synchronous stop check immediately before publication.
+Retain started-operation failures observed through owned cleanup and its final event-loop flush. Handle abandoned RPC rejections after failed-owner retirement without resuming work.
+Playwright request errors can include authorization headers. Redact capability values in JSON and stderr while retaining raw error identity internally.
 
 Exercise actual UI controls during playback, after failure and at completion.
 Assert immediately after each inverse control action; checking only the final state can hide paired unauthorized changes.
