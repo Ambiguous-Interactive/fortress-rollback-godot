@@ -8,8 +8,34 @@ const Scene = preload("res://examples/online/replay.tscn")
 const Simulation = preload("res://examples/offline/simulation.gd")
 
 
+class FocusGame:
+	extends Simulation
+
+	var scene_ref: WeakRef
+	var focus_during_save: bool = false
+	var notified: bool = false
+	var focus_frame: int = 0
+
+	func save_state(saved_frame: int, writer: Writer) -> Driver.SaveResult:
+		var result: Driver.SaveResult = super.save_state(saved_frame, writer)
+		if focus_during_save:
+			_notify_focus_loss(saved_frame)
+		return result
+
+	func simulate_frame(input_frame: int, inputs: Types.FrameInputs) -> bool:
+		var result: bool = super.simulate_frame(input_frame, inputs)
+		if not focus_during_save:
+			_notify_focus_loss(input_frame)
+		return result
+
+	func _notify_focus_loss(at_frame: int) -> void:
+		if not notified and at_frame == focus_frame:
+			notified = true
+			scene_ref.get_ref().notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+
+
 func cases() -> PackedStringArray:
-	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "timeline"])
+	return PackedStringArray(["cadence", "controls", "failure", "scene_speed", "backward_step", "scene_backward_step", "keyboard_controls", "focus_loss", "timeline"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -17,6 +43,8 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.equal(viewer.has_method("set_playback_speed"), true, "playback speed can be selected")
 	if viewer.has_method("set_playback_speed"):
 		match name:
+			"focus_loss":
+				_focus_loss(context)
 			"timeline":
 				_timeline(context)
 			"keyboard_controls":
@@ -450,5 +478,184 @@ func _timeline(context: RefCounted) -> void:
 	node._physics_process(0.0)
 	context.equal(node.viewer.current_frame(), 2, "released busy drag cannot suppress later scene playback")
 	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	node._exit_tree()
+	node.free()
+
+
+# Value: protects=leaving the application preserves the inspected replay boundary; fails_when=focus loss advances or resumes playback;
+# why_new=keyboard controls do not deliver application lifecycle notifications; seam=none
+func _focus_loss(context: RefCounted) -> void:
+	for idle: String in ["empty", "ready", "paused", "complete"]:
+		var idle_node: Node2D = Scene.instantiate()
+		idle_node._ready()
+		if idle != "empty":
+			idle_node.viewer.open_bytes(Fixture.recording().to_bytes())
+		if idle == "paused":
+			idle_node.viewer.step()
+		elif idle == "complete":
+			idle_node.viewer.seek(idle_node.viewer.frame_count())
+			while idle_node.viewer.is_seeking():
+				idle_node._physics_process(0.0)
+		idle_node._refresh()
+		var idle_message: String = idle_node.viewer.message
+		var idle_status: String = idle_node._status.text
+		idle_node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+		idle_node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+		idle_node._physics_process(0.0)
+		context.equal(idle_node.viewer.message, idle_message, "focus changes preserve " + idle + " playback notice")
+		context.equal(idle_node._status.text, idle_status, "focus changes preserve " + idle + " displayed status")
+		idle_node._exit_tree()
+		idle_node.free()
+	for during_save: bool in [false, true]:
+		var callback_node: Node2D = Scene.instantiate()
+		callback_node._ready()
+		callback_node.viewer.open_bytes(Fixture.recording().to_bytes())
+		var game: FocusGame = FocusGame.new()
+		game.scene_ref = weakref(callback_node)
+		game.focus_during_save = during_save
+		callback_node.viewer.game = game
+		callback_node.viewer._player.configure(callback_node.viewer._recording, game, Simulation.SNAPSHOT_BYTES, 300, 121)
+		callback_node.viewer.set_playback_speed(16)
+		callback_node.viewer.toggle_play()
+		callback_node._physics_process(0.0)
+		context.equal(game.notified, true, "actual game callback delivers focus loss")
+		context.equal([callback_node.viewer.current_frame(), callback_node.viewer.is_playing], [1, false], "focus pause finishes one accepted owner before another fast-playback frame")
+		context.equal(callback_node.viewer._player.is_current_state_validated(), true, "callback focus pause validates its completed displayed state")
+		callback_node._physics_process(0.0)
+		context.equal(callback_node.viewer.current_frame(), 1, "later background ticks retain the paused boundary")
+		context.state(callback_node.viewer.current_frame(), callback_node.viewer.game.canonical_bytes())
+		callback_node._exit_tree()
+		callback_node.free()
+	for ending: bool in [false, true]:
+		var boundary_node: Node2D = Scene.instantiate()
+		boundary_node._ready()
+		boundary_node.viewer.open_bytes(Fixture.recording(900).to_bytes())
+		var boundary_game: FocusGame = FocusGame.new()
+		boundary_game.scene_ref = weakref(boundary_node)
+		boundary_game.focus_during_save = true
+		boundary_game.focus_frame = 2 if ending else 600
+		boundary_node.viewer.game = boundary_game
+		boundary_node.viewer._player.configure(boundary_node.viewer._recording, boundary_game, Simulation.SNAPSHOT_BYTES, 300, 121)
+		boundary_node.viewer.set_repeat_range(0 if ending else 600, 2 if ending else 850)
+		boundary_node.viewer.set_repeat_playback(true)
+		boundary_node.viewer.set_playback_speed(16)
+		boundary_node.viewer.toggle_play()
+		boundary_node._physics_process(0.0)
+		while boundary_node.viewer.is_seeking():
+			boundary_node._physics_process(0.0)
+		context.equal(boundary_game.notified, true, "actual selected-range boundary validation delivers focus loss")
+		context.equal(
+			[boundary_node.viewer.current_frame(), boundary_node.viewer.is_playing], [boundary_game.focus_frame, false],
+			"focus during Repeat start or end validation prevents automatic resumption"
+		)
+		boundary_node._physics_process(0.0)
+		context.equal(boundary_node.viewer.current_frame(), boundary_game.focus_frame, "Repeat boundary stays paused after its validation owner releases")
+		boundary_node._exit_tree()
+		boundary_node.free()
+	for repeat: bool in [false, true]:
+		var node: Node2D = Scene.instantiate()
+		node._ready()
+		node.viewer.open_bytes(Fixture.recording(900).to_bytes())
+		node.viewer.set_repeat_playback(repeat)
+		node.viewer.set_playback_speed(1)
+		node.viewer.toggle_play()
+		for tick: int in 3:
+			node._physics_process(0.0)
+		node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+		context.equal(node.viewer.is_playing, false, "losing focus pauses ordinary and repeating playback immediately")
+		for tick: int in 8:
+			node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 0, "unfocused service preserves the displayed boundary")
+		node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+		node._physics_process(0.0)
+		context.equal(node.viewer.is_playing, false, "returning focus requires explicit Play")
+		_key(node, KEY_P)
+		node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 0, "explicit resume starts fresh slow-motion cadence")
+		for tick: int in 3:
+			node._physics_process(0.0)
+		context.equal(node.viewer.current_frame(), 1, "explicit resume can advance normally")
+		node.viewer.seek(900)
+		node._physics_process(0.0)
+		node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+		while node.viewer.is_seeking():
+			node._physics_process(0.0)
+		context.equal([node.viewer.current_frame(), node.viewer.is_playing], [900, false], "selected seek still finishes at its paused destination")
+		context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+		node._exit_tree()
+		node.free()
+	for replacement: bool in [false, true]:
+		var replaced: Viewer = Viewer.new()
+		replaced.open_bytes(Fixture.recording().to_bytes())
+		replaced.toggle_play()
+		var pending: RefCounted = replaced._player.begin_advance()
+		context.equal(pending.batch != null, true, "replacement control retains an accepted owner")
+		replaced.request_pause()
+		replaced._player.terminate()
+		if replacement:
+			replaced.open_bytes(Fixture.recording().to_bytes())
+		else:
+			replaced.restart()
+		replaced.toggle_play()
+		replaced.tick()
+		context.equal([replaced.current_frame(), replaced.is_playing], [1, true], "restart and replacement discard the prior lifetime's requested pause")
+		replaced.terminate()
+	var repeat_node: Node2D = Scene.instantiate()
+	repeat_node._ready()
+	repeat_node.viewer.open_bytes(Fixture.recording(900).to_bytes())
+	repeat_node.viewer.set_repeat_range(600, 850)
+	repeat_node.viewer.set_repeat_playback(true)
+	repeat_node.viewer.toggle_play()
+	repeat_node._physics_process(0.0)
+	context.equal([repeat_node.viewer.is_seeking(), repeat_node.viewer.is_playing], [true, false], "Repeat navigates to its selected start before playing")
+	repeat_node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	while repeat_node.viewer.is_seeking():
+		repeat_node._physics_process(0.0)
+	repeat_node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_IN)
+	repeat_node._physics_process(0.0)
+	context.equal([repeat_node.viewer.current_frame(), repeat_node.viewer.is_playing], [600, false], "focus loss prevents selected Repeat navigation from resuming playback")
+	_key(repeat_node, KEY_P)
+	repeat_node._physics_process(0.0)
+	context.equal(repeat_node.viewer.current_frame(), 601, "explicit Play resumes after selected Repeat navigation")
+	context.state(repeat_node.viewer.current_frame(), repeat_node.viewer.game.canonical_bytes())
+	repeat_node._exit_tree()
+	repeat_node.free()
+	var node: Node2D = Scene.instantiate()
+	node._ready()
+	node.viewer.open_bytes(Fixture.recording().to_bytes())
+	node.viewer.toggle_play()
+	var opened: RefCounted = node.viewer._player.begin_advance()
+	context.equal(opened.batch != null, true, "retain expert work during playback")
+	node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	context.equal(node.viewer.is_playing, true, "focus pause preserves active expert ownership")
+	node._physics_process(0.0)
+	context.equal(node.viewer.current_frame(), 0, "pending focus pause cannot service expert work")
+	while true:
+		var request: Viewer.Types.Request = opened.batch.next_request()
+		if request == null:
+			break
+		var checksum: PackedByteArray = PackedByteArray()
+		var ok: bool
+		if request.kind == Viewer.Types.Kind.SAVE:
+			var saved: RefCounted = node.viewer.game.save_state(request.frame, request.writer)
+			ok = saved.ok
+			checksum = saved.checksum
+		else:
+			ok = node.viewer.game.simulate_frame(request.frame, request.inputs)
+		var completed: RefCounted = node.viewer._player.complete_request(request.batch_id, request.request_id, ok, checksum)
+		context.equal(completed.code, Viewer.Types.Code.OK, "expert owner completes normally after focus loss")
+	node._physics_process(0.0)
+	context.equal([node.viewer.current_frame(), node.viewer.is_playing], [1, false], "deferred pause applies before another frame can advance")
+	context.equal(node._status.text.contains("Press Play to resume"), true, "focus pause explains how to continue")
+	context.state(node.viewer.current_frame(), node.viewer.game.canonical_bytes())
+	var corrupt: RefCounted = Fixture.recording()
+	corrupt._checksums[16] ^= 1
+	node.viewer.open_bytes(corrupt.to_bytes())
+	node.viewer.toggle_play()
+	node._physics_process(0.0)
+	node.notification(MainLoop.NOTIFICATION_APPLICATION_FOCUS_OUT)
+	context.equal(node.viewer.has_failure(), true, "focus pause validates the displayed recorded state")
+	context.equal(node.viewer.current_frame(), 1, "failed pause validation preserves the displayed boundary")
+	context.equal(node._status.text.contains("Recorded state checksum mismatch"), true, "focus prompt cannot hide a pause validation failure")
 	node._exit_tree()
 	node.free()

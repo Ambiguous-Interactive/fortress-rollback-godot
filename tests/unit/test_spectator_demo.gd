@@ -922,6 +922,11 @@ func _gap_feedback(context: RefCounted) -> void:
 		"Delayed spectator | BUFFERING | waiting for confirmed frame 0 (2 later frames received)",
 		"gap feedback names the exact missing frame and retained later rows"
 	)
+	scene.demo.is_paused = true
+	scene._update_label()
+	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | PAUSED", "input gap does not replace the pause state")
+	context.equal(scene._label.text.contains("Missing confirmed frame 0 | 2 later frames received."), true, "paused startup names the known reordered gap")
+	scene.demo.is_paused = false
 	context.equal(scene.demo.stream.receive_packet(scene.demo.stream.encode_row(0, row), 0), Types.Code.OK, "first gap receives its original input")
 	context.equal(scene.demo.viewer.set_playback(2, 4, 4), Types.Code.OK, "delay needs contiguous input beyond the next gap")
 	scene._update_label()
@@ -934,6 +939,12 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | PAUSED", "caller pause remains distinct from a network input gap")
 	context.equal(scene._label.text.contains("Buffered 2 confirmed frames | Later rows 1"), true, "paused feedback separates contiguous input from retained rows beyond a gap")
+	context.equal(scene._label.text.contains("Missing confirmed frame 2 | 1 later frame received."), true, "paused delay exposes the actual known gap separately")
+	var before: PackedByteArray = scene.demo.game.canonical_bytes()
+	context.equal(scene.demo.step_viewer(), Types.Code.PREDICTION_STALL, "deliberate viewing delay still refuses a single step")
+	scene._update_label()
+	context.bytes_equal(scene.demo.game.canonical_bytes(), before, 0, "gap feedback never consumes buffered input")
+	context.equal(scene._label.text.contains("Missing confirmed frame 2"), true, "refused inspection retains the missing-frame explanation")
 	scene.demo.is_paused = false
 	context.equal(scene.demo.viewer.set_playback(0, 4, 4), Types.Code.OK, "release delay to consume recovered prefix")
 	for frame: int in 2:
@@ -950,12 +961,29 @@ func _gap_feedback(context: RefCounted) -> void:
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | WATCHING", "contiguous recovery restores normal watching")
 	context.equal(scene._label.text.contains("Buffered 2 confirmed frames | Later rows 0"), true, "feedback moves recovered rows into the playable backlog")
+	scene.demo.is_paused = true
+	scene._update_label()
+	context.equal(scene._label.text.contains("Missing confirmed frame"), false, "contiguous recovery removes the paused gap notice")
 	for frame: int in 2:
 		context.equal(scene.demo.step_viewer(), Types.Code.OK, "recovered rows remain playable")
 	context.equal(scene.demo.game.frame, 4, "healthy continuation consumes every original row once")
+	var reference: Game = Game.new()
+	var statuses: PackedInt32Array = PackedInt32Array([Queue.Status.CONFIRMED, Queue.Status.CONFIRMED])
+	for frame: int in 4:
+		context.equal(reference.simulate_frame(frame, Types.FrameInputs.new(row, statuses)), true, "independent original confirmed row")
+	context.bytes_equal(scene.demo.game.canonical_bytes(), reference.canonical_bytes(), 4, "recovered viewing equals the independent original prefix")
 	scene.demo.is_paused = false
 	scene._update_label()
 	context.equal(scene._label.text.get_slice("\n", 0), "Delayed spectator | BUFFERING | waiting for confirmed input", "drained healthy stream waits for host progress")
+	scene.demo.is_paused = true
+	scene._update_label()
+	context.equal(scene._label.text.contains("Missing confirmed frame"), false, "ordinary future host input is not reported as a known gap")
+	context.equal(scene.demo.stream.receive_packet(scene.demo.stream.encode_row(5, row), 0), Types.Code.OK, "create a later paused gap")
+	scene._update_label()
+	context.equal(scene._label.text.contains("Missing confirmed frame 4 | 1 later frame received."), true, "paused notice follows the current host gap")
+	scene.demo.lose_host_connection()
+	scene._update_label()
+	context.equal(scene._label.text.contains("Missing confirmed frame"), false, "host loss replaces recoverable missing-input guidance")
 	scene.free()
 
 

@@ -27,6 +27,7 @@ var _repeat_playback: bool = false
 var _repeat_start: int = -1
 var _repeat_end: int = -1
 var _resume_after_seek: bool = false
+var _pause_requested: bool = false
 var _speed_quarters: int = 4
 var _playback_quarters: int = 0
 var _seek_target: int = -1
@@ -147,6 +148,7 @@ func restart() -> void:
 		return
 	_seek_target = -1
 	_resume_after_seek = false
+	_pause_requested = false
 	_playback_quarters = 0
 	_player.terminate()
 	game = IntegrationGame.new() if is_integration_game() else Simulation.new()
@@ -167,6 +169,7 @@ func terminate() -> void:
 	is_playing = false
 	_seek_target = -1
 	_resume_after_seek = false
+	_pause_requested = false
 	_playback_quarters = 0
 	if _recording != null and not had_failure:
 		message = "Playback stopped. Restart to watch again."
@@ -192,6 +195,29 @@ func toggle_play() -> void:
 	message = "Playing; recorded checksums are validated."
 	if _recorded_checksums.is_empty():
 		message = "Playing inputs; this recording has no checksums."
+
+
+## Request a lifecycle pause, including inside game callbacks or manual requests.
+## The accepted player step finishes first; no later playback input starts. Selected seeks finish paused.
+func request_pause() -> void:
+	if _recording == null or (not _is_busy() and not is_playing and not _resume_after_seek):
+		return
+	_pause_requested = true
+	_apply_requested_pause()
+
+
+func _apply_requested_pause() -> void:
+	if not _pause_requested or _is_busy():
+		return
+	_pause_requested = false
+	_resume_after_seek = false
+	_playback_quarters = 0
+	var paused_playback: bool = is_playing
+	if is_playing:
+		is_playing = false
+		_finish_seek()
+	if paused_playback and not has_failure() and not is_seeking():
+		message = "Paused after leaving the application. Press Play to resume."
 
 
 ## Quarter-speed units: 1, 2, 4, 8, 16 select ¼×, ½×, 1×, 2×, 4×.
@@ -247,6 +273,9 @@ func repeat_range() -> PackedInt64Array:
 func _begin_selected_repeat() -> void:
 	if not seek(_repeat_start) or has_failure():
 		return
+	if _pause_requested:
+		_apply_requested_pause()
+		return
 	if is_seeking():
 		_resume_after_seek = true
 	else:
@@ -265,6 +294,7 @@ func playback_speed_quarters() -> int:
 func tick() -> void:
 	if _is_busy():
 		return
+	_apply_requested_pause()
 	if is_seeking():
 		for _frame: int in SEEK_FRAMES_PER_TICK:
 			if not is_seeking():
@@ -288,9 +318,10 @@ func tick() -> void:
 		while _playback_quarters >= 4 and is_playing:
 			_playback_quarters -= 4
 			_advance()
-			if _repeat_playback and has_repeat_range() and current_frame() == _repeat_end and not has_failure():
+			if is_playing and _repeat_playback and has_repeat_range() and current_frame() == _repeat_end and not has_failure():
 				_finish_seek()
-				is_playing = not has_failure()
+				is_playing = not has_failure() and not _pause_requested
+				_apply_requested_pause()
 				break
 			if _player.is_complete():
 				break
@@ -336,6 +367,7 @@ func _advance() -> void:
 	elif _player.is_complete():
 		is_playing = _repeat_playback and frame_count() > 0
 		message = _complete_message()
+	_apply_requested_pause()
 
 
 func frame_count() -> int:
@@ -569,7 +601,7 @@ func _finish_seek() -> void:
 		message = _failure_message(_player.failure_frame(), code, _player.failure_expected_checksum(), _player.failure_actual_checksum())
 	else:
 		message = _complete_message() if _player.is_complete() else "Paused."
-		if resume:
+		if resume and not _pause_requested:
 			toggle_play()
 
 

@@ -4,6 +4,8 @@
 
 ### Added
 
+- Add focus-loss pause to the effects match and replay viewer. Resume explicitly; selected replay seeks still finish paused.
+
 - Add Finish match to the effects demo. Confirm pending inputs and preserve final effects before watching the complete replay.
 
 - Add replay selection markers to repeat a chosen frame range with checksum validation.
@@ -304,6 +306,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Fix paused spectator feedback to name missing confirmed frames while retaining the paused state.
 
 - Fix spectator delay and catch-up shortcuts on layouts with shifted punctuation. Use Y/U and I/O without modifiers.
 

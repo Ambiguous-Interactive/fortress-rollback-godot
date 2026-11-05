@@ -183,6 +183,8 @@ Free slots do not authorize a frame outside the receive window or permit deliver
 `missing_frame` identifies the first gap before those accepted rows, or `-1` when no gap is known.
 An empty pending buffer means the viewer is waiting for new host progress, rather than a known missing row.
 The local example names the missing frame and later-row count while it buffers.
+While paused, a separate missing-frame notice preserves the pause label, including when viewing delay holds contiguous input.
+The notice clears after those earlier rows arrive or viewing stops; waiting for new host progress alone does not show it.
 These observations do not request retransmission or establish host liveness.
 
 ![Viewer waiting for a missing frame while retaining later input](images/spectator-gap.png)
