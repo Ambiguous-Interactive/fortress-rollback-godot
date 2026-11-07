@@ -23,7 +23,7 @@ from godot_smoke import run
 from run import begin_results, capture, captured_text
 from browser.webrtc_matrix import prepare_firefox
 from browser.webrtc_import import freeze_after_import
-from signalfish_probe import inventory
+from signalfish_probe import inventory, walk_entries
 
 PREFIX = 'FORTRESS_TEST_RESULT '
 PROGRESS_PREFIX = 'FORTRESS_TEST_PROGRESS '
@@ -777,7 +777,7 @@ def tool_inventory(paths):
     for name, path in paths.items():
         if not path.exists() or path.is_symlink():
             raise ValueError(f'ownership runtime input missing or symlinked: {name}')
-        for source in sorted(path.rglob('*')) if path.is_dir() else [path]:
+        for source in walk_entries(path):
             key = name + '/' + str(source.relative_to(path)) if path.is_dir() else name
             if source.is_symlink():
                 raise ValueError(f'ownership runtime input is symlinked: {key}')

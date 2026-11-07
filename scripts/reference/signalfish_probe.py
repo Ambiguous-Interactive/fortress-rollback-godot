@@ -2,6 +2,7 @@
 """Run the optional adapter against the verified SDK in an isolated project."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,7 +10,7 @@ import tempfile
 import tarfile
 
 from engine_path import resolve_engine
-from fetch import fetch, load_manifest
+from fetch import digest, fetch, load_manifest
 from receipt_arguments import ReceiptParser
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,20 +18,39 @@ MARKER = 'FORTRESS_SIGNALFISH_SDK_OK'
 TIMEOUT = 30
 
 
+def walk_entries(root):
+    """Return every entry under root (or root itself), sorted, without following symlinks.
+
+    Boundary verification walks the same trees on every repeated check. This
+    enumerates the identical entry set as ``sorted(root.rglob('*'))`` using
+    directory scans that do not descend into symlinks, so membership, symlink
+    rejection and digest evidence stay exactly as before.
+    """
+    if not root.is_dir():
+        return [root]
+    found = []
+    pending = [root]
+    while pending:
+        with os.scandir(pending.pop()) as scan:
+            for entry in scan:
+                found.append(Path(entry.path))
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(entry.path)
+    return sorted(found)
+
+
 def inventory(paths):
     result = {}
     for name, path in paths.items():
         if path.is_symlink():
             raise ValueError('evidence source is symlinked')
-        files = sorted(path.rglob('*')) if path.is_dir() else [path]
-        for source in files:
+        for source in walk_entries(path):
             if source.is_symlink():
                 raise ValueError('evidence source is symlinked')
             if source.is_dir():
                 continue
             key = name + '/' + str(source.relative_to(path)) if path.is_dir() else name
-            with source.open('rb') as stream:
-                result[key] = hashlib.file_digest(stream, 'sha256').hexdigest()
+            result[key] = digest(source)
     return result
 
 

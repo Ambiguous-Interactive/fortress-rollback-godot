@@ -9,15 +9,11 @@ import shutil
 import subprocess
 import tempfile
 
-from fetch import CACHE, MANIFEST, fetch, load_manifest
+from fetch import CACHE, MANIFEST, digest, fetch, load_manifest
 from receipt_arguments import ReceiptParser
 from signalfish_live_probe import extract, server_cargo_home, source_inventory
 from signalfish_probe import inventory
 from run import rust_environment
-
-
-def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def shared_target(revision):
