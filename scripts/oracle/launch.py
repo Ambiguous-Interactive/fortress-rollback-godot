@@ -20,6 +20,18 @@ from receipt_arguments import ReceiptParser  # noqa: E402
 from run import rust_environment, setup_rust  # noqa: E402
 
 
+def git_identity(root=ROOT):
+    """Repository identity captured before execution, so a receipt names what ran."""
+    return {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
+            'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=root, text=True))}
+
+
+def require_unchanged(label, original, current):
+    """Reject a run whose evidence inputs changed between capture and publication."""
+    if original != current:
+        raise ValueError('evidence identity changed: ' + label + '; rerun')
+
+
 def execute(command, log, input_text=None, timeout=120):
     log.write_text('COMMAND_STARTED: ' + repr(command) + '\n')
     try:
@@ -144,6 +156,11 @@ def main():
         parser.error('workers must be an integer in 1..8')
     if not 1 <= args.jobs <= 8:
         parser.error('workers must be an integer in 1..8')
+    identity = git_identity()
+    source_paths = sorted(list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py',
+                          ROOT / 'scripts/reference/engine_path.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
+                          + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')))
+    source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
     trees = sources(manifest, args.offline)
@@ -170,9 +187,11 @@ def main():
             workers.shutdown(wait=True, cancel_futures=True)
             raise
     controls = versioned_controls(binary, engine, control_cases, args.output)
-    report = {'format': 1, 'passed': True, 'commit': subprocess.check_output(
-        ['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-        'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)),
+    require_unchanged('local source inventory', source_hashes,
+                      {str(path.relative_to(ROOT)): digest(path) for path in source_paths})
+    require_unchanged('repository identity', identity, git_identity())
+    report = {'format': 1, 'passed': True, 'commit': identity['commit'],
+        'working_tree_dirty': identity['working_tree_dirty'],
         'upstream_revision': manifest['sources']['fortress']['revision'],
         'upstream_lock_sha256': digest(trees['fortress'] / 'Cargo.lock'),
         'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
@@ -180,10 +199,7 @@ def main():
         'binary_sha256': digest(binary), 'engine': engine_version.strip(), 'engine_sha256': digest(engine),
         'engine_path': str(engine),
         'platform': platform.platform(), 'features': [], 'default_features': False, 'cases': cases, 'negative_controls': controls['1'], 'versioned_negative_controls': controls,
-        'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
-            list((ROOT / 'scripts/oracle').rglob('*.py')) + [ROOT / 'scripts/reference/receipt_arguments.py',
-                                                               ROOT / 'scripts/reference/engine_path.py'] + list((ROOT / 'scripts/oracle/rust/src').glob('*.rs'))
-            + list((ROOT / 'tests/oracle').glob('*.gd')) + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')))},
+        'source_sha256': source_hashes,
         'limitations': ['Sync-test public API only; no P2P, transport or protocol parity.',
                         'Production Godot sync-test session parity only; P2P parity remains a separate gate.',
                         'Confirmation unavailable through upstream public sync-test API.']}

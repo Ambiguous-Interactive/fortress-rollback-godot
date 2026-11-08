@@ -6,10 +6,9 @@ from pathlib import Path
 import platform
 import hashlib
 import shutil
-import subprocess
 import tempfile
 
-from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust
+from launch import ROOT, CACHE, execute, digest, load_manifest, sources, setup_rust, git_identity, require_unchanged
 from engine_path import resolve_engine
 from fetch import retain_verified_tree
 from receipt_arguments import ReceiptParser
@@ -119,6 +118,11 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
+    identity = git_identity()
+    source_paths = sorted(list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py'))
+                          + [ROOT / 'scripts/reference/engine_path.py', ROOT / 'scripts/oracle/rust/src/bin/queue.rs',
+                             ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py'])
+    source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
     trees = sources(manifest, args.offline)
@@ -175,9 +179,12 @@ def main():
     version, _ = execute([str(engine), '--version'], args.output / 'engine-version.log')
     (args.output / 'rust-trace.json').write_text(json.dumps(rust_runs[0], indent=2) + '\n')
     (args.output / 'godot-trace.json').write_text(json.dumps(godot_runs[0], indent=2) + '\n')
+    require_unchanged('local source inventory', source_hashes,
+                      {str(path.relative_to(ROOT)): digest(path) for path in source_paths})
+    require_unchanged('repository identity', identity, git_identity())
     result = {'format': 1, 'passed': True, 'upstream_revision': manifest['sources']['fortress']['revision'],
-              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
-              'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True)),
+              'commit': identity['commit'],
+              'working_tree_dirty': identity['working_tree_dirty'],
               'engine': version.strip(), 'engine_sha256': digest(engine), 'engine_path': str(engine),
               'platform': platform.platform(),
               'cases': len(names), 'operations': sum(counts), 'repeat_equal': True, 'controls': controls, 'reviewed_divergence': divergence,
@@ -186,9 +193,7 @@ def main():
               'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
               'bundle_sha256': digest(fixture), 'rust_trace_sha256': digest(args.output / 'rust-trace.json'),
               'godot_trace_sha256': digest(args.output / 'godot-trace.json'),
-              'source_sha256': {str(path.relative_to(ROOT)): digest(path) for path in sorted(
-                  list((ROOT / 'addons/fortress_rollback/core').glob('*.gd')) + list((ROOT / 'scripts/oracle').glob('queue_*.py')) + [ROOT / 'scripts/reference/engine_path.py']
-                  + [ROOT / 'scripts/oracle/rust/src/bin/queue.rs', ROOT / 'tests/oracle/queue_trace.gd', ROOT / 'scripts/reference/receipt_arguments.py'])},
+              'source_sha256': source_hashes,
               'limitations': ['Raw queue only; no session confirmation, prediction window, transport or rollback history.',
                               'Zero neutral input in differential corpus; custom neutral verified independently.',
                               'Upstream partial initial-gap capacity failure intentionally diverges: Godot rejects atomically.']}
