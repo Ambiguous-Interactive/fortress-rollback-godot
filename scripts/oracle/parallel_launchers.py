@@ -22,6 +22,10 @@ import time
 ORACLE_DIR = Path(__file__).resolve().parent
 ROOT = ORACLE_DIR.parent.parent
 
+sys.path.insert(0, str(ROOT / 'scripts' / 'reference'))
+from fetch import load_manifest  # noqa: E402
+from run import setup_rust  # noqa: E402
+
 # Table order is the reporting and first-failure rejection order, longest launcher
 # first: the pool starts the slowest launcher immediately so the elapsed time
 # approaches its duration instead of its duration plus every shorter launcher.
@@ -76,6 +80,12 @@ def main() -> int:
     parser.add_argument('--timeout', type=float, default=0.0,
                         help='per-launcher bound in seconds; 0 keeps the workflow job timeout as the only bound')
     args = parser.parse_args()
+    # Provision the pinned Rust toolchain once before any launcher starts: the CI
+    # cache keeps crates and downloads but not the toolchain, and six concurrent
+    # rustup installations into the shared CARGO_HOME/RUSTUP_HOME raced on the same
+    # partial downloads. Each launcher's own setup_rust call then finds cargo
+    # present and becomes a no-op.
+    setup_rust(load_manifest(), False)
     jobs = max(1, min(args.jobs, len(LAUNCHERS)))
     if args.timeout < 0:
         raise ValueError('launcher timeout must not be negative')

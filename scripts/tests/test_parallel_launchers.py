@@ -156,6 +156,33 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         self.assertIn('2 launchers, 1 failed', stdout.getvalue())
         self.assertIn('produced no log', stdout.getvalue())
 
+    def test_provisions_the_toolchain_once_before_any_launcher(self):
+        table = {'alpha': str(write_script(self.root, 'alpha.py', PASS_SCRIPT)),
+                 'beta': str(write_script(self.root, 'beta.py', PASS_SCRIPT))}
+        calls = []
+
+        def record_setup(manifest, offline):
+            calls.append('setup')
+            return 'cargo', None
+
+        def record_launcher(name, command, log_path, timeout):
+            calls.append('launcher:' + name)
+            self.assertIn('setup', calls, 'a launcher started before the toolchain was provisioned')
+            return {'name': name, 'seconds': 0.0, 'returncode': 0, 'timeout': False}
+
+        with unittest.mock.patch.dict(parallel_launchers.LAUNCHERS, table, clear=True), \
+                unittest.mock.patch.object(parallel_launchers, 'load_manifest', return_value='manifest'), \
+                unittest.mock.patch.object(parallel_launchers, 'setup_rust', side_effect=record_setup), \
+                unittest.mock.patch.object(parallel_launchers, 'run_launcher', side_effect=record_launcher), \
+                unittest.mock.patch('sys.argv', ['parallel_launchers.py', '--godot', 'unused',
+                                                 '--results', str(self.results)]), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            exit_code = parallel_launchers.main()
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(calls.count('setup'), 1)
+        self.assertEqual(calls[0], 'setup')
+        self.assertEqual(len(calls), 3)
+
 
 if __name__ == '__main__':
     unittest.main()
