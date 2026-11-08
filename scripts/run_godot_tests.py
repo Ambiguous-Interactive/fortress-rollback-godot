@@ -25,6 +25,10 @@ import host_capacity  # noqa: E402
 from native_source_snapshot import SourceSnapshot  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+# The Python helpers this process actually executes beside the engine. Their bytes
+# qualify the receipt like the GDScript source image does: an intervening edit is
+# a failed qualification, not a stale success.
+HELPERS = ('host_capacity.py', 'native_source_snapshot.py', 'changed_suites.py', 'reference/engine_path.py')
 PREFIX = "FORTRESS_TEST_RESULT "
 CASES_PREFIX = "FORTRESS_TEST_CASES "
 PROGRESS_PREFIX = "FORTRESS_TEST_PROGRESS "
@@ -603,6 +607,13 @@ class _Parser(argparse.ArgumentParser):
         super().error(message)
 
 
+def helper_identity() -> dict:
+    """Digest the Python bytes this launcher executes, before any engine child starts."""
+    sources = {'run_godot_tests.py': Path(__file__).resolve()}
+    sources.update({name: ROOT / 'scripts' / name for name in HELPERS})
+    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sorted(sources.items())}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _Parser(description=__doc__, allow_abbrev=False)
     parser.arguments = sys.argv[1:] if argv is None else argv
@@ -636,18 +647,23 @@ def main(argv: list[str] | None = None) -> int:
     args.results.parent.mkdir(parents=True, exist_ok=True)
     args.results.write_text(json.dumps({"format": 1, "passed": False,
                                        "failure": "in_progress"}) + "\n", encoding="utf-8")
-    executable = resolve_engine(args.godot)
     handlers = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
     for number in handlers:
         signal.signal(number, cancel_execution)
     try:
+        # Load the last helper after the prior receipt is invalidated: a broken helper
+        # must not crash the launcher while a stale passing receipt survives. The
+        # capture below then binds every loaded helper module before any engine child.
+        import changed_suites
+        helpers = helper_identity()
+        executable = resolve_engine(args.godot)
         with SourceSnapshot(ROOT) as snapshot:
-            return execute(args, executable, snapshot)
+            return execute(args, executable, snapshot, helpers)
     except KeyboardInterrupt:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "cancelled"}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
         return 130
-    except (OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
+    except (ImportError, SyntaxError, OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": str(exc)}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
         return 1
@@ -665,7 +681,7 @@ def main(argv: list[str] | None = None) -> int:
             _cancelled.clear()
 
 
-def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot) -> int:
+def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot, helpers: dict[str, str]) -> int:
     engine_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
     command = [str(executable), "--headless", "--path", str(snapshot.path), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
@@ -674,9 +690,10 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
     if args.changed:
-        from changed_suites import changed_files, previous_class_names, select
-        changed = changed_files(args.changed)
-        args.suite = select(discover(args.category, snapshot.path), changed, root=snapshot.path, old_names=previous_class_names(args.changed, changed))
+        import changed_suites  # already loaded in main; a cached import cannot re-read the file
+        changed = changed_suites.changed_files(args.changed)
+        args.suite = changed_suites.select(discover(args.category, snapshot.path), changed, root=snapshot.path,
+                                           old_names=changed_suites.previous_class_names(args.changed, changed))
         print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
         if not args.suite:
             args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
@@ -770,10 +787,13 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             report[exc.phase + "_probe"] = exc.report
         if isinstance(exc, subprocess.TimeoutExpired):
             report.update(stdout=_decode(exc.stdout), stderr=_decode(exc.stderr))
-    report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence())
+    report.update(commit=snapshot.commit, working_tree_dirty=snapshot.dirty, source_snapshot=snapshot.evidence(),
+                  helper_sources=helpers)
     try:
         if hashlib.sha256(executable.read_bytes()).hexdigest() != engine_sha256:
             raise ValueError("engine_changed")
+        if helper_identity() != helpers:
+            raise ValueError("helper_source_changed")
         snapshot.verify_image()
         if snapshot.changed():
             raise ValueError("source_changed")

@@ -172,8 +172,9 @@ The spectator SDK-adapter witness spans 257 original rows with recurrent refusal
 callback/expert viewing and decoded status-sensitive recordings. Actual SDK/server/browser qualification remains in #131 and #245.
 The retained-history source comparison also exercises donor recovery after two queue capacities of original gameplay,
 with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
-Native development receipts execute a bounded private authored-source image and record its hashes and starting Git identity;
-Python helper identity and descendant supervision remain separate evidence gaps in #298.
+Native development receipts execute a bounded private authored-source image, record its hashes and starting Git identity,
+and bind the on-disk Python helper bytes: digests are captured after every helper module has loaded and before any engine
+child starts, then re-verified after execution (#298; private helper staging remains the named follow-up).
 Native test launches wait within an explicit host-capacity budget before starting engines, then retain requested parallelism under the machine-wide lease.
 Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.

@@ -4,7 +4,9 @@ from copy import deepcopy
 from pathlib import Path
 import subprocess
 import shutil
+import sys
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import CACHE, ROOT, digest, load_manifest
 from handshake_contract import strict_shape
 

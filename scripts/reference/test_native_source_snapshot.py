@@ -80,9 +80,39 @@ class SourceReceiptControls(unittest.TestCase):
             self.assertEqual(subprocess.check_output(["git", "diff", "--cached", "--name-only"], cwd=caller,
                                                     env=environment, text=True, timeout=30), "sentinel\n")
 
+    # Value: protects the receipt contract; fails_when=a broken helper crashes the launcher while a stale success survives;
+    # why_new=eager helper loading moved the first import ahead of the receipt write; seam=fixture launcher process
+    def test_broken_helper_invalidates_stale_success(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = fixture_environment()
+            for source in ("scripts/run_godot_tests.py", "scripts/host_capacity.py",
+                           "scripts/reference/engine_path.py", "scripts/native_source_snapshot.py"):
+                target = root / source
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / source, target)
+            (root / "scripts/changed_suites.py").write_text("def broken(:\n")
+            (root / "project.godot").write_text("config_version=5\n")
+            (root / ".gitignore").write_text(".cache/\n")
+            for command in (["git", "init", "-q"], ["git", "add", "."],
+                            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base"]):
+                subprocess.run(command, cwd=root, env=environment, check=True, capture_output=True, timeout=30)
+            receipt = root / ".cache/receipt.json"
+            receipt.parent.mkdir(parents=True, exist_ok=True)
+            receipt.write_text('{"passed": true}')
+            process = subprocess.run([sys.executable, str(root / "scripts/run_godot_tests.py"), "--godot", "missing-engine",
+                                      "--results", str(receipt)],
+                                     cwd=root, env=environment, capture_output=True, text=True, timeout=30)
+            report = json.loads(receipt.read_text())
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIsNot(report["passed"], True, "a broken helper must not leave a stale success receipt")
+            self.assertNotEqual(report["failure"], "in_progress", "the broken helper must be a named failure")
+            self.assertIn("changed_suites.py", report["failure"])
+            self.assertNotIn("records", report)
+
     # Value: protects=executed source identity; fails_when=end-only Git metadata qualifies changed bytes; why_new=runner controls only validate outcomes; seam=fake engine process
     def test_executed_source_identity(self) -> None:
-        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit"):
+        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit", "helper_edit"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 environment = fixture_environment()
@@ -121,6 +151,8 @@ class SourceReceiptControls(unittest.TestCase):
                        f"'commit','-qm','intervening'],cwd={str(root)!r},check=True,timeout=10)\n"
                        if mode == "commit" else "")
                     + (" sample.write_text('replaced snapshot\\n')\n" if mode == "replace_snapshot" else "")
+                    + (f" helper=pathlib.Path({(str(root) + '/scripts/host_capacity.py')!r});helper.write_text(helper.read_text() + '\\n# mutated helper\\n')\n"
+                       if mode == "helper_edit" else "")
                     + (" original.write_text('transient source\\n');original.write_text('stable dirty source\\n')\n"
                        if mode == "transient_edit" else "")
                     + "run={'assertions':1,'failures':[],'states':[{'frame':0,'bytes':'01'}]}\n"
@@ -139,11 +171,15 @@ class SourceReceiptControls(unittest.TestCase):
                 identity = report["source_snapshot"]
                 self.assertEqual(report["commit"], initial_commit)
                 self.assertIs(report["working_tree_dirty"], True)
+                self.assertEqual(sorted(report["helper_sources"]),
+                                 ['changed_suites.py', 'host_capacity.py', 'native_source_snapshot.py',
+                                  'reference/engine_path.py', 'run_godot_tests.py'])
                 self.assertIn("tests/unit/test_sample.gd", identity["files"])
                 self.assertEqual(len(identity["sha256"]), 64)
                 self.assertFalse(Path(identity["path"]).exists(), "snapshot must be cleaned after qualification")
                 if not expected:
-                    failure = {"replace_snapshot": "snapshot_changed", "engine_edit": "engine_changed"}.get(mode, "source_changed")
+                    failure = {"replace_snapshot": "snapshot_changed", "engine_edit": "engine_changed",
+                               "helper_edit": "helper_source_changed"}.get(mode, "source_changed")
                     self.assertEqual(report["failure"], failure)
                 if mode == "commit":
                     self.assertEqual(suite.read_text(), "stable dirty source\n")

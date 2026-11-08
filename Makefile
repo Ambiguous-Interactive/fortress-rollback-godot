@@ -53,7 +53,7 @@ test-reference:
 
 ## Offline scenario/trace and process-receipt negative controls
 test-oracle:
-	$(PY) -m unittest discover -s scripts/oracle -p 'test_*.py'
+	$(PY) scripts/parallel_unittests.py --start-dir scripts/oracle
 
 ## Actual pinned Rust and production Godot queue comparison
 queue-probes:
