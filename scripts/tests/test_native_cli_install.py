@@ -102,7 +102,9 @@ class NativeCliInstallTests(unittest.TestCase):
                             self.assertNotIn('stderr', options)
                         if current == phase:
                             if timeout:
-                                raise subprocess.TimeoutExpired(command, 120, output=b'partial stdout\n', stderr=b'partial stderr\n')
+                                raise subprocess.TimeoutExpired(command, 120,
+                                                                output=b'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n',
+                                                                stderr=b'partial stderr\n')
                             return subprocess.CompletedProcess(command, 42, 'partial stdout\n', 'partial stderr\n')
                         output = '/fake/root'
                         if current == 'wrapper metadata':
@@ -120,7 +122,12 @@ class NativeCliInstallTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, phase):
                             helper.Installer(args).install()
                     self.assertEqual(len([entry for entry in calls if entry[0] == phase]), 1)
-                    self.assertIn('partial stdout', stderr.getvalue())
+                    if timeout:
+                        self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue(),
+                                      'the timeout path keeps the host and path')
+                        self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+                    else:
+                        self.assertIn('partial stdout', stderr.getvalue())
                     self.assertIn('partial stderr', stderr.getvalue())
                     self.assertNotIn('installed @', stdout.getvalue())
                     self.assertNotIn('retry 2/3', stderr.getvalue())
