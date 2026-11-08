@@ -176,6 +176,7 @@ Native development receipts execute a bounded private authored-source image, rec
 and bind the on-disk Python helper bytes: digests are captured after every helper module has loaded and before any engine
 child starts, then re-verified after execution (#298; private helper staging remains the named follow-up).
 Native test launches wait within an explicit host-capacity budget before starting engines, then retain requested parallelism under the machine-wide lease.
+The ownership witness overlaps its per-suite native engine processes in the same bounded wave, keeping one fresh process, watchdog and after-run boundary verification per suite; browser pages stay serial because they need a responsive host.
 Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.

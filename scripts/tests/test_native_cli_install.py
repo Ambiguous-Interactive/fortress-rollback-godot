@@ -46,6 +46,10 @@ if args[:1] == ['view']:
             sys.exit(1)
         print(json.dumps({'version': args[1].rsplit('@', 1)[1]}))
 elif args[:1] == ['install']:
+    if '--foreground-scripts' in args and '--loglevel=http' in args:
+        print('npm http fetch GET https://registry.example/' + package, flush=True)
+        print('npm http fetch GET 200 https://registry.example/' + package + '/-/' + package.split('/')[1] + '-' + version + '.tgz?t=SIGNED-QUERY-CREDENTIAL', flush=True)
+        print('npm sill runScript postinstall ' + package + '@' + version, flush=True)
     if scenario.get('install_delay'):
         counter = root / 'installs'
         attempt = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -69,7 +73,8 @@ else:
 
 class NativeCliInstallTests(unittest.TestCase):
     def test_command_failures_identify_phase_and_preserve_partial_output(self):
-        # Value: distinguishes hung commands without registry timing or leaking caller environment.
+        # Value: distinguishes hung commands without registry timing or leaking caller environment;
+        # the install phase merges its streams so diagnostics keep npm's original interleaving.
         spec = importlib.util.spec_from_file_location('native_cli_installer', HELPER)
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
@@ -85,11 +90,21 @@ class NativeCliInstallTests(unittest.TestCase):
                             current = 'wrapper metadata' if command[2].endswith('@latest') else 'native metadata'
                         else:
                             current = {'install': 'global installation', 'root': 'global root lookup'}[command[1]]
-                        calls.append(current)
+                        calls.append((current, options))
                         self.assertEqual(options['timeout'], 120)
+                        if current == 'global installation':
+                            self.assertNotIn('capture_output', options, 'install streams merge in order')
+                            self.assertEqual(options['stdout'], subprocess.PIPE)
+                            self.assertEqual(options['stderr'], subprocess.STDOUT)
+                        else:
+                            self.assertIn('capture_output', options, 'metadata streams stay separate for JSON parsing')
+                            self.assertNotIn('stdout', options)
+                            self.assertNotIn('stderr', options)
                         if current == phase:
                             if timeout:
-                                raise subprocess.TimeoutExpired(command, 120, output=b'partial stdout\n', stderr=b'partial stderr\n')
+                                raise subprocess.TimeoutExpired(command, 120,
+                                                                output=b'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n',
+                                                                stderr=b'partial stderr\n')
                             return subprocess.CompletedProcess(command, 42, 'partial stdout\n', 'partial stderr\n')
                         output = '/fake/root'
                         if current == 'wrapper metadata':
@@ -106,8 +121,13 @@ class NativeCliInstallTests(unittest.TestCase):
                             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                         with self.assertRaisesRegex(ValueError, phase):
                             helper.Installer(args).install()
-                    self.assertEqual(calls.count(phase), 1)
-                    self.assertIn('partial stdout', stderr.getvalue())
+                    self.assertEqual(len([entry for entry in calls if entry[0] == phase]), 1)
+                    if timeout:
+                        self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue(),
+                                      'the timeout path keeps the host and path')
+                        self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+                    else:
+                        self.assertIn('partial stdout', stderr.getvalue())
                     self.assertIn('partial stderr', stderr.getvalue())
                     self.assertNotIn('installed @', stdout.getvalue())
                     self.assertNotIn('retry 2/3', stderr.getvalue())
@@ -163,6 +183,30 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertIn('first publication failure', result.stderr)
         self.assertEqual(len([call for call in calls if call[0] == 'view']), 4)
         self.assertFalse(any(call[0] == 'install' for call in calls))
+
+    def test_install_failure_streams_lifecycle_and_registry_phase_evidence(self):
+        # Value: a hung global install localizes to wrapper lifecycle execution versus
+        # registry acquisition, on the next failure, without waiting for upstream logs;
+        # the merged stream preserves the order npm produced the evidence in.
+        result, calls = self.invoke(install_error=True)
+        self.assertNotEqual(result.returncode, 0)
+        installs = [call for call in calls if call[0] == 'install']
+        self.assertEqual(len(installs), 1)
+        self.assertIn('--foreground-scripts', installs[0])
+        self.assertIn('--loglevel=http', installs[0])
+        self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', result.stderr)
+        self.assertIn('npm sill runScript postinstall @opencode/cli@', result.stderr)
+        self.assertIn('https://registry.example/@opencode/cli/-/cli-2.0.30.tgz?<redacted>', result.stderr,
+                      'the host and path survive redaction')
+        self.assertNotIn('SIGNED-QUERY-CREDENTIAL', result.stderr, 'query credentials never reach the diagnostics')
+        self.assertLess(result.stderr.index('npm http fetch GET https://registry.example/@opencode/cli'),
+                        result.stderr.index('npm sill runScript postinstall @opencode/cli@'),
+                        'registry and lifecycle evidence keep their original order')
+        views = [call for call in calls if call[0] == 'view']
+        self.assertTrue(views)
+        for view in views:
+            self.assertNotIn('--foreground-scripts', view)
+            self.assertNotIn('--loglevel=http', view)
 
     def test_install_publication_delay_retries_only_the_expected_native_release(self):
         result, calls = self.invoke(install_delay=True)

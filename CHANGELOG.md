@@ -4,6 +4,10 @@
 
 ### Added
 
+- Overlap the ownership witness's per-suite native engine processes in a bounded wave. Each suite keeps its own fresh process, 180-second watchdog and after-run boundary verification; the wave joins every suite and a rejection still names the first failing suite in suite order. The native-only 4.3 part-1 witness finishes in about 2m38s locally instead of 9m41s.
+
+- Stream npm lifecycle and registry-phase evidence during native CLI installation (`--foreground-scripts --loglevel=http`), so a hung global install localizes to wrapper postinstall versus registry acquisition on the next failure.
+
 - Bind the native test receipt to the on-disk Python helper bytes. The launcher digests its own script and every helper module it executes after they have loaded and before starting an engine, re-verifies them after execution and reports helper drift as a failed qualification instead of a stale success.
 
 - Run the oracle negative-control suite through the same bounded parallel subprocess runner as the reference suite. Oracle test files are now import-order independent, and the suite finishes in about 42s locally instead of 63s.

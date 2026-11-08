@@ -1,6 +1,7 @@
 """Rejected ownership-run gates split from the original single suite for bounded parallel files."""
 
 import json
+from pathlib import Path
 import subprocess
 from unittest import mock
 
@@ -111,6 +112,8 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
         self.assertEqual(entry['outcome'], 'progressing')
         self.assertEqual(entry['native_progress']['case'], 'parity')
         self.assertEqual(entry['native_progress']['elapsed'], 18)
+        self.assertEqual(entry['native_suite'], sorted(probes.select_suites('all'))[0],
+                         'the rejection names the first failing suite')
         self.assertFalse(entry['alive'], 'the native child was killed by the deadline')
         self.assertFalse((results / 'ownership.json').exists(), 'a rejected run publishes no receipt')
 
@@ -125,12 +128,18 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
 
     # Value: protects=per-child exit and completion checks; fails_when=negative verdict leaks to healthy suites; why_new=aggregation has no process status; seam=none
     def test_later_native_batch_rejects_wrong_exit_incomplete_output_and_engine_errors(self):
+        suites = sorted(probes.select_suites('all'))
         for mutation in ('wrong_exit', 'missing_marker', 'duplicate_marker', 'script_error', 'engine_error'):
             with self.subTest(mutation=mutation):
                 results = self.scenario(native_fault=mutation, expected=ValueError)
                 self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')
                 self.assertFalse((results / 'ownership.json').exists())
-                self.assertEqual(len(list(results.glob('ownership-*-native-*.log'))), 2)
+                # The wave joins every suite before the rejection, so each keeps
+                # its own evidence, including the earlier suite and the faulted one.
+                self.assertEqual(len(list(results.glob('ownership-*-native-*.log'))), len(suites))
+                for suite in suites[:2]:
+                    self.assertTrue((results / f'ownership-4.3-negative-native-{Path(suite).stem}.log').exists(),
+                                    suite + ' kept its log')
 
     # Value: protects=partial batch evidence; fails_when=later timeout hides completed batch or last case; why_new=first-child timeout cannot catch overwrites; seam=none
     def test_later_native_timeout_keeps_each_log_and_last_case(self):
@@ -138,16 +147,20 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
         entry = self.rounds(results)[0]
         self.assertEqual(entry['outcome'], 'progressing')
         self.assertEqual(entry['native_progress']['case'], 'parity')
-        self.assertFalse((results / 'ownership.json').exists())
+        self.assertEqual(entry['native_suite'], sorted(probes.select_suites('all'))[1],
+                         'the rejection names the timed-out suite, not an earlier one')
+        self.assertFalse((results / 'ownership.json').exists(), 'a rejected run publishes no receipt')
+        suites = sorted(probes.select_suites('all'))
         logs = list(results.glob('ownership-*-native-*.log'))
-        self.assertEqual(len(logs), 2)
+        self.assertEqual(len(logs), len(suites), 'the wave joins every suite before rejection')
         self.assertTrue(all(probes.PROGRESS_PREFIX in log.read_text(encoding='utf-8') for log in logs))
 
     def test_the_retained_observation_is_bounded(self):
         noisy = json.dumps({**BROWSER_DETAIL, 'errors': [f'engine error {index}' for index in range(50)]})
         results = self.scenario(noisy + '\n')
         entry = self.rounds(results)[0]
-        self.assertEqual(len(entry), 8, 'a round keeps a fixed number of fields')
+        self.assertEqual(len(entry), 9, 'a round keeps a fixed number of fields')
+        self.assertEqual(entry['native_suite'], None, 'a browser rejection names no native suite')
         self.assertEqual(len(entry['errors']), probes.MAX_RETAINED_ERRORS)
         self.assertEqual(len(entry['browser_progress']), 7, 'a progress record keeps a fixed number of fields')
         self.assertEqual(entry['browser_progress']['case'], 'golden')

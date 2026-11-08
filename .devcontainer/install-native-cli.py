@@ -14,31 +14,51 @@ class PublicationPending(Exception):
     """Only a known native dependency's missing registry version is retryable."""
 
 
+QUERY_CREDENTIALS = re.compile(r'(https?://[^\s?#]+)\?[^\s]*')
+
+
+def redact_query_strings(text):
+    """Strip query strings from diagnostic URLs, keeping host and path.
+
+    A configured registry can hand out signed download redirects, and the http
+    loglevel prints those URLs. The credentials live in the query, so failure
+    and timeout diagnostics never print one.
+    """
+    return QUERY_CREDENTIALS.sub(r'\1?<redacted>', text)
+
+
 class Installer:
     def __init__(self, args):
         self.args = args
         self.deadline = time.monotonic() + args.timeout
 
-    def command(self, command, publication=False, *, phase):
+    def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise ValueError(f'publication retry budget exhausted before {phase} (elapsed time)')
+        # The install phase merges the streams so the failure and timeout
+        # diagnostics keep npm's original interleaving of lifecycle banners
+        # (stdout) and registry logs (stderr). The JSON metadata lookups keep
+        # separate streams: merged warnings would corrupt their parsing.
+        streams = {'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT} if merged else {'capture_output': True}
         try:
-            result = subprocess.run(command, capture_output=True, encoding='utf-8', timeout=min(120, remaining), check=False)
+            result = subprocess.run(command, encoding='utf-8', timeout=min(120, remaining), check=False, **streams)
         except subprocess.TimeoutExpired as failure:
-            # Preserve the first attempt's diagnostics even when the process hangs.
+            # Preserve the first attempt's diagnostics even when the process hangs,
+            # in the order npm produced them, without registry query credentials.
             for output in (failure.stdout, failure.stderr):
                 if output:
-                    print(output.decode('utf-8', errors='replace') if isinstance(output, bytes) else output, file=sys.stderr)
+                    text = output.decode('utf-8', errors='replace') if isinstance(output, bytes) else output
+                    print(redact_query_strings(text), file=sys.stderr)
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget') from failure
         if result.returncode:
-            print(result.stdout, end='', file=sys.stderr)
-            print(result.stderr, end='', file=sys.stderr)
+            combined = redact_query_strings((result.stdout or '') + (result.stderr or ''))
+            print(combined, end='', file=sys.stderr)
             # Never retry authentication, permissions, malformed metadata or wrapper lookup.
-            codes = set(re.findall(r'npm (?:ERR!|error) code ([A-Z0-9_]+)', result.stderr))
+            codes = set(re.findall(r'npm (?:ERR!|error) code ([A-Z0-9_]+)', combined))
             # A sentence-ending period is punctuation; version suffixes remain part of the token.
             tokens = {token.removesuffix('.') for token in re.findall(
-                r'(?<![A-Za-z0-9_@/.+-])(@[a-z0-9._-]+/[a-z0-9._-]+@[0-9A-Za-z.+_-]+)(?![A-Za-z0-9_@/.+-])', result.stderr)}
+                r'(?<![A-Za-z0-9_@/.+-])(@[a-z0-9._-]+/[a-z0-9._-]+@[0-9A-Za-z.+_-]+)(?![A-Za-z0-9_@/.+-])', combined)}
             missing = publication is True or (publication and any(spec in tokens for spec in publication))
             if missing and codes and codes <= {'ETARGET', 'E404'}:
                 raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
@@ -88,10 +108,14 @@ class Installer:
                     if not isinstance(native, dict) or native.get('version') != spec.rsplit('@', 1)[1]:
                         raise ValueError(f'native package metadata does not match selected version: {spec}')
                 # Frozen exact latest: the release cannot change while readiness or installation retries.
-                output = self.command(['npm', 'install', '-g', '--include=optional', '--prefer-online', package + '@' + version],
-                                      install_specs, phase='global installation')
-                if output:
-                    print(output)
+                # Foreground scripts stream the wrapper's postinstall (native version probe plus
+                # nested fallback npm) into the merged stream, and the http loglevel names each
+                # registry request, so a hang localizes to lifecycle execution versus acquisition.
+                # npm never prints authorization material at this level, and the merged stream is
+                # only printed on failure or timeout, in its original order.
+                self.command(['npm', 'install', '-g', '--include=optional', '--prefer-online',
+                              '--foreground-scripts', '--loglevel=http', package + '@' + version],
+                             install_specs, phase='global installation', merged=True)
                 break
             except PublicationPending as failure:
                 if attempt == self.args.attempts or time.monotonic() + self.args.interval >= self.deadline:

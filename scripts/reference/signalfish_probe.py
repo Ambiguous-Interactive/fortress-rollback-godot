@@ -46,14 +46,28 @@ def inventory(paths):
     for name, path in paths.items():
         if path.is_symlink():
             raise ValueError('evidence source is symlinked')
-        for source in walk_entries(path):
-            if source.is_symlink():
-                raise ValueError('evidence source is symlinked')
-            if source.is_dir():
-                continue
-            key = name + '/' + str(source.relative_to(path)) if path.is_dir() else name
-            result[key] = digest(source)
-    return result
+        if not path.is_dir():
+            result[name] = digest(path)
+            continue
+        # One scandir walk per directory: the entry already knows whether it is
+        # a symlink or a directory, so repeated inventories do not re-stat each
+        # member through pathlib. Membership, symlink rejection and the
+        # fail-closed unreadable-directory behavior stay as walk_entries had them.
+        prefix = str(path) + os.sep
+        pending = [str(path)]
+        while pending:
+            with os.scandir(pending.pop()) as scan:
+                for entry in scan:
+                    if entry.is_symlink():
+                        raise ValueError('evidence source is symlinked')
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    else:
+                        result[name + '/' + entry.path[len(prefix):]] = digest(Path(entry.path))
+    # Directory enumeration order is not stable across platforms and scans.
+    # Receipts serialize these inventories, so the keys are sorted exactly as
+    # the previous walk_entries-based walk sorted them.
+    return {key: result[key] for key in sorted(result)}
 
 
 def main():
