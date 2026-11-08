@@ -211,3 +211,66 @@ otherwise idle: sequential `unittest discover` 8m49.0s (299 cases, 10
 skips); parallel runner 3m21.0s, 36 files, 0 failed, 0 missing. The
 critical path is now the slowest single file (about 202s), so further
 wall reduction requires gate changes, not scheduling.
+
+## Current 24-job baseline and the parallel oracle suite
+
+Run [42443776980](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980)
+qualified main `5118de2f26d2a86d35672e8f3ba6319ac0b8ded4` on 2026-11-08: all 24
+jobs passed, the workflow took 18m04s of wall time and the jobs summed to
+235m56s. Reproduce with:
+
+```sh
+gh api repos/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980/jobs --paginate \
+  --jq '.jobs[] | [.name, .started_at, .completed_at] | @tsv'
+```
+
+Job times, longest first:
+
+| Job | Wall time |
+| --- | --- |
+| Native and Chromium snapshot ownership 4.3 part 1 | 18m00s |
+| Native and Chromium snapshot ownership 4.7.2 part 1 | 14m41s |
+| Native and Chromium snapshot ownership 4.3 part 2 | 13m48s |
+| Native and Firefox snapshot ownership 4.7.2 positive part 1 | 12m35s |
+| Native and Firefox snapshot ownership 4.7.2 negative part 2 | 12m08s |
+| Native and Firefox snapshot ownership 4.3 negative part 1 | 12m02s |
+| Native and Firefox snapshot ownership 4.3 positive part 1 | 11m31s |
+| Native and Chromium snapshot ownership 4.7.2 part 2 | 11m29s |
+| Godot 4.3 and Chromium oracles | 11m11s |
+| Native and Firefox snapshot ownership 4.3 positive part 2 | 11m07s |
+| Native and Firefox snapshot ownership 4.3 negative part 2 | 10m40s |
+| Native and Firefox snapshot ownership 4.7.2 positive part 2 | 10m24s |
+| Native and Firefox snapshot ownership 4.7.2 negative part 1 | 10m01s |
+| Godot 4.7.2 and Chromium suites | 9m44s |
+| SignalFish relay and Chromium WebRTC 4.3 online | 9m43s |
+| SignalFish relay and Chromium WebRTC 4.7.2 online | 9m15s |
+| Godot 4.3 and Chromium suites | 7m56s |
+| Godot 4.7.2 and Chromium oracles | 7m38s |
+| SignalFish relay and Chromium WebRTC 4.3 direct | 6m39s |
+| Reference negative controls | 6m39s |
+| SignalFish relay and Chromium WebRTC 4.7.2 mixed | 6m00s |
+| SignalFish relay and Chromium WebRTC 4.7.2 direct | 5m33s |
+| SignalFish relay and Chromium WebRTC 4.3 mixed | 5m15s |
+| Pinned Rust reference | 1m57s |
+
+The wall-time critical path is no longer a browser room job: it is the
+ownership 4.3 part 1 verification step ("Verify integer encoding, snapshot
+ownership and byte sessions", 17m12s of its 18m00s). The thirteen ownership
+jobs hold the thirteen longest positions; the longest SignalFish browser job
+(4.3 online, 9m43s) sits in the middle of the pack. The original 66-minute
+summed target predates this expanded 24-job inventory and is no longer
+comparable with it.
+
+The negative-controls job shows the landed scheduling levers. #333's
+process-parallel runner took `make test-reference` from 11m49s (run
+42432613366) to 6m39s on the identical 299-case inventory. Within the same
+job, `make test-oracle` was still one serial `unittest discover` process. It
+now uses the same parallel runner. Local measurement on this devcontainer,
+warm and otherwise idle: 16 files, 120 cases, serial wall 63.0s, parallel
+wall 41.6s (summed process time 74.2s; the critical path is `test_replay.py`
+at 41.6s). Flipping it exposed a real fragility first: `make test-oracle`
+passed single-process only because `test_engine.py` alphabetically imports
+before the other files and mutates `sys.path` as a side effect, which let
+their transitive `scripts/reference` imports resolve. `handshake_formal.py`
+now inserts that path itself, so every oracle test file is import-order
+independent and per-file subprocess isolation is sound.

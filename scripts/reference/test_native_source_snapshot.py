@@ -82,7 +82,7 @@ class SourceReceiptControls(unittest.TestCase):
 
     # Value: protects=executed source identity; fails_when=end-only Git metadata qualifies changed bytes; why_new=runner controls only validate outcomes; seam=fake engine process
     def test_executed_source_identity(self) -> None:
-        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit"):
+        for mode in ("stable_dirty", "edit", "commit", "replace_snapshot", "transient_edit", "engine_edit", "helper_edit"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 environment = fixture_environment()
@@ -121,6 +121,8 @@ class SourceReceiptControls(unittest.TestCase):
                        f"'commit','-qm','intervening'],cwd={str(root)!r},check=True,timeout=10)\n"
                        if mode == "commit" else "")
                     + (" sample.write_text('replaced snapshot\\n')\n" if mode == "replace_snapshot" else "")
+                    + (f" helper=pathlib.Path({(str(root) + '/scripts/host_capacity.py')!r});helper.write_text(helper.read_text() + '\\n# mutated helper\\n')\n"
+                       if mode == "helper_edit" else "")
                     + (" original.write_text('transient source\\n');original.write_text('stable dirty source\\n')\n"
                        if mode == "transient_edit" else "")
                     + "run={'assertions':1,'failures':[],'states':[{'frame':0,'bytes':'01'}]}\n"
@@ -139,11 +141,15 @@ class SourceReceiptControls(unittest.TestCase):
                 identity = report["source_snapshot"]
                 self.assertEqual(report["commit"], initial_commit)
                 self.assertIs(report["working_tree_dirty"], True)
+                self.assertEqual(sorted(report["helper_sources"]),
+                                 ['changed_suites.py', 'host_capacity.py', 'native_source_snapshot.py',
+                                  'reference/engine_path.py', 'run_godot_tests.py'])
                 self.assertIn("tests/unit/test_sample.gd", identity["files"])
                 self.assertEqual(len(identity["sha256"]), 64)
                 self.assertFalse(Path(identity["path"]).exists(), "snapshot must be cleaned after qualification")
                 if not expected:
-                    failure = {"replace_snapshot": "snapshot_changed", "engine_edit": "engine_changed"}.get(mode, "source_changed")
+                    failure = {"replace_snapshot": "snapshot_changed", "engine_edit": "engine_changed",
+                               "helper_edit": "helper_source_changed"}.get(mode, "source_changed")
                     self.assertEqual(report["failure"], failure)
                 if mode == "commit":
                     self.assertEqual(suite.read_text(), "stable dirty source\n")

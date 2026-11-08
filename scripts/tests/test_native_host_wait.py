@@ -27,7 +27,7 @@ class NativeHostWaitTest(unittest.TestCase):
         host_capacity.LEASE_FILE = host_capacity.LEASE_DIR / 'host.lock'
         self.checkout = self.root / 'checkout'
         (self.checkout / 'scripts/reference').mkdir(parents=True)
-        for name in ('run_godot_tests.py', 'host_capacity.py', 'native_source_snapshot.py'):
+        for name in ('run_godot_tests.py', 'host_capacity.py', 'native_source_snapshot.py', 'changed_suites.py'):
             shutil.copyfile(SCRIPTS / name, self.checkout / 'scripts' / name)
         shutil.copyfile(SCRIPTS / 'reference/engine_path.py', self.checkout / 'scripts/reference/engine_path.py')
         (self.checkout / 'project.godot').write_text('[application]\nconfig/name="capacity control"\n')
