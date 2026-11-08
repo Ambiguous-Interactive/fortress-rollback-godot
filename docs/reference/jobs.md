@@ -233,8 +233,23 @@ The per-suite repeated-inventory cost also dropped: the boundary inventory now
 scans each directory once with cached entry types instead of re-statting every
 member through pathlib, with identical membership, symlink rejection and
 fail-closed unreadable-directory behavior (`test_signalfish_probe` covers all
-three). On the runner, the CI step times are recorded from the run records of
-the change that introduced the wave.
+three).
+
+Runner evidence for the wave, from public run records. Before: main run
+[42457452576](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42457452576)
+(`25edd524d77b0099c114cf932d52b9cc1dc490f0f`) took 18m04s of wall time and its
+jobs summed to 235m56s; its longest job was the Chromium 4.3 part-1 ownership
+job at 18m00s. After: the branch run
+[42510871354](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42510871354)
+of the same inventory took 13m54s of wall time, 215m21s summed, all 24 jobs
+green; the four Chromium ownership jobs took 10m59s/11m06s (4.3 parts 1/2) and
+12m04s/11m14s (4.7.2 parts 1/2), against 18m00s/13m48s and 14m41s/11m29s
+before. The Firefox ownership jobs moved within their observed run-to-run
+variance (for example 4.7.2 positive part 1 fell 12m35s → 9m10s while 4.3
+positive part 1 rose 11m31s → 13m53s), and the new wall critical path is the
+Firefox 4.3 positive part-1 job at 13m53s. These are single-run comparisons of
+changing trees, not a noise-controlled per-job benchmark; the controlled
+causal measurement is the same-tree local witness above.
 
 ## Current 24-job baseline and the parallel oracle suite
 
