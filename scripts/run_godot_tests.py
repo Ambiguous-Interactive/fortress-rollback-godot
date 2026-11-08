@@ -663,7 +663,7 @@ def main(argv: list[str] | None = None) -> int:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "cancelled"}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
         return 130
-    except (ImportError, OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
+    except (ImportError, SyntaxError, OSError, subprocess.SubprocessError, ValueError, UnicodeError) as exc:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": str(exc)}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
         return 1

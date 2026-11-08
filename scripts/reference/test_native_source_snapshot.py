@@ -106,6 +106,8 @@ class SourceReceiptControls(unittest.TestCase):
             report = json.loads(receipt.read_text())
             self.assertNotEqual(process.returncode, 0)
             self.assertIsNot(report["passed"], True, "a broken helper must not leave a stale success receipt")
+            self.assertNotEqual(report["failure"], "in_progress", "the broken helper must be a named failure")
+            self.assertIn("changed_suites.py", report["failure"])
             self.assertNotIn("records", report)
 
     # Value: protects=executed source identity; fails_when=end-only Git metadata qualifies changed bytes; why_new=runner controls only validate outcomes; seam=fake engine process
