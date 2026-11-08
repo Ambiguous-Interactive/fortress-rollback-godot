@@ -1084,7 +1084,9 @@ def run_probes(args, results):
             # expected failures; anything else must not linger as a running
             # round) cancels the suites that have not started, records the
             # rejection and re-raises. shutdown joins the engines already
-            # running; each capture kills its own child on the way out.
+            # running; KeyboardInterrupt reaches only this main thread, so a
+            # running worker's engine keeps its own watchdog and ends within
+            # its 180-second bound rather than being killed mid-run.
             wave = ThreadPoolExecutor(max_workers=native_workers)
             futures = [wave.submit(native_suite_task, suite) for suite in ordered_suites]
             try:

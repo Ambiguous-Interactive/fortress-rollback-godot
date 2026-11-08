@@ -141,9 +141,10 @@ class OwnershipRejectionFixture(unittest.TestCase):
         fixture_lock = threading.Lock()
 
         def mutate_project(project, boundary):
-            if not project_fault or changed_project or project_fault[0] != boundary:
-                return
-            changed_project.append(True)
+            with fixture_lock:
+                if not project_fault or changed_project or project_fault[0] != boundary:
+                    return
+                changed_project.append(True)
             mutation = project_fault[1]
             target = project / 'addons/fortress_rollback/core/driver.gd'
             if mutation == 'source':
