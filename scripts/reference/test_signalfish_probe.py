@@ -1,6 +1,7 @@
 """Value: SDK receipts reject failed processes, stale success and changed executed evidence."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -82,10 +83,13 @@ class SignalFishProbeControls(unittest.TestCase):
                             probe.main()
                         self.assertIs(json.loads(receipt.read_text())['passed'], False)
                         self.assertTrue((output / 'signalfish-sdk.log').exists())
+
+
 class WalkEntriesControls(unittest.TestCase):
-    # Value: protects=identical inventory membership with fail-closed unreadable trees;
-    # fails_when=the scandir walk drops entries rglob reported or walks symlinked directories; seam=none
-    def test_walk_entries_matches_rglob_and_refuses_unreadable_directories(self):
+    # Value: protects=identical inventory membership and fail-closed unreadable trees;
+    # fails_when=the scandir walk drops entries rglob reported or walks symlinked directories;
+    # why_new=repeated inventories moved from rglob to directory scans; seam=none
+    def test_walk_entries_matches_rglob_entry_set(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / 'deep/nested').mkdir(parents=True)
@@ -101,6 +105,24 @@ class WalkEntriesControls(unittest.TestCase):
             self.assertEqual(probe.walk_entries(root), expected)
             self.assertEqual(probe.walk_entries(root / 'plain.bin'), [root / 'plain.bin'])
             self.assertEqual(probe.walk_entries(root / 'missing'), [root / 'missing'])
+
+    # Value: protects=fail-closed inventory on unreadable trees; fails_when=an unreadable
+    # directory is silently skipped so a partial membership publishes as evidence;
+    # why_new=rglob skipped unreadable directories while scandir scans raise; seam=none
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0,
+                     'root can scan directories regardless of their mode')
+    def test_walk_entries_fails_closed_on_an_unreadable_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sealed = root / 'sealed'
+            sealed.mkdir()
+            (sealed / 'inside.txt').write_text('hidden')
+            sealed.chmod(0o000)
+            try:
+                with self.assertRaises(OSError):
+                    probe.walk_entries(root)
+            finally:
+                sealed.chmod(0o700)
 
     def test_inventory_hashes_every_file_and_rejects_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
