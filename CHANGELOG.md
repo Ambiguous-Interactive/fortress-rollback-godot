@@ -4,6 +4,8 @@
 
 ### Added
 
+- Run the reference negative-control suite through bounded parallel subprocesses with fail-closed aggregation. The same cases now finish in about 3m21s locally instead of 8m49s; the ownership rejection suite is split by concern into four files.
+
 - Add pause, resume and single-frame controls to the effects replay. Focus loss holds playback until explicit resume.
 
 - Add peer-example buttons and F/G shortcuts to apply fresh measured input-delay suggestions.
@@ -316,6 +318,8 @@
 - Add a bounded raw input queue with owned bytes, frame delay, and repeat-last prediction.
 
 ### Fixed
+
+- Bind oracle launch receipts to the repository identity and source digests captured before execution. A run whose files or commits change mid-execution is rejected instead of publishing ending-state identity.
 
 - Fix paused spectator feedback to name missing confirmed frames while retaining the paused state.
 

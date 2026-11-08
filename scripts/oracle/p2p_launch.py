@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 from fetch import ROOT, CACHE, digest, load_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import setup_rust, rust_environment
-from launch import execute
+from launch import execute, git_identity, require_unchanged
 from engine_path import resolve_engine
 from p2p_contract import validate, validate_scenario, compare, REVISION
 from p2p_controls import process_controls
@@ -186,11 +186,6 @@ def executable_identity(path):
     return {'path': str(resolved), 'sha256': digest(resolved), 'mode': resolved.stat().st_mode & 0o777}
 
 
-def require_unchanged(label, original, current):
-    if original != current:
-        raise ValueError('evidence identity changed: ' + label + '; rerun')
-
-
 def main():
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
@@ -200,6 +195,7 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
+    identity = git_identity()
     engine = resolve_engine(args.godot)
     files = source_files()
     hashes = {str(p.relative_to(ROOT)): digest(p) for p in sorted(files)}
@@ -267,13 +263,14 @@ def main():
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     require_unchanged('Rust oracle executable', binary_identity, executable_identity(binary))
+    require_unchanged('repository identity', identity, git_identity())
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True,
         'upstream_revision': REVISION, 'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': upstream_hashes,
         'upstream_lock_sha256': upstream_hashes['Cargo.lock'],
         'upstream_manifest_sha256': upstream_hashes['Cargo.toml'], 'source_sha256': hashes,
-        'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, encoding='utf-8').strip(),
-        'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, encoding='utf-8')),
+        'commit': identity['commit'],
+        'working_tree_dirty': identity['working_tree_dirty'],
         'engine': engine_version.strip(), 'engine_sha256': engine_identity['sha256'], 'binary_sha256': binary_identity['sha256'],
         'engine_identity': engine_identity, 'engine_path': str(engine),
         'binary_identity': binary_identity, 'execution_identities_unchanged': True,

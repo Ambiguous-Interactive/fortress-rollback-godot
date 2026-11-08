@@ -196,6 +196,18 @@ silently skipped an unreadable directory, so repeated inventories cannot
 report a vacuously incomplete membership as evidence.
 
 Remaining reduction levers are gate changes or runner changes: removing a
-redundant boundary check, running browser rooms concurrently, or a
-process-parallel negative-control runner. Each needs its own review against
-the evidence contract; none is a drop-in performance fix.
+redundant boundary check, or running browser rooms concurrently. The
+process-parallel negative-control runner landed separately: each
+`test_*.py` file now executes in its own fresh interpreter under a bounded
+worker pool with fail-closed aggregation (`scripts/parallel_unittests.py`,
+wired into `make test-reference`), so per-file cases, seeds, receipts and
+skips are unchanged while no file waits behind another. The ownership
+rejection suite was split along its existing concern boundaries into
+`test_ownership_phase_selection`, `test_ownership_full_inventories`,
+`test_ownership_mutation_identity` and `test_ownership_rejection_diagnosis`
+(51 methods preserved by name; the shared rejected-run fixture moved to
+`ownership_rejection_fixture.py`). Measured on this devcontainer, warm and
+otherwise idle: sequential `unittest discover` 8m49.0s (299 cases, 10
+skips); parallel runner 3m21.0s, 36 files, 0 failed, 0 missing. The
+critical path is now the slowest single file (about 202s), so further
+wall reduction requires gate changes, not scheduling.

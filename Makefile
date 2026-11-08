@@ -49,7 +49,7 @@ test-llm:
 
 ## Reference fetch/inventory negative controls (no network or downloaded tools)
 test-reference:
-	$(PY) -m unittest discover -s scripts/reference -p 'test_*.py'
+	$(PY) scripts/parallel_unittests.py --start-dir scripts/reference
 
 ## Offline scenario/trace and process-receipt negative controls
 test-oracle:

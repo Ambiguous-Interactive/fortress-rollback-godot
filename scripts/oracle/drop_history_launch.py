@@ -11,8 +11,8 @@ from fetch import CACHE, ROOT, digest, load_manifest, sources
 from receipt_arguments import ReceiptParser
 from run import setup_rust, rust_environment
 from engine_path import resolve_engine
-from launch import execute
-from p2p_launch import source_files, upstream_inventory, executable_identity, require_unchanged
+from launch import execute, git_identity, require_unchanged
+from p2p_launch import source_files, upstream_inventory, executable_identity
 from drop_history_contract import history_bytes, compare, negative_controls, loss_evidence_controls, commit_loss_evidence_controls, require, REVISION
 
 from drop_history_contract import wrapped_evidence_controls
@@ -142,6 +142,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'
     receipt.unlink(missing_ok=True)
+    identity = git_identity()
     local_sources = inventory()
     manifest = load_manifest()
     trees = sources(manifest, offline=args.offline)
@@ -231,14 +232,15 @@ def main():
     require_unchanged('upstream source inventory', pinned_sources, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
     require_unchanged('drop oracle executable', binary_identity, executable_identity(binary))
+    require_unchanged('repository identity', identity, git_identity())
     verify_tools(tool_paths, tool_identities)
     records = args.output / 'comparison.json'
     records.write_text(json.dumps(observed[0], indent=2) + '\n')
     receipt.write_text(json.dumps({'format': 1, 'complete': True, 'passed': True, 'upstream_revision': REVISION,
         'upstream_archive_sha256': manifest['sources']['fortress']['archive']['digest'],
         'manifest_sha256': digest(ROOT / 'docs/reference/pins.json'), 'upstream_source_sha256': pinned_sources,
-        'source_sha256': local_sources, 'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, encoding='utf-8').strip(),
-        'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, encoding='utf-8')),
+        'source_sha256': local_sources, 'commit': identity['commit'],
+        'working_tree_dirty': identity['working_tree_dirty'],
         'engine': engine_version.strip(), 'engine_identity': engine_identity, 'binary_identity': binary_identity,
         'cargo': cargo_version.strip(), 'rustc': rust_version.strip(), 'tool_identities': tool_identities, 'default_features': False, 'features': [],
         'execution_identities_unchanged': True, 'fresh_process_repeat_equal': True, 'comparison_sha256': digest(records),

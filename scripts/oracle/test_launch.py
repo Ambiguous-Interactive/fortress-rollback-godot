@@ -2,14 +2,18 @@
 import copy
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import sys
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import launch
 import controls
+import git_test_environment
 from contract import checksum
 from test_contract import scenario, trace
 
@@ -149,6 +153,67 @@ class LauncherTests(unittest.TestCase):
         value['upstream_revision'] = '0' * 40
         with self.assertRaises(ValueError):
             launch.oracle_result(json.dumps(value), '', scenario())
+
+
+class SourceIdentityTests(unittest.TestCase):
+    """Receipts must name the repository state that actually executed (#298)."""
+
+    def fixture_repository(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, True)
+        environment = git_test_environment.fixture_environment()
+        commands = [['git', 'init'], ['git', 'config', 'user.email', 'fixture@example.com'],
+                    ['git', 'config', 'user.name', 'fixture'], ['git', 'config', 'commit.gpgsign', 'false']]
+        for command in commands:
+            subprocess.run(command, cwd=directory, check=True, capture_output=True, env=environment)
+        (directory / 'tracked.txt').write_text('executed bytes\n', encoding='utf-8')
+        subprocess.run(['git', 'add', 'tracked.txt'], cwd=directory, check=True, capture_output=True, env=environment)
+        subprocess.run(['git', 'commit', '-m', 'fixture'], cwd=directory, check=True, capture_output=True, env=environment)
+        return directory, environment
+
+    def identity(self, directory, environment):
+        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=directory, env=environment, text=True).strip()
+        dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=directory, env=environment, text=True))
+        return {'commit': commit, 'working_tree_dirty': dirty}
+
+    def test_identity_matches_actual_repository_state(self):
+        directory, environment = self.fixture_repository()
+        self.assertEqual(launch.git_identity(directory), self.identity(directory, environment))
+        first = launch.git_identity(directory)
+        self.assertFalse(first['working_tree_dirty'])
+        (directory / 'tracked.txt').write_text('edited bytes\n', encoding='utf-8')
+        dirty = launch.git_identity(directory)
+        self.assertEqual(dirty, self.identity(directory, environment))
+        self.assertTrue(dirty['working_tree_dirty'])
+        self.assertEqual(dirty['commit'], first['commit'])
+        subprocess.run(['git', 'add', '-A'], cwd=directory, check=True, capture_output=True, env=environment)
+        subprocess.run(['git', 'commit', '-m', 'second'], cwd=directory, check=True, capture_output=True, env=environment)
+        changed = launch.git_identity(directory)
+        self.assertFalse(changed['working_tree_dirty'])
+        self.assertNotEqual(changed['commit'], first['commit'])
+
+    def test_dirty_tree_is_a_stable_positive_control(self):
+        directory, _ = self.fixture_repository()
+        (directory / 'tracked.txt').write_text('local iteration bytes\n', encoding='utf-8')
+        before = launch.git_identity(directory)
+        launch.require_unchanged('repository identity', before, launch.git_identity(directory))
+        self.assertTrue(before['working_tree_dirty'])
+
+    def test_commit_and_dirty_drift_are_rejected(self):
+        directory, environment = self.fixture_repository()
+        before = launch.git_identity(directory)
+        (directory / 'tracked.txt').write_text('intervening edit\n', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'repository identity'):
+            launch.require_unchanged('repository identity', before, launch.git_identity(directory))
+        subprocess.run(['git', 'add', '-A'], cwd=directory, check=True, capture_output=True, env=environment)
+        subprocess.run(['git', 'commit', '-m', 'intervening commit'], cwd=directory, check=True, capture_output=True, env=environment)
+        with self.assertRaisesRegex(ValueError, 'repository identity'):
+            launch.require_unchanged('repository identity', before, launch.git_identity(directory))
+
+    def test_unchanged_evidence_label_is_rejected_only_on_difference(self):
+        launch.require_unchanged('local source inventory', {'a': 1}, {'a': 1})
+        with self.assertRaisesRegex(ValueError, 'evidence identity changed: local source inventory'):
+            launch.require_unchanged('local source inventory', {'a': 1}, {'a': 2})
 
 
 if __name__ == '__main__':
