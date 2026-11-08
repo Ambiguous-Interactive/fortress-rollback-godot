@@ -140,7 +140,7 @@ class OwnershipBatchTests(unittest.TestCase):
         pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([12])", '
                    r'suffix: " (negative|positive) part ([12])", part_suffix: "(-(?:negative|positive)-part-[12])"')
         rows = re.findall(pattern, workflow)
-        expected = {(version, phase, part, f' {phase} part {part}', f'-{phase}-part-{part}')
+        expected = {(version, phase, part, phase, part, f'-{phase}-part-{part}')
                     for version in ('4.3', '4.7.2')
                     for phase in ('negative', 'positive') for part in ('1', '2')}
         self.assertEqual(set(rows), expected)
