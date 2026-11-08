@@ -87,8 +87,8 @@ class SignalFishProbeControls(unittest.TestCase):
 
 class WalkEntriesControls(unittest.TestCase):
     # Value: protects=identical inventory membership and fail-closed unreadable trees;
-    # fails_when=the scandir walk drops entries rglob reported or walks symlinked directories;
-    # why_new=repeated inventories moved from rglob to directory scans; seam=none
+    # fails_when=entries are dropped, symlinks are traversed, or a scan error is swallowed;
+    # why_new=repeated inventories moved from rglob to directory scans; seam=patched os.scandir
     def test_walk_entries_matches_rglob_entry_set(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -105,6 +105,19 @@ class WalkEntriesControls(unittest.TestCase):
             self.assertEqual(probe.walk_entries(root), expected)
             self.assertEqual(probe.walk_entries(root / 'plain.bin'), [root / 'plain.bin'])
             self.assertEqual(probe.walk_entries(root / 'missing'), [root / 'missing'])
+            injected = []
+            real_scandir = probe.os.scandir
+
+            def denied_scan(path):
+                if Path(path) == root / 'deep/nested':
+                    injected.append(path)
+                    raise PermissionError('nested scan denied')
+                return real_scandir(path)
+
+            with patch.object(probe.os, 'scandir', side_effect=denied_scan):
+                with self.assertRaisesRegex(PermissionError, 'nested scan denied'):
+                    probe.walk_entries(root)
+            self.assertEqual(injected, [str(root / 'deep/nested')], 'nested scan fault was not injected')
 
     # Value: protects=fail-closed inventory on unreadable trees; fails_when=an unreadable
     # directory is silently skipped so a partial membership publishes as evidence;
