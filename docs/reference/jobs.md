@@ -251,6 +251,49 @@ Firefox 4.3 positive part-1 job at 13m53s. These are single-run comparisons of
 changing trees, not a noise-controlled per-job benchmark; the controlled
 causal measurement is the same-tree local witness above.
 
+## Parallel oracle launchers and per-phase Chromium ownership jobs
+
+The oracles leg ran its six upstream comparison launchers strictly serially:
+the "Compare actual upstream and Godot traces" step took 592s of the 677s
+Godot 4.3 oracles job in run 42521796675. `scripts/oracle/parallel_launchers.py`
+now runs them in bounded parallel subprocesses (longest first, default
+`min(4, cpus)` workers, fail-closed aggregation, join-all, per-launcher logs).
+The launcher receipts are unchanged: each launcher keeps its own interpreter,
+output directory and receipt, and the shared pinned cargo target stays correct
+under cargo's own build lock. The runner provisions the pinned Rust toolchain
+once before the pool, because six concurrent rustup installations on a cold
+cache raced on the same partial downloads (first branch run 42529928519).
+
+The Chromium ownership jobs each ran `--phase both` (two full phases serially
+in one job), which made them the wall critical path. The matrix now declares
+negative and positive jobs per version and suite part, matching the Firefox
+shape: 12 ownership jobs become 16 and the workflow 24 becomes 28. This
+repeats per-job setup (~32s per job) while cutting the per-job verification.
+
+Branch run [42530683579](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42530683579)
+(head `b16e5a8`, all 28 checks green) against the 24-job main run 42521796675
+(`081c7ad`, all 24 jobs green):
+
+| Job group | Before | After |
+| --- | --- | --- |
+| Godot 4.3 oracles | 11m17s | 5m36s |
+| Godot 4.7.2 oracles | 10m47s | 5m25s |
+| Chromium ownership 4.3 part 1 | 14m03s | 7m31s / 6m06s (positive/negative) |
+| Chromium ownership 4.3 part 2 | 11m39s | 5m29s / 4m12s (positive/negative) |
+| Chromium ownership 4.7.2 part 1 | 11m59s | 4m49s / 6m13s (positive/negative) |
+| Chromium ownership 4.7.2 part 2 | 9m29s | 5m52s / 5m43s (positive/negative) |
+| Workflow wall | 14m03s | 13m01s |
+| Summed job time | 207m48s | ~198m |
+
+The oracles step fell to about 250s because the four shorter launchers now
+overlap the p2p launcher instead of running before it; the local controlled
+measurement (same tree, warm target, idle) is 445.7s serial → 278.0s parallel.
+The wall gain is smaller than the ownership job gain because the Firefox
+ownership jobs moved within their documented run-to-run variance (4.3 positive
+part 2 took 12m39s here against 10m20s in the earlier main run, and became the
+critical path). These are single-run comparisons of changing trees, not a
+noise-controlled benchmark; the per-job table remains the comparison point.
+
 ## Current 24-job baseline and the parallel oracle suite
 
 Run [42443776980](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980)
