@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 import tempfile
-from unittest import mock
 
 import ownership_probes as probes
 from ownership_rejection_fixture import OwnershipRejectionFixture
@@ -54,15 +53,4 @@ class OwnershipPhaseSelectionTests(OwnershipRejectionFixture):
                               ('--suite-part', 'unknown'), ('--suite-part', 'True'), ('--suite-part', '1.0')):
             with self.subTest(option=option, value=value), tempfile.TemporaryDirectory() as directory:
                 self.assert_invalid_execution_option(Path(directory), option, value)
-
-    def assert_invalid_execution_option(self, directory, option, value):
-        with (mock.patch.object(probes, 'CACHE', directory),
-              mock.patch.object(probes, 'load_manifest', return_value={'godot': {'minimum': '4.3', 'current_stable': '4.7.2'}}),
-              mock.patch.object(probes.host_capacity, 'acquire_when_free') as acquire,
-              mock.patch.object(probes, 'run_probes') as execute,
-              mock.patch('sys.argv', ['ownership_probes.py', option, value])):
-            with self.assertRaises(SystemExit):
-                probes.main()
-            acquire.assert_not_called()
-            execute.assert_not_called()
 

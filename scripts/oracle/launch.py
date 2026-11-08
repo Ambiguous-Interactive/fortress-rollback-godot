@@ -2,6 +2,7 @@
 """Compare pinned upstream requests with the production Godot session and independent game."""
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
@@ -22,8 +23,10 @@ from run import rust_environment, setup_rust  # noqa: E402
 
 def git_identity(root=ROOT):
     """Repository identity captured before execution, so a receipt names what ran."""
-    return {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
-            'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=root, text=True))}
+    environment = {name: value for name, value in os.environ.items()
+                   if name not in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES')}
+    return {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True, env=environment).strip(),
+            'working_tree_dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=root, text=True, env=environment))}
 
 
 def require_unchanged(label, original, current):

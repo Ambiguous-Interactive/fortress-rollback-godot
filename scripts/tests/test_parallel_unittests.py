@@ -12,11 +12,13 @@ aggregation is the gate. These tests pin:
 Each case exercises the real script end to end through a temporary tree.
 """
 
+import io
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -28,7 +30,7 @@ RUNNER = Path(parallel_unittests.__file__).resolve()
 
 
 def run_runner(*arguments):
-    completed = subprocess.run([sys.executable, str(RUNNER), *arguments], capture_output=True, text=True, timeout=120)
+    completed = subprocess.run([sys.executable, str(RUNNER), *arguments], capture_output=True, text=True, timeout=120, check=False)
     return completed
 
 
@@ -53,7 +55,7 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         for name in ('test_a.py', 'test_b.py'):
             self.assertIn(f'pass {name}', completed.stdout)
-        self.assertIn('2 files, 0 failed, 0 missing', completed.stdout)
+        self.assertIn('2 files, 0 failed', completed.stdout)
 
     def test_failing_file_fails_the_run_and_prints_its_output(self):
         self.passing('test_good.py')
@@ -63,7 +65,7 @@ class ParallelRunnerTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertIn('FAIL test_bad.py', completed.stdout)
         self.assertIn('expected marker', completed.stdout + completed.stderr)
-        self.assertIn('1 failed, 0 missing', completed.stdout)
+        self.assertIn('1 failed', completed.stdout)
 
     def test_timeout_fails_the_run(self):
         self.passing('test_quick.py')
@@ -84,6 +86,23 @@ class ParallelRunnerTests(unittest.TestCase):
     def test_discovery_without_matches_raises(self):
         with self.assertRaises(ValueError):
             parallel_unittests.discover(self.directory, 'test_*.py')
+
+    def test_worker_crash_fails_the_run(self):
+        self.passing('test_quiet.py')
+        original = parallel_unittests.run_file
+
+        def crashing(*arguments):
+            if arguments[2] == 'test_quiet.py':
+                raise OSError('worker exploded')
+            return original(*arguments)
+
+        with unittest.mock.patch.object(parallel_unittests, 'run_file', side_effect=crashing), \
+                unittest.mock.patch('sys.argv', ['parallel_unittests.py', '--start-dir', str(self.directory), '--jobs', '1']):
+            with redirect_stdout(io.StringIO()) as output, redirect_stderr(io.StringIO()) as errors:
+                exit_code = parallel_unittests.main()
+        self.assertEqual(exit_code, 1)
+        self.assertIn('FAIL test_quiet.py', output.getvalue())
+        self.assertIn('worker exploded', errors.getvalue())
 
 
 if __name__ == '__main__':

@@ -28,7 +28,7 @@ def run_file(root: Path, start: Path, name: str, timeout: float) -> dict:
     command = [sys.executable, '-m', 'unittest', 'discover', '-s', str(start), '-p', name, '-v']
     began = time.monotonic()
     try:
-        completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=timeout)
+        completed = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=timeout, check=False)
         return {'file': name, 'seconds': time.monotonic() - began, 'returncode': completed.returncode,
                 'stdout': completed.stdout, 'stderr': completed.stderr, 'timeout': False}
     except subprocess.TimeoutExpired as expired:
@@ -55,11 +55,14 @@ def main() -> int:
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         pending = {pool.submit(run_file, root, start, name, args.timeout): name for name in files}
         for future in concurrent.futures.as_completed(pending):
-            result = future.result()
+            try:
+                result = future.result()
+            except Exception as error:  # a worker crash is a failed file, never a partially counted run
+                result = {'file': pending[future], 'seconds': 0.0, 'returncode': 1,
+                          'stdout': '', 'stderr': f'{type(error).__name__}: {error}', 'timeout': False}
             results[result['file']] = result
             mark = 'pass' if result['returncode'] == 0 else 'FAIL'
             print(f"[{len(results)}/{len(files)}] {mark} {result['file']} {result['seconds']:.1f}s", flush=True)
-    missing = [name for name in files if name not in results]
     failed = [name for name in files if results[name]['returncode'] != 0]
     for name in failed:
         result = results[name]
@@ -70,9 +73,8 @@ def main() -> int:
         if result['stderr']:
             print(result['stderr'], file=sys.stderr)
     summed = sum(result['seconds'] for result in results.values())
-    print(f'Parallel unittest: {len(files)} files, {len(failed)} failed, {len(missing)} missing; '
-          f'{summed:.1f}s summed process time.')
-    return int(bool(failed or missing))
+    print(f'Parallel unittest: {len(files)} files, {len(failed)} failed; {summed:.1f}s summed process time.')
+    return int(bool(failed))
 
 
 if __name__ == '__main__':
