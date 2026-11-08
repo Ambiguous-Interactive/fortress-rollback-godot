@@ -263,9 +263,12 @@ browser job (4.3 online, 9m43s) sits in the middle of the pack. The original
 longer comparable with it.
 
 The negative-controls job shows the landed scheduling levers. #333's
-process-parallel runner took `make test-reference` from 11m49s (run
-42432613366) to 6m39s on the identical 299-case inventory. Within the same
-job, `make test-oracle` was still one serial `unittest discover` process. It
+process-parallel runner took the `make test-reference` step from 10m34s (run
+42432613366, 01:04:19Z–01:14:53Z) to 5m12s (this run, 03:41:42Z–03:46:54Z) on
+the identical 299-case inventory; the whole job fell from 11m49s to 6m39s.
+Within the same
+job, `make test-oracle` was still one serial `unittest discover` process (its
+step took 1m21s in this run). It
 now uses the same parallel runner. Local measurement on this devcontainer,
 warm and otherwise idle: 16 files, 120 cases, serial wall 63.0s, parallel
 wall 41.6s (summed process time 74.2s; the critical path is `test_replay.py`
