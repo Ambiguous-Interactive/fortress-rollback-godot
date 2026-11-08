@@ -48,6 +48,7 @@ if args[:1] == ['view']:
 elif args[:1] == ['install']:
     if '--foreground-scripts' in args and '--loglevel=http' in args:
         print('npm http fetch GET https://registry.example/' + package, flush=True)
+        print('npm http fetch GET 200 https://registry.example/' + package + '/-/' + package.split('/')[1] + '-' + version + '.tgz?t=SIGNED-QUERY-CREDENTIAL', flush=True)
         print('npm sill runScript postinstall ' + package + '@' + version, flush=True)
     if scenario.get('install_delay'):
         counter = root / 'installs'
@@ -188,6 +189,9 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertIn('--loglevel=http', installs[0])
         self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', result.stderr)
         self.assertIn('npm sill runScript postinstall @opencode/cli@', result.stderr)
+        self.assertIn('https://registry.example/@opencode/cli/-/cli-2.0.30.tgz?<redacted>', result.stderr,
+                      'the host and path survive redaction')
+        self.assertNotIn('SIGNED-QUERY-CREDENTIAL', result.stderr, 'query credentials never reach the diagnostics')
         self.assertLess(result.stderr.index('npm http fetch GET https://registry.example/@opencode/cli'),
                         result.stderr.index('npm sill runScript postinstall @opencode/cli@'),
                         'registry and lifecycle evidence keep their original order')

@@ -14,6 +14,19 @@ class PublicationPending(Exception):
     """Only a known native dependency's missing registry version is retryable."""
 
 
+QUERY_CREDENTIALS = re.compile(r'(https?://[^\s?#]+)\?[^\s]*')
+
+
+def redact_query_strings(text):
+    """Strip query strings from diagnostic URLs, keeping host and path.
+
+    A configured registry can hand out signed download redirects, and the http
+    loglevel prints those URLs. The credentials live in the query, so failure
+    and timeout diagnostics never print one.
+    """
+    return QUERY_CREDENTIALS.sub(r'\1?<redacted>', text)
+
+
 class Installer:
     def __init__(self, args):
         self.args = args
@@ -32,13 +45,14 @@ class Installer:
             result = subprocess.run(command, encoding='utf-8', timeout=min(120, remaining), check=False, **streams)
         except subprocess.TimeoutExpired as failure:
             # Preserve the first attempt's diagnostics even when the process hangs,
-            # in the order npm produced them.
+            # in the order npm produced them, without registry query credentials.
             for output in (failure.stdout, failure.stderr):
                 if output:
-                    print(output.decode('utf-8', errors='replace') if isinstance(output, bytes) else output, file=sys.stderr)
+                    text = output.decode('utf-8', errors='replace') if isinstance(output, bytes) else output
+                    print(redact_query_strings(text), file=sys.stderr)
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget') from failure
         if result.returncode:
-            combined = (result.stdout or '') + (result.stderr or '')
+            combined = redact_query_strings((result.stdout or '') + (result.stderr or ''))
             print(combined, end='', file=sys.stderr)
             # Never retry authentication, permissions, malformed metadata or wrapper lookup.
             codes = set(re.findall(r'npm (?:ERR!|error) code ([A-Z0-9_]+)', combined))
