@@ -72,7 +72,8 @@ else:
 
 class NativeCliInstallTests(unittest.TestCase):
     def test_command_failures_identify_phase_and_preserve_partial_output(self):
-        # Value: distinguishes hung commands without registry timing or leaking caller environment.
+        # Value: distinguishes hung commands without registry timing or leaking caller environment;
+        # the install phase merges its streams so diagnostics keep npm's original interleaving.
         spec = importlib.util.spec_from_file_location('native_cli_installer', HELPER)
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
@@ -88,8 +89,16 @@ class NativeCliInstallTests(unittest.TestCase):
                             current = 'wrapper metadata' if command[2].endswith('@latest') else 'native metadata'
                         else:
                             current = {'install': 'global installation', 'root': 'global root lookup'}[command[1]]
-                        calls.append(current)
+                        calls.append((current, options))
                         self.assertEqual(options['timeout'], 120)
+                        if current == 'global installation':
+                            self.assertNotIn('capture_output', options, 'install streams merge in order')
+                            self.assertEqual(options['stdout'], subprocess.PIPE)
+                            self.assertEqual(options['stderr'], subprocess.STDOUT)
+                        else:
+                            self.assertIn('capture_output', options, 'metadata streams stay separate for JSON parsing')
+                            self.assertNotIn('stdout', options)
+                            self.assertNotIn('stderr', options)
                         if current == phase:
                             if timeout:
                                 raise subprocess.TimeoutExpired(command, 120, output=b'partial stdout\n', stderr=b'partial stderr\n')
@@ -109,7 +118,7 @@ class NativeCliInstallTests(unittest.TestCase):
                             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                         with self.assertRaisesRegex(ValueError, phase):
                             helper.Installer(args).install()
-                    self.assertEqual(calls.count(phase), 1)
+                    self.assertEqual(len([entry for entry in calls if entry[0] == phase]), 1)
                     self.assertIn('partial stdout', stderr.getvalue())
                     self.assertIn('partial stderr', stderr.getvalue())
                     self.assertNotIn('installed @', stdout.getvalue())
@@ -169,7 +178,8 @@ class NativeCliInstallTests(unittest.TestCase):
 
     def test_install_failure_streams_lifecycle_and_registry_phase_evidence(self):
         # Value: a hung global install localizes to wrapper lifecycle execution versus
-        # registry acquisition, on the next failure, without waiting for upstream logs.
+        # registry acquisition, on the next failure, without waiting for upstream logs;
+        # the merged stream preserves the order npm produced the evidence in.
         result, calls = self.invoke(install_error=True)
         self.assertNotEqual(result.returncode, 0)
         installs = [call for call in calls if call[0] == 'install']
@@ -178,6 +188,9 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertIn('--loglevel=http', installs[0])
         self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', result.stderr)
         self.assertIn('npm sill runScript postinstall @opencode/cli@', result.stderr)
+        self.assertLess(result.stderr.index('npm http fetch GET https://registry.example/@opencode/cli'),
+                        result.stderr.index('npm sill runScript postinstall @opencode/cli@'),
+                        'registry and lifecycle evidence keep their original order')
         views = [call for call in calls if call[0] == 'view']
         self.assertTrue(views)
         for view in views:

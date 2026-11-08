@@ -1080,9 +1080,22 @@ def run_probes(args, results):
             verify_staged(project, staged_frozen)
             verify_tools(editor_paths, editor_frozen)
             ordered_suites = sorted(selected)
-            with ThreadPoolExecutor(max_workers=native_workers) as wave:
-                futures = [wave.submit(native_suite_task, suite) for suite in ordered_suites]
+            # An exception that escapes a worker (the tasks above catch their
+            # expected failures; anything else must not linger as a running
+            # round) cancels the suites that have not started, records the
+            # rejection and re-raises. shutdown joins the engines already
+            # running; each capture kills its own child on the way out.
+            wave = ThreadPoolExecutor(max_workers=native_workers)
+            futures = [wave.submit(native_suite_task, suite) for suite in ordered_suites]
+            try:
                 outcomes = [future.result() for future in futures]
+            except BaseException as error:
+                for future in futures:
+                    future.cancel()
+                reject(started, 'failed', alive=False, errors=bounded_errors([f'{type(error).__name__}: {error}']))
+                raise
+            finally:
+                wave.shutdown(wait=True, cancel_futures=True)
             batches = []
             for kind, suite, progress, payload, error in outcomes:
                 if kind == 'timeout':

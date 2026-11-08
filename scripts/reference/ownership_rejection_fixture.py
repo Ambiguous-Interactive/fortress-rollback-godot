@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import zipfile
 from unittest import mock
 import unittest
@@ -135,6 +136,9 @@ class OwnershipRejectionFixture(unittest.TestCase):
         node_path = directory / 'node'
         node_path.symlink_to(node_target)
         alias_replaced = []
+        # The native wave calls this fixture's capture from several threads, so
+        # each one-time check-and-mutate sequence takes this lock.
+        fixture_lock = threading.Lock()
 
         def mutate_project(project, boundary):
             if not project_fault or changed_project or project_fault[0] != boundary:
@@ -273,21 +277,22 @@ class OwnershipRejectionFixture(unittest.TestCase):
             project = Path(command[command.index('--path') + 1])
             (project / '.godot/cache').write_text('mutable native cache')
             mutate_project(project, 'native')
-            if tool_fault == 'native' and not changed_tool:
-                Path(command[0]).write_text('mutated editor during native capture')
-                changed_tool.append(True)
-            if runtime_before in ('node', 'browser', 'package', 'source', 'display') and not changed_runtime:
-                target = {'node': node_target, 'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
-                          'package': registry, 'source': root / 'scripts/reference/browser/ownership.cjs',
-                          'display': root / 'scripts/reference/browser/webrtc_display.cjs'}[runtime_before]
-                target.write_text('mutated before first browser execution')
-                changed_runtime.append(True)
-            if node_alias and not alias_replaced:
-                alias_replaced.append(True)
-                replacement = directory / 'unverified-node'
-                replacement.write_text('unverified node')
-                node_path.unlink()
-                node_path.symlink_to(replacement)
+            if runtime_before in ('node', 'browser', 'package', 'source', 'display'):
+                with fixture_lock:
+                    if not changed_runtime:
+                        target = {'node': node_target, 'browser': Path(environment['FORTRESS_' + selected.upper() + '_EXECUTABLE']),
+                                  'package': registry, 'source': root / 'scripts/reference/browser/ownership.cjs',
+                                  'display': root / 'scripts/reference/browser/webrtc_display.cjs'}[runtime_before]
+                        target.write_text('mutated before first browser execution')
+                        changed_runtime.append(True)
+            if node_alias:
+                with fixture_lock:
+                    if not alias_replaced:
+                        alias_replaced.append(True)
+                        replacement = directory / 'unverified-node'
+                        replacement.write_text('unverified node')
+                        node_path.unlink()
+                        node_path.symlink_to(replacement)
             code, value = batch_value(command)
             output = probes.PREFIX + json.dumps(value) + '\n'
             output += probes.PROGRESS_PREFIX + json.dumps(NATIVE_PROGRESS) + '\n'
@@ -303,6 +308,11 @@ class OwnershipRejectionFixture(unittest.TestCase):
                     output += 'SCRIPT ERROR: injected abort\n'
                 elif native_fault == 'engine_error':
                     output += 'ERROR: injected leak\n'
+            if tool_fault == 'native' and native_suite == native_suites[0]:
+                with fixture_lock:
+                    if not changed_tool:
+                        Path(command[0]).write_text('mutated editor during native capture')
+                        changed_tool.append(True)
             log.write_text(output, encoding='utf-8')
             if native_timeout or (native_fault == 'timeout' and native_suite == faulted_native_suite):
                 raise subprocess.TimeoutExpired(command, timeout, output=output.encode('utf-8'))

@@ -64,7 +64,10 @@ def inventory(paths):
                         pending.append(entry.path)
                     else:
                         result[name + '/' + entry.path[len(prefix):]] = digest(Path(entry.path))
-    return result
+    # Directory enumeration order is not stable across platforms and scans.
+    # Receipts serialize these inventories, so the keys are sorted exactly as
+    # the previous walk_entries-based walk sorted them.
+    return {key: result[key] for key in sorted(result)}
 
 
 def main():
