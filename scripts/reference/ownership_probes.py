@@ -922,7 +922,8 @@ def run_probes(args, results):
     def observe(label):
         with rounds_lock:
             rounds.append({'label': label, 'outcome': 'running', 'started': time.time(), 'seconds': None,
-                           'alive': None, 'native_progress': None, 'browser_progress': None, 'errors': []})
+                           'alive': None, 'native_progress': None, 'browser_progress': None, 'native_suite': None,
+                           'errors': []})
             write_rounds()
         return time.monotonic()
 
@@ -1101,12 +1102,13 @@ def run_probes(args, results):
             batches = []
             for kind, suite, progress, payload, error in outcomes:
                 if kind == 'timeout':
-                    reject(started, rejected_state(progress), native_progress=progress, alive=False, errors=payload)
+                    reject(started, rejected_state(progress), native_progress=progress, native_suite=suite,
+                           alive=False, errors=payload)
                     raise error
                 if progress is not None:
                     update(native_progress=progress)
                 if kind != 'ok':
-                    reject(started, 'failed', alive=False, errors=payload)
+                    reject(started, 'failed', alive=False, native_suite=suite, errors=payload)
                     raise error
                 batches.append((suite, payload))
             native = aggregate_native(batches, negative, selected)

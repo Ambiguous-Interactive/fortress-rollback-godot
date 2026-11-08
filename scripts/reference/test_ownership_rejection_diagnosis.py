@@ -112,6 +112,8 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
         self.assertEqual(entry['outcome'], 'progressing')
         self.assertEqual(entry['native_progress']['case'], 'parity')
         self.assertEqual(entry['native_progress']['elapsed'], 18)
+        self.assertEqual(entry['native_suite'], sorted(probes.select_suites('all'))[0],
+                         'the rejection names the first failing suite')
         self.assertFalse(entry['alive'], 'the native child was killed by the deadline')
         self.assertFalse((results / 'ownership.json').exists(), 'a rejected run publishes no receipt')
 
@@ -145,6 +147,8 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
         entry = self.rounds(results)[0]
         self.assertEqual(entry['outcome'], 'progressing')
         self.assertEqual(entry['native_progress']['case'], 'parity')
+        self.assertEqual(entry['native_suite'], sorted(probes.select_suites('all'))[1],
+                         'the rejection names the timed-out suite, not an earlier one')
         self.assertFalse((results / 'ownership.json').exists(), 'a rejected run publishes no receipt')
         suites = sorted(probes.select_suites('all'))
         logs = list(results.glob('ownership-*-native-*.log'))
@@ -155,7 +159,8 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
         noisy = json.dumps({**BROWSER_DETAIL, 'errors': [f'engine error {index}' for index in range(50)]})
         results = self.scenario(noisy + '\n')
         entry = self.rounds(results)[0]
-        self.assertEqual(len(entry), 8, 'a round keeps a fixed number of fields')
+        self.assertEqual(len(entry), 9, 'a round keeps a fixed number of fields')
+        self.assertEqual(entry['native_suite'], None, 'a browser rejection names no native suite')
         self.assertEqual(len(entry['errors']), probes.MAX_RETAINED_ERRORS)
         self.assertEqual(len(entry['browser_progress']), 7, 'a progress record keeps a fixed number of fields')
         self.assertEqual(entry['browser_progress']['case'], 'golden')
