@@ -1,6 +1,7 @@
 """Value: SDK receipts reject failed processes, stale success and changed executed evidence."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -82,6 +83,76 @@ class SignalFishProbeControls(unittest.TestCase):
                             probe.main()
                         self.assertIs(json.loads(receipt.read_text())['passed'], False)
                         self.assertTrue((output / 'signalfish-sdk.log').exists())
+
+
+class WalkEntriesControls(unittest.TestCase):
+    # Value: protects=identical inventory membership and fail-closed unreadable trees;
+    # fails_when=entries are dropped, symlinks are traversed, or a scan error is swallowed;
+    # why_new=repeated inventories moved from rglob to directory scans; seam=patched os.scandir
+    def test_walk_entries_matches_rglob_entry_set(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'deep/nested').mkdir(parents=True)
+            (root / 'deep/nested/leaf.txt').write_text('leaf')
+            (root / 'deep/empty').mkdir()
+            (root / '.dotfile').write_text('dot')
+            (root / 'plain.bin').write_bytes(b'\x00bytes')
+            (root / 'broken').symlink_to(root / 'missing-target')
+            (root / 'link-to-file').symlink_to(root / 'plain.bin')
+            (root / 'link-to-dir').symlink_to(root / 'deep')
+            (root / 'deep/escape').symlink_to(root)
+            expected = sorted(root.rglob('*'))
+            self.assertEqual(probe.walk_entries(root), expected)
+            self.assertEqual(probe.walk_entries(root / 'plain.bin'), [root / 'plain.bin'])
+            self.assertEqual(probe.walk_entries(root / 'missing'), [root / 'missing'])
+            injected = []
+            real_scandir = probe.os.scandir
+
+            def denied_scan(path):
+                if Path(path) == root / 'deep/nested':
+                    injected.append(path)
+                    raise PermissionError('nested scan denied')
+                return real_scandir(path)
+
+            with patch.object(probe.os, 'scandir', side_effect=denied_scan):
+                with self.assertRaisesRegex(PermissionError, 'nested scan denied'):
+                    probe.walk_entries(root)
+            self.assertEqual(injected, [str(root / 'deep/nested')], 'nested scan fault was not injected')
+
+    # Value: protects=fail-closed inventory on unreadable trees; fails_when=an unreadable
+    # directory is silently skipped so a partial membership publishes as evidence;
+    # why_new=rglob skipped unreadable directories while scandir scans raise; seam=none
+    @unittest.skipIf(hasattr(os, 'geteuid') and os.geteuid() == 0,
+                     'root can scan directories regardless of their mode')
+    def test_walk_entries_fails_closed_on_an_unreadable_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sealed = root / 'sealed'
+            sealed.mkdir()
+            (sealed / 'inside.txt').write_text('hidden')
+            sealed.chmod(0o000)
+            try:
+                with self.assertRaises(OSError):
+                    probe.walk_entries(root)
+            finally:
+                sealed.chmod(0o700)
+
+    def test_inventory_hashes_every_file_and_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'pkg/sub').mkdir(parents=True)
+            (root / 'pkg/sub/a.txt').write_text('alpha')
+            (root / 'pkg/b.bin').write_bytes(b'beta')
+            (root / 'pkg/empty').mkdir()
+            inventoried = probe.inventory({'pkg': root / 'pkg'})
+            self.assertEqual(inventoried, {
+                'pkg/sub/a.txt': hashlib.sha256(b'alpha').hexdigest(),
+                'pkg/b.bin': hashlib.sha256(b'beta').hexdigest()})
+            (root / 'pkg/link').symlink_to(root / 'pkg/b.bin')
+            with self.assertRaisesRegex(ValueError, 'evidence source is symlinked'):
+                probe.inventory({'pkg': root / 'pkg'})
+            with self.assertRaisesRegex(ValueError, 'evidence source is symlinked'):
+                probe.inventory({'link': root / 'pkg/link'})
 
 
 if __name__ == '__main__':

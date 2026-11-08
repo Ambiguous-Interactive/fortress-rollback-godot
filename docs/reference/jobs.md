@@ -160,3 +160,42 @@ The longest ownership job was 16m16s, compared with 24m52s in the earlier run.
 These are observed job times across changing inventories, not a controlled speedup measurement.
 All 24 jobs summed to 233m58s. The expanded inventory is not comparable with the original 66-minute target.
 Reducing total work without removing coverage remains tracked in #148 and #164.
+
+## Measured negative control: stat-keyed digest reuse is unsound
+
+The Reference negative-control suite was profiled per module on a warm
+arm64 devcontainer (session 158, PR #332 investigation). One module,
+`test_ownership_probes`, took 473s of the 520s serial suite. cProfile on its
+slowest case attributed most of that to 501,959 `hashlib.file_digest` calls
+from `tool_inventory` (2,517 calls) and `signalfish_probe.inventory`
+(1,650 calls): every native/browser boundary re-walks and re-hashes the
+staged project and the Playwright `node_modules` trees.
+
+A digest memo keyed by each file's stat identity was implemented and
+measured at 2.2x (`make test-reference` 8m39s to 3m53s; the slowest cases
+79.8s to 14.4s), then removed because it is not sound for this evidence
+contract. Measured on the devcontainer filesystem:
+
+- `st_mtime_ns` and `st_ctime_ns` are jiffy-quantized (about 1ms), so a
+  same-size rewrite within the same jiffy keeps the previous key.
+- Deleting and recreating a file immediately reuses the inode, so `st_ino`
+  does not distinguish re-creation either.
+
+Two existing controls do exactly that and failed with the memo
+(`test_signalfish_webrtc_probe`'s same-size editor-metadata rewrite failed
+6 of 8 isolated runs; `test_fetch`'s same-size `prepare_zip` repair control
+failed under load). Serving a stale digest would let a receipt publish
+boundary evidence that no re-read supports. Boundary verification must
+therefore read every byte at every boundary; the per-boundary hashing cost
+of the negative-control suite and the real ownership jobs is contractual.
+
+The `os.scandir` enumeration change from the same investigation is kept:
+it lists the identical entry set as `sorted(root.rglob('*'))` without
+following symlinks, and it fails closed with `OSError` where `rglob`
+silently skipped an unreadable directory, so repeated inventories cannot
+report a vacuously incomplete membership as evidence.
+
+Remaining reduction levers are gate changes or runner changes: removing a
+redundant boundary check, running browser rooms concurrently, or a
+process-parallel negative-control runner. Each needs its own review against
+the evidence contract; none is a drop-in performance fix.
