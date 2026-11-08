@@ -23,8 +23,10 @@ def walk_entries(root):
 
     Boundary verification walks the same trees on every repeated check. This
     enumerates the identical entry set as ``sorted(root.rglob('*'))`` using
-    directory scans that do not descend into symlinks, so membership, symlink
-    rejection and digest evidence stay exactly as before.
+    directory scans that do not descend into symlinks, so membership and
+    symlink rejection stay as before. Unlike ``rglob``, a directory that
+    cannot be scanned raises ``OSError`` instead of being silently skipped:
+    boundary inventories fail closed on unreadable trees.
     """
     if not root.is_dir():
         return [root]

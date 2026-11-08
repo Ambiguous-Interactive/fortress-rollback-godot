@@ -32,33 +32,9 @@ def load_manifest(path=MANIFEST):
     return data
 
 
-# Boundary verification re-reads the same trees many times within one process
-# (staged projects, node_modules, pinned sources). Entries are keyed by the
-# content-bearing stat identity, so any write that changes bytes also changes
-# size or nanosecond mtime and forces a fresh read; the recorded digest of
-# unchanged files is returned without reading them again.
-_DIGEST_CACHE = {}
-_DIGEST_CACHE_LIMIT = 1 << 16
-
-
 def digest(path, algorithm='sha256'):
-    status = path.stat()
-    key = (str(path), status.st_dev, status.st_ino, status.st_size, status.st_mtime_ns, algorithm)
-    cached = _DIGEST_CACHE.get(key)
-    if cached is not None:
-        return cached
     with path.open('rb') as stream:
-        value = hashlib.file_digest(stream, algorithm).hexdigest()
-    try:
-        confirm = path.stat()
-    except OSError:
-        return value
-    if (confirm.st_size, confirm.st_mtime_ns) != (status.st_size, status.st_mtime_ns):
-        return value
-    if len(_DIGEST_CACHE) >= _DIGEST_CACHE_LIMIT:
-        _DIGEST_CACHE.clear()
-    _DIGEST_CACHE[key] = value
-    return value
+        return hashlib.file_digest(stream, algorithm).hexdigest()
 
 
 def fetch(pin, name, offline=False, cache=CACHE):

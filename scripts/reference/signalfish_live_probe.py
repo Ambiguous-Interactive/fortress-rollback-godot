@@ -13,7 +13,7 @@ import tarfile
 import tempfile
 import time
 
-from fetch import CACHE, digest, fetch, load_manifest
+from fetch import CACHE, fetch, load_manifest
 from engine_path import resolve_engine
 from receipt_arguments import ReceiptParser
 from signalfish_probe import inventory
@@ -49,7 +49,7 @@ def source_inventory(root):
         if source.is_symlink():
             raise ValueError('server source contains a symlink')
         if source.is_file():
-            result[str(relative)] = digest(source)
+            result[str(relative)] = hashlib.sha256(source.read_bytes()).hexdigest()
     return result
 
 

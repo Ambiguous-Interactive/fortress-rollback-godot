@@ -82,6 +82,42 @@ class SignalFishProbeControls(unittest.TestCase):
                             probe.main()
                         self.assertIs(json.loads(receipt.read_text())['passed'], False)
                         self.assertTrue((output / 'signalfish-sdk.log').exists())
+class WalkEntriesControls(unittest.TestCase):
+    # Value: protects=identical inventory membership with fail-closed unreadable trees;
+    # fails_when=the scandir walk drops entries rglob reported or walks symlinked directories; seam=none
+    def test_walk_entries_matches_rglob_and_refuses_unreadable_directories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'deep/nested').mkdir(parents=True)
+            (root / 'deep/nested/leaf.txt').write_text('leaf')
+            (root / 'deep/empty').mkdir()
+            (root / '.dotfile').write_text('dot')
+            (root / 'plain.bin').write_bytes(b'\x00bytes')
+            (root / 'broken').symlink_to(root / 'missing-target')
+            (root / 'link-to-file').symlink_to(root / 'plain.bin')
+            (root / 'link-to-dir').symlink_to(root / 'deep')
+            (root / 'deep/escape').symlink_to(root)
+            expected = sorted(root.rglob('*'))
+            self.assertEqual(probe.walk_entries(root), expected)
+            self.assertEqual(probe.walk_entries(root / 'plain.bin'), [root / 'plain.bin'])
+            self.assertEqual(probe.walk_entries(root / 'missing'), [root / 'missing'])
+
+    def test_inventory_hashes_every_file_and_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'pkg/sub').mkdir(parents=True)
+            (root / 'pkg/sub/a.txt').write_text('alpha')
+            (root / 'pkg/b.bin').write_bytes(b'beta')
+            (root / 'pkg/empty').mkdir()
+            inventoried = probe.inventory({'pkg': root / 'pkg'})
+            self.assertEqual(inventoried, {
+                'pkg/sub/a.txt': hashlib.sha256(b'alpha').hexdigest(),
+                'pkg/b.bin': hashlib.sha256(b'beta').hexdigest()})
+            (root / 'pkg/link').symlink_to(root / 'pkg/b.bin')
+            with self.assertRaisesRegex(ValueError, 'evidence source is symlinked'):
+                probe.inventory({'pkg': root / 'pkg'})
+            with self.assertRaisesRegex(ValueError, 'evidence source is symlinked'):
+                probe.inventory({'link': root / 'pkg/link'})
 
 
 if __name__ == '__main__':
