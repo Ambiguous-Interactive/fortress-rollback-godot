@@ -645,11 +645,15 @@ HELPER_MODULES = {'host_capacity.py': 'host_capacity', 'native_source_snapshot.p
 def helper_identity() -> dict:
     """Digest the Python bytes this launcher executed, from each loaded module's own staged file."""
     sources = {'run_godot_tests.py': _STAGE_ROOT / 'run_godot_tests.py'}
+    staged = _STAGE_ROOT.resolve()
     for name, module in HELPER_MODULES.items():
         loaded = sys.modules.get(module)
         if loaded is None or not getattr(loaded, '__file__', None):
             raise ImportError(f'helper module not loaded: {module}')
-        sources[name] = Path(loaded.__file__).resolve()
+        path = Path(loaded.__file__).resolve()
+        if staged not in path.parents:
+            raise ImportError(f'helper module not from staged image: {module}')
+        sources[name] = path
     return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sorted(sources.items())}
 
 

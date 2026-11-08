@@ -18,6 +18,7 @@ import io
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import unittest.mock
@@ -124,6 +125,44 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         time.sleep(3)
         self.assertFalse((self.results / 'sleeper' / 'late-child-marker').exists(),
                          'orphaned launcher child survived the group kill')
+
+    def test_interruption_fences_queued_launches_and_kills_active_groups(self):
+        table = {'alpha': str(write_script(self.root, 'alpha.py', PASS_SCRIPT)),
+                 'beta': str(write_script(self.root, 'beta.py', PASS_SCRIPT)),
+                 'gamma': str(write_script(self.root, 'gamma.py', PASS_SCRIPT))}
+        killed = []
+        release = threading.Event()
+
+        def fake(name, command, log_path, timeout):
+            if name == 'alpha':
+                raise KeyboardInterrupt('simulated interruption')
+            if name == 'beta':
+                # A still-running launcher whose group interruption must terminate.
+                with parallel_launchers._active_lock:
+                    parallel_launchers._active_groups.add(4242)
+                try:
+                    release.wait(10)
+                finally:
+                    with parallel_launchers._active_lock:
+                        parallel_launchers._active_groups.discard(4242)
+            return {'name': name, 'seconds': 0.0, 'returncode': 0, 'timeout': False}
+
+        def record_kill(pid):
+            killed.append(pid)
+            release.set()
+
+        try:
+            with unittest.mock.patch.dict(parallel_launchers.LAUNCHERS, table, clear=True), \
+                    unittest.mock.patch.object(parallel_launchers, 'run_launcher', side_effect=fake), \
+                    unittest.mock.patch.object(parallel_launchers, 'kill_group', side_effect=record_kill), \
+                    unittest.mock.patch('sys.argv', ['parallel_launchers.py', '--godot', 'unused',
+                                                     '--results', str(self.results)]), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                with self.assertRaises(KeyboardInterrupt):
+                    parallel_launchers.main()
+        finally:
+            release.set()
+        self.assertEqual(killed, [4242], 'interruption did not terminate the active launcher group')
 
     def test_missing_launcher_script_fails_the_run(self):
         table = {'ghost': str(self.root / 'absent.py')}
