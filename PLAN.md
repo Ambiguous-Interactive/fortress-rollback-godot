@@ -173,10 +173,13 @@ callback/expert viewing and decoded status-sensitive recordings. Actual SDK/serv
 The retained-history source comparison also exercises donor recovery after two queue capacities of original gameplay,
 with unequal frontiers, two targets and combined control/history loss; broader live acceptance remains in #188.
 Native development receipts execute a bounded private authored-source image, record its hashes and starting Git identity,
-and bind the on-disk Python helper bytes: digests are captured after every helper module has loaded and before any engine
-child starts, then re-verified after execution (#298; private helper staging remains the named follow-up).
+and bind the executed Python helper bytes: the helpers run from a private staged image whose digests are captured before
+any import and before any engine child starts; the live tree stays an evidence input whose drift during the run fails
+qualification (#298).
 Native test launches wait within an explicit host-capacity budget before starting engines, then retain requested parallelism under the machine-wide lease.
 The ownership witness overlaps its per-suite native engine processes in the same bounded wave, keeping one fresh process, watchdog and after-run boundary verification per suite; browser pages stay serial because they need a responsive host.
+The ownership matrix runs each Chromium phase as its own job, matching the existing Firefox shape, so the workflow's wall-time critical path is no longer one double-phase job.
+The oracle launchers run in bounded parallel subprocesses with fail-closed aggregation; each launcher keeps its own interpreter, output directory and receipt, and the shared cargo target stays correct under cargo's own build lock.
 Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.

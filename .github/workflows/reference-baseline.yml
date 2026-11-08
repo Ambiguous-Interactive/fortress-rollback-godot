@@ -105,10 +105,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {version: "4.3", browser: chromium, phase: both, suite_part: "1", suffix: " part 1", part_suffix: "-part-1"}
-          - {version: "4.3", browser: chromium, phase: both, suite_part: "2", suffix: " part 2", part_suffix: "-part-2"}
-          - {version: "4.7.2", browser: chromium, phase: both, suite_part: "1", suffix: " part 1", part_suffix: "-part-1"}
-          - {version: "4.7.2", browser: chromium, phase: both, suite_part: "2", suffix: " part 2", part_suffix: "-part-2"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-positive-part-1"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-positive-part-2"}
+          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
+          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
+          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-positive-part-1"}
+          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-positive-part-2"}
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
           - {version: "4.3", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
@@ -161,7 +165,7 @@ jobs:
             --work-dir .cache/scratch/firefox-shutdown-control \
             --output .cache/reference/results/firefox-shutdown-control
       - name: Verify spectator browser control origins
-        if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.suite_part == '1'
+        if: matrix.browser == 'chromium' && matrix.version == '4.3' && matrix.phase == 'negative' && matrix.suite_part == '1'
         env:
           PYTHONPATH: scripts/reference
           FORTRESS_PLAYWRIGHT_PACKAGE: ${{ github.workspace }}/.cache/reference/browser/node_modules/@playwright/test
@@ -271,12 +275,7 @@ jobs:
         run: |
           version="${{ matrix.version }}"
           editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
-          python3 scripts/oracle/queue_launch.py --godot "$editor" --output ".cache/reference/results/queue-$version"
-          python3 scripts/oracle/launch.py --godot "$editor" --output ".cache/reference/results/oracle-$version"
-          python3 scripts/oracle/replay_launch.py --godot "$editor" --output ".cache/reference/results/replay-$version"
-          python3 scripts/oracle/handshake_launch.py --godot "$editor" --output ".cache/reference/results/handshake-$version"
-          python3 scripts/oracle/p2p_launch.py --godot "$editor" --output ".cache/reference/results/p2p-$version"
-          python3 scripts/oracle/drop_history_launch.py --godot "$editor" --output ".cache/reference/results/drop-history-$version"
+          python3 scripts/oracle/parallel_launchers.py --godot "$editor" --suffix "$version"
       - name: Verify the pinned SpectatorSession model and its unsafe control
         if: matrix.part == 'oracles'
         run: |

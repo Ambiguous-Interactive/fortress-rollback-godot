@@ -133,14 +133,18 @@ class OwnershipBatchTests(unittest.TestCase):
             with self.subTest(part=part), self.assertRaises(ValueError):
                 probes.select_suites(part)
 
-    # Value: protects=Chromium CI retains every declared partition; fails_when=matrix drops a part or command ignores selection; why_new=Firefox-only CI splitting; seam=none
+    # Value: protects=Chromium CI retains every declared partition and phase; fails_when=matrix drops
+    # a phase or part or command ignores selection; why_new=per-phase Chromium jobs match Firefox; seam=none
     def test_chromium_ci_declares_both_parts_and_passes_the_selector(self):
         workflow = (probes.ROOT / '.github/workflows/reference-baseline.yml').read_text()
-        pattern = (r'version: "([^"]+)", browser: chromium, phase: both, suite_part: "([12])", '
-                   r'suffix: " part [12]", part_suffix: "(-part-[12])"')
+        pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([12])", '
+                   r'suffix: " (?:negative|positive) part [12]", part_suffix: "(-(?:negative|positive)-part-[12])"')
         rows = re.findall(pattern, workflow)
-        self.assertEqual(set(rows), {(version, part, '-part-' + part) for version in ('4.3', '4.7.2') for part in ('1', '2')})
-        self.assertEqual(len(rows), 4)
+        expected = {(version, phase, part, f'-{phase}-part-{part}')
+                    for version in ('4.3', '4.7.2')
+                    for phase in ('negative', 'positive') for part in ('1', '2')}
+        self.assertEqual(set(rows), expected)
+        self.assertEqual(len(rows), 8)
         command = workflow.split('          else\n            python3 scripts/reference/ownership_probes.py', 1)[1].split('          fi', 1)[0]
         self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"', command)
         self.assertIn("matrix.part_suffix", workflow)
