@@ -24,7 +24,7 @@ ORACLE_DIR = Path(__file__).resolve().parent
 ROOT = ORACLE_DIR.parent.parent
 
 sys.path.insert(0, str(ROOT / 'scripts' / 'reference'))
-from fetch import load_manifest  # noqa: E402
+from fetch import load_manifest, sources  # noqa: E402
 from run import setup_rust  # noqa: E402
 
 # Table order is the reporting and first-failure rejection order, longest launcher
@@ -108,6 +108,11 @@ def main() -> int:
     # partial downloads. Each launcher's own setup_rust call then finds cargo
     # present and becomes a no-op.
     setup_rust(load_manifest(), False)
+    # Publish the pinned upstream source trees once before the pool: a launcher whose
+    # retain_verified_tree sees a stale or partial tree replaces it in place, so two
+    # concurrent preparations could delete a tree another launcher is reading. Each
+    # launcher's own sources() call then finds a verified-identical tree and keeps it.
+    sources(load_manifest(), False)
     outputs = {name: (args.results / f'{name}-{args.suffix}' if args.suffix else args.results / name)
                for name in LAUNCHERS}
     logs = {name: (args.results / f'launcher-{args.suffix}-{name}.log' if args.suffix

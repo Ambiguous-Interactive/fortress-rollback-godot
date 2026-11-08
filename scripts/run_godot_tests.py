@@ -36,23 +36,29 @@ def _stage_helpers() -> Path:
 
     The staged layout mirrors ``scripts/``, so each module's paths and defaults stay
     valid, and the staged directories precede the live tree on ``sys.path`` so every
-    helper import resolves to the staged bytes. Digests captured after the copy bind
-    exactly what Python imports; a live-tree edit inside the startup window can no
-    longer be misattributed to the executed bytes. The image lives for the whole
-    process — repeat ``main()`` calls re-read the same bytes their cached modules
-    executed — and disappears with the process's temporary directory.
+    helper import resolves to the staged bytes. Each copied file's digest is captured
+    before any staged module is imported, so the receipt binds the bytes Python read
+    and a later capture can reject image drift; a live-tree edit inside the startup
+    window can no longer be misattributed to the executed bytes. The image lives for
+    the whole process — repeat ``main()`` calls re-read the same bytes their cached
+    modules executed — and disappears with the process's temporary directory.
     """
     source = Path(__file__).resolve().parent
     staged = Path(tempfile.mkdtemp(prefix='fortress-helper-staging-'))
+    digests = {}
     for name in ('run_godot_tests.py',) + HELPERS:
         target = staged / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source / name, target)
+        digests[name] = hashlib.sha256(target.read_bytes()).hexdigest()
     sys.path.insert(0, str(staged / 'reference'))
     sys.path.insert(0, str(staged))
+    global _STAGED_DIGESTS
+    _STAGED_DIGESTS = digests
     return staged
 
 
+_STAGED_DIGESTS: dict[str, str] = {}
 _STAGE_ROOT = _stage_helpers()
 from engine_path import resolve_engine  # noqa: E402  staged copy
 import host_capacity  # noqa: E402  staged copy
@@ -709,6 +715,14 @@ def main(argv: list[str] | None = None) -> int:
         import changed_suites
         helpers = helper_identity()
         live_helpers = live_helper_identity()
+        if helpers != _STAGED_DIGESTS:
+            # The staged image changed between its capture and the imports/digest
+            # above, so no receipt can claim either set of bytes as executed.
+            raise ValueError("helper_image_changed")
+        if helpers != live_helpers:
+            # Live drift during staging would qualify a mixed image: the copied
+            # bytes would not correspond to any single live-tree state.
+            raise ValueError("helper_source_changed")
         executable = resolve_engine(args.godot)
         with SourceSnapshot(ROOT) as snapshot:
             return execute(args, executable, snapshot, helpers, live_helpers)

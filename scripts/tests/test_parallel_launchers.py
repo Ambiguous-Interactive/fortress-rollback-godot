@@ -195,7 +195,7 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         self.assertIn('2 launchers, 1 failed', stdout.getvalue())
         self.assertIn('produced no log', stdout.getvalue())
 
-    def test_provisions_the_toolchain_once_before_any_launcher(self):
+    def test_provisions_the_toolchain_and_source_trees_once_before_any_launcher(self):
         table = {'alpha': str(write_script(self.root, 'alpha.py', PASS_SCRIPT)),
                  'beta': str(write_script(self.root, 'beta.py', PASS_SCRIPT))}
         calls = []
@@ -204,14 +204,20 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
             calls.append('setup')
             return 'cargo', None
 
+        def record_sources(manifest, offline):
+            calls.append('sources')
+            return {}
+
         def record_launcher(name, command, log_path, timeout):
             calls.append('launcher:' + name)
-            self.assertIn('setup', calls, 'a launcher started before the toolchain was provisioned')
+            self.assertEqual(calls[:2], ['setup', 'sources'],
+                             'a launcher started before the toolchain and source trees were prepared')
             return {'name': name, 'seconds': 0.0, 'returncode': 0, 'timeout': False}
 
         with unittest.mock.patch.dict(parallel_launchers.LAUNCHERS, table, clear=True), \
                 unittest.mock.patch.object(parallel_launchers, 'load_manifest', return_value='manifest'), \
                 unittest.mock.patch.object(parallel_launchers, 'setup_rust', side_effect=record_setup), \
+                unittest.mock.patch.object(parallel_launchers, 'sources', side_effect=record_sources), \
                 unittest.mock.patch.object(parallel_launchers, 'run_launcher', side_effect=record_launcher), \
                 unittest.mock.patch('sys.argv', ['parallel_launchers.py', '--godot', 'unused',
                                                  '--results', str(self.results)]), \
@@ -219,8 +225,9 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
             exit_code = parallel_launchers.main()
         self.assertEqual(exit_code, 0)
         self.assertEqual(calls.count('setup'), 1)
-        self.assertEqual(calls[0], 'setup')
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls.count('sources'), 1)
+        self.assertEqual(calls[:2], ['setup', 'sources'])
+        self.assertEqual(len(calls), 4)
 
 
 if __name__ == '__main__':

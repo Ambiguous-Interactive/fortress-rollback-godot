@@ -124,9 +124,17 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
             with self.subTest(check=check):
                 self.assertIn(check, oracles)
         runner = RUNNER.read_text(encoding='utf-8')
-        for launcher in RUNNER_LAUNCHERS:
-            with self.subTest(launcher=launcher):
-                self.assertIn(launcher, runner)
+        namespace = {'__name__': 'parallel_launchers_under_test', '__file__': str(RUNNER)}
+        exec(compile(runner, str(RUNNER), 'exec'), namespace)
+        self.assertTrue(set(RUNNER_LAUNCHERS) <= set(namespace['LAUNCHERS'].values()),
+                        'the active launcher table dropped a pinned upstream comparison')
+        # The mutant comments out one launcher entry; the active table loses it and
+        # this validation detects the omission.
+        mutant = runner.replace("    'p2p': 'p2p_launch.py',", "    # 'p2p': 'p2p_launch.py',")
+        self.assertNotEqual(mutant, runner)
+        mutant_namespace = {'__name__': 'parallel_launchers_mutant', '__file__': str(RUNNER)}
+        exec(compile(mutant, str(RUNNER), 'exec'), mutant_namespace)
+        self.assertFalse(set(RUNNER_LAUNCHERS) <= set(mutant_namespace['LAUNCHERS'].values()))
         # The mutant drops the oracle trace comparison from the oracles leg.
         mutant = text.replace('python3 scripts/oracle/parallel_launchers.py',
                               'python3 scripts/oracle/parallel_launchers_disabled.py')
