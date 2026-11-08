@@ -88,7 +88,12 @@ class Installer:
                     if not isinstance(native, dict) or native.get('version') != spec.rsplit('@', 1)[1]:
                         raise ValueError(f'native package metadata does not match selected version: {spec}')
                 # Frozen exact latest: the release cannot change while readiness or installation retries.
-                output = self.command(['npm', 'install', '-g', '--include=optional', '--prefer-online', package + '@' + version],
+                # Foreground scripts stream the wrapper's postinstall (native version probe plus
+                # nested fallback npm) into the captured streams, and the http loglevel names each
+                # registry request, so a hang localizes to lifecycle execution versus acquisition.
+                # npm never prints authorization material at this level.
+                output = self.command(['npm', 'install', '-g', '--include=optional', '--prefer-online',
+                                       '--foreground-scripts', '--loglevel=http', package + '@' + version],
                                       install_specs, phase='global installation')
                 if output:
                     print(output)

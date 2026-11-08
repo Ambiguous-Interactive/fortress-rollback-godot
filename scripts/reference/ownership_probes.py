@@ -8,8 +8,10 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 
 from fetch import CACHE, ROOT, digest, fetch, load_manifest, prepare_zip
 from local_ownership import claim
@@ -908,6 +910,9 @@ def run_probes(args, results):
     # written down as it starts and stays on disk when the run fails. A
     # rejected round also keeps the progress of its last case, the errors
     # the engine or the browser reported and the state the rejection found.
+    # The native wave mutates the current round from its worker threads, so
+    # every mutation and rewrite takes this lock.
+    rounds_lock = threading.Lock()
     rounds = []
     rounds_path = results / 'ownership-rounds.json'
 
@@ -915,14 +920,16 @@ def run_probes(args, results):
         rounds_path.write_text(json.dumps(rounds, indent=2) + '\n')
 
     def observe(label):
-        rounds.append({'label': label, 'outcome': 'running', 'started': time.time(), 'seconds': None,
-                       'alive': None, 'native_progress': None, 'browser_progress': None, 'errors': []})
-        write_rounds()
+        with rounds_lock:
+            rounds.append({'label': label, 'outcome': 'running', 'started': time.time(), 'seconds': None,
+                           'alive': None, 'native_progress': None, 'browser_progress': None, 'errors': []})
+            write_rounds()
         return time.monotonic()
 
     def update(**fields):
-        rounds[-1].update(fields)
-        write_rounds()
+        with rounds_lock:
+            rounds[-1].update(fields)
+            write_rounds()
 
     def finish(started):
         update(outcome='passed', seconds=round(time.monotonic() - started, 3))
@@ -949,6 +956,10 @@ def run_probes(args, results):
     phases_requested = ['negative', 'positive'] if args.phase == 'both' else [args.phase]
     selected = select_suites(args.suite_part)
     suites_requested = {suite: sorted(cases) for suite, cases in selected.items()}
+    # The native wave overlaps fresh per-suite engine processes; browser pages
+    # stay serial because they need a responsive host. Another owner of the
+    # host-capacity lease keeps the wave serial instead of competing with it.
+    native_workers = host_capacity.worker_count(min(os.cpu_count() or 1, 4))
     if any(version not in (data['godot']['minimum'], data['godot']['current_stable']) for version in versions_requested):
         raise ValueError('requested ownership engine is not pinned')
     for version in versions_requested:
@@ -1028,33 +1039,33 @@ def run_probes(args, results):
             verify_tools(editor_paths, editor_frozen)
             staged_frozen = freeze_after_import(staged_paths(project), staged_before)
             # Each suite retains both in-process repetitions and its own 180s
-            # watchdog. A growing inventory must not merge bounded suites into
-            # one process that exceeds their shared deadline.
-            batches = []
-            for suite in sorted(selected):
+            # watchdog in its own fresh engine process; the wave only overlaps
+            # those processes and never runs while a browser page is live. A
+            # growing inventory must not merge bounded suites into one process
+            # that exceeds their shared deadline. The staged project and the
+            # editor are verified once before the wave and after every suite,
+            # so a mutation during any suite is caught without re-reading the
+            # same unchanged tree once per engine start. Every suite finishes
+            # (the executor joins its threads), and the rejection names the
+            # first failing suite in suite order.
+            def native_suite_task(suite):
                 native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
                 try:
-                    verify_staged(project, staged_frozen)
-                    verify_tools(editor_paths, editor_frozen)
                     code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
                                            + ['--suite', suite],
                                            environment, native_log, timeout=180)
                 except subprocess.TimeoutExpired as error:
-                    # The native deadline rejected the run. Its progress record
+                    # The native deadline rejected this suite. Its progress record
                     # names the case that was executing when the deadline fired.
-                    output = captured_text(error.output) + captured_text(error.stderr)
-                    progress = bounded_progress(last_progress(output), 'native')
-                    reject(started, rejected_state(progress), native_progress=progress, alive=False,
-                           errors=failure_lines(output))
-                    raise
-                except Exception:
+                    text = captured_text(error.output) + captured_text(error.stderr)
+                    progress = bounded_progress(last_progress(text), 'native')
+                    return ('timeout', suite, progress, failure_lines(text), error)
+                except Exception as error:
                     # The engine never ran: the tool failed before it produced output.
-                    reject(started, 'failed', alive=False,
-                           errors=failure_lines(native_log.read_text(encoding='utf-8', errors='replace')
-                                                if native_log.exists() else ''))
-                    raise
+                    return ('failed', suite, None,
+                            failure_lines(native_log.read_text(encoding='utf-8', errors='replace')
+                                          if native_log.exists() else ''), error)
                 progress = bounded_progress(last_progress(output), 'native')
-                update(native_progress=progress)
                 try:
                     verify_staged(project, staged_frozen)
                     verify_tools(editor_paths, editor_frozen)
@@ -1063,11 +1074,26 @@ def run_probes(args, results):
                     markers = [line[len(PREFIX):] for line in output.splitlines() if line.startswith(PREFIX)]
                     if len(markers) != 1:
                         raise ValueError('missing/duplicate native report')
-                    batch = validate(json.loads(markers[0]), negative_suite(suite, negative), {suite: EXPECTED[suite]})
-                    batches.append((suite, batch))
-                except Exception:
-                    reject(started, 'failed', alive=False, errors=failure_lines(output))
-                    raise
+                    return ('ok', suite, progress, validate(json.loads(markers[0]), negative_suite(suite, negative), {suite: EXPECTED[suite]}), None)
+                except Exception as error:
+                    return ('failed', suite, progress, failure_lines(output), error)
+            verify_staged(project, staged_frozen)
+            verify_tools(editor_paths, editor_frozen)
+            ordered_suites = sorted(selected)
+            with ThreadPoolExecutor(max_workers=native_workers) as wave:
+                futures = [wave.submit(native_suite_task, suite) for suite in ordered_suites]
+                outcomes = [future.result() for future in futures]
+            batches = []
+            for kind, suite, progress, payload, error in outcomes:
+                if kind == 'timeout':
+                    reject(started, rejected_state(progress), native_progress=progress, alive=False, errors=payload)
+                    raise error
+                if progress is not None:
+                    update(native_progress=progress)
+                if kind != 'ok':
+                    reject(started, 'failed', alive=False, errors=payload)
+                    raise error
+                batches.append((suite, payload))
             native = aggregate_native(batches, negative, selected)
             record = {'engine_version': version, 'version': actual, 'editor_artifact': name, 'negative_control': negative, 'native': native,
                       'staged_inventory': staged_frozen, 'editor_inventory': editor_frozen}

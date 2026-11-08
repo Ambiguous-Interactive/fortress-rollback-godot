@@ -46,6 +46,9 @@ if args[:1] == ['view']:
             sys.exit(1)
         print(json.dumps({'version': args[1].rsplit('@', 1)[1]}))
 elif args[:1] == ['install']:
+    if '--foreground-scripts' in args and '--loglevel=http' in args:
+        print('npm http fetch GET https://registry.example/' + package, flush=True)
+        print('npm sill runScript postinstall ' + package + '@' + version, flush=True)
     if scenario.get('install_delay'):
         counter = root / 'installs'
         attempt = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -163,6 +166,23 @@ class NativeCliInstallTests(unittest.TestCase):
         self.assertIn('first publication failure', result.stderr)
         self.assertEqual(len([call for call in calls if call[0] == 'view']), 4)
         self.assertFalse(any(call[0] == 'install' for call in calls))
+
+    def test_install_failure_streams_lifecycle_and_registry_phase_evidence(self):
+        # Value: a hung global install localizes to wrapper lifecycle execution versus
+        # registry acquisition, on the next failure, without waiting for upstream logs.
+        result, calls = self.invoke(install_error=True)
+        self.assertNotEqual(result.returncode, 0)
+        installs = [call for call in calls if call[0] == 'install']
+        self.assertEqual(len(installs), 1)
+        self.assertIn('--foreground-scripts', installs[0])
+        self.assertIn('--loglevel=http', installs[0])
+        self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', result.stderr)
+        self.assertIn('npm sill runScript postinstall @opencode/cli@', result.stderr)
+        views = [call for call in calls if call[0] == 'view']
+        self.assertTrue(views)
+        for view in views:
+            self.assertNotIn('--foreground-scripts', view)
+            self.assertNotIn('--loglevel=http', view)
 
     def test_install_publication_delay_retries_only_the_expected_native_release(self):
         result, calls = self.invoke(install_delay=True)

@@ -134,6 +134,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
         node_target.write_text('verified node')
         node_path = directory / 'node'
         node_path.symlink_to(node_target)
+        alias_replaced = []
 
         def mutate_project(project, boundary):
             if not project_fault or changed_project or project_fault[0] != boundary:
@@ -152,6 +153,11 @@ class OwnershipRejectionFixture(unittest.TestCase):
                 target.write_bytes(b'changed resource')
             else:
                 (project / ('orphan.gd.uid' if mutation == 'orphan' else 'unknown.gd')).write_text('unpaired generated input')
+
+        # The native wave overlaps per-suite engine children, so a fault keys on
+        # the suite identity it names instead of a global call order.
+        native_suites = sorted(probes.select_suites(suite_part))
+        faulted_native_suite = native_suites[1] if len(native_suites) > 1 else None
 
         def run(command, environment, log, timeout=180):
             if Path(command[0]).name.startswith('Godot_'):
@@ -276,7 +282,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
                           'display': root / 'scripts/reference/browser/webrtc_display.cjs'}[runtime_before]
                 target.write_text('mutated before first browser execution')
                 changed_runtime.append(True)
-            if node_alias and len(capture_calls) == 1:
+            if node_alias and not alias_replaced:
+                alias_replaced.append(True)
                 replacement = directory / 'unverified-node'
                 replacement.write_text('unverified node')
                 node_path.unlink()
@@ -284,7 +291,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
             code, value = batch_value(command)
             output = probes.PREFIX + json.dumps(value) + '\n'
             output += probes.PROGRESS_PREFIX + json.dumps(NATIVE_PROGRESS) + '\n'
-            if len(capture_calls) == 2 and native_fault:
+            native_suite = next((command[index + 1] for index, item in enumerate(command) if item == '--suite'), None)
+            if native_suite == faulted_native_suite and native_fault:
                 if native_fault == 'wrong_exit':
                     code = 1
                 elif native_fault == 'missing_marker':
@@ -296,7 +304,7 @@ class OwnershipRejectionFixture(unittest.TestCase):
                 elif native_fault == 'engine_error':
                     output += 'ERROR: injected leak\n'
             log.write_text(output, encoding='utf-8')
-            if native_timeout or (len(capture_calls) == 2 and native_fault == 'timeout'):
+            if native_timeout or (native_fault == 'timeout' and native_suite == faulted_native_suite):
                 raise subprocess.TimeoutExpired(command, timeout, output=output.encode('utf-8'))
             return code, output
 
@@ -365,7 +373,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
             elif tool_fault == 'import':
                 self.assertEqual(capture_calls, [], 'import mutation must stop before native execution')
             elif tool_fault == 'native':
-                self.assertEqual(len(capture_calls), 1, 'native mutation must stop before another engine execution')
+                self.assertTrue(capture_calls, 'the native mutation must reach a per-suite engine boundary')
+                self.assertEqual(browser_calls, [], 'a mutated engine must not qualify a browser batch')
             elif tool_fault == 'template_freeze':
                 self.assertEqual(export_calls, [], 'changed template must not be exported')
             else:
@@ -380,7 +389,9 @@ class OwnershipRejectionFixture(unittest.TestCase):
             expected_suites = probes.select_suites(suite_part)
             selections = [[command[index + 1] for index, item in enumerate(command) if item == '--suite']
                           for command, log, timeout in capture_calls]
-            self.assertEqual(selections, [[suite] for suite in sorted(expected_suites)] * round_count,
+            # The native wave overlaps per-suite engine children, so the calls
+            # interleave; every suite still runs exactly once per round.
+            self.assertEqual(sorted(selections), sorted([[suite] for suite in sorted(expected_suites)] * round_count),
                              'each round runs every suite once, each under its own watchdog')
             self.assertTrue(all(timeout == 180 for command, log, timeout in capture_calls))
             logs = [log for command, log, timeout in capture_calls]

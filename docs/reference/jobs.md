@@ -212,6 +212,30 @@ skips); parallel runner 3m21.0s, 36 files, 0 failed, 0 missing. The
 critical path is now the slowest single file (about 202s), so further
 wall reduction requires gate changes, not scheduling.
 
+## Native-wave overlap in the ownership jobs
+
+The ownership witness ran its native suites one engine process at a time: 49
+suites per phase per part, twice per Chromium job and once per Firefox job.
+The per-suite shape is unchanged — one fresh engine process per suite, both
+in-process repetitions and the 180-second watchdog — but the wave now runs
+those processes concurrently (bounded by host capacity: four workers on an
+idle host, serial when another owner holds it) and joins every suite before
+the run continues. Browser pages stay serial because they need a responsive
+host. The staged project and the editor are verified once before the wave and
+after every suite, so a mutation during any suite is still caught; the
+rejection names the first failing suite in suite order, and every suite's log
+survives.
+
+Measured on this devcontainer, warm and otherwise idle, the native-only 4.3
+part-1 witness (both phases, no browser) fell from 9m41.0s serial to 2m38.4s
+under the wave with identical receipts (passed, same inventory, same sources).
+The per-suite repeated-inventory cost also dropped: the boundary inventory now
+scans each directory once with cached entry types instead of re-statting every
+member through pathlib, with identical membership, symlink rejection and
+fail-closed unreadable-directory behavior (`test_signalfish_probe` covers all
+three). On the runner, the CI step times are recorded from the run records of
+the change that introduced the wave.
+
 ## Current 24-job baseline and the parallel oracle suite
 
 Run [42443776980](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980)
