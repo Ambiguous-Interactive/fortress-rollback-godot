@@ -21,6 +21,7 @@ import threading
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from engine_path import resolve_engine  # noqa: E402
+import changed_suites  # noqa: E402
 import host_capacity  # noqa: E402
 from native_source_snapshot import SourceSnapshot  # noqa: E402
 
@@ -647,12 +648,13 @@ def main(argv: list[str] | None = None) -> int:
     args.results.parent.mkdir(parents=True, exist_ok=True)
     args.results.write_text(json.dumps({"format": 1, "passed": False,
                                        "failure": "in_progress"}) + "\n", encoding="utf-8")
-    helpers = helper_identity()
-    executable = resolve_engine(args.godot)
     handlers = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
     for number in handlers:
         signal.signal(number, cancel_execution)
     try:
+        # Capture after every helper module has loaded and before any engine child starts.
+        helpers = helper_identity()
+        executable = resolve_engine(args.godot)
         with SourceSnapshot(ROOT) as snapshot:
             return execute(args, executable, snapshot, helpers)
     except KeyboardInterrupt:
@@ -686,9 +688,9 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         command += ["--filter", args.filter]
     # run_tests.gd sorts its suites, so shards follow the same order.
     if args.changed:
-        from changed_suites import changed_files, previous_class_names, select
-        changed = changed_files(args.changed)
-        args.suite = select(discover(args.category, snapshot.path), changed, root=snapshot.path, old_names=previous_class_names(args.changed, changed))
+        changed = changed_suites.changed_files(args.changed)
+        args.suite = changed_suites.select(discover(args.category, snapshot.path), changed, root=snapshot.path,
+                                           old_names=changed_suites.previous_class_names(args.changed, changed))
         print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
         if not args.suite:
             args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")

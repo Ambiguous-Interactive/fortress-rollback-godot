@@ -4,7 +4,7 @@
 
 ### Added
 
-- Bind the native test receipt to the executed Python helper bytes. The launcher records the digests of its own script and every helper module it executes before starting an engine, re-verifies them after execution and reports helper drift as a failed qualification instead of a stale success.
+- Bind the native test receipt to the on-disk Python helper bytes. The launcher digests its own script and every helper module it executes after they have loaded and before starting an engine, re-verifies them after execution and reports helper drift as a failed qualification instead of a stale success.
 
 - Run the oracle negative-control suite through the same bounded parallel subprocess runner as the reference suite. Oracle test files are now import-order independent, and the suite finishes in about 42s locally instead of 63s.
 

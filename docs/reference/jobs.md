@@ -215,7 +215,7 @@ wall reduction requires gate changes, not scheduling.
 ## Current 24-job baseline and the parallel oracle suite
 
 Run [42443776980](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42443776980)
-qualified main `5118de2f26d2a86d35672e8f3ba6319ac0b8ded4` on 2026-11-08: all 24
+qualified main `5118de2405a2c440ff1db661319ac90f84025f17` on 2026-11-08: all 24
 jobs passed, the workflow took 18m04s of wall time and the jobs summed to
 235m56s. Reproduce with:
 
@@ -255,11 +255,12 @@ Job times, longest first:
 
 The wall-time critical path is no longer a browser room job: it is the
 ownership 4.3 part 1 verification step ("Verify integer encoding, snapshot
-ownership and byte sessions", 17m12s of its 18m00s). The thirteen ownership
-jobs hold the thirteen longest positions; the longest SignalFish browser job
-(4.3 online, 9m43s) sits in the middle of the pack. The original 66-minute
-summed target predates this expanded 24-job inventory and is no longer
-comparable with it.
+ownership and byte sessions", 17m12s of its 18m00s). The twelve ownership
+jobs hold twelve of the thirteen longest positions; only the Godot 4.3
+oracles job (11m11s, ninth) interrupts the run. The longest SignalFish
+browser job (4.3 online, 9m43s) sits in the middle of the pack. The original
+66-minute summed target predates this expanded 24-job inventory and is no
+longer comparable with it.
 
 The negative-controls job shows the landed scheduling levers. #333's
 process-parallel runner took `make test-reference` from 11m49s (run
