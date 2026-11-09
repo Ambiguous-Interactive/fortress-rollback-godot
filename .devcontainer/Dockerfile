@@ -39,8 +39,8 @@ ARG NODE_VERSION=26.12.1
 # sources file took the substitution.
 RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
       -exec sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; s|http://security\.ubuntu\.com|https://security.ubuntu.com|g' {} + \
-    && { grep -Fqs 'https://archive.ubuntu.com/ubuntu/' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null \
-         || { echo 'no Ubuntu sources file selected the HTTPS archive' >&2; exit 1; }; } \
+    && find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
+      -exec grep -Fqs 'https://archive.ubuntu.com/ubuntu/' {} + \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \
