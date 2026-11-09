@@ -70,6 +70,14 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         self.root = Path(tempfile.mkdtemp(prefix='parallel-launchers-'))
         self.results = self.root / 'results'
         self.addCleanup(shutil.rmtree, self.root, True)
+        # The runner's startup preflights must never reach the network from a test:
+        # stub them for every case; a case can override with its own recorder.
+        setup = unittest.mock.patch.object(parallel_launchers, 'setup_rust', return_value=('cargo', None))
+        setup.start()
+        self.addCleanup(setup.stop)
+        sources = unittest.mock.patch.object(parallel_launchers, 'sources', return_value={})
+        sources.start()
+        self.addCleanup(sources.stop)
 
     def run_main(self, table, arguments):
         stdout = io.StringIO()

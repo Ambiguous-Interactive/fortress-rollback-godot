@@ -29,6 +29,17 @@ ROOT = Path(__file__).resolve().parents[1]
 # Python actually ran; the live tree stays an evidence input whose drift during the run
 # is a failed qualification, not a stale success.
 HELPERS = ('host_capacity.py', 'native_source_snapshot.py', 'changed_suites.py', 'reference/engine_path.py')
+# Where each staged helper's module ends up once imported; the module object's own
+# file is the executed bytes this receipt binds.
+HELPER_MODULES = {'host_capacity.py': 'host_capacity', 'native_source_snapshot.py': 'native_source_snapshot',
+                  'changed_suites.py': 'changed_suites', 'reference/engine_path.py': 'engine_path'}
+# Bound by _load_staged_helpers once main() has invalidated any earlier receipt, so a
+# staging or import failure cannot leave a stale passing receipt behind as evidence.
+_STAGED_DIGESTS: dict[str, str] = {}
+_STAGE_ROOT = Path(tempfile.gettempdir()) / 'fortress-helper-staging-unloaded'
+resolve_engine = None
+host_capacity = None
+SourceSnapshot = None
 
 
 def _stage_helpers() -> Path:
@@ -58,11 +69,33 @@ def _stage_helpers() -> Path:
     return staged
 
 
-_STAGED_DIGESTS: dict[str, str] = {}
-_STAGE_ROOT = _stage_helpers()
-from engine_path import resolve_engine  # noqa: E402  staged copy
-import host_capacity  # noqa: E402  staged copy
-from native_source_snapshot import SourceSnapshot  # noqa: E402  staged copy
+def _load_staged_helpers() -> None:
+    """Stage the helpers, then bind the staged helper modules into this namespace.
+
+    Called from main() only after any earlier receipt was invalidated, so a missing
+    or broken helper fails the selected run instead of surviving as apparent
+    evidence. Repeat main() calls keep their cached modules; their digests still
+    bind the executed bytes because the image lives for the whole process.
+    """
+    global _STAGE_ROOT, resolve_engine, host_capacity, SourceSnapshot
+    _STAGE_ROOT = _stage_helpers()
+    # A helper cached from the live tree by an embedding process would otherwise be
+    # reused here: the launcher must execute its staged image, so evict any cached
+    # module whose loaded file is not inside a staged image before importing.
+    for name in HELPER_MODULES.values():
+        loaded = sys.modules.get(name)
+        if loaded is None or not getattr(loaded, '__file__', None):
+            continue
+        path = Path(loaded.__file__).resolve()
+        if not any(parent.name.startswith('fortress-helper-staging-') for parent in path.parents):
+            del sys.modules[name]
+    import changed_suites  # noqa: E402  staged copy
+    import engine_path  # noqa: E402  staged copy
+    import host_capacity as staged_host_capacity  # noqa: E402  staged copy
+    import native_source_snapshot  # noqa: E402  staged copy
+    resolve_engine = engine_path.resolve_engine
+    host_capacity = staged_host_capacity
+    SourceSnapshot = native_source_snapshot.SourceSnapshot
 
 PREFIX = "FORTRESS_TEST_RESULT "
 CASES_PREFIX = "FORTRESS_TEST_CASES "
@@ -642,22 +675,17 @@ class _Parser(argparse.ArgumentParser):
         super().error(message)
 
 
-# Where each staged helper's module ends up once imported; the module object's own
-# file is the executed bytes this receipt binds.
-HELPER_MODULES = {'host_capacity.py': 'host_capacity', 'native_source_snapshot.py': 'native_source_snapshot',
-                  'changed_suites.py': 'changed_suites', 'reference/engine_path.py': 'engine_path'}
-
-
 def helper_identity() -> dict:
     """Digest the Python bytes this launcher executed, from each loaded module's own staged file."""
     sources = {'run_godot_tests.py': _STAGE_ROOT / 'run_godot_tests.py'}
-    staged = _STAGE_ROOT.resolve()
     for name, module in HELPER_MODULES.items():
         loaded = sys.modules.get(module)
         if loaded is None or not getattr(loaded, '__file__', None):
             raise ImportError(f'helper module not loaded: {module}')
         path = Path(loaded.__file__).resolve()
-        if staged not in path.parents:
+        # Repeat main() calls keep cached modules from an earlier image of this
+        # process; any private staged image proves the bytes were not live-tree.
+        if not any(parent.name.startswith('fortress-helper-staging-') for parent in path.parents):
             raise ImportError(f'helper module not from staged image: {module}')
         sources[name] = path
     return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sorted(sources.items())}
@@ -707,12 +735,12 @@ def main(argv: list[str] | None = None) -> int:
     for number in handlers:
         signal.signal(number, cancel_execution)
     try:
-        # Load the last helper after the prior receipt is invalidated: a broken helper
-        # must not crash the launcher while a stale passing receipt survives. The staged
-        # directories precede the live tree on sys.path, so this import and the module-top
-        # imports above executed the staged bytes that the capture below binds before any
-        # engine child.
-        import changed_suites
+        # Stage and load every helper after the prior receipt is invalidated: a broken
+        # helper must not crash the launcher while a stale passing receipt survives.
+        # The staged directories precede the live tree on sys.path, so these imports
+        # executed the staged bytes that helper_identity() binds before any engine
+        # child; the capture happened before the imports.
+        _load_staged_helpers()
         helpers = helper_identity()
         live_helpers = live_helper_identity()
         if helpers != _STAGED_DIGESTS:
@@ -742,7 +770,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"passed": False, "results": str(args.results)}))
             return 1
         finally:
-            host_capacity.release()
+            if host_capacity is not None:
+                host_capacity.release()
             for number, handler in handlers.items():
                 signal.signal(number, handler)
             _cancelled.clear()

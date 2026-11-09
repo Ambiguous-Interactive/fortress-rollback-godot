@@ -156,6 +156,7 @@ print('FORTRESS_TEST_RESULT ' + json.dumps(dict(format=1, complete=True, passed=
                 marker.unlink(missing_ok=True)
                 script = (f"import sys, time, json; from types import SimpleNamespace; sys.path.insert(0, {str(self.checkout / 'scripts')!r}); "
                           "import run_godot_tests as runner\n"
+                          "runner._load_staged_helpers()\n"
                           "clock, attempts = [0.0], []\n"
                           "runner.time = SimpleNamespace(monotonic=lambda: clock[0], sleep=time.sleep)\n"
                           "def acquire(name):\n"
