@@ -1666,7 +1666,7 @@ func _failure_feedback(context: RefCounted) -> void:
 			context.equal(status.failure_frame, 5, "stopped session retains exact failed callback frame")
 			scene._update_label()
 			var operation: String = "saving state" if kind == Types.Kind.SAVE else "simulating input"
-			var expected: String = "STOPPED: failed while %s at frame 5 | R: start again" % operation
+			var expected: String = "STOPPED: failed while %s at frame 5 (code %d) | R: start again" % [operation, Types.Code.CALLBACK_FAILED]
 			context.equal(scene._label.text.contains(expected), true, "viewer explains failed operation, frame and restart")
 			context.equal(scene.get_node("SpectatorControls/Content/HostControls/RestartMatch").disabled, false, "failed callback permits fresh match recovery")
 			var failed_export: PackedByteArray = scene.demo.replay_bytes()
@@ -1721,7 +1721,10 @@ func _failure_feedback(context: RefCounted) -> void:
 			Types.Code.TERMINATED: "viewing canceled",
 			Types.Code.DESYNC: "state checksum mismatch",
 		}[code]
-		context.equal(scene._label.text.contains("STOPPED: " + reason + " | R: start again"), true, "stopped viewer gives a named cause without inventing a callback frame")
+		context.equal(
+			scene._label.text.contains("STOPPED: %s (code %d) | R: start again" % [reason, code]),
+			true, "stopped viewer gives a named cause without inventing a callback frame"
+		)
 		scene.free()
 
 

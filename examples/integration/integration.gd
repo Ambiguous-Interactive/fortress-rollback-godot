@@ -274,9 +274,9 @@ func _update_label() -> void:
 		if recorded < _demo.loop.game.frame:
 			state += " | Replay holds the first %d frames" % recorded
 	if _code not in [Types.Code.OK, Types.Code.PREDICTION_STALL, Types.Code.BUSY]:
-		state = "STOPPED: code %d, failure frame %d" % [_code, status.failure_frame]
+		state = "STOPPED: %s (code %d, failure frame %d)" % [Types.reason_text(_code), _code, status.failure_frame]
 	if _demo.replay_player == null and _replay_code != Types.Code.OK:
-		state += " | REPLAY UNAVAILABLE: code %d" % _replay_code
+		state += " | REPLAY UNAVAILABLE: %s (code %d)" % [Types.reason_text(_replay_code), _replay_code]
 	if _demo.replay_player != null:
 		state = ("REPLAY PAUSED" if _is_replay_paused else "REPLAY") + " frame %d of %d" % [_demo.replay_player.current_frame(), _demo.replay_frames]
 		if _replay_code == Types.Code.FRAME_EXHAUSTED:
@@ -284,7 +284,7 @@ func _update_label() -> void:
 		elif _replay_code == Types.Code.BUSY:
 			state = "WAITING FOR ACTIVE REPLAY WORK"
 		elif _replay_code != Types.Code.OK:
-			state = "REPLAY STOPPED: code %d at frame %d" % [_replay_code, _demo.replay_player.failure_frame()]
+			state = "REPLAY STOPPED: %s at frame %d (code %d)" % [Types.reason_text(_replay_code), _demo.replay_player.failure_frame(), _replay_code]
 	_label.text = (
 		"Rollback-safe shots | %s\n" % state
 		+ "A/D or arrows: move | Space: fire | P: watch replay | R: restart\n"

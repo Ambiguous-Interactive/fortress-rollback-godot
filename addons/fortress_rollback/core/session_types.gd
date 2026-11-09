@@ -35,6 +35,67 @@ enum Kind { SAVE, LOAD, ADVANCE }
 enum Lifecycle { RUNNING, TERMINATED }
 
 
+## Plain-language cause for a session status or failure code, for user-facing
+## labels and reports. Unknown reasons keep their number so diagnostics stay
+## identifiable; every documented code gets short lowercase text.
+static func reason_text(reason: int) -> String:
+	match reason:
+		Code.OK:
+			return "no failure"
+		Code.READY:
+			return "ready to advance"
+		Code.MISSING_LOCAL_INPUT:
+			return "local input missing"
+		Code.PREDICTION_STALL:
+			return "waiting for confirmed remote input"
+		Code.BUSY:
+			return "active game work"
+		Code.NOT_CONFIGURED:
+			return "not configured"
+		Code.INVALID_CONFIGURATION:
+			return "invalid configuration"
+		Code.INVALID_PLAYER:
+			return "invalid player"
+		Code.INVALID_FRAME:
+			return "invalid frame"
+		Code.INPUT_WIDTH:
+			return "input width mismatch"
+		Code.INPUT_ALREADY_SUBMITTED:
+			return "input already submitted"
+		Code.INVALID_TIME:
+			return "invalid protocol time"
+		Code.STALE_REQUEST:
+			return "request expired"
+		Code.HISTORY_UNAVAILABLE:
+			return "required history is no longer retained"
+		Code.CALLBACK_FAILED:
+			return "game callback failed"
+		Code.SNAPSHOT_FAILED:
+			return "snapshot failed"
+		Code.FRAME_EXHAUSTED:
+			return "frame limit reached"
+		Code.INPUT_FAILED:
+			return "confirmed input failed"
+		Code.DESYNC:
+			return "state checksum mismatch"
+		Code.TERMINATED:
+			return "terminated"
+		Code.EXPIRED_VIEW:
+			return "request view expired"
+		Code.NOT_SYNCHRONIZED:
+			return "waiting for synchronization"
+		Code.NETWORK_BACKPRESSURE:
+			return "network backpressure"
+		Code.PROTOCOL_FAILED:
+			return "protocol failure"
+		Code.UNSUPPORTED:
+			return "unsupported"
+		Code.INCOMPATIBLE_RECORDING:
+			return "recording does not match this game"
+		_:
+			return "reason code %d" % reason
+
+
 class Result:
 	extends RefCounted
 	var code: int

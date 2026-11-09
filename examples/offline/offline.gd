@@ -160,9 +160,9 @@ func _update_label() -> void:
 		status = "WAITING FOR ACTIVE WORK"
 	elif _session.status().lifecycle == Types.Lifecycle.TERMINATED:
 		_code = _session.status().reason
-		status = "STOPPED (code %d, failure frame %d)" % [_code, _session.status().failure_frame]
+		status = "STOPPED: %s (code %d, failure frame %d)" % [Types.reason_text(_code), _code, _session.status().failure_frame]
 	elif _code not in [Types.Code.OK, Types.Code.BUSY]:
-		status = "STOPPED (code %d)" % _code
+		status = "STOPPED: %s (code %d)" % [Types.reason_text(_code), _code]
 	_pause_button.disabled = not _can_service()
 	_pause_button.text = "Resume (P)" if _is_paused else "Pause (P)"
 	_step_button.disabled = _pause_button.disabled or not _is_paused

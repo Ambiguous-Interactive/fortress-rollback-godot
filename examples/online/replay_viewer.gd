@@ -156,7 +156,8 @@ func restart() -> void:
 	var snapshot_bytes: int = IntegrationGame.SNAPSHOT_BYTES if is_integration_game() else Simulation.SNAPSHOT_BYTES
 	var code: int = _player.configure(_recording, game, snapshot_bytes, 300, 121)
 	is_playing = false
-	message = "Ready. Press Play; recorded checksums are validated." if code == Types.Code.OK else "Could not start playback (%d)." % code
+	var started: bool = code == Types.Code.OK
+	message = "Ready. Press Play; recorded checksums are validated." if started else "Could not start playback: %s (code %d)." % [Types.reason_text(code), code]
 	if code == Types.Code.OK and _recorded_checksums.is_empty():
 		message = "Ready. Press Play; this recording has no checksums."
 
@@ -614,7 +615,7 @@ func _complete_message() -> String:
 
 
 func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: PackedByteArray) -> String:
-	var text: String = "Replay stopped at frame %d (code %d)." % [frame, code]
+	var text: String = "Replay stopped at frame %d: %s (code %d)." % [frame, Types.reason_text(code), code]
 	if code in [Types.Code.CALLBACK_FAILED, Types.Code.SNAPSHOT_FAILED]:
 		var operations: Dictionary = {Types.Kind.SAVE: "saving state", Types.Kind.LOAD: "loading state", Types.Kind.ADVANCE: "simulating input"}
 		text += " Failed while %s." % operations.get(_player.failure_kind(), "processing game state")

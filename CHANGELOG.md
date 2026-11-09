@@ -4,6 +4,8 @@
 
 ### Improved
 
+- Name each example's stopped cause in plain language, keeping the numeric code beside it for tooling. Session reasons render through the shared `FortressSessionTypes.reason_text()` helper in the offline, effects, peer, online, spectator, replay-viewer and diagnostic-viewer labels and refusal messages; the peer example's packet-failure line keeps its own wording for the separate protocol endpoint enum.
+
 - Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part ran 14 pages in 217s instead of 25 pages in 415s, with every case, repetition and comparison unchanged.
 
 - Share one npm download cache across the browser CI jobs, so repeated `npm ci` installs stop fetching every package from the registry.
