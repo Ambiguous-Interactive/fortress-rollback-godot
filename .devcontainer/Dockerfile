@@ -39,10 +39,12 @@ ARG NODE_VERSION=26.12.1
 # image variant whose sources name no archive keeps its defaults, which
 # stayed reachable on the architectures the substitution cannot serve.
 RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
-      -exec sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; s|http://security\.ubuntu\.com|https://security.ubuntu.com|g' {} + \
+      -exec sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; \
+      s|http://security\.ubuntu\.com|https://security.ubuntu.com|g; \
+      s|http://ports\.ubuntu\.com|https://ports.ubuntu.com|g' {} + \
     && { find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
-      -exec grep -Fqs 'https://archive.ubuntu.com/ubuntu/' {} + \
-      || echo 'no archive.ubuntu.com sources found; keeping the base image defaults'; } \
+      -exec grep -Eq 'https://(archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com)/' {} + \
+      || echo 'no Ubuntu archive sources found; keeping the base image defaults'; } \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \

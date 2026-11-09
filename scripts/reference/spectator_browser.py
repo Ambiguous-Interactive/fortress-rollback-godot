@@ -136,8 +136,10 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
     try:
         return _execute(engine, project, runtime, url, environment, output, control, fault, acceptance_delay_ms)
     except ValueError as failure:
-        browser = repr(bounded_tail(output / 'browser.log'))[:2048]
-        native = repr(bounded_tail(output / 'native.log'))[:2048]
+        # Escaping doubles newlines, so clipping the front of the representation
+        # could discard the failure line at the end of a log: keep the tail.
+        browser = repr(bounded_tail(output / 'browser.log'))[-2048:]
+        native = repr(bounded_tail(output / 'native.log'))[-2048:]
         raise ValueError(f'{failure}; browser.log tail: {browser}; native.log tail: {native}') from failure
 
 

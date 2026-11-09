@@ -87,8 +87,10 @@ phases. A single-phase receipt never establishes complete qualification; both
 phases must pass for every engine. Omitting `--phase` retains both phases.
 Firefox CI on both engine pins also selects `--suite-part 1` through `--suite-part 4` within
 each phase to fit the same 30-minute job cap. Parts interleave the sorted suite
-inventory and repeat the ownership-control suite in all four parts. Their union
-covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py); only the four control cases overlap.
+inventory and repeat the ownership-control suite in all four parts. Each part
+runs only its own suites (plus that control in its phase); the union of the
+four parts covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py), and only the four control
+cases overlap.
 Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
 inventory. All four parts and both phases must pass for full qualification.

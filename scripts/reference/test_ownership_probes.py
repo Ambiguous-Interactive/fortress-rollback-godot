@@ -149,11 +149,15 @@ class OwnershipBatchTests(unittest.TestCase):
         self.assertEqual(set(rows), expected)
         self.assertEqual(len(rows), 16)
         # The Firefox rows carry the same partition and phase coverage with the
-        # compact part suffix; dropping one must fail the contract like Chromium.
+        # compact part suffix, which must agree with each row's declared part so
+        # artifact names stay unique; dropping one row must fail like Chromium.
         firefox = re.findall(r'version: "([^"]+)", browser: firefox, phase: (negative|positive), suite_part: "([1-4])", '
-                             r'suffix: " (negative|positive) part ([1-4])", part_suffix: "-part-[1-4]"', workflow)
+                             r'suffix: " (negative|positive) part ([1-4])", part_suffix: "-part-([1-4])"', workflow)
         self.assertEqual({row[:5] for row in firefox}, {(version, phase, part, phase, part)
                                                         for version, phase, part, _, _, _ in expected})
+        self.assertEqual({(version, phase, part, suffix) for version, phase, part, _, _, suffix in firefox},
+                         {(version, phase, part, part)
+                          for version, phase, part, _, _, _ in expected})
         self.assertEqual(len(firefox), 16)
         command = workflow.split('          else\n            python3 scripts/reference/ownership_probes.py', 1)[1].split('          fi', 1)[0]
         self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"', command)

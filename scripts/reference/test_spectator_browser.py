@@ -29,13 +29,15 @@ class SpectatorBrowserExecutionDiagnosticsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r'exported spectator failed; browser.log tail.*request failed.*native.log tail.*passed') as raised:
                     spectator_browser.execute('engine', 'project', {}, 'url', {}, output, None)
             self.assertLessEqual(len(str(raised.exception)), 4300, 'the diagnostic stays bounded')
-            # Escaped representations are bounded after formatting, not only the raw reads.
-            (output / 'browser.log').write_text('\n' * 4096, encoding='utf-8')
+            # Escaped representations are bounded after formatting, keep their
+            # ends, and a failure marker at the end of an escape-heavy log survives.
+            (output / 'browser.log').write_text('\n' * 4096 + 'net::ERR_ABORTED on /admission', encoding='utf-8')
             (output / 'native.log').write_text('\t' * 4096, encoding='utf-8')
             with mock.patch.object(spectator_browser, '_execute', side_effect=ValueError('exported spectator failed')):
                 with self.assertRaises(ValueError) as escaped:
                     spectator_browser.execute('engine', 'project', {}, 'url', {}, output, None)
             self.assertLessEqual(len(str(escaped.exception)), 4300, 'escaped tail representations stay bounded')
+            self.assertIn('net::ERR_ABORTED on /admission', str(escaped.exception), 'the final failure line survives escaping')
             # A missing log must not mask the original rejection cause.
             (output / 'native.log').unlink()
             with mock.patch.object(spectator_browser, '_execute', side_effect=ValueError('native browser-host witness failed')):
