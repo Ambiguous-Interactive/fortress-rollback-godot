@@ -432,6 +432,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
                 self.assertTrue(all(len(group) <= 2 for group in groups), 'a Firefox page may hold at most two suites')
                 self.assertTrue(all(len(group) == 1 or probes.PEER_PARITY_SUITE not in group for group in groups),
                                 'the peer-parity suite stays alone')
+                self.assertTrue(any(len(group) == 2 for group in groups),
+                                'measured native durations must reach the page planner')
             self.assertEqual([command[4] if len(command) == 5 else None for command, log, timeout in browser_calls], expected_cases * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
             browser_logs = [log for command, log, timeout in browser_calls]
