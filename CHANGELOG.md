@@ -4,6 +4,8 @@
 
 ### Improved
 
+- Acknowledge exactly one success-paired disposal artifact in the exported spectator witness: the viewer page's own completed `/done` control POST that the pinned web transport reports as `net::ERR_ABORTED` during result-phase bookkeeping. The observation stays in the receipt under `acknowledged_disposal_abort`, the pairing requires the page's passing result and the exact six-field failure identity, and every other browser request failure stays fatal. This ends the intermittent host-departure witness failure that issue #322 diagnosed.
+
 - Name each example's stopped cause in plain language, keeping the numeric code beside it for tooling. Session reasons render through the shared `FortressSessionTypes.reason_text()` helper in the offline, effects, peer, online, spectator, replay-viewer and diagnostic-viewer labels and refusal messages; the peer example's packet-failure line keeps its own wording for the separate protocol endpoint enum.
 
 - Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part ran 14 pages in 217s instead of 25 pages in 415s, with every case, repetition and comparison unchanged.
