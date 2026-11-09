@@ -6,41 +6,52 @@ instead of against a single run.
 
 ## Measured baseline
 
-Source: run `39539697986` of the `Reference Baseline` workflow on `main`, the
-squash commit `20098dbc16cc31084a667c8aaacbfbe6c2974b68`, 2026-10-21. The run
-used the warm `reference-signalfish-server-v1` cache key, so the pinned Rust
-crates, the pinned engine archives, the export templates and the shared relay
-server build tree were already restored.
+The workflow currently runs 48 jobs: 32 ownership parts (two engines, two
+browsers, two phases, four interleaved suite parts), six SignalFish legs, eight
+Godot legs, the negative controls and the pinned Rust reference. The last
+unchanged-source `main` run and this repository's first paired-page run record
+the current shape:
 
-| Job | Wall time |
-| --- | --- |
-| Reference negative controls | 1m20s |
-| Pinned Rust reference | 2m45s |
-| SignalFish relay and Chromium WebRTC 4.3 direct | 3m36s |
-| SignalFish relay and Chromium WebRTC 4.7.2 direct | 5m07s |
-| SignalFish relay and Chromium WebRTC 4.3 mixed | 5m13s |
-| Godot 4.7.2 and Chromium suites | 5m35s |
-| Godot 4.3 and Chromium suites | 5m56s |
-| Godot 4.3 and Chromium oracles | 6m01s |
-| Godot 4.7.2 and Chromium oracles | 6m08s |
-| SignalFish relay and Chromium WebRTC 4.3 online | 6m22s |
-| SignalFish relay and Chromium WebRTC 4.7.2 online | 6m22s |
-| SignalFish relay and Chromium WebRTC 4.7.2 mixed | 6m51s |
-| Native and Chromium snapshot ownership | 8m04s |
-| **Summed job time** | **69m20s** |
+Source: `main` run `42562496243` (squash commit `639e51f`, 2026-11-09) against
+candidate run `42570092471` (2026-11-09). Both used warm cache keys.
 
-The ten browser jobs and the ownership job carry 65m15s of the 69m20s. The
-three jobs without a browser carry 4m05s.
+| Group | `main` job time | paired-page run |
+| --- | --- | --- |
+| Native and Firefox snapshot ownership (16 jobs) | 99m06s | 81m44s |
+| Native and Chromium snapshot ownership (16 jobs) | 61m02s | 68m54s |
+| SignalFish relay and Chromium WebRTC (6 jobs) | 43m43s | 41m32s |
+| Godot oracles (2 jobs) | 14m48s | 16m42s |
+| Godot whole-inventory test shards (4 jobs) | 15m06s | 14m54s |
+| Godot suites (2 jobs) | 4m17s | 5m12s |
+| Reference negative controls | 4m37s | 4m12s |
+| Pinned Rust reference | 2m14s | 2m30s |
+| **Summed job time** | **245m00s** | **236m00s** |
+| Slowest job (workflow wall time) | 10m00s | 8m32s |
 
-Reproduce the table from the public run records:
+Shared hosted runners vary by minutes between identical runs, so the grouped
+totals carry that noise; the targeted change is the Firefox group, and its
+round evidence is page counts, not wall time alone.
+
+## Firefox page pairing
+
+Each Firefox ownership part previously paid one browser page per suite: 25
+pages per part. A page now holds two neighboring suites only while the same
+runner's native wave measured their combined cost inside a 30-second budget,
+so the hosted page deadline (180 seconds) keeps its margin at the hosted
+web/native ratio that rejected the four-suite page in #224. The peer-parity
+suite keeps one case per page; Chromium keeps its four-suite pages.
+
+Measured on candidate run `42570092471`, Firefox 4.3 positive part 1 passed
+with 14 browser pages instead of 25 in 217.431s of round time; the same part
+on `main` run `42562496243` passed with 25 pages in 415.487s. Every case,
+repetition, negative control and native/web equality check is unchanged.
+
+Reproduce either table from the public run records:
 
 ```sh
-gh run view 39539697986 --json jobs \
+gh run view 42570092471 --json jobs \
   --jq '.jobs[] | "\(.name)\t\(.startedAt)\t\(.completedAt)"'
 ```
-
-The same command on any other warm run gives the same table, and the spread
-between identical warm runs is larger than the gap to the 66-minute target.
 
 ## Where the browser time goes
 
@@ -114,9 +125,10 @@ Package signature and checksum authentication remain enabled.
 ## Measured baseline scope
 
 This table records the measured baseline and names the dominant browser work.
-It does not shorten a browser job. The reduction of the room and page work
-without weakening a gate is tracked in the follow-up issue linked from
-[#148](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/148).
+The Firefox page pairing is the first page-work reduction that keeps every
+gate; the room count, export work and the consecutive warm-run target remain
+tracked in [#148](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/148)
+and [#164](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/164).
 
 ## Native-only oracle setup
 
@@ -136,7 +148,8 @@ and consecutive warm-run target remain open in #164.
 Run [41394927982](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/41394927982)
 qualified main `1e4f96f161430e7c400ea4764c325f4e23e589b0` on 2026-11-02.
 Its 22 jobs summed to 211m58s and the workflow took 24m55s. This expanded
-inventory is not comparable with the older 69m20s total above.
+inventory is not comparable with the pre-sharding 69m20s total that run
+`39539697986` recorded.
 
 | Chromium ownership pin | Job time | Verification step |
 | --- | --- | --- |
@@ -391,11 +404,6 @@ split into two interleaved parts per phase, so a 25-suite part still owns a
 whole serial share of both the native wave and the serial browser pages. Four
 interleaved parts keep the browser pages balanced (25/25/25/25 suites,
 149–174 cases per part over the current 97-suite inventory).
-
-Firefox pages pair neighboring suites only while the same runner's measured
-native wave cost fits a 30-second page budget, so a 25-suite part runs about
-13 pages instead of 25 while the peer-parity suite keeps one case per page and
-no case, repetition or comparison moves.
 
 The scheduling change that follows from these two measurements splits the
 unit inventory across two same-tree jobs (`run_godot_tests.py --shard 1of2`

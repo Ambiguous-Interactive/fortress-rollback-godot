@@ -4,7 +4,7 @@
 
 ### Improved
 
-- Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part previously paid one page per suite; a local part ran 13 pages instead of 25.
+- Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part ran 14 pages in 217s instead of 25 pages in 415s, with every case, repetition and comparison unchanged.
 
 - Share one npm download cache across the browser CI jobs, so repeated `npm ci` installs stop fetching every package from the registry.
 
