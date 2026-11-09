@@ -5,9 +5,10 @@ The serial chain of seven native probes is the Reference Baseline wall-time
 critical path (issue #340). Each probe already binds an ephemeral port, starts
 its own pinned server subprocess and writes to its own output directory, so two
 of them overlap safely when the host-capacity lease is held once for the whole
-wave: the children run with ``FORTRESS_HOST_LEASE_HELD=1`` and the wave owner
-releases the host when the last probe joins. The six browser-viewer cells stay
-serial in the workflow because browser pages need a responsive host.
+wave: the children run with ``FORTRESS_HOST_LEASE_HELD`` naming the wave
+owner's lease, and the wave owner releases the host when the last probe joins.
+The six browser-viewer cells stay serial in the workflow because browser pages
+need a responsive host.
 
 The run fails unless every probe executed exactly once and exited zero. Every
 failure names its own log, and one rejection never masks a sibling's failure.
@@ -77,6 +78,12 @@ def abort_active_groups() -> None:
         kill_group(pid)
 
 
+def _on_terminate(signum, _frame):
+    """Fence and kill on SIGTERM, then exit: engines must not outlive the wave."""
+    abort_active_groups()
+    raise SystemExit(128 + signum)
+
+
 def probe_command(name, script, extra, template, args):
     """The exact pre-overlap command for one probe, in the workflow's argument order."""
     output = args.results / template.format(version=args.version)
@@ -138,6 +145,9 @@ def main() -> int:
     # Every main() run is a fresh wave: a leftover abort from a caught
     # interruption must not refuse the next run in the same process.
     _abort.clear()
+    # A runner that escalates to SIGTERM must fence the same way SIGINT does,
+    # or detached engines outlive the wave holding the ports the lease protects.
+    signal.signal(signal.SIGTERM, _on_terminate)
     if not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
         raise ValueError('the development host stayed busy; the native probe wave needs a responsive host')
     # The wave owns the host for its whole duration; the probe children inherit

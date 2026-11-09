@@ -67,6 +67,12 @@ def abort_active_groups() -> None:
         kill_group(pid)
 
 
+def _on_terminate(signum, _frame):
+    """Fence and kill on SIGTERM, then exit: engines must not outlive the wave."""
+    abort_active_groups()
+    raise SystemExit(128 + signum)
+
+
 def prefetch_oracle_crates(cargo, environment, manifest, version, log_path):
     """Download the complete locked crate set into the shared registry before the pool.
 
@@ -145,6 +151,9 @@ def main() -> int:
     # Every main() run is a fresh wave: a leftover abort from a caught
     # interruption must not refuse the next run in the same process.
     _abort.clear()
+    # A runner that escalates to SIGTERM must fence the same way SIGINT does,
+    # or detached engines outlive the wave holding the ports the lease protects.
+    signal.signal(signal.SIGTERM, _on_terminate)
     if args.timeout < 0:
         parser.error('launcher timeout must not be negative')
     # Provision the pinned Rust toolchain once before any launcher starts: the CI

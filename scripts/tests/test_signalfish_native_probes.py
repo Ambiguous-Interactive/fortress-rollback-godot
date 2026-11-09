@@ -169,6 +169,7 @@ class NativeProbeWaveTests(unittest.TestCase):
     def test_a_probe_spawned_into_an_abort_kills_its_own_group(self):
         real_kill = probes.kill_group
         killed = []
+        descendant = self.root / 'descendant-pid'
 
         def record_and_kill(pid):
             killed.append(pid)
@@ -177,22 +178,54 @@ class NativeProbeWaveTests(unittest.TestCase):
         real_popen = probes.subprocess.Popen
 
         def popen_then_abort(command, **kwargs):
-            # Abort lands in the spawn-to-registration window the fence owns.
+            # Abort lands in the spawn-to-registration window the fence owns,
+            # after the leader has forked its engine stand-in and recorded it.
             process = real_popen(command, **kwargs)
+            deadline = time.time() + 5
+            while not (self.root / 'engine-descendant-pid').exists() and time.time() < deadline:
+                time.sleep(0.01)
             probes._abort.set()
             return process
 
+        leader_script = (
+            "import os, sys, time, pathlib\n"
+            f"pathlib.Path({str(descendant)!r}).write_text(str(os.getpid()))\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    time.sleep(30)\n"
+            "    os._exit(0)\n"
+            f"pathlib.Path({str(self.root / 'engine-descendant-pid')!r}).write_text(str(child))\n"
+            "time.sleep(30)\n"
+        )
+        script_path = write_script(self.root, 'leader.py', leader_script)
         log = self.results / 'native-probe-4.3-sleeper.log'
         try:
             with unittest.mock.patch.object(probes.subprocess, 'Popen', side_effect=popen_then_abort), \
                     unittest.mock.patch.object(probes, 'kill_group', side_effect=record_and_kill):
                 began = time.monotonic()
-                result = probes.run_probe('sleeper', ['sleep', '30'], log, {})
+                result = probes.run_probe('sleeper', [sys.executable, str(script_path)], log, {})
         finally:
             probes._abort.clear()
         self.assertLess(time.monotonic() - began, 15, 'the spawned probe must be killed, not waited out')
         self.assertEqual(result['returncode'], -9, 'SIGKILL to the probe group must end the probe')
         self.assertEqual(len(killed), 1, 'the spawn-window abort must kill its own group')
+        # The group kill is what protects engine children: the leader's forked
+        # descendant must die with the group, not only the leader itself. A
+        # freshly killed process can linger as a zombie until reaping, so a
+        # zombie counts as dead.
+        child_pid = int((self.root / 'engine-descendant-pid').read_text())
+        deadline = time.time() + 5
+
+        def dead(pid):
+            try:
+                fields = Path(f'/proc/{pid}/stat').read_text()
+                return fields.rsplit(')', 1)[1].split()[0] == 'Z'
+            except (OSError, IndexError):
+                return True
+
+        while time.time() < deadline and not dead(child_pid):
+            time.sleep(0.05)
+        self.assertTrue(dead(child_pid), 'a forked engine descendant survived the group kill')
 
     def test_an_aborted_fence_refuses_later_launches(self):
         probes._abort.set()
@@ -210,6 +243,85 @@ class NativeProbeWaveTests(unittest.TestCase):
         result = probes.run_probe('refused', ['sleep', '30'], log, {})
         self.assertEqual(result['returncode'], 1, 'a fenced probe is a failed probe')
         self.assertFalse(log.exists(), 'a fenced probe must not start its command')
+
+    def test_sigterm_fences_and_exits_like_an_interrupt(self):
+        real_kill = probes.kill_group
+        killed = []
+
+        def record_and_kill(pid):
+            killed.append(pid)
+            real_kill(pid)
+
+        script_path = write_script(self.root, 'sleeper.py', 'import time\ntime.sleep(30)\n')
+        log = self.results / 'native-probe-4.3-sigterm.log'
+        began = time.monotonic()
+        worker = threading.Thread(target=probes.run_probe,
+                                  args=('sleeper', [sys.executable, str(script_path)], log, {}))
+        try:
+            worker.start()
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                with probes._active_lock:
+                    if any(handle['pid'] is not None for handle in probes._active_handles):
+                        break
+                time.sleep(0.02)
+            with unittest.mock.patch.object(probes, 'kill_group', side_effect=record_and_kill):
+                with self.assertRaises(SystemExit) as raised:
+                    probes._on_terminate(15, None)
+            worker.join(10)
+        finally:
+            probes._abort.clear()
+        self.assertFalse(worker.is_alive(), 'the fenced probe must end promptly after SIGTERM')
+        self.assertEqual(raised.exception.code, 143, 'SIGTERM must exit like a terminated shell command')
+        self.assertLess(time.monotonic() - began, 15, 'the SIGTERM fence must not wait out the engine')
+        self.assertEqual(len(killed), 1, 'the SIGTERM fence must kill the registered group')
+
+    def test_the_pool_never_exceeds_its_worker_bound(self):
+        script = write_script(self.root, 'hold.py', PASS_SCRIPT)
+        table = self.table({name: script for name in ('alpha', 'beta', 'gamma', 'delta')})
+        lock = threading.Lock()
+        state = {'running': 0, 'peak': 0}
+
+        def tracked(name, command, log_path, environment):
+            with lock:
+                state['running'] += 1
+                state['peak'] = max(state['peak'], state['running'])
+            time.sleep(0.2)
+            with lock:
+                state['running'] -= 1
+            return {'name': name, 'seconds': 0.2, 'returncode': 0}
+
+        for jobs, expected_peak in (('2', 2), ('1', 1), ('0', 1)):
+            with self.subTest(jobs=jobs):
+                state.update(running=0, peak=0)
+                with unittest.mock.patch.dict(probes.PROBES, table, clear=True), \
+                        unittest.mock.patch.object(probes, 'run_probe', side_effect=tracked), \
+                        unittest.mock.patch('sys.argv', ['signalfish_native_probes.py'] + self.arguments(['--jobs', jobs])), \
+                        redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    exit_code = probes.main()
+                self.assertEqual(exit_code, 0)
+                self.assertEqual(state['peak'], expected_peak,
+                                 f'--jobs {jobs} must bound the wave at {expected_peak} overlapping probes')
+
+    def test_sigterm_handler_is_installed_for_the_wave(self):
+        table = self.table({'alpha': write_script(self.root, 'alpha.py', PASS_SCRIPT)})
+        installed = []
+        real_signal = probes.signal.signal
+
+        def record_signal(signum, handler):
+            installed.append((signum, handler))
+            if signum == probes.signal.SIGTERM:
+                return probes.signal.SIG_DFL
+            return real_signal(signum, handler)
+
+        with unittest.mock.patch.dict(probes.PROBES, table, clear=True), \
+                unittest.mock.patch.object(probes.signal, 'signal', side_effect=record_signal), \
+                unittest.mock.patch('sys.argv', ['signalfish_native_probes.py'] + self.arguments()), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            probes.main()
+        signums = [signum for signum, _ in installed]
+        self.assertIn(probes.signal.SIGTERM, signums, 'the wave must install its SIGTERM fence')
+        self.assertIn(probes._on_terminate, [handler for _, handler in installed])
 
     def test_abort_active_groups_kills_every_registered_group(self):
         killed = []

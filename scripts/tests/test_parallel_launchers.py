@@ -182,6 +182,46 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
             parallel_launchers._abort.clear()
         self.assertEqual(killed, [4242], 'interruption did not terminate the active launcher group')
 
+    def test_a_fenced_run_launcher_refuses_to_launch(self):
+        parallel_launchers._abort.set()
+        self.addCleanup(parallel_launchers._abort.clear)
+        log = self.results / 'launcher-refused.log'
+        result = parallel_launchers.run_launcher('refused', ['sleep', '30'], log, 0)
+        self.assertEqual(result['returncode'], 1, 'a fenced launcher is a failed launcher')
+        self.assertFalse(log.exists(), 'a fenced launcher must not start its command')
+
+    def test_sigterm_fences_and_exits_like_an_interrupt(self):
+        real_kill = parallel_launchers.kill_group
+        killed = []
+
+        def record_and_kill(pid):
+            killed.append(pid)
+            real_kill(pid)
+
+        script_path = write_script(self.root, 'sleeper.py', 'import time\ntime.sleep(30)\n')
+        log = self.results / 'launcher-sigterm.log'
+        began = time.monotonic()
+        worker = threading.Thread(target=parallel_launchers.run_launcher,
+                                  args=('sleeper', [sys.executable, str(script_path)], log, 0))
+        try:
+            worker.start()
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                with parallel_launchers._active_lock:
+                    if any(handle['pid'] is not None for handle in parallel_launchers._active_handles):
+                        break
+                time.sleep(0.02)
+            with unittest.mock.patch.object(parallel_launchers, 'kill_group', side_effect=record_and_kill):
+                with self.assertRaises(SystemExit) as raised:
+                    parallel_launchers._on_terminate(15, None)
+            worker.join(10)
+        finally:
+            parallel_launchers._abort.clear()
+        self.assertFalse(worker.is_alive(), 'the fenced launcher must end promptly after SIGTERM')
+        self.assertEqual(raised.exception.code, 143, 'SIGTERM must exit like a terminated shell command')
+        self.assertLess(time.monotonic() - began, 15, 'the SIGTERM fence must not wait out the engine')
+        self.assertEqual(len(killed), 1, 'the SIGTERM fence must kill the registered group')
+
     def test_a_launcher_spawned_into_an_abort_kills_its_own_group(self):
         real_kill = parallel_launchers.kill_group
         killed = []
@@ -193,22 +233,53 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         real_popen = parallel_launchers.subprocess.Popen
 
         def popen_then_abort(command, **kwargs):
-            # Abort lands in the spawn-to-registration window the fence owns.
+            # Abort lands in the spawn-to-registration window the fence owns,
+            # after the leader has forked its engine stand-in and recorded it.
             process = real_popen(command, **kwargs)
+            deadline = time.time() + 5
+            while not (self.root / 'engine-descendant-pid').exists() and time.time() < deadline:
+                time.sleep(0.01)
             parallel_launchers._abort.set()
             return process
 
+        leader_script = (
+            "import os, time, pathlib\n"
+            "child = os.fork()\n"
+            "if child == 0:\n"
+            "    time.sleep(30)\n"
+            "    os._exit(0)\n"
+            f"pathlib.Path({str(self.root / 'engine-descendant-pid')!r}).write_text(str(child))\n"
+            "time.sleep(30)\n"
+        )
+        script_path = write_script(self.root, 'leader.py', leader_script)
         log = self.results / 'launcher-sleeper.log'
         try:
             with unittest.mock.patch.object(parallel_launchers.subprocess, 'Popen', side_effect=popen_then_abort), \
                     unittest.mock.patch.object(parallel_launchers, 'kill_group', side_effect=record_and_kill):
                 began = time.monotonic()
-                result = parallel_launchers.run_launcher('sleeper', ['sleep', '30'], log, 0)
+                result = parallel_launchers.run_launcher('sleeper', [sys.executable, str(script_path)], log, 0)
         finally:
             parallel_launchers._abort.clear()
         self.assertLess(time.monotonic() - began, 15, 'the spawned launcher must be killed, not waited out')
         self.assertEqual(result['returncode'], -9, 'SIGKILL to the launcher group must end the launcher')
         self.assertEqual(len(killed), 1, 'the spawn-window abort must kill its own group')
+        # The group kill is what protects engine children: the leader's forked
+        # descendant must die with the group, not only the leader itself. A
+        # freshly killed process can linger as a zombie until reaping, so a
+        # zombie counts as dead.
+        child_pid = int((self.root / 'engine-descendant-pid').read_text())
+        deadline = time.time() + 5
+
+        def dead(pid):
+            try:
+                fields = Path(f'/proc/{pid}/stat').read_text()
+                return fields.rsplit(')', 1)[1].split()[0] == 'Z'
+            except (OSError, IndexError):
+                return True
+
+        while time.time() < deadline and not dead(child_pid):
+            time.sleep(0.05)
+        self.assertTrue(dead(child_pid), 'a forked engine descendant survived the group kill')
 
     def test_missing_launcher_script_fails_the_run(self):
         table = {'ghost': str(self.root / 'absent.py')}
