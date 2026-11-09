@@ -551,6 +551,10 @@ func _inspection_lifetimes(context: RefCounted, scene: Node2D) -> void:
 	scene._demo.loop.session.terminate(Types.Code.DESYNC, frame)
 	scene._physics_process(1.0 / 60.0)
 	context.equal(scene._code, Types.Code.DESYNC, "paused physics observes the first terminal cause")
-	context.equal(scene._label.text.contains("STOPPED: code %d, failure frame %d" % [Types.Code.DESYNC, frame]), true, "externally stopped match identifies its exact cause")
+	context.equal(
+		scene._label.text.contains("STOPPED: %s (code %d, failure frame %d)" % [Types.reason_text(Types.Code.DESYNC), Types.Code.DESYNC, frame]),
+		true, "externally stopped match identifies its exact cause"
+	)
+	context.equal(scene._label.text.contains("state checksum mismatch"), true, "stopped match names its cause in plain language")
 	context.equal(scene._label.text.contains("PAUSED"), false, "terminated match does not claim resumable pause")
 	context.equal(scene._demo.tick_count, live_tick, "terminal status refresh never services the live match")

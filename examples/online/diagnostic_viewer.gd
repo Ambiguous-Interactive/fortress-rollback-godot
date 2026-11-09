@@ -125,7 +125,7 @@ func step() -> void:
 	if _code != Types.Code.OK:
 		is_playing = false
 		var failure: Dictionary = _player.report().failure
-		message = "Stopped at boundary %d: %s (code %d)." % [failure.get("frame", -1), failure.get("kind", "playback"), _code]
+		message = "Stopped at boundary %d: %s (%s, code %d)." % [failure.get("frame", -1), failure.get("kind", "playback"), Types.reason_text(_code), _code]
 	elif _player.is_complete():
 		_index += 1
 		is_playing = false

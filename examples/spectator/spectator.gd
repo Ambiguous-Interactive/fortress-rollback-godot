@@ -355,7 +355,7 @@ func _update_label() -> void:
 	for button: Button in _policy_controls.get_children():
 		button.disabled = _follow_live_button.disabled
 	if demo.host == null or demo.viewer == null:
-		_label.text = "Could not start: code %d" % _code
+		_label.text = "Could not start: %s (code %d)" % [Types.reason_text(_code), _code]
 		return
 	var state: String = "PAUSED" if demo.is_paused else "WATCHING"
 	var policy: PackedInt64Array = demo.viewer.playback_policy()

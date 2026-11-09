@@ -614,7 +614,7 @@ func _complete_message() -> String:
 
 
 func _failure_message(frame: int, code: int, expected: PackedByteArray, actual: PackedByteArray) -> String:
-	var text: String = "Replay stopped at frame %d (code %d)." % [frame, code]
+	var text: String = "Replay stopped at frame %d: %s (code %d)." % [frame, Types.reason_text(code), code]
 	if code in [Types.Code.CALLBACK_FAILED, Types.Code.SNAPSHOT_FAILED]:
 		var operations: Dictionary = {Types.Kind.SAVE: "saving state", Types.Kind.LOAD: "loading state", Types.Kind.ADVANCE: "simulating input"}
 		text += " Failed while %s." % operations.get(_player.failure_kind(), "processing game state")

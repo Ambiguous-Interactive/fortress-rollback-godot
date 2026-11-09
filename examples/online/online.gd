@@ -102,7 +102,7 @@ func _raise_input_delay() -> void:
 		return
 	_release_gameplay_focus()
 	var code: int = controller.game_match.raise_input_delay()
-	controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+	controller.message = "Input delay raised." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged: %s (code %d)." % [Lobby.Match.Types.reason_text(code), code]
 	_update_status()
 
 
@@ -111,7 +111,10 @@ func _apply_suggested_delay() -> void:
 		return
 	_release_gameplay_focus()
 	var code: int = controller.game_match.apply_suggested_delay()
-	controller.message = "Suggested input delay applied." if code == Lobby.Match.Types.Code.OK else "Input delay unchanged (code %d)." % code
+	controller.message = (
+		"Suggested input delay applied." if code == Lobby.Match.Types.Code.OK
+		else "Input delay unchanged: %s (code %d)." % [Lobby.Match.Types.reason_text(code), code]
+	)
 	_update_status()
 
 

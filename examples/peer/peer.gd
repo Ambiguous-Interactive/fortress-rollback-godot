@@ -179,11 +179,11 @@ func _update_label() -> void:
 			button.disabled = not _can_change_delay()
 		else:
 			button.disabled = not _can_configure_faults() or (action == "step" and not _is_paused)
-	_label.text = ("Two peer sessions | actual encoded bytes in this process | failure: %d\n"
+	_label.text = ("Two peer sessions | actual encoded bytes in this process | failure: %s\n"
 		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets | X: wrong game rules\n"
 		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s%s%s\n"
 		+ "Sent %d | Dropped %d | Delivered %d | Queued %d / 256") % [
-		_match.failure, str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
+		Peer.Types.reason_text(_match.failure), str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
 		" | 1/2: raise peer input delay" if _can_change_delay() else "", _delay_result,
 		_match.sent, _match.dropped, _match.delivered, _match.queued_packets()]
 	_label.text += "\nP: pause/resume | N: service one tick | " + ("PAUSED" if _is_paused else "RUNNING")
@@ -196,9 +196,9 @@ func _update_label() -> void:
 		_label.text += "\nPeer %d: %s | frame %d | confirmed %d | delay %d | ACK %d | pending %d | restores %d | stalls %d" % [
 			player + 1, network.state, session.status().current_frame, session.status().confirmed_frame, session.input_delay(player),
 			peer.last_acked_frame, peer.pending_frames, _match.games[player].restores, _match.stalls[player]]
-		_label.text += "\n  RTT %d ms | ahead %d | interrupted %s | event %s | terminal reason %d" % [
+		_label.text += "\n  RTT %d ms | ahead %d | interrupted %s | event %s | terminal reason: %s" % [
 			peer.get("round_trip_time_ms", 0), network.get("frames_ahead", 0), str(peer.get("interrupted", false)),
-			_match.latest_events[player].get("kind", "none"), session.status().reason]
+			_match.latest_events[player].get("kind", "none"), Peer.Types.reason_text(session.status().reason)]
 		var event: Dictionary = _match.latest_events[player]
 		if event.get("kind", "") == "desync_detected":
 			_label.text += " | mismatch frame %d" % event.frame
