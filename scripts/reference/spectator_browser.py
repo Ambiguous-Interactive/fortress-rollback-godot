@@ -103,9 +103,26 @@ def validate_no_acceptance(control):
 
 # The pinned engines' web HTTPRequest occasionally reports its own completed control POST as
 # net::ERR_ABORTED during result-phase bookkeeping, after the page consumed the HTTP 200 and
-# published its passing result. One exact, success-paired artifact per report is acknowledged;
-# every other request failure stays fatal.
-DISPOSAL_ABORT = {'path': '/done', 'method': 'POST', 'resourceType': 'fetch', 'failure': 'net::ERR_ABORTED', 'phase': 'result'}
+# published its result. Demonstrated on the page's /done and /viewer POSTs, paired with a
+# passing result and with an intended rejection. One exact, result-paired artifact per report
+# is acknowledged; every other request failure stays fatal.
+DISPOSAL_ABORT_PATHS = ('/done', '/viewer')
+DISPOSAL_ABORT = {'method': 'POST', 'resourceType': 'fetch', 'failure': 'net::ERR_ABORTED', 'phase': 'result'}
+
+
+def published_complete_result(result):
+    """True when the page published a complete decision beside which a disposal
+    abort is plausible: a passing result, or the demonstrated admission
+    rejection that refused the offered state. A page that failed a playback
+    step mid-run stays fatal; the zero-simulation evidence itself is enforced
+    separately from the browser report's own state."""
+    if not isinstance(result, dict) or type(result.get('passed')) is not bool:
+        return False
+    if result.get('errors') or []:
+        return False
+    if result['passed'] is True:
+        return True
+    return result.get('reason') == 'browser original-state or membership binding'
 
 
 def acknowledge_disposal_abort(browser, control):
@@ -119,10 +136,11 @@ def acknowledge_disposal_abort(browser, control):
     expected = {'origin': origin, **DISPOSAL_ABORT}
     if any(type(artifact.get(key)) is not type(value) or artifact.get(key) != value for key, value in expected.items()):
         return browser
+    if artifact.get('path') not in DISPOSAL_ABORT_PATHS:
+        return browser
     if browser.get('errors') != ['browser request failed']:
         return browser
-    result = browser.get('result')
-    if not isinstance(result, dict) or result.get('passed') is not True:
+    if not published_complete_result(browser.get('result')):
         return browser
     browser['requestFailures'] = []
     browser['errors'] = []
@@ -132,7 +150,7 @@ def acknowledge_disposal_abort(browser, control):
 
 def validate_fault(returncode, browser, host_alive, control, stderr=''):
     if (stderr or type(returncode) is not int or returncode != 1 or host_alive is not True or type(browser) is not dict
-            or browser.get('browser') != 'Chromium' or type(browser.get('version')) is not str or not browser['version']
+        or browser.get('browser') != 'Chromium' or type(browser.get('version')) is not str or not browser['version']
             or browser.get('errors') != [] or type(browser.get('result')) is not dict):
         raise ValueError('exported admission control did not reach its intended rejection')
     result = browser['result']
@@ -215,6 +233,7 @@ def _execute(engine, project, runtime, url, environment, output, control, fault=
             browser_output = process.stdout
             if fault in ['initial-state', 'room-identity']:
                 browser = json.loads(browser_output)
+                acknowledge_disposal_abort(browser, control)
                 validate_fault(process.returncode, browser, host.poll() is None, control, process.stderr)
                 return {'fault': fault, 'rejected': True, 'viewer': browser}
             if process.returncode != 0 or process.stderr:

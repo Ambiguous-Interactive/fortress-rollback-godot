@@ -4,6 +4,10 @@
 
 ### Improved
 
+- Acknowledge the spectator pages' own completed `/viewer` control POST beside an intended admission rejection as the same `net::ERR_ABORTED` result-phase disposal artifact already acknowledged beside a passing `/done` result, and run the acknowledgment in the admission-rejection cells. The pairing still requires exactly one origin-bound result-phase artifact, no runner failure, a page-level error-free report, and either a passing page or the demonstrated refused-state decision with zero simulations; a page that failed a playback step mid-run stays fatal. This repairs the merge-triggered `initial-state` witness failure on main.
+
+- Capture each repository-harness command's output in the devcontainer verification and print its tail when the check rejects the environment, so a failing check names its own failure instead of leaving the rejection to blind reproduction.
+
 - Overlap the online leg's seven native probes (relay witness, native spectator witness, two departure cells and three late-signal cells) in one bounded two-worker wave with fail-closed aggregation, cutting the Reference Baseline wall-time critical path. The host-capacity lease is held once for the whole wave and the probe children inherit it, so no two probe processes contend; every probe keeps its exact command, watchdogs and output paths, the six browser-viewer cells stay serial, and every failure still names its own log without masking a sibling.
 
 - Acknowledge exactly one success-paired disposal artifact in the exported spectator witness: the viewer page's own completed `/done` control POST that the pinned web transport reports as `net::ERR_ABORTED` during result-phase bookkeeping. The observation stays in the receipt under `acknowledged_disposal_abort`, the pairing requires the page's passing result and the exact six-field failure identity, and every other browser request failure stays fatal. This ends the intermittent host-departure witness failure that issue #322 diagnosed.
