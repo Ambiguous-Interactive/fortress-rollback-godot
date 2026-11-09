@@ -409,17 +409,23 @@ class OwnershipRejectionFixture(unittest.TestCase):
             self.assertEqual(len(logs), len(set(logs)), 'each native batch keeps its own log')
             groups = [json.loads(command[3]) for command, log, timeout in browser_calls]
             suites = sorted(expected_suites)
-            batch_size = 1 if selected == 'firefox' else 4
             expected_groups = []
             expected_cases = []
-            for offset in range(0, len(suites), batch_size):
-                group = suites[offset:offset + batch_size]
-                if selected == 'firefox' and group == ['res://tests/unit/test_driver_peer_parity.gd']:
-                    cases = [row['case'] for row in native_value(False)['records'] if row['suite'] == group[0]]
-                else:
-                    cases = [None]
-                expected_groups.extend([group] * len(cases))
-                expected_cases.extend(cases)
+            if selected == 'firefox':
+                # The faked native wave is fast, so every eligible neighbor pair
+                # shares one Firefox page; the peer-parity suite stays alone and
+                # keeps its exact per-case pages.
+                for group in probes.firefox_pages(suites, {suite: 0.0 for suite in suites}):
+                    if group == [probes.PEER_PARITY_SUITE]:
+                        cases = [row['case'] for row in native_value(False)['records'] if row['suite'] == group[0]]
+                    else:
+                        cases = [None]
+                    expected_groups.extend([group] * len(cases))
+                    expected_cases.extend(cases)
+            else:
+                for offset in range(0, len(suites), 4):
+                    expected_groups.append(suites[offset:offset + 4])
+                    expected_cases.append(None)
             self.assertEqual(groups, expected_groups * round_count)
             self.assertEqual([command[4] if len(command) == 5 else None for command, log, timeout in browser_calls], expected_cases * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))

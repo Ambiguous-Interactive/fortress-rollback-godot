@@ -89,6 +89,33 @@ class ChooserMutationTests(unittest.TestCase):
 
 
 class OwnershipBatchTests(unittest.TestCase):
+    # Value: protects=Firefox pages stay inside the hosted page deadline (#224); fails_when=a page
+    # combines unmeasured, over-budget or peer-parity work; why_new=whole-run tests use fast fakes; seam=none
+    def test_firefox_pages_pair_neighbors_only_inside_the_measured_budget(self):
+        a, b, c, d, heavy = (f'res://tests/unit/test_suite_{name}.gd' for name in ('a', 'b', 'c', 'd', 'heavy'))
+        parity = probes.PEER_PARITY_SUITE
+        cases = [
+            # (native seconds, ordered suites, expected pages)
+            ({a: 5.0, b: 5.0, c: 5.0, d: 5.0}, [a, b, c, d], [[a, b], [c, d]]),
+            ({a: 16.0, b: 16.0, c: 5.0, d: 5.0}, [a, b, c, d], [[a], [b, c], [d]]),
+            ({a: 5.0, d: 5.0}, [a, b, c, d], [[a], [b], [c], [d]]),
+            ({a: 5.0, b: 5.0, c: 5.0}, [a, parity, b, c], [[a], [parity], [b, c]]),
+            ({a: 5.0, b: 5.0, c: 5.0}, [parity, a, b, c], [[parity], [a, b], [c]]),
+            ({a: 5.0, b: 5.0}, [a, b], [[a, b]]),
+            ({a: 5.0}, [a], [[a]]),
+        ]
+        for native_seconds, ordered, expected in cases:
+            with self.subTest(ordered=ordered):
+                self.assertEqual(probes.firefox_pages(ordered, native_seconds), expected)
+        with self.subTest(budget='explicit'):
+            self.assertEqual(probes.firefox_pages([a, b], {a: 9.0, b: 9.0}, budget=20.0), [[a, b]])
+            self.assertEqual(probes.firefox_pages([a, b], {a: 11.0, b: 11.0}, budget=20.0), [[a], [b]])
+        # Every grouped plan preserves the exact suite order without loss or repetition.
+        inventory = sorted(probes.EXPECTED)
+        pages = probes.firefox_pages(inventory, {suite: 0.0 for suite in inventory})
+        self.assertEqual([suite for page in pages for suite in page], inventory)
+        self.assertTrue(all(len(page) <= 2 and page != [probes.PEER_PARITY_SUITE, inventory[0]] for page in pages))
+
     # Value: protects=case pages retain the full native suite and order; fails_when=pages lose, repeat or alter evidence; why_new=suite-only aggregation; seam=none
     def test_case_pages_reassemble_exact_native_order_and_reject_incomplete_evidence(self):
         suite = 'res://tests/unit/test_driver_peer_parity.gd'

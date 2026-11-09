@@ -145,6 +145,11 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: "26.12.1"
+          # The browser tooling is reinstall per job; a shared npm download cache
+          # keeps `npm ci` off the registry on the warm path without changing
+          # what is installed.
+          cache: npm
+          cache-dependency-path: scripts/reference/browser/package-lock.json
       - name: Restore verified reference downloads
         uses: actions/cache@v6.1.0
         with:
@@ -214,6 +219,8 @@ jobs:
         if: matrix.part == 'suites'
         with:
           node-version: "26.12.1"
+          cache: npm
+          cache-dependency-path: scripts/reference/browser/package-lock.json
       - name: Select Ubuntu HTTPS mirror alternatives
         run: sudo bash scripts/reference/prepare_ubuntu_apt.sh /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt
       - name: Select Java 17 for scoped model checking
@@ -354,6 +361,8 @@ jobs:
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: "26.12.1"
+          cache: npm
+          cache-dependency-path: scripts/reference/browser/package-lock.json
       - name: Restore verified transport downloads and crates
         uses: actions/cache@v6.1.0
         with:
