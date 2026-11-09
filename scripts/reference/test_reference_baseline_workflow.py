@@ -1,10 +1,12 @@
 """Value: keep the exported web probes on one leg without losing a check from either leg."""
+import importlib.util
 import re
 import unittest
 from pathlib import Path
 
 
 WORKFLOW = Path(__file__).resolve().parents[2] / '.github/workflows/reference-baseline.yml'
+ROOT = Path(__file__).resolve().parents[2]
 
 # The checks each matrix leg must keep, in the order the workflow runs them.
 SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_package_audit.py',
@@ -124,6 +126,8 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
     # Value: protects=both shard legs keep the whole unit inventory exactly once; fails_when=a shard drops or repeats suites; seam=workflow text and runner selector
     def test_the_test_shards_cover_the_whole_unit_inventory_exactly_once(self):
         text = WORKFLOW.read_text(encoding='utf-8')
+        block = job_blocks(text)['godot']
+        self.assertIn('part: [suites, oracles, tests-1of2, tests-2of2]', '\n'.join(block))
         shard_steps = [step for step in godot_steps(text) if '--shard "$shard"' in command(step)]
         self.assertEqual(len(shard_steps), 1)
         self.assertEqual(shard_steps[0]['attributes'].get('if'), "startsWith(matrix.part, 'tests')")
@@ -131,19 +135,20 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertIn('--results ".cache/tests/runner-$version-$part.json"', command(shard_steps[0]))
         self.assertIn('--category integration', command(shard_steps[0]))
         self.assertIn('--category determinism', command(shard_steps[0]))
-        # The runner's interleave must tile the discovered inventory: the two declared
-        # shards union to every suite, and no suite lands in both.
-        namespace = {'__name__': 'runner_under_test', '__file__': str(Path(__file__).resolve().parents[2] / 'scripts/run_godot_tests.py')}
-        runner = Path(namespace['__file__']).read_text(encoding='utf-8')
-        exec(compile(runner, namespace['__file__'], 'exec'), namespace)
-        suites = namespace['discover']('unit')
-        first = namespace['select_shard'](suites, '1of2')
-        second = namespace['select_shard'](suites, '2of2')
+        # Integration and determinism run on the declared last shard only; a shard
+        # count change must move this literal with the matrix.
+        self.assertIn('[[ "$shard" == 2of2 ]]', command(shard_steps[0]))
+        runner = importlib.util.spec_from_file_location('run_godot_tests_under_test', ROOT / 'scripts/run_godot_tests.py')
+        module = importlib.util.module_from_spec(runner)
+        runner.loader.exec_module(module)
+        suites = module.discover('unit')
+        first = module.select_shard(suites, '1of2')
+        second = module.select_shard(suites, '2of2')
         self.assertEqual(sorted(first + second), suites)
         self.assertEqual(set(first) & set(second), set())
         for invalid in ('0/2', '1/', '3/2', 'x/y', '1/2', '0of2', '3of2'):
             with self.subTest(shard=invalid), self.assertRaises(ValueError):
-                namespace['select_shard'](suites, invalid)
+                module.select_shard(suites, invalid)
 
     # Value: protects=every check of all legs; fails_when=a leg loses native work; seam=workflow text
     def test_every_leg_keeps_its_own_checks(self):
@@ -155,11 +160,10 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         for check in ORACLES_CHECKS:
             with self.subTest(check=check):
                 self.assertIn(check, oracles)
-        for part in ('tests-1of2', 'tests-2of2'):
-            with self.subTest(part=part):
-                tests = shared_leg_commands(text, "startsWith(matrix.part, 'tests')")
-                for check in TESTS_CHECKS:
-                    self.assertIn(check, tests)
+        tests = shared_leg_commands(text, "startsWith(matrix.part, 'tests')")
+        for check in TESTS_CHECKS:
+            with self.subTest(check=check):
+                self.assertIn(check, tests)
         runner = RUNNER.read_text(encoding='utf-8')
         namespace = {'__name__': 'parallel_launchers_under_test', '__file__': str(RUNNER)}
         exec(compile(runner, str(RUNNER), 'exec'), namespace)

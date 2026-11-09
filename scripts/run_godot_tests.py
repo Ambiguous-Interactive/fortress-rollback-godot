@@ -747,6 +747,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.shard:
         # A shard only covers a whole discovered inventory: filtered or hand-picked
         # selections would silently lose coverage across the parallel CI jobs.
+        # This pre-check validates arguments on the live tree; execute() applies
+        # the real selection to the private source snapshot it runs.
         if args.category != "unit" or args.suite or args.filter or args.changed:
             parser.error("--shard selects the whole unit inventory itself")
         if len(select_shard(discover("unit"), args.shard)) == 0:

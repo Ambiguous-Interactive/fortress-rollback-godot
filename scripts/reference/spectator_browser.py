@@ -118,7 +118,10 @@ def validate_fault(returncode, browser, host_alive, control, stderr=''):
 def bounded_tail(path, limit=2048):
     """A bounded log tail so a failed cell names its evidence in the step output."""
     try:
-        return path.read_text(encoding='utf-8', errors='replace')[-limit:]
+        with path.open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(stream.tell() - limit * 4, 0))
+            return stream.read(limit * 4).decode('utf-8', errors='replace')[-limit:]
     except OSError:
         return ''
 
@@ -133,9 +136,9 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
     try:
         return _execute(engine, project, runtime, url, environment, output, control, fault, acceptance_delay_ms)
     except ValueError as failure:
-        native = bounded_tail(output / 'native.log')
-        raise ValueError(f'{failure}; browser.log tail: {bounded_tail(output / "browser.log")!r}; '
-                         f'native.log tail: {native!r}') from None
+        browser = repr(bounded_tail(output / 'browser.log'))[:2048]
+        native = repr(bounded_tail(output / 'native.log'))[:2048]
+        raise ValueError(f'{failure}; browser.log tail: {browser}; native.log tail: {native}') from failure
 
 
 def _execute(engine, project, runtime, url, environment, output, control, fault=None, acceptance_delay_ms=None):

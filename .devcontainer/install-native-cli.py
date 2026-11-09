@@ -55,8 +55,26 @@ class Installer:
         except subprocess.TimeoutExpired as failure:
             # Preserve the first attempt's diagnostics even when the process tree
             # hangs, in the order npm produced them, without registry credentials.
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            stdout, stderr = process.communicate()
+            # start_new_session made the group id equal the child's pid, and the
+            # group may already be gone, which must not replace this diagnostic.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # A descendant that escaped the group (setsid) can still hold the
+                # pipes open; this build is failing anyway, so end the wait and
+                # report the phase with whatever was collected.
+                process.kill()
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.stdout.close()
+                    if process.stderr:
+                        process.stderr.close()
+                    stdout, stderr = '', ''
             text = (stdout or '') + (stderr or '')
             if text:
                 print(redact_query_strings(text), end='', file=sys.stderr)

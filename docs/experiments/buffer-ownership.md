@@ -76,8 +76,8 @@ checked before the full native/Web results are compared; missing or duplicate
 batches cannot qualify. Receipts declare the selected engine versions.
 The default command runs both pins;
 `--version 4.3` or `--version 4.7.2` runs both control rounds for one pin.
-CI keeps both Chromium jobs and runs each Firefox pin/control phase in its own
-job under the existing 30-minute budget. Both Firefox phases are required on each pin. Each selection runs the same complete case
+CI keeps the Chromium ownership jobs and runs each browser pin/control phase in its own
+job per suite part under the existing 30-minute budget. Both Firefox phases are required on each pin. Each selection runs the same complete case
 inventory, native comparison and negative controls; it does not filter replay,
 driver or spectator coverage. Firefox output additionally records its WebGL
 preferences and checked window geometry.
@@ -91,7 +91,7 @@ inventory and repeat the ownership-control suite in all four parts. Their union
 covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py); only the four control cases overlap.
 Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
-inventory. Both parts and both phases must pass for full qualification.
+inventory. All four parts and both phases must pass for full qualification.
 Omitting `--suite-part` keeps the complete inventory.
 Owned browser contexts close before their parent process. Full Firefox shutdown
 also runs the destructor that removes late updater locks; exit code zero alone

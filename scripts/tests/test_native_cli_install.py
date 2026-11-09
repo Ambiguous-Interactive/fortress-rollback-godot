@@ -111,30 +111,35 @@ class NativeCliInstallTests(unittest.TestCase):
                             self.command = command
                             self.current = phase_of(command)
                             self.returncode = 42 if self.current == phase and not timeout else 0
+                            self.communicate_calls = 0
+                            self.stdout = io.StringIO()
+                            self.stderr = io.StringIO()
                             calls.append(options)
+
+                        def kill(self):
+                            pass
+
                         def communicate(self, **options):
                             bounded = options.get('timeout')
                             if self.current != phase:
                                 if self.current == 'runtime version':
                                     return 'runtime', ''
                                 return metadata(self.command), ''
-                            if bounded is not None and timeout:
+                            self.communicate_calls += 1
+                            if self.current == phase and bounded and self.communicate_calls == 1 and timeout:
                                 raise subprocess.TimeoutExpired(
                                     self.command, bounded,
                                     output=b'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n',
                                     stderr=b'partial stderr\n')
-                            if bounded is not None:
-                                return 'partial stdout\n', 'partial stderr\n'
                             # The post-kill collect returns the retained partial evidence.
                             return 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n', 'partial stderr\n'
 
                     args = SimpleNamespace(timeout=600, package='@opencode/cli', arch='arm64', attempts=3, interval=0)
                     stdout, stderr = io.StringIO(), io.StringIO()
-                    # The killed group lookup stays out of unit scope; the real process
-                    # group behavior is covered by the live child test below.
+                    # The pid doubles as the group id (start_new_session); the real
+                    # process group behavior is covered by the live child test below.
                     with patch.object(helper.time, 'monotonic', return_value=10), \
                             patch.object(helper.subprocess, 'Popen', FakePopen), \
-                            patch.object(helper.os, 'getpgid', return_value=4321), \
                             patch.object(helper.os, 'killpg') as killpg, \
                             patch.object(helper.Path, 'read_text', return_value='{"version":"2.0.30"}'), \
                             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -156,21 +161,34 @@ class NativeCliInstallTests(unittest.TestCase):
 
     def test_timeout_ends_the_process_group_and_preserves_partial_output(self):
         # Value: a hung wrapper postinstall must not hide the partial npm evidence or
-        # hang the launcher: the whole group dies, and the pipes reach EOF immediately.
+        # hang the launcher: the whole group dies — the printed grandchild's exit
+        # proves the kill reached the descendants, not just the direct child — and
+        # the pipes reach EOF immediately.
         # fails_when=the timeout kills only the direct child; a surviving grandchild
         # holds the pipe until its own exit, which delays this test far past its bound.
         helper = self.load_helper()
-        script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
-                  "sh -c 'sleep 60' & sleep 60")
-        args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
-        stderr = io.StringIO()
-        started = time.monotonic()
-        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
-                helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
-        self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
-        self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
-        self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / 'grandchild.pid'
+            script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                      f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
+            args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+            stderr = io.StringIO()
+            started = time.monotonic()
+            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
+                    helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
+            self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
+            self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
+            self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+            # A killed process can stay a zombie briefly; poll for its removal.
+            for _ in range(50):
+                try:
+                    os.kill(int(pid_file.read_text()), 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('the grandchild pipe holder survived the group kill')
 
     def invoke(self, package='@opencode/cli', arch='amd64', **scenario):
         with tempfile.TemporaryDirectory() as directory:
