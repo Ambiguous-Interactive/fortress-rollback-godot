@@ -751,8 +751,15 @@ def main(argv: list[str] | None = None) -> int:
         # the real selection to the private source snapshot it runs.
         if args.category != "unit" or args.suite or args.filter or args.changed:
             parser.error("--shard selects the whole unit inventory itself")
-        if len(select_shard(discover("unit"), args.shard)) == 0:
-            parser.error("shard selects no suite")
+        if args.jobs < 2:
+            # The single-process shard command passes whole suites, so a shard
+            # argument would be ignored and every suite would run in each leg.
+            parser.error("--shard requires parallel jobs")
+        try:
+            if len(select_shard(discover("unit"), args.shard)) == 0:
+                parser.error("shard selects no suite")
+        except ValueError as failure:
+            parser.error(str(failure))
     if args.changed and args.suite:
         parser.error("--changed selects suites itself")
     # Supersede prior success before any external executable gets control.

@@ -136,8 +136,8 @@ class OwnershipBatchTests(unittest.TestCase):
             with self.subTest(part=part), self.assertRaises(ValueError):
                 probes.select_suites(part)
 
-    # Value: protects=Chromium CI retains every declared partition and phase; fails_when=matrix drops
-    # a phase or part or command ignores selection; why_new=per-phase Chromium jobs match Firefox; seam=none
+    # Value: protects=CI retains every declared partition and phase for both browsers; fails_when=matrix drops
+    # a phase or part or command ignores selection; why_new=per-phase jobs match across browsers; seam=none
     def test_chromium_ci_declares_both_parts_and_passes_the_selector(self):
         workflow = (probes.ROOT / '.github/workflows/reference-baseline.yml').read_text()
         pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([1-4])", '
@@ -148,6 +148,13 @@ class OwnershipBatchTests(unittest.TestCase):
                     for phase in ('negative', 'positive') for part in ('1', '2', '3', '4')}
         self.assertEqual(set(rows), expected)
         self.assertEqual(len(rows), 16)
+        # The Firefox rows carry the same partition and phase coverage with the
+        # compact part suffix; dropping one must fail the contract like Chromium.
+        firefox = re.findall(r'version: "([^"]+)", browser: firefox, phase: (negative|positive), suite_part: "([1-4])", '
+                             r'suffix: " (negative|positive) part ([1-4])", part_suffix: "-part-[1-4]"', workflow)
+        self.assertEqual({row[:5] for row in firefox}, {(version, phase, part, phase, part)
+                                                        for version, phase, part, _, _, _ in expected})
+        self.assertEqual(len(firefox), 16)
         command = workflow.split('          else\n            python3 scripts/reference/ownership_probes.py', 1)[1].split('          fi', 1)[0]
         self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"', command)
         self.assertIn("matrix.part_suffix", workflow)

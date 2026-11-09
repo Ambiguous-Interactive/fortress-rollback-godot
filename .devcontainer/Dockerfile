@@ -31,7 +31,13 @@ ARG NODE_VERSION=26.12.1
 # python3 must be the FULL package: the base image ships none, and features
 # install only python3-minimal, which lacks stdlib modules (json, unittest,
 # dataclasses) that this repo's harness requires.
-RUN apt-get update \
+# The image ships plain-HTTP Ubuntu sources, and GitHub-hosted x64 runners
+# intermittently cannot reach archive.ubuntu.com:80 while the trusted HTTPS
+# mirrors the reference workflow already selects keep working, so the same
+# HTTPS hosts are selected here before the first acquisition.
+RUN sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; s|http://security\.ubuntu\.com|https://security.ubuntu.com|g' /etc/apt/sources.list.d/ubuntu.sources \
+    && grep -q 'https://archive.ubuntu.com/ubuntu/' /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \
         fd-find \
