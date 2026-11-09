@@ -233,7 +233,7 @@ func _tick(now_us: int, buttons: int) -> void:
 		elif result.code in [Types.Code.PREDICTION_STALL, Types.Code.NETWORK_BACKPRESSURE]:
 			stalls += 1
 		else:
-			failure = "Game stopped (%d). Leave and create a new room." % result.code
+			failure = "Game stopped: %s (code %d). Leave and create a new room." % [Types.reason_text(result.code), result.code]
 		if failure.is_empty():
 			_service(now_us)
 	if has_started:
@@ -280,7 +280,8 @@ func _finish_replay_boundary(now_us: int) -> void:
 		replay_captured = replay_capture_code == Types.Code.OK
 		has_recorded_replay = has_recorded_replay or replay_captured or (peer.replay() != null and peer.replay().frame_count() > 0)
 	if peer.status().lifecycle == Types.Lifecycle.TERMINATED:
-		failure = "Final replay state could not be captured (%d). Download the available replay before leaving." % peer.status().reason
+		failure = "Final replay state could not be captured: %s (code %d). Download the available replay before leaving." % [
+			Types.reason_text(peer.status().reason), peer.status().reason]
 	if failure.is_empty():
 		_service(now_us)
 
@@ -336,7 +337,7 @@ func _collect_events() -> void:
 	if suggested_delay <= peer.input_delay(local_slot) or peer.status().current_frame - suggested_frame > SUGGESTION_FRAMES:
 		suggested_delay = -1
 	if peer.status().lifecycle == Types.Lifecycle.TERMINATED and failure.is_empty():
-		failure = "Session ended (%d). Leave and create a new room." % peer.status().reason
+		failure = "Session ended: %s (code %d). Leave and create a new room." % [Types.reason_text(peer.status().reason), peer.status().reason]
 
 
 func _service(now_us: int) -> bool:

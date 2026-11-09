@@ -446,7 +446,7 @@ func _stop_reason(status: Types.Status) -> String:
 		Types.Code.STALE_REQUEST: "playback request expired",
 		Types.Code.EXPIRED_VIEW: "playback request expired",
 	}
-	return reasons.get(status.reason, "code %d" % status.reason)
+	return reasons.get(status.reason, Types.reason_text(status.reason))
 
 
 func _recording_feedback() -> String:

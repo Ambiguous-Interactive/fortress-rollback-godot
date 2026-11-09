@@ -270,7 +270,8 @@ func _update_status() -> void:
 			elif game.replay_capture_code in [Lobby.Match.Types.Code.PREDICTION_STALL, Lobby.Match.Types.Code.NETWORK_BACKPRESSURE]:
 				_status.text += "\nFinishing replay: waiting for confirmed inputs and correction."
 			else:
-				_status.text += "\nFinal-state evidence unavailable (%d). Download retains historical checksum coverage." % game.replay_capture_code
+				_status.text += "\nFinal-state evidence unavailable: %s (code %d)." % [
+					Lobby.Match.Types.reason_text(game.replay_capture_code), game.replay_capture_code]
 		var counts: Lobby.Match.Types.Statistics = game.peer.statistics()
 		_status.text += (
 			"\nRollbacks: %d | max depth: %d | replayed frames: %d | relay links: %d"
@@ -304,7 +305,10 @@ func _export_diagnostics() -> void:
 
 func _finish_replay() -> void:
 	var code: int = controller.game_match.finish_replay()
-	_replay_notice = "Gameplay stopped while final replay inputs settle." if code == Lobby.Match.Types.Code.OK else "Could not finish replay (%d)." % code
+	_replay_notice = (
+		"Gameplay stopped while final replay inputs settle." if code == Lobby.Match.Types.Code.OK
+		else "Could not finish replay: %s (code %d)." % [Lobby.Match.Types.reason_text(code), code]
+	)
 	_update_status()
 
 

@@ -156,7 +156,8 @@ func restart() -> void:
 	var snapshot_bytes: int = IntegrationGame.SNAPSHOT_BYTES if is_integration_game() else Simulation.SNAPSHOT_BYTES
 	var code: int = _player.configure(_recording, game, snapshot_bytes, 300, 121)
 	is_playing = false
-	message = "Ready. Press Play; recorded checksums are validated." if code == Types.Code.OK else "Could not start playback (%d)." % code
+	var started: bool = code == Types.Code.OK
+	message = "Ready. Press Play; recorded checksums are validated." if started else "Could not start playback: %s (code %d)." % [Types.reason_text(code), code]
 	if code == Types.Code.OK and _recorded_checksums.is_empty():
 		message = "Ready. Press Play; this recording has no checksums."
 

@@ -728,8 +728,8 @@ Selected replay ranges also repeat through bounded validated navigation, checkin
 The effects example can stop sampling and confirm its final tail before replaying the complete match.
 Effects-match service and replay playback pause on application focus loss and require explicit resume; selected replay seeks finish paused.
 The local spectator can freeze host, delivery and viewing together, including on focus loss, with explicit resume.
-Every example stop label names its terminal cause in plain language through the shared session reason text,
-keeping the numeric code for tooling.
+Every example stop label names its terminal cause in plain language through the shared session reason text
+(the peer example names its protocol packet failures locally), keeping the numeric code for tooling.
 These client controls do not close the broader driver equivalence, spectator live acceptance or replay source-parity gates.
 
 ## Upstream tracking and upgrades

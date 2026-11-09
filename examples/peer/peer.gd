@@ -106,13 +106,13 @@ func _apply_action(action: String) -> void:
 			return
 		var player: int = 0 if action == "delay_first" else 1
 		var code: int = _match.raise_input_delay(player)
-		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged (code %d)" % [player + 1, code]
+		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d delay unchanged: %s (code %d)" % [player + 1, Peer.Types.reason_text(code), code]
 	elif action in ["suggest_first", "suggest_second"]:
 		var player: int = 0 if action == "suggest_first" else 1
 		if not _can_change_delay() or _match.suggested_input_delay(player) < 0:
 			return
 		var code: int = _match.apply_suggested_delay(player)
-		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d suggestion unchanged (code %d)" % [player + 1, code]
+		_delay_result = "" if code == Peer.Types.Code.OK else " | peer %d suggestion unchanged: %s (code %d)" % [player + 1, Peer.Types.reason_text(code), code]
 	elif action == "desync":
 		if _can_change_delay():
 			_match.inject_desync()
@@ -136,6 +136,43 @@ func _can_configure_faults() -> bool:
 		if session.status().lifecycle != Peer.Types.Lifecycle.RUNNING:
 			return false
 	return true
+
+
+## Plain-language name for the peer match's protocol-level failure. The endpoint
+## enum is separate from session reasons, so it keeps its own local wording;
+## unknown codes stay numeric.
+func _endpoint_failure_text(code: int) -> String:
+	match code:
+		Match.I.Code.OK:
+			return "none"
+		Match.I.Code.INVALID_ARGUMENT:
+			return "invalid call"
+		Match.I.Code.WRONG_STATE:
+			return "unexpected transport state"
+		Match.I.Code.INVALID_PACKET:
+			return "malformed packet"
+		Match.I.Code.WRONG_SOURCE:
+			return "packet from the wrong source"
+		Match.I.Code.WRONG_CONNECTION:
+			return "packet on the wrong connection"
+		Match.I.Code.UNSUPPORTED_KIND:
+			return "unsupported packet kind"
+		Match.I.Code.BACKPRESSURE:
+			return "blocked packets"
+		Match.I.Code.TOKEN_REUSED:
+			return "transport token reused"
+		Match.I.Code.BUSY:
+			return "waiting for packet service"
+		Match.I.Code.CONFLICT:
+			return "conflicting packet delivery"
+		Match.I.Code.INVALID_FRAME:
+			return "invalid frame"
+		Match.I.Code.INPUT_FAILED:
+			return "confirmed input failed"
+		Match.I.Code.TERMINATED:
+			return "session terminated"
+		_:
+			return "failure code %d" % code
 
 
 func _can_change_delay() -> bool:
@@ -183,7 +220,7 @@ func _update_label() -> void:
 		+ "WASD: player 1 | Arrows: player 2 | R: reset | Space: block packets | X: wrong game rules\n"
 		+ "L: loss (%s) | T: latency (%d ticks) | O: reorder (%s) | blocked: %s%s%s\n"
 		+ "Sent %d | Dropped %d | Delivered %d | Queued %d / 256") % [
-		Peer.Types.reason_text(_match.failure), str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
+		_endpoint_failure_text(_match.failure), str(_match.drop_every > 0), _match.latency_ticks, str(_match.reorder), str(_match.is_partitioned),
 		" | 1/2: raise peer input delay" if _can_change_delay() else "", _delay_result,
 		_match.sent, _match.dropped, _match.delivered, _match.queued_packets()]
 	_label.text += "\nP: pause/resume | N: service one tick | " + ("PAUSED" if _is_paused else "RUNNING")

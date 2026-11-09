@@ -3,10 +3,12 @@ extends RefCounted
 # Value: protects=plain-language terminal causes in every example label; fails_when=raw numeric codes reach users;
 # why_new=example scenes showed bare "code %d" for terminal reasons; seam=none
 const Types = preload("res://addons/fortress_rollback/core/session_types.gd")
+const Viewer = preload("res://examples/online/replay_viewer.gd")
+const PeerScene = preload("res://examples/peer/peer.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["known_reasons", "unknown_reasons", "scene_messages"])
+	return PackedStringArray(["known_reasons", "unknown_reasons", "scene_messages", "peer_failures"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -32,9 +34,26 @@ func _unknown_reasons(context: RefCounted) -> void:
 
 
 func _scene_messages(context: RefCounted) -> void:
-	var viewer: RefCounted = load("res://examples/online/replay_viewer.gd").new()
+	var viewer: Viewer = Viewer.new()
 	var message: String = viewer._failure_message(3, Types.Code.HISTORY_UNAVAILABLE, PackedByteArray(), PackedByteArray())
 	context.equal(message.contains("required history is no longer retained"), true, "replay stop names the missing history")
 	context.equal(message.contains("code %d" % Types.Code.HISTORY_UNAVAILABLE), true, "replay stop retains its code for tooling")
 	var corrupt: String = viewer._failure_message(5, Types.Code.DESYNC, PackedByteArray([1]), PackedByteArray([2]))
 	context.equal(corrupt.contains("state checksum mismatch"), true, "checksum stop names the failed comparison")
+
+
+## The peer example's failure line shows the protocol endpoint enum, which is a
+## different numeric space from session reasons, so it keeps its own wording.
+func _peer_failures(context: RefCounted) -> void:
+	var scene: PeerScene = PeerScene.new()
+	const Endpoint = PeerScene.Match.I
+	context.equal(scene._endpoint_failure_text(Endpoint.Code.OK), "none", "healthy peer match names no failure")
+	context.equal(scene._endpoint_failure_text(Endpoint.Code.INPUT_FAILED), "confirmed input failed", "peer input failure names its cause")
+	context.equal(scene._endpoint_failure_text(Endpoint.Code.BACKPRESSURE), "blocked packets", "blocked packets keep their injected-fault name")
+	context.equal(scene._endpoint_failure_text(Endpoint.Code.TERMINATED), "session terminated", "peer termination stays distinct from input failure")
+	for code: int in Endpoint.Code.values():
+		var text: String = scene._endpoint_failure_text(code)
+		context.equal(text.is_empty(), false, "endpoint code %d has readable text" % code)
+		context.equal(text.contains(str(code)), false, "endpoint code %d does not show its raw number" % code)
+	context.equal(scene._endpoint_failure_text(999), "failure code 999", "unknown endpoint codes keep their number")
+	scene.free()
