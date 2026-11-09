@@ -8,6 +8,10 @@
 
 - Stream npm lifecycle and registry-phase evidence during native CLI installation (`--foreground-scripts --loglevel=http`), so a hung global install localizes to wrapper postinstall versus registry acquisition on the next failure.
 
+- Run the oracle launchers (queue, development oracle, replay, handshake, p2p, drop history) in bounded parallel subprocesses with fail-closed aggregation in the oracles CI leg. Each launcher keeps its own interpreter, output directory and receipt; the shared pinned cargo target stays correct under cargo's own build lock.
+
+- Run each Chromium ownership phase as its own workflow job (negative/positive per engine pin and suite part), matching the Firefox matrix shape.
+
 - Bind the native test receipt to the on-disk Python helper bytes. The launcher digests its own script and every helper module it executes after they have loaded and before starting an engine, re-verifies them after execution and reports helper drift as a failed qualification instead of a stale success.
 
 - Run the oracle negative-control suite through the same bounded parallel subprocess runner as the reference suite. Oracle test files are now import-order independent, and the suite finishes in about 42s locally instead of 63s.
@@ -633,3 +637,5 @@
 - Prune stale scratch and superseded container caches on every container start, and report the repository cache without modifying it.
 
 - **Breaking**: Change exact endpoint byte budgets to reserve one extra local input frame for acknowledged-input recovery.
+
+- Stage the Python helpers a native test run executes into a private digest-verified image. Receipt `helper_sources` names each loaded module's own staged file, so it binds the bytes Python actually imported, including across repeat `main()` calls; the live tree stays an evidence input whose drift during the run still fails qualification as `helper_source_changed`, and the staged image itself fails as `helper_image_changed`.

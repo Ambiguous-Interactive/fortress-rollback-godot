@@ -10,9 +10,12 @@ WORKFLOW = Path(__file__).resolve().parents[2] / '.github/workflows/reference-ba
 SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_package_audit.py',
                  'scripts/reference/signalfish_probe.py', 'scripts/reference/test_godot_runner.py',
                  'scripts/run_godot_tests.py']
-ORACLES_CHECKS = ['scripts/oracle/queue_launch.py', 'scripts/oracle/launch.py', 'scripts/oracle/replay_launch.py',
-                  'scripts/oracle/handshake_launch.py', 'scripts/oracle/p2p_launch.py',
-                  'scripts/oracle/drop_history_launch.py', 'scripts/oracle/spectator_launch.py']
+ORACLES_CHECKS = ['scripts/oracle/parallel_launchers.py', 'scripts/oracle/spectator_launch.py']
+# The runner's table owns the six upstream comparisons; a dropped entry would silently
+# remove its launch from CI, so the table itself is pinned here.
+RUNNER_LAUNCHERS = ['queue_launch.py', 'launch.py', 'replay_launch.py',
+                    'handshake_launch.py', 'p2p_launch.py', 'drop_history_launch.py']
+RUNNER = Path(__file__).resolve().parents[2] / 'scripts/oracle/parallel_launchers.py'
 
 
 def job_blocks(text):
@@ -120,10 +123,23 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         for check in ORACLES_CHECKS:
             with self.subTest(check=check):
                 self.assertIn(check, oracles)
+        runner = RUNNER.read_text(encoding='utf-8')
+        namespace = {'__name__': 'parallel_launchers_under_test', '__file__': str(RUNNER)}
+        exec(compile(runner, str(RUNNER), 'exec'), namespace)
+        self.assertTrue(set(RUNNER_LAUNCHERS) <= set(namespace['LAUNCHERS'].values()),
+                        'the active launcher table dropped a pinned upstream comparison')
+        # The mutant comments out one launcher entry; the active table loses it and
+        # this validation detects the omission.
+        mutant = runner.replace("    'p2p': 'p2p_launch.py',", "    # 'p2p': 'p2p_launch.py',")
+        self.assertNotEqual(mutant, runner)
+        mutant_namespace = {'__name__': 'parallel_launchers_mutant', '__file__': str(RUNNER)}
+        exec(compile(mutant, str(RUNNER), 'exec'), mutant_namespace)
+        self.assertFalse(set(RUNNER_LAUNCHERS) <= set(mutant_namespace['LAUNCHERS'].values()))
         # The mutant drops the oracle trace comparison from the oracles leg.
-        mutant = text.replace('python3 scripts/oracle/launch.py', 'python3 scripts/oracle/launch_disabled.py')
+        mutant = text.replace('python3 scripts/oracle/parallel_launchers.py',
+                              'python3 scripts/oracle/parallel_launchers_disabled.py')
         self.assertNotEqual(mutant, text)
-        self.assertNotIn('scripts/oracle/launch.py', leg_commands(mutant, 'oracles'))
+        self.assertNotIn('scripts/oracle/parallel_launchers.py', leg_commands(mutant, 'oracles'))
 
     # Value: protects=the pinned engine of the oracle leg; fails_when=the oracle launchers lose it; seam=workflow text
     def test_the_oracle_leg_still_installs_the_pinned_engine(self):

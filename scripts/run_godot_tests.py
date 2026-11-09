@@ -12,23 +12,91 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import threading
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'reference'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from engine_path import resolve_engine  # noqa: E402
-import host_capacity  # noqa: E402
-from native_source_snapshot import SourceSnapshot  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-# The Python helpers this process actually executes beside the engine. Their bytes
-# qualify the receipt like the GDScript source image does: an intervening edit is
-# a failed qualification, not a stale success.
+# The Python helpers this process actually executes beside the engine. They run from a
+# private staged image (see _stage_helpers), so the bytes the receipt binds are the bytes
+# Python actually ran; the live tree stays an evidence input whose drift during the run
+# is a failed qualification, not a stale success.
 HELPERS = ('host_capacity.py', 'native_source_snapshot.py', 'changed_suites.py', 'reference/engine_path.py')
+# Where each staged helper's module ends up once imported; the module object's own
+# file is the executed bytes this receipt binds.
+HELPER_MODULES = {'host_capacity.py': 'host_capacity', 'native_source_snapshot.py': 'native_source_snapshot',
+                  'changed_suites.py': 'changed_suites', 'reference/engine_path.py': 'engine_path'}
+# Bound by _load_staged_helpers once main() has invalidated any earlier receipt, so a
+# staging or import failure cannot leave a stale passing receipt behind as evidence.
+_STAGED_DIGESTS: dict[str, str] = {}
+_STAGE_ROOT = Path(tempfile.gettempdir()) / 'fortress-helper-staging-unloaded'
+resolve_engine = None
+host_capacity = None
+SourceSnapshot = None
+
+
+def _stage_helpers() -> Path:
+    """Copy every helper this launcher executes into a private staged image.
+
+    The staged layout mirrors ``scripts/``, so each module's paths and defaults stay
+    valid, and the staged directories precede the live tree on ``sys.path`` so every
+    helper import resolves to the staged bytes. Each copied file's digest is captured
+    before any staged module is imported, so the receipt binds the bytes Python read
+    and a later capture can reject image drift; a live-tree edit inside the startup
+    window can no longer be misattributed to the executed bytes. The image lives for
+    the whole process — repeat ``main()`` calls re-read the same bytes their cached
+    modules executed — and disappears with the process's temporary directory.
+    """
+    source = Path(__file__).resolve().parent
+    staged = Path(tempfile.mkdtemp(prefix='fortress-helper-staging-'))
+    digests = {}
+    for name in ('run_godot_tests.py',) + HELPERS:
+        target = staged / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / name, target)
+        digests[name] = hashlib.sha256(target.read_bytes()).hexdigest()
+    sys.path.insert(0, str(staged / 'reference'))
+    sys.path.insert(0, str(staged))
+    global _STAGED_DIGESTS
+    _STAGED_DIGESTS = digests
+    return staged
+
+
+def _load_staged_helpers() -> None:
+    """Stage the helpers, then bind the staged helper modules into this namespace.
+
+    Called from main() only after any earlier receipt was invalidated, so a missing
+    or broken helper fails the selected run instead of surviving as apparent
+    evidence. Repeat main() calls keep their cached modules; their digests still
+    bind the executed bytes because the image lives for the whole process.
+    """
+    global _STAGE_ROOT, resolve_engine, host_capacity, SourceSnapshot
+    _STAGE_ROOT = _stage_helpers()
+    # A helper cached from the live tree by an embedding process would otherwise be
+    # reused here: the launcher must execute its staged image, so evict any cached
+    # module whose loaded file is not inside a staged image before importing.
+    for name in HELPER_MODULES.values():
+        loaded = sys.modules.get(name)
+        if loaded is None or not getattr(loaded, '__file__', None):
+            continue
+        path = Path(loaded.__file__).resolve()
+        if not any(parent.name.startswith('fortress-helper-staging-') for parent in path.parents):
+            del sys.modules[name]
+    import changed_suites  # noqa: E402  staged copy
+    import engine_path  # noqa: E402  staged copy
+    import host_capacity as staged_host_capacity  # noqa: E402  staged copy
+    import native_source_snapshot  # noqa: E402  staged copy
+    resolve_engine = engine_path.resolve_engine
+    host_capacity = staged_host_capacity
+    SourceSnapshot = native_source_snapshot.SourceSnapshot
+
 PREFIX = "FORTRESS_TEST_RESULT "
 CASES_PREFIX = "FORTRESS_TEST_CASES "
 PROGRESS_PREFIX = "FORTRESS_TEST_PROGRESS "
@@ -608,7 +676,23 @@ class _Parser(argparse.ArgumentParser):
 
 
 def helper_identity() -> dict:
-    """Digest the Python bytes this launcher executes, before any engine child starts."""
+    """Digest the Python bytes this launcher executed, from each loaded module's own staged file."""
+    sources = {'run_godot_tests.py': _STAGE_ROOT / 'run_godot_tests.py'}
+    for name, module in HELPER_MODULES.items():
+        loaded = sys.modules.get(module)
+        if loaded is None or not getattr(loaded, '__file__', None):
+            raise ImportError(f'helper module not loaded: {module}')
+        path = Path(loaded.__file__).resolve()
+        # Repeat main() calls keep cached modules from an earlier image of this
+        # process; any private staged image proves the bytes were not live-tree.
+        if not any(parent.name.startswith('fortress-helper-staging-') for parent in path.parents):
+            raise ImportError(f'helper module not from staged image: {module}')
+        sources[name] = path
+    return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sorted(sources.items())}
+
+
+def live_helper_identity() -> dict:
+    """Digest the live-tree helper bytes; an evidence input whose drift during the run fails qualification."""
     sources = {'run_godot_tests.py': Path(__file__).resolve()}
     sources.update({name: ROOT / 'scripts' / name for name in HELPERS})
     return {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in sorted(sources.items())}
@@ -651,14 +735,25 @@ def main(argv: list[str] | None = None) -> int:
     for number in handlers:
         signal.signal(number, cancel_execution)
     try:
-        # Load the last helper after the prior receipt is invalidated: a broken helper
-        # must not crash the launcher while a stale passing receipt survives. The
-        # capture below then binds every loaded helper module before any engine child.
-        import changed_suites
+        # Stage and load every helper after the prior receipt is invalidated: a broken
+        # helper must not crash the launcher while a stale passing receipt survives.
+        # The staged directories precede the live tree on sys.path, so these imports
+        # executed the staged bytes that helper_identity() binds before any engine
+        # child; the capture happened before the imports.
+        _load_staged_helpers()
         helpers = helper_identity()
+        live_helpers = live_helper_identity()
+        if helpers != _STAGED_DIGESTS:
+            # The staged image changed between its capture and the imports/digest
+            # above, so no receipt can claim either set of bytes as executed.
+            raise ValueError("helper_image_changed")
+        if helpers != live_helpers:
+            # Live drift during staging would qualify a mixed image: the copied
+            # bytes would not correspond to any single live-tree state.
+            raise ValueError("helper_source_changed")
         executable = resolve_engine(args.godot)
         with SourceSnapshot(ROOT) as snapshot:
-            return execute(args, executable, snapshot, helpers)
+            return execute(args, executable, snapshot, helpers, live_helpers)
     except KeyboardInterrupt:
         args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "cancelled"}) + "\n", encoding="utf-8")
         print(json.dumps({"passed": False, "results": str(args.results)}))
@@ -675,13 +770,15 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"passed": False, "results": str(args.results)}))
             return 1
         finally:
-            host_capacity.release()
+            if host_capacity is not None:
+                host_capacity.release()
             for number, handler in handlers.items():
                 signal.signal(number, handler)
             _cancelled.clear()
 
 
-def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot, helpers: dict[str, str]) -> int:
+def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot, helpers: dict[str, str],
+            live_helpers: dict[str, str]) -> int:
     engine_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
     command = [str(executable), "--headless", "--path", str(snapshot.path), "--script",
                "res://tests/runner/run_tests.gd", "--", "--category", args.category,
@@ -691,9 +788,11 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
     # run_tests.gd sorts its suites, so shards follow the same order.
     if args.changed:
         import changed_suites  # already loaded in main; a cached import cannot re-read the file
-        changed = changed_suites.changed_files(args.changed)
+        # The staged helper module defaults to its own copy's parents, so the live project
+        # root is passed explicitly: selection reads the same evidence inputs the run names.
+        changed = changed_suites.changed_files(args.changed, root=ROOT)
         args.suite = changed_suites.select(discover(args.category, snapshot.path), changed, root=snapshot.path,
-                                           old_names=changed_suites.previous_class_names(args.changed, changed))
+                                           old_names=changed_suites.previous_class_names(args.changed, changed, root=ROOT))
         print(json.dumps({"changed_since": args.changed, "suites": args.suite}), file=sys.stderr)
         if not args.suite:
             args.results.write_text(json.dumps({"format": 1, "passed": False, "failure": "no_affected_suites"}) + "\n", encoding="utf-8")
@@ -793,6 +892,8 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
         if hashlib.sha256(executable.read_bytes()).hexdigest() != engine_sha256:
             raise ValueError("engine_changed")
         if helper_identity() != helpers:
+            raise ValueError("helper_image_changed")
+        if live_helper_identity() != live_helpers:
             raise ValueError("helper_source_changed")
         snapshot.verify_image()
         if snapshot.changed():
