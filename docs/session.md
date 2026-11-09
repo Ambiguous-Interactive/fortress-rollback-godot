@@ -247,7 +247,10 @@ The current sync-test event drain is empty, matching upstream. External-input
 mode has no network events. Status reports terminal reason plus failure frame
 and request kind where applicable. `FortressSessionTypes.reason_text()` renders
 any reason code as short plain text for user-facing labels, keeping unknown
-reasons numeric. The [ADR](contracts.md) remains the target
+reasons numeric. The protocol endpoint enum renders through
+`FortressInputEndpointTypes.reason_text()`, and the relay/fallback transport
+enum through `FortressSignalFishRelayTypes.reason_text()`; both keep unknown
+codes numeric. The [ADR](contracts.md) remains the target
 contract for future transport/events and release interfaces. This implementation
 uses `complete_request(..., callback_ok, checksum)` and driver-local callback
 records as the current typed completion boundary.

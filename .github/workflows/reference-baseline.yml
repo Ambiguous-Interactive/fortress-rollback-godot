@@ -442,18 +442,11 @@ jobs:
         run: |
           for version in "${{ matrix.version }}"; do
             editor=".cache/reference/webrtc-editors/$version/Godot_v${version}-stable_linux.x86_64"
-            python3 scripts/reference/signalfish_live_probe.py \
-              --godot "$editor" \
-              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-              --output ".cache/reference/results/signalfish-live-$version"
-            python3 scripts/reference/signalfish_spectator_live.py \
-              --godot "$editor" \
-              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-              --output ".cache/reference/results/spectator-live-$version"
+            server_args=(
+              --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server
+              --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560
+              --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json
+            )
             for browser_cell in healthy initial-state room-identity viewer-departure host-departure delayed-accept; do
               browser_args=()
               if [ "$browser_cell" = delayed-accept ]; then
@@ -461,27 +454,16 @@ jobs:
               elif [ "$browser_cell" != healthy ]; then browser_args=(--browser-fault "$browser_cell"); fi
               python3 scripts/reference/signalfish_spectator_live.py \
                 --godot "$editor" --browser-viewer "${browser_args[@]}" \
-                --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-                --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-                --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
+                "${server_args[@]}" \
                 --output ".cache/reference/results/spectator-browser-$version-$browser_cell"
             done
-            for departure in host viewer; do
-              python3 scripts/reference/signalfish_spectator_live.py \
-                --godot "$editor" --departure "$departure" \
-                --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-                --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-                --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-                --output ".cache/reference/results/spectator-live-$version-departure-$departure"
-            done
-            for late_signal in spectator_join_failed spectator_left spectator_disconnected; do
-              python3 scripts/reference/signalfish_spectator_live.py \
-                --godot "$editor" --late-signal "$late_signal" \
-                --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
-                --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
-                --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
-                --output ".cache/reference/results/spectator-live-$version-$late_signal"
-            done
+            # The seven native probes overlap in one host-lease wave; browser pages above stay serial.
+            python3 scripts/reference/signalfish_native_probes.py \
+              --godot "$editor" \
+              "${server_args[@]}" \
+              --version "$version" \
+              --results .cache/reference/results \
+              --jobs 2
           done
       - uses: actions/upload-artifact@v7.0.2
         if: always()

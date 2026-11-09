@@ -15,6 +15,7 @@ ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 
 import ast
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -103,6 +104,69 @@ class HostCapacityTest(unittest.TestCase):
         self.assertTrue(host_capacity.wait_for_free(0.0))
         self.assertTrue(host_capacity.acquire("online-witness"))
         self.assertTrue(host_capacity.acquire_when_free("online-witness", 0.0))
+
+    # Value: a probe wave takes the host once; its children must inherit that
+    # ownership without contending with their own wave or releasing it early.
+    def test_wave_child_acquires_at_once_while_the_named_owner_holds(self):
+        owner = self.hold_in_subprocess()
+        try:
+            self.assertEqual(host_capacity.holder(), "other")
+            started = time.time()
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "other"}):
+                self.assertTrue(host_capacity.acquire("wave-child"))
+                self.assertTrue(host_capacity.wait_for_free(0.0))
+                self.assertTrue(host_capacity.acquire_when_free("wave-child", 0.0))
+            self.assertLess(time.time() - started, 5, "a wave child waited for its own wave's lease")
+            # The child never held the lock itself, so the wave owner keeps the host.
+            self.assertEqual(host_capacity.holder(), "other")
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
+
+    def test_a_stray_wave_value_with_another_owner_held_does_not_inherit(self):
+        owner = self.hold_in_subprocess()
+        try:
+            # A value naming nobody cannot silently disable contention protection.
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "1"}):
+                self.assertFalse(host_capacity.acquire("stray"))
+                self.assertFalse(host_capacity.acquire_when_free("stray", 0.0))
+                self.assertEqual(host_capacity.worker_count(16), 1)
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "not-the-owner"}):
+                self.assertFalse(host_capacity.acquire("stray"))
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
+
+    def test_a_stray_wave_value_with_a_free_host_takes_the_real_lock(self):
+        with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "1"}):
+            self.assertTrue(host_capacity.acquire("wave-child"))
+            self.assertEqual(host_capacity.holder(), "wave-child")
+            host_capacity.release()
+        self.assertIsNone(host_capacity.holder(), "the release must give the real lock back")
+
+    def test_wave_child_release_keeps_the_wave_owner_in_place(self):
+        owner = self.hold_in_subprocess()
+        try:
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "other"}):
+                self.assertTrue(host_capacity.acquire("wave-child"))
+                host_capacity.release()
+            self.assertEqual(host_capacity.holder(), "other",
+                             "a wave child released the lease its wave owner still holds")
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
+
+    def test_wave_child_sees_the_wave_owner_by_name_not_the_string_none(self):
+        owner = self.hold_in_subprocess()
+        try:
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "other"}):
+                self.assertTrue(host_capacity.acquire("wave-child"))
+                self.assertEqual(host_capacity.holder(), "other",
+                                 "an inheriting member must read the live owner's name")
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
+
 
     def test_wait_for_free_returns_when_the_host_is_free(self):
         self.assertTrue(host_capacity.wait_for_free(0.0))

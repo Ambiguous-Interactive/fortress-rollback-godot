@@ -12,6 +12,14 @@ runner waits within a bounded budget before starting its engine children, then
 keeps its requested parallel capacity while it owns the host. A witness that
 starts later waits for it instead of competing for it.
 
+An overlapping probe wave takes the host once for all its members. The wave
+owner runs its probe children with `FORTRESS_HOST_LEASE_HELD` naming the wave
+owner's lease, so each member acquires at once without contending with its own
+wave and never releases the host while a sibling still runs; the wave owner
+releases when the last probe joins. The inheritance holds only while that
+named owner still holds the host: if the wave owner died, the lease died with
+it and the member takes the host itself.
+
 The host is one exclusive file lock, so exactly one process owns it. The
 operating system releases the lock when its owner ends, so a lease of a
 process that is gone never holds the host and a stale file never blocks it.
@@ -40,13 +48,22 @@ def _lease_directory() -> Path:
 
 LEASE_DIR = _lease_directory()
 LEASE_FILE = LEASE_DIR / "host.lock"
+# Set to the wave owner's lease name for the children of one probe wave. While
+# that named owner still holds the host, a member inherits the lease instead of
+# contending with its own wave or releasing it while a sibling still runs. A
+# stray value naming no live owner changes nothing: the process takes the host
+# itself, so the flag can never silently disable contention protection.
+WAVE_HELD_ENV = "FORTRESS_HOST_LEASE_HELD"
 # The owner of this process, its lock handle and its name.
 _state = {"handle": None, "name": None}
 
 
 def _ours() -> bool:
     """True when this process holds the host."""
-    return _state["handle"] is not None
+    if _state["handle"] is not None:
+        return True
+    wave = os.environ.get(WAVE_HELD_ENV)
+    return bool(wave) and holder() == wave
 
 
 def _open_lock(create: bool) -> TextIO:
@@ -109,7 +126,7 @@ def release() -> None:
 
 def holder() -> str | None:
     """The name of the owner that holds the host, or None when it is free."""
-    if _ours():
+    if _state["handle"] is not None:
         return str(_state["name"])
     try:
         handle = _open_lock(False)

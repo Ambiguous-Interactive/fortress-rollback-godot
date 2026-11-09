@@ -33,6 +33,11 @@ remains permitted. This restriction counts endpoint identities, not player slots
 | `drain_outbox()` | Owned `Packet` records with `to` and `bytes`; caller delivers or drops them. |
 | `drain_events/transitions()` | Owned endpoint records tagged with a `peer` byte identity. |
 
+`poll` and `receive` return `FortressInputEndpointTypes.Code` values, a separate
+numeric space from the session reasons. `FortressInputEndpointTypes.reason_text()`
+renders any endpoint code as short plain text for user-facing labels, keeping
+unknown codes numeric.
+
 Use `receive_and_poll` for a single incoming packet and timer service in the same
 iteration. Retry packets carry the receipt bank from before delivery, matching
 the upstream service boundary; accepted input is still retained before its ACK.

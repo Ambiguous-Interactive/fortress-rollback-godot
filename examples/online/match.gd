@@ -13,6 +13,7 @@ const Adapter = preload("res://addons/fortress_rollback/transport/signalfish_ada
 const Direct = preload("res://addons/fortress_rollback/transport/signalfish_webrtc.gd")
 const Relay = preload("res://addons/fortress_rollback/transport/signalfish_relay.gd")
 const Fallback = preload("res://addons/fortress_rollback/transport/signalfish_fallback.gd")
+const RelayTypes = preload("res://addons/fortress_rollback/transport/signalfish_relay_types.gd")
 const Simulation = preload("res://examples/offline/simulation.gd")
 
 ## Largest packet the transports carry. Input batches are sized to fit it.
@@ -313,7 +314,7 @@ func _poll_protocol(now_us: int) -> bool:
 		if not has_started:
 			return false
 		if code not in [Inputs.Code.OK, Inputs.Code.BACKPRESSURE]:
-			failure = "Protocol stopped (%d). Leave and create a new room." % code
+			failure = _protocol_stopped_text(code)
 			return false
 		_collect_events()
 		if not failure.is_empty():
@@ -350,15 +351,29 @@ func _service(now_us: int) -> bool:
 		if accepted == Fallback.Code.OK:
 			_pending.clear()
 		elif accepted != Fallback.Code.BACKPRESSURE:
-			failure = "Transport queue stopped (%d). Leave and create a new room." % accepted
+			failure = _transport_stopped_text("Transport queue stopped", accepted)
 			return false
 	var result: Fallback.Result = fallback.poll(now_us, next_token)
 	if not has_started:
 		return false
 	if result.code not in [Fallback.Code.OK, Fallback.Code.BACKPRESSURE]:
-		failure = "Transport stopped (%d). Leave and create a new room." % result.code
+		failure = _transport_stopped_text("Transport stopped", result.code)
 		return false
 	return true
+
+
+## Plain-language stop lines keep the numeric code beside the text for tooling
+## parity; each enum space renders through its own shared helper.
+func _protocol_stopped_text(code: int) -> String:
+	return _stopped_text("Protocol stopped", Inputs.reason_text(code), code)
+
+
+func _transport_stopped_text(prefix: String, code: int) -> String:
+	return _stopped_text(prefix, RelayTypes.reason_text(code), code)
+
+
+func _stopped_text(prefix: String, text: String, code: int) -> String:
+	return "%s: %s (code %d). Leave and create a new room." % [prefix, text, code]
 
 
 func detach() -> void:

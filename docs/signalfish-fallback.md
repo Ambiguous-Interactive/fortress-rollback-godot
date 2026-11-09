@@ -58,6 +58,8 @@ func service_transport(now_us: int) -> void:
 limit is the smaller of the direct and relay limits. Refusal leaves all caller
 bytes owned by the caller. Unsent direct packets return to coordinator ownership
 with their original frozen destination and exact payload bytes.
+`FortressSignalFishRelayTypes.reason_text()` renders any transport code as short
+plain text for user-facing labels, keeping unknown codes numeric.
 
 ## Idle routes and bounded service batches
 

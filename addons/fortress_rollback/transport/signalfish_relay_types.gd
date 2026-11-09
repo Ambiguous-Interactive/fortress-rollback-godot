@@ -5,6 +5,41 @@ enum Code { OK, INVALID_ARGUMENT, WRONG_STATE, INCOMPATIBLE_MODE, INVALID_ENVELO
 	BACKPRESSURE, RECEIVE_OVERFLOW, SDK_FAILURE, PEER_FAILURE }
 
 
+## Plain-language name for a transport result code, including the fallback coordinator
+## which reuses this enum. This is a separate numeric space from the session reasons and
+## the protocol endpoint codes, so it keeps its own text; unknown codes keep their number.
+static func reason_text(code: int) -> String:
+	match code:
+		Code.OK:
+			return "no failure"
+		Code.INVALID_ARGUMENT:
+			return "invalid call"
+		Code.WRONG_STATE:
+			return "transport is not configured for this call"
+		Code.INCOMPATIBLE_MODE:
+			return "binary transport mode was not negotiated"
+		Code.INVALID_ENVELOPE:
+			return "malformed transport envelope"
+		Code.WRONG_SOURCE:
+			return "packet from the wrong source"
+		Code.WRONG_SESSION:
+			return "packet from another match"
+		Code.NOT_RECIPIENT:
+			return "packet addressed to another peer"
+		Code.TOO_LARGE:
+			return "packet exceeds an agreed size bound"
+		Code.BACKPRESSURE:
+			return "transport queues are full"
+		Code.RECEIVE_OVERFLOW:
+			return "received bytes exceeded the receive bound"
+		Code.SDK_FAILURE:
+			return "the transport sdk failed"
+		Code.PEER_FAILURE:
+			return "a peer endpoint failed"
+		_:
+			return "failure code %d" % code
+
+
 class Options:
 	extends RefCounted
 	var max_packet_bytes: int = 65479
