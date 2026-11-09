@@ -78,6 +78,9 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         sources = unittest.mock.patch.object(parallel_launchers, 'sources', return_value={})
         sources.start()
         self.addCleanup(sources.stop)
+        prefetch = unittest.mock.patch.object(parallel_launchers, 'prefetch_oracle_crates', return_value=None)
+        prefetch.start()
+        self.addCleanup(prefetch.stop)
 
     def run_main(self, table, arguments):
         stdout = io.StringIO()
@@ -216,26 +219,35 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
             calls.append('sources')
             return {}
 
+        def record_fetch(cargo, environment, manifest, version, log_path):
+            calls.append('fetch')
+            self.assertEqual(manifest.name, 'Cargo.toml')
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text('fetch recorded\n')
+
         def record_launcher(name, command, log_path, timeout):
             calls.append('launcher:' + name)
-            self.assertEqual(calls[:2], ['setup', 'sources'],
-                             'a launcher started before the toolchain and source trees were prepared')
+            self.assertEqual(calls[:3], ['setup', 'sources', 'fetch'],
+                             'a launcher started before the shared toolchain, sources and crates were prepared')
             return {'name': name, 'seconds': 0.0, 'returncode': 0, 'timeout': False}
 
         with unittest.mock.patch.dict(parallel_launchers.LAUNCHERS, table, clear=True), \
-                unittest.mock.patch.object(parallel_launchers, 'load_manifest', return_value='manifest'), \
+                unittest.mock.patch.object(parallel_launchers, 'load_manifest', return_value={'rust': {'version': '1.99.1'}}), \
                 unittest.mock.patch.object(parallel_launchers, 'setup_rust', side_effect=record_setup), \
                 unittest.mock.patch.object(parallel_launchers, 'sources', side_effect=record_sources), \
+                unittest.mock.patch.object(parallel_launchers, 'prefetch_oracle_crates', side_effect=record_fetch), \
                 unittest.mock.patch.object(parallel_launchers, 'run_launcher', side_effect=record_launcher), \
                 unittest.mock.patch('sys.argv', ['parallel_launchers.py', '--godot', 'unused',
-                                                 '--results', str(self.results)]), \
+                                                 '--results', str(self.results), '--suffix', '4.3']), \
                 redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             exit_code = parallel_launchers.main()
         self.assertEqual(exit_code, 0)
-        self.assertEqual(calls.count('setup'), 1)
-        self.assertEqual(calls.count('sources'), 1)
-        self.assertEqual(calls[:2], ['setup', 'sources'])
-        self.assertEqual(len(calls), 4)
+        for step in ('setup', 'sources', 'fetch'):
+            self.assertEqual(calls.count(step), 1, step)
+        self.assertEqual(calls[:3], ['setup', 'sources', 'fetch'])
+        self.assertEqual(len(calls), 5)
+        self.assertTrue((self.results / 'oracle-fetch-4.3.log').exists(),
+                        'the preflight must keep its output log beside the launcher logs')
 
 
 if __name__ == '__main__':

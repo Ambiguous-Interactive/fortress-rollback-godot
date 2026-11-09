@@ -25,7 +25,7 @@ ROOT = ORACLE_DIR.parent.parent
 
 sys.path.insert(0, str(ROOT / 'scripts' / 'reference'))
 from fetch import load_manifest, sources  # noqa: E402
-from run import setup_rust  # noqa: E402
+from run import rust_environment, setup_rust  # noqa: E402
 
 # Table order is the reporting and first-failure rejection order, longest launcher
 # first: the pool starts the slowest launcher immediately so the elapsed time
@@ -53,6 +53,25 @@ def kill_group(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+def prefetch_oracle_crates(cargo, environment, manifest, version, log_path):
+    """Download the complete locked crate set into the shared registry before the pool.
+
+    The launchers build with ``--offline``, so the shared registry cache must already
+    hold every crate of the pinned lockfile. A partially populated cache (jobs racing
+    one cache key, last writer winning) made an offline build fail on a crate a
+    concurrent launcher had not downloaded yet; one non-offline fetch of the same
+    lockfile removes that ordering assumption, and every build still proves offline
+    completeness.
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run([str(cargo), '+' + version, 'fetch', '--locked',
+                                '--manifest-path', str(manifest)],
+                               env=environment, capture_output=True, text=True, timeout=1800)
+    log_path.write_text(completed.stdout + completed.stderr, encoding='utf-8')
+    if completed.returncode != 0:
+        raise ValueError('oracle crate pre-fetch failed: ' + (completed.stderr or completed.stdout)[-2000:])
 
 
 def launcher_command(name, script, godot, output):
@@ -107,12 +126,16 @@ def main() -> int:
     # rustup installations into the shared CARGO_HOME/RUSTUP_HOME raced on the same
     # partial downloads. Each launcher's own setup_rust call then finds cargo
     # present and becomes a no-op.
-    setup_rust(load_manifest(), False)
+    manifest_data = load_manifest()
+    cargo, environment = setup_rust(manifest_data, False)
     # Publish the pinned upstream source trees once before the pool: a launcher whose
     # retain_verified_tree sees a stale or partial tree replaces it in place, so two
     # concurrent preparations could delete a tree another launcher is reading. Each
     # launcher's own sources() call then finds a verified-identical tree and keeps it.
-    sources(load_manifest(), False)
+    sources(manifest_data, False)
+    prefetch_oracle_crates(cargo, environment, ROOT / 'scripts' / 'oracle' / 'rust' / 'Cargo.toml',
+                           manifest_data['rust']['version'],
+                           args.results / ('oracle-fetch-' + args.suffix + '.log' if args.suffix else 'oracle-fetch.log'))
     outputs = {name: (args.results / f'{name}-{args.suffix}' if args.suffix else args.results / name)
                for name in LAUNCHERS}
     logs = {name: (args.results / f'launcher-{args.suffix}-{name}.log' if args.suffix
