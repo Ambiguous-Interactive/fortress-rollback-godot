@@ -135,6 +135,9 @@ def main() -> int:
     parser.add_argument('--jobs', type=int, default=2, help='overlapping probes; 2 matches the measured host budget')
     args = parser.parse_args()
     jobs = max(1, min(args.jobs, len(PROBES)))
+    # Every main() run is a fresh wave: a leftover abort from a caught
+    # interruption must not refuse the next run in the same process.
+    _abort.clear()
     if not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
         raise ValueError('the development host stayed busy; the native probe wave needs a responsive host')
     # The wave owns the host for its whole duration; the probe children inherit

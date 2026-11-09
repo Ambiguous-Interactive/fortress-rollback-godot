@@ -10,7 +10,7 @@
 
 - Name each example's stopped cause in plain language, keeping the numeric code beside it for tooling. Session reasons render through the shared `FortressSessionTypes.reason_text()` helper in the offline, effects, peer, online, spectator, replay-viewer and diagnostic-viewer labels and refusal messages; the peer example's packet-failure line keeps its own wording for the separate protocol endpoint enum.
 
-- Name the online example's protocol and transport stop codes in plain language beside their numbers: the endpoint codes render through the shared `FortressInputEndpointTypes.reason_text()` and the relay/fallback transport codes through the shared `FortressSignalFishRelayTypes.reason_text()`, which the peer example's failure line now reuses instead of duplicating its own enum wording.
+- Name the online example's protocol and transport stop codes in plain language beside their numbers: the endpoint codes render through the shared `FortressInputEndpointTypes.reason_text()` and the relay/fallback transport codes through the shared `FortressSignalFishRelayTypes.reason_text()`; the peer example's failure line now reuses the endpoint helper instead of duplicating its own enum wording.
 
 - Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part ran 14 pages in 217s instead of 25 pages in 415s, with every case, repetition and comparison unchanged.
 

@@ -194,6 +194,15 @@ class NativeProbeWaveTests(unittest.TestCase):
         self.assertEqual(result['returncode'], -9, 'SIGKILL to the probe group must end the probe')
         self.assertEqual(len(killed), 1, 'the spawn-window abort must kill its own group')
 
+    def test_an_aborted_fence_refuses_later_launches(self):
+        probes._abort.set()
+        self.addCleanup(probes._abort.clear)
+        with unittest.mock.patch.object(probes, 'kill_group', side_effect=lambda pid: None):
+            probes.abort_active_groups()
+        refused = probes.run_probe('next', ['sleep', '30'], self.results / 'next.log', {})
+        self.assertEqual(refused['returncode'], 1,
+                         'the fence must refuse launches after the abort, not only kill running groups')
+
     def test_a_fenced_run_probe_refuses_to_launch(self):
         probes._abort.set()
         self.addCleanup(probes._abort.clear)
