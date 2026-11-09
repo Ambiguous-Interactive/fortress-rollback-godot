@@ -211,6 +211,9 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
                     if any(handle['pid'] is not None for handle in parallel_launchers._active_handles):
                         break
                 time.sleep(0.02)
+            with parallel_launchers._active_lock:
+                self.assertTrue(any(handle['pid'] is not None for handle in parallel_launchers._active_handles),
+                                'the launcher must register its group before the fence runs')
             with unittest.mock.patch.object(parallel_launchers, 'kill_group', side_effect=record_and_kill):
                 with self.assertRaises(SystemExit) as raised:
                     parallel_launchers._on_terminate(15, None)
@@ -266,7 +269,10 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         # The group kill is what protects engine children: the leader's forked
         # descendant must die with the group, not only the leader itself. A
         # freshly killed process can linger as a zombie until reaping, so a
-        # zombie counts as dead.
+        # zombie counts as dead. /proc is the evidence source; without it the
+        # depth of the kill cannot be observed here.
+        if not Path('/proc/self').exists():
+            self.skipTest('process state requires /proc')
         child_pid = int((self.root / 'engine-descendant-pid').read_text())
         deadline = time.time() + 5
 

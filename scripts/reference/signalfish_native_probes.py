@@ -55,8 +55,10 @@ HOST_WAIT_SECONDS = 900.0
 # Probe spawns in flight, registered before their process starts, so an
 # interruption can fence and kill every active group even while a probe is
 # between spawn and registration. _abort makes every later launch return at
-# once, so a fenced pool drains without running any remaining probe.
-_active_lock = threading.Lock()
+# once, so a fenced pool drains without running any remaining probe. The lock
+# is reentrant because the SIGTERM handler runs in the main thread and may
+# fence while that thread already holds the lock.
+_active_lock = threading.RLock()
 _active_handles: list[dict] = []
 _abort = threading.Event()
 
@@ -82,6 +84,42 @@ def _on_terminate(signum, _frame):
     """Fence and kill on SIGTERM, then exit: engines must not outlive the wave."""
     abort_active_groups()
     raise SystemExit(128 + signum)
+
+
+def run_wave(args, jobs):
+    """Run every probe in the bounded pool and return the per-probe results."""
+    # The wave owns the host for its whole duration; the probe children inherit
+    # that ownership instead of taking and releasing it one process at a time.
+    environment = os.environ.copy()
+    environment[host_capacity.WAVE_HELD_ENV] = HOST_LEASE_NAME
+    outputs = {name: args.results / PROBES[name][2].format(version=args.version) for name in PROBES}
+    logs = {name: args.results / f'native-probe-{args.version}-{name}.log' for name in PROBES}
+    commands = {name: probe_command(name, *PROBES[name], args) for name in PROBES}
+    print(f'Running {len(PROBES)} native probes with {jobs} parallel subprocesses.', flush=True)
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        pending = {}
+        try:
+            pending = {pool.submit(run_probe, name, commands[name], logs[name], environment): name
+                       for name in PROBES}
+            for future in concurrent.futures.as_completed(pending):
+                name = pending[future]
+                try:
+                    result = future.result()
+                except Exception as error:  # a worker crash is a failed probe, never a partially counted run
+                    result = {'name': name, 'seconds': 0.0, 'returncode': 1,
+                              'error': f'{type(error).__name__}: {error}'}
+                results[name] = result
+                mark = 'pass' if result['returncode'] == 0 else 'FAIL'
+                print(f'[{len(results)}/{len(PROBES)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
+        except BaseException:
+            # Fence queued launches and terminate every active probe group:
+            # an interruption must not block on engines that keep running.
+            for future in pending:
+                future.cancel()
+            abort_active_groups()
+            raise
+    return results, logs
 
 
 def probe_command(name, script, extra, template, args):
@@ -145,45 +183,16 @@ def main() -> int:
     # Every main() run is a fresh wave: a leftover abort from a caught
     # interruption must not refuse the next run in the same process.
     _abort.clear()
-    # A runner that escalates to SIGTERM must fence the same way SIGINT does,
-    # or detached engines outlive the wave holding the ports the lease protects.
-    signal.signal(signal.SIGTERM, _on_terminate)
     if not host_capacity.acquire_when_free(HOST_LEASE_NAME, HOST_WAIT_SECONDS):
         raise ValueError('the development host stayed busy; the native probe wave needs a responsive host')
-    # The wave owns the host for its whole duration; the probe children inherit
-    # that ownership instead of taking and releasing it one process at a time.
-    environment = os.environ.copy()
-    environment[host_capacity.WAVE_HELD_ENV] = HOST_LEASE_NAME
-    outputs = {name: args.results / PROBES[name][2].format(version=args.version) for name in PROBES}
-    logs = {name: args.results / f'native-probe-{args.version}-{name}.log' for name in PROBES}
-    commands = {name: probe_command(name, *PROBES[name], args) for name in PROBES}
-    print(f'Running {len(PROBES)} native probes with {jobs} parallel subprocesses.', flush=True)
-    results = {}
+    # The SIGTERM fence lives only while the wave owns the host; the previous
+    # handler returns when the wave ends, however it ends.
+    previous_term = signal.signal(signal.SIGTERM, _on_terminate)
     began = time.monotonic()
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            pending = {}
-            try:
-                pending = {pool.submit(run_probe, name, commands[name], logs[name], environment): name
-                           for name in PROBES}
-                for future in concurrent.futures.as_completed(pending):
-                    name = pending[future]
-                    try:
-                        result = future.result()
-                    except Exception as error:  # a worker crash is a failed probe, never a partially counted run
-                        result = {'name': name, 'seconds': 0.0, 'returncode': 1,
-                                  'error': f'{type(error).__name__}: {error}'}
-                    results[name] = result
-                    mark = 'pass' if result['returncode'] == 0 else 'FAIL'
-                    print(f'[{len(results)}/{len(PROBES)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
-            except BaseException:
-                # Fence queued launches and terminate every active probe group:
-                # an interruption must not block on engines that keep running.
-                for future in pending:
-                    future.cancel()
-                abort_active_groups()
-                raise
+        results, logs = run_wave(args, jobs)
     finally:
+        signal.signal(signal.SIGTERM, previous_term)
         host_capacity.release()
     failed = [name for name in PROBES if results[name]['returncode'] != 0]
     for name in failed:

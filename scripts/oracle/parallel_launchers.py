@@ -44,8 +44,10 @@ TAIL_LINES = 200
 # Launcher spawns in flight, registered before their process starts, so an
 # interruption can fence and kill every active group even while a launcher is
 # between spawn and registration. _abort makes every later launch return at
-# once, so a fenced pool drains without running any remaining launcher.
-_active_lock = threading.Lock()
+# once, so a fenced pool drains without running any remaining launcher. The
+# lock is reentrant because the SIGTERM handler runs in the main thread and may
+# fence while that thread already holds the lock.
+_active_lock = threading.RLock()
 _active_handles: list[dict] = []
 _abort = threading.Event()
 
@@ -71,6 +73,43 @@ def _on_terminate(signum, _frame):
     """Fence and kill on SIGTERM, then exit: engines must not outlive the wave."""
     abort_active_groups()
     raise SystemExit(128 + signum)
+
+
+def run_wave(args, jobs):
+    """Run every launcher in the bounded pool and return the per-launcher results."""
+    outputs = {name: (args.results / f'{name}-{args.suffix}' if args.suffix else args.results / name)
+               for name in LAUNCHERS}
+    logs = {name: (args.results / f'launcher-{args.suffix}-{name}.log' if args.suffix
+                   else args.results / f'launcher-{name}.log')
+            for name in LAUNCHERS}
+    commands = {name: launcher_command(name, ORACLE_DIR / script, args.godot, outputs[name])
+                for name, script in LAUNCHERS.items()}
+    print(f'Running {len(LAUNCHERS)} oracle launchers with {jobs} parallel subprocesses.', flush=True)
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        pending = {}
+        try:
+            pending = {pool.submit(run_launcher, name, commands[name], logs[name], args.timeout): name
+                       for name in LAUNCHERS}
+            for future in concurrent.futures.as_completed(pending):
+                name = pending[future]
+                try:
+                    result = future.result()
+                except Exception as error:  # a worker crash is a failed launcher, never a partially counted run
+                    result = {'name': name, 'seconds': 0.0, 'returncode': 1, 'timeout': False,
+                              'error': f'{type(error).__name__}: {error}'}
+                results[name] = result
+                mark = 'pass' if result['returncode'] == 0 else 'FAIL'
+                print(f'[{len(results)}/{len(LAUNCHERS)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
+        except BaseException:
+            # Fence queued launches and terminate every active launcher group:
+            # an interruption must not block on engines that keep running while
+            # the default per-launcher timeout is disabled.
+            for future in pending:
+                future.cancel()
+            abort_active_groups()
+            raise
+    return results, logs
 
 
 def prefetch_oracle_crates(cargo, environment, manifest, version, log_path):
@@ -151,9 +190,6 @@ def main() -> int:
     # Every main() run is a fresh wave: a leftover abort from a caught
     # interruption must not refuse the next run in the same process.
     _abort.clear()
-    # A runner that escalates to SIGTERM must fence the same way SIGINT does,
-    # or detached engines outlive the wave holding the ports the lease protects.
-    signal.signal(signal.SIGTERM, _on_terminate)
     if args.timeout < 0:
         parser.error('launcher timeout must not be negative')
     # Provision the pinned Rust toolchain once before any launcher starts: the CI
@@ -171,39 +207,13 @@ def main() -> int:
     prefetch_oracle_crates(cargo, environment, ROOT / 'scripts' / 'oracle' / 'rust' / 'Cargo.toml',
                            manifest_data['rust']['version'],
                            args.results / ('oracle-fetch-' + args.suffix + '.log' if args.suffix else 'oracle-fetch.log'))
-    outputs = {name: (args.results / f'{name}-{args.suffix}' if args.suffix else args.results / name)
-               for name in LAUNCHERS}
-    logs = {name: (args.results / f'launcher-{args.suffix}-{name}.log' if args.suffix
-                   else args.results / f'launcher-{name}.log')
-            for name in LAUNCHERS}
-    commands = {name: launcher_command(name, ORACLE_DIR / script, args.godot, outputs[name])
-                for name, script in LAUNCHERS.items()}
-    print(f'Running {len(LAUNCHERS)} oracle launchers with {jobs} parallel subprocesses.', flush=True)
-    results = {}
-    began = time.monotonic()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        pending = {}
-        try:
-            pending = {pool.submit(run_launcher, name, commands[name], logs[name], args.timeout): name
-                       for name in LAUNCHERS}
-            for future in concurrent.futures.as_completed(pending):
-                name = pending[future]
-                try:
-                    result = future.result()
-                except Exception as error:  # a worker crash is a failed launcher, never a partially counted run
-                    result = {'name': name, 'seconds': 0.0, 'returncode': 1, 'timeout': False,
-                              'error': f'{type(error).__name__}: {error}'}
-                results[name] = result
-                mark = 'pass' if result['returncode'] == 0 else 'FAIL'
-                print(f'[{len(results)}/{len(LAUNCHERS)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
-        except BaseException:
-            # Fence queued launches and terminate every active launcher group:
-            # an interruption must not block on engines that keep running while
-            # the default per-launcher timeout is disabled.
-            for future in pending:
-                future.cancel()
-            abort_active_groups()
-            raise
+    # The SIGTERM fence lives only while the wave runs; the previous handler
+    # returns when the wave ends, however it ends.
+    previous_term = signal.signal(signal.SIGTERM, _on_terminate)
+    try:
+        results, logs = run_wave(args, jobs)
+    finally:
+        signal.signal(signal.SIGTERM, previous_term)
     failed = [name for name in LAUNCHERS if results[name]['returncode'] != 0]
     for name in failed:
         result = results[name]
@@ -215,10 +225,9 @@ def main() -> int:
             print_tail(logs[name])
         else:
             print(f'--- {name} produced no log ---')
-    elapsed = time.monotonic() - began
     summed = sum(result['seconds'] for result in results.values())
     print(f'Parallel oracle launchers: {len(LAUNCHERS)} launchers, {len(failed)} failed; '
-          f'elapsed {elapsed:.1f}s, summed process time {summed:.1f}s.')
+          f'summed process time {summed:.1f}s.')
     return int(bool(failed))
 
 
