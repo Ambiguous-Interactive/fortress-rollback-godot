@@ -42,7 +42,8 @@ adjudications). Trigger: large change (5 files, +173/−48) plus incident (a
 ## Outcome
 
 - State: `findings-acted`
-- Follow-ups: signalfish `online` leg serial-probe parallelism (wall
-  critical path, needs a session that can burn CI cycles); #104 adaptive
-  prototype with the rejected-traffic correction; #164/#148 room-count and
-  export-work levers.
+- Follow-ups: signalfish `online` leg serial-probe overlap is now tracked as
+  issue [#340](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/340)
+  (13 serial probes, 5m59s–8m37s measured step, wall critical path, browser
+  cells stay serial); #104 adaptive prototype with the rejected-traffic
+  correction; #164/#148 room-count and export-work levers.
