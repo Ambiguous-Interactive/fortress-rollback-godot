@@ -35,12 +35,14 @@ ARG NODE_VERSION=26.12.1
 # intermittently cannot reach archive.ubuntu.com:80 while the trusted HTTPS
 # mirrors the reference workflow already selects keep working, so the same
 # HTTPS hosts are selected here before the first acquisition, whichever
-# sources layout the base image uses. The build fails closed when no
-# sources file took the substitution.
+# sources layout the base image uses. The substitution is best effort: an
+# image variant whose sources name no archive keeps its defaults, which
+# stayed reachable on the architectures the substitution cannot serve.
 RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
       -exec sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; s|http://security\.ubuntu\.com|https://security.ubuntu.com|g' {} + \
-    && find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
+    && { find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
       -exec grep -Fqs 'https://archive.ubuntu.com/ubuntu/' {} + \
+      || echo 'no archive.ubuntu.com sources found; keeping the base image defaults'; } \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \
