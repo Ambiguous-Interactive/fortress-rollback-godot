@@ -122,14 +122,17 @@ class OwnershipBatchTests(unittest.TestCase):
     # Value: protects=complete partition coverage and live alias controls; fails_when=parts omit cases or controls; why_new=whole inventory only; seam=none
     def test_suite_parts_cover_every_case_with_only_the_control_repeated(self):
         control = 'res://tests/determinism/test_buffer_ownership.gd'
-        first, second = [probes.select_suites(part) for part in ('1', '2')]
-        self.assertEqual(set(first) | set(second), set(probes.EXPECTED))
-        self.assertEqual(set(first) & set(second), {control})
-        cases = {(suite, case) for part in (first, second) for suite, names in part.items() for case in names}
+        parts = [probes.select_suites(part) for part in ('1', '2', '3', '4')]
+        self.assertEqual(set().union(*(set(part) for part in parts)), set(probes.EXPECTED))
+        for part in parts:
+            self.assertIn(control, part)
+        repeated = {suite for suite in probes.EXPECTED if sum(suite in part for part in parts) > 1}
+        self.assertEqual(repeated, {control})
+        cases = {(suite, case) for part in parts for suite, names in part.items() for case in names}
         self.assertEqual(cases, {(suite, case) for suite, names in probes.EXPECTED.items() for case in names})
         self.assertEqual(len(cases), probes.EXPECTED_COUNT)
         self.assertEqual(probes.select_suites('all'), probes.EXPECTED)
-        for part in ('unknown', '', True, 1, 1.0, None):
+        for part in ('unknown', '', '5', True, 1, 1.0, None):
             with self.subTest(part=part), self.assertRaises(ValueError):
                 probes.select_suites(part)
 
@@ -137,14 +140,14 @@ class OwnershipBatchTests(unittest.TestCase):
     # a phase or part or command ignores selection; why_new=per-phase Chromium jobs match Firefox; seam=none
     def test_chromium_ci_declares_both_parts_and_passes_the_selector(self):
         workflow = (probes.ROOT / '.github/workflows/reference-baseline.yml').read_text()
-        pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([12])", '
-                   r'suffix: " (negative|positive) part ([12])", part_suffix: "(-(?:negative|positive)-part-[12])"')
+        pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([1-4])", '
+                   r'suffix: " (negative|positive) part ([1-4])", part_suffix: "(-(?:negative|positive)-part-[1-4])"')
         rows = re.findall(pattern, workflow)
         expected = {(version, phase, part, phase, part, f'-{phase}-part-{part}')
                     for version in ('4.3', '4.7.2')
-                    for phase in ('negative', 'positive') for part in ('1', '2')}
+                    for phase in ('negative', 'positive') for part in ('1', '2', '3', '4')}
         self.assertEqual(set(rows), expected)
-        self.assertEqual(len(rows), 8)
+        self.assertEqual(len(rows), 16)
         command = workflow.split('          else\n            python3 scripts/reference/ownership_probes.py', 1)[1].split('          fi', 1)[0]
         self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"', command)
         self.assertIn("matrix.part_suffix", workflow)

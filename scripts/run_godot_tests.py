@@ -590,6 +590,24 @@ def discover(category: str, root: Path = ROOT) -> list[str]:
     return sorted(paths)
 
 
+def select_shard(suites: list[str], shard: str) -> list[str]:
+    """Split one whole-inventory run across same-tree jobs by name interleave.
+
+    Two CI jobs each run half the unit inventory on its own runner, so the wall
+    time of the CPU-saturated engine wave halves without dropping a suite: the
+    union of all shards of one total is exactly the discovered inventory, and
+    the shards are disjoint. The interleaved order keeps every shard's suite
+    count within one of the ideal share.
+    """
+    match = re.fullmatch(r"([1-9][0-9]*)of([1-9][0-9]*)", shard)
+    if not match:
+        raise ValueError("shard must be NofM with positive whole numbers, such as 1of2")
+    index, total = int(match.group(1)), int(match.group(2))
+    if index > total:
+        raise ValueError("shard index must not exceed its total")
+    return suites[index - 1::total]
+
+
 def merge(reports: list[dict], filtered: bool) -> dict:
     """Combine per-suite shard reports into one process-equivalent run, in suite order."""
     if filtered:
@@ -714,6 +732,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
                         help="parallel Godot processes; each suite runs in its own pair of fresh processes")
     parser.add_argument("--host-wait", type=float, default=600, help="seconds to wait for exclusive host capacity before engine execution")
+    parser.add_argument("--shard", default="", help="N/M name-interleaved whole-inventory shard for parallel CI jobs (unit only)")
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be finite and positive")
@@ -725,6 +744,13 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("host-wait must be finite and nonnegative")
     if args.jobs < 1:
         parser.error("jobs must be positive")
+    if args.shard:
+        # A shard only covers a whole discovered inventory: filtered or hand-picked
+        # selections would silently lose coverage across the parallel CI jobs.
+        if args.category != "unit" or args.suite or args.filter or args.changed:
+            parser.error("--shard selects the whole unit inventory itself")
+        if len(select_shard(discover("unit"), args.shard)) == 0:
+            parser.error("shard selects no suite")
     if args.changed and args.suite:
         parser.error("--changed selects suites itself")
     # Supersede prior success before any external executable gets control.
@@ -799,6 +825,8 @@ def execute(args: argparse.Namespace, executable: Path, snapshot: SourceSnapshot
             print(json.dumps({"passed": None, "results": str(args.results), "note": "no suite loads a changed file"}))
             return 0
     suites = sorted(args.suite) or discover(args.category, snapshot.path)
+    if args.shard:
+        suites = select_shard(suites, args.shard)
     durations = load_durations(args.durations)
     version_probe = None
     try:

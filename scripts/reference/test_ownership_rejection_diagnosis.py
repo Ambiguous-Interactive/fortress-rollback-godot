@@ -13,7 +13,7 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
     # Value: protects=download failures leave a terminal diagnosis; fails_when=any gate error leaves a running round;
     # why_new=ordinary browser-batch rejection does not cover downloads; seam=mocked tool outputs and real source inventories
     def test_download_gate_failures_keep_bounded_failed_rounds(self):
-        part = next(part for part in ('1', '2') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
+        part = next(part for part in ('1', '2', '3', '4') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
         diagnostics = {
             'run': 'download command failure ', 'json': 'Expecting property name enclosed in double quotes',
             'browser': 'browser reported errors', 'download': 'replay download boundary differs',
@@ -35,7 +35,7 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
 
     # Value: protects=negative controls reject cleanup failure; fails_when=expected text inside AggregateError passes; seam=mocked owned-child output
     def test_download_controls_reject_expected_error_with_cleanup_failure(self):
-        part = next(part for part in ('1', '2') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
+        part = next(part for part in ('1', '2', '3', '4') if 'res://tests/unit/test_replay_viewer_prefix.gd' in probes.select_suites(part))
         for name, diagnostic in probes.CONTROL_DIAGNOSTICS.items():
             with self.subTest(control=name):
                 output = ('AggregateError: ownership and cleanup failed\n'
@@ -57,7 +57,7 @@ class OwnershipRejectionDiagnosisTests(OwnershipRejectionFixture):
     # Value: protects=divergent case pages cannot publish or leave a running round; fails_when=assembly trusts repeats only; why_new=suite-level failures; seam=mocked browser
     def test_case_page_divergence_keeps_a_failed_round_and_no_receipt(self):
         suite = 'res://tests/unit/test_driver_peer_parity.gd'
-        part = next(part for part in ('1', '2') if suite in probes.select_suites(part))
+        part = next(part for part in ('1', '2', '3', '4') if suite in probes.select_suites(part))
         results = self.scenario(expected=ValueError, selected='firefox', version='4.3', phase='positive', suite_part=part, browser_fault='case_assertions')
         self.assertFalse((results / 'ownership.json').exists())
         self.assertEqual(self.rounds(results)[0]['outcome'], 'failed')

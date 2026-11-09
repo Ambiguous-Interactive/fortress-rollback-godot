@@ -9,7 +9,10 @@ WORKFLOW = Path(__file__).resolve().parents[2] / '.github/workflows/reference-ba
 # The checks each matrix leg must keep, in the order the workflow runs them.
 SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_package_audit.py',
                  'scripts/reference/signalfish_probe.py', 'scripts/reference/test_godot_runner.py',
-                 'scripts/run_godot_tests.py']
+                 'scripts/reference/diagnostic_json.py']
+# The two shard legs together own the whole unit inventory exactly once; the second shard
+# also keeps the integration and determinism categories.
+TESTS_CHECKS = ['scripts/run_godot_tests.py', '--shard "$shard"']
 ORACLES_CHECKS = ['scripts/oracle/parallel_launchers.py', 'scripts/oracle/spectator_launch.py']
 # The runner's table owns the six upstream comparisons; a dropped entry would silently
 # remove its launch from CI, so the table itself is pinned here.
@@ -84,6 +87,11 @@ def leg_commands(text, part):
     return ' '.join(commands)
 
 
+def shared_leg_commands(text, condition):
+    """The commands of every step gated by the given shared matrix condition."""
+    return ' '.join(command(step) for step in godot_steps(text) if step['attributes'].get('if') == condition)
+
+
 class ReferenceBaselineWorkflowTests(unittest.TestCase):
     # Value: protects=native-only oracle jobs avoid unused browser setup; fails_when=setup runs on both legs; seam=workflow text
     def test_browser_dependencies_are_only_installed_for_web_work(self):
@@ -107,13 +115,37 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertNotEqual(mutant, text)
         self.assertNotEqual(web_probe_conditions(mutant), ["matrix.part == 'suites'"])
 
-    # Value: protects=both pinned engines and both legs; fails_when=the matrix loses a version or a part; seam=workflow text
+    # Value: protects=both pinned engines and every leg; fails_when=the matrix loses a version or a part; seam=workflow text
     def test_the_matrix_keeps_both_engines_and_both_legs(self):
         block = '\n'.join(job_blocks(WORKFLOW.read_text(encoding='utf-8'))['godot'])
         self.assertIn('version: ["4.3", "4.7.2"]', block)
-        self.assertIn('part: [suites, oracles]', block)
+        self.assertIn('part: [suites, oracles, tests-1of2, tests-2of2]', block)
 
-    # Value: protects=every check of both legs; fails_when=a leg loses native work; seam=workflow text
+    # Value: protects=both shard legs keep the whole unit inventory exactly once; fails_when=a shard drops or repeats suites; seam=workflow text and runner selector
+    def test_the_test_shards_cover_the_whole_unit_inventory_exactly_once(self):
+        text = WORKFLOW.read_text(encoding='utf-8')
+        shard_steps = [step for step in godot_steps(text) if '--shard "$shard"' in command(step)]
+        self.assertEqual(len(shard_steps), 1)
+        self.assertEqual(shard_steps[0]['attributes'].get('if'), "startsWith(matrix.part, 'tests')")
+        self.assertIn('shard="${part#tests-}"', command(shard_steps[0]))
+        self.assertIn('--results ".cache/tests/runner-$version-$part.json"', command(shard_steps[0]))
+        self.assertIn('--category integration', command(shard_steps[0]))
+        self.assertIn('--category determinism', command(shard_steps[0]))
+        # The runner's interleave must tile the discovered inventory: the two declared
+        # shards union to every suite, and no suite lands in both.
+        namespace = {'__name__': 'runner_under_test', '__file__': str(Path(__file__).resolve().parents[2] / 'scripts/run_godot_tests.py')}
+        runner = Path(namespace['__file__']).read_text(encoding='utf-8')
+        exec(compile(runner, namespace['__file__'], 'exec'), namespace)
+        suites = namespace['discover']('unit')
+        first = namespace['select_shard'](suites, '1of2')
+        second = namespace['select_shard'](suites, '2of2')
+        self.assertEqual(sorted(first + second), suites)
+        self.assertEqual(set(first) & set(second), set())
+        for invalid in ('0/2', '1/', '3/2', 'x/y', '1/2', '0of2', '3of2'):
+            with self.subTest(shard=invalid), self.assertRaises(ValueError):
+                namespace['select_shard'](suites, invalid)
+
+    # Value: protects=every check of all legs; fails_when=a leg loses native work; seam=workflow text
     def test_every_leg_keeps_its_own_checks(self):
         text = WORKFLOW.read_text(encoding='utf-8')
         suites, oracles = leg_commands(text, 'suites'), leg_commands(text, 'oracles')
@@ -123,6 +155,11 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         for check in ORACLES_CHECKS:
             with self.subTest(check=check):
                 self.assertIn(check, oracles)
+        for part in ('tests-1of2', 'tests-2of2'):
+            with self.subTest(part=part):
+                tests = shared_leg_commands(text, "startsWith(matrix.part, 'tests')")
+                for check in TESTS_CHECKS:
+                    self.assertIn(check, tests)
         runner = RUNNER.read_text(encoding='utf-8')
         namespace = {'__name__': 'parallel_launchers_under_test', '__file__': str(RUNNER)}
         exec(compile(runner, str(RUNNER), 'exec'), namespace)
@@ -140,6 +177,10 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
                               'python3 scripts/oracle/parallel_launchers_disabled.py')
         self.assertNotEqual(mutant, text)
         self.assertNotIn('scripts/oracle/parallel_launchers.py', leg_commands(mutant, 'oracles'))
+        # The mutant drops one test shard leg, losing half the unit inventory.
+        mutant = text.replace('part: [suites, oracles, tests-1of2, tests-2of2]', 'part: [suites, oracles, tests-1of2]')
+        self.assertNotEqual(mutant, text)
+        self.assertEqual(leg_commands(mutant, 'tests-2of2'), '')
 
     # Value: protects=the pinned engine of the oracle leg; fails_when=the oracle launchers lose it; seam=workflow text
     def test_the_oracle_leg_still_installs_the_pinned_engine(self):
