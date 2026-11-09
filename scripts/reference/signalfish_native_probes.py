@@ -51,10 +51,13 @@ TAIL_LINES = 200
 HOST_LEASE_NAME = 'online-native-probes'
 HOST_WAIT_SECONDS = 900.0
 
-# Probe process groups that are currently running. Interruption terminates them
-# before waiting, so a cancelled run cannot block on engines that keep executing.
+# Probe spawns in flight, registered before their process starts, so an
+# interruption can fence and kill every active group even while a probe is
+# between spawn and registration. _abort makes every later launch return at
+# once, so a fenced pool drains without running any remaining probe.
 _active_lock = threading.Lock()
-_active_groups: set[int] = set()
+_active_handles: list[dict] = []
+_abort = threading.Event()
 
 
 def kill_group(pid: int) -> None:
@@ -63,6 +66,15 @@ def kill_group(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+def abort_active_groups() -> None:
+    """Fence every later launch and kill every active probe's process group."""
+    _abort.set()
+    with _active_lock:
+        pids = [handle["pid"] for handle in _active_handles if handle["pid"] is not None]
+    for pid in pids:
+        kill_group(pid)
 
 
 def probe_command(name, script, extra, template, args):
@@ -81,16 +93,25 @@ def run_probe(name, command, log_path, environment):
     """Execute one probe in its own process group and stream output to its log."""
     began = time.monotonic()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open('w', encoding='utf-8') as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True, env=environment)
-        with _active_lock:
-            _active_groups.add(process.pid)
-        try:
-            returncode = process.wait()
-        finally:
+    handle = {"pid": None}
+    with _active_lock:
+        if _abort.is_set():
+            return {'name': name, 'seconds': 0.0, 'returncode': 1, 'error': 'aborted before launch'}
+        _active_handles.append(handle)
+    try:
+        with log_path.open('w', encoding='utf-8') as log:
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                                       start_new_session=True, env=environment)
             with _active_lock:
-                _active_groups.discard(process.pid)
+                handle["pid"] = process.pid
+            if _abort.is_set():
+                # The fence ran while this probe was between spawn and registration,
+                # so nobody else can kill its group.
+                kill_group(process.pid)
+            returncode = process.wait()
+    finally:
+        with _active_lock:
+            _active_handles.remove(handle)
     return {'name': name, 'seconds': time.monotonic() - began, 'returncode': returncode}
 
 
@@ -119,7 +140,7 @@ def main() -> int:
     # The wave owns the host for its whole duration; the probe children inherit
     # that ownership instead of taking and releasing it one process at a time.
     environment = os.environ.copy()
-    environment[host_capacity.WAVE_HELD_ENV] = '1'
+    environment[host_capacity.WAVE_HELD_ENV] = HOST_LEASE_NAME
     outputs = {name: args.results / PROBES[name][2].format(version=args.version) for name in PROBES}
     logs = {name: args.results / f'native-probe-{args.version}-{name}.log' for name in PROBES}
     commands = {name: probe_command(name, *PROBES[name], args) for name in PROBES}
@@ -128,9 +149,10 @@ def main() -> int:
     began = time.monotonic()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-            pending = {pool.submit(run_probe, name, commands[name], logs[name], environment): name
-                       for name in PROBES}
+            pending = {}
             try:
+                pending = {pool.submit(run_probe, name, commands[name], logs[name], environment): name
+                           for name in PROBES}
                 for future in concurrent.futures.as_completed(pending):
                     name = pending[future]
                     try:
@@ -142,14 +164,11 @@ def main() -> int:
                     mark = 'pass' if result['returncode'] == 0 else 'FAIL'
                     print(f'[{len(results)}/{len(PROBES)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
             except BaseException:
-                # Fence queued launches and terminate active probe groups before
-                # waiting: an interruption must not block on engines that keep running.
+                # Fence queued launches and terminate every active probe group:
+                # an interruption must not block on engines that keep running.
                 for future in pending:
                     future.cancel()
-                with _active_lock:
-                    groups = list(_active_groups)
-                for pid in groups:
-                    kill_group(pid)
+                abort_active_groups()
                 raise
     finally:
         host_capacity.release()

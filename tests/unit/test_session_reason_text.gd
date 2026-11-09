@@ -105,15 +105,16 @@ func _transport_reasons(context: RefCounted) -> void:
 
 
 ## The online example's protocol and transport stop lines name the cause and keep
-## the numeric code beside it for tooling parity.
+## the numeric code beside it for tooling parity. Each line renders through its
+## own enum space, pinned by codes that exist in only one of the two enums.
 func _online_stops(context: RefCounted) -> void:
 	var match_scene: OnlineMatch = OnlineMatch.new()
-	var protocol: String = match_scene._stopped_text("Protocol stopped", Endpoint.reason_text(Endpoint.Code.TOKEN_REUSED), Endpoint.Code.TOKEN_REUSED)
-	context.equal(protocol.contains("transport token reused"), true, "protocol stop names its cause")
-	context.equal(protocol.contains("code %d" % Endpoint.Code.TOKEN_REUSED), true, "protocol stop retains its code for tooling")
-	var queue: String = match_scene._stopped_text("Transport queue stopped", RelayTypes.reason_text(RelayTypes.Code.BACKPRESSURE), RelayTypes.Code.BACKPRESSURE)
-	context.equal(queue.contains("transport queues are full"), true, "transport queue stop names its cause")
-	context.equal(queue.contains("code %d" % RelayTypes.Code.BACKPRESSURE), true, "transport queue stop retains its code for tooling")
-	var transport: String = match_scene._stopped_text("Transport stopped", RelayTypes.reason_text(RelayTypes.Code.SDK_FAILURE), RelayTypes.Code.SDK_FAILURE)
-	context.equal(transport.contains("the transport sdk failed"), true, "transport stop names its layer")
-	context.equal(transport.contains("code %d" % RelayTypes.Code.SDK_FAILURE), true, "transport stop retains its code for tooling")
+	var protocol: String = match_scene._protocol_stopped_text(Endpoint.Code.WRONG_CONNECTION)
+	context.equal(protocol, "Protocol stopped: packet on the wrong connection (code %d). Leave and create a new room." % Endpoint.Code.WRONG_CONNECTION,
+		"protocol stop names its endpoint cause beside its code")
+	var queue: String = match_scene._transport_stopped_text("Transport queue stopped", RelayTypes.Code.WRONG_SESSION)
+	context.equal(queue, "Transport queue stopped: packet from another match (code %d). Leave and create a new room." % RelayTypes.Code.WRONG_SESSION,
+		"transport queue stop names its transport cause beside its code")
+	var transport: String = match_scene._transport_stopped_text("Transport stopped", RelayTypes.Code.RECEIVE_OVERFLOW)
+	context.equal(transport, "Transport stopped: received bytes exceeded the receive bound (code %d). Leave and create a new room." % RelayTypes.Code.RECEIVE_OVERFLOW,
+		"transport stop names its transport cause beside its code")

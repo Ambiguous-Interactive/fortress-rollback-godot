@@ -41,10 +41,13 @@ LAUNCHERS = {
 
 TAIL_LINES = 200
 
-# Launcher process groups that are currently running. Interruption terminates them
-# before waiting, so a cancelled run cannot block on engines that keep executing.
+# Launcher spawns in flight, registered before their process starts, so an
+# interruption can fence and kill every active group even while a launcher is
+# between spawn and registration. _abort makes every later launch return at
+# once, so a fenced pool drains without running any remaining launcher.
 _active_lock = threading.Lock()
-_active_groups: set[int] = set()
+_active_handles: list[dict] = []
+_abort = threading.Event()
 
 
 def kill_group(pid: int) -> None:
@@ -53,6 +56,15 @@ def kill_group(pid: int) -> None:
         os.killpg(os.getpgid(pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
+
+
+def abort_active_groups() -> None:
+    """Fence every later launch and kill every active launcher's process group."""
+    _abort.set()
+    with _active_lock:
+        pids = [handle["pid"] for handle in _active_handles if handle["pid"] is not None]
+    for pid in pids:
+        kill_group(pid)
 
 
 def prefetch_oracle_crates(cargo, environment, manifest, version, log_path):
@@ -83,20 +95,31 @@ def run_launcher(name, command, log_path, timeout):
     began = time.monotonic()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     timed_out = False
-    with log_path.open('w', encoding='utf-8') as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-        with _active_lock:
-            _active_groups.add(process.pid)
-        try:
-            returncode = process.wait(timeout=timeout or None)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            kill_group(process.pid)
-            process.wait()
-            returncode = 124
-        finally:
+    handle = {"pid": None}
+    with _active_lock:
+        if _abort.is_set():
+            return {'name': name, 'seconds': 0.0, 'returncode': 1, 'timeout': False,
+                    'error': 'aborted before launch'}
+        _active_handles.append(handle)
+    try:
+        with log_path.open('w', encoding='utf-8') as log:
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             with _active_lock:
-                _active_groups.discard(process.pid)
+                handle["pid"] = process.pid
+            if _abort.is_set():
+                # The fence ran while this launcher was between spawn and
+                # registration, so nobody else can kill its group.
+                kill_group(process.pid)
+            try:
+                returncode = process.wait(timeout=timeout or None)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill_group(process.pid)
+                process.wait()
+                returncode = 124
+    finally:
+        with _active_lock:
+            _active_handles.remove(handle)
     return {'name': name, 'seconds': time.monotonic() - began, 'returncode': returncode, 'timeout': timed_out}
 
 
@@ -147,9 +170,10 @@ def main() -> int:
     results = {}
     began = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
-        pending = {pool.submit(run_launcher, name, commands[name], logs[name], args.timeout): name
-                   for name in LAUNCHERS}
+        pending = {}
         try:
+            pending = {pool.submit(run_launcher, name, commands[name], logs[name], args.timeout): name
+                       for name in LAUNCHERS}
             for future in concurrent.futures.as_completed(pending):
                 name = pending[future]
                 try:
@@ -161,15 +185,12 @@ def main() -> int:
                 mark = 'pass' if result['returncode'] == 0 else 'FAIL'
                 print(f'[{len(results)}/{len(LAUNCHERS)}] {mark} {name} {result["seconds"]:.1f}s', flush=True)
         except BaseException:
-            # Fence queued launches and terminate active launcher groups before
-            # waiting: an interruption must not block on engines that keep running
-            # while the default per-launcher timeout is disabled.
+            # Fence queued launches and terminate every active launcher group:
+            # an interruption must not block on engines that keep running while
+            # the default per-launcher timeout is disabled.
             for future in pending:
                 future.cancel()
-            with _active_lock:
-                groups = list(_active_groups)
-            for pid in groups:
-                kill_group(pid)
+            abort_active_groups()
             raise
     failed = [name for name in LAUNCHERS if results[name]['returncode'] != 0]
     for name in failed:

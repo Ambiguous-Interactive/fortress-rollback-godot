@@ -32,7 +32,7 @@ import signalfish_native_probes as probes
 PASS_SCRIPT = """\
 import os, sys
 from pathlib import Path
-assert os.environ.get('FORTRESS_HOST_LEASE_HELD') == '1', 'wave children must inherit the held lease'
+assert os.environ.get('FORTRESS_HOST_LEASE_HELD') == 'online-native-probes', 'wave children must inherit the wave lease by name'
 args = sys.argv[1:]
 for required in ('--godot', '--server', '--server-source', '--build-receipt', '--output'):
     assert required in args, args
@@ -126,20 +126,25 @@ class NativeProbeWaveTests(unittest.TestCase):
                             'beta': write_script(self.root, 'beta.py', PASS_SCRIPT),
                             'gamma': write_script(self.root, 'gamma.py', PASS_SCRIPT)})
         killed = []
+        registered = threading.Event()
         release = threading.Event()
 
         def fake(name, command, log_path, environment):
             if name == 'alpha':
+                # Deterministic ordering: alpha interrupts only after beta has
+                # registered its group, so the fence always has a live target.
+                registered.wait(10)
                 raise KeyboardInterrupt('simulated interruption')
             if name == 'beta':
                 # A still-running probe whose group interruption must terminate.
                 with probes._active_lock:
-                    probes._active_groups.add(4242)
+                    probes._active_handles.append({'pid': 4242})
+                registered.set()
                 try:
                     release.wait(10)
                 finally:
                     with probes._active_lock:
-                        probes._active_groups.discard(4242)
+                        probes._active_handles.remove({'pid': 4242})
             return {'name': name, 'seconds': 0.0, 'returncode': 0}
 
         def record_kill(pid):
@@ -155,8 +160,38 @@ class NativeProbeWaveTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     probes.main()
         finally:
+            registered.set()
             release.set()
+            probes._abort.clear()
         self.assertEqual(killed, [4242], 'interruption did not terminate the active probe group')
+
+    def test_a_fenced_pool_refuses_to_launch(self):
+        probes._abort.set()
+        self.addCleanup(probes._abort.clear)
+        table = self.table({'alpha': write_script(self.root, 'alpha.py', PASS_SCRIPT)})
+        log = self.results / 'native-probe-4.3-alpha.log'
+        with unittest.mock.patch.dict(probes.PROBES, table, clear=True), \
+                unittest.mock.patch('sys.argv', ['signalfish_native_probes.py'] + self.arguments()), \
+                redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()):
+            exit_code = probes.main()
+        self.assertEqual(exit_code, 1, 'a probe refused by the fence is a failed probe')
+        self.assertFalse(log.exists(), 'a fenced probe must not start its command')
+        self.assertIn('FAIL alpha', stdout.getvalue())
+
+    def test_abort_active_groups_kills_every_registered_group(self):
+        killed = []
+        self.addCleanup(probes._abort.clear)
+        with unittest.mock.patch.object(probes, 'kill_group', side_effect=killed.append):
+            with probes._active_lock:
+                handles = [{'pid': 11}, {'pid': None}, {'pid': 22}]
+                probes._active_handles.extend(handles)
+            try:
+                probes.abort_active_groups()
+            finally:
+                with probes._active_lock:
+                    for handle in handles:
+                        probes._active_handles.remove(handle)
+        self.assertEqual(sorted(killed), [11, 22], 'a spawn still without a pid must be skipped, not killed')
 
     def test_the_wave_takes_the_host_once_and_releases_after_the_join(self):
         table = self.table({'alpha': write_script(self.root, 'alpha.py', PASS_SCRIPT)})

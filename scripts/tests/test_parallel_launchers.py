@@ -142,20 +142,25 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
                  'beta': str(write_script(self.root, 'beta.py', PASS_SCRIPT)),
                  'gamma': str(write_script(self.root, 'gamma.py', PASS_SCRIPT))}
         killed = []
+        registered = threading.Event()
         release = threading.Event()
 
         def fake(name, command, log_path, timeout):
             if name == 'alpha':
+                # Deterministic ordering: alpha interrupts only after beta has
+                # registered its group, so the fence always has a live target.
+                registered.wait(10)
                 raise KeyboardInterrupt('simulated interruption')
             if name == 'beta':
                 # A still-running launcher whose group interruption must terminate.
                 with parallel_launchers._active_lock:
-                    parallel_launchers._active_groups.add(4242)
+                    parallel_launchers._active_handles.append({'pid': 4242})
+                registered.set()
                 try:
                     release.wait(10)
                 finally:
                     with parallel_launchers._active_lock:
-                        parallel_launchers._active_groups.discard(4242)
+                        parallel_launchers._active_handles.remove({'pid': 4242})
             return {'name': name, 'seconds': 0.0, 'returncode': 0, 'timeout': False}
 
         def record_kill(pid):
@@ -172,7 +177,9 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     parallel_launchers.main()
         finally:
+            registered.set()
             release.set()
+            parallel_launchers._abort.clear()
         self.assertEqual(killed, [4242], 'interruption did not terminate the active launcher group')
 
     def test_missing_launcher_script_fails_the_run(self):

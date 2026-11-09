@@ -314,7 +314,7 @@ func _poll_protocol(now_us: int) -> bool:
 		if not has_started:
 			return false
 		if code not in [Inputs.Code.OK, Inputs.Code.BACKPRESSURE]:
-			failure = _stopped_text("Protocol stopped", Inputs.reason_text(code), code)
+			failure = _protocol_stopped_text(code)
 			return false
 		_collect_events()
 		if not failure.is_empty():
@@ -351,19 +351,27 @@ func _service(now_us: int) -> bool:
 		if accepted == Fallback.Code.OK:
 			_pending.clear()
 		elif accepted != Fallback.Code.BACKPRESSURE:
-			failure = _stopped_text("Transport queue stopped", RelayTypes.reason_text(accepted), accepted)
+			failure = _transport_stopped_text("Transport queue stopped", accepted)
 			return false
 	var result: Fallback.Result = fallback.poll(now_us, next_token)
 	if not has_started:
 		return false
 	if result.code not in [Fallback.Code.OK, Fallback.Code.BACKPRESSURE]:
-		failure = _stopped_text("Transport stopped", RelayTypes.reason_text(result.code), result.code)
+		failure = _transport_stopped_text("Transport stopped", result.code)
 		return false
 	return true
 
 
-## One plain-language stop line shared by the protocol and transport numeric spaces;
-## the numeric code stays beside the text for tooling parity.
+## Plain-language stop lines keep the numeric code beside the text for tooling
+## parity; each enum space renders through its own shared helper.
+func _protocol_stopped_text(code: int) -> String:
+	return _stopped_text("Protocol stopped", Inputs.reason_text(code), code)
+
+
+func _transport_stopped_text(prefix: String, code: int) -> String:
+	return _stopped_text(prefix, RelayTypes.reason_text(code), code)
+
+
 func _stopped_text(prefix: String, text: String, code: int) -> String:
 	return "%s: %s (code %d). Leave and create a new room." % [prefix, text, code]
 
