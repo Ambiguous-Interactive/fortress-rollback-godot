@@ -360,3 +360,43 @@ before the other files and mutates `sys.path` as a side effect, which let
 their transitive `scripts/reference` imports resolve. `handshake_formal.py`
 now inserts that path itself, so every oracle test file is import-order
 independent and per-file subprocess isolation is sound.
+
+## Current 28-job baseline and the whole-inventory shard jobs
+
+Run [42543205499](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42543205499)
+qualified main `488f6c101ab7a19b22f5a7d9489b16f5a7808826` on 2026-11-09: all 28
+jobs passed, the workflow took 13m00s of wall time and the jobs summed to
+204m17s (12,257s). The five longest jobs:
+
+| Job | Wall time |
+| --- | --- |
+| Godot 4.3 and Chromium suites | 12m56s |
+| Native and Firefox snapshot ownership 4.7.2 positive part 1 | 11m44s |
+| Native and Firefox snapshot ownership 4.3 negative part 2 | 11m11s |
+| Native and Firefox snapshot ownership 4.3 negative part 1 | 10m19s |
+| Native and Firefox snapshot ownership 4.7.2 negative part 2 | 9m39s |
+
+The critical path moved back to the Godot suites job: its
+"Verify runner failure controls and fresh-process suites" step took 11m54s,
+of which the whole-inventory unit run owns about 9 minutes (01:02:41–01:11:39
+in the job log). The step-level receipt (`tests/durations.json` in the
+uploaded artifact) measures the unit inventory at 1,060.8s of summed suite
+time per fresh-process run; the two contractual repetitions over four parallel
+workers make the wave exactly CPU-bound (2,121.6s of shard wall over 538s
+wall is 3.94 of 4 workers). More workers on the same 4-vCPU runner cannot
+shorten it; only a second runner can.
+
+The same levers apply to the ownership witness: its 97-suite inventory is
+split into two interleaved parts per phase, so a 25-suite part still owns a
+whole serial share of both the native wave and the serial browser pages. Four
+interleaved parts keep one page per suite balanced (25/25/25/25 suites,
+149–174 cases per part over the current 97-suite inventory).
+
+The scheduling change that follows from these two measurements splits the
+unit inventory across two same-tree jobs (`run_godot_tests.py --shard 1of2`
+and `--shard 2of2`, whose name interleave tiles the discovered inventory
+exactly once) and splits the ownership parts from two to four per phase. The
+resulting per-job table is recorded from that change's own run records when
+it lands; the workflow-contract tests keep the shard union and the ownership
+part union equal to the declared inventories, so no gate moves with the
+schedule.

@@ -180,6 +180,11 @@ Native test launches wait within an explicit host-capacity budget before startin
 The ownership witness overlaps its per-suite native engine processes in the same bounded wave, keeping one fresh process, watchdog and after-run boundary verification per suite; browser pages stay serial because they need a responsive host.
 The ownership matrix runs each Chromium phase as its own job, matching the existing Firefox shape, so the workflow's wall-time critical path is no longer one double-phase job.
 The oracle launchers run in bounded parallel subprocesses with fail-closed aggregation; each launcher keeps its own interpreter, output directory and receipt, and the shared cargo target stays correct under cargo's own build lock.
+The unit-test wave shards across two same-tree CI jobs whose name-interleaved
+suites tile the discovered inventory exactly once, and the ownership witness
+splits into four interleaved suite parts per phase, so both the CPU-bound
+engine wave and the serial browser pages spread across runners without
+removing a gate.
 Cancellation fences queued launches and retires owned engine groups before releasing capacity; per-case watchdog isolation remains available after contention with one worker.
 Authenticated spectator byte streams ignore validated duplicates after viewed history expires without renewing host liveness.
 The same policy applies to custom transports and the SignalFish adapter.

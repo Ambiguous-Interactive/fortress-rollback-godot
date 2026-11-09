@@ -85,9 +85,9 @@ Use `--phase negative` or `--phase positive` only for an explicit partition.
 The receipt declares `phases_requested` and covers only its requested pins and
 phases. A single-phase receipt never establishes complete qualification; both
 phases must pass for every engine. Omitting `--phase` retains both phases.
-Firefox CI on both engine pins also selects `--suite-part 1` or `--suite-part 2` within
-each phase to fit the same 30-minute job cap. Parts alternate the sorted suite
-inventory and repeat the ownership-control suite in both parts. Their union
+Firefox CI on both engine pins also selects `--suite-part 1` through `--suite-part 4` within
+each phase to fit the same 30-minute job cap. Parts interleave the sorted suite
+inventory and repeat the ownership-control suite in all four parts. Their union
 covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py); only the four control cases overlap.
 Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
