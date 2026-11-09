@@ -414,7 +414,8 @@ class OwnershipRejectionFixture(unittest.TestCase):
             if selected == 'firefox':
                 # The faked native wave is fast, so every eligible neighbor pair
                 # shares one Firefox page; the peer-parity suite stays alone and
-                # keeps its exact per-case pages.
+                # keeps its exact per-case pages. The policy invariants hold
+                # regardless of what the shared planner returns.
                 for group in probes.firefox_pages(suites, {suite: 0.0 for suite in suites}):
                     if group == [probes.PEER_PARITY_SUITE]:
                         cases = [row['case'] for row in native_value(False)['records'] if row['suite'] == group[0]]
@@ -427,6 +428,10 @@ class OwnershipRejectionFixture(unittest.TestCase):
                     expected_groups.append(suites[offset:offset + 4])
                     expected_cases.append(None)
             self.assertEqual(groups, expected_groups * round_count)
+            if selected == 'firefox':
+                self.assertTrue(all(len(group) <= 2 for group in groups), 'a Firefox page may hold at most two suites')
+                self.assertTrue(all(len(group) == 1 or probes.PEER_PARITY_SUITE not in group for group in groups),
+                                'the peer-parity suite stays alone')
             self.assertEqual([command[4] if len(command) == 5 else None for command, log, timeout in browser_calls], expected_cases * round_count)
             self.assertTrue(all(timeout == 240 for command, log, timeout in browser_calls))
             browser_logs = [log for command, log, timeout in browser_calls]

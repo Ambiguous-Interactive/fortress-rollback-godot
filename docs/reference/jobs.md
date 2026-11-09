@@ -389,8 +389,13 @@ shorten it; only a second runner can.
 The same levers apply to the ownership witness: its 97-suite inventory is
 split into two interleaved parts per phase, so a 25-suite part still owns a
 whole serial share of both the native wave and the serial browser pages. Four
-interleaved parts keep one page per suite balanced (25/25/25/25 suites,
+interleaved parts keep the browser pages balanced (25/25/25/25 suites,
 149–174 cases per part over the current 97-suite inventory).
+
+Firefox pages pair neighboring suites only while the same runner's measured
+native wave cost fits a 30-second page budget, so a 25-suite part runs about
+13 pages instead of 25 while the peer-parity suite keeps one case per page and
+no case, repetition or comparison moves.
 
 The scheduling change that follows from these two measurements splits the
 unit inventory across two same-tree jobs (`run_godot_tests.py --shard 1of2`

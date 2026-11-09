@@ -98,9 +98,12 @@ class OwnershipBatchTests(unittest.TestCase):
             # (native seconds, ordered suites, expected pages)
             ({a: 5.0, b: 5.0, c: 5.0, d: 5.0}, [a, b, c, d], [[a, b], [c, d]]),
             ({a: 16.0, b: 16.0, c: 5.0, d: 5.0}, [a, b, c, d], [[a], [b, c], [d]]),
+            # 15.0 + 15.0 equals the budget exactly, so the pair still shares one page.
+            ({a: 15.0, b: 15.0, c: 5.0}, [a, b, c], [[a, b], [c]]),
             ({a: 5.0, d: 5.0}, [a, b, c, d], [[a], [b], [c], [d]]),
             ({a: 5.0, b: 5.0, c: 5.0}, [a, parity, b, c], [[a], [parity], [b, c]]),
             ({a: 5.0, b: 5.0, c: 5.0}, [parity, a, b, c], [[parity], [a, b], [c]]),
+            ({a: 5.0, b: 5.0, c: 5.0}, [a, b, parity, c], [[a, b], [parity], [c]]),
             ({a: 5.0, b: 5.0}, [a, b], [[a, b]]),
             ({a: 5.0}, [a], [[a]]),
         ]
@@ -110,11 +113,16 @@ class OwnershipBatchTests(unittest.TestCase):
         with self.subTest(budget='explicit'):
             self.assertEqual(probes.firefox_pages([a, b], {a: 9.0, b: 9.0}, budget=20.0), [[a, b]])
             self.assertEqual(probes.firefox_pages([a, b], {a: 11.0, b: 11.0}, budget=20.0), [[a], [b]])
-        # Every grouped plan preserves the exact suite order without loss or repetition.
+        # Every grouped plan preserves the exact suite order without loss or
+        # repetition, and the peer-parity suite never shares a page.
         inventory = sorted(probes.EXPECTED)
         pages = probes.firefox_pages(inventory, {suite: 0.0 for suite in inventory})
         self.assertEqual([suite for page in pages for suite in page], inventory)
-        self.assertTrue(all(len(page) <= 2 and page != [probes.PEER_PARITY_SUITE, inventory[0]] for page in pages))
+        self.assertTrue(all(len(page) <= 2 and (len(page) == 1 or probes.PEER_PARITY_SUITE not in page)
+                            for page in pages))
+        self.assertIn([probes.PEER_PARITY_SUITE], pages)
+        # An unmeasured suite stays alone even next to a measured neighbor.
+        self.assertEqual(probes.firefox_pages([a, b], {b: 0.0}), [[a], [b]])
 
     # Value: protects=case pages retain the full native suite and order; fails_when=pages lose, repeat or alter evidence; why_new=suite-only aggregation; seam=none
     def test_case_pages_reassemble_exact_native_order_and_reject_incomplete_evidence(self):

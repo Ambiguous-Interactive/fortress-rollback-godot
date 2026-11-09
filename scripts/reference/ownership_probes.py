@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify integer, ownership and production byte sessions on pinned native/Web engines."""
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -624,9 +625,10 @@ def firefox_pages(ordered_suites, native_seconds, budget=FIREFOX_PAGE_NATIVE_BUD
     """
     pages = []
     for suite in ordered_suites:
+        measured = native_seconds.get(suite, math.inf)
+        previous = native_seconds.get(pages[-1][0], math.inf) if pages else math.inf
         if (not pages or len(pages[-1]) >= 2 or suite == PEER_PARITY_SUITE
-                or pages[-1][0] == PEER_PARITY_SUITE
-                or native_seconds.get(pages[-1][0], budget) + native_seconds.get(suite, budget) > budget):
+                or pages[-1][0] == PEER_PARITY_SUITE or previous + measured > budget):
             pages.append([suite])
         else:
             pages[-1].append(suite)
