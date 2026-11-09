@@ -139,40 +139,13 @@ func _can_configure_faults() -> bool:
 
 
 ## Plain-language name for the peer match's protocol-level failure. The endpoint
-## enum is separate from session reasons, so it keeps its own local wording;
-## unknown codes stay numeric.
+## enum is separate from session reasons; the shared endpoint helper owns the
+## wording, and the healthy match keeps its short local label. Unknown codes
+## stay numeric.
 func _endpoint_failure_text(code: int) -> String:
-	match code:
-		Match.I.Code.OK:
-			return "none"
-		Match.I.Code.INVALID_ARGUMENT:
-			return "invalid call"
-		Match.I.Code.WRONG_STATE:
-			return "unexpected transport state"
-		Match.I.Code.INVALID_PACKET:
-			return "malformed packet"
-		Match.I.Code.WRONG_SOURCE:
-			return "packet from the wrong source"
-		Match.I.Code.WRONG_CONNECTION:
-			return "packet on the wrong connection"
-		Match.I.Code.UNSUPPORTED_KIND:
-			return "unsupported packet kind"
-		Match.I.Code.BACKPRESSURE:
-			return "blocked packets"
-		Match.I.Code.TOKEN_REUSED:
-			return "transport token reused"
-		Match.I.Code.BUSY:
-			return "waiting for packet service"
-		Match.I.Code.CONFLICT:
-			return "conflicting packet delivery"
-		Match.I.Code.INVALID_FRAME:
-			return "invalid frame"
-		Match.I.Code.INPUT_FAILED:
-			return "confirmed input failed"
-		Match.I.Code.TERMINATED:
-			return "session terminated"
-		_:
-			return "failure code %d" % code
+	if code == Match.I.Code.OK:
+		return "none"
+	return Match.I.reason_text(code)
 
 
 func _can_change_delay() -> bool:
