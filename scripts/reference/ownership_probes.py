@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify integer, ownership and production byte sessions on pinned native/Web engines."""
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -29,6 +30,12 @@ from signalfish_probe import inventory, walk_entries
 
 PREFIX = 'FORTRESS_TEST_RESULT '
 PROGRESS_PREFIX = 'FORTRESS_TEST_PROGRESS '
+# The peer-parity suite always runs one case per Firefox page: its combined
+# cases once completed past the hosted page deadline inside a shared page.
+PEER_PARITY_SUITE = 'res://tests/unit/test_driver_peer_parity.gd'
+# The measured native work two suites may combine into one Firefox page; the
+# derivation from the hosted page deadline is in firefox_pages().
+FIREFOX_PAGE_NATIVE_BUDGET = 30.0
 # The observation of a round is bounded: a fixed number of fields, a fixed
 # number of retained errors and a fixed error length. A rejected run keeps its
 # diagnosis without buffering the output that produced it.
@@ -591,7 +598,7 @@ def select_suites(part):
     """Split suite work into four interleaved parts, retaining the alias control in every part.
 
     Four same-runner jobs halve the workflow's wall-time share of the witness: the
-    name interleave keeps one page per suite in each part balanced (25 suites per
+    name interleave keeps the browser pages of each part balanced (25 suites per
     part over the current 97-suite inventory), while every part still repeats the
     mutated ownership control.
     """
@@ -601,6 +608,31 @@ def select_suites(part):
     selected = ordered if part == 'all' else ordered[int(part) - 1::4]
     control = 'res://tests/determinism/test_buffer_ownership.gd'
     return {suite: EXPECTED[suite] for suite in ordered if suite in selected or suite == control}
+
+
+def firefox_pages(ordered_suites, native_seconds, budget=FIREFOX_PAGE_NATIVE_BUDGET):
+    """Group Firefox suites into pages of at most two neighboring suites.
+
+    #224 caps a Firefox page at two suites after a four-suite page exceeded the
+    180-second hosted page deadline, and the witness previously paid one page
+    per Firefox suite. A page shares two neighboring suites only while the
+    native wave that just ran on this same runner measured their combined work
+    within ``budget``: the hosted run that rejected the four-suite page paid
+    roughly 3.5x its native cost, so a 30-second native budget bounds a shared
+    page near 105 seconds, inside the hosted page deadline with room for
+    browser startup. An unmeasured suite and the peer-parity suite always stay
+    alone, so the existing per-case peer-parity pages remain intact.
+    """
+    pages = []
+    for suite in ordered_suites:
+        measured = native_seconds.get(suite, math.inf)
+        previous = native_seconds.get(pages[-1][0], math.inf) if pages else math.inf
+        if (not pages or len(pages[-1]) >= 2 or suite == PEER_PARITY_SUITE
+                or pages[-1][0] == PEER_PARITY_SUITE or previous + measured > budget):
+            pages.append([suite])
+        else:
+            pages[-1].append(suite)
+    return pages
 
 
 def aggregate_native(batches, negative, expected=None):
@@ -1055,7 +1087,20 @@ def run_probes(args, results):
             # same unchanged tree once per engine start. Every suite finishes
             # (the executor joins its threads), and the rejection names the
             # first failing suite in suite order.
+            # The native cost measured on this same runner bounds how much
+            # web page work a Firefox page may combine (see the batching below).
+            native_seconds: dict[str, float] = {}
+
             def native_suite_task(suite):
+                """Measure the hosted native cost this same runner just paid, for page budgeting."""
+                suite_started = time.monotonic()
+                try:
+                    return native_suite_run(suite)
+                finally:
+                    native_seconds[suite] = time.monotonic() - suite_started
+
+            def native_suite_run(suite):
+                """Run one native suite batch and return its bounded outcome tuple."""
                 native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
                 try:
                     code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']
@@ -1142,12 +1187,16 @@ def run_probes(args, results):
                 browser_batches = []
                 browser_identity = None
                 ordered_suites = sorted(selected)
-                batch_size = 1 if args.browser == 'firefox' else 4
-                for batch_index, offset in enumerate(range(0, len(ordered_suites), batch_size)):
-                    suites = ordered_suites[offset:offset + batch_size]
+                # Chromium keeps its established four-suite pages; Firefox pages
+                # pair neighbors only inside the measured native budget above.
+                if args.browser == 'firefox':
+                    page_suites = firefox_pages(ordered_suites, native_seconds)
+                else:
+                    page_suites = [ordered_suites[offset:offset + 4] for offset in range(0, len(ordered_suites), 4)]
+                for batch_index, suites in enumerate(page_suites):
                     case_names = [None]
                     native_suite = None
-                    if args.browser == 'firefox' and suites == ['res://tests/unit/test_driver_peer_parity.gd']:
+                    if args.browser == 'firefox' and suites == [PEER_PARITY_SUITE]:
                         suite_records = [record for record in native['records'] if record['suite'] == suites[0]]
                         native_suite = {**native, 'passed': True, 'count': len(suite_records), 'records': suite_records}
                         case_names = [record['case'] for record in suite_records]

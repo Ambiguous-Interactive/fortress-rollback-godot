@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Improved
+
+- Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part ran 14 pages in 217s instead of 25 pages in 415s, with every case, repetition and comparison unchanged.
+
+- Share one npm download cache across the browser CI jobs, so repeated `npm ci` installs stop fetching every package from the registry.
+
 ### Added
 
 - Overlap the ownership witness's per-suite native engine processes in a bounded wave. Each suite keeps its own fresh process, 180-second watchdog and after-run boundary verification; the wave joins every suite and a rejection still names the first failing suite in suite order. The native-only 4.3 part-1 witness finishes in about 2m38s locally instead of 9m41s.
