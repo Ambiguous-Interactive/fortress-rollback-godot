@@ -487,5 +487,77 @@ assert.equal(errors.length,3,'deliberate close must not invent a request failure
                 validate_host_departure(host, {**browser, **changes})
 
 
+class SpectatorDisposalAbortTests(unittest.TestCase):
+    # Value: protects=only the exact success-paired /done disposal abort is acknowledged;
+    # fails_when=a real request failure or a failed page result is classified as expected;
+    # why_new=the pinned web transport reports the page's own completed /done POST as
+    # net::ERR_ABORTED during result-phase bookkeeping (#322); seam=spectator_browser
+    CONTROL = 'http://127.0.0.1:42855'
+    ARTIFACT = {'origin': CONTROL, 'path': '/done', 'method': 'POST', 'resourceType': 'fetch',
+                'failure': 'net::ERR_ABORTED', 'phase': 'result'}
+    PASSED = {'passed': True, 'departure': 'host', 'socket_departed': False, 'selected_host_departed': True,
+              'playback_stopped': True, 'viewer_seated': False, 'frame': 8, 'compared': 8, 'buffered_rows': 3,
+              'simulations_before': 8, 'simulations_after': 8, 'viewer_binary_receives': 15}
+    HOST = {'passed': True, 'departure': 'host', 'frames': 20, 'confirmed': 19, 'host_rollbacks': 18,
+            'socket_closed': True, 'remote_host_departure_observed': True, 'publication_stopped': True,
+            'viewer_paused_frame': 8}
+
+    def browser(self, **changes):
+        report = {'browser': 'Chromium', 'version': '156.0', 'errors': ['browser request failed'],
+                  'requestFailures': [dict(self.ARTIFACT)], 'departureClosed': False, 'result': dict(self.PASSED)}
+        report.update(changes)
+        return report
+
+    def test_exact_artifact_is_acknowledged_and_retained_as_evidence(self):
+        from spectator_browser import acknowledge_disposal_abort, classify_browser_output
+        report = self.browser()
+        classified, failure = classify_browser_output(1, '', json.dumps(report), SimpleNamespace(url=self.CONTROL))
+        self.assertIsNone(failure, 'the acknowledged disposal abort does not reject exit code 1')
+        self.assertEqual(classified['errors'], [], 'the acknowledged abort must not fail the gate')
+        self.assertEqual(classified['requestFailures'], [], 'the acknowledged abort moves out of the fatal list')
+        self.assertEqual(classified['acknowledged_disposal_abort'], self.ARTIFACT, 'the observation stays visible in the receipt')
+        validate_host_departure(self.HOST, classified)
+        healthy, failure = classify_browser_output(0, '', json.dumps({'browser': 'Chromium', 'errors': [], 'result': self.PASSED}), SimpleNamespace(url=self.CONTROL))
+        self.assertIsNone(failure, 'healthy exit stays accepted')
+        self.assertNotIn('acknowledged_disposal_abort', healthy, 'healthy reports gain no acknowledgment')
+
+    def test_execution_path_rejections(self):
+        from spectator_browser import classify_browser_output
+        failure = 'exported spectator failed; inspect browser.log'
+        self.assertEqual(classify_browser_output(1, 'node printed an error', '{"errors":[]}', SimpleNamespace(url=self.CONTROL)), (None, failure), 'stderr stays fatal')
+        self.assertEqual(classify_browser_output(1, '', 'not json', SimpleNamespace(url=self.CONTROL)), (None, failure), 'malformed output stays fatal')
+        for returncode in [1, 3]:
+            report = self.browser()
+            report['result'].update(passed=False, reason='browser playback step')
+            classified, rejection = classify_browser_output(returncode, '', json.dumps(report), SimpleNamespace(url=self.CONTROL))
+            self.assertEqual(rejection, failure, f'exit {returncode} without acknowledgment stays rejected')
+            self.assertEqual(classified['errors'], ['browser request failed'], f'exit {returncode} keeps its error')
+
+    def test_mutations_stay_fatal(self):
+        from spectator_browser import acknowledge_disposal_abort, classify_browser_output
+        mutations = [
+            ('second failure', lambda report: report['requestFailures'].append(
+                {**self.ARTIFACT, 'path': '/admission', 'phase': 'state'})),
+            ('lost page success', lambda report: report['result'].update(passed=False, reason='browser playback step')),
+            ('different failure code', lambda report: report['requestFailures'][0].update(failure='net::ERR_CONNECTION_REFUSED')),
+            ('different phase', lambda report: report['requestFailures'][0].update(phase='departure')),
+            ('different path', lambda report: report['requestFailures'][0].update(path='/admission')),
+            ('wrong origin', lambda report: report['requestFailures'][0].update(origin='http://127.0.0.1:1')),
+            ('foreign error text', lambda report: report.update(errors=['browser console error'])),
+            ('no failures at all', lambda report: report.update(requestFailures=[])),
+            ('runner failure phase', lambda report: report.update(runnerFailurePhase='final')),
+        ]
+        for name, mutate in mutations:
+            with self.subTest(name=name):
+                report = self.browser()
+                mutate(report)
+                classified, rejection = classify_browser_output(1, '', json.dumps(report), SimpleNamespace(url=self.CONTROL))
+                self.assertEqual(rejection, 'exported spectator failed; inspect browser.log', name + ' must stay fatal')
+                self.assertNotIn('acknowledged_disposal_abort', classified, name + ' stays unacknowledged')
+                self.assertTrue(classified['errors'], name + ' keeps its fatal error')
+                with self.assertRaises(ValueError, msg=name + ' fails the departure gate'):
+                    validate_host_departure(self.HOST, classified)
+
+
 if __name__ == '__main__':
     unittest.main()

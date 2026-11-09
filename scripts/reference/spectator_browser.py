@@ -9,6 +9,7 @@ import subprocess
 import shutil
 import threading
 import zipfile
+from urllib.parse import urlsplit
 
 from fetch import CACHE, ROOT, digest, fetch, prepare_zip
 from godot_smoke import run
@@ -100,6 +101,35 @@ def validate_no_acceptance(control):
         raise ValueError('exported admission control accepted or completed playback')
 
 
+# The pinned engines' web HTTPRequest occasionally reports its own completed control POST as
+# net::ERR_ABORTED during result-phase bookkeeping, after the page consumed the HTTP 200 and
+# published its passing result. One exact, success-paired artifact per report is acknowledged;
+# every other request failure stays fatal.
+DISPOSAL_ABORT = {'path': '/done', 'method': 'POST', 'resourceType': 'fetch', 'failure': 'net::ERR_ABORTED', 'phase': 'result'}
+
+
+def acknowledge_disposal_abort(browser, control):
+    if not isinstance(browser, dict) or browser.get('runnerFailurePhase') is not None:
+        return browser
+    failures = browser.get('requestFailures')
+    if not isinstance(failures, list) or len(failures) != 1 or not isinstance(failures[0], dict):
+        return browser
+    origin = urlsplit(str(control.url))._replace(path='', query='', fragment='').geturl()
+    artifact = failures[0]
+    expected = {'origin': origin, **DISPOSAL_ABORT}
+    if any(type(artifact.get(key)) is not type(value) or artifact.get(key) != value for key, value in expected.items()):
+        return browser
+    if browser.get('errors') != ['browser request failed']:
+        return browser
+    result = browser.get('result')
+    if not isinstance(result, dict) or result.get('passed') is not True:
+        return browser
+    browser['requestFailures'] = []
+    browser['errors'] = []
+    browser['acknowledged_disposal_abort'] = artifact
+    return browser
+
+
 def validate_fault(returncode, browser, host_alive, control, stderr=''):
     if (stderr or type(returncode) is not int or returncode != 1 or host_alive is not True or type(browser) is not dict
             or browser.get('browser') != 'Chromium' or type(browser.get('version')) is not str or not browser['version']
@@ -143,6 +173,29 @@ def execute(engine, project, runtime, url, environment, output, control, fault=N
         raise ValueError(f'{failure}; browser.log tail: {browser}; native.log tail: {native}') from failure
 
 
+def classify_browser_output(returncode, stderr, browser_output, control):
+    """Parse one spectator observer report and name its rejection, if any.
+
+    The observer exits nonzero when it counts any browser error, including the
+    expected /done disposal abort, so exit code 1 is acceptable only for the
+    exact acknowledged report; every other exit, any stderr and malformed
+    output keep the original rejection.
+    """
+    failure = 'exported spectator failed; inspect browser.log'
+    if stderr:
+        return None, failure
+    try:
+        candidate = json.loads(browser_output)
+    except ValueError:
+        return None, failure
+    if not isinstance(candidate, dict):
+        return None, failure
+    acknowledge_disposal_abort(candidate, control)
+    if returncode != 0 and candidate.get('acknowledged_disposal_abort') is None:
+        return candidate, failure
+    return candidate, None
+
+
 def _execute(engine, project, runtime, url, environment, output, control, fault=None, acceptance_delay_ms=None):
     controller = ROOT / "scripts/reference/browser/spectator.cjs"
     if acceptance_delay_ms is not None:
@@ -179,7 +232,9 @@ def _execute(engine, project, runtime, url, environment, output, control, fault=
     rows = [json.loads(line.removeprefix('FORTRESS_BROWSER_HOST_RESULT ')) for line in native.splitlines() if line.startswith('FORTRESS_BROWSER_HOST_RESULT ')]
     if host.returncode != 0 or 'ERROR:' in native or len(rows) != 1:
         raise ValueError('native browser-host witness failed; inspect native.log')
-    result = json.loads(browser_output)
+    result, failure = classify_browser_output(process.returncode, process.stderr, browser_output, control)
+    if failure is not None:
+        raise ValueError(failure)
     if fault == 'host-departure':
         validate_host_departure(rows[0], result)
     elif fault == 'viewer-departure':
