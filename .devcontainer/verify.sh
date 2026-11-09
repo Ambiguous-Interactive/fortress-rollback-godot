@@ -172,19 +172,20 @@ else
 
   section "Repository harness"
   # A rejected check must name its own failure: capture each command's output
-  # and print its tail when the check rejects the environment.
+  # and print it whole when the check rejects the environment, so no failure
+  # name or earlier case is clipped away.
   harness_output="$(mktemp)"
   if make -C "$ROOT" lint-llm >"$harness_output" 2>&1; then
     ok "make lint-llm"
   else
     bad "make lint-llm"
-    tail -40 "$harness_output"
+    cat "$harness_output"
   fi
   if make -C "$ROOT" test-llm >"$harness_output" 2>&1; then
     ok "make test-llm"
   else
     bad "make test-llm"
-    tail -40 "$harness_output"
+    cat "$harness_output"
   fi
   rm -f "$harness_output"
 
