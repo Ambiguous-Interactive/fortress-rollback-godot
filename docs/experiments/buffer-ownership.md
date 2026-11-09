@@ -76,8 +76,8 @@ checked before the full native/Web results are compared; missing or duplicate
 batches cannot qualify. Receipts declare the selected engine versions.
 The default command runs both pins;
 `--version 4.3` or `--version 4.7.2` runs both control rounds for one pin.
-CI keeps both Chromium jobs and runs each Firefox pin/control phase in its own
-job under the existing 30-minute budget. Both Firefox phases are required on each pin. Each selection runs the same complete case
+CI keeps the Chromium ownership jobs and runs each browser pin/control phase in its own
+job per suite part under the existing 30-minute budget. Both Firefox phases are required on each pin. Each selection runs the same complete case
 inventory, native comparison and negative controls; it does not filter replay,
 driver or spectator coverage. Firefox output additionally records its WebGL
 preferences and checked window geometry.
@@ -85,13 +85,16 @@ Use `--phase negative` or `--phase positive` only for an explicit partition.
 The receipt declares `phases_requested` and covers only its requested pins and
 phases. A single-phase receipt never establishes complete qualification; both
 phases must pass for every engine. Omitting `--phase` retains both phases.
-Firefox CI on both engine pins also selects `--suite-part 1` or `--suite-part 2` within
-each phase to fit the same 30-minute job cap. Parts alternate the sorted suite
-inventory and repeat the ownership-control suite in both parts. Their union
-covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py); only the four control cases overlap.
+Firefox CI on both engine pins also selects `--suite-part 1` through `--suite-part 4` within
+each phase to fit the same 30-minute job cap. Parts interleave the sorted suite
+inventory and repeat the ownership-control suite in all four parts. Each part
+runs only its own suites, plus that control — mutated to fail in the negative
+phase and required to pass in the positive phase; the union of the four parts
+covers the [declared suite and case inventory](../../scripts/reference/ownership_probes.py), and only the four control
+cases overlap.
 Every selected case still runs twice, with exact native/Web comparison.
 Receipts declare `suite_part_requested` and the exact `suites_requested`
-inventory. Both parts and both phases must pass for full qualification.
+inventory. All four parts and both phases must pass for full qualification.
 Omitting `--suite-part` keeps the complete inventory.
 Owned browser contexts close before their parent process. Full Firefox shutdown
 also runs the destructor that removes late updater locks; exit code zero alone

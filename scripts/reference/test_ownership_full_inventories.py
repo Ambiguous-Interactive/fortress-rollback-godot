@@ -27,7 +27,7 @@ class OwnershipFullInventoryTests(OwnershipRejectionFixture):
     # Value: protects=CI parts run both real controls with exact declared native/Web coverage; fails_when=selector drops work; why_new=whole-run orchestration; seam=none
     def test_suite_parts_run_exact_declared_inventory_and_both_controls(self):
         for browser in ('firefox', 'chromium'):
-            for part in ('1', '2'):
+            for part in ('1', '2', '3', '4'):
                 with self.subTest(browser=browser, part=part):
                     results = self.scenario(expected=None, selected=browser, version='4.3', suite_part=part)
                     receipt = json.loads((results / 'ownership.json').read_text())

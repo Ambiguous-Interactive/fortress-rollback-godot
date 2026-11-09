@@ -7,9 +7,11 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -72,65 +74,121 @@ else:
 
 
 class NativeCliInstallTests(unittest.TestCase):
-    def test_command_failures_identify_phase_and_preserve_partial_output(self):
-        # Value: distinguishes hung commands without registry timing or leaking caller environment;
-        # the install phase merges its streams so diagnostics keep npm's original interleaving.
+    @staticmethod
+    def load_helper():
         spec = importlib.util.spec_from_file_location('native_cli_installer', HELPER)
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
+        return helper
+
+    def test_command_failures_identify_phase_and_preserve_partial_output(self):
+        # Value: distinguishes hung commands without registry timing or leaking caller environment;
+        # the install phase merges its streams so diagnostics keep npm's original interleaving.
+        helper = self.load_helper()
+        outer = self
         for phase in ('wrapper metadata', 'native metadata', 'global installation', 'global root lookup', 'runtime version'):
             for timeout in (True, False):
                 with self.subTest(phase=phase, timeout=timeout):
                     calls = []
 
-                    def run(command, **options):
+                    def phase_of(command):
                         if command[0] == 'opencode':
-                            current = 'runtime version'
-                        elif command[1] == 'view':
-                            current = 'wrapper metadata' if command[2].endswith('@latest') else 'native metadata'
-                        else:
-                            current = {'install': 'global installation', 'root': 'global root lookup'}[command[1]]
-                        calls.append((current, options))
-                        self.assertEqual(options['timeout'], 120)
-                        if current == 'global installation':
-                            self.assertNotIn('capture_output', options, 'install streams merge in order')
-                            self.assertEqual(options['stdout'], subprocess.PIPE)
-                            self.assertEqual(options['stderr'], subprocess.STDOUT)
-                        else:
-                            self.assertIn('capture_output', options, 'metadata streams stay separate for JSON parsing')
-                            self.assertNotIn('stdout', options)
-                            self.assertNotIn('stderr', options)
-                        if current == phase:
-                            if timeout:
-                                raise subprocess.TimeoutExpired(command, 120,
-                                                                output=b'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n',
-                                                                stderr=b'partial stderr\n')
-                            return subprocess.CompletedProcess(command, 42, 'partial stdout\n', 'partial stderr\n')
-                        output = '/fake/root'
-                        if current == 'wrapper metadata':
-                            output = json.dumps({'version': '2.0.30', 'optionalDependencies': {
+                            return 'runtime version'
+                        if command[1] == 'view':
+                            return 'wrapper metadata' if command[2].endswith('@latest') else 'native metadata'
+                        return {'install': 'global installation', 'root': 'global root lookup'}[command[1]]
+
+                    def metadata(command):
+                        if phase_of(command) == 'wrapper metadata':
+                            return json.dumps({'version': '2.0.30', 'optionalDependencies': {
                                 '@opencode/cli-linux-arm64': '2.0.30'}})
-                        elif current == 'native metadata':
-                            output = json.dumps({'version': '2.0.30'})
-                        return subprocess.CompletedProcess(command, 0, output, '')
+                        return json.dumps({'version': '2.0.30'})
+
+                    class FakePopen:
+                        pid = 4321
+
+                        def __init__(self, command, **options):
+                            self.command = command
+                            self.current = phase_of(command)
+                            self.returncode = 42 if self.current == phase and not timeout else 0
+                            self.communicate_calls = 0
+                            self.stdout = io.StringIO()
+                            self.stderr = io.StringIO()
+                            calls.append(options)
+
+                        def kill(self):
+                            pass
+
+                        def communicate(self, **options):
+                            bounded = options.get('timeout')
+                            if self.current != phase:
+                                if self.current == 'runtime version':
+                                    return 'runtime', ''
+                                return metadata(self.command), ''
+                            self.communicate_calls += 1
+                            if self.current == phase and bounded and self.communicate_calls == 1 and timeout:
+                                raise subprocess.TimeoutExpired(
+                                    self.command, bounded,
+                                    output=b'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n',
+                                    stderr=b'partial stderr\n')
+                            # The post-kill collect returns the retained partial evidence.
+                            return 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\n', 'partial stderr\n'
 
                     args = SimpleNamespace(timeout=600, package='@opencode/cli', arch='arm64', attempts=3, interval=0)
                     stdout, stderr = io.StringIO(), io.StringIO()
-                    with patch.object(helper.time, 'monotonic', return_value=10), patch.object(helper.subprocess, 'run', side_effect=run), \
+                    # The pid doubles as the group id (start_new_session); the real
+                    # process group behavior is covered by the live child test below.
+                    with patch.object(helper.time, 'monotonic', return_value=10), \
+                            patch.object(helper.subprocess, 'Popen', FakePopen), \
+                            patch.object(helper.os, 'killpg') as killpg, \
                             patch.object(helper.Path, 'read_text', return_value='{"version":"2.0.30"}'), \
                             contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                         with self.assertRaisesRegex(ValueError, phase):
                             helper.Installer(args).install()
-                    self.assertEqual(len([entry for entry in calls if entry[0] == phase]), 1)
+                    self.assertTrue(calls, 'the failing phase must have been reached')
+                    for options in calls:
+                        self.assertTrue(options['start_new_session'], 'every command must own its process group')
+                    self.assertEqual(killpg.call_count, 1 if timeout else 0)
                     if timeout:
+                        self.assertEqual(killpg.call_args.args, (4321, signal.SIGKILL))
                         self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue(),
                                       'the timeout path keeps the host and path')
                         self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
                     else:
-                        self.assertIn('partial stdout', stderr.getvalue())
-                    self.assertIn('partial stderr', stderr.getvalue())
+                        self.assertIn('partial stderr', stderr.getvalue())
                     self.assertNotIn('installed @', stdout.getvalue())
                     self.assertNotIn('retry 2/3', stderr.getvalue())
+
+    def test_timeout_ends_the_process_group_and_preserves_partial_output(self):
+        # Value: a hung wrapper postinstall must not hide the partial npm evidence or
+        # hang the launcher: the whole group dies — the printed grandchild's exit
+        # proves the kill reached the descendants, not just the direct child — and
+        # the pipes reach EOF immediately.
+        # fails_when=the timeout kills only the direct child; a surviving grandchild
+        # holds the pipe until its own exit, which delays this test far past its bound.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / 'grandchild.pid'
+            script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                      f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
+            args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+            stderr = io.StringIO()
+            started = time.monotonic()
+            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
+                    helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
+            self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
+            self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
+            self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+            # A killed process can stay a zombie briefly; poll for its removal.
+            for _ in range(50):
+                try:
+                    os.kill(int(pid_file.read_text()), 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail('the grandchild pipe holder survived the group kill')
 
     def invoke(self, package='@opencode/cli', arch='amd64', **scenario):
         with tempfile.TemporaryDirectory() as directory:

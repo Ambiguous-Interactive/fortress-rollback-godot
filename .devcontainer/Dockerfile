@@ -31,7 +31,21 @@ ARG NODE_VERSION=26.12.1
 # python3 must be the FULL package: the base image ships none, and features
 # install only python3-minimal, which lacks stdlib modules (json, unittest,
 # dataclasses) that this repo's harness requires.
-RUN apt-get update \
+# The image ships plain-HTTP Ubuntu sources, and GitHub-hosted x64 runners
+# intermittently cannot reach archive.ubuntu.com:80 while the trusted HTTPS
+# mirrors the reference workflow already selects keep working, so the same
+# HTTPS hosts are selected here before the first acquisition, whichever
+# sources layout the base image uses. The substitution is best effort: an
+# image variant whose sources name no archive keeps its defaults, which
+# stayed reachable on the architectures the substitution cannot serve.
+RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
+      -exec sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; \
+      s|http://security\.ubuntu\.com|https://security.ubuntu.com|g; \
+      s|http://ports\.ubuntu\.com|https://ports.ubuntu.com|g' {} + \
+    && { find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
+      -exec grep -Eq 'https://(archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com)/' {} + \
+      || echo 'no Ubuntu archive sources found; keeping the base image defaults'; } \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \
         fd-find \

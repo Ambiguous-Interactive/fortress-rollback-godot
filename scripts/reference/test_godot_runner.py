@@ -488,7 +488,9 @@ class ReceiptControls(unittest.TestCase):
         for arguments, invalidated in [(['--category', 'bogus'], True), (['--timeout', '-1'], True), (['--inventory-timeout', '0'], True),
                                        (['--inventory-timeout', 'nan'], True), (['--inventory-timeout', 'inf'], True), (['--jobs', '0'], True),
                                        (['--host-wait', '-1'], True), (['--host-wait', 'nan'], True), (['--host-wait', 'inf'], True),
-                                       (['--seed', str(2**63)], True), (['--bogus'], True), (['--help'], False)]:
+                                       (['--seed', str(2**63)], True), (['--bogus'], True), (['--help'], False),
+                                       (['--shard', '3of2'], True), (['--shard', 'x/y'], True), (['--shard', '1of2', '--jobs', '1'], True),
+                                       (['--shard', '1of2', '--filter', 'x'], True)]:
             with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as directory:
                 receipt = Path(directory) / 'receipt.json'
                 receipt.write_text('{"passed":true}')

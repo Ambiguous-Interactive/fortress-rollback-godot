@@ -107,20 +107,36 @@ jobs:
         include:
           - {version: "4.3", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
           - {version: "4.3", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-negative-part-3"}
+          - {version: "4.3", browser: chromium, phase: negative, suite_part: "4", suffix: " negative part 4", part_suffix: "-negative-part-4"}
           - {version: "4.3", browser: chromium, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-positive-part-1"}
           - {version: "4.3", browser: chromium, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-positive-part-2"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "3", suffix: " positive part 3", part_suffix: "-positive-part-3"}
+          - {version: "4.3", browser: chromium, phase: positive, suite_part: "4", suffix: " positive part 4", part_suffix: "-positive-part-4"}
           - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-negative-part-1"}
           - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-negative-part-2"}
+          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-negative-part-3"}
+          - {version: "4.7.2", browser: chromium, phase: negative, suite_part: "4", suffix: " negative part 4", part_suffix: "-negative-part-4"}
           - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-positive-part-1"}
           - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-positive-part-2"}
+          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "3", suffix: " positive part 3", part_suffix: "-positive-part-3"}
+          - {version: "4.7.2", browser: chromium, phase: positive, suite_part: "4", suffix: " positive part 4", part_suffix: "-positive-part-4"}
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
           - {version: "4.3", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
+          - {version: "4.3", browser: firefox, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-part-3"}
+          - {version: "4.3", browser: firefox, phase: negative, suite_part: "4", suffix: " negative part 4", part_suffix: "-part-4"}
           - {version: "4.3", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
           - {version: "4.3", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
+          - {version: "4.3", browser: firefox, phase: positive, suite_part: "3", suffix: " positive part 3", part_suffix: "-part-3"}
+          - {version: "4.3", browser: firefox, phase: positive, suite_part: "4", suffix: " positive part 4", part_suffix: "-part-4"}
           - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "1", suffix: " negative part 1", part_suffix: "-part-1"}
           - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "2", suffix: " negative part 2", part_suffix: "-part-2"}
+          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "3", suffix: " negative part 3", part_suffix: "-part-3"}
+          - {version: "4.7.2", browser: firefox, phase: negative, suite_part: "4", suffix: " negative part 4", part_suffix: "-part-4"}
           - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "1", suffix: " positive part 1", part_suffix: "-part-1"}
           - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "2", suffix: " positive part 2", part_suffix: "-part-2"}
+          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "3", suffix: " positive part 3", part_suffix: "-part-3"}
+          - {version: "4.7.2", browser: firefox, phase: positive, suite_part: "4", suffix: " positive part 4", part_suffix: "-part-4"}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -186,8 +202,9 @@ jobs:
       fail-fast: false
       matrix:
         version: ["4.3", "4.7.2"]
-        # Suites and oracle launchers share no state, so they run as parallel jobs.
-        part: [suites, oracles]
+        # Suites, oracle launchers and the two whole-inventory test shards share no state, so they
+        # run as parallel jobs. The CPU-saturated unit wave halves its wall time on a second runner.
+        part: [suites, oracles, tests-1of2, tests-2of2]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -243,6 +260,23 @@ jobs:
         # and leaves the exported web probe to the suites leg.
         if: matrix.part == 'oracles'
         run: python3 scripts/reference/godot_smoke.py --version "${{ matrix.version }}"
+      - name: Prepare the pinned editor for the test shards
+        if: startsWith(matrix.part, 'tests')
+        run: |
+          PYTHONPATH=scripts/reference python3 - <<'PY'
+          from fetch import load_manifest, fetch, prepare_zip, CACHE
+          import platform
+          data = load_manifest()
+          arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
+          if arch is None:
+              raise SystemExit('editor bootstrap supports Linux arm64/x86_64 only')
+          version = "${{ matrix.version }}"
+          name = f'Godot_v{version}-stable_linux.{arch}.zip'
+          directory = CACHE / 'editors' / version
+          directory.mkdir(parents=True, exist_ok=True)
+          prepare_zip(fetch(data['artifacts'][name], name, False), directory, executable_members=(name[:-4],))
+          (directory / name[:-4]).chmod(0o755)
+          PY
       - name: Verify runner failure controls and fresh-process suites
         if: matrix.part == 'suites'
         run: |
@@ -262,14 +296,23 @@ jobs:
             grep -Fx 'FORTRESS_REPLAY_NAVIGATION_OK 460' "$navigation_log"
             if grep -Eq '^(SCRIPT ERROR:|ERROR:)' "$navigation_log"; then exit 1; fi
           done
-          python3 scripts/run_godot_tests.py --godot "$editor" --timeout 180 --results ".cache/tests/runner-$version.json"
-          for case in default_single default_batched readiness_boundary aborted_wait; do
-            case_timeout=120
-            if [[ "$case" == default_single ]]; then case_timeout=180; fi
-            python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
-              --results ".cache/tests/integration-$version-$case.json"
-          done
-          python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
+      - name: Verify the whole-inventory engine wave shards
+        if: startsWith(matrix.part, 'tests')
+        run: |
+          version="${{ matrix.version }}"
+          editor=".cache/reference/editors/$version/Godot_v${version}-stable_linux.x86_64"
+          part="${{ matrix.part }}"
+          shard="${part#tests-}"
+          python3 scripts/run_godot_tests.py --godot "$editor" --shard "$shard" --timeout 180 --results ".cache/tests/runner-$version-$part.json"
+          if [[ "$shard" == 2of2 ]]; then
+            for case in default_single default_batched readiness_boundary aborted_wait; do
+              case_timeout=120
+              if [[ "$case" == default_single ]]; then case_timeout=180; fi
+              python3 scripts/run_godot_tests.py --godot "$editor" --category integration --filter "$case" --timeout "$case_timeout" \
+                --results ".cache/tests/integration-$version-$case.json"
+            done
+            python3 scripts/run_godot_tests.py --godot "$editor" --category determinism --results ".cache/tests/determinism-$version.json"
+          fi
       - name: Compare actual upstream and Godot traces
         if: matrix.part == 'oracles'
         run: |

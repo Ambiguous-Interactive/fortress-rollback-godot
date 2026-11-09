@@ -588,11 +588,17 @@ def negative_suite(suite, negative):
 
 
 def select_suites(part):
-    """Split suite work while retaining the alias control in every part."""
-    if type(part) is not str or part not in ('all', '1', '2'):
+    """Split suite work into four interleaved parts, retaining the alias control in every part.
+
+    Four same-runner jobs halve the workflow's wall-time share of the witness: the
+    name interleave keeps one page per suite in each part balanced (25 suites per
+    part over the current 97-suite inventory), while every part still repeats the
+    mutated ownership control.
+    """
+    if type(part) is not str or part not in ('all', '1', '2', '3', '4'):
         raise ValueError('invalid ownership suite part')
     ordered = sorted(EXPECTED)
-    selected = ordered if part == 'all' else ordered[int(part) - 1::2]
+    selected = ordered if part == 'all' else ordered[int(part) - 1::4]
     control = 'res://tests/determinism/test_buffer_ownership.gd'
     return {suite: EXPECTED[suite] for suite in ordered if suite in selected or suite == control}
 
@@ -883,7 +889,7 @@ def main():
         parser.add_argument('--web', action='store_true')
         parser.add_argument('--browser', choices=['chromium', 'firefox'], default='chromium')
         parser.add_argument('--phase', choices=['both', 'negative', 'positive'], default='both')
-        parser.add_argument('--suite-part', choices=['all', '1', '2'], default='all')
+        parser.add_argument('--suite-part', choices=['all', '1', '2', '3', '4'], default='all')
         pins = load_manifest()['godot']
         parser.add_argument('--version', choices=list(dict.fromkeys([pins['minimum'], pins['current_stable']])))
         try:

@@ -360,3 +360,85 @@ before the other files and mutates `sys.path` as a side effect, which let
 their transitive `scripts/reference` imports resolve. `handshake_formal.py`
 now inserts that path itself, so every oracle test file is import-order
 independent and per-file subprocess isolation is sound.
+
+## Current 28-job baseline and the whole-inventory shard jobs
+
+Run [42543205499](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42543205499)
+qualified main `488f6c101ab7a19b22f5a7d9489b16f5a7808826` on 2026-11-09: all 28
+jobs passed, the workflow took 13m00s of wall time and the jobs summed to
+204m17s (12,257s). The five longest jobs:
+
+| Job | Wall time |
+| --- | --- |
+| Godot 4.3 and Chromium suites | 12m56s |
+| Native and Firefox snapshot ownership 4.7.2 positive part 1 | 11m44s |
+| Native and Firefox snapshot ownership 4.3 negative part 2 | 11m11s |
+| Native and Firefox snapshot ownership 4.3 negative part 1 | 10m19s |
+| Native and Firefox snapshot ownership 4.7.2 negative part 2 | 9m39s |
+
+The critical path moved back to the Godot suites job: its
+"Verify runner failure controls and fresh-process suites" step took 11m54s,
+of which the whole-inventory unit run owns about 9 minutes (01:02:41–01:11:39
+in the job log). The step-level receipt (`tests/durations.json` in the
+uploaded artifact) measures the unit inventory at 1,060.8s of summed suite
+time per fresh-process run; the two contractual repetitions over four parallel
+workers make the wave exactly CPU-bound (2,121.6s of shard wall over 538s
+wall is 3.94 of 4 workers). More workers on the same 4-vCPU runner cannot
+shorten it; only a second runner can.
+
+The same levers apply to the ownership witness: its 97-suite inventory is
+split into two interleaved parts per phase, so a 25-suite part still owns a
+whole serial share of both the native wave and the serial browser pages. Four
+interleaved parts keep one page per suite balanced (25/25/25/25 suites,
+149–174 cases per part over the current 97-suite inventory).
+
+The scheduling change that follows from these two measurements splits the
+unit inventory across two same-tree jobs (`run_godot_tests.py --shard 1of2`
+and `--shard 2of2`, whose name interleave tiles the discovered inventory
+exactly once) and splits the ownership parts from two to four per phase. The
+workflow-contract tests keep the shard union and the ownership part union
+equal to the declared inventories, so no gate moves with the schedule.
+
+## Current 48-job baseline and the shard jobs
+
+PR #338's candidate run
+[42553118792](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42553118792)
+(2026-11-09): all 48 Reference Baseline jobs passed (plus the Devcontainer
+Verify and harness workflows), the workflow took 10m38s of wall time and the
+jobs summed to 242m59s (14,579s). Same-tree scheduling comparison with the
+28-job run above:
+
+| Job family | Before (28 jobs) | After (48 jobs) |
+| --- | --- | --- |
+| Workflow wall | 13m00s | 10m38s |
+| Godot 4.3 suites family | 12m56s (one job) | suites 2m30s, tests-1of2 3m54s, tests-2of2 4m00s |
+| Godot 4.7.2 suites family | 6m29s (one job) | suites 2m02s, tests-1of2 3m54s, tests-2of2 4m36s |
+| Chromium ownership 4.3 (longest part) | 8m52s | 6m27s |
+| Chromium ownership 4.7.2 (longest part) | 6m37s | 4m14s |
+| Firefox ownership 4.3 (longest part) | 11m11s | 8m34s |
+| Firefox ownership 4.7.2 (longest part) | 11m44s | 6m05s |
+| Summed job time | 204m17s | 242m59s |
+
+The former critical-path family (the 4.3 suites job) fell by 69 percent;
+the longest Firefox 4.3 part fell by 23 percent and the longest Firefox
+4.7.2 part by 48 percent; every workflow-level check still runs, with the
+same rooms, receipts and inventories. The wall gain is bounded by the
+untouched SignalFish online job, which itself moved from 8m31s in the
+baseline run to 10m35s in this run — the run-to-run variance that earlier
+sections document. The summed
+job time grew 19 percent because 20 more jobs each repeat checkout and
+tool setup, the same wall-versus-compute trade the per-phase ownership
+split already accepted. These are single-run comparisons of changing
+trees, not noise-controlled benchmarks.
+
+Reproduce the table from the public run records:
+
+```sh
+gh api repos/Ambiguous-Interactive/fortress-rollback-godot/actions/runs/42553118792/jobs --paginate \
+  --jq '.jobs[] | [.name, .started_at, .completed_at] | @tsv'
+```
+
+The remaining levers are unchanged: the online Signalfish job's twelve
+serial spectator probes and the suites job's remaining serial probe
+commands, with the #104 runner-contention budget for any concurrent
+browser work.

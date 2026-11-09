@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Install one latest wrapper after its matching Linux native release is published."""
+"""Install one latest wrapper after its matching Linux release is published."""
 import argparse
 import json
 import math
+import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -40,17 +42,44 @@ class Installer:
         # diagnostics keep npm's original interleaving of lifecycle banners
         # (stdout) and registry logs (stderr). The JSON metadata lookups keep
         # separate streams: merged warnings would corrupt their parsing.
-        streams = {'stdout': subprocess.PIPE, 'stderr': subprocess.STDOUT} if merged else {'capture_output': True}
+        stdout = subprocess.PIPE
+        stderr = subprocess.STDOUT if merged else subprocess.PIPE
+        # A new session lets the timeout below end the whole npm process group:
+        # the wrapper's postinstall spawns its own children, and any survivor
+        # would keep the pipes open, so the partial evidence never reached the
+        # TimeoutExpired diagnostic and the hang moved into Python itself.
+        process = subprocess.Popen(command, encoding='utf-8', stdout=stdout, stderr=stderr,
+                                   start_new_session=True)
         try:
-            result = subprocess.run(command, encoding='utf-8', timeout=min(120, remaining), check=False, **streams)
+            stdout, stderr = process.communicate(timeout=min(120, remaining))
         except subprocess.TimeoutExpired as failure:
-            # Preserve the first attempt's diagnostics even when the process hangs,
-            # in the order npm produced them, without registry query credentials.
-            for output in (failure.stdout, failure.stderr):
-                if output:
-                    text = output.decode('utf-8', errors='replace') if isinstance(output, bytes) else output
-                    print(redact_query_strings(text), file=sys.stderr)
+            # Preserve the first attempt's diagnostics even when the process tree
+            # hangs, in the order npm produced them, without registry credentials.
+            # start_new_session made the group id equal the child's pid, and the
+            # group may already be gone, which must not replace this diagnostic.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                stdout, stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                # A descendant that escaped the group (setsid) can still hold the
+                # pipes open; this build is failing anyway, so end the wait and
+                # report the phase with whatever was collected.
+                process.kill()
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.stdout.close()
+                    if process.stderr:
+                        process.stderr.close()
+                    stdout, stderr = '', ''
+            text = (stdout or '') + (stderr or '')
+            if text:
+                print(redact_query_strings(text), end='', file=sys.stderr)
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget') from failure
+        result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode:
             combined = redact_query_strings((result.stdout or '') + (result.stderr or ''))
             print(combined, end='', file=sys.stderr)

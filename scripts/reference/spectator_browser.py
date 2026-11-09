@@ -115,7 +115,35 @@ def validate_fault(returncode, browser, host_alive, control, stderr=''):
     validate_no_acceptance(control)
 
 
+def bounded_tail(path, limit=2048):
+    """A bounded log tail so a failed cell names its evidence in the step output."""
+    try:
+        with path.open('rb') as stream:
+            stream.seek(0, os.SEEK_END)
+            stream.seek(max(stream.tell() - limit * 4, 0))
+            return stream.read(limit * 4).decode('utf-8', errors='replace')[-limit:]
+    except OSError:
+        return ''
+
+
 def execute(engine, project, runtime, url, environment, output, control, fault=None, acceptance_delay_ms=None):
+    """Run one exported spectator cell, naming its retained logs on any rejection.
+
+    The failure evidence (browser.log, native.log) is always published as a
+    workflow artifact, but a recurrence must be diagnosable from the step log
+    alone: the raised reason carries the bounded tails of both logs.
+    """
+    try:
+        return _execute(engine, project, runtime, url, environment, output, control, fault, acceptance_delay_ms)
+    except ValueError as failure:
+        # Escaping doubles newlines, so clipping the front of the representation
+        # could discard the failure line at the end of a log: keep the tail.
+        browser = repr(bounded_tail(output / 'browser.log'))[-2048:]
+        native = repr(bounded_tail(output / 'native.log'))[-2048:]
+        raise ValueError(f'{failure}; browser.log tail: {browser}; native.log tail: {native}') from failure
+
+
+def _execute(engine, project, runtime, url, environment, output, control, fault=None, acceptance_delay_ms=None):
     controller = ROOT / "scripts/reference/browser/spectator.cjs"
     if acceptance_delay_ms is not None:
         controller = controller.with_name("spectator_acceptance.cjs")
