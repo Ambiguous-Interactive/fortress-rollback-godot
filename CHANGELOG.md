@@ -4,9 +4,13 @@
 
 ### Improved
 
+- Overlap the online leg's seven native probes (relay witness, native spectator witness, two departure cells and three late-signal cells) in one bounded two-worker wave with fail-closed aggregation, cutting the Reference Baseline wall-time critical path. The host-capacity lease is held once for the whole wave and the probe children inherit it, so no two probe processes contend; every probe keeps its exact command, watchdogs and output paths, the six browser-viewer cells stay serial, and every failure still names its own log without masking a sibling.
+
 - Acknowledge exactly one success-paired disposal artifact in the exported spectator witness: the viewer page's own completed `/done` control POST that the pinned web transport reports as `net::ERR_ABORTED` during result-phase bookkeeping. The observation stays in the receipt under `acknowledged_disposal_abort`, the pairing requires the page's passing result and the exact six-field failure identity, and every other browser request failure stays fatal. This ends the intermittent host-departure witness failure that issue #322 diagnosed.
 
 - Name each example's stopped cause in plain language, keeping the numeric code beside it for tooling. Session reasons render through the shared `FortressSessionTypes.reason_text()` helper in the offline, effects, peer, online, spectator, replay-viewer and diagnostic-viewer labels and refusal messages; the peer example's packet-failure line keeps its own wording for the separate protocol endpoint enum.
+
+- Name the online example's protocol and transport stop codes in plain language beside their numbers: the endpoint codes render through the shared `FortressInputEndpointTypes.reason_text()` and the relay/fallback transport codes through the shared `FortressSignalFishRelayTypes.reason_text()`, which the peer example's failure line now reuses instead of duplicating its own enum wording.
 
 - Pair neighboring Firefox ownership suites into shared browser pages when the same runner's measured native suite cost fits the hosted page deadline, with the peer-parity suite still one case per page. A hosted Firefox part ran 14 pages in 217s instead of 25 pages in 415s, with every case, repetition and comparison unchanged.
 
