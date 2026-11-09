@@ -380,9 +380,9 @@ func _update_label() -> void:
 	if status.lifecycle == Types.Lifecycle.TERMINATED:
 		state = "COMPLETE | R: start again" if demo.viewer.is_complete() else "STOPPED: %s | R: start again" % _stop_reason(status)
 		if status.reason == Types.Code.HISTORY_UNAVAILABLE:
-			state = "HISTORY UNAVAILABLE | R: start again"
+			state = "HISTORY UNAVAILABLE (code %d) | R: start again" % status.reason
 	if demo.is_host_connection_lost:
-		state = "HOST CONNECTION LOST | R: start again"
+		state = "HOST CONNECTION LOST: %s (code %d) | R: start again" % [Types.reason_text(status.reason), status.reason]
 	var host_notice: String = ""
 	var host_status: Types.Status = demo.host.loop.session.status()
 	if host_status.lifecycle == Types.Lifecycle.TERMINATED and not demo.is_host_finished:
@@ -436,7 +436,7 @@ func _stop_reason(status: Types.Status) -> String:
 		var text: String = "failed while " + operations.get(status.failure_kind, "processing game state")
 		if status.failure_frame >= 0:
 			text += " at frame %d" % status.failure_frame
-		return text
+		return text + " (code %d)" % status.reason
 	var reasons: Dictionary = {
 		Types.Code.PROTOCOL_FAILED: "host stream failed",
 		Types.Code.TERMINATED: "viewing canceled",
@@ -446,7 +446,7 @@ func _stop_reason(status: Types.Status) -> String:
 		Types.Code.STALE_REQUEST: "playback request expired",
 		Types.Code.EXPIRED_VIEW: "playback request expired",
 	}
-	return reasons.get(status.reason, Types.reason_text(status.reason))
+	return "%s (code %d)" % [reasons.get(status.reason, Types.reason_text(status.reason)), status.reason]
 
 
 func _recording_feedback() -> String:

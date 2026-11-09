@@ -8,7 +8,7 @@ const PeerScene = preload("res://examples/peer/peer.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["known_reasons", "unknown_reasons", "scene_messages", "peer_failures"])
+	return PackedStringArray(["known_reasons", "unknown_reasons", "scene_messages", "peer_failures", "spectator_stops"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -56,4 +56,19 @@ func _peer_failures(context: RefCounted) -> void:
 		context.equal(text.is_empty(), false, "endpoint code %d has readable text" % code)
 		context.equal(text.contains(str(code)), false, "endpoint code %d does not show its raw number" % code)
 	context.equal(scene._endpoint_failure_text(999), "failure code 999", "unknown endpoint codes keep their number")
+	scene.free()
+
+
+## The spectator scene's mapped stop wordings keep their domain phrasing and
+## gain the numeric code; unmapped reasons fall back to the shared text.
+func _spectator_stops(context: RefCounted) -> void:
+	var scene: Node2D = load("res://examples/spectator/spectator.gd").new()
+	var status: Types.Status = Types.Status.new()
+	status.reason = Types.Code.TERMINATED
+	context.equal(scene._stop_reason(status), "viewing canceled (code %d)" % Types.Code.TERMINATED, "spectator stop keeps its wording beside its code")
+	status.reason = Types.Code.NOT_SYNCHRONIZED
+	context.equal(
+		scene._stop_reason(status), "waiting for synchronization (code %d)" % Types.Code.NOT_SYNCHRONIZED,
+		"unmapped spectator reasons use the shared text"
+	)
 	scene.free()
