@@ -12,6 +12,12 @@ runner waits within a bounded budget before starting its engine children, then
 keeps its requested parallel capacity while it owns the host. A witness that
 starts later waits for it instead of competing for it.
 
+An overlapping probe wave takes the host once for all its members. The wave
+owner runs its probe children with `FORTRESS_HOST_LEASE_HELD=1`, so each child
+acquires at once without contending with its own wave and never releases the
+host while a sibling still runs; the wave owner releases when the last probe
+joins.
+
 The host is one exclusive file lock, so exactly one process owns it. The
 operating system releases the lock when its owner ends, so a lease of a
 process that is gone never holds the host and a stale file never blocks it.
@@ -40,13 +46,17 @@ def _lease_directory() -> Path:
 
 LEASE_DIR = _lease_directory()
 LEASE_FILE = LEASE_DIR / "host.lock"
+# Set to "1" for the children of one probe wave: the wave owner holds the host
+# for the whole wave, so a member neither contends with its own wave nor
+# releases the host while a sibling still runs.
+WAVE_HELD_ENV = "FORTRESS_HOST_LEASE_HELD"
 # The owner of this process, its lock handle and its name.
 _state = {"handle": None, "name": None}
 
 
 def _ours() -> bool:
     """True when this process holds the host."""
-    return _state["handle"] is not None
+    return _state["handle"] is not None or os.environ.get(WAVE_HELD_ENV) == "1"
 
 
 def _open_lock(create: bool) -> TextIO:
