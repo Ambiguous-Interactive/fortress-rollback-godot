@@ -43,3 +43,5 @@ evidence. Facts without evidence do not get in (curation gate).
   secure-context and development-hosting facts
 - [gdscript-runtime.md](./gdscript-runtime.md) — how the GDScript runtime
   reports an aborted function and what the test host must do about it
+- [ci-hosted-runners.md](./ci-hosted-runners.md) — hosted-runner 504-outage
+  classification and spaced-rerun recovery, per-step timing extraction
