@@ -1100,6 +1100,7 @@ def run_probes(args, results):
                     native_seconds[suite] = time.monotonic() - suite_started
 
             def native_suite_run(suite):
+                """Run one native suite batch and return its bounded outcome tuple."""
                 native_log = results / f'ownership-{label}-native-{Path(suite).stem}.log'
                 try:
                     code, output = capture(base + ['--script', 'tests/runner/run_tests.gd', '--', '--category', 'determinism']

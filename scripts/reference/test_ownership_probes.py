@@ -92,7 +92,7 @@ class OwnershipBatchTests(unittest.TestCase):
     # Value: protects=Firefox pages stay inside the hosted page deadline (#224); fails_when=a page
     # combines unmeasured, over-budget or peer-parity work; why_new=whole-run tests use fast fakes; seam=none
     def test_firefox_pages_pair_neighbors_only_inside_the_measured_budget(self):
-        a, b, c, d, heavy = (f'res://tests/unit/test_suite_{name}.gd' for name in ('a', 'b', 'c', 'd', 'heavy'))
+        a, b, c, d = (f'res://tests/unit/test_suite_{name}.gd' for name in ('a', 'b', 'c', 'd'))
         parity = probes.PEER_PARITY_SUITE
         cases = [
             # (native seconds, ordered suites, expected pages)

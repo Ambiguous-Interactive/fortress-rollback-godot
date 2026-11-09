@@ -49,7 +49,7 @@ repetition, negative control and native/web equality check is unchanged.
 Reproduce either table from the public run records:
 
 ```sh
-gh run view 42570092471 --json jobs \
+gh run view 42570092471 --attempt 4 --json jobs \
   --jq '.jobs[] | "\(.name)\t\(.startedAt)\t\(.completedAt)"'
 ```
 
