@@ -34,9 +34,13 @@ ARG NODE_VERSION=26.12.1
 # The image ships plain-HTTP Ubuntu sources, and GitHub-hosted x64 runners
 # intermittently cannot reach archive.ubuntu.com:80 while the trusted HTTPS
 # mirrors the reference workflow already selects keep working, so the same
-# HTTPS hosts are selected here before the first acquisition.
-RUN sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; s|http://security\.ubuntu\.com|https://security.ubuntu.com|g' /etc/apt/sources.list.d/ubuntu.sources \
-    && grep -q 'https://archive.ubuntu.com/ubuntu/' /etc/apt/sources.list.d/ubuntu.sources \
+# HTTPS hosts are selected here before the first acquisition, whichever
+# sources layout the base image uses. The build fails closed when no
+# sources file took the substitution.
+RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'sources.list' -o -name '*.list' \) \
+      -exec sed -i 's|http://archive\.ubuntu\.com|https://archive.ubuntu.com|g; s|http://security\.ubuntu\.com|https://security.ubuntu.com|g' {} + \
+    && { grep -Fqs 'https://archive.ubuntu.com/ubuntu/' /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null \
+         || { echo 'no Ubuntu sources file selected the HTTPS archive' >&2; exit 1; }; } \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         bat \
