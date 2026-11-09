@@ -18,6 +18,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
@@ -165,18 +166,41 @@ class NativeProbeWaveTests(unittest.TestCase):
             probes._abort.clear()
         self.assertEqual(killed, [4242], 'interruption did not terminate the active probe group')
 
-    def test_a_fenced_pool_refuses_to_launch(self):
+    def test_a_probe_spawned_into_an_abort_kills_its_own_group(self):
+        real_kill = probes.kill_group
+        killed = []
+
+        def record_and_kill(pid):
+            killed.append(pid)
+            real_kill(pid)
+
+        real_popen = probes.subprocess.Popen
+
+        def popen_then_abort(command, **kwargs):
+            # Abort lands in the spawn-to-registration window the fence owns.
+            process = real_popen(command, **kwargs)
+            probes._abort.set()
+            return process
+
+        log = self.results / 'native-probe-4.3-sleeper.log'
+        try:
+            with unittest.mock.patch.object(probes.subprocess, 'Popen', side_effect=popen_then_abort), \
+                    unittest.mock.patch.object(probes, 'kill_group', side_effect=record_and_kill):
+                began = time.monotonic()
+                result = probes.run_probe('sleeper', ['sleep', '30'], log, {})
+        finally:
+            probes._abort.clear()
+        self.assertLess(time.monotonic() - began, 15, 'the spawned probe must be killed, not waited out')
+        self.assertEqual(result['returncode'], -9, 'SIGKILL to the probe group must end the probe')
+        self.assertEqual(len(killed), 1, 'the spawn-window abort must kill its own group')
+
+    def test_a_fenced_run_probe_refuses_to_launch(self):
         probes._abort.set()
         self.addCleanup(probes._abort.clear)
-        table = self.table({'alpha': write_script(self.root, 'alpha.py', PASS_SCRIPT)})
-        log = self.results / 'native-probe-4.3-alpha.log'
-        with unittest.mock.patch.dict(probes.PROBES, table, clear=True), \
-                unittest.mock.patch('sys.argv', ['signalfish_native_probes.py'] + self.arguments()), \
-                redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()):
-            exit_code = probes.main()
-        self.assertEqual(exit_code, 1, 'a probe refused by the fence is a failed probe')
+        log = self.results / 'native-probe-4.3-refused.log'
+        result = probes.run_probe('refused', ['sleep', '30'], log, {})
+        self.assertEqual(result['returncode'], 1, 'a fenced probe is a failed probe')
         self.assertFalse(log.exists(), 'a fenced probe must not start its command')
-        self.assertIn('FAIL alpha', stdout.getvalue())
 
     def test_abort_active_groups_kills_every_registered_group(self):
         killed = []

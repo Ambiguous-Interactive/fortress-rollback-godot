@@ -142,6 +142,9 @@ def main() -> int:
                         help='per-launcher bound in seconds; 0 keeps the workflow job timeout as the only bound')
     args = parser.parse_args()
     jobs = max(1, min(args.jobs, len(LAUNCHERS)))
+    # Every main() run is a fresh wave: a leftover abort from a caught
+    # interruption must not refuse the next run in the same process.
+    _abort.clear()
     if args.timeout < 0:
         parser.error('launcher timeout must not be negative')
     # Provision the pinned Rust toolchain once before any launcher starts: the CI

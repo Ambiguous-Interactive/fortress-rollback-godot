@@ -172,7 +172,7 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
                     unittest.mock.patch.object(parallel_launchers, 'run_launcher', side_effect=fake), \
                     unittest.mock.patch.object(parallel_launchers, 'kill_group', side_effect=record_kill), \
                     unittest.mock.patch('sys.argv', ['parallel_launchers.py', '--godot', 'unused',
-                                                     '--results', str(self.results)]), \
+                                                     '--results', str(self.results), '--jobs', '2']), \
                     redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 with self.assertRaises(KeyboardInterrupt):
                     parallel_launchers.main()
@@ -181,6 +181,34 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
             release.set()
             parallel_launchers._abort.clear()
         self.assertEqual(killed, [4242], 'interruption did not terminate the active launcher group')
+
+    def test_a_launcher_spawned_into_an_abort_kills_its_own_group(self):
+        real_kill = parallel_launchers.kill_group
+        killed = []
+
+        def record_and_kill(pid):
+            killed.append(pid)
+            real_kill(pid)
+
+        real_popen = parallel_launchers.subprocess.Popen
+
+        def popen_then_abort(command, **kwargs):
+            # Abort lands in the spawn-to-registration window the fence owns.
+            process = real_popen(command, **kwargs)
+            parallel_launchers._abort.set()
+            return process
+
+        log = self.results / 'launcher-sleeper.log'
+        try:
+            with unittest.mock.patch.object(parallel_launchers.subprocess, 'Popen', side_effect=popen_then_abort), \
+                    unittest.mock.patch.object(parallel_launchers, 'kill_group', side_effect=record_and_kill):
+                began = time.monotonic()
+                result = parallel_launchers.run_launcher('sleeper', ['sleep', '30'], log, 0)
+        finally:
+            parallel_launchers._abort.clear()
+        self.assertLess(time.monotonic() - began, 15, 'the spawned launcher must be killed, not waited out')
+        self.assertEqual(result['returncode'], -9, 'SIGKILL to the launcher group must end the launcher')
+        self.assertEqual(len(killed), 1, 'the spawn-window abort must kill its own group')
 
     def test_missing_launcher_script_fails_the_run(self):
         table = {'ghost': str(self.root / 'absent.py')}

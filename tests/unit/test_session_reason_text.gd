@@ -10,6 +10,27 @@ const PeerScene = preload("res://examples/peer/peer.gd")
 const OnlineMatch = preload("res://examples/online/match.gd")
 
 
+## A transport that refuses queued batches and refuses polls, so the online
+## example's real service path renders its stop lines.
+class RefusingFallback extends OnlineMatch.Fallback:
+	const _Relay = preload("res://addons/fortress_rollback/transport/signalfish_relay_types.gd")
+
+	func enqueue_batch(_packets) -> int:
+		return _Relay.Code.WRONG_STATE
+
+	func poll(_now_us: int, _next_token_factory: Callable = Callable()) -> _Relay.Result:
+		return _Relay.Result.new(_Relay.Code.SDK_FAILURE)
+
+
+## A protocol endpoint that refuses polls, so the online example's real poll
+## path renders its stop line.
+class RefusingPeer extends OnlineMatch.Peer:
+	const _Endpoint = preload("res://addons/fortress_rollback/protocol/input_endpoint_types.gd")
+
+	func poll(_now_us: Variant, _tokens: Variant = []) -> int:
+		return _Endpoint.Code.WRONG_CONNECTION
+
+
 func cases() -> PackedStringArray:
 	return PackedStringArray(["known_reasons", "unknown_reasons", "scene_messages", "peer_failures", "spectator_stops", "endpoint_reasons",
 		"transport_reasons", "online_stops"])
@@ -104,17 +125,33 @@ func _transport_reasons(context: RefCounted) -> void:
 	context.equal(RelayTypes.reason_text(-3), "failure code -3", "unknown transport codes keep their number")
 
 
-## The online example's protocol and transport stop lines name the cause and keep
-## the numeric code beside it for tooling parity. Each line renders through its
+## The online example's real service and poll paths name the stop cause and keep
+## the numeric code beside it for tooling parity. Each path renders through its
 ## own enum space, pinned by codes that exist in only one of the two enums.
 func _online_stops(context: RefCounted) -> void:
 	var match_scene: OnlineMatch = OnlineMatch.new()
-	var protocol: String = match_scene._protocol_stopped_text(Endpoint.Code.WRONG_CONNECTION)
-	context.equal(protocol, "Protocol stopped: packet on the wrong connection (code %d). Leave and create a new room." % Endpoint.Code.WRONG_CONNECTION,
-		"protocol stop names its endpoint cause beside its code")
-	var queue: String = match_scene._transport_stopped_text("Transport queue stopped", RelayTypes.Code.WRONG_SESSION)
-	context.equal(queue, "Transport queue stopped: packet from another match (code %d). Leave and create a new room." % RelayTypes.Code.WRONG_SESSION,
-		"transport queue stop names its transport cause beside its code")
-	var transport: String = match_scene._transport_stopped_text("Transport stopped", RelayTypes.Code.RECEIVE_OVERFLOW)
-	context.equal(transport, "Transport stopped: received bytes exceeded the receive bound (code %d). Leave and create a new room." % RelayTypes.Code.RECEIVE_OVERFLOW,
-		"transport stop names its transport cause beside its code")
+	match_scene.has_started = true
+	match_scene.fallback = RefusingFallback.new()
+	match_scene._pending = [OnlineMatch.Peer.Packet.new(PackedByteArray(), PackedByteArray())]
+	match_scene._service(0)
+	context.equal(
+		match_scene.failure,
+		"Transport queue stopped: transport is not configured for this call (code %d). Leave and create a new room." % RelayTypes.Code.WRONG_STATE,
+		"the transport queue stop names its transport cause beside its code"
+	)
+	match_scene.failure = ""
+	match_scene._pending = []
+	match_scene._service(0)
+	context.equal(
+		match_scene.failure,
+		"Transport stopped: the transport sdk failed (code %d). Leave and create a new room." % RelayTypes.Code.SDK_FAILURE,
+		"the transport stop names its transport cause beside its code"
+	)
+	match_scene.failure = ""
+	match_scene.peer = RefusingPeer.new()
+	match_scene._poll_protocol(0)
+	context.equal(
+		match_scene.failure,
+		"Protocol stopped: packet on the wrong connection (code %d). Leave and create a new room." % Endpoint.Code.WRONG_CONNECTION,
+		"the protocol stop names its endpoint cause beside its code"
+	)
