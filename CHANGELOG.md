@@ -4,6 +4,8 @@
 
 ### Improved
 
+- Scope the probe wave's host-lease inheritance to the wave owner's identity instead of its lease name: the wave owner publishes its name and pid through `FORTRESS_HOST_LEASE_HELD`, and a member inherits only while the live lease record names that exact owner, so a leftover child of an earlier wave can no longer inherit from a later wave that reused the lease name.
+
 - Acknowledge the spectator pages' own completed `/viewer` control POST beside an intended admission rejection as the same `net::ERR_ABORTED` result-phase disposal artifact already acknowledged beside a passing `/done` result, and run the acknowledgment in the admission-rejection cells. The pairing still requires exactly one origin-bound result-phase artifact, no runner failure, a page-level error-free report, and either a passing page or the demonstrated refused-state decision with zero simulations; a page that failed a playback step mid-run stays fatal. This repairs the merge-triggered `initial-state` witness failure on main.
 
 - Capture each repository-harness command's output in the devcontainer verification and print its tail when the check rejects the environment, so a failing check names its own failure instead of leaving the rejection to blind reproduction.

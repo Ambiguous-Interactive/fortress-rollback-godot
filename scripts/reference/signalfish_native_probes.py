@@ -6,9 +6,9 @@ critical path (issue #340). Each probe already binds an ephemeral port, starts
 its own pinned server subprocess and writes to its own output directory, so two
 of them overlap safely when the host-capacity lease is held once for the whole
 wave: the children run with ``FORTRESS_HOST_LEASE_HELD`` naming the wave
-owner's lease, and the wave owner releases the host when the last probe joins.
-The six browser-viewer cells stay serial in the workflow because browser pages
-need a responsive host.
+owner's lease identity (its name and pid), and the wave owner releases the
+host when the last probe joins. The six browser-viewer cells stay serial in
+the workflow because browser pages need a responsive host.
 
 The run fails unless every probe executed exactly once and exited zero. Every
 failure names its own log, and one rejection never masks a sibling's failure.
@@ -90,8 +90,10 @@ def run_wave(args, jobs):
     """Run every probe in the bounded pool and return the per-probe results."""
     # The wave owns the host for its whole duration; the probe children inherit
     # that ownership instead of taking and releasing it one process at a time.
+    # The value names this owner exactly, so a leftover member of an earlier
+    # wave cannot inherit again from a later wave that reused the lease name.
     environment = os.environ.copy()
-    environment[host_capacity.WAVE_HELD_ENV] = HOST_LEASE_NAME
+    environment[host_capacity.WAVE_HELD_ENV] = host_capacity.wave_owner_value(HOST_LEASE_NAME)
     outputs = {name: args.results / PROBES[name][2].format(version=args.version) for name in PROBES}
     logs = {name: args.results / f'native-probe-{args.version}-{name}.log' for name in PROBES}
     commands = {name: probe_command(name, *PROBES[name], args) for name in PROBES}
