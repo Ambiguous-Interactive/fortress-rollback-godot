@@ -211,3 +211,16 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertEqual(len(uploads), 1)
         self.assertEqual(uploads[0]['attributes'].get('if'), 'always()')
         self.assertIn('godot-browser-reference-results-${{ matrix.version }}-${{ matrix.part }}', uploads[0]['with'].get('name', ''))
+
+    # Value: protects=every system-package acquisition from a dropped-archive job failure (#349);
+    # fails_when=an install command loses its retry wrapper; seam=workflow text
+    def test_every_package_acquisition_keeps_its_retry_wrapper(self):
+        text = WORKFLOW.read_text(encoding='utf-8')
+        acquisition = re.compile(r'playwright install-deps|apt-get install -y')
+        commands = [line.strip() for line in text.splitlines() if acquisition.search(line)]
+        # Five Playwright install-deps calls and three direct apt-get installs (Rust
+        # linker, Firefox Xvfb tools, scoped-model Java), including the Firefox branch.
+        self.assertEqual(len(commands), 8, commands)
+        for command in commands:
+            self.assertIn('scripts/reference/retry_apt_fetch.sh', command, command)
+        self.assertTrue((ROOT / 'scripts/reference/retry_apt_fetch.sh').is_file())
