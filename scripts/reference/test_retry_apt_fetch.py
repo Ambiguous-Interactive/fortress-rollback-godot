@@ -65,24 +65,44 @@ class RetryAptFetchTests(unittest.TestCase):
         self.assertIn('fonts-tlwg-loma-otf_0.7.3-1_all.deb', result.stderr)
         self.assertIn('attempt 2 of 2', result.stderr)
 
+    def test_outer_tool_mapping_of_apt_failure_recovers_through_one_retry(self):
+        # Playwright install-deps exits 1 while its log still carries apt's exit 100 summary.
+        log = (DROPPED_ARCHIVE + '\n' + DROP_SIGNATURE
+               + '\nFailed to install browser dependencies\nError: Installation process exited with code: 100')
+        result = self.run_wrapper([(1, log), (0, '')])
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(self.invocations(), 2)
+        self.assertIn('fonts-tlwg-loma-otf_0.7.3-1_all.deb', result.stderr)
+        self.assertIn('attempt 2 of 2', result.stderr)
+
     def test_persistent_drop_fails_after_the_single_retry(self):
-        result = self.run_wrapper([(100, DROPPED_ARCHIVE + '\n' + DROP_SIGNATURE)])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.invocations(), 2, 'the wrapper must retry exactly once')
-        self.assertIn('failed again on attempt 2 of 2', result.stderr)
+        playwright_log = DROPPED_ARCHIVE + '\n' + DROP_SIGNATURE + '\nFailed to install browser dependencies'
+        # Data-driven: (exit code, failure body) pairs that must fail after exactly one retry.
+        cases = {
+            'direct apt exit 100': (100, DROPPED_ARCHIVE + '\n' + DROP_SIGNATURE),
+            'outer tool exit 1 over apt exit 100': (1, playwright_log),
+        }
+        for label, attempt in cases.items():
+            with self.subTest(label):
+                result = self.run_wrapper([attempt])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.invocations(), 2, 'the wrapper must retry exactly once')
+                self.assertIn('failed again on attempt 2 of 2', result.stderr)
+            self.counter.unlink()
+            self.plan.unlink()
 
     def test_failures_without_dropped_archives_never_retry(self):
         # Data-driven: (exit code, failure body) pairs that must fail immediately.
         cases = {
-            'wrong exit code with the full signature': (1, DROPPED_ARCHIVE + '\n' + DROP_SIGNATURE),
+            'outer failure without the summary signature': (1, DROPPED_ARCHIVE),
             'acquisition code without the summary signature': (100, DROPPED_ARCHIVE),
         }
         for label, attempt in cases.items():
             with self.subTest(label):
                 result = self.run_wrapper([attempt])
                 self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(self.invocations(), 1, 'only a code-100 dropped-archive failure may retry')
-                self.assertIn('no dropped archives', result.stderr)
+                self.assertEqual(self.invocations(), 1, 'only the dropped-archive summary may retry')
+                self.assertIn('no dropped-archive summary', result.stderr)
             self.counter.unlink()
             self.plan.unlink()
 
@@ -91,6 +111,7 @@ class RetryAptFetchTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(self.invocations(), 2)
         self.assertIn('attempt 2 of 2', result.stderr)
+        self.assertIn('without naming them', result.stderr)
 
     def test_missing_command_is_rejected_without_running(self):
         result = subprocess.run(['bash', str(COMMAND)], capture_output=True, text=True, timeout=10)
