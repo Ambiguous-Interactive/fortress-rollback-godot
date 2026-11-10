@@ -185,6 +185,8 @@ class HostCapacityTest(unittest.TestCase):
                 ("other:", False, "an empty pid"),
                 (f":{owner.pid}", False, "an empty lease name"),
                 ("other:-1", False, "a negative pid"),
+                ("other:²", False, "a superscript digit that isdigit() accepts but int() rejects"),
+                ("other:" + "9" * 5000, False, "a digit string beyond int()'s conversion limit"),
             ]
             for value, inherits, why in cases:
                 with self.subTest(value=value, why=why):
@@ -195,6 +197,11 @@ class HostCapacityTest(unittest.TestCase):
         finally:
             owner.terminate()
             owner.wait(timeout=10)
+
+    def test_wave_owner_value_names_this_process_exactly(self):
+        self.assertEqual(host_capacity.wave_owner_value("online-native-probes"),
+                         f"online-native-probes:{os.getpid()}")
+        self.assertEqual(host_capacity.wave_owner_value("x"), f"x:{os.getpid()}")
 
     # Value: the reused-name hazard — a second wave takes the constant lease
     # name after the first wave ended, and the first wave's leftover member

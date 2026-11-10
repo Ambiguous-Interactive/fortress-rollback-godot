@@ -74,14 +74,21 @@ def wave_owner_value(name: str) -> str:
 
 
 def _wave_owner() -> tuple[str, int] | None:
-    """The (name, pid) the environment names, or None for a stray value."""
+    """The (name, pid) the environment names, or None for a stray value.
+
+    The parse cannot raise: any value whose tail is not a plain integer is a
+    stray value and changes nothing, whatever characters it contains.
+    """
     value = os.environ.get(WAVE_HELD_ENV)
     if not value:
         return None
     name, _, pid = value.rpartition(":")
-    if not name or not pid.isdigit():
+    if not name:
         return None
-    return name, int(pid)
+    try:
+        return name, int(pid)
+    except ValueError:
+        return None
 
 
 def _holder_record() -> tuple[str, int | None] | None:
