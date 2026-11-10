@@ -9,6 +9,7 @@ import shutil
 import json
 import os
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -488,10 +489,11 @@ assert.equal(errors.length,3,'deliberate close must not invent a request failure
 
 
 class SpectatorDisposalAbortTests(unittest.TestCase):
-    # Value: protects=only the exact success-paired /done disposal abort is acknowledged;
-    # fails_when=a real request failure or a failed page result is classified as expected;
-    # why_new=the pinned web transport reports the page's own completed /done POST as
-    # net::ERR_ABORTED during result-phase bookkeeping (#322); seam=spectator_browser
+    # Value: protects=only the exact result-paired /done and /viewer disposal aborts are acknowledged;
+    # fails_when=a real request failure or a page that died mid-run is classified as expected;
+    # why_new=the pinned web transport reports the page's own completed control POST as
+    # net::ERR_ABORTED during result-phase bookkeeping, demonstrated beside a passing result
+    # (#322) and beside an intended admission rejection; seam=spectator_browser
     CONTROL = 'http://127.0.0.1:42855'
     ARTIFACT = {'origin': CONTROL, 'path': '/done', 'method': 'POST', 'resourceType': 'fetch',
                 'failure': 'net::ERR_ABORTED', 'phase': 'result'}
@@ -501,10 +503,14 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
     HOST = {'passed': True, 'departure': 'host', 'frames': 20, 'confirmed': 19, 'host_rollbacks': 18,
             'socket_closed': True, 'remote_host_departure_observed': True, 'publication_stopped': True,
             'viewer_paused_frame': 8}
+    REJECTED = {'passed': False, 'reason': 'browser original-state or membership binding', 'errors': []}
+    STATE = {'accept_delivered': False, 'accept_pending': False, 'compared': 0, 'frame': 0, 'simulations': 0}
 
     def browser(self, **changes):
+        # A deep copy keeps a nested mutation in one report from leaking into
+        # the class-level fixtures another case reads.
         report = {'browser': 'Chromium', 'version': '156.0', 'errors': ['browser request failed'],
-                  'requestFailures': [dict(self.ARTIFACT)], 'departureClosed': False, 'result': dict(self.PASSED)}
+                  'requestFailures': [dict(self.ARTIFACT)], 'departureClosed': False, 'result': deepcopy(self.PASSED)}
         report.update(changes)
         return report
 
@@ -538,7 +544,7 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
         mutations = [
             ('second failure', lambda report: report['requestFailures'].append(
                 {**self.ARTIFACT, 'path': '/admission', 'phase': 'state'})),
-            ('lost page success', lambda report: report['result'].update(passed=False, reason='browser playback step')),
+            ('page failed mid-run', lambda report: report['result'].update(passed=False, reason='browser playback step')),
             ('different failure code', lambda report: report['requestFailures'][0].update(failure='net::ERR_CONNECTION_REFUSED')),
             ('different phase', lambda report: report['requestFailures'][0].update(phase='departure')),
             ('different path', lambda report: report['requestFailures'][0].update(path='/admission')),
@@ -557,6 +563,36 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
                 self.assertTrue(classified['errors'], name + ' keeps its fatal error')
                 with self.assertRaises(ValueError, msg=name + ' fails the departure gate'):
                     validate_host_departure(self.HOST, classified)
+
+    def test_rejection_paired_viewer_abort_is_acknowledged(self):
+        from spectator_browser import acknowledge_disposal_abort, validate_fault
+        artifact = {**self.ARTIFACT, 'path': '/viewer'}
+        report = self.browser(**{'requestFailures': [artifact], 'result': dict(self.REJECTED), 'state': dict(self.STATE)})
+        acknowledged = acknowledge_disposal_abort(report, SimpleNamespace(url=self.CONTROL))
+        self.assertEqual(acknowledged['errors'], [], 'the intended rejection keeps no transport error')
+        self.assertEqual(acknowledged['acknowledged_disposal_abort'], artifact, 'the observation stays visible')
+        control = SimpleNamespace(url=self.CONTROL, accepted_once=False, received=0, done=None)
+        validate_fault(1, acknowledged, True, control, '')
+
+    def test_rejection_paired_abort_mutations_stay_fatal(self):
+        from spectator_browser import acknowledge_disposal_abort, validate_fault
+        artifact = {**self.ARTIFACT, 'path': '/viewer'}
+        base = self.browser(**{'requestFailures': [artifact], 'result': dict(self.REJECTED)})
+        mutations = [
+            ('page died mid-run', lambda report: report['result'].update(errors=['browser playback step'])),
+            ('result is not a page decision', lambda report: report['result'].pop('passed')),
+            ('unwaited control path', lambda report: report['requestFailures'][0].update(path='/admission')),
+            ('mid-run playback failure', lambda report: report['result'].update(reason='browser playback step')),
+        ]
+        for name, mutate in mutations:
+            with self.subTest(name=name):
+                report = self.browser(**{'requestFailures': [dict(artifact)], 'result': dict(self.REJECTED)})
+                mutate(report)
+                self.assertIsNone(acknowledge_disposal_abort(report, SimpleNamespace(url=self.CONTROL)).get('acknowledged_disposal_abort'),
+                                  name + ' must stay unacknowledged')
+                report['errors'] = []
+                with self.assertRaises(ValueError, msg=name + ' fails the admission gate'):
+                    validate_fault(1, report, True, SimpleNamespace(url=self.CONTROL), '')
 
 
 if __name__ == '__main__':
