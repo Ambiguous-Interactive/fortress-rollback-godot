@@ -403,9 +403,10 @@ Inspect actual SDK/Godot channel options; do not claim zero retransmits if the
 mesh uses packet lifetime instead. Reserve packet consumption for the adapter.
 Respect server-selected offerer roles and latest plan generations.
 The direct adapter now provides bounded byte delivery and lifetime fences.
-The exported Chromium witness covers 2/4/8 peers on both pinned engines, and
-the Firefox and mixed-browser pairs qualify the same labels and rooms under
-Xvfb as separate witness jobs.
+The exported Chromium witness covers 2/4/8 peers on both pinned engines,
+and the Firefox pair now qualifies the same labels and rooms under Xvfb
+as separate witness jobs; the chromium-firefox pair stays deferred on its
+recorded ICE setup failure (#104).
 The slow eight-peer FIFO regression requires actual receipt and confirmation;
 live witness send/receive work budgets must match its tested configuration.
 The witness exercises elapsed transport deadlines and caller-owned handshake

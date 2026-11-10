@@ -456,7 +456,7 @@ serial spectator probes and the suites job's remaining serial probe
 commands, with the #104 runner-contention budget for any concurrent
 browser work.
 
-## Firefox and mixed-browser witness axes
+## Firefox witness axis
 
 The transport witness matrix qualified the Chromium pair only; #104's
 eight-player Firefox rooms had failed hosted CI under runner CPU starvation
@@ -476,7 +476,12 @@ with the whole launcher pinned to `taskset -c 0,1` under one Xvfb display:
 The forced-schedule control cannot run the rooms without weakening the
 pinned clock gate, so the historical bounded-runner measurement above stays
 the previous-schedule number; the hosted runs bind their own source-bound
-receipts per pair. The matrix adds four Firefox and four mixed-browser
-witness jobs that run the same direct and mixed labels under `xvfb-run`
-with the pinned Firefox installation; Chromium jobs keep their names,
-labels, receipts and artifacts.
+receipts per pair. The matrix adds four Firefox witness jobs (direct and
+mixed label sets, both engine pins) that run the same rooms as the
+Chromium pair under `xvfb-run` with the pinned Firefox installation;
+Chromium jobs keep their names, labels, receipts and artifacts. The
+chromium-firefox pair stays out of the matrix: its hosted 8-player rooms
+fail ICE setup deterministically (every peer reports "ICE failed, add a
+STUN server" against the absolute setup deadline) in Reference run
+`42763413592`, the same failure class session 025 recorded for the mixed
+jobs; that cross-browser setup gap remains tracked in #104.
