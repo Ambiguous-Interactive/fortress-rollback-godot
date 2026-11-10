@@ -469,8 +469,8 @@ with the whole launcher pinned to `taskset -c 0,1` under one Xvfb display:
 
 | Bound-runner clean label (rooms 2/4/8, Firefox pair) | Result |
 | --- | --- |
-| Godot 4.3, adaptive batch (current source) | passed in 57s; every 8-player peer confirmed through frame 38 with 38 canonical comparisons |
-| Godot 4.7.2, adaptive batch (current source) | passed in 59s; same canonical coverage |
+| Godot 4.3, idle-stopping service batch (current source) | passed in 57s; every 8-player peer confirmed through frame 38 with 38 canonical comparisons |
+| Godot 4.7.2, idle-stopping service batch (current source) | passed in 59s; same canonical coverage |
 | Previous schedule (forced eight rounds per turn) | rejected before any room: the clock gate reports "every readiness turn services the still-live endpoints" |
 
 The forced-schedule control cannot run the rooms without weakening the
