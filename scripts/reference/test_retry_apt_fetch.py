@@ -88,8 +88,8 @@ class RetryAptFetchTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.invocations(), 2, 'the wrapper must retry exactly once')
                 self.assertIn('failed again on attempt 2 of 2', result.stderr)
-            self.counter.unlink()
-            self.plan.unlink()
+            self.counter.unlink(missing_ok=True)
+            self.plan.unlink(missing_ok=True)
 
     def test_failures_without_dropped_archives_never_retry(self):
         # Data-driven: (exit code, failure body) pairs that must fail immediately.
@@ -103,8 +103,8 @@ class RetryAptFetchTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(self.invocations(), 1, 'only the dropped-archive summary may retry')
                 self.assertIn('no dropped-archive summary', result.stderr)
-            self.counter.unlink()
-            self.plan.unlink()
+            self.counter.unlink(missing_ok=True)
+            self.plan.unlink(missing_ok=True)
 
     def test_unnamed_summary_signature_still_retries_once(self):
         result = self.run_wrapper([(100, DROP_SIGNATURE), (0, '')])
