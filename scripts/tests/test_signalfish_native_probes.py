@@ -4,7 +4,8 @@ The wave replaces the serial native probe chain in the Reference Baseline
 workflow, so its aggregation is the gate. These tests pin:
 
 * probes that all pass exit zero and run once each against their own output,
-  with the wave-held lease flag in their environment;
+  with the wave-held lease flag naming the wave owner's identity in their
+  environment;
 * a failing probe fails the whole run, surfaces its own output, and every
   sibling still joins with its own result — two failures are both named;
 * interruption fences queued probes and terminates active process groups;
@@ -33,7 +34,10 @@ import signalfish_native_probes as probes
 PASS_SCRIPT = """\
 import os, sys
 from pathlib import Path
-assert os.environ.get('FORTRESS_HOST_LEASE_HELD') == 'online-native-probes', 'wave children must inherit the wave lease by name'
+value = os.environ.get('FORTRESS_HOST_LEASE_HELD', '')
+name, _, pid = value.rpartition(':')
+assert name == 'online-native-probes' and pid.isdigit(), (
+    f'wave children must inherit the wave owner identity, saw {value!r}')
 args = sys.argv[1:]
 for required in ('--godot', '--server', '--server-source', '--build-receipt', '--output'):
     assert required in args, args

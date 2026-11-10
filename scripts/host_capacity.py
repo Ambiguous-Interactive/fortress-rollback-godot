@@ -14,11 +14,13 @@ starts later waits for it instead of competing for it.
 
 An overlapping probe wave takes the host once for all its members. The wave
 owner runs its probe children with `FORTRESS_HOST_LEASE_HELD` naming the wave
-owner's lease, so each member acquires at once without contending with its own
-wave and never releases the host while a sibling still runs; the wave owner
-releases when the last probe joins. The inheritance holds only while that
-named owner still holds the host: if the wave owner died, the lease died with
-it and the member takes the host itself.
+owner's lease identity — the lease name and the wave owner's pid — so each
+member acquires at once without contending with its own wave and never
+releases the host while a sibling still runs; the wave owner releases when the
+last probe joins. The inheritance holds only while that exact owner still
+holds the host: if the wave owner died, the lease died with it and the member
+takes the host itself, and a member left over from an earlier wave cannot
+falsely inherit just because a later wave reused the lease name.
 
 The host is one exclusive file lock, so exactly one process owns it. The
 operating system releases the lock when its owner ends, so a lease of a
@@ -48,22 +50,98 @@ def _lease_directory() -> Path:
 
 LEASE_DIR = _lease_directory()
 LEASE_FILE = LEASE_DIR / "host.lock"
-# Set to the wave owner's lease name for the children of one probe wave. While
-# that named owner still holds the host, a member inherits the lease instead of
-# contending with its own wave or releasing it while a sibling still runs. A
-# stray value naming no live owner changes nothing: the process takes the host
-# itself, so the flag can never silently disable contention protection.
+# Names the wave owner's lease identity — "name:pid" — for the children of
+# one probe wave. While that named owner still holds the host, a member
+# inherits the lease instead of contending with its own wave or releasing it
+# while a sibling still runs. The pid makes the inheritance ownership-scoped,
+# not name-scoped: a grandchild that outlives its wave cannot inherit again
+# from a later wave that reused the lease name, because the live record names
+# a different pid. A stray value naming no live owner changes nothing: the
+# process takes the host itself, so the flag can never silently disable
+# contention protection.
 WAVE_HELD_ENV = "FORTRESS_HOST_LEASE_HELD"
 # The owner of this process, its lock handle and its name.
 _state = {"handle": None, "name": None}
+
+
+def wave_owner_value(name: str) -> str:
+    """The lease identity a wave owner publishes to its probe children.
+
+    The owner calls this while it holds the host, so the pid matches the lock
+    record it wrote and its members can require that exact owner.
+    """
+    return f"{name}:{os.getpid()}"
+
+
+def _wave_owner() -> tuple[str, int] | None:
+    """The (name, pid) the environment names, or None for a stray value.
+
+    The parse cannot raise, and only the canonical decimal spelling the wave
+    owner publishes counts: any other tail — signed, padded, spaced,
+    underscored or non-ASCII — leaves the value a stray that changes nothing.
+    """
+    value = os.environ.get(WAVE_HELD_ENV)
+    if not value:
+        return None
+    name, _, pid = value.rpartition(":")
+    if not name:
+        return None
+    try:
+        owner = name, int(pid)
+    except ValueError:
+        return None
+    return owner if pid == str(owner[1]) else None
+
+
+def _holder_record() -> tuple[str, int | None] | None:
+    """Who holds the host: (name, pid), or None when it is free.
+
+    A record without a usable pid keeps its name with a None pid, and an
+    unreadable record reports the name "unknown"; holder() depends on both.
+    """
+    if _state["handle"] is not None:
+        return _state["name"], os.getpid()
+    try:
+        handle = _open_lock(False)
+    except FileNotFoundError:
+        return None
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        if error.errno not in (errno.EACCES, errno.EAGAIN):
+            handle.close()
+            raise
+        # Another owner holds the lock. Its record names the owner.
+        try:
+            handle.seek(0)
+            record = json.loads(handle.read())
+            name = record.get("name")
+            pid = record.get("pid")
+        except (OSError, ValueError, AttributeError):
+            name, pid = None, None
+        handle.close()
+        if isinstance(name, str) and name:
+            if isinstance(pid, int) and not isinstance(pid, bool):
+                return name, pid
+            return name, None
+        return "unknown", None
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    handle.close()
+    return None
 
 
 def _ours() -> bool:
     """True when this process holds the host."""
     if _state["handle"] is not None:
         return True
-    wave = os.environ.get(WAVE_HELD_ENV)
-    return bool(wave) and holder() == wave
+    wave = _wave_owner()
+    if wave is None:
+        return False
+    record = _holder_record()
+    if record is None:
+        return False
+    name, pid = record
+    return name == wave[0] and pid == wave[1]
 
 
 def _open_lock(create: bool) -> TextIO:
@@ -126,29 +204,10 @@ def release() -> None:
 
 def holder() -> str | None:
     """The name of the owner that holds the host, or None when it is free."""
-    if _state["handle"] is not None:
-        return str(_state["name"])
-    try:
-        handle = _open_lock(False)
-    except FileNotFoundError:
+    record = _holder_record()
+    if record is None:
         return None
-    try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as error:
-        if error.errno not in (errno.EACCES, errno.EAGAIN):
-            handle.close()
-            raise
-        # Another owner holds the lock. Its record names the owner.
-        try:
-            handle.seek(0)
-            name = json.loads(handle.read()).get("name")
-        except (OSError, ValueError, AttributeError):
-            name = None
-        handle.close()
-        return name if isinstance(name, str) and name else "unknown"
-    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    handle.close()
-    return None
+    return record[0]
 
 
 def wait_for_free(timeout_seconds: float) -> bool:

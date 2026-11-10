@@ -10,7 +10,9 @@ ends with `PROTOCOL_FAILED`. The host lock makes that ownership explicit:
 * a second owner cannot take the host while the first one holds it;
 * the lock ends with its owner, so the host of a process that is gone never
   blocks the next probe;
-* a process that holds the host does not wait for itself.
+* a process that holds the host does not wait for itself;
+* a probe wave's children inherit their wave owner's lease only while that
+  exact owner — name and pid — still holds it.
 """
 
 import ast
@@ -112,7 +114,7 @@ class HostCapacityTest(unittest.TestCase):
         try:
             self.assertEqual(host_capacity.holder(), "other")
             started = time.time()
-            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "other"}):
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: f"other:{owner.pid}"}):
                 self.assertTrue(host_capacity.acquire("wave-child"))
                 self.assertTrue(host_capacity.wait_for_free(0.0))
                 self.assertTrue(host_capacity.acquire_when_free("wave-child", 0.0))
@@ -127,12 +129,12 @@ class HostCapacityTest(unittest.TestCase):
         owner = self.hold_in_subprocess()
         try:
             # A value naming nobody cannot silently disable contention protection.
-            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "1"}):
-                self.assertFalse(host_capacity.acquire("stray"))
-                self.assertFalse(host_capacity.acquire_when_free("stray", 0.0))
-                self.assertEqual(host_capacity.worker_count(16), 1)
-            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "not-the-owner"}):
-                self.assertFalse(host_capacity.acquire("stray"))
+            for stray in ("1", "not-the-owner", "other", "other:junk", "other:"):
+                with self.subTest(stray=stray):
+                    with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: stray}):
+                        self.assertFalse(host_capacity.acquire("stray"))
+                        self.assertFalse(host_capacity.acquire_when_free("stray", 0.0))
+                        self.assertEqual(host_capacity.worker_count(16), 1)
         finally:
             owner.terminate()
             owner.wait(timeout=10)
@@ -147,7 +149,7 @@ class HostCapacityTest(unittest.TestCase):
     def test_wave_child_release_keeps_the_wave_owner_in_place(self):
         owner = self.hold_in_subprocess()
         try:
-            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "other"}):
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: f"other:{owner.pid}"}):
                 self.assertTrue(host_capacity.acquire("wave-child"))
                 host_capacity.release()
             self.assertEqual(host_capacity.holder(), "other",
@@ -159,7 +161,7 @@ class HostCapacityTest(unittest.TestCase):
     def test_wave_child_sees_the_wave_owner_by_name_not_the_string_none(self):
         owner = self.hold_in_subprocess()
         try:
-            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "other"}):
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: f"other:{owner.pid}"}):
                 self.assertTrue(host_capacity.acquire("wave-child"))
                 self.assertEqual(host_capacity.holder(), "other",
                                  "an inheriting member must read the live owner's name")
@@ -167,6 +169,84 @@ class HostCapacityTest(unittest.TestCase):
             owner.terminate()
             owner.wait(timeout=10)
 
+    # Value: inheritance is ownership-scoped, not name-scoped, so a member can
+    # never ride a lease whose recorded owner is not exactly the wave owner
+    # the environment names (issue #345's identity-based inheritance).
+    def test_wave_inheritance_requires_the_live_owner_identity(self):
+        owner = self.hold_in_subprocess()
+        try:
+            self.assertEqual(host_capacity.holder(), "other")
+            cases = [
+                (f"other:{owner.pid}", True, "the live wave owner's exact identity"),
+                (f"other:{owner.pid + 1}", False, "a stale pid under the same lease name"),
+                (f"someone-else:{owner.pid}", False, "the live pid under another lease name"),
+                ("other", False, "a name-only value without an owner pid"),
+                ("other:not-a-pid", False, "a non-numeric pid"),
+                ("other:", False, "an empty pid"),
+                (f":{owner.pid}", False, "an empty lease name"),
+                ("other:-1", False, "a negative pid"),
+                ("other:²", False, "a superscript digit that isdigit() accepts but int() rejects"),
+                ("other:" + "9" * 5000, False, "a digit string beyond int()'s conversion limit"),
+                (f"other:+{owner.pid}", False, "a signed spelling of the live pid"),
+                (f"other:0{owner.pid}", False, "a zero-padded spelling of the live pid"),
+                (f"other:{owner.pid} ", False, "a space-padded spelling of the live pid"),
+            ]
+            for value, inherits, why in cases:
+                with self.subTest(value=value, why=why):
+                    with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: value}):
+                        self.assertEqual(host_capacity.acquire("wave-child"), inherits,
+                                         f"{why}: must {'inherit' if inherits else 'contend'}")
+                        self.assertEqual(host_capacity.worker_count(16), 16 if inherits else 1)
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
+
+    def test_wave_owner_value_names_this_process_exactly(self):
+        self.assertEqual(host_capacity.wave_owner_value("online-native-probes"),
+                         f"online-native-probes:{os.getpid()}")
+        self.assertEqual(host_capacity.wave_owner_value("x"), f"x:{os.getpid()}")
+
+    # Value: only the canonical decimal spelling the wave owner publishes
+    # counts; every other spelling of a live pid stays a stray value.
+    def test_wave_owner_rejects_noncanonical_pid_spellings(self):
+        live = os.getpid()
+        cases = [f"x:+{live}", f"x:0{live}", f"x:{live} ", f"x: {live}", f"x:{live}\t",
+                 "x:1_0", "x:٥", "x:½"]
+        for value in cases:
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: value}):
+                    self.assertIsNone(host_capacity._wave_owner(),
+                                      "a noncanonical pid spelling must stay a stray value")
+        with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: f"x:{live}"}):
+            self.assertEqual(host_capacity._wave_owner(), ("x", live),
+                             "the canonical spelling keeps parsing")
+        # A negative number is already canonical, so it parses — but its pid
+        # can never equal a record's, so it can never inherit.
+        with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "x:-7"}):
+            self.assertEqual(host_capacity._wave_owner(), ("x", -7))
+
+    # Value: the reused-name hazard — a second wave takes the constant lease
+    # name after the first wave ended, and the first wave's leftover member
+    # must not inherit the second wave's lease (issue #345's case).
+    def test_a_second_wave_reusing_the_name_does_not_inherit_a_stale_child(self):
+        first = self.hold_in_subprocess()
+        stale = f"other:{first.pid}"
+        first.terminate()
+        first.wait(timeout=10)
+        (Path(self.directory.name) / "ready").unlink(missing_ok=True)
+        owner = self.hold_in_subprocess()
+        try:
+            self.assertEqual(host_capacity.holder(), "other", "the second wave took the reused name")
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: stale}):
+                self.assertFalse(host_capacity.acquire("stale-child"),
+                                 "a stale child must not inherit a later wave's reused lease")
+                self.assertEqual(host_capacity.worker_count(16), 1)
+            with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: f"other:{owner.pid}"}):
+                self.assertTrue(host_capacity.acquire("live-child"),
+                                "the live wave's own child still inherits")
+        finally:
+            owner.terminate()
+            owner.wait(timeout=10)
 
     def test_wait_for_free_returns_when_the_host_is_free(self):
         self.assertTrue(host_capacity.wait_for_free(0.0))

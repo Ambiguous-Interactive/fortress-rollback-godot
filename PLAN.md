@@ -180,7 +180,7 @@ Native test launches wait within an explicit host-capacity budget before startin
 The ownership witness overlaps its per-suite native engine processes in the same bounded wave, keeping one fresh process, watchdog and after-run boundary verification per suite; browser pages stay serial because they need a responsive host.
 The ownership matrix runs each Chromium phase as its own job, matching the existing Firefox shape, so the workflow's wall-time critical path is no longer one double-phase job.
 The oracle launchers run in bounded parallel subprocesses with fail-closed aggregation; each launcher keeps its own interpreter, output directory and receipt, and the shared cargo target stays correct under cargo's own build lock.
-The online leg's seven native probes overlap in one bounded two-worker wave that takes the host lease once for all its members; every probe keeps its exact command, watchdogs and output paths, the six browser-viewer cells stay serial, and one rejection never masks a sibling's failure.
+The online leg's seven native probes overlap in one bounded two-worker wave that takes the host lease once for all its members; every probe keeps its exact command, watchdogs and output paths, the six browser-viewer cells stay serial, and one rejection never masks a sibling's failure. The wave's lease inheritance is identity-scoped: children receive the wave owner's name and pid through one environment value, and a member inherits only while the live lock record names that exact owner, rather than by the lease name alone.
 The unit-test wave shards across two same-tree CI jobs whose name-interleaved
 suites tile the discovered inventory exactly once, and the ownership witness
 splits into four interleaved suite parts per phase, so both the CPU-bound
