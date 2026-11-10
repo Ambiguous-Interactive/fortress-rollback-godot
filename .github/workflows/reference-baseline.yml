@@ -353,21 +353,15 @@ jobs:
         # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
         # runs with the direct labels so both jobs take about as long.
         part: [direct, mixed, online]
-        # `pair` is a real axis whose only cross-product value is `chromium`, so each include below
-        # conflicts with that original value and becomes its own new job. An include that does not
-        # conflict would merge into the matched combinations and overwrite their pair instead
-        # (the Firefox and mixed-browser pairs are the #104 eight-player axes; the Chromium jobs
-        # keep their exact names, labels, receipts and artifacts).
-        pair: [chromium]
-        include:
-          - {version: "4.3", part: direct, pair: firefox}
-          - {version: "4.3", part: mixed, pair: firefox}
-          - {version: "4.7.2", part: direct, pair: firefox}
-          - {version: "4.7.2", part: mixed, pair: firefox}
-          - {version: "4.3", part: direct, pair: chromium-firefox}
-          - {version: "4.3", part: mixed, pair: chromium-firefox}
-          - {version: "4.7.2", part: direct, pair: chromium-firefox}
-          - {version: "4.7.2", part: mixed, pair: chromium-firefox}
+        # The Firefox and mixed-browser pairs are the #104 eight-player axes. The online part stays
+        # Chromium-only, so its Firefox and mixed-browser combinations are excluded and the
+        # remaining 14 combinations each run one witness shape: the Chromium pair keeps its exact
+        # name, labels, receipts and artifacts, and each non-Chromium pair runs the same labels
+        # under Xvfb.
+        pair: [chromium, firefox, chromium-firefox]
+        exclude:
+          - {part: online, pair: firefox}
+          - {part: online, pair: chromium-firefox}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
