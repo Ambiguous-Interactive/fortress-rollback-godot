@@ -76,8 +76,8 @@ def wave_owner_value(name: str) -> str:
 def _wave_owner() -> tuple[str, int] | None:
     """The (name, pid) the environment names, or None for a stray value.
 
-    The parse cannot raise: any value whose tail is not a plain integer is a
-    stray value and changes nothing, whatever characters it contains.
+    The parse cannot raise: a tail that is not an integer, in whatever
+    spelling `int()` accepts, leaves the value a stray that changes nothing.
     """
     value = os.environ.get(WAVE_HELD_ENV)
     if not value:
