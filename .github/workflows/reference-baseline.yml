@@ -353,14 +353,21 @@ jobs:
         # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
         # runs with the direct labels so both jobs take about as long.
         part: [direct, mixed, online]
-        # The Firefox and mixed-browser pairs qualify the same labels and rooms as the Chromium pair;
-        # they are the eight-player bounded-runner axes from #104 and stay separate jobs so the
-        # established Chromium names, required checks and artifacts keep their exact shape.
+        # `pair` is a real axis whose only cross-product value is `chromium`, so each include below
+        # conflicts with that original value and becomes its own new job. An include that does not
+        # conflict would merge into the matched combinations and overwrite their pair instead
+        # (the Firefox and mixed-browser pairs are the #104 eight-player axes; the Chromium jobs
+        # keep their exact names, labels, receipts and artifacts).
+        pair: [chromium]
         include:
-          - {part: direct, pair: firefox}
-          - {part: mixed, pair: firefox}
-          - {part: direct, pair: chromium-firefox}
-          - {part: mixed, pair: chromium-firefox}
+          - {version: "4.3", part: direct, pair: firefox}
+          - {version: "4.3", part: mixed, pair: firefox}
+          - {version: "4.7.2", part: direct, pair: firefox}
+          - {version: "4.7.2", part: mixed, pair: firefox}
+          - {version: "4.3", part: direct, pair: chromium-firefox}
+          - {version: "4.3", part: mixed, pair: chromium-firefox}
+          - {version: "4.7.2", part: direct, pair: chromium-firefox}
+          - {version: "4.7.2", part: mixed, pair: chromium-firefox}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -411,7 +418,7 @@ jobs:
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
-          if [[ -n "${{ matrix.pair }}" ]]; then
+          if [[ "${{ matrix.pair }}" != chromium ]]; then
             .cache/reference/browser/node_modules/.bin/playwright install-deps firefox
             sudo apt-get update
             sudo apt-get install -y xvfb xdotool
@@ -434,7 +441,7 @@ jobs:
         run: |
           pair_args=()
           wrapper=()
-          if [[ -n "${{ matrix.pair }}" ]]; then
+          if [[ "${{ matrix.pair }}" != chromium ]]; then
             pair_args=(--browser-pair "${{ matrix.pair }}")
             # Firefox endpoints need a visible window for WebGL; Chromium rooms stay headless.
             wrapper=(xvfb-run -a)
@@ -489,7 +496,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}${{ matrix.pair && format('-{0}', matrix.pair) || '' }}
+          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}${{ matrix.pair == 'chromium' && '' || format('-{0}', matrix.pair) }}
           # The build receipt keeps the server binary's digest and build log; the published copy is not evidence.
           path: |
             .cache/reference/results/
