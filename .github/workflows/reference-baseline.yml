@@ -342,7 +342,7 @@ jobs:
           if-no-files-found: error
 
   signalfish:
-    name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
+    name: SignalFish ${{ matrix.pair == 'firefox' && 'Firefox ' || matrix.pair && 'mixed-browser ' || 'relay and Chromium ' }}WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
@@ -353,6 +353,14 @@ jobs:
         # witness splits into direct-path and mixed-path labels; the short disabled-fallback control
         # runs with the direct labels so both jobs take about as long.
         part: [direct, mixed, online]
+        # The Firefox and mixed-browser pairs qualify the same labels and rooms as the Chromium pair;
+        # they are the eight-player bounded-runner axes from #104 and stay separate jobs so the
+        # established Chromium names, required checks and artifacts keep their exact shape.
+        include:
+          - {part: direct, pair: firefox}
+          - {part: mixed, pair: firefox}
+          - {part: direct, pair: chromium-firefox}
+          - {part: mixed, pair: chromium-firefox}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.1.0
@@ -403,6 +411,11 @@ jobs:
           cp scripts/reference/browser/package*.json .cache/reference/browser/
           npm ci --ignore-scripts --prefix .cache/reference/browser
           .cache/reference/browser/node_modules/.bin/playwright install-deps chromium
+          if [[ -n "${{ matrix.pair }}" ]]; then
+            .cache/reference/browser/node_modules/.bin/playwright install-deps firefox
+            sudo apt-get update
+            sudo apt-get install -y xvfb xdotool
+          fi
       - name: Build the pinned local SignalFish server
         run: |
           PYTHONPATH=scripts/reference python3 - <<'PY'
@@ -419,11 +432,19 @@ jobs:
       - name: Verify real browser WebRTC on the pinned engine
         if: matrix.part == 'direct' || matrix.part == 'mixed'
         run: |
+          pair_args=()
+          wrapper=()
+          if [[ -n "${{ matrix.pair }}" ]]; then
+            pair_args=(--browser-pair "${{ matrix.pair }}")
+            # Firefox endpoints need a visible window for WebGL; Chromium rooms stay headless.
+            wrapper=(xvfb-run -a)
+          fi
           if [[ "${{ matrix.part }}" == direct ]]; then
             labels=(clean faults corrupt default mixed-disabled peer-drop peer-drop-corrupt peer-drop-close peer-drop-answer peer-drop-relay)
           else labels=(mixed mixed-default mixed-close recording-pressure); fi
-          python3 scripts/reference/signalfish_webrtc_probe.py \
+          "${wrapper[@]}" python3 scripts/reference/signalfish_webrtc_probe.py \
             --version "${{ matrix.version }}" "${labels[@]/#/--label=}" \
+            "${pair_args[@]}" \
             --server .cache/reference/results/signalfish-server-build/target/debug/signal-fish-server \
             --server-source .cache/reference/signal-fish-server-8cbf5d9e5dc155e7a7a4f8f5593f0a24f8aaa560 \
             --build-receipt .cache/reference/results/signalfish-server-build/build-receipt.json \
@@ -468,7 +489,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
-          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}
+          name: signalfish-live-reference-results-${{ matrix.version }}-${{ matrix.part }}${{ matrix.pair && format('-{0}', matrix.pair) || '' }}
           # The build receipt keeps the server binary's digest and build log; the published copy is not evidence.
           path: |
             .cache/reference/results/
