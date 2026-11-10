@@ -76,8 +76,9 @@ def wave_owner_value(name: str) -> str:
 def _wave_owner() -> tuple[str, int] | None:
     """The (name, pid) the environment names, or None for a stray value.
 
-    The parse cannot raise: a tail that is not an integer, in whatever
-    spelling `int()` accepts, leaves the value a stray that changes nothing.
+    The parse cannot raise, and only the canonical decimal spelling the wave
+    owner publishes counts: any other tail — signed, padded, spaced,
+    underscored or non-ASCII — leaves the value a stray that changes nothing.
     """
     value = os.environ.get(WAVE_HELD_ENV)
     if not value:
@@ -86,9 +87,10 @@ def _wave_owner() -> tuple[str, int] | None:
     if not name:
         return None
     try:
-        return name, int(pid)
+        owner = name, int(pid)
     except ValueError:
         return None
+    return owner if pid == str(owner[1]) else None
 
 
 def _holder_record() -> tuple[str, int | None] | None:

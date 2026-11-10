@@ -187,6 +187,9 @@ class HostCapacityTest(unittest.TestCase):
                 ("other:-1", False, "a negative pid"),
                 ("other:²", False, "a superscript digit that isdigit() accepts but int() rejects"),
                 ("other:" + "9" * 5000, False, "a digit string beyond int()'s conversion limit"),
+                (f"other:+{owner.pid}", False, "a signed spelling of the live pid"),
+                (f"other:0{owner.pid}", False, "a zero-padded spelling of the live pid"),
+                (f"other:{owner.pid} ", False, "a space-padded spelling of the live pid"),
             ]
             for value, inherits, why in cases:
                 with self.subTest(value=value, why=why):
@@ -202,6 +205,25 @@ class HostCapacityTest(unittest.TestCase):
         self.assertEqual(host_capacity.wave_owner_value("online-native-probes"),
                          f"online-native-probes:{os.getpid()}")
         self.assertEqual(host_capacity.wave_owner_value("x"), f"x:{os.getpid()}")
+
+    # Value: only the canonical decimal spelling the wave owner publishes
+    # counts; every other spelling of a live pid stays a stray value.
+    def test_wave_owner_rejects_noncanonical_pid_spellings(self):
+        live = os.getpid()
+        cases = [f"x:+{live}", f"x:0{live}", f"x:{live} ", f"x: {live}", f"x:{live}\t",
+                 "x:1_0", "x:٥", "x:½"]
+        for value in cases:
+            with self.subTest(value=value):
+                with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: value}):
+                    self.assertIsNone(host_capacity._wave_owner(),
+                                      "a noncanonical pid spelling must stay a stray value")
+        with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: f"x:{live}"}):
+            self.assertEqual(host_capacity._wave_owner(), ("x", live),
+                             "the canonical spelling keeps parsing")
+        # A negative number is already canonical, so it parses — but its pid
+        # can never equal a record's, so it can never inherit.
+        with patch.dict(os.environ, {host_capacity.WAVE_HELD_ENV: "x:-7"}):
+            self.assertEqual(host_capacity._wave_owner(), ("x", -7))
 
     # Value: the reused-name hazard — a second wave takes the constant lease
     # name after the first wave ended, and the first wave's leftover member
