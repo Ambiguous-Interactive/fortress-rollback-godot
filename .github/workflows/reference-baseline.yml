@@ -342,7 +342,12 @@ jobs:
           if-no-files-found: error
 
   signalfish:
-    name: SignalFish ${{ matrix.pair == 'firefox' && 'Firefox ' || matrix.pair && 'mixed-browser ' || 'relay and Chromium ' }}WebRTC ${{ matrix.version }} ${{ matrix.part }}
+    name: >-
+      SignalFish ${{
+      matrix.pair == 'firefox' && 'Firefox '
+      || matrix.pair == 'chromium-firefox' && 'mixed-browser '
+      || 'relay and Chromium '
+      }}WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
