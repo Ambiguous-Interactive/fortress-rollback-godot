@@ -455,3 +455,33 @@ The remaining levers are unchanged: the online Signalfish job's twelve
 serial spectator probes and the suites job's remaining serial probe
 commands, with the #104 runner-contention budget for any concurrent
 browser work.
+
+## Firefox witness axis
+
+The transport witness matrix qualified the Chromium pair only; #104's
+eight-player Firefox rooms had failed hosted CI under runner CPU starvation
+(peers stalled at frames 29–30 of 40 against the 239-second progress
+deadline; session 025's bounded two-CPU control measured 317.38s to that
+failure). The shipped service batch stops an idle route after one round
+(#143), so an idle rendered turn performs one transport poll instead of
+eight, and the bounded-runner qualification was rerun on this devcontainer
+with the whole launcher pinned to `taskset -c 0,1` under one Xvfb display:
+
+| Bound-runner clean label (rooms 2/4/8, Firefox pair) | Result |
+| --- | --- |
+| Godot 4.3, idle-stopping service batch (current source) | passed in 57s; every 8-player peer confirmed through frame 38 with 38 canonical comparisons |
+| Godot 4.7.2, idle-stopping service batch (current source) | passed in 59s; same canonical coverage |
+| Previous schedule (forced eight rounds per turn) | rejected before any room: the clock gate reports "every readiness turn services the still-live endpoints" |
+
+The forced-schedule control cannot run the rooms without weakening the
+pinned clock gate, so the historical bounded-runner measurement above stays
+the previous-schedule number; the hosted runs bind their own source-bound
+receipts per pair. The matrix adds four Firefox witness jobs (direct and
+mixed label sets, both engine pins) that run the same rooms as the
+Chromium pair under `xvfb-run` with the pinned Firefox installation;
+Chromium jobs keep their names, labels, receipts and artifacts. The
+chromium-firefox pair stays out of the matrix: its hosted 8-player rooms
+fail ICE setup deterministically (every peer reports "ICE failed, add a
+STUN server" against the absolute setup deadline) in Reference run
+`42763413592`, the same failure class session 025 recorded for the mixed
+jobs; that cross-browser setup gap remains tracked in #104.
