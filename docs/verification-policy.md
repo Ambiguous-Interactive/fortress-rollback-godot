@@ -76,6 +76,30 @@ workflow did not run. Report actual Safari/device evidence separately from WebKi
 automation. Performance budgets come from repeated measurements of noise and
 reference hardware, not arbitrary portable-CI time thresholds.
 
+## Review coverage and external review services
+
+The same missing-not-green rule applies to review checks. A skipped, paused,
+billing-blocked or otherwise unavailable external review check is **missing
+review coverage**, never a passed review. Its check result is reported as
+unavailable by name; it is never counted as clean coverage or used to satisfy a
+review gate.
+
+Session review coverage comes from reviews that actually ran at the delivered
+head: fresh adversarial review, an external automatic review that produced
+findings or an explicit clean result, and the complete paginated feedback scan.
+Each recorded review names the exact commit it covered; a review of an earlier
+head does not cover a later repair commit, and review coverage is re-established
+after every push. Agents must not explicitly trigger a bot review to produce
+coverage; ordinary automatic review is the only acceptable automatic form.
+Where a configured external service pauses itself after reviewed commits, the
+pause is recorded as a limitation with the last covered and first uncovered
+heads, and independent adversarial review carries the remaining coverage.
+Restoring or reconfiguring an external review service is an owner action in
+that service, not a repository change; review availability is tracked in
+[#307](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/307)
+and Bugbot availability in
+[#276](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/276).
+
 ## One owner at a time on a development host
 
 The local test runner starts one process per suite. Its default worker count is
