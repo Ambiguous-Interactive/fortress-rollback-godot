@@ -734,6 +734,10 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 	var cut: int = barrier.cut
 	var bound: int = barrier.lower
 	var digest: int = 0
+	var witnessed: int = 0
+	if phase == Phase.REPORT:
+		# A survivor's report attests its own endpoint state for the target.
+		witnessed = 1 if barrier.witnessed else 0
 	if phase == Phase.REPORT and stage == Stage.INVENTORY:
 		# The inventory report carries this survivor's own window.
 		cut = barrier.upper
@@ -753,7 +757,7 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 		"bound": bound,
 		"available_through": barrier.available_through,
 		"cut_digest": digest,
-		"witnessed": 1 if barrier.witnessed else 0,
+		"witnessed": witnessed,
 		"chunk_index": 0,
 		"chunk_count": barrier.chunk_budget / 16 if phase == Phase.REPORT and stage == Stage.INVENTORY else barrier.chunk_count,
 		"data": _targets(barrier),

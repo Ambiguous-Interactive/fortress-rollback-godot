@@ -111,7 +111,10 @@ least one fellow survivor attests, in its inventory report and again in its cert
 that its own endpoint for the target latched the departure (the silence flag or a
 terminated endpoint). The coordinator re-checks the certification-time attestation against
 the window report's attestation and ends the match with `missing_witness` when no surviving
-follower attests, or with `conflicting_history` when the two attestations disagree. The
+follower attests, or with `conflicting_history` when the two attestations disagree. That
+re-check is a consistency check, not an independent verification of the peer's endpoint
+state; the protocol is not byzantine-resistant, and a peer that fabricates a consistent
+report chain lies outside this tier's contract, as with the certified digest. The
 attestation travels in the Godot-side barrier report; the pinned source owns no such field.
 
 The last survivor also raises the cut through every retained actual input from the departed endpoint.

@@ -91,7 +91,7 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 9 | `GOODBYE` | reason:u8 |
 | 10 | `FLOOR_REQUEST` | round_seq:u32 |
 | 11 | `FLOOR_REPLY` | round_seq:u32, count:u8, floors[count]:i32, nullable |
-| 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, witnessed:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, reserved:u16, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
+| 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, witnessed:u8, reserved:u8, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
 The retained-history drop tier uses feature bit `1`; bounded donor transfer adds
@@ -117,13 +117,17 @@ INVENTORY and READY reports instead carry an exact retained-history inventory:
 u8 version `1`, u8 target count, then ordered `(slot:u8, from:i32, through:i32)`
 rows. `(-1, -1)` means unavailable history. There are at most eight rows (74 bytes);
 an interval spans at most the agreed queue capacity plus one reclaimed frame.
-On an INVENTORY or READY report the former reserved u8 carries the sender's
-departure attestation: `1` when its own endpoint for the target latched a
-departure (the silence flag or a terminated endpoint) and `0` otherwise. Every
-other phase sends `0`, and any other value fails the decode. The attestation is
-a Godot-side extension; the pinned source's coordinated-drop tier carries no
-such field, so pinned-source comparisons stay bound to their recorded
-boundaries and do not project it.
+Report-phase messages carry the sender's departure attestation in the first
+byte of the former reserved trailer: `1` when its own endpoint for the target
+latched a departure (the silence flag or a terminated endpoint) and `0`
+otherwise. INVENTORY and READY consume that attestation; the other report
+stages carry it without a reader, and every non-report phase sends `0` there.
+Any other value fails the decode. The attestation is a Godot-side extension;
+the pinned source's coordinated-drop tier carries no such field, so
+pinned-source comparisons stay bound to their recorded boundaries and do not
+project it. A peer built before this field reads the trailer as one reserved
+`u16` and refuses the packet, so a session must upgrade all participants
+together.
 INVENTORY's `chunk_count` advertises its safe historical payload budget in 16-byte
 units (1–64). READY retains the original interval's start and covers every original
 receipt plus the cut; a completed donor transfer may extend its end. Unknown,

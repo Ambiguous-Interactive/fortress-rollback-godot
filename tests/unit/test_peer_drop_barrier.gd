@@ -28,7 +28,8 @@ func cases() -> PackedStringArray:
 			"split_witness_recovers",
 			"false_witness_fails_closed",
 			"mismatched_attestation_aborts",
-			"forged_witness_certificate_is_refused",
+			"unreported_window_certificate_is_refused",
+			"common_peer_split_fails_before_the_certificate",
 			"goodbye_certificate_keeps_the_explicit_path",
 			"codec_round_trip",
 			"conflicting_certificate",
@@ -64,8 +65,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_false_witness_fails_closed(context)
 		"mismatched_attestation_aborts":
 			_mismatched_attestation_aborts(context)
-		"forged_witness_certificate_is_refused":
-			_forged_witness_certificate_is_refused(context)
+		"unreported_window_certificate_is_refused":
+			_unreported_window_certificate_is_refused(context)
+		"common_peer_split_fails_before_the_certificate":
+			_common_peer_split_fails_before_the_certificate(context)
 		"goodbye_certificate_keeps_the_explicit_path":
 			_goodbye_certificate_keeps_the_explicit_path(context)
 		"codec_round_trip":
@@ -467,7 +470,8 @@ func _split(
 	mesh: Dictionary,
 	elapsed: int,
 	alterations: Array[Dictionary] = [],
-	injections: Array[Dictionary] = []
+	injections: Array[Dictionary] = [],
+	components: Array = [[0, 2]]
 ) -> void:
 	var waited: int = 0
 	var pending: Array[Dictionary] = injections.duplicate()
@@ -485,9 +489,13 @@ func _split(
 				_inject(context, mesh, injection)
 			pending.clear()
 		for packet: Dictionary in packets:
-			# The isolated second peer neither sends nor receives; the first
-			# and third peers keep their own link.
-			if not ([0, 2].has(packet.from) and [0, 2].has(packet.to)):
+			# Only the components' own links deliver; the cut links stay silent.
+			var kept: bool = false
+			for component: Array in components:
+				if component.has(packet.from) and component.has(packet.to):
+					kept = true
+					break
+			if not kept:
 				continue
 			var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
 			if code == I.Code.TERMINATED:
@@ -707,8 +715,8 @@ func _forged_ready_fields(mesh: Dictionary) -> Dictionary:
 
 
 ## A certificate from a peer that never reported its own window is refused, so
-## a lone forged attestation cannot complete the agreement.
-func _forged_witness_certificate_is_refused(context: RefCounted) -> void:
+## a lone attestation cannot complete the agreement without a report chain.
+func _unreported_window_certificate_is_refused(context: RefCounted) -> void:
 	var mesh: Dictionary = _split_build(context)
 	_play(context, mesh, 6, true)
 	# The third peer is still linked to the isolated second peer, so it has
@@ -725,6 +733,26 @@ func _forged_witness_certificate_is_refused(context: RefCounted) -> void:
 	context.equal(mesh.reasons, ["missing_quorum"], "the forged certificate changed no agreement")
 	for survivor: int in [0, 2]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the forged certificate")
+
+
+## The issue's literal common-peer split: only the first-second link is cut,
+## and the third peer observes no departure while its links stay healthy. No
+## witness materializes, so the certificate never reaches certification and
+## the match ends with the recorded answer-deadline reason, nothing frozen.
+func _common_peer_split_fails_before_the_certificate(context: RefCounted) -> void:
+	# The second peer outlives the window, so it never departs and the third
+	# peer never observes a departure to attest.
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 3, [350000, 900000, 400000], 200000)
+	_play(context, mesh, 6, true)
+	_split(context, mesh, 800000, [], [], [[0, 2], [1, 2]])
+	context.equal(mesh.cuts.is_empty(), true, "an unwitnessed split freezes no slot")
+	context.equal(mesh.reasons, ["timeout", "timeout"], "the coordinator and the waiting survivor record their deadlines")
+	for player: int in [0, 2]:
+		context.equal(mesh.peers[player].status().lifecycle, Types.Lifecycle.TERMINATED, "the unwitnessed match ends")
+		context.equal(mesh.peers[player]._core.frozen_frame(1), -1, "the connected peer's slot stays unfrozen")
+	var barrier: Variant = _barrier(mesh, 1)
+	context.equal(int(barrier.certificates.size()), 0, "no survivor certified the unwitnessed operation")
+	context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING, "the connected second peer keeps running")
 
 
 ## A goodbye departure keeps its explicit path: the certificate commits even
