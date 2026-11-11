@@ -679,7 +679,11 @@ Remote donors also yield accepted certificate turns to history retries while ano
 A survivor lost before commit aborts the local attempt with `participant_lost`
 and ends the match; committed decisions remain irreversible. A certificate
 that names another value ends the match with a recorded reason
-instead of freezing divergent values. The match holds while the barrier runs
+instead of freezing divergent values. An automatic timeout certificate also
+commits only when a fellow survivor attests, in its window report and again in
+its certificate, that its own endpoint for the target latched the departure;
+unwitnessed or inconsistent attestations end the match with recorded reasons
+(#353). The match holds while the barrier runs
 and a barrier that cannot agree ends the match with a recorded reason.
 A freeze refuses a cut below the protected confirmed frontier before changing history. Three real peer sessions now run that barrier end to end:
 one peer stops answering, the two survivors agree one frame, keep one
