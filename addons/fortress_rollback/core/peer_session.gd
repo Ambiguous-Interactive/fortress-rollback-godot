@@ -1009,7 +1009,7 @@ func _collect_events(local_close: bool = false) -> void:
 			if event.kind == "disconnected" and not local_close:
 				# The departed peer keeps its own event; the survivors either freeze it or stop.
 				if _core.status().lifecycle != Types.Lifecycle.TERMINATED:
-					_drop_peer(index)
+					_drop_peer(index, event.reason)
 				_publish_event(event)
 				continue
 			if event.kind == "drop_barrier":
@@ -1026,8 +1026,8 @@ func _collect_events(local_close: bool = false) -> void:
 
 ## The coordinated drop of a departed peer owns the agreement state.
 ## The peer session keeps the transport, the simulation and the publication.
-func _drop_peer(index: int) -> bool:
-	return _drops.observed(self, index)
+func _drop_peer(index: int, reason: Variant = 0) -> bool:
+	return _drops.observed(self, index, reason)
 
 
 ## A pending coordinated drop holds the match until the survivors agree the frozen frame.

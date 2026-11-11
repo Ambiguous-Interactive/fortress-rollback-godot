@@ -21,6 +21,8 @@ func cases() -> PackedStringArray:
 			"held_match",
 			"unconfirmed_fallback",
 			"second_departure",
+			"even_split_fails_closed",
+			"minority_split_continues",
 			"codec_round_trip",
 			"conflicting_certificate",
 			"stale_messages",
@@ -41,6 +43,10 @@ func run_case(name: String, context: RefCounted) -> void:
 			_unconfirmed_fallback(context)
 		"second_departure":
 			_second_departure(context)
+		"even_split_fails_closed":
+			_even_split_fails_closed(context)
+		"minority_split_continues":
+			_minority_split_continues(context)
 		"codec_round_trip":
 			_codec_round_trip(context)
 		"conflicting_certificate":
@@ -420,6 +426,75 @@ func _unconfirmed_fallback(context: RefCounted) -> void:
 	for survivor: int in [0, 1]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.TERMINATED, "timeout fails closed")
 		context.equal(mesh.peers[survivor]._core.frozen_frame(2), -1, "timeout leaves the target unfrozen")
+
+
+## Same-component traffic only: cross-component packets never arrive.
+func _deliver_partition(context: RefCounted, mesh: Dictionary, components: Array) -> void:
+	var packets: Array[Dictionary] = _drain(mesh)
+	for component: Array in components:
+		var kept: Array[Dictionary] = []
+		for packet: Dictionary in packets:
+			if component.has(packet.from) and component.has(packet.to):
+				kept.append(packet)
+		_deliver(context, mesh, kept, true)
+
+
+## A symmetric partition that outlives the disconnect timeout fails closed on
+## both sides, before its certificate deadline, without freezing any slot or
+## staging a certificate (wallstop/fortress-rollback#385).
+func _even_split_fails_closed(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4, [400000, 400000, 400000, 400000], 400000)
+	_play(context, mesh, 6, true)
+	var waited: int = 0
+	while waited < 500000:
+		mesh.now += 1000
+		waited += 1000
+		for player: int in range(4):
+			var polled: int = mesh.peers[player].poll(mesh.now)
+			if polled != I.Code.OK:
+				context.equal(polled, I.Code.TERMINATED, "the split peer stops by its own refusal")
+		_deliver_partition(context, mesh, [[0, 1], [2, 3]])
+	context.equal(mesh.cuts.is_empty(), true, "a split mesh freezes no departed slot")
+	context.equal(mesh.unconfirmed, 4, "every component reports its refused certificate")
+	context.equal(mesh.reasons.has("missing_quorum"), true, "the split names its missing quorum")
+	for player: int in range(4):
+		context.equal(mesh.peers[player].status().lifecycle, Types.Lifecycle.TERMINATED, "the split ends the match")
+	context.equal(mesh.peers[0]._core.frozen_frame(2), -1, "the first component freezes no target")
+	context.equal(mesh.peers[2]._core.frozen_frame(0), -1, "the other component freezes no target")
+
+
+## The majority component continues without the departed peer while the
+## minority component fails closed with its recorded reason
+## (wallstop/fortress-rollback#385).
+func _minority_split_continues(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 3, [400000, 400000, 400000], 400000)
+	_play(context, mesh, 6, true)
+	var waited: int = 0
+	while waited < 500000:
+		mesh.now += 1000
+		waited += 1000
+		for player: int in range(3):
+			if mesh.peers[player].status().lifecycle == Types.Lifecycle.TERMINATED:
+				continue
+			var polled: int = mesh.peers[player].poll(mesh.now)
+			if polled != I.Code.OK:
+				context.equal(polled, I.Code.TERMINATED, "the split peer stops by its own refusal")
+		_deliver_partition(context, mesh, [[0, 1]])
+	context.equal(mesh.unconfirmed, 1, "only the minority component reports a refused certificate")
+	context.equal(mesh.reasons.has("missing_quorum"), true, "the minority names its missing quorum")
+	context.equal(mesh.peers[2].status().lifecycle, Types.Lifecycle.TERMINATED, "the minority component stops")
+	# The majority component agrees one freeze and keeps playing without the departed slot.
+	_play(context, mesh, 4, true, [0, 1], 2)
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the majority component publishes the drop")
+	context.equal(cuts[1], cuts[0], "the majority survivors freeze the same frame")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the majority keeps playing")
+	var rows_first: Dictionary = _rows(mesh.games[0])
+	var rows_second: Dictionary = _rows(mesh.games[1])
+	for frame: int in range(cuts[0] + 1, mini(rows_first.size(), rows_second.size())):
+		context.equal(rows_first[frame][2].status, "disconnected", "the departed slot reports a disconnected status")
+		context.equal(rows_first[frame][2].bytes, rows_second[frame][2].bytes, "the majority simulates the same frozen value")
 
 
 ## A departure after the owner of the lowest slot left still agrees one frame.
