@@ -23,6 +23,7 @@ func cases() -> PackedStringArray:
 			"second_departure",
 			"even_split_fails_closed",
 			"minority_split_continues",
+			"int_reason_keeps_the_explicit_path",
 			"codec_round_trip",
 			"conflicting_certificate",
 			"stale_messages",
@@ -47,6 +48,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_even_split_fails_closed(context)
 		"minority_split_continues":
 			_minority_split_continues(context)
+		"int_reason_keeps_the_explicit_path":
+			_int_reason_keeps_the_explicit_path(context)
 		"codec_round_trip":
 			_codec_round_trip(context)
 		"conflicting_certificate":
@@ -495,6 +498,31 @@ func _minority_split_continues(context: RefCounted) -> void:
 	for frame: int in range(cuts[0] + 1, mini(rows_first.size(), rows_second.size())):
 		context.equal(rows_first[frame][2].status, "disconnected", "the departed slot reports a disconnected status")
 		context.equal(rows_first[frame][2].bytes, rows_second[frame][2].bytes, "the majority simulates the same frozen value")
+
+
+## The majority component continues without the departed peer while the
+## minority component fails closed with its recorded reason
+## (wallstop/fortress-rollback#385).
+func _int_reason_keeps_the_explicit_path(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4, [400000, 400000, 400000, 400000], 400000)
+	_play(context, mesh, 6, true)
+	var waited: int = 0
+	while waited < 500000 and mesh.peers[0].status().lifecycle != Types.Lifecycle.TERMINATED:
+		mesh.now += 1000
+		waited += 1000
+		for player: int in range(4):
+			var polled: int = mesh.peers[player].poll(mesh.now)
+			if polled != I.Code.OK:
+				context.equal(polled, I.Code.TERMINATED, "the split peer stops by its own refusal")
+		_deliver_partition(context, mesh, [[0, 1], [2, 3]])
+	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.TERMINATED, "the split refused the automatic certificate")
+	# An int reason is a goodbye or an explicit caller, never a timeout: the gate
+	# must not trip even in a split mesh, so the literal stays tied to the
+	# lifecycle's one timeout reason string.
+	var target: int = mesh.peers[0].peer_ids().find(_id(3))
+	context.equal(mesh.peers[0]._drops.observed(mesh.peers[0], target, 7), true, "an int reason stages the explicit certificate")
+	context.equal(mesh.peers[0]._drops.has_barrier(_id(3).hex_encode()), true, "the explicit path opens the barrier")
+	context.equal(mesh.reasons.count("missing_quorum"), 4, "only the timeout reasons trip the quorum gate")
 
 
 ## A departure after the owner of the lowest slot left still agrees one frame.

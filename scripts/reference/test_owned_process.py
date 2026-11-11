@@ -321,6 +321,15 @@ class SplitStreamTests(unittest.TestCase):
             self.assertIn('TIMEOUT: command exceeded 2 seconds', log.read_text())
 
 
+    def test_split_rejects_stdin_past_the_pipe_bound(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'bound.log'
+            with self.assertRaises(ValueError) as raised:
+                owned_process.run_split([PYTHON, '-c', 'import sys; sys.stdin.read()'], {}, log, 10,
+                                        input_text='x' * (owned_process.MAX_INPUT_BYTES + 1))
+            self.assertIn('bounded pipe write', str(raised.exception))
+
+
 class SpawnedProcessTests(unittest.TestCase):
     def test_finish_stops_a_running_host_and_verifies_its_tree(self):
         with tempfile.TemporaryDirectory() as folder:

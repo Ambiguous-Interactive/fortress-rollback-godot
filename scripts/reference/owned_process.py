@@ -26,6 +26,10 @@ TOKEN_VARIABLE = 'FORTRESS_OWNED_RUN'
 MAX_PROCESSES = 4096
 MAX_IDENTITY_LENGTH = 160
 MAX_NAMED_SURVIVORS = 8
+# A stdin payload larger than this could block inside _feed_stdin forever: a
+# child that never reads would fill the 64 KiB pipe buffer and the deadline
+# would never arm. Callers with bigger payloads must stream them differently.
+MAX_INPUT_BYTES = 60000
 # After the direct child exits, an escaped descendant can hold the output
 # pipes open forever. Draining stops at this idle grace instead of waiting
 # for an EOF that would never come; bytes that arrive after the child's exit
@@ -249,6 +253,10 @@ def _start(command, environment, cwd, input_text=False):
 
 def _feed_stdin(process, input_text):
     """Write one bounded stdin payload; the pipes drain concurrently elsewhere."""
+    if len(input_text) > MAX_INPUT_BYTES:
+        process.kill()
+        process.wait(timeout=10)
+        raise ValueError(f'stdin payload exceeds the bounded pipe write: {len(input_text)} > {MAX_INPUT_BYTES} bytes')
     try:
         process.stdin.write(input_text)
         process.stdin.close()
@@ -401,7 +409,9 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None):
         members = terminate_group(process.pid) if group_alive else []
         survivors = terminate(token_value)
         if members or survivors:
-            log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
+            # The child's own trusted output stays in the log beside the note,
+            # so an escaped run keeps its diagnosis where the caller looks.
+            log.write_text(''.join(parts.values()) + f'OWNED_PROCESSES: terminated {members + survivors}\n')
             raise EscapedDescendants(members + survivors)
         if post_exit_bytes:
             log.write_text(f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '

@@ -48,7 +48,7 @@ def execute(command, log, input_text=None, timeout=120):
         returncode, stdout, stderr = owned_process.run_split(command, rust_environment(), log, timeout,
                                                              cwd=ROOT, input_text=input_text)
     except subprocess.TimeoutExpired:
-        raise  # owned_process recorded the partial output and the timeout marker.
+        raise  # The owned path recorded the partial output and timeout marker; the Linux fallback does not log.
     except OSError as error:
         log.write_text(f'TOOL_FAILURE: {error}\n')
         raise

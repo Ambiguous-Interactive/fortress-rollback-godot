@@ -252,7 +252,7 @@ def _execute(engine, project, runtime, url, environment, output, control, fault=
     rows = [json.loads(line.removeprefix('FORTRESS_BROWSER_HOST_RESULT ')) for line in native.splitlines() if line.startswith('FORTRESS_BROWSER_HOST_RESULT ')]
     if host.returncode != 0 or 'ERROR:' in native or len(rows) != 1:
         raise ValueError('native browser-host witness failed; inspect native.log')
-    result, failure = classify_browser_output(process.returncode, process.stderr, browser_output, control)
+    result, failure = classify_browser_output(returncode, stderr, browser_output, control)
     if failure is not None:
         raise ValueError(failure)
     if fault == 'host-departure':
