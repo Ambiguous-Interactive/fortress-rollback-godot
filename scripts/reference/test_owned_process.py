@@ -321,13 +321,22 @@ class SplitStreamTests(unittest.TestCase):
             self.assertIn('TIMEOUT: command exceeded 2 seconds', log.read_text())
 
 
-    def test_split_rejects_stdin_past_the_pipe_bound(self):
+    def test_large_stdin_payload_reaches_the_child(self):
         with tempfile.TemporaryDirectory() as folder:
-            log = Path(folder) / 'bound.log'
-            with self.assertRaises(ValueError) as raised:
-                owned_process.run_split([PYTHON, '-c', 'import sys; sys.stdin.read()'], {}, log, 10,
-                                        input_text='x' * (owned_process.MAX_INPUT_BYTES + 1))
-            self.assertIn('bounded pipe write', str(raised.exception))
+            log = Path(folder) / 'volume-stdin.log'
+            payload = 'x' * (200 * 1024)
+            returncode, stdout, stderr = owned_process.run_split(
+                [PYTHON, '-c', 'import sys; sys.stdout.write(sys.stdin.read())'], {}, log, 10, input_text=payload)
+            self.assertEqual(returncode, 0)
+            self.assertEqual(stdout, payload, 'a payload past the pipe buffer must still reach the child')
+
+    def test_a_child_that_never_reads_stdin_still_meets_its_deadline(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'unread-stdin.log'
+            with self.assertRaises(subprocess.TimeoutExpired):
+                owned_process.run_split([PYTHON, '-c', 'import time; time.sleep(60)'], {}, log, 2,
+                                        input_text='x' * (200 * 1024))
+            self.assertIn('TIMEOUT: command exceeded 2 seconds', log.read_text())
 
 
 class SpawnedProcessTests(unittest.TestCase):

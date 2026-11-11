@@ -18,6 +18,7 @@ import os
 import select
 import signal
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -26,10 +27,6 @@ TOKEN_VARIABLE = 'FORTRESS_OWNED_RUN'
 MAX_PROCESSES = 4096
 MAX_IDENTITY_LENGTH = 160
 MAX_NAMED_SURVIVORS = 8
-# A stdin payload larger than this could block inside _feed_stdin forever: a
-# child that never reads would fill the 64 KiB pipe buffer and the deadline
-# would never arm. Callers with bigger payloads must stream them differently.
-MAX_INPUT_BYTES = 60000
 # After the direct child exits, an escaped descendant can hold the output
 # pipes open forever. Draining stops at this idle grace instead of waiting
 # for an EOF that would never come; bytes that arrive after the child's exit
@@ -252,16 +249,23 @@ def _start(command, environment, cwd, input_text=False):
 
 
 def _feed_stdin(process, input_text):
-    """Write one bounded stdin payload; the pipes drain concurrently elsewhere."""
-    if len(input_text) > MAX_INPUT_BYTES:
-        process.kill()
-        process.wait(timeout=10)
-        raise ValueError(f'stdin payload exceeds the bounded pipe write: {len(input_text)} > {MAX_INPUT_BYTES} bytes')
-    try:
-        process.stdin.write(input_text)
-        process.stdin.close()
-    except (BrokenPipeError, OSError):
-        pass  # A child that exits early must not mask its own failure code.
+    """Write the stdin payload concurrently, so a full pipe cannot block.
+
+    The write runs on its own thread while the collector drains the output
+    pipes, mirroring the communicate() loop the previous subprocess.run shape
+    used: a payload larger than the pipe buffer, or a child that never reads,
+    can never stop the deadline from arming. A killed child surfaces as a
+    write failure inside the thread and must not mask the real exit.
+    """
+
+    def feed():
+        try:
+            process.stdin.write(input_text)
+            process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass  # A child that exits early must not mask its own failure code.
+
+    threading.Thread(target=feed, daemon=True).start()
 
 
 def run(command, environment, log, timeout, cwd=None, input_text=None):
