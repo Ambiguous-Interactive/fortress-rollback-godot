@@ -83,7 +83,7 @@ def identities(token_value):
     return sorted(found, key=lambda item: item['pid'])
 
 
-def group_members(group):
+def group_members(group, proc=None):
     """Name the live members of one process group; zombies are already dead.
 
     A grandchild that exited before its parent is a zombie until init reaps
@@ -93,14 +93,14 @@ def group_members(group):
     runs whenever reap latency exceeds the drain grace.
     """
     found = []
-    for entry in Path('/proc').iterdir():
+    for entry in (proc or Path('/proc')).iterdir():
         if not entry.name.isdigit():
             continue
         try:
             fields = (entry / 'stat').read_text().rsplit(') ', 1)[-1].split()
         except OSError:
             continue
-        if not fields or fields[0] == 'Z' or int(fields[2]) != group:
+        if not fields or fields[0] in ('Z', 'X') or int(fields[2]) != group:
             continue
         found.append({'pid': int(entry.name), 'name': _name(entry)})
     return sorted(found, key=lambda item: item['pid'])

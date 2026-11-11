@@ -808,7 +808,7 @@ def verify_executed_helpers(frozen_sources, root=None, names=None):
     bytecode without trusting cache timestamps, and a helper whose source no
     longer matches the inventory fails for drift before any witness runs.
     """
-    root = ROOT if root is None else root
+    root = (ROOT if root is None else root).resolve()
     for name in names or HELPER_MODULES:
         module = sys.modules.get(name)
         if module is None or not getattr(module, '__file__', None):

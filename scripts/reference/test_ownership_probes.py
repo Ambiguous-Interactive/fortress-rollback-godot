@@ -635,6 +635,12 @@ class ExecutedHelperBytecodeTests(unittest.TestCase):
                 # The poisoned body keeps the honest header, so source timestamps and
                 # sizes still validate: only verified-source comparison can reject it.
                 cache.write_bytes(header + marshal.dumps(compile("VALUE = 'poisoned'", str(helper), 'exec')))
+                # A loader with a timestamp-valid cache executes the poisoned body;
+                # prove the import boundary first, then the rejection of those bytes.
+                del sys.modules[name]
+                poisoned_module = __import__(name)
+                poisoned_module.__cached__ = str(cache)
+                self.assertEqual(poisoned_module.VALUE, 'poisoned')
                 with self.assertRaisesRegex(ValueError, 'differs from verified source'):
                     probes.verify_executed_helpers(frozen, root=root, names=(name,))
                 cache.write_bytes(honest)

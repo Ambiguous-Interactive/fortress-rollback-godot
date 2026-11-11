@@ -176,19 +176,30 @@ print('test owned_case ... ok', flush=True)
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / 'writer.log'
             log.write_text('')
+            marker = Path(folder) / 'writer.pid'
             command = [PYTHON, '-c', """
 import os, sys, time
 pid = os.fork()
 if pid == 0:
+    open(sys.argv[1], 'w').write(str(os.getpid()))
     while True:
-        sys.stdout.write('y' * 65536 + '\\n')
-        sys.stdout.flush()
+        try:
+            sys.stdout.write('y' * 65536 + '\\n')
+            sys.stdout.flush()
+        except OSError:
+            pass
         time.sleep(0.01)
 print('child exits', flush=True)
-"""]
+""", str(marker)]
             with self.assertRaises(owned_process.EscapedDescendants) as raised:
                 owned_process.run(command, {}, log, 3)
             self.assertTrue(raised.exception.survivors, 'the writing escapee must be named and killed')
+            pid = int(marker.read_text())
+            self.assertIn(pid, [item['pid'] for item in raised.exception.survivors])
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(alive(pid), 'the sweep must terminate the writing escapee')
 
     def test_unreaped_zombie_grandchild_is_not_a_survivor(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -208,6 +219,19 @@ print('done', flush=True)
                     self.assertEqual(returncode, 0)
                     self.assertEqual(output.strip(), 'done')
                     self.assertNotIn('OWNED_PROCESSES', log.read_text())
+
+    # Value: protects=zombie filtering; fails_when=zombies or dead members are counted;
+    # why_new=the process test can race init's reaper; seam=proc fixture
+    def test_group_members_skips_zombies_and_dead_members(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = Path(folder)
+            for pid, state, name in (('70', 'Z', 'gone'), ('71', 'X', 'dead'), ('72', 'S', 'live')):
+                entry = proc / pid
+                entry.mkdir()
+                (entry / 'stat').write_text(f'{pid} ({name}) {state} 1 77')
+                if state == 'S':
+                    (entry / 'cmdline').write_bytes(b'live\0')
+            self.assertEqual(owned_process.group_members(77, proc=proc), [{'pid': 72, 'name': 'live'}])
 
     def test_capture_keeps_output_and_survivor_diagnostics_in_one_log(self):
         with tempfile.TemporaryDirectory() as folder:

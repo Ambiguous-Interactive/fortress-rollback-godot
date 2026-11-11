@@ -155,7 +155,10 @@ def identity_error(identity) -> str | None:
     if not isinstance(identity, str) or not (match := IDENTITY_PATTERN.match(identity)):
         return f"unparseable port test identity: {identity!r}"
     relative = match.group("suite") or match.group("script")
-    if not (REPO / relative).is_file():
+    target = (REPO / relative).resolve()
+    if not target.is_relative_to(REPO):
+        return f"port test identity escapes the repository: {identity}"
+    if not target.is_file():
         return f"port test identity names a missing repository file: {identity}"
     return None
 
@@ -245,10 +248,15 @@ def binding_errors(ledger: dict, bundles: list, commit: str, pins_digest: str) -
     """
     errors = []
     for origin, bundle in enumerate(bundles):
-        errors += result_bundle_errors(bundle, f"results[{origin}]", commit, pins_digest)
+        bundle_errors = result_bundle_errors(bundle, f"results[{origin}]", commit, pins_digest)
+        errors += bundle_errors
     satisfied: dict = {}
     for origin, bundle in enumerate(bundles):
-        if type(bundle) is dict and type(bundle.get("runs")) is list:
+        # A bundle that failed its envelope cannot contribute evidence: its
+        # cases stay out of the satisfied set so stale or foreign bundles are
+        # never the reason a mapping appears executed.
+        if type(bundle) is dict and type(bundle.get("runs")) is list and not result_bundle_errors(
+                bundle, f"results[{origin}]", commit, pins_digest):
             executed, marker_errors = executed_suite_cases(bundle, f"results[{origin}]")
             satisfied.update(executed)
             errors += marker_errors

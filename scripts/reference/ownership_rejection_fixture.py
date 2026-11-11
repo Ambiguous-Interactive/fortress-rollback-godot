@@ -358,11 +358,12 @@ class OwnershipRejectionFixture(unittest.TestCase):
             return str(node_path) if (node_alias or runtime_before == 'node') and name == 'node' else original_which(name)
 
         # The executed helper modules live in the real tree, not this fixture
-        # root; their bytecode verification is covered by its own controls.
+        # root; their bytecode verification is covered by its own controls, and
+        # the assertion below proves the launcher still runs it before any witness.
         with mock.patch.object(probes.shutil, 'which', side_effect=which), \
                 mock.patch.object(probes, 'tool_inventory', side_effect=tool_inventory), \
                 mock.patch.object(probes, 'prepare_firefox', side_effect=prepare_firefox), \
-                mock.patch.object(probes, 'verify_executed_helpers'), \
+                mock.patch.object(probes, 'verify_executed_helpers') as helpers, \
                 mock.patch.object(probes, 'ROOT', root), mock.patch.object(probes, 'CACHE', cache), \
                 mock.patch.object(probes, 'load_manifest', return_value=data), \
                 mock.patch.object(probes, 'fetch', return_value=archive), \
@@ -376,10 +377,12 @@ class OwnershipRejectionFixture(unittest.TestCase):
                            + ([] if suite_part == 'all' else ['--suite-part', suite_part])):
             if expected is None:
                 probes.main()
+                helpers.assert_called_once_with(probes.source_inventory())
             else:
                 # The rejected run still fails: the diagnosis is kept, not swallowed.
                 with self.assertRaises(expected):
                     probes.main()
+                self.assertEqual(helpers.call_count, 1, 'bytecode verification runs before any witness')
         if tool_fault:
             self.assertTrue(changed_tool, 'mutation must reach an extracted tool boundary')
             self.assertEqual(browser_calls, [], 'changed engine/template must not qualify a browser batch')

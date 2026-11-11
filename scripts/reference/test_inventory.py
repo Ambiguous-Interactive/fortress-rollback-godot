@@ -149,33 +149,38 @@ class PortTestBindingTests(unittest.TestCase):
                                                       self.COMMIT, self.PINS))
         discovered = {"files": {}, "records": [{"id": "fortress:src/queue.rs"}]}
         bound = self.ledger_with(self.SUITE)
-        broken = self.ledger_with("invented::test", "res://tests/unit/missing_suite.gd")
+        broken = self.ledger_with("invented::test", "res://tests/unit/missing_suite.gd", "res://../outside/suite.gd")
         bound["inventory"] = broken["inventory"] = discovered
         self.assertEqual([], inventory.validate(bound, discovered))
         errors = inventory.validate(broken, discovered)
         self.assertTrue(any("unparseable port test identity" in e for e in errors))
         self.assertTrue(any("names a missing repository file" in e for e in errors))
+        self.assertTrue(any("escapes the repository" in e for e in errors))
 
     def test_binding_rejects_each_broken_evidence_shape_for_its_reason(self):
         ledger = self.ledger_with(f"{self.SUITE}::{self.CASE}")
         failed_marker = {"format": 1, "passed": False, "complete": True, "records": [{"suite": self.SUITE, "case": self.CASE}]}
         incomplete_marker = {"format": 1, "passed": True, "complete": False, "records": [{"suite": self.SUITE, "case": self.CASE}]}
-        run = lambda stdout, exit_code=0: [{"command": ["godot", "--suite", self.SUITE], "exit": exit_code, "stdout": stdout}]
+        def marker_run(stdout, exit_code=0):
+            return [{"command": ["godot", "--suite", self.SUITE], "exit": exit_code, "stdout": stdout}]
+
         mutations = [
             ("stale commit", ledger, [self.bundle(commit="d" * 40)], "commit differs"),
             ("dirty tree", ledger, [self.bundle(working_tree_dirty=True)], "dirty working tree"),
             ("stale pins", ledger, [self.bundle(pins="q" * 64)], "pin manifest digest differs"),
-            ("failed run", ledger, [self.bundle(runs=run("", exit_code=1))], "failed or unbounded run"),
+            ("failed run", ledger, [self.bundle(runs=marker_run("", exit_code=1))], "failed or unbounded run"),
+            ("non-object run", ledger, [self.bundle(runs=["not-a-run"])], "failed or unbounded run"),
             ("no runs", ledger, [self.bundle(runs=[])], "records no executed run"),
-            ("failed marker", ledger, [self.bundle(runs=run(inventory.RUN_MARKER + json.dumps(failed_marker)))], "failed or incomplete"),
-            ("incomplete marker", ledger, [self.bundle(runs=run(inventory.RUN_MARKER + json.dumps(incomplete_marker)))], "failed or incomplete"),
-            ("unparsable marker", ledger, [self.bundle(runs=run(inventory.RUN_MARKER + "{"))], "unparsable"),
+            ("failed marker", ledger, [self.bundle(runs=marker_run(inventory.RUN_MARKER + json.dumps(failed_marker)))], "failed or incomplete"),
+            ("incomplete marker", ledger, [self.bundle(runs=marker_run(inventory.RUN_MARKER + json.dumps(incomplete_marker)))], "failed or incomplete"),
+            ("unparsable marker", ledger, [self.bundle(runs=marker_run(inventory.RUN_MARKER + "{"))], "unparsable"),
             ("foreign case", ledger, [self.bundle(case="pressured_handshake_expiry")], "not executed and passed"),
             ("foreign suite", ledger, [self.bundle(suite=self.SUITE.replace("lifecycle", "handshake"))], "not executed and passed"),
             ("absent platform evidence", ledger, [self.bundle(engine=None)], "platform evidence is absent"),
             ("non-boolean pass", ledger, [self.bundle(passed=1)], "did not pass"),
             ("no bundles", ledger, [], "not executed and passed"),
             ("malformed run stdout", ledger, [self.bundle(runs=[{"command": ["godot"], "exit": 0, "stdout": 7}])], "run stdout is absent or malformed"),
+            ("invalid bundle cannot satisfy a mapping", ledger, [self.bundle(commit="d" * 40)], "not executed and passed"),
         ]
         for name, bound, bundles, expected in mutations:
             with self.subTest(name=name):
