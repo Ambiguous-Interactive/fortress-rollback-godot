@@ -58,20 +58,19 @@ class LauncherTests(unittest.TestCase):
 
     def test_crash_rejects_plausible_trace(self):
         with tempfile.TemporaryDirectory() as directory:
-            result = subprocess.CompletedProcess(['oracle'], 2, json.dumps(trace()), '')
-            with patch.object(launch.subprocess, 'run', return_value=result):
+            with patch.object(launch.owned_process, 'run_split', return_value=(2, json.dumps(trace()), '')):
                 with self.assertRaisesRegex(ValueError, 'process failed'):
                     launch.execute(['oracle'], Path(directory) / 'log')
 
-    def test_timeout_retains_partial_stream(self):
+    def test_timeout_propagates_after_the_owned_log(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'log'
-            error = subprocess.TimeoutExpired(['oracle'], 1, b'partial stdout', b'partial stderr')
-            with patch.object(launch.subprocess, 'run', side_effect=error):
+            log.write_text('partial stdoutpartial stderr\nTIMEOUT: command exceeded 1 seconds\n')
+            error = subprocess.TimeoutExpired(['oracle'], 1, 'partial stdoutpartial stderr')
+            with patch.object(launch.owned_process, 'run_split', side_effect=error):
                 with self.assertRaises(subprocess.TimeoutExpired):
                     launch.execute(['oracle'], log)
-            self.assertIn('partial stdout', log.read_text())
-            self.assertIn('partial stderr', log.read_text())
+            self.assertIn('COMMAND_STARTED', log.read_text(), 'the started command stays in the log')
 
     def test_stale_success_removed_before_setup_failure(self):
         with tempfile.TemporaryDirectory() as directory:
