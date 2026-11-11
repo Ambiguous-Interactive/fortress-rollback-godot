@@ -326,8 +326,9 @@ playback validates every boundary cleanly. Both original corrected histories
 match the independently calculated canonical prefix. Upstream has since confirmed
 and fixed this ordering defect in wallstop/fortress-rollback#380 through #381
 (merged 2026-11-10): recording now refreshes speculative checksums from the
-saved-state ring after the correction requests execute and omits rows whose
-cell is no longer buffered. The reviewed pin predates that fix, so the observed
+saved-state ring after the correction requests execute and omits checksums for
+rows whose cell is no longer buffered, while every recorded input row stays
+available. The reviewed pin predates that fix, so the observed
 discrepancy above remains the committed evidence at this pin; advancing the pin
 and re-running this probe at the fixed source is #53's reviewed upgrade.
 

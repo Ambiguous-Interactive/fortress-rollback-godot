@@ -121,13 +121,15 @@ Report-phase messages carry the sender's departure attestation in the first
 byte of the former reserved trailer: `1` when its own endpoint for the target
 latched a departure (the silence flag or a terminated endpoint) and `0`
 otherwise. INVENTORY and READY consume that attestation; the other report
-stages carry it without a reader, and every non-report phase sends `0` there.
-Any other value fails the decode. The attestation is a Godot-side extension;
+stages carry `0` there, as does every non-report phase. Any other value fails
+the decode. The attestation is a Godot-side extension;
 the pinned source's coordinated-drop tier carries no such field, so
 pinned-source comparisons stay bound to their recorded boundaries and do not
 project it. A peer built before this field reads the trailer as one reserved
-`u16` and refuses the packet, so a session must upgrade all participants
-together.
+`u16` and decodes a zero-attestation report unchanged; it refuses a report
+whose attestation is `1`. The wire therefore offers no version gate, and a
+session must upgrade all participants together instead of relying on packet
+rejection.
 INVENTORY's `chunk_count` advertises its safe historical payload budget in 16-byte
 units (1–64). READY retains the original interval's start and covers every original
 receipt plus the cut; a completed donor transfer may extend its end. Unknown,

@@ -735,8 +735,9 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 	var bound: int = barrier.lower
 	var digest: int = 0
 	var witnessed: int = 0
-	if phase == Phase.REPORT:
-		# A survivor's report attests its own endpoint state for the target.
+	if phase == Phase.REPORT and stage in [Stage.INVENTORY, Stage.READY]:
+		# A survivor's window report and its certificate attest its own
+		# endpoint state for the target; no other phase consumes the field.
 		witnessed = 1 if barrier.witnessed else 0
 	if phase == Phase.REPORT and stage == Stage.INVENTORY:
 		# The inventory report carries this survivor's own window.

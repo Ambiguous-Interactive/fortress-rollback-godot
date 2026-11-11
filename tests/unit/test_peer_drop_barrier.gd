@@ -605,7 +605,7 @@ func _witnessed_death_commits(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 6, true)
 	_leave(context, mesh, 2)
-	var witnessed_flags: Array = []
+	var wire_flags: Dictionary = {}
 	var waited: int = 0
 	while waited < 600000 and not (mesh.cuts.has(0) and mesh.cuts.has(1)):
 		mesh.now += 1000
@@ -619,13 +619,21 @@ func _witnessed_death_commits(context: RefCounted) -> void:
 				continue
 			packets.append(packet)
 			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
-			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER \
-				and int(decoded.message.phase) == 2 and int(decoded.message.stage) == 2:
-				witnessed_flags.append(int(decoded.message.witnessed))
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				wire_flags[[int(decoded.message.phase), int(decoded.message.stage)]] = int(decoded.message.witnessed)
 		_deliver(context, mesh, packets)
 	var cuts: Array[int] = _cuts(mesh, [0, 1])
 	context.equal(cuts[0] >= 0, true, "the first survivor publishes the drop")
 	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
+	# The wire contract: only the two consumed report stages attest; prepares,
+	# commits and committed acknowledgements send zero.
+	for stage: Array in [[1, 0], [2, 1], [2, 2], [4, 0], [2, 3]]:
+		context.equal(wire_flags.has(stage), true, "the witnessed drop travels through phase %s" % str(stage))
+	context.equal(int(wire_flags.get([1, 0], -1)), 0, "the prepare sends no attestation")
+	context.equal(int(wire_flags.get([2, 1], -1)), 1, "the window report attests the departure")
+	context.equal(int(wire_flags.get([2, 2], -1)), 1, "the certificate attests the departure")
+	context.equal(int(wire_flags.get([4, 0], -1)), 0, "the commit sends no attestation")
+	context.equal(int(wire_flags.get([2, 3], -1)), 0, "the committed acknowledgement sends no attestation")
 	var barrier: Variant = _barrier(mesh)
 	context.equal(bool(barrier.automatic), true, "the timeout departure is automatic")
 	context.equal(int(barrier.certificates.size()), 1, "exactly one survivor attested")
@@ -633,9 +641,6 @@ func _witnessed_death_commits(context: RefCounted) -> void:
 	for survivor: int in [0, 1]:
 		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the witnessed drop keeps the match running")
 	context.equal(mesh.unconfirmed, 0, "the witnessed drop needs no fallback")
-	context.equal(witnessed_flags.is_empty(), false, "the certificates traveled on the wire")
-	for flag: int in witnessed_flags:
-		context.equal(flag, 1, "every certificate attests the departure")
 	# The survivors resimulate the frames after the agreed frame with the frozen value.
 	_play(context, mesh, 4, true, [0, 1], 2)
 	var rows_first: Dictionary = _rows(mesh.games[0])
