@@ -238,9 +238,14 @@ class ParallelLauncherRunnerTests(unittest.TestCase):
         def popen_then_abort(command, **kwargs):
             # Abort lands in the spawn-to-registration window the fence owns,
             # after the leader has forked its engine stand-in and recorded it.
+            # The kill can interrupt a half-written pid file, so wait for the
+            # recorded content, not the file's existence.
             process = real_popen(command, **kwargs)
             deadline = time.time() + 5
-            while not (self.root / 'engine-descendant-pid').exists() and time.time() < deadline:
+            while time.time() < deadline:
+                recorded = (self.root / 'engine-descendant-pid')
+                if recorded.exists() and recorded.read_text().strip().isdigit():
+                    break
                 time.sleep(0.01)
             parallel_launchers._abort.set()
             return process
