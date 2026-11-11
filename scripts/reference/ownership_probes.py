@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify integer, ownership and production byte sessions on pinned native/Web engines."""
 import json
+import marshal
 import math
 import os
 from pathlib import Path
@@ -779,6 +780,7 @@ def source_inventory():
                'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py', 'scripts/reference/receipt_arguments.py',
                'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
+               'scripts/reference/owned_process.py', 'scripts/host_capacity.py',
                'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
                'scripts/reference/browser/package-lock.json', 'docs/reference/pins.json', 'project.godot']
     return {filename: digest(ROOT / filename) for filename in FILES + helpers}
@@ -789,6 +791,50 @@ def verify_sources(expected):
         path = ROOT / filename
         if not path.is_file() or digest(path) != checksum:
             raise ValueError(f'ownership source changed during execution: {filename}')
+
+
+HELPER_MODULES = ('fetch', 'local_ownership', 'replay_download', 'receipt_arguments', 'godot_smoke',
+                  'run', 'owned_process', 'host_capacity', 'browser.webrtc_matrix', 'browser.webrtc_import',
+                  'signalfish_probe')
+
+
+def verify_executed_helpers(frozen_sources, root=None, names=None):
+    """Reject an executed helper whose bytecode is not verified source compilation.
+
+    The process imports its helpers from the working tree, where a
+    timestamp-valid poisoned ``__pycache__`` would execute instead of the source
+    bytes the receipt binds. Comparing each imported module's cache code object
+    against a fresh compilation of the bound source rejects that foreign
+    bytecode without trusting cache timestamps, and a helper whose source no
+    longer matches the inventory fails for drift before any witness runs.
+    Stated scope: this binds the cache the loader consults and the source on
+    disk at verification time. Code that already executed before this check
+    ran cannot be re-verified from outside the interpreter; closing that
+    window entirely needs the #298 staged-image import for this witness and
+    stays open work in issue #290.
+    """
+    root = (ROOT if root is None else root).resolve()
+    for name in names or HELPER_MODULES:
+        module = sys.modules.get(name)
+        if module is None or not getattr(module, '__file__', None):
+            raise ValueError(f'ownership helper module is not imported: {name}')
+        path = Path(module.__file__).resolve()
+        try:
+            relative = path.relative_to(root).as_posix()
+        except ValueError:
+            raise ValueError(f'ownership helper module is outside the source tree: {name}') from None
+        if frozen_sources.get(relative) != digest(path):
+            raise ValueError(f'ownership executed helper source differs from inventory: {relative}')
+        cached = getattr(module, '__cached__', None)
+        if not cached or not Path(cached).is_file():
+            continue  # The module was compiled from verified source without consulting a cache.
+        try:
+            stored = marshal.loads(Path(cached).read_bytes()[16:])
+            compiled = compile(path.read_bytes(), module.__file__, 'exec')
+        except (ValueError, EOFError, TypeError) as error:
+            raise ValueError(f'ownership helper bytecode cache is unreadable: {relative}: {error}') from None
+        if stored != compiled:
+            raise ValueError(f'ownership helper bytecode cache differs from verified source: {relative}')
 
 
 def staged_paths(project):
@@ -978,6 +1024,9 @@ def run_probes(args, results):
         update(outcome=state, seconds=round(time.monotonic() - started, 3), **fields)
 
     frozen_sources = source_inventory()
+    verify_executed_helpers(frozen_sources)
+    python_path = Path(sys.executable).resolve()
+    python_binding = {'path': str(python_path), 'sha256': digest(python_path)}
     data = load_manifest()
     arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
     if platform.system() != 'Linux' or arch is None:
@@ -1298,10 +1347,13 @@ def run_probes(args, results):
     validate_phases(records, rounds, versions_requested, phases_requested)
     validate_coverage(records, args.suite_part, suites_requested)
     verify_sources(frozen_sources)
+    if digest(python_path) != python_binding['sha256']:
+        raise ValueError('ownership interpreter changed during execution')
     if tool_inventory(browser_paths) != browser_frozen:
         raise ValueError('ownership browser runtime changed during execution')
     report = {'status': 'passed', 'web_requested': args.web, 'architecture': arch, 'seed': '1701',
               'browser_requested': args.browser if args.web else None, 'browser_runtime_inventory': browser_frozen,
+              'python': python_binding,
               'rounds': rounds, 'versions_requested': versions_requested, 'phases_requested': phases_requested,
               'suite_part_requested': args.suite_part, 'suites_requested': suites_requested,
               'manifest_sha256': frozen_sources['docs/reference/pins.json'],

@@ -45,21 +45,23 @@ def captured_text(value):
     return value.decode('utf-8', errors='replace') if isinstance(value, bytes) else value or ''
 
 
+import owned_process
+
 def capture(cmd, environment, log, timeout, cwd=None):
+    """Run one bounded command whose whole descendant tree stays owned.
+
+    owned_process.run keeps the started command, any terminated survivors and
+    the timeout marker inside this log; the exception contract matches the
+    previous subprocess.run shape, so every deadline caller behaves the same.
+    """
     log.write_text('COMMAND_STARTED: ' + repr(cmd) + '\n')
     try:
-        completed = subprocess.run(cmd, cwd=cwd, env=environment, capture_output=True,
-                                   text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as error:
-        log.write_text(captured_text(error.output) + captured_text(error.stderr)
-                       + f'\nTIMEOUT: command exceeded {error.timeout} seconds\n')
-        raise
+        returncode, output = owned_process.run(cmd, environment, log, timeout, cwd)
     except OSError as error:
         log.write_text(f'TOOL_FAILURE: {error}\n')
         raise
-    output = completed.stdout + completed.stderr
     log.write_text(output)
-    return completed.returncode, output
+    return returncode, output
 
 
 def command(command, cwd, environment, log):

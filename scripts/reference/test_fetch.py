@@ -323,16 +323,17 @@ class ReferenceContracts(unittest.TestCase):
                 self.assertEqual(len(helps), 1, launcher)
 
     def test_timeout_replaces_old_log_with_partial_diagnostics(self):
-        for command in (rust_runner.command, godot_runner.run):
-            with self.subTest(command=command.__module__), tempfile.TemporaryDirectory() as folder:
+        # The owned launcher must replace a stale success log with the output the
+        # command actually flushed before its deadline killed the whole tree.
+        script = ("import sys, time\nprint('partial stdout', flush=True)\n"
+                  "print('partial stderr', file=sys.stderr)\ntime.sleep(30)")
+        for command in (rust_runner.capture, godot_runner.run):
+            with self.subTest(command=command.__module__ + ':' + command.__name__), \
+                    tempfile.TemporaryDirectory() as folder:
                 log = Path(folder) / 'command.log'
                 log.write_text('OLD_SUCCESS')
-                expired = subprocess.TimeoutExpired(['tool'], 180, output=b'partial stdout', stderr=b'partial stderr')
-                with patch('subprocess.run', side_effect=expired), self.assertRaises(subprocess.TimeoutExpired):
-                    if command is rust_runner.command:
-                        command(['tool'], Path(folder), os.environ.copy(), log)
-                    else:
-                        command(['tool'], os.environ.copy(), log)
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    command([sys.executable, '-c', script], os.environ.copy(), log, timeout=2)
                 output = log.read_text()
                 self.assertIn('partial stdout', output)
                 self.assertIn('partial stderr', output)
