@@ -170,6 +170,9 @@ The launcher's repeatable `--suite` option selects suite paths; `--filter` match
 Give independent behavior its own registered case so failures and focused filters identify the contract being exercised.
 Inspect the selected case inventory before claiming a subsystem passed; a matching word can cover only a few unrelated cases.
 When tightening configuration ownership, sweep constructor setup in related suites: attach expected owners before opening the batch whose exclusion is under test.
+Run a full-category run alone: two concurrent category runs contend for CPU and
+produce spurious shard failures that vanish on a clean solo rerun (session 174
+recorded a false full-unit failure while a review agent's identical run overlapped).
 Deliver the full suite. Process isolation, worker order and cache verification
 are described in [infrastructure evidence](references/infrastructure.md#faster-local-iteration).
 
