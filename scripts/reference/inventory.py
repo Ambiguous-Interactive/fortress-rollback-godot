@@ -247,16 +247,14 @@ def binding_errors(ledger: dict, bundles: list, commit: str, pins_digest: str) -
     resulting JSON file here with ``--results``.
     """
     errors = []
+    satisfied: dict = {}
     for origin, bundle in enumerate(bundles):
         bundle_errors = result_bundle_errors(bundle, f"results[{origin}]", commit, pins_digest)
         errors += bundle_errors
-    satisfied: dict = {}
-    for origin, bundle in enumerate(bundles):
         # A bundle that failed its envelope cannot contribute evidence: its
         # cases stay out of the satisfied set so stale or foreign bundles are
         # never the reason a mapping appears executed.
-        if type(bundle) is dict and type(bundle.get("runs")) is list and not result_bundle_errors(
-                bundle, f"results[{origin}]", commit, pins_digest):
+        if not bundle_errors and type(bundle) is dict and type(bundle.get("runs")) is list:
             executed, marker_errors = executed_suite_cases(bundle, f"results[{origin}]")
             satisfied.update(executed)
             errors += marker_errors

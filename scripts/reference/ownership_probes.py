@@ -807,6 +807,11 @@ def verify_executed_helpers(frozen_sources, root=None, names=None):
     against a fresh compilation of the bound source rejects that foreign
     bytecode without trusting cache timestamps, and a helper whose source no
     longer matches the inventory fails for drift before any witness runs.
+    Stated scope: this binds the cache the loader consults and the source on
+    disk at verification time. Code that already executed before this check
+    ran cannot be re-verified from outside the interpreter; closing that
+    window entirely needs the #298 staged-image import for this witness and
+    stays open work in issue #290.
     """
     root = (ROOT if root is None else root).resolve()
     for name in names or HELPER_MODULES:

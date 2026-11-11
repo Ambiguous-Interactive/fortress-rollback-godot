@@ -272,17 +272,32 @@ def run(command, environment, log, timeout, cwd=None):
             log.write_text(text + f'TIMEOUT: command exceeded {timeout} seconds\n'
                            + f'OWNED_PROCESSES: terminated {survivors}\n')
             raise subprocess.TimeoutExpired(command, timeout, output=text) from None
+        except BaseException:
+            # An interruption must not strand the tree either: the new session
+            # never saw the terminal signal, so both ownership checks run and
+            # the child is reaped before the interrupt propagates.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            members = terminate_group(process.pid)
+            survivors = terminate(token_value)
+            process.poll()
+            if members or survivors:
+                log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
+            raise
         if post_exit_bytes:
             output += ('\nPOST_EXIT_OUTPUT: '
                        f'{post_exit_bytes} byte(s) arrived after the command exited and were withheld\n')
-        if group_alive:
-            members = terminate_group(process.pid)
-            log.write_text(output + f'OWNED_PROCESSES: terminated {members}\n')
-            raise EscapedDescendants(members)
+        # Both ownership checks always run before any escape raises: a command
+        # can leave a same-group descendant and a setsid token carrier at once,
+        # and reporting only the first would strand the second.
+        members = terminate_group(process.pid) if group_alive else []
         survivors = terminate(token_value)
-        if survivors:
-            log.write_text(output + f'OWNED_PROCESSES: terminated {survivors}\n')
-            raise EscapedDescendants(survivors)
+        if members or survivors:
+            output += f'OWNED_PROCESSES: terminated {members + survivors}\n'
+            log.write_text(output)
+            raise EscapedDescendants(members + survivors)
         if post_exit_bytes:
             log.write_text(output)
         return returncode, output

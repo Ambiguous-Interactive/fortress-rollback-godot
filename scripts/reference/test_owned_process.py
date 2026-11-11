@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest import mock
 import unittest
 
 import owned_process
@@ -232,6 +233,35 @@ print('done', flush=True)
                 if state == 'S':
                     (entry / 'cmdline').write_bytes(b'live\0')
             self.assertEqual(owned_process.group_members(77, proc=proc), [{'pid': 72, 'name': 'live'}])
+
+    def test_interruption_terminates_the_tree_before_propagating(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'interrupt.log'
+            log.write_text('')
+            marker = Path(folder) / 'sleeper.pid'
+            command = [PYTHON, '-c', """
+import os, sys, time
+open(sys.argv[1], 'w').write(str(os.getpid()))
+print('ready', flush=True)
+time.sleep(60)
+""", str(marker)]
+            def interrupting_collect(process, deadline):
+                deadline_marker = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline_marker:
+                    time.sleep(0.01)
+                raise KeyboardInterrupt
+
+            with mock.patch.object(owned_process, '_collect', side_effect=interrupting_collect):
+                with self.assertRaises(KeyboardInterrupt):
+                    owned_process.run(command, {}, log, 30)
+            pid = int(marker.read_text())
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(alive(pid), 'an interrupted command must not strand its process tree')
+            # When SIGKILL delivery beats both sweeps, nothing survives to be
+            # named and the log stays empty; the pid liveness check above is
+            # the contract under test.
 
     def test_capture_keeps_output_and_survivor_diagnostics_in_one_log(self):
         with tempfile.TemporaryDirectory() as folder:
