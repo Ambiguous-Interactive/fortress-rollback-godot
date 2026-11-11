@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts/reference'))
 
+import owned_process  # noqa: E402
 from contract import fields, integer, validate_scenario, validate_trace  # noqa: E402
 from corpus import scenarios, validate_history  # noqa: E402
 from controls import negative_controls  # noqa: E402
@@ -36,20 +37,25 @@ def require_unchanged(label, original, current):
 
 
 def execute(command, log, input_text=None, timeout=120):
+    """Run one bounded engine or oracle step whose descendant tree stays owned.
+
+    The started command, any terminated escapees and a timeout marker land in
+    the same log the previous subprocess.run shape wrote, and the partial
+    output a deadline captured still travels with the raised TimeoutExpired.
+    """
     log.write_text('COMMAND_STARTED: ' + repr(command) + '\n')
     try:
-        result = subprocess.run(command, cwd=ROOT, input=input_text, capture_output=True,
-                                text=True, encoding='utf-8', timeout=timeout,
-                                env=rust_environment())
-    except subprocess.TimeoutExpired as error:
-        output = error.stdout or b''
-        errors = error.stderr or b''
-        log.write_text(str(output) + '\n' + str(errors) + '\nTIMEOUT\n')
+        returncode, stdout, stderr = owned_process.run_split(command, rust_environment(), log, timeout,
+                                                             cwd=ROOT, input_text=input_text)
+    except subprocess.TimeoutExpired:
+        raise  # owned_process recorded the partial output and the timeout marker.
+    except OSError as error:
+        log.write_text(f'TOOL_FAILURE: {error}\n')
         raise
-    log.write_text(result.stdout + result.stderr)
-    if result.returncode:
-        raise ValueError(f'process failed ({result.returncode}); see {log}')
-    return result.stdout, result.stderr
+    log.write_text(stdout + stderr)
+    if returncode:
+        raise ValueError(f'process failed ({returncode}); see {log}')
+    return stdout, stderr
 
 
 def oracle_result(stdout, stderr, scenario):

@@ -90,8 +90,12 @@ class OwnedProcessTests(unittest.TestCase):
                 with self.assertRaises(owned_process.EscapedDescendants) as raised:
                     owned_process.run(command, {}, log, 10)
                 pid = int(marker.read_text())
-                [survivor] = raised.exception.survivors
-                self.assertEqual(survivor['pid'], pid, 'the escaped descendant must be identified by its own pid')
+                # Both sweeps run before the escape raises, so a descendant
+                # still dying inside the SIGKILL delivery race may be named by
+                # the group sweep and the token sweep alike.
+                named = {item['pid'] for item in raised.exception.survivors}
+                self.assertEqual(named, {pid}, 'the escaped descendant must be identified by its own pid')
+                [survivor] = [item for item in raised.exception.survivors if item['pid'] == pid]
                 self.assertTrue(survivor['name'], 'the escaped descendant must be named')
                 text = log.read_text()
                 self.assertIn(f'OWNED_PROCESSES: terminated [{{\'pid\': {pid}', text)
@@ -279,6 +283,79 @@ time.sleep(60)
                 capture(command, {}, log, 10)
             text = log.read_text()
             self.assertIn('OWNED_PROCESSES: terminated', text)
+
+
+class SplitStreamTests(unittest.TestCase):
+    def test_split_keeps_stdout_stderr_and_stdin_separate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'split.log'
+            log.write_text('')
+            code = "import sys\nsys.stdout.write('out')\nsys.stderr.write('err')\nprint(input())"
+            returncode, stdout, stderr = owned_process.run_split([PYTHON, '-c', code], {}, log, 10,
+                                                                 input_text='fed\n')
+            self.assertEqual(returncode, 0)
+            self.assertEqual(stdout, 'outfed\n')
+            self.assertEqual(stderr, 'err')
+            self.assertEqual(log.read_text(), '', 'a healthy split run leaves the log to its caller')
+
+    def test_split_escaped_descendant_raises_without_stream_contamination(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'escape.log'
+            marker = Path(folder) / 'escaped.pid'
+            command = [PYTHON, '-c', escape_child('setsid', marker), str(marker)]
+            with self.assertRaises(owned_process.EscapedDescendants):
+                owned_process.run_split(command, {}, log, 10)
+            pid = int(marker.read_text())
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(alive(pid), 'the split sweep must terminate the escaped descendant')
+
+    def test_split_timeout_records_partial_output_in_the_log(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'timeout.log'
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                owned_process.run_split([PYTHON, '-c', "import time; print('started', flush=True); time.sleep(60)"],
+                                        {}, log, 2)
+            self.assertIn('started', raised.exception.output)
+            self.assertIn('TIMEOUT: command exceeded 2 seconds', log.read_text())
+
+
+class SpawnedProcessTests(unittest.TestCase):
+    def test_finish_stops_a_running_host_and_verifies_its_tree(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, token = owned_process.spawn([PYTHON, '-c', 'import time; time.sleep(60)'],
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.assertTrue(alive(process.pid))
+            owned_process.finish(process, token, grace=5)
+            self.assertFalse(alive(process.pid), 'finish must stop the spawned host')
+
+    def test_finish_terminates_an_escaped_descendant_of_the_host(self):
+        with tempfile.TemporaryDirectory() as folder:
+            marker = Path(folder) / 'escaped.pid'
+            process, token = owned_process.spawn([PYTHON, '-c', escape_child('setsid', marker), str(marker)],
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 5
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                with self.assertRaises(owned_process.EscapedDescendants):
+                    owned_process.finish(process, token, grace=5)
+                pid = int(marker.read_text())
+                deadline = time.monotonic() + 5
+                while alive(pid) and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                self.assertFalse(alive(pid), 'finish must terminate the escaped descendant')
+            finally:
+                process.wait(timeout=10)
+
+    def test_finish_after_clean_exit_keeps_only_the_sweep_checks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            process, token = owned_process.spawn([PYTHON, '-c', 'print("done")'],
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            process.wait(timeout=10)
+            owned_process.finish(process, token, grace=5)
+            self.assertEqual(process.returncode, 0, 'a clean host keeps its own exit code')
 
 
 if __name__ == '__main__':
