@@ -255,9 +255,13 @@ time.sleep(60)
                 with self.assertRaises(KeyboardInterrupt):
                     owned_process.run(command, {}, log, 30)
             pid = int(marker.read_text())
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(alive(pid), 'an interrupted command must not strand its process tree')
+            # The handler reaps before propagating: the pid is gone entirely,
+            # never left behind as a zombie of this test.
             stat = Path(f'/proc/{pid}/stat')
-            # The interrupt handler reaps the child before propagating: the pid
-            # is gone entirely, not left behind as a zombie of this test.
             if stat.exists():
                 self.assertNotEqual(stat.read_text().rsplit(') ', 1)[-1].split()[0], 'Z')
             # When SIGKILL delivery beats both sweeps, nothing survives to be

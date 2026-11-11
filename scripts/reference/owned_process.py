@@ -277,17 +277,26 @@ def run(command, environment, log, timeout, cwd=None):
             # never saw the terminal signal, so both ownership checks run, the
             # child is reaped, and no cleanup failure replaces the interrupt.
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    pass  # The child exited in the interrupt race; the sweeps below still run.
                 members = terminate_group(process.pid)
                 survivors = terminate(token_value)
                 if members or survivors:
-                    log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
+                    try:
+                        log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
+                    except OSError:
+                        pass  # A failing log sink must not replace the interrupt either.
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     pass
             except Exception as cleanup_failure:
-                log.write_text(f'OWNED_PROCESS_CLEANUP_FAILED: {cleanup_failure}\n')
+                try:
+                    log.write_text(f'OWNED_PROCESS_CLEANUP_FAILED: {cleanup_failure}\n')
+                except OSError:
+                    pass
             process.poll()
             raise
         if post_exit_bytes:
