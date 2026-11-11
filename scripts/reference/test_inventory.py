@@ -116,5 +116,75 @@ class InventoryTests(unittest.TestCase):
                 self.assertTrue(inventory.validate(ledger, self.baseline))
 
 
+class PortTestBindingTests(unittest.TestCase):
+    """Value: coverage claims bind to executed passing evidence at one candidate commit."""
+
+    SUITE = "res://tests/unit/test_online_lifecycle.gd"
+    CASE = "saturated_handshake_expiry"
+    COMMIT = "c" * 40
+    PINS = "p" * 64
+
+    def ledger_with(self, *test_ids):
+        return {"schema_version": 1, "inventory": {"files": {}, "records": []},
+                "decisions": {"fortress:src/queue.rs": dict(inventory.decision(), port_test_ids=list(test_ids))}}
+
+    def bundle(self, commit=COMMIT, pins=PINS, suite=SUITE, case=CASE, **overrides):
+        marker = {"format": 1, "passed": True, "complete": True,
+                  "records": [{"suite": suite, "case": case}]}
+        value = {"format": 1, "passed": True, "working_tree_dirty": False, "commit": commit,
+                 "pin_manifest_sha256": pins, "engine": "4.3.stable.official", "platform": "Linux",
+                 "machine": "arm64", "seed": "1701",
+                 "runs": [{"command": ["godot", "--suite", suite], "exit": 0,
+                           "stdout": inventory.RUN_MARKER + json.dumps(marker)}]}
+        value.update(overrides)
+        return value
+
+    def bound_errors(self, ledger, bundles):
+        return inventory.binding_errors(ledger, bundles, self.COMMIT, self.PINS)
+
+    def test_valid_completed_coverage_passes_and_always_on_identities_stay_checked(self):
+        ledger = self.ledger_with(f"{self.SUITE}::{self.CASE}")
+        self.assertEqual([], self.bound_errors(ledger, [self.bundle()]))
+        self.assertEqual([], inventory.binding_errors(ledger, [self.bundle(), self.bundle(case="pressured_handshake_expiry")],
+                                                      self.COMMIT, self.PINS))
+        discovered = {"files": {}, "records": [{"id": "fortress:src/queue.rs"}]}
+        bound = self.ledger_with(self.SUITE)
+        broken = self.ledger_with("invented::test", "res://tests/unit/missing_suite.gd")
+        bound["inventory"] = broken["inventory"] = discovered
+        self.assertEqual([], inventory.validate(bound, discovered))
+        errors = inventory.validate(broken, discovered)
+        self.assertTrue(any("unparseable port test identity" in e for e in errors))
+        self.assertTrue(any("names a missing repository file" in e for e in errors))
+
+    def test_binding_rejects_each_broken_evidence_shape_for_its_reason(self):
+        ledger = self.ledger_with(f"{self.SUITE}::{self.CASE}")
+        failed_marker = {"format": 1, "passed": False, "complete": True, "records": [{"suite": self.SUITE, "case": self.CASE}]}
+        incomplete_marker = {"format": 1, "passed": True, "complete": False, "records": [{"suite": self.SUITE, "case": self.CASE}]}
+        run = lambda stdout, exit_code=0: [{"command": ["godot", "--suite", self.SUITE], "exit": exit_code, "stdout": stdout}]
+        mutations = [
+            ("stale commit", ledger, [self.bundle(commit="d" * 40)], "commit differs"),
+            ("dirty tree", ledger, [self.bundle(working_tree_dirty=True)], "dirty working tree"),
+            ("stale pins", ledger, [self.bundle(pins="q" * 64)], "pin manifest digest differs"),
+            ("failed run", ledger, [self.bundle(runs=run("", exit_code=1))], "failed or unbounded run"),
+            ("no runs", ledger, [self.bundle(runs=[])], "records no executed run"),
+            ("failed marker", ledger, [self.bundle(runs=run(inventory.RUN_MARKER + json.dumps(failed_marker)))], "failed or incomplete"),
+            ("incomplete marker", ledger, [self.bundle(runs=run(inventory.RUN_MARKER + json.dumps(incomplete_marker)))], "failed or incomplete"),
+            ("unparsable marker", ledger, [self.bundle(runs=run(inventory.RUN_MARKER + "{"))], "unparsable"),
+            ("foreign case", ledger, [self.bundle(case="pressured_handshake_expiry")], "not executed and passed"),
+            ("foreign suite", ledger, [self.bundle(suite=self.SUITE.replace("lifecycle", "handshake"))], "not executed and passed"),
+            ("absent platform evidence", ledger, [self.bundle(engine=None)], "platform evidence is absent"),
+            ("non-boolean pass", ledger, [self.bundle(passed=1)], "did not pass"),
+            ("no bundles", ledger, [], "not executed and passed"),
+        ]
+        for name, bound, bundles, expected in mutations:
+            with self.subTest(name=name):
+                self.assertTrue(any(expected in e for e in self.bound_errors(bound, bundles)))
+
+    def test_script_qualname_mapping_names_its_missing_receipt_bundle(self):
+        ledger = self.ledger_with("scripts/oracle/spectator_runtime.py::check")
+        errors = self.bound_errors(ledger, [self.bundle()])
+        self.assertTrue(any("needs its own receipt bundle" in e for e in errors), errors)
+
+
 if __name__ == "__main__":
     unittest.main()
