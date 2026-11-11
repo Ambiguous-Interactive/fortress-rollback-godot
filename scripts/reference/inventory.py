@@ -206,7 +206,11 @@ def executed_suite_cases(bundle, origin: str) -> tuple[dict, list[str]]:
     """Collect the complete passing suite/case identities one bundle recorded."""
     executed, errors = {}, []
     for run in bundle["runs"]:
-        for line in (run.get("stdout") or "").splitlines():
+        stdout = run.get("stdout") if type(run) is dict else None
+        if type(stdout) is not str:
+            errors.append(f"{origin}: bundle run stdout is absent or malformed")
+            continue
+        for line in stdout.splitlines():
             if not line.startswith(RUN_MARKER):
                 continue
             try:
@@ -257,7 +261,7 @@ def binding_errors(ledger: dict, bundles: list, commit: str, pins_digest: str) -
                 continue
             match = IDENTITY_PATTERN.match(test_id)
             if match.group("script"):
-                errors.append(f"{name}: {test_id} needs its own receipt bundle; a runner bundle cannot bind it")
+                errors.append(f"{name}: {test_id} has no implemented receipt binding; a runner bundle cannot bind script identities yet")
                 continue
             suite, case = "res://" + match.group("suite"), match.group("case")
             if case is not None and (suite, case) not in satisfied:

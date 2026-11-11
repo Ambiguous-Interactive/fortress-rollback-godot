@@ -183,7 +183,7 @@ class PortTestBindingTests(unittest.TestCase):
     def test_script_qualname_mapping_names_its_missing_receipt_bundle(self):
         ledger = self.ledger_with("scripts/oracle/spectator_runtime.py::check")
         errors = self.bound_errors(ledger, [self.bundle()])
-        self.assertTrue(any("needs its own receipt bundle" in e for e in errors), errors)
+        self.assertTrue(any("has no implemented receipt binding" in e for e in errors), errors)
 
 
 if __name__ == "__main__":

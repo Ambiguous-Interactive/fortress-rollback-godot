@@ -112,6 +112,64 @@ class OwnedProcessTests(unittest.TestCase):
             outside.wait(timeout=10)  # This test owns the process: reap the kill before checking liveness.
             self.assertFalse(alive(outside.pid))
 
+    def test_high_volume_output_never_blocks_on_a_full_pipe(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'volume.log'
+            log.write_text('')
+            command = [PYTHON, '-c',
+                       "import sys\ndata = 'x' * 65536 + '\\n'\n"
+                       "sys.stdout.write(data * 4)\nsys.stderr.write(data)\nsys.stdout.flush()\n"
+                       "print('done', flush=True)"]
+            returncode, output = owned_process.run(command, {}, log, 15)
+            self.assertEqual(returncode, 0)
+            self.assertEqual(output.count('x' * 65536), 5, 'more than one pipe capacity must survive')
+            self.assertIn('done\n', output)
+            self.assertNotIn('POST_EXIT_OUTPUT', output)
+
+    def test_environment_scrubbing_cannot_hide_a_same_session_descendant(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'scrubbed.log'
+            log.write_text('')
+            marker = Path(folder) / 'scrubbed.pid'
+            command = [PYTHON, '-c', """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    open(sys.argv[1], 'w').write(str(os.getpid()))
+    os.execve('/bin/sleep', ['sleep', '30'], {'PATH': '/usr/bin:/bin'})
+while not os.path.exists(sys.argv[1]):
+    time.sleep(0.01)
+""", str(marker)]
+            with self.assertRaises(owned_process.EscapedDescendants) as raised:
+                owned_process.run(command, {}, log, 10)
+            pid = int(marker.read_text())
+            self.assertEqual([item['pid'] for item in raised.exception.survivors], [pid],
+                             'a scrubbed descendant must be named through its process group')
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(alive(pid), 'the group check must terminate the scrubbed descendant')
+
+    def test_descendant_bytes_after_exit_are_withheld_from_the_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'injected.log'
+            log.write_text('')
+            command = [PYTHON, '-c', """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    time.sleep(0.3)
+    print('test injected_case ... ok', flush=True)
+print('test owned_case ... ok', flush=True)
+"""]
+            returncode, output = owned_process.run(command, {}, log, 10)
+            self.assertEqual(returncode, 0)
+            self.assertNotIn('injected_case', output.split('POST_EXIT_OUTPUT')[0],
+                             'a descendant line must not enter the command output')
+            self.assertIn('POST_EXIT_OUTPUT', output)
+            self.assertIn('test owned_case ... ok', output)
+
     def test_capture_keeps_output_and_survivor_diagnostics_in_one_log(self):
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / 'capture.log'
