@@ -175,6 +175,7 @@ class PortTestBindingTests(unittest.TestCase):
             ("absent platform evidence", ledger, [self.bundle(engine=None)], "platform evidence is absent"),
             ("non-boolean pass", ledger, [self.bundle(passed=1)], "did not pass"),
             ("no bundles", ledger, [], "not executed and passed"),
+            ("malformed run stdout", ledger, [self.bundle(runs=[{"command": ["godot"], "exit": 0, "stdout": 7}])], "run stdout is absent or malformed"),
         ]
         for name, bound, bundles, expected in mutations:
             with self.subTest(name=name):

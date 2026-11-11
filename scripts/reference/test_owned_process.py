@@ -69,8 +69,10 @@ class OwnedProcessTests(unittest.TestCase):
             self.assertIn('started', raised.exception.output)
             text = log.read_text()
             self.assertIn('TIMEOUT: command exceeded 2 seconds', text)
-            # The whole group died with the direct child, so the sweep names no survivor.
-            self.assertIn('terminated []', text)
+            # The group kill and the token sweep both terminate the tree; the
+            # sweep may catch the grandchild in the SIGKILL delivery race and
+            # name it, so only the bounded no-third-attempt contract is fixed.
+            self.assertIn('OWNED_PROCESSES: terminated', text)
             pid = int(marker.read_text())
             deadline = time.monotonic() + 5
             while alive(pid) and time.monotonic() < deadline:
@@ -169,6 +171,43 @@ print('test owned_case ... ok', flush=True)
                              'a descendant line must not enter the command output')
             self.assertIn('POST_EXIT_OUTPUT', output)
             self.assertIn('test owned_case ... ok', output)
+
+    def test_unbounded_same_group_writer_cannot_hang_or_oom_the_sweep(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'writer.log'
+            log.write_text('')
+            command = [PYTHON, '-c', """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    while True:
+        sys.stdout.write('y' * 65536 + '\\n')
+        sys.stdout.flush()
+        time.sleep(0.01)
+print('child exits', flush=True)
+"""]
+            with self.assertRaises(owned_process.EscapedDescendants) as raised:
+                owned_process.run(command, {}, log, 3)
+            self.assertTrue(raised.exception.survivors, 'the writing escapee must be named and killed')
+
+    def test_unreaped_zombie_grandchild_is_not_a_survivor(self):
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'zombie.log'
+            log.write_text('')
+            command = [PYTHON, '-c', """
+import os, time
+pid = os.fork()
+if pid == 0:
+    os._exit(0)
+time.sleep(0.05)
+print('done', flush=True)
+"""]
+            for attempt in range(3):
+                with self.subTest(attempt=attempt):
+                    returncode, output = owned_process.run(command, {}, log, 10)
+                    self.assertEqual(returncode, 0)
+                    self.assertEqual(output.strip(), 'done')
+                    self.assertNotIn('OWNED_PROCESSES', log.read_text())
 
     def test_capture_keeps_output_and_survivor_diagnostics_in_one_log(self):
         with tempfile.TemporaryDirectory() as folder:

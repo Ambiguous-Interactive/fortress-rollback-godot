@@ -5,11 +5,14 @@ running: a Playwright browser or engine process outlives the failed witness,
 is adopted by init and competes for the responsive host the next run needs.
 Every owned command carries a unique run token in its environment and launches
 in its own session. After any exit, ownership is checked twice: the command's
-process group must be gone, which catches a descendant that escaped through
-setsid or scrubbed its environment, and the /proc token sweep names any
+process group must be gone, which catches a descendant that stayed in the
+session and scrubbed its environment, and the /proc token sweep names any
 surviving carrier so it can be killed and recorded. Kills are pinned through
 pidfds where the kernel supports them, so a recycled pid never receives a
-signal meant for an owned process.
+signal meant for an owned process. The known residual hole is stated plainly:
+a descendant that both setsid's away and scrubs the token leaves no kernel
+marker this module can see; containing that case needs cgroup-backed
+ownership and remains open work in issue #290.
 """
 import os
 import select
@@ -31,6 +34,12 @@ MAX_NAMED_SURVIVORS = 8
 DRAIN_IDLE_SECONDS = 0.5
 POLL_SECONDS = 0.1
 DRAIN_CHUNK = 65536
+# After exit, a dead child can leave at most one pipe capacity of unread data
+# per stream. The settle pass is bounded in time and bytes so a same-group
+# descendant that keeps writing can never turn the trusted snapshot into an
+# unbounded hang; everything it cannot attribute is withheld later anyway.
+SETTLE_SECONDS = 2.0
+SETTLE_MAX_BYTES = 4 * DRAIN_CHUNK
 
 
 class EscapedDescendants(ValueError):
@@ -75,7 +84,14 @@ def identities(token_value):
 
 
 def group_members(group):
-    """Name the live members of one process group through their /proc stat pgrp."""
+    """Name the live members of one process group; zombies are already dead.
+
+    A grandchild that exited before its parent is a zombie until init reaps
+    it, and a zombie still holds its process group open. It cannot write,
+    hold a pipe or come back, so it is skipped: naming it as a terminated
+    survivor would record a dead process, and counting it would fail healthy
+    runs whenever reap latency exceeds the drain grace.
+    """
     found = []
     for entry in Path('/proc').iterdir():
         if not entry.name.isdigit():
@@ -84,7 +100,7 @@ def group_members(group):
             fields = (entry / 'stat').read_text().rsplit(') ', 1)[-1].split()
         except OSError:
             continue
-        if not fields or int(fields[2]) != group:
+        if not fields or fields[0] == 'Z' or int(fields[2]) != group:
             continue
         found.append({'pid': int(entry.name), 'name': _name(entry)})
     return sorted(found, key=lambda item: item['pid'])
@@ -173,16 +189,19 @@ def _collect(process, deadline):
             exit_observed = True
             # The child's own writes are already in the kernel buffers; repeat
             # nonblocking passes until no more arrives, so its queued final
-            # output stays trusted even when it exceeded one chunk.
-            while _read_available(streams, buffers):
-                pass
+            # output stays trusted even when it exceeded one chunk. The pass is
+            # bounded in time and bytes: a descendant that keeps writing after
+            # the child exited must not turn the snapshot into a hang.
+            settle_deadline = min(time.monotonic() + SETTLE_SECONDS, deadline)
+            settle_budget = SETTLE_MAX_BYTES
+            while streams and settle_budget > 0 and time.monotonic() < settle_deadline:
+                added = _read_available(streams, buffers)
+                settle_budget -= added
+                if not added:
+                    break
             trusted = {descriptor: len(buffers[descriptor]) for descriptor in buffers}
             exit_deadline = time.monotonic() + DRAIN_IDLE_SECONDS
-            try:
-                os.killpg(process.pid, 0)
-                group_alive = True
-            except ProcessLookupError:
-                group_alive = False
+            group_alive = bool(group_members(process.pid))
         if exit_observed:
             if not streams or time.monotonic() >= exit_deadline:
                 break
@@ -239,7 +258,10 @@ def run(command, environment, log, timeout, cwd=None):
         try:
             returncode, output, post_exit_bytes, group_alive = _collect(process, time.monotonic() + timeout)
         except _Deadline as expired:
-            os.killpg(process.pid, signal.SIGKILL)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass  # The child exited in the deadline race; the sweeps below still run.
             survivors = terminate(token_value)
             process.poll()
             text = expired.buffers[expired.stdout].decode('utf-8', errors='replace')
