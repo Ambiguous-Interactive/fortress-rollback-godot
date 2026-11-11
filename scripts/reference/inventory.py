@@ -197,41 +197,51 @@ def result_bundle_errors(bundle, origin: str, commit: str, pins_digest: str) -> 
         errors.append(f"{origin}: bundle records no executed run")
         return errors
     for run in runs:
-        if type(run) is not dict or type(run.get("exit")) is not int or run["exit"] != 0:
-            errors.append(f"{origin}: bundle contains a failed or unbounded run")
-        command = run.get("command") if type(run) is dict else None
-        if type(command) is not list or not command or any(type(part) is not str for part in command):
-            errors.append(f"{origin}: bundle run command is absent or malformed")
+        shards = run.get("shards") if type(run) is dict else None
+        if type(shards) is not list or not shards:
+            errors.append(f"{origin}: bundle run has no shards")
+            continue
+        for shard in shards:
+            if type(shard) is not dict or type(shard.get("exit")) is not int or shard["exit"] != 0:
+                errors.append(f"{origin}: bundle contains a failed or unbounded shard")
+            command = shard.get("command") if type(shard) is dict else None
+            if type(command) is not list or not command or any(type(part) is not str for part in command):
+                errors.append(f"{origin}: bundle shard command is absent or malformed")
     return errors
 
 
 def executed_suite_cases(bundle, origin: str) -> tuple[dict, list[str]]:
-    """Collect the complete passing suite/case identities one bundle recorded."""
+    """Collect the complete passing suite/case identities one bundle recorded.
+
+    The launcher's merged runs carry their per-process work in ``shards``;
+    each shard's ``stdout`` is where the runner prints its test markers.
+    """
     executed, errors = {}, []
     for run in bundle["runs"]:
-        stdout = run.get("stdout") if type(run) is dict else None
-        if type(stdout) is not str:
-            errors.append(f"{origin}: bundle run stdout is absent or malformed")
-            continue
-        for line in stdout.splitlines():
-            if not line.startswith(RUN_MARKER):
+        for shard in run.get("shards") or []:
+            stdout = shard.get("stdout") if type(shard) is dict else None
+            if type(stdout) is not str:
+                errors.append(f"{origin}: bundle shard stdout is absent or malformed")
                 continue
-            try:
-                report = json.loads(line[len(RUN_MARKER):])
-            except ValueError:
-                errors.append(f"{origin}: bundle test marker is unparsable")
-                continue
-            if (type(report) is not dict or report.get("format") != 1
-                    or report.get("passed") is not True or report.get("complete") is not True):
-                errors.append(f"{origin}: bundle test marker is failed or incomplete")
-                continue
-            records = report.get("records")
-            if type(records) is not list:
-                errors.append(f"{origin}: bundle test marker has no case records")
-                continue
-            for record in records:
-                if type(record) is dict and type(record.get("suite")) is str and type(record.get("case")) is str:
-                    executed[(record["suite"], record["case"])] = True
+            for line in stdout.splitlines():
+                if not line.startswith(RUN_MARKER):
+                    continue
+                try:
+                    report = json.loads(line[len(RUN_MARKER):])
+                except ValueError:
+                    errors.append(f"{origin}: bundle test marker is unparsable")
+                    continue
+                if (type(report) is not dict or report.get("format") != 1
+                        or report.get("passed") is not True or report.get("complete") is not True):
+                    errors.append(f"{origin}: bundle test marker is failed or incomplete")
+                    continue
+                records = report.get("records")
+                if type(records) is not list:
+                    errors.append(f"{origin}: bundle test marker has no case records")
+                    continue
+                for record in records:
+                    if type(record) is dict and type(record.get("suite")) is str and type(record.get("case")) is str:
+                        executed[(record["suite"], record["case"])] = True
     return executed, errors
 
 

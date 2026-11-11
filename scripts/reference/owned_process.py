@@ -274,17 +274,21 @@ def run(command, environment, log, timeout, cwd=None):
             raise subprocess.TimeoutExpired(command, timeout, output=text) from None
         except BaseException:
             # An interruption must not strand the tree either: the new session
-            # never saw the terminal signal, so both ownership checks run and
-            # the child is reaped before the interrupt propagates.
+            # never saw the terminal signal, so both ownership checks run, the
+            # child is reaped, and no cleanup failure replaces the interrupt.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
-            except OSError:
-                pass
-            members = terminate_group(process.pid)
-            survivors = terminate(token_value)
+                members = terminate_group(process.pid)
+                survivors = terminate(token_value)
+                if members or survivors:
+                    log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+            except Exception as cleanup_failure:
+                log.write_text(f'OWNED_PROCESS_CLEANUP_FAILED: {cleanup_failure}\n')
             process.poll()
-            if members or survivors:
-                log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
             raise
         if post_exit_bytes:
             output += ('\nPOST_EXIT_OUTPUT: '

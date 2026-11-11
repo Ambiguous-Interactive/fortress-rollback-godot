@@ -131,11 +131,12 @@ class PortTestBindingTests(unittest.TestCase):
     def bundle(self, commit=COMMIT, pins=PINS, suite=SUITE, case=CASE, **overrides):
         marker = {"format": 1, "passed": True, "complete": True,
                   "records": [{"suite": suite, "case": case}]}
+        shard = {"command": ["godot", "--suite", suite], "exit": 0,
+                 "stdout": inventory.RUN_MARKER + json.dumps(marker)}
         value = {"format": 1, "passed": True, "working_tree_dirty": False, "commit": commit,
                  "pin_manifest_sha256": pins, "engine": "4.3.stable.official", "platform": "Linux",
                  "machine": "arm64", "seed": "1701",
-                 "runs": [{"command": ["godot", "--suite", suite], "exit": 0,
-                           "stdout": inventory.RUN_MARKER + json.dumps(marker)}]}
+                 "runs": [{"result": {}, "shards": [shard]}]}
         value.update(overrides)
         return value
 
@@ -161,25 +162,26 @@ class PortTestBindingTests(unittest.TestCase):
         ledger = self.ledger_with(f"{self.SUITE}::{self.CASE}")
         failed_marker = {"format": 1, "passed": False, "complete": True, "records": [{"suite": self.SUITE, "case": self.CASE}]}
         incomplete_marker = {"format": 1, "passed": True, "complete": False, "records": [{"suite": self.SUITE, "case": self.CASE}]}
-        def marker_run(stdout, exit_code=0):
-            return [{"command": ["godot", "--suite", self.SUITE], "exit": exit_code, "stdout": stdout}]
+        def marker_shard(stdout, exit_code=0):
+            return [{"result": {}, "shards": [{"command": ["godot", "--suite", self.SUITE], "exit": exit_code, "stdout": stdout}]}]
 
         mutations = [
             ("stale commit", ledger, [self.bundle(commit="d" * 40)], "commit differs"),
             ("dirty tree", ledger, [self.bundle(working_tree_dirty=True)], "dirty working tree"),
             ("stale pins", ledger, [self.bundle(pins="q" * 64)], "pin manifest digest differs"),
-            ("failed run", ledger, [self.bundle(runs=marker_run("", exit_code=1))], "failed or unbounded run"),
-            ("non-object run", ledger, [self.bundle(runs=["not-a-run"])], "failed or unbounded run"),
+            ("failed shard", ledger, [self.bundle(runs=marker_shard("", exit_code=1))], "failed or unbounded shard"),
+            ("non-object run", ledger, [self.bundle(runs=["not-a-run"])], "run has no shards"),
+            ("no shards", ledger, [self.bundle(runs=[{"result": {}}])], "run has no shards"),
             ("no runs", ledger, [self.bundle(runs=[])], "records no executed run"),
-            ("failed marker", ledger, [self.bundle(runs=marker_run(inventory.RUN_MARKER + json.dumps(failed_marker)))], "failed or incomplete"),
-            ("incomplete marker", ledger, [self.bundle(runs=marker_run(inventory.RUN_MARKER + json.dumps(incomplete_marker)))], "failed or incomplete"),
-            ("unparsable marker", ledger, [self.bundle(runs=marker_run(inventory.RUN_MARKER + "{"))], "unparsable"),
+            ("failed marker", ledger, [self.bundle(runs=marker_shard(inventory.RUN_MARKER + json.dumps(failed_marker)))], "failed or incomplete"),
+            ("incomplete marker", ledger, [self.bundle(runs=marker_shard(inventory.RUN_MARKER + json.dumps(incomplete_marker)))], "failed or incomplete"),
+            ("unparsable marker", ledger, [self.bundle(runs=marker_shard(inventory.RUN_MARKER + "{"))], "unparsable"),
             ("foreign case", ledger, [self.bundle(case="pressured_handshake_expiry")], "not executed and passed"),
             ("foreign suite", ledger, [self.bundle(suite=self.SUITE.replace("lifecycle", "handshake"))], "not executed and passed"),
             ("absent platform evidence", ledger, [self.bundle(engine=None)], "platform evidence is absent"),
             ("non-boolean pass", ledger, [self.bundle(passed=1)], "did not pass"),
             ("no bundles", ledger, [], "not executed and passed"),
-            ("malformed run stdout", ledger, [self.bundle(runs=[{"command": ["godot"], "exit": 0, "stdout": 7}])], "run stdout is absent or malformed"),
+            ("malformed shard stdout", ledger, [self.bundle(runs=marker_shard(7))], "shard stdout is absent or malformed"),
             ("invalid bundle cannot satisfy a mapping", ledger, [self.bundle(commit="d" * 40)], "not executed and passed"),
         ]
         for name, bound, bundles, expected in mutations:
