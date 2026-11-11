@@ -106,7 +106,16 @@ interruption is unreachable, and the departed member counts toward the epoch unt
 certificate commits. A component without the majority ends the match with `missing_quorum`
 and its reachable/membership counts instead of staging certificates toward a split-brain
 fork. Goodbye departures keep the explicit path, and the last survivor keeps the one-member
-freeze.
+freeze. An automatic timeout certificate additionally requires an independent witness: at
+least one fellow survivor attests, in its inventory report and again in its certificate,
+that its own endpoint for the target latched the departure (the silence flag or a
+terminated endpoint). The coordinator re-checks the certification-time attestation against
+the window report's attestation and ends the match with `missing_witness` when no surviving
+follower attests, or with `conflicting_history` when the two attestations disagree. That
+re-check is a consistency check, not an independent verification of the peer's endpoint
+state; the protocol is not byzantine-resistant, and a peer that fabricates a consistent
+report chain lies outside this tier's contract, as with the certified digest. The
+attestation travels in the Godot-side barrier report; the pinned source owns no such field.
 
 The last survivor also raises the cut through every retained actual input from the departed endpoint.
 All of that endpoint's player slots must retain complete history through the same cut before any slot freezes.

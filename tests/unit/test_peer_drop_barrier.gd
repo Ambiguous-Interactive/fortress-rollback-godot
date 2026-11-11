@@ -24,6 +24,13 @@ func cases() -> PackedStringArray:
 			"even_split_fails_closed",
 			"minority_split_continues",
 			"int_reason_keeps_the_explicit_path",
+			"witnessed_death_commits",
+			"split_witness_recovers",
+			"false_witness_fails_closed",
+			"mismatched_attestation_aborts",
+			"unreported_window_certificate_is_refused",
+			"common_peer_split_fails_before_the_certificate",
+			"goodbye_certificate_keeps_the_explicit_path",
 			"codec_round_trip",
 			"conflicting_certificate",
 			"stale_messages",
@@ -50,6 +57,20 @@ func run_case(name: String, context: RefCounted) -> void:
 			_minority_split_continues(context)
 		"int_reason_keeps_the_explicit_path":
 			_int_reason_keeps_the_explicit_path(context)
+		"witnessed_death_commits":
+			_witnessed_death_commits(context)
+		"split_witness_recovers":
+			_split_witness_recovers(context)
+		"false_witness_fails_closed":
+			_false_witness_fails_closed(context)
+		"mismatched_attestation_aborts":
+			_mismatched_attestation_aborts(context)
+		"unreported_window_certificate_is_refused":
+			_unreported_window_certificate_is_refused(context)
+		"common_peer_split_fails_before_the_certificate":
+			_common_peer_split_fails_before_the_certificate(context)
+		"goodbye_certificate_keeps_the_explicit_path":
+			_goodbye_certificate_keeps_the_explicit_path(context)
 		"codec_round_trip":
 			_codec_round_trip(context)
 		"conflicting_certificate":
@@ -442,6 +463,51 @@ func _deliver_partition(context: RefCounted, mesh: Dictionary, components: Array
 		_deliver(context, mesh, kept, true)
 
 
+## The first and third peers keep their link while the link between the first
+## and second survivor is cut, so each of them times the other out alone.
+func _split(
+	context: RefCounted,
+	mesh: Dictionary,
+	elapsed: int,
+	alterations: Array[Dictionary] = [],
+	injections: Array[Dictionary] = [],
+	components: Array = [[0, 2]]
+) -> void:
+	var waited: int = 0
+	var pending: Array[Dictionary] = injections.duplicate()
+	while waited < elapsed:
+		mesh.now += 1000
+		waited += 1000
+		for player: int in range(mesh.peers.size()):
+			if mesh.peers[player].status().lifecycle == Types.Lifecycle.TERMINATED:
+				continue
+			var polled: int = mesh.peers[player].poll(mesh.now)
+			context.equal(polled, I.Code.OK, "poll the split peer")
+		var packets: Array[Dictionary] = _alter(context, mesh, _drain(mesh), alterations)
+		if not pending.is_empty() and _split_barrier_started(mesh):
+			for injection: Dictionary in pending:
+				_inject(context, mesh, injection)
+			pending.clear()
+		for packet: Dictionary in packets:
+			# Only the components' own links deliver; the cut links stay silent.
+			var kept: bool = false
+			for component: Array in components:
+				if component.has(packet.from) and component.has(packet.to):
+					kept = true
+					break
+			if not kept:
+				continue
+			var code: int = mesh.peers[packet.to].receive(packet.bytes, _id(packet.from), mesh.now)
+			if code == I.Code.TERMINATED:
+				continue
+			context.equal(code, I.Code.OK, "deliver the split packet")
+
+
+## True once the first peer holds a coordinated drop barrier for the second.
+func _split_barrier_started(mesh: Dictionary) -> bool:
+	return mesh.peers[0]._drops.has_barrier(_id(1).hex_encode())
+
+
 ## A symmetric partition that outlives the disconnect timeout fails closed on
 ## both sides, before its certificate deadline, without freezing any slot or
 ## staging a certificate (wallstop/fortress-rollback#385).
@@ -525,6 +591,198 @@ func _int_reason_keeps_the_explicit_path(context: RefCounted) -> void:
 	context.equal(mesh.reasons.count("missing_quorum"), 4, "only the timeout reasons trip the quorum gate")
 
 
+## The shared parameters of the common-peer split: the second peer is fully
+## isolated, so it fails closed with its missing quorum, and its parting
+## goodbye lets the third peer hold the departure's barrier before the first
+## peer's automatic timeout opens the witnessed certificate.
+func _split_build(context: RefCounted) -> Dictionary:
+	return _build(context, L.Disconnect.CONTINUE, 8, 3, [350000, 200000, 400000], 200000)
+
+
+## A genuine single death commits with the surviving witness's attestation, and
+## the wire carries that attestation on every certificate.
+func _witnessed_death_commits(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	_leave(context, mesh, 2)
+	var wire_flags: Dictionary = {}
+	var waited: int = 0
+	while waited < 600000 and not (mesh.cuts.has(0) and mesh.cuts.has(1)):
+		mesh.now += 1000
+		waited += 1000
+		for survivor: int in [0, 1]:
+			context.equal(mesh.peers[survivor].poll(mesh.now), I.Code.OK, "poll the survivor")
+		var packets: Array[Dictionary] = []
+		for packet: Dictionary in _drain(mesh):
+			if packet.to == 2 or packet.from == 2:
+				# The departed peer receives nothing more and stops answering.
+				continue
+			packets.append(packet)
+			var decoded: T.Result = Codec.decode(packet.bytes, _limits(mesh.count))
+			if decoded.code == T.Code.OK and decoded.message.kind == T.Kind.DROP_BARRIER:
+				wire_flags[[int(decoded.message.phase), int(decoded.message.stage)]] = int(decoded.message.witnessed)
+		_deliver(context, mesh, packets)
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the first survivor publishes the drop")
+	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
+	# The wire contract: only the two consumed report stages attest; prepares,
+	# commits and committed acknowledgements send zero.
+	for stage: Array in [[1, 0], [2, 1], [2, 2], [4, 0], [2, 3]]:
+		context.equal(wire_flags.has(stage), true, "the witnessed drop travels through phase %s" % str(stage))
+	context.equal(int(wire_flags.get([1, 0], -1)), 0, "the prepare sends no attestation")
+	context.equal(int(wire_flags.get([2, 1], -1)), 1, "the window report attests the departure")
+	context.equal(int(wire_flags.get([2, 2], -1)), 1, "the certificate attests the departure")
+	context.equal(int(wire_flags.get([4, 0], -1)), 0, "the commit sends no attestation")
+	context.equal(int(wire_flags.get([2, 3], -1)), 0, "the committed acknowledgement sends no attestation")
+	var barrier: Variant = _barrier(mesh)
+	context.equal(bool(barrier.automatic), true, "the timeout departure is automatic")
+	context.equal(int(barrier.certificates.size()), 1, "exactly one survivor attested")
+	context.equal(bool(barrier.certificates.values()[0]["witnessed"]), true, "the attesting survivor witnessed the departure")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the witnessed drop keeps the match running")
+	context.equal(mesh.unconfirmed, 0, "the witnessed drop needs no fallback")
+	# The survivors resimulate the frames after the agreed frame with the frozen value.
+	_play(context, mesh, 4, true, [0, 1], 2)
+	var rows_first: Dictionary = _rows(mesh.games[0])
+	var rows_second: Dictionary = _rows(mesh.games[1])
+	for frame: int in range(cuts[0] + 1, mini(rows_first.size(), rows_second.size())):
+		context.equal(rows_first[frame][2].bytes, rows_second[frame][2].bytes, "the survivors simulate the same frozen value")
+		context.equal(rows_first[frame][2].status, "disconnected", "the departed slot reports a disconnected status")
+
+
+## The isolated second peer fails closed while the first and third peers agree
+## one witnessed freeze for it and keep playing without its slot.
+func _split_witness_recovers(context: RefCounted) -> void:
+	var mesh: Dictionary = _split_build(context)
+	_play(context, mesh, 6, true)
+	_split(context, mesh, 700000)
+	var cuts: Array[int] = _cuts(mesh, [0, 2])
+	context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.TERMINATED, "the isolated peer stops by its own refused certificate")
+	context.equal(mesh.reasons, ["missing_quorum"], "only the isolated peer's own failure is recorded")
+	context.equal(cuts[0] >= 0, true, "the first survivor freezes the isolated peer")
+	context.equal(cuts[1], cuts[0], "the third peer freezes the same frame")
+	var barrier: Variant = _barrier(mesh, 1)
+	context.equal(int(barrier.certificates.size()), 1, "the third peer attested once")
+	context.equal(bool(barrier.certificates.values()[0]["witnessed"]), true, "the attestation names its own latched departure")
+	for survivor: int in [0, 2]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the majority keeps playing")
+		context.equal(mesh.peers[survivor]._core.frozen_frame(1), cuts[0], "the isolated peer's slot is frozen at the agreed frame")
+	# The survivors keep one confirmed history without the isolated slot.
+	_play(context, mesh, 4, true, [0, 2], 1)
+	var rows_first: Dictionary = _rows(mesh.games[0])
+	var rows_third: Dictionary = _rows(mesh.games[2])
+	for frame: int in range(cuts[0] + 1, mini(rows_first.size(), rows_third.size())):
+		context.equal(rows_first[frame][1].bytes, rows_third[frame][1].bytes, "the survivors simulate the same frozen value")
+		context.equal(rows_first[frame][1].status, "disconnected", "the isolated slot reports a disconnected status")
+
+
+## A certificate whose every attestation is false cannot authorize an automatic
+## freeze: the match ends with the recorded witness reason before any commit.
+func _false_witness_fails_closed(context: RefCounted) -> void:
+	var mesh: Dictionary = _split_build(context)
+	_play(context, mesh, 6, true)
+	var alterations: Array[Dictionary] = [
+		{"phase": 2, "stage": 1, "fields": {"witnessed": 0}, "replace": true},
+		{"phase": 2, "stage": 2, "fields": {"witnessed": 0}, "replace": true},
+	]
+	_split(context, mesh, 700000, alterations)
+	context.equal(mesh.cuts.is_empty(), true, "an unwitnessed certificate freezes no slot")
+	context.equal(mesh.reasons.count("missing_witness"), 2, "both survivors record the missing witness")
+	for player: int in [0, 2]:
+		context.equal(mesh.peers[player].status().lifecycle, Types.Lifecycle.TERMINATED, "the unwitnessed match ends")
+		context.equal(mesh.peers[player]._core.frozen_frame(1), -1, "the isolated peer's slot stays unfrozen")
+		context.equal(mesh.peers[player].status().reason, Types.Code.PROTOCOL_FAILED, "the terminal cause is the missing witness")
+
+
+## An attestation that changes between a survivor's window report and its
+## certificate is a conflicting report, so the match ends before any commit.
+func _mismatched_attestation_aborts(context: RefCounted) -> void:
+	var mesh: Dictionary = _split_build(context)
+	_play(context, mesh, 6, true)
+	var alterations: Array[Dictionary] = [
+		{"phase": 2, "stage": 1, "fields": {"witnessed": 0}, "replace": true},
+	]
+	_split(context, mesh, 700000, alterations)
+	context.equal(mesh.cuts.is_empty(), true, "a conflicting attestation freezes no slot")
+	context.equal(mesh.reasons.has("conflicting_history"), true, "the survivors report the conflicting attestation")
+	for player: int in [0, 2]:
+		context.equal(mesh.peers[player].status().lifecycle, Types.Lifecycle.TERMINATED, "the mismatch ends the match")
+		context.equal(mesh.peers[player]._core.frozen_frame(1), -1, "the isolated peer's slot stays unfrozen")
+
+
+## A forged certificate of the current operation that names a latched departure.
+func _forged_ready_fields(mesh: Dictionary) -> Dictionary:
+	var fields: Dictionary = _identity_fields(mesh, 1)
+	fields["phase"] = 2
+	fields["stage"] = 2
+	fields["witnessed"] = 1
+	return fields
+
+
+## A certificate from a peer that never reported its own window is refused, so
+## a lone attestation cannot complete the agreement without a report chain.
+func _unreported_window_certificate_is_refused(context: RefCounted) -> void:
+	var mesh: Dictionary = _split_build(context)
+	_play(context, mesh, 6, true)
+	# The third peer is still linked to the isolated second peer, so it has
+	# observed no departure when the forged certificate arrives; it has not
+	# reported its own window to the coordinator either.
+	var injections: Array[Dictionary] = [{"to": 0, "from": 2, "fields": _forged_ready_fields.bind(mesh)}]
+	_split(context, mesh, 358000, [], injections)
+	var barrier: Variant = _barrier(mesh, 1)
+	context.equal(int(barrier.certificates.size()), 0, "the forged certificate is not counted")
+	_split(context, mesh, 400000)
+	var cuts: Array[int] = _cuts(mesh, [0, 2])
+	context.equal(cuts[0] >= 0, true, "the genuine witness still completes the agreement")
+	context.equal(cuts[1], cuts[0], "the survivors freeze the same frame")
+	context.equal(mesh.reasons, ["missing_quorum"], "the forged certificate changed no agreement")
+	for survivor: int in [0, 2]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the match survives the forged certificate")
+
+
+## The issue's literal common-peer split: only the first-second link is cut,
+## and the third peer observes no departure while its links stay healthy. No
+## witness materializes, so the certificate never reaches certification and
+## the match ends with the recorded answer-deadline reason, nothing frozen.
+func _common_peer_split_fails_before_the_certificate(context: RefCounted) -> void:
+	# The second peer outlives the window, so it never departs and the third
+	# peer never observes a departure to attest.
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 3, [350000, 900000, 400000], 200000)
+	_play(context, mesh, 6, true)
+	_split(context, mesh, 800000, [], [], [[0, 2], [1, 2]])
+	context.equal(mesh.cuts.is_empty(), true, "an unwitnessed split freezes no slot")
+	context.equal(mesh.reasons, ["timeout", "timeout"], "the coordinator and the waiting survivor record their deadlines")
+	for player: int in [0, 2]:
+		context.equal(mesh.peers[player].status().lifecycle, Types.Lifecycle.TERMINATED, "the unwitnessed match ends")
+		context.equal(mesh.peers[player]._core.frozen_frame(1), -1, "the connected peer's slot stays unfrozen")
+	var barrier: Variant = _barrier(mesh, 1)
+	context.equal(int(barrier.certificates.size()), 0, "no survivor certified the unwitnessed operation")
+	context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING, "the connected second peer keeps running")
+
+
+## A goodbye departure keeps its explicit path: the certificate commits even
+## when no attestation names a latched departure.
+func _goodbye_certificate_keeps_the_explicit_path(context: RefCounted) -> void:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 6, true)
+	context.equal(mesh.peers[2].close(mesh.now, 7), I.Code.OK, "the departing peer says goodbye")
+	_deliver(context, mesh, _drain(mesh), true)
+	var alterations: Array[Dictionary] = [
+		{"phase": 2, "stage": 1, "fields": {"witnessed": 0}, "replace": true},
+		{"phase": 2, "stage": 2, "fields": {"witnessed": 0}, "replace": true},
+	]
+	_detect(context, mesh, [0, 1], 600000, true, alterations, [], true)
+	var cuts: Array[int] = _cuts(mesh, [0, 1])
+	context.equal(cuts[0] >= 0, true, "the explicit departure freezes the slot")
+	context.equal(cuts[1], cuts[0], "both survivors freeze the same frame")
+	var barrier: Variant = _barrier(mesh)
+	context.equal(bool(barrier.automatic), false, "the goodbye departure is not automatic")
+	context.equal(bool(barrier.certificates.values()[0]["witnessed"]), false, "no survivor attested a latched departure")
+	context.equal(mesh.reasons.has("missing_witness"), false, "the explicit path never asks for a witness")
+	for survivor: int in [0, 1]:
+		context.equal(mesh.peers[survivor].status().lifecycle, Types.Lifecycle.RUNNING, "the explicit departure keeps the match running")
+
+
 ## A departure after the owner of the lowest slot left still agrees one frame.
 func _second_departure(context: RefCounted) -> void:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE, 8, 4)
@@ -561,6 +819,7 @@ func _codec_round_trip(context: RefCounted) -> void:
 	message.cut_digest = 13
 	message.chunk_index = 1
 	message.chunk_count = 2
+	message.witnessed = 1
 	message.data = PackedByteArray([2, 3, 0])
 	message.bytes = PackedByteArray([9, 8])
 	var encoded: T.Result = Codec.encode(message, limits)
@@ -581,6 +840,7 @@ func _codec_round_trip(context: RefCounted) -> void:
 	context.equal(decoded.message.cut_digest, 13, "the barrier keeps the frozen value's digest")
 	context.equal(decoded.message.chunk_index, 1, "the barrier keeps its chunk index")
 	context.equal(decoded.message.chunk_count, 2, "the barrier keeps its chunk count")
+	context.equal(int(decoded.message.witnessed), 1, "the barrier keeps its departure attestation")
 	context.equal(decoded.message.data, PackedByteArray([2, 3, 0]), "the barrier keeps its target list")
 	context.equal(decoded.message.bytes, PackedByteArray([9, 8]), "the barrier keeps its frozen value")
 	# An unknown phase, an unknown stage and a malformed target list are refused.
@@ -617,6 +877,17 @@ func _codec_round_trip(context: RefCounted) -> void:
 	unordered.bound = 0
 	unordered.data = PackedByteArray([2, 0, 0, 1, 0, 0])
 	context.equal(Codec.encode(unordered, limits).code, T.Code.INVALID_MESSAGE, "an unordered target list is refused")
+	# An attestation is one bit: an unknown witness value is refused on the wire.
+	var forged: T.Message = T.Message.new()
+	forged.kind = T.Kind.DROP_BARRIER
+	forged.phase = 1
+	forged.operation = 1
+	forged.cut = 1
+	forged.bound = 0
+	forged.witnessed = 2
+	forged.data = PackedByteArray([2, 0, 0])
+	var encoded_forged: T.Result = Codec.encode(forged, limits)
+	context.equal(encoded_forged.code, T.Code.INVALID_MESSAGE, "an unknown witness value is refused")
 
 
 ## A certificate that names another value ends the match instead of freezing divergent values.
@@ -632,14 +903,14 @@ func _conflicting_certificate(context: RefCounted) -> void:
 		context.equal(mesh.peers[survivor].status().reason, Types.Code.PROTOCOL_FAILED, "the terminal cause is the conflicting history")
 
 
-## The barrier of the departed peer, read when a message is built.
-func _barrier(mesh: Dictionary) -> Variant:
-	return mesh.peers[0]._drops.barrier(_id(2).hex_encode())
+## The barrier of a departed peer, read when a message is built.
+func _barrier(mesh: Dictionary, target: int = 2) -> Variant:
+	return mesh.peers[0]._drops.barrier(_id(target).hex_encode())
 
 
 ## The operation identity of the current barrier and the target list it names.
-func _identity_fields(mesh: Dictionary) -> Dictionary:
-	var barrier: Variant = _barrier(mesh)
+func _identity_fields(mesh: Dictionary, target: int = 2) -> Dictionary:
+	var barrier: Variant = _barrier(mesh, target)
 	var era: int = barrier.generations[0]
 	return {
 		"phase": 1,
@@ -647,7 +918,7 @@ func _identity_fields(mesh: Dictionary) -> Dictionary:
 		"target_set_digest": barrier.target_set_digest,
 		"coordinator": barrier.coordinator,
 		"coordinator_generation": barrier.coordinator_generation,
-		"data": PackedByteArray([2, era & 255, (era >> 8) & 255]),
+		"data": PackedByteArray([target, era & 255, (era >> 8) & 255]),
 	}
 
 

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Require an independent departure witness before an automatic timeout drop certificate commits: a fellow survivor must attest, in its window report and again in its certificate, that its own endpoint for the target latched the departure. The coordinator re-checks the certificate's attestation against the report's and ends the match with `missing_witness` (or `conflicting_history` on a disagreement) instead of freezing on an unwitnessed certificate. Goodbye and explicit departures keep their path, and the strict-majority quorum gate is unchanged. The attestation rides the `DROP_BARRIER` report's former reserved trailer byte, which now decodes only `0` and `1`; a peer built before this change refuses such packets, so upgrade all match participants together.
+
 ### Improved
 
 - Scope the probe wave's host-lease inheritance to the wave owner's identity instead of its lease name: the wave owner publishes its name and pid through `FORTRESS_HOST_LEASE_HELD`, and a member inherits only while the live lease record names that exact owner, not by the name alone.

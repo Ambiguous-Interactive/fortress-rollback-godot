@@ -616,6 +616,7 @@ func send_drop_barrier(payload: Variant, now_us: Variant) -> int:
 	var message: T.Message = _packet(T.Kind.DROP_BARRIER)
 	var fields: Array[String] = ["phase", "stage", "reason", "coordinator", "coordinator_generation", "operation"]
 	fields.append_array(["target_set_digest", "cut", "bound", "available_through", "cut_digest", "chunk_index", "chunk_count"])
+	fields.append("witnessed")
 	for field: String in fields:
 		if not payload.get(field, null) is int:
 			return I.Code.INVALID_ARGUMENT
