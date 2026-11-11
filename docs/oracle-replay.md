@@ -323,7 +323,13 @@ at each odd boundary and continues. Expected and actual checksum bytes remain
 in the source observation; the comparison requires these events rather than
 normalizing or hiding them. Godot records the repaired checksums and its decoded
 playback validates every boundary cleanly. Both original corrected histories
-match the independently calculated canonical prefix.
+match the independently calculated canonical prefix. Upstream has since confirmed
+and fixed this ordering defect in wallstop/fortress-rollback#380 through #381
+(merged 2026-11-10): recording now refreshes speculative checksums from the
+saved-state ring after the correction requests execute and omits rows whose
+cell is no longer buffered. The reviewed pin predates that fix, so the observed
+discrepancy above remains the committed evidence at this pin; advancing the pin
+and re-running this probe at the fixed source is #53's reviewed upgrade.
 
 The same gate retains those nine-frame cases and adds paired 257-frame changing-input
 and neutral-input runs. Each endpoint advances beyond two default 128-row queue capacities,
@@ -538,4 +544,6 @@ The original watchdog durations remain unchanged.
 These are Godot browser witnesses, not source-runtime comparisons. Buffer pressure
 is injected; physical relay congestion, the complete asymmetric delivery/stall
 schedule, neutral and withheld-delivery browser controls, and unchanged-source
-recovery remain open in #256. #253 retains the source's speculative checksum discrepancy.
+recovery remain open in #256. #253 retains the source's speculative checksum
+discrepancy at this pin; upstream fixed the ordering defect in #381, and the
+pin advance is #53's reviewed upgrade.
