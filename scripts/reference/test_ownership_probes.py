@@ -1,11 +1,13 @@
 """Value: ownership receipts reject incomplete, divergent or unrelated failure streams."""
 import ast
 import copy
+import marshal
 import re
 import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 from unittest import mock
@@ -391,6 +393,7 @@ class OwnershipReceiptTests(unittest.TestCase):
                                        'scripts/reference/fetch.py', 'scripts/reference/run.py', 'scripts/reference/godot_smoke.py',
                                        'scripts/reference/receipt_arguments.py', 'scripts/reference/local_ownership.py', 'scripts/reference/browser/webrtc_matrix.py',
                                        'scripts/reference/browser/webrtc_import.py', 'scripts/reference/signalfish_probe.py',
+                                       'scripts/reference/owned_process.py', 'scripts/host_capacity.py',
                                        'scripts/reference/browser/webrtc_display.cjs', 'scripts/reference/browser/package.json',
                                        'scripts/reference/browser/package-lock.json',
                                        'docs/reference/pins.json', 'project.godot']
@@ -435,6 +438,9 @@ class OwnershipReceiptTests(unittest.TestCase):
                       mock.patch.object(probes, 'load_manifest', return_value=data),
                       mock.patch.object(probes, 'fetch', return_value=archive), mock.patch.object(probes, 'run', side_effect=run),
                       mock.patch.object(probes, 'capture', side_effect=capture),
+                      # The executed helper modules live in the real tree, not this
+                      # fixture root; their bytecode verification is the other test's subject.
+                      mock.patch.object(probes, 'verify_executed_helpers'),
                       mock.patch.object(probes.shutil, 'copyfile', side_effect=copy_file),
                       mock.patch.object(probes.host_capacity, 'acquire_when_free', return_value=True),
                       mock.patch.object(probes.platform, 'machine', return_value='x86_64'),
@@ -596,6 +602,42 @@ class RuntimeDiagnosticTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, '^ownership runtime input is symlinked: firefox/browser/lock$'):
                         probes.tool_inventory({'firefox': installation})
                     digest.assert_not_called()
+
+
+class ExecutedHelperBytecodeTests(unittest.TestCase):
+    # Value: protects=the executed bytes the receipt binds; fails_when=a timestamp-valid poisoned
+    # __pycache__ or a drifted helper source would execute instead of verified source; seam=import boundary
+    def test_helper_verification_rejects_poisoned_caches_and_drift(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            helper = root / 'bytecode_probe_helper.py'
+            source = "VALUE = 'honest'\n"
+            helper.write_text(source)
+            sys.path.insert(0, str(root))
+            name = 'bytecode_probe_helper'
+            try:
+                module = __import__(name)
+                relative = 'bytecode_probe_helper.py'
+                frozen = {relative: probes.digest(helper)}
+                probes.verify_executed_helpers(frozen, root=root, names=(name,))
+                cache = Path(module.__cached__)
+                header = cache.read_bytes()[:16]
+                # The poisoned body keeps the honest header, so source timestamps and
+                # sizes still validate: only verified-source comparison can reject it.
+                cache.write_bytes(header + marshal.dumps(compile("VALUE = 'poisoned'", module.__file__, 'exec')))
+                with self.assertRaisesRegex(ValueError, 'differs from verified source'):
+                    probes.verify_executed_helpers(frozen, root=root, names=(name,))
+                cache.write_bytes(header + marshal.dumps(compile(source, module.__file__, 'exec')))
+                probes.verify_executed_helpers(frozen, root=root, names=(name,))
+                with self.assertRaisesRegex(ValueError, 'differs from inventory'):
+                    probes.verify_executed_helpers({relative: '0' * 64}, root=root, names=(name,))
+                with self.assertRaisesRegex(ValueError, 'outside the source tree'):
+                    probes.verify_executed_helpers(frozen, names=(name,))
+                with self.assertRaisesRegex(ValueError, 'not imported'):
+                    probes.verify_executed_helpers({'missing_helper.py': '0' * 64}, root=root, names=('missing_helper',))
+            finally:
+                sys.path.remove(str(root))
+                sys.modules.pop(name, None)
 
 
 if __name__ == '__main__':
