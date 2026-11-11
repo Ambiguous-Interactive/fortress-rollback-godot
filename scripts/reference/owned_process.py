@@ -18,6 +18,7 @@ import os
 import select
 import signal
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -174,7 +175,9 @@ def _collect(process, deadline):
     full pipe. Once the child has exited, one immediate read pass captures
     everything it had already written; later bytes can only come from an
     escaped descendant and are withheld from the returned output. Draining
-    after exit stops at EOF or the idle grace, whichever comes first.
+    after exit stops at EOF or the idle grace, whichever comes first. The
+    returned parts keep stdout and stderr separate so a caller that parses
+    the streams differently can join them in its own order.
     """
     stdout = process.stdout.fileno()
     streams = {stdout: bytearray(), process.stderr.fileno(): bytearray()}
@@ -216,11 +219,8 @@ def _collect(process, deadline):
             continue
         _read_available(streams, buffers)
     process.wait()
-    text = bytes(buffers[stdout][:trusted[stdout]]).decode('utf-8', errors='replace')
-    for descriptor, data in buffers.items():
-        if descriptor != stdout:
-            text += bytes(data[:trusted[descriptor]]).decode('utf-8', errors='replace')
-    return process.returncode, text, post_exit_bytes, group_alive
+    parts = {descriptor: bytes(data[:trusted[descriptor]]).decode('utf-8', errors='replace') for descriptor, data in buffers.items()}
+    return process.returncode, parts, post_exit_bytes, group_alive
 
 
 def _wait_readable(streams, timeout):
@@ -237,26 +237,54 @@ def _drain_after_kill(process):
     return stdout + ''.join(data.decode('utf-8', errors='replace') for data in buffers.values())
 
 
-def run(command, environment, log, timeout, cwd=None):
-    """Run one bounded command whose entire descendant tree stays owned.
-
-    The launcher writes the started command, the owned identities it had to
-    terminate and a TIMEOUT marker into the same log the caller already reads,
-    so a rejected or escaped run keeps its diagnosis where the watchdog looks.
-    The return value and the raised TimeoutExpired match the previous
-    subprocess.run contract, including the partial output a deadline captured.
-    """
+def _start(command, environment, cwd, input_text=False):
+    """Start one process in its own session carrying a unique ownership token."""
     owned = dict(environment or os.environ)
     token_value = uuid.uuid4().hex
     owned[TOKEN_VARIABLE] = token_value
-    if not (hasattr(os, 'killpg') and Path('/proc').is_dir()):
-        completed = subprocess.run(command, cwd=cwd, env=owned, capture_output=True, text=True, timeout=timeout)
-        return completed.returncode, completed.stdout + completed.stderr
     process = subprocess.Popen(command, cwd=cwd, env=owned, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               start_new_session=True)
+                               stdin=subprocess.PIPE if input_text else subprocess.DEVNULL,
+                               text=True, start_new_session=True)
+    return process, token_value
+
+
+def _feed_stdin(process, input_text, failures):
+    """Write the stdin payload concurrently, so a full pipe cannot block.
+
+    The write runs on its own thread while the collector drains the output
+    pipes, mirroring the communicate() loop the previous subprocess.run shape
+    used: a payload larger than the pipe buffer, or a child that never reads,
+    can never stop the deadline from arming. A killed child surfaces as a
+    write failure inside the thread and must not mask the real exit, and a
+    failed write still owes the child its EOF.
+    """
+
+    def feed():
+        try:
+            process.stdin.write(input_text)
+            process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            try:
+                process.stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+        except Exception as error:
+            failures.append(error)  # Named in the log; the exit code stays the child's.
+
+    threading.Thread(target=feed, daemon=True).start()
+
+
+def _run_until_exit(process, token_value, log, timeout):
+    """Collect one owned child, owning the deadline and interruption paths.
+
+    Both public runners share this tail: a deadline kills the group, keeps the
+    partial output and records the timeout marker; an interruption must not
+    strand the tree either. Returns the trusted per-stream parts and the exit
+    bookkeeping, or raises with the log already written.
+    """
     try:
         try:
-            returncode, output, post_exit_bytes, group_alive = _collect(process, time.monotonic() + timeout)
+            returncode, parts, post_exit_bytes, group_alive = _collect(process, time.monotonic() + timeout)
         except _Deadline as expired:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -264,14 +292,11 @@ def run(command, environment, log, timeout, cwd=None):
                 pass  # The child exited in the deadline race; the sweeps below still run.
             survivors = terminate(token_value)
             process.poll()
-            text = expired.buffers[expired.stdout].decode('utf-8', errors='replace')
-            for descriptor, data in expired.buffers.items():
-                if descriptor != expired.stdout:
-                    text += data.decode('utf-8', errors='replace')
+            text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
             text += _drain_after_kill(process) + '\n'
             log.write_text(text + f'TIMEOUT: command exceeded {timeout} seconds\n'
                            + f'OWNED_PROCESSES: terminated {survivors}\n')
-            raise subprocess.TimeoutExpired(command, timeout, output=text) from None
+            raise subprocess.TimeoutExpired(process.args, timeout, output=text) from None
         except BaseException:
             # An interruption must not strand the tree either: the new session
             # never saw the terminal signal, so both ownership checks run, the
@@ -299,22 +324,153 @@ def run(command, environment, log, timeout, cwd=None):
                     pass
             process.poll()
             raise
-        if post_exit_bytes:
-            output += ('\nPOST_EXIT_OUTPUT: '
-                       f'{post_exit_bytes} byte(s) arrived after the command exited and were withheld\n')
-        # Both ownership checks always run before any escape raises: a command
-        # can leave a same-group descendant and a setsid token carrier at once,
-        # and reporting only the first would strand the second.
-        members = terminate_group(process.pid) if group_alive else []
-        survivors = terminate(token_value)
-        if members or survivors:
-            output += f'OWNED_PROCESSES: terminated {members + survivors}\n'
-            log.write_text(output)
-            raise EscapedDescendants(members + survivors)
-        if post_exit_bytes:
-            log.write_text(output)
-        return returncode, output
+        return returncode, parts, post_exit_bytes, group_alive
     finally:
-        for stream in (process.stdout, process.stderr):
+        for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
-                stream.close()
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+
+
+def run(command, environment, log, timeout, cwd=None, input_text=None):
+    """Run one bounded command whose entire descendant tree stays owned.
+
+    The launcher writes the started command, the owned identities it had to
+    terminate and a TIMEOUT marker into the same log the caller already reads,
+    so a rejected or escaped run keeps its diagnosis where the watchdog looks.
+    The return value and the raised TimeoutExpired match the previous
+    subprocess.run contract, including the partial output a deadline captured.
+    """
+    if not (hasattr(os, 'killpg') and Path('/proc').is_dir()):
+        owned = dict(environment or os.environ)
+        owned[TOKEN_VARIABLE] = uuid.uuid4().hex
+        try:
+            completed = subprocess.run(command, cwd=cwd, env=owned, capture_output=True, text=True, timeout=timeout,
+                                       input=input_text)
+        except subprocess.TimeoutExpired as error:
+            output = error.output if isinstance(error.output, str) else (error.output or b'').decode('utf-8', errors='replace')
+            log.write_text(output + f'\nTIMEOUT: command exceeded {timeout} seconds\n')
+            raise
+        return completed.returncode, completed.stdout + completed.stderr
+    process, token_value = _start(command, environment, cwd, input_text is not None)
+    feed_failures = []
+    if input_text is not None:
+        _feed_stdin(process, input_text, feed_failures)
+    returncode, parts, post_exit_bytes, group_alive = _run_until_exit(process, token_value, log, timeout)
+    output = ''.join(parts.values())
+    if feed_failures:
+        output += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
+    if post_exit_bytes:
+        output += ('\nPOST_EXIT_OUTPUT: '
+                   f'{post_exit_bytes} byte(s) arrived after the command exited and were withheld\n')
+    # Both ownership checks always run before any escape raises: a command
+    # can leave a same-group descendant and a setsid token carrier at once,
+    # and reporting only the first would strand the second.
+    members = terminate_group(process.pid) if group_alive else []
+    survivors = terminate(token_value)
+    if members or survivors:
+        output += f'OWNED_PROCESSES: terminated {members + survivors}\n'
+        log.write_text(output)
+        raise EscapedDescendants(members + survivors)
+    if post_exit_bytes or feed_failures:
+        log.write_text(output)
+    return returncode, output
+
+
+def run_split(command, environment, log, timeout, cwd=None, input_text=None):
+    """Run one owned command and keep its streams separate for strict callers.
+
+    Callers that parse stdout as data and refuse any stderr need the command's
+    own streams without the diagnostic notes a merged run may append. The
+    healthy path returns exactly the trusted stdout and stderr the child
+    wrote; an escaped descendant raises EscapedDescendants instead of
+    contaminating either stream, and the timeout path keeps the merged partial
+    output on the raised TimeoutExpired exactly like run().
+    """
+    if not (hasattr(os, 'killpg') and Path('/proc').is_dir()):
+        owned = dict(environment or os.environ)
+        owned[TOKEN_VARIABLE] = uuid.uuid4().hex
+        try:
+            completed = subprocess.run(command, cwd=cwd, env=owned, capture_output=True, text=True, timeout=timeout,
+                                       input=input_text)
+        except subprocess.TimeoutExpired as error:
+            output = error.output if isinstance(error.output, str) else (error.output or b'').decode('utf-8', errors='replace')
+            log.write_text(output + f'\nTIMEOUT: command exceeded {timeout} seconds\n')
+            raise
+        return completed.returncode, completed.stdout, completed.stderr
+    process, token_value = _start(command, environment, cwd, input_text is not None)
+    stdout_descriptor = process.stdout.fileno()
+    feed_failures = []
+    if input_text is not None:
+        _feed_stdin(process, input_text, feed_failures)
+    returncode, parts, post_exit_bytes, group_alive = _run_until_exit(process, token_value, log, timeout)
+    stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
+    if feed_failures:
+        stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
+    members = terminate_group(process.pid) if group_alive else []
+    survivors = terminate(token_value)
+    if members or survivors:
+        # The child's own trusted output stays in the log beside the note,
+        # so an escaped run keeps its diagnosis where the caller looks.
+        log.write_text(''.join(parts.values()) + f'OWNED_PROCESSES: terminated {members + survivors}\n')
+        raise EscapedDescendants(members + survivors)
+    if post_exit_bytes:
+        log.write_text(f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
+                       'exited and were withheld\n')
+        stderr += (f'\nPOST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
+                   'exited and were withheld\n')
+    return returncode, parts[stdout_descriptor], stderr
+
+
+def spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
+    """Start one caller-managed process in its own owned session.
+
+    Long-lived companions such as a native engine host cannot go through run():
+    their lifetime spans other owned commands. The caller receives the process
+    and its token and must end the episode with finish(), which applies the
+    same descendant-tree ownership checks run() applies to its own children.
+    """
+    owned = dict(environment if environment is not None else os.environ)
+    token_value = uuid.uuid4().hex
+    owned[TOKEN_VARIABLE] = token_value
+    process = subprocess.Popen(command, cwd=cwd, env=owned, stdout=stdout, stderr=stderr, start_new_session=True)
+    return process, token_value
+
+
+def finish(process, token_value, grace=5.0):
+    """Stop one spawned process and verify its whole descendant tree is gone.
+
+    The direct child is asked to terminate first and is killed at the grace
+    deadline, mirroring the previous host teardown; then both ownership checks
+    run, so any surviving descendant is killed and named instead of being
+    adopted by init. Returns once nothing owned is alive.
+    """
+    try:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except OSError:
+                    process.kill()
+                process.wait(timeout=grace)
+        members = terminate_group(process.pid)
+        survivors = terminate(token_value)
+        if process.poll() is None:
+            try:
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                pass  # The sweeps already killed every group member and carrier.
+        if members or survivors:
+            raise EscapedDescendants(members + survivors)
+    finally:
+        for stream in (process.stdin, process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError:
+                    pass

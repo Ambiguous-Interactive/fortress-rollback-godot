@@ -650,6 +650,13 @@ The development bearer service is not a production identity provider; seated rem
 retains exported host/seated transport, replacement, pressure and remaining browser lifecycle cells.
 Coordinated peer drop must preserve exposed confirmed history and irreversible
 commit semantics; a local minimum-received-frame shortcut is insufficient.
+An automatic timeout departure may stage its certificate only while a strict
+majority of the membership epoch remains locally reachable; a component
+without the majority ends the match with a recorded `missing_quorum` reason
+instead of staging complementary freezes toward a fork (the pinned upstream
+defect wallstop/fortress-rollback#383, fixed upstream by #385). Goodbye
+departures keep the explicit path and the last survivor keeps the pinned
+one-member freeze.
 The opt-in graceful drop freezes a departed slot at the mesh-confirmed frame so
 the survivors keep playing and reports a disconnected input status. The
 survivors now agree that frame first: the survivor that owns the lowest

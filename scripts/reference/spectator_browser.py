@@ -11,6 +11,7 @@ import threading
 import zipfile
 from urllib.parse import urlsplit
 
+import owned_process  # noqa: E402
 from fetch import CACHE, ROOT, digest, fetch, prepare_zip
 from godot_smoke import run
 from signalfish_probe import inventory
@@ -219,39 +220,36 @@ def _execute(engine, project, runtime, url, environment, output, control, fault=
     if acceptance_delay_ms is not None:
         controller = controller.with_name("spectator_acceptance.cjs")
         environment = {**environment, "FORTRESS_ACCEPT_DELAY_MS": str(acceptance_delay_ms)}
+    browser_log = output / 'browser.log'
     with (output / 'native.log').open('wb') as log:
-        host = subprocess.Popen([str(engine), '--headless', '--path', str(project), '--script', 'res://spectator_browser_host.gd', '--', str(runtime)],
-                                stdout=log, stderr=subprocess.STDOUT)
+        host, token = owned_process.spawn([str(engine), '--headless', '--path', str(project), '--script', 'res://spectator_browser_host.gd', '--', str(runtime)],
+                                          environment, stdout=log, stderr=subprocess.STDOUT)
         try:
             try:
-                process = subprocess.run([environment['FORTRESS_NODE_EXECUTABLE'], str(controller), url, str(runtime)],
-                                     env=environment, capture_output=True, encoding='utf-8', timeout=80)
-            except subprocess.TimeoutExpired as error:
-                (output / 'browser.log').write_bytes((error.stdout or b'') + (error.stderr or b''))
-                raise ValueError('exported spectator browser process deadline') from error
-            (output / 'browser.log').write_text(process.stdout + process.stderr)
-            browser_output = process.stdout
+                returncode, browser_output, stderr = owned_process.run_split(
+                    [environment['FORTRESS_NODE_EXECUTABLE'], str(controller), url, str(runtime)],
+                    environment, browser_log, 80)
+            except subprocess.TimeoutExpired:
+                # owned_process recorded the partial browser output and the timeout marker.
+                raise ValueError('exported spectator browser process deadline') from None
+            browser_log.write_text(browser_output + stderr)
             if fault in ['initial-state', 'room-identity']:
                 browser = json.loads(browser_output)
                 acknowledge_disposal_abort(browser, control)
-                validate_fault(process.returncode, browser, host.poll() is None, control, process.stderr)
+                validate_fault(returncode, browser, host.poll() is None, control, stderr)
                 return {'fault': fault, 'rejected': True, 'viewer': browser}
-            if process.returncode != 0 or process.stderr:
+            if returncode != 0 or stderr:
                 raise ValueError('exported spectator failed; inspect browser.log')
             host.wait(timeout=10)
         finally:
-            if host.poll() is None:
-                host.terminate()
-                try:
-                    host.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    host.kill()
-                    host.wait(timeout=5)
+            # Both ownership checks run on every exit, so a browser or engine
+            # descendant can never outlive this cell as an adopted competitor.
+            owned_process.finish(host, token)
     native = (output / 'native.log').read_text()
     rows = [json.loads(line.removeprefix('FORTRESS_BROWSER_HOST_RESULT ')) for line in native.splitlines() if line.startswith('FORTRESS_BROWSER_HOST_RESULT ')]
     if host.returncode != 0 or 'ERROR:' in native or len(rows) != 1:
         raise ValueError('native browser-host witness failed; inspect native.log')
-    result, failure = classify_browser_output(process.returncode, process.stderr, browser_output, control)
+    result, failure = classify_browser_output(returncode, stderr, browser_output, control)
     if failure is not None:
         raise ValueError(failure)
     if fault == 'host-departure':

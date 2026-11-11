@@ -132,7 +132,7 @@ func has_barrier(key: String) -> bool:
 
 
 ## A peer went silent. The survivors agree the frozen frame before they freeze it.
-func observed(host: Variant, index: int) -> bool:
+func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 	if host._lifecycle.disconnect_behavior != L.Disconnect.CONTINUE:
 		host._core.terminate(Types.Code.PROTOCOL_FAILED)
 		return false
@@ -145,6 +145,19 @@ func observed(host: Variant, index: int) -> bool:
 	var lower: int = host._core.rollback_floor()
 	var receipts: Dictionary = Inventory.capture(host._core, slots)
 	var last_survivor: bool = _live_survivors(host) == 0
+	if reason is String and reason == "timeout" and not last_survivor:
+		var quorum: Dictionary = _automatic_quorum(host, index)
+		if not quorum["met"]:
+			# An automatic timeout departure must not stage a certificate while a
+			# strict majority of the membership epoch is unreachable: a split mesh
+			# would otherwise stage complementary freezes toward divergent
+			# histories. The one-member certificate keeps the pinned last-survivor
+			# freeze, and goodbye departures keep their explicit path
+			# (wallstop/fortress-rollback#385).
+			host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[index].duplicate(),
+				"reason": "missing_quorum", "reachable": quorum["reachable"], "membership": quorum["membership"]})
+			host._core.terminate(Types.Code.PROTOCOL_FAILED)
+			return false
 	if last_survivor:
 		upper = maxi(upper, Inventory.highest(receipts))
 	if upper < lower or (last_survivor and not Inventory.covers(receipts, slots, lower, upper)):
@@ -821,6 +834,28 @@ func _live_survivors(host: Variant) -> int:
 		if not is_gone(host._ids[index].hex_encode()):
 			count += 1
 	return count
+
+
+## An automatic timeout departure may open the certificate only while a strict
+## majority of the membership epoch remains locally reachable, counting this
+## session and every not-yet-dropped peer whose endpoint is still running
+## without a latched interruption. The departed member counts toward the epoch
+## until its own certificate commits, so an even split refuses on both sides
+## instead of staging complementary freezes (wallstop/fortress-rollback#385).
+## Goodbye departures keep the explicit path, and the survivor agreement inside
+## the certificate stays the independent witness for verdicts this session
+## cannot observe directly.
+func _automatic_quorum(host: Variant, index: int) -> Dictionary:
+	var reachable: int = 1
+	var membership: int = 2
+	for peer: int in range(host._ids.size()):
+		if peer == index or is_gone(host._ids[peer].hex_encode()):
+			continue
+		membership += 1
+		var status: Dictionary = host._endpoint(peer).status()
+		if status.get("state") == "running" and status.get("interrupted") != true:
+			reachable += 1
+	return {"met": reachable * 2 > membership, "reachable": reachable, "membership": membership}
 
 
 ## The lowest surviving slot decides which survivor proposes the coordinated drop.

@@ -100,6 +100,14 @@ a peer using the older drop tier is refused before gameplay.
 
 ### The coordinated drop
 
+An automatic timeout departure opens the certificate only while a strict majority of the
+membership epoch remains locally reachable: an endpoint that is terminated or latches an
+interruption is unreachable, and the departed member counts toward the epoch until its own
+certificate commits. A component without the majority ends the match with `missing_quorum`
+and its reachable/membership counts instead of staging certificates toward a split-brain
+fork. Goodbye departures keep the explicit path, and the last survivor keeps the one-member
+freeze.
+
 The last survivor also raises the cut through every retained actual input from the departed endpoint.
 All of that endpoint's player slots must retain complete history through the same cut before any slot freezes.
 Missing grouped history ends the match with `missing_history`; received original inputs are never replaced by an earlier frozen value.
