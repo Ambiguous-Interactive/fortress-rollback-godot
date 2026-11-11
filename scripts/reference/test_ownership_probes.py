@@ -1,6 +1,7 @@
 """Value: ownership receipts reject incomplete, divergent or unrelated failure streams."""
 import ast
 import copy
+import importlib.util
 import marshal
 import re
 import json
@@ -619,15 +620,24 @@ class ExecutedHelperBytecodeTests(unittest.TestCase):
                 module = __import__(name)
                 relative = 'bytecode_probe_helper.py'
                 frozen = {relative: probes.digest(helper)}
+                # The cache is fabricated from the source's own timestamp and
+                # size, so the control is independent of whether this
+                # interpreter writes bytecode caches at all.
+                cache = Path(importlib.util.cache_from_source(helper))
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                module.__cached__ = str(cache)
+                data = helper.read_bytes()
+                header = (importlib.util.MAGIC_NUMBER + (0).to_bytes(4, 'little')
+                          + int(helper.stat().st_mtime).to_bytes(4, 'little') + len(data).to_bytes(4, 'little'))
+                honest = header + marshal.dumps(compile(data, str(helper), 'exec'))
+                cache.write_bytes(honest)
                 probes.verify_executed_helpers(frozen, root=root, names=(name,))
-                cache = Path(module.__cached__)
-                header = cache.read_bytes()[:16]
                 # The poisoned body keeps the honest header, so source timestamps and
                 # sizes still validate: only verified-source comparison can reject it.
-                cache.write_bytes(header + marshal.dumps(compile("VALUE = 'poisoned'", module.__file__, 'exec')))
+                cache.write_bytes(header + marshal.dumps(compile("VALUE = 'poisoned'", str(helper), 'exec')))
                 with self.assertRaisesRegex(ValueError, 'differs from verified source'):
                     probes.verify_executed_helpers(frozen, root=root, names=(name,))
-                cache.write_bytes(header + marshal.dumps(compile(source, module.__file__, 'exec')))
+                cache.write_bytes(honest)
                 probes.verify_executed_helpers(frozen, root=root, names=(name,))
                 with self.assertRaisesRegex(ValueError, 'differs from inventory'):
                     probes.verify_executed_helpers({relative: '0' * 64}, root=root, names=(name,))
