@@ -25,8 +25,9 @@ def check_godot_inventory(packet, missing_rows, target_slots, unequal, warmup=0)
     receipts = bytes([1, target_slots]) + b''.join(struct.pack('<Bii', slot, max(0, warmup - 2), warmup + 7 + missing_rows)
                                                                 for slot in range(2 * target_slots, 3 * target_slots))
     expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2]) + bytes(7) + bytes([22]) + bytes(7)
-                + struct.pack('<I4BHHIQiiiQHHHI', 54 + len(targets) + len(receipts), 2, 1, 0, 0, 0, 21 << 8,
-                              era + 1, digest, warmup + 4 + int(unequal), max(0, warmup - 2), warmup + 7 + missing_rows, 0, 0, 64, 0, len(targets))
+                # The inventory report attests the sender's own latched departure.
+                + struct.pack('<I4BHHIQiiiQHH2BI', 54 + len(targets) + len(receipts), 2, 1, 0, 0, 0, 21 << 8,
+                              era + 1, digest, warmup + 4 + int(unequal), max(0, warmup - 2), warmup + 7 + missing_rows, 0, 0, 64, 1, 0, len(targets))
                 + targets + struct.pack('<I', len(receipts)) + receipts)
     require(bytes.fromhex(raw) == expected, 'Godot exact original inventory')
 

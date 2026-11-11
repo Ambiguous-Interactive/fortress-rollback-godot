@@ -199,10 +199,14 @@ def check_godot_commit(packet, missing_rows, target_slots, acknowledgement=False
             value = ((value ^ byte) * 1099511628211) & 0x3fffffffffffffff
         return value or 1
     value = bytes((cut * 11 + slot * 7 + index) % 251 for slot in range(2 * target_slots, 3 * target_slots) for index in range(4))
+    # The report's trailer carries the sender's departure attestation: a
+    # certified acknowledgement reports from a survivor whose own endpoint for
+    # the target latched the departure, so it sends witnessed=1; the commit is
+    # not a report and sends 0.
     expected = (b'FRGP\x02\x00\x0c\x00' + bytes([91]) + bytes(15) + bytes([2 if acknowledgement else 1]) + bytes(7) + bytes([22 if acknowledgement else 21]) + bytes(7)
-                + struct.pack('<I4BHHIQiiiQHHHI', 54 + len(targets), 2 if acknowledgement else 4, 3 if acknowledgement else 0, 0, 0, 0, 21 << 8,
+                + struct.pack('<I4BHHIQiiiQHH2BI', 54 + len(targets), 2 if acknowledgement else 4, 3 if acknowledgement else 0, 0, 0, 0, 21 << 8,
                               target_era + 1, digest(targets), cut, max(0, warmup - 2 + int(unequal and not acknowledgement)),
-                              cut if acknowledgement else warmup + 7, digest(value), 0, 0, 0, len(targets))
+                              cut if acknowledgement else warmup + 7, digest(value), 0, 0, 1 if acknowledgement else 0, 0, len(targets))
                 + targets + struct.pack('<I', 0))
     require(bytes.fromhex(raw) == expected, 'Godot exact certified acknowledgement' if acknowledgement else 'Godot exact certified commit')
 
