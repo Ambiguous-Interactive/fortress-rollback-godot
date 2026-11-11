@@ -138,6 +138,8 @@ static func body_size(message: T.Message, bounds: T.Limits) -> int:
 				return -1
 			if message.chunk_count < 0 or message.chunk_count > 64:
 				return -1
+			if message.witnessed < 0 or message.witnessed > 1:
+				return -1
 			if message.bytes.size() > 4096:
 				return -1
 			if not _targets(message.data, bounds.player_count):

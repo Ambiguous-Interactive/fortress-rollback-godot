@@ -238,7 +238,7 @@ func _validate_agreement(context: RefCounted, fixture: RefCounted, parity: RefCo
 				context.equal(barrier.role, Drop.Role.PROPOSER, "survivor zero collects the all-survivor certificate")
 				context.equal(barrier.certificates.keys(), [fixture._id(1).hex_encode()], "proposer retains every remote survivor certificate")
 				for identity: String in barrier.certificates:
-					context.equal(barrier.certificates[identity], {"cut": 5, "digest": digest}, "the survivor certificate binds the agreed cut and original value")
+					context.equal(barrier.certificates[identity], {"cut": 5, "digest": digest, "witnessed": true}, "the survivor certificate binds the agreed cut and original value")
 			else:
 				context.equal(barrier.role, Drop.Role.FOLLOWER, "survivor one certifies the coordinator value")
 				context.equal(barrier.certified, true, "follower certified the agreed value")

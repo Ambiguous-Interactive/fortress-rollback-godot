@@ -184,7 +184,8 @@ static func _write_body(writer: StreamPeerBuffer, message: T.Message) -> void:
 			writer.put_u64(message.cut_digest)
 			writer.put_u16(message.chunk_index)
 			writer.put_u16(message.chunk_count)
-			writer.put_u16(0)
+			writer.put_u8(message.witnessed)
+			writer.put_u8(0)
 			writer.put_u32(message.data.size())
 			writer.put_data(message.data)
 			writer.put_u32(message.bytes.size())
@@ -262,7 +263,8 @@ static func _read_body(reader: Reader, message: T.Message, limits: T.Limits) -> 
 			message.cut_digest = reader.number(8)
 			message.chunk_index = reader.number(2)
 			message.chunk_count = reader.number(2)
-			if reader.number(2) != 0:
+			message.witnessed = reader.number(1)
+			if message.witnessed > 1 or reader.number(1) != 0:
 				reader.valid = false
 				return
 			var targets: int = reader.number(4)

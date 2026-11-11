@@ -21,7 +21,7 @@ extends RefCounted
 enum Phase { PREPARE = 1, REPORT = 2, BACKFILL = 3, COMMIT = 4, ABORT = 5 }
 enum Stage { NONE = 0, INVENTORY = 1, READY = 2, COMMITTED = 3, NEEDS_VALUE = 4, HISTORY = 5 }
 enum Role { FOLLOWER = 0, PROPOSER = 1 }
-enum Abort { SUPERSEDED = 1, MISSING_HISTORY = 2, CONFLICTING_HISTORY = 3, PARTICIPANT_LOST = 4, TIMEOUT = 5, GENERATION_CHANGED = 6, RESOURCE_LIMIT = 7 }
+enum Abort { SUPERSEDED = 1, MISSING_HISTORY = 2, CONFLICTING_HISTORY = 3, PARTICIPANT_LOST = 4, TIMEOUT = 5, GENERATION_CHANGED = 6, RESOURCE_LIMIT = 7, MISSING_WITNESS = 8 }
 const PENDING: String = "pending"
 const COMMITTED: String = "committed"
 const FAILED: String = "failed"
@@ -72,6 +72,11 @@ class Barrier:
 	var chunk_budget: int = 0
 	var history: History = History.new()
 	var ready_receipts: Dictionary = {}
+	## An automatic timeout departure needs an independent witness before the
+	## certificate commits; goodbye and explicit departures keep their path.
+	var automatic: bool = false
+	## Whether this survivor's own endpoint for the target latched a departure.
+	var witnessed: bool = false
 
 
 var _departed: Dictionary = {}
@@ -170,6 +175,8 @@ func observed(host: Variant, index: int, reason: Variant = 0) -> bool:
 		return _freeze(host, index, upper, PackedByteArray(), false)
 	var barrier: Barrier = Barrier.new()
 	barrier.index = index
+	barrier.automatic = reason is String and reason == "timeout"
+	barrier.witnessed = _witnessed(host, index)
 	for identity: PackedByteArray in host._ids:
 		if not is_gone(identity.hex_encode()):
 			barrier.participants.append(identity.hex_encode())
@@ -325,6 +332,13 @@ func _drive_proposer(host: Variant, barrier: Barrier, now_us: int) -> void:
 	if certified < live:
 		# The all-survivor certificate is not complete yet.
 		return
+	if barrier.automatic and not _witness_present(barrier):
+		# An automatic timeout departure commits only when a fellow survivor
+		# attests its own endpoint latched the target's departure. Without that
+		# witness a connected or fabricated certificate must not freeze the
+		# slot (wallstop/fortress-rollback#385).
+		_fail(host, barrier, "missing_witness")
+		return
 	if not _can_freeze(host, barrier.index, barrier.cut):
 		_abort(host, barrier, Abort.MISSING_HISTORY)
 		return
@@ -427,6 +441,7 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 			"available_through": int(event.get("available_through", -1)),
 			"chunk_budget": int(event.get("chunk_count", 0)) * 16,
 			"receipts": receipts,
+			"witnessed": int(event.get("witnessed", 0)) == 1,
 		}
 		if barrier.answers.has(identity) and barrier.answers[identity] != answer:
 			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
@@ -455,7 +470,14 @@ func _receive_report(host: Variant, index: int, key: String, barrier: Barrier, e
 		if not Inventory.covers(receipts, barrier.slots, int(answer.bound), barrier.cut):
 			_abort(host, barrier, Abort.MISSING_HISTORY)
 			return
-		var certificate: Dictionary = {"cut": int(event.get("cut", -1)), "digest": int(event.get("cut_digest", 0))}
+		# The certification-time attestation must match the one this survivor
+		# reported with its own window: both derive from its endpoint state for
+		# the target, so a mismatch means a corrupted or fabricated report.
+		var witnessed: bool = int(event.get("witnessed", 0)) == 1
+		if witnessed != bool(answer.witnessed):
+			_abort(host, barrier, Abort.CONFLICTING_HISTORY)
+			return
+		var certificate: Dictionary = {"cut": int(event.get("cut", -1)), "digest": int(event.get("cut_digest", 0)), "witnessed": witnessed}
 		if barrier.certificates.has(identity):
 			if barrier.certificates[identity] != certificate:
 				_abort(host, barrier, Abort.CONFLICTING_HISTORY)
@@ -627,7 +649,8 @@ func _fail(host: Variant, barrier: Barrier, reason: String, notify: bool = true)
 	host._publish_event({"kind": "peer_drop_unconfirmed", "peer": host._ids[barrier.index].duplicate(), "reason": reason})
 	if notify:
 		# The other survivors stop waiting instead of timing out on their own.
-		_send(host, barrier, Phase.ABORT, Stage.NONE, Abort.MISSING_HISTORY if reason in ["missing_history", "no_common_window"] else Abort.TIMEOUT)
+		var abort: int = Abort.MISSING_WITNESS if reason == "missing_witness" else Abort.MISSING_HISTORY if reason in ["missing_history", "no_common_window"] else Abort.TIMEOUT
+		_send(host, barrier, Phase.ABORT, Stage.NONE, abort)
 	host._core.terminate(Types.Code.PROTOCOL_FAILED)
 
 
@@ -656,6 +679,8 @@ func _abort_reason(reason: int) -> String:
 			return "generation_changed"
 		Abort.RESOURCE_LIMIT:
 			return "resource_limit"
+		Abort.MISSING_WITNESS:
+			return "missing_witness"
 	return "timeout"
 
 
@@ -674,6 +699,10 @@ func publication_due(host: Variant, barrier: Barrier, phase: int, stage: int) ->
 
 ## Send one barrier phase to every survivor that still takes part in the match.
 func _send(host: Variant, barrier: Barrier, phase: int, stage: int = Stage.NONE, reason: int = 0, retry: bool = false) -> bool:
+	if phase == Phase.REPORT:
+		# Every report re-derives its attestation from this survivor's own
+		# endpoint for the target, so a stored flag cannot outlive the state.
+		barrier.witnessed = _witnessed(host, barrier.index)
 	var payload: Dictionary = _payload(barrier, phase, stage, reason)
 	var sent: bool = true
 	for index: int in range(host._ids.size()):
@@ -724,6 +753,7 @@ func _payload(barrier: Barrier, phase: int, stage: int, reason: int) -> Dictiona
 		"bound": bound,
 		"available_through": barrier.available_through,
 		"cut_digest": digest,
+		"witnessed": 1 if barrier.witnessed else 0,
 		"chunk_index": 0,
 		"chunk_count": barrier.chunk_budget / 16 if phase == Phase.REPORT and stage == Stage.INVENTORY else barrier.chunk_count,
 		"data": _targets(barrier),
@@ -836,15 +866,34 @@ func _live_survivors(host: Variant) -> int:
 	return count
 
 
-## An automatic timeout departure may open the certificate only while a strict
+## True when at least one surviving follower certified a witnessed attestation.
+func _witness_present(barrier: Barrier) -> bool:
+	for identity: String in barrier.certificates:
+		if is_gone(identity):
+			continue
+		if barrier.certificates[identity].get("witnessed", false):
+			return true
+	return false
+
+
+## Whether this survivor's own endpoint for the departed peer latched a
+## departure: the silence flag or a terminated endpoint. This session cannot
+## read another member's verdict, so the verdict travels as an attested barrier
+## report instead of being assumed.
+func _witnessed(host: Variant, index: int) -> bool:
+	var status: Dictionary = host._endpoint(index).status()
+	return status.get("interrupted") == true or status.get("state") != "running"
+
+
+## An automatic timeout departure may only open the certificate while a strict
 ## majority of the membership epoch remains locally reachable, counting this
 ## session and every not-yet-dropped peer whose endpoint is still running
 ## without a latched interruption. The departed member counts toward the epoch
 ## until its own certificate commits, so an even split refuses on both sides
 ## instead of staging complementary freezes (wallstop/fortress-rollback#385).
-## Goodbye departures keep the explicit path, and the survivor agreement inside
-## the certificate stays the independent witness for verdicts this session
-## cannot observe directly.
+## Goodbye departures keep the explicit path, and the certificate additionally
+## requires one attested witness: a follower whose own endpoint for the target
+## latched the departure (wallstop/fortress-rollback#385, #353).
 func _automatic_quorum(host: Variant, index: int) -> Dictionary:
 	var reachable: int = 1
 	var membership: int = 2

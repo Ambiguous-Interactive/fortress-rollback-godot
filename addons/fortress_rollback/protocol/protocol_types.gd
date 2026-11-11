@@ -80,6 +80,9 @@ class Message:
 	var available_through: int = -1
 	var chunk_index: int = 0
 	var chunk_count: int = 0
+	## The coordinated drop report attests whether the sender's own endpoint for
+	## the target latched a departure: 1 when it did, 0 otherwise.
+	var witnessed: int = 0
 	var bytes: PackedByteArray = PackedByteArray()
 
 

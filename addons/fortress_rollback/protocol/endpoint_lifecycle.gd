@@ -95,6 +95,7 @@ static func receive_control(plan: Dictionary, message: T.Message, packet: Callab
 				"cut_digest": message.cut_digest,
 				"chunk_index": message.chunk_index,
 				"chunk_count": message.chunk_count,
+				"witnessed": message.witnessed,
 				"slots": message.data.duplicate(),
 				"bytes": message.bytes.duplicate(),
 			})
