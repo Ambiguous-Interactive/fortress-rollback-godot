@@ -229,9 +229,6 @@ def _execute(engine, project, runtime, url, environment, output, control, fault=
                 returncode, browser_output, stderr = owned_process.run_split(
                     [environment['FORTRESS_NODE_EXECUTABLE'], str(controller), url, str(runtime)],
                     environment, browser_log, 80)
-            except owned_process.EscapedDescendants as escape:
-                browser_log.write_text(f'OWNED_PROCESSES: terminated {escape.survivors}\n')
-                raise
             except subprocess.TimeoutExpired:
                 # owned_process recorded the partial browser output and the timeout marker.
                 raise ValueError('exported spectator browser process deadline') from None

@@ -333,10 +333,21 @@ class SplitStreamTests(unittest.TestCase):
     def test_a_child_that_never_reads_stdin_still_meets_its_deadline(self):
         with tempfile.TemporaryDirectory() as folder:
             log = Path(folder) / 'unread-stdin.log'
+            marker = Path(folder) / 'grandchild.pid'
+            command = [PYTHON, '-c',
+                       "import os, sys, time\n"
+                       "pid = os.fork()\n"
+                       "if pid == 0:\n    open(sys.argv[1], 'w').write(str(os.getpid()))\n    time.sleep(60)\n"
+                       "sys.stdin.read()\ntime.sleep(60)",
+                       str(marker)]
             with self.assertRaises(subprocess.TimeoutExpired):
-                owned_process.run_split([PYTHON, '-c', 'import time; time.sleep(60)'], {}, log, 2,
-                                        input_text='x' * (200 * 1024))
+                owned_process.run_split(command, {}, log, 2, input_text='x' * (200 * 1024))
             self.assertIn('TIMEOUT: command exceeded 2 seconds', log.read_text())
+            pid = int(marker.read_text())
+            deadline = time.monotonic() + 5
+            while alive(pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertFalse(alive(pid), 'the deadline must own the whole tree, stdin or not')
 
 
 class SpawnedProcessTests(unittest.TestCase):

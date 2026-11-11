@@ -65,12 +65,13 @@ class LauncherTests(unittest.TestCase):
     def test_timeout_propagates_after_the_owned_log(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / 'log'
-            log.write_text('partial stdoutpartial stderr\nTIMEOUT: command exceeded 1 seconds\n')
             error = subprocess.TimeoutExpired(['oracle'], 1, 'partial stdoutpartial stderr')
             with patch.object(launch.owned_process, 'run_split', side_effect=error):
                 with self.assertRaises(subprocess.TimeoutExpired):
                     launch.execute(['oracle'], log)
-            self.assertIn('COMMAND_STARTED', log.read_text(), 'the started command stays in the log')
+            text = log.read_text()
+            self.assertEqual(text, 'COMMAND_STARTED: [\'oracle\']\n',
+                             'execute only names the started command; the owned path owns the timeout record')
 
     def test_stale_success_removed_before_setup_failure(self):
         with tempfile.TemporaryDirectory() as directory:
