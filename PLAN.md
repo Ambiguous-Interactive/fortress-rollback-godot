@@ -258,7 +258,11 @@ shared ordered request engine, local sync-test mode and synchronous game driver.
 bytes, including snapshotted PRNG and pending-event games, directly with pinned upstream sessions. External-input tests verify
 asymmetric prediction and corrected replay. `make p2p-probes` compares actual
 upstream and Godot byte sessions across 2–8 slots, delayed inputs, packet faults
-and scoped timing, checksum and terminal observations.
+and scoped timing, checksum and terminal observations. Its lifecycle corpus
+includes a one-way partition: one peer receives nothing while the other keeps
+receiving, both interrupt at the shared notify bound, and the schedule ends at
+the starved peer's terminal with both peers' canonical states matching through
+the last shared operation.
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
 retains long-lived partition/fairness vocabulary and first-divergence shrinking.
 These scoped gates do not establish browser or full-feature release parity.

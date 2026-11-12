@@ -28,6 +28,8 @@
 
 ### Added
 
+- Compare an actual one-way partition through the P2P oracle: after three confirmed frames, the new `partition_one_way` lifecycle case drops every packet from one peer while delivering all of the other's. The starved peer predicts through the loss, both peers latch their own `network_interrupted` at the shared notify bound, and the schedule ends at the starved peer's terminal poll. Both pinned engines match ordered requests, stalls, gauges, canonical states and the single final terminal twice in fresh processes, with the case's required observations and mutation controls recorded in the receipt.
+
 - Overlap the ownership witness's per-suite native engine processes in a bounded wave. Each suite keeps its own fresh process, 180-second watchdog and after-run boundary verification; the wave joins every suite and a rejection still names the first failing suite in suite order. The native-only 4.3 part-1 witness finishes in about 2m38s locally instead of 9m41s.
 
 - Stream npm lifecycle and registry-phase evidence during native CLI installation (`--foreground-scripts --loglevel=http`), so a hung global install localizes to wrapper postinstall versus registry acquisition on the next failure.

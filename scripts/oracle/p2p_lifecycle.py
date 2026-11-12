@@ -180,6 +180,7 @@ CORPUS_REQUIREMENTS = {
                               'quality_advantage quality_ping quality_pong measured_rtt'),
     'disconnect_boundary': ('network_interrupted disconnected stats_transition',
                             'notify_payload terminal_peer terminal_earlier terminal_unfrozen invented_self_extension'),
+    'partition_one_way': ('network_interrupted disconnected', 'notify_payload terminal_peer terminal_earlier terminal_unfrozen invented_self_extension'),
     'checksums_match': ('checksum_report nonzero_checksum', 'checksum_payload'),
     'checksums_repair': ('checksum_report nonzero_checksum repair_load', 'checksum_payload'),
     'checksums_diverge': ('checksum_report nonzero_checksum desync_detected',
