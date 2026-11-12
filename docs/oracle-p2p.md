@@ -236,15 +236,16 @@ false desync events. The divergent initial state produces an actual source
 
 The one-way partition case first confirms three frames in both directions and
 then silently drops every packet from peer 0 while delivering all of peer 1's.
-The starved peer predicts through the missing inputs, latches its own
-`network_interrupted` at the shared notify bound, and ends the schedule at its
-terminal poll. The fed peer keeps receiving the starved peer's packets through
-the starvation rounds; the schedule's final two polls then advance one shared
-second with no packet in between, so it too latches an interruption at the same
-notify bound before the schedule ends. Neither side observes a departure other
-than the single final terminal. The comparison requires both peers' frames,
-stalls and canonical states to match through the last shared operation,
-including the fed peer's prediction past its last received input.
+The starved peer predicts through the missing inputs and latches its own
+`network_interrupted` during the starvation rounds, once nothing has arrived
+past the shared notify bound. The tail polls then advance the clock without
+delivering more packets, so the fed peer — whose last packet arrived during the
+starvation rounds — latches its own interruption at the first tail poll, and
+the starved peer's terminal fires at exactly the timeout bound at the final
+poll. Neither side observes a departure other than the single final terminal.
+The comparison requires both peers' frames, stalls and canonical states to
+match through the last shared operation, including the fed peer's prediction
+past its last received input.
 
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.

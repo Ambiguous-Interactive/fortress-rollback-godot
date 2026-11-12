@@ -260,7 +260,8 @@ asymmetric prediction and corrected replay. `make p2p-probes` compares actual
 upstream and Godot byte sessions across 2–8 slots, delayed inputs, packet faults
 and scoped timing, checksum and terminal observations. Its lifecycle corpus
 includes a one-way partition: one peer receives nothing while the other keeps
-receiving, both interrupt at the shared notify bound, and the schedule ends at
+receiving, both peers latch their own interruption once quiet spans pass the
+shared notify bound, and the schedule ends at
 the starved peer's terminal with both peers' canonical states matching through
 the last shared operation.
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
