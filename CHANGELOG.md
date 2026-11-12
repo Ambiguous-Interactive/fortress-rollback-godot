@@ -8,6 +8,8 @@
 
 ### Improved
 
+- Witness the group-kill descendant tests with a held pipe write end instead of a `/proc` zombie poll: the read end returns EOF exactly when the launcher leader and its fork have both exited, while a reaped entry or a reused pid could make the old poll name a survivor for a group the kernel killed. A partial group kill (leader only) fails the new witness at its own diagnostic; the 218-test harness suite passes twice in fresh processes.
+
 - Scope the probe wave's host-lease inheritance to the wave owner's identity instead of its lease name: the wave owner publishes its name and pid through `FORTRESS_HOST_LEASE_HELD`, and a member inherits only while the live lease record names that exact owner, not by the name alone.
 
 - Acknowledge the spectator pages' own completed `/viewer` control POST beside an intended admission rejection as the same `net::ERR_ABORTED` result-phase disposal artifact already acknowledged beside a passing `/done` result, and run the acknowledgment in the admission-rejection cells. The pairing still requires exactly one origin-bound result-phase artifact, no runner failure, a page-level error-free report, and either a passing page or the demonstrated refused-state decision with zero simulations; a page that failed a playback step mid-run stays fatal. This repairs the merge-triggered `initial-state` witness failure on main.
