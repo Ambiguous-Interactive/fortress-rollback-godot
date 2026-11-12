@@ -15,6 +15,8 @@ Each case exercises the real script end to end through temporary trees.
 """
 
 import io
+import os
+import select
 import shutil
 import sys
 import tempfile
@@ -174,6 +176,12 @@ class NativeProbeWaveTests(unittest.TestCase):
         real_kill = probes.kill_group
         killed = []
         descendant = self.root / 'descendant-pid'
+        # The descendant's death is witnessed by the pipe's write end: the
+        # leader and its fork both hold it, so the read end returns EOF only
+        # when every group member has exited. A /proc zombie poll cannot make
+        # that distinction under reaping and pid-reuse races; a hosted runner
+        # once reported a survivor for a group the kernel killed.
+        witness_read, witness_write = os.pipe()
 
         def record_and_kill(pid):
             killed.append(pid)
@@ -186,6 +194,7 @@ class NativeProbeWaveTests(unittest.TestCase):
             # after the leader has forked its engine stand-in and recorded it.
             # The kill can interrupt a half-written pid file, so wait for the
             # recorded content, not the file's existence.
+            kwargs['pass_fds'] = tuple(kwargs.get('pass_fds', ())) + (witness_write,)
             process = real_popen(command, **kwargs)
             deadline = time.time() + 5
             while time.time() < deadline:
@@ -208,6 +217,14 @@ class NativeProbeWaveTests(unittest.TestCase):
         )
         script_path = write_script(self.root, 'leader.py', leader_script)
         log = self.results / 'native-probe-4.3-sleeper.log'
+
+        def close_witness():
+            for fd in (witness_write, witness_read):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self.addCleanup(close_witness)
         try:
             with unittest.mock.patch.object(probes.subprocess, 'Popen', side_effect=popen_then_abort), \
                     unittest.mock.patch.object(probes, 'kill_group', side_effect=record_and_kill):
@@ -215,29 +232,17 @@ class NativeProbeWaveTests(unittest.TestCase):
                 result = probes.run_probe('sleeper', [sys.executable, str(script_path)], log, {})
         finally:
             probes._abort.clear()
+        os.close(witness_write)
         self.assertLess(time.monotonic() - began, 15, 'the spawned probe must be killed, not waited out')
         self.assertEqual(result['returncode'], -9, 'SIGKILL to the probe group must end the probe')
         self.assertEqual(len(killed), 1, 'the spawn-window abort must kill its own group')
         # The group kill is what protects engine children: the leader's forked
-        # descendant must die with the group, not only the leader itself. A
-        # freshly killed process can linger as a zombie until reaping, so a
-        # zombie counts as dead. /proc is the evidence source; without it the
-        # depth of the kill cannot be observed here.
-        if not Path('/proc/self').exists():
-            self.skipTest('process state requires /proc')
-        child_pid = int((self.root / 'engine-descendant-pid').read_text())
-        deadline = time.time() + 5
-
-        def dead(pid):
-            try:
-                fields = Path(f'/proc/{pid}/stat').read_text()
-                return fields.rsplit(')', 1)[1].split()[0] == 'Z'
-            except (OSError, IndexError):
-                return True
-
-        while time.time() < deadline and not dead(child_pid):
-            time.sleep(0.05)
-        self.assertTrue(dead(child_pid), 'a forked engine descendant survived the group kill')
+        # descendant must die with the group, not only the leader itself. The
+        # pipe read end unblocks with EOF exactly when the leader and the
+        # fork have both exited; a survivor keeps it open past this bound.
+        readable = select.select([witness_read], [], [], 10)[0]
+        self.assertTrue(readable and os.read(witness_read, 1) == b'',
+                        'a forked engine descendant survived the group kill: its pipe end is still open')
 
     def test_an_aborted_fence_refuses_later_launches(self):
         probes._abort.set()
