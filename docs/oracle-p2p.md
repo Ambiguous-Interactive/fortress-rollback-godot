@@ -224,7 +224,7 @@ Those issue requirements remain open.
 
 ## Lifecycle observations
 
-Eight additional two-peer scenarios compare real quality reports, echoed replies,
+Nine additional two-peer scenarios compare real quality reports, echoed replies,
 keepalives, interruption and resume events, timeout, pacing recommendations,
 and checksum exchange. Timer cases exercise interval equality and interval plus
 one. Delayed quality replies produce actual RTT observations. One case combines
@@ -233,6 +233,19 @@ The skew case produces an actual `WaitRecommendation`, including its skip count.
 Matching and reordered input cases exchange nonzero checksum inventories without
 false desync events. The divergent initial state produces an actual source
 `DesyncDetected` with frame, peer and both checksums.
+
+The one-way partition case first confirms three frames in both directions and
+then silently drops every packet from peer 0 while delivering all of peer 1's.
+The starved peer predicts through the missing inputs and latches its own
+`network_interrupted` during the starvation rounds, once nothing has arrived
+past the shared notify bound. The tail polls then advance the clock without
+delivering more packets, so the fed peer — whose last packet arrived during the
+starvation rounds — latches its own interruption at the first tail poll, and
+the starved peer's terminal fires at exactly the timeout bound at the final
+poll. Neither side observes a departure other than the single final terminal.
+The comparison requires both peers' frames, stalls and canonical states to
+match through the last shared operation, including the fed peer's prediction
+past its last received input.
 
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.

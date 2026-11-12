@@ -3,7 +3,8 @@ from p2p_contract import validate_scenario
 
 
 def corpus(binary, observe, selected=None):
-    names = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary', 'checksums_match', 'checksums_repair', 'checksums_diverge', 'pacing_skew')
+    names = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
+             'partition_one_way', 'checksums_match', 'checksums_repair', 'checksums_diverge', 'pacing_skew')
     return {name: build(binary, observe, name) for name in names if selected is None or selected == name}
 
 
@@ -16,6 +17,10 @@ def build(binary, observe, name):
         settings['divergent_peer'] = 1
     if name == 'pacing_skew':
         settings.update(notify_us=5000000, timeout_us=10000000)
+    if name == 'partition_one_way':
+        # Starvation latches interruption at notify and the terminal at timeout;
+        # both bounds stay inside the schedule's polls.
+        settings.update(timeout_us=2500000)
     scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 8, 'lifecycle': settings, 'operations': []}
     latest = None; now = 0; delivered = set()
     def append(kind, at=None, refresh=True, **kwargs):
@@ -68,6 +73,30 @@ def build(binary, observe, name):
         settings.update(quality_us=100000000, keepalive_us=100000000)
         for time in (500000, 500001, 5000000, 5000001):
             append('poll', peer=0, at=time)
+    elif name == 'partition_one_way':
+        # A short confirmed prefix, then one-way loss: peer 1 stops receiving
+        # everything from peer 0 while peer 0 keeps receiving peer 1. Peer 1
+        # predicts through the starvation, latches the disconnect timeout and
+        # ends the schedule at its terminal; peer 0 never observes a departure.
+        for _ in range(3):
+            step(0); step(1); flush()
+        for frame in range(12):
+            now = 500000 + frame * 150000
+            step(0, at=now); step(1, at=now + 1)
+            pending = [p['id'] for p in latest['packets'] if p['id'] not in delivered and p['from'] == 1]
+            for packet in pending:
+                delivered.add(packet); append('deliver', packet=packet, refresh=False)
+            latest = observe(binary, scenario)
+            if any(e['kind'] == 'network_interrupted' for r in latest['records'] if r['peer'] == 1 for e in r['events']):
+                break
+        append('poll', peer=0, at=2000000)
+        append('poll', peer=1, at=2000001)
+        if any(r['peer'] == 1 and e['kind'] == 'disconnected' for r in latest['records'] for e in r['events']):
+            raise ValueError('partition terminal precedes the timeout poll')
+        append('poll', peer=0, at=3000000)
+        append('poll', peer=1, at=3000001)
+        if not any(r['peer'] == 1 and e['kind'] == 'disconnected' for r in latest['records'] for e in r['events']):
+            raise ValueError('partition starvation never reached the disconnect timeout')
     else:
         for frame in range(48 if name == 'pacing_skew' else 14):
             if name == 'pacing_skew':
