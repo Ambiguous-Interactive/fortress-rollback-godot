@@ -314,7 +314,7 @@ def main():
         + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))
         + [ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',
            ROOT / 'scripts/reference/owned_process.py', ROOT / 'scripts/reference/engine_path.py',
-           ROOT / 'scripts/reference/receipt_arguments.py'])
+           ROOT / 'scripts/reference/receipt_arguments.py', ROOT / 'scripts/oracle/rust/Cargo.toml'])
     source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
@@ -372,6 +372,7 @@ def main():
     require_unchanged('local source inventory', source_hashes,
                       {str(path.relative_to(ROOT)): digest(path) for path in source_paths})
     require_unchanged('floor oracle binary', clean_binary_identity, digest(clean_binary))
+    require_unchanged('oracle lockfile', digest(ROOT / 'scripts/oracle/rust/Cargo.lock'), digest(CACHE / 'sync-floor-observation/adapter-clean/Cargo.lock'))
     require_unchanged('repository identity', identity, git_identity())
     result = {'format': 1, 'passed': True, 'upstream_revision': REVISION,
               'commit': identity['commit'],

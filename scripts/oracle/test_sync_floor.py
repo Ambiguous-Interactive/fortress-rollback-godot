@@ -71,6 +71,7 @@ class SyncFloorCorpusTests(unittest.TestCase):
                 lambda records: records[1]['players'][1].update(confirmed_floor='ffff'),
                 lambda records: records[1]['players'][2].update(retained_floor='00'),
                 lambda records: records[2]['requests'][1]['inputs'][0].update(status='predicted'),
+                lambda records: records[2]['requests'][1]['inputs'][0].update(bytes='ff'),
                 lambda records: records[2]['requests'][0].update(state_bytes='00' * 16),
                 lambda records: records[2]['requests'][0].update(checksum='00' * 32),
                 lambda records: records[2]['requests'][1].update(inputs=[]),
@@ -81,6 +82,26 @@ class SyncFloorCorpusTests(unittest.TestCase):
             with self.subTest(mutation=mutate):
                 with self.assertRaises(ValueError):
                     validate_records(bad, self.scenario, complete=False)
+
+    def test_delay_record_pinning(self):
+        """The delay record echoes the scheduled raise and the staged frontier shift."""
+        from sync_floor_contract import _contexts, validate_record
+        scenario = self.scenario
+        index = next(i for i, operation in enumerate(scenario['operations']) if operation['kind'] == 'delay')
+        context = _contexts(scenario)[index]
+        record = {'index': index, 'kind': 'delay', 'player': 0, 'value': 2, 'ok': True,
+                  'frame_delay': 2, 'last_added': 21}
+        validate_record(record, scenario, context)
+        for mutate in [
+                lambda r: r.update(player=1),
+                lambda r: r.update(value=3),
+                lambda r: r.update(frame_delay=3),
+                lambda r: r.update(last_added=20)]:
+            bad = copy.deepcopy(record)
+            mutate(bad)
+            with self.subTest(mutation=mutate):
+                with self.assertRaises(ValueError):
+                    validate_record(bad, scenario, context)
 
     def test_first_acceptance_divergence(self):
         clean = [{'index': 0, 'kind': 'receive', 'accepted': False}, {'index': 1, 'kind': 'advance'}]

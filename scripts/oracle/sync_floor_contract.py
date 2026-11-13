@@ -43,6 +43,8 @@ def validate_record(record, source, context):
         fields(record, 'index kind player value ok frame_delay last_added', 'delay record')
         integer(record['player'], 0, source['players'] - 1, 'record player')
         integer(record['value'], 1, source['queue_capacity'] - 1, 'record delay value')
+        if (record['player'], record['value']) != (operation['player'], operation['value']):
+            raise ValueError(f'record {record["index"]}: delay identity does not match the scheduled operation')
         if record['ok'] is not True:
             raise ValueError(f'record {record["index"]}: delay raise must succeed')
         integer(record['frame_delay'], 0, source['queue_capacity'] - 1, 'record frame_delay')
@@ -73,7 +75,14 @@ def validate_record(record, source, context):
                 raise ValueError(f'observation {player}: recoverable floor row without a confirmed read')
             if observed['confirmed_floor'] is not None and observed['confirmed_floor'] != observed['retained_floor']:
                 raise ValueError(f'observation {player}: confirmed floor read disagrees with the recoverable row')
-            if span is not None and span[0] <= record['floor'] <= span[1]:
+            if span is None or not span[0] <= record['floor'] <= span[1]:
+                # Outside the retained interval neither read can find the floor row;
+                # a non-null read would mean un-pinned stale-tag bytes.
+                if observed['confirmed_floor'] is not None or observed['retained_floor'] is not None:
+                    raise ValueError(f'observation {player}: floor row read outside the retained interval')
+            else:
+                if span[0] < record['floor'] or span[1] != frontiers[player]:
+                    raise ValueError(f'observation {player}: retained range does not end at the receipt frontier')
                 expected = row_at_scheduled(player, record['floor'])
                 for edge in ('confirmed_floor', 'retained_floor'):
                     if observed[edge] is not None and observed[edge] != f'{expected:02x}':
@@ -112,6 +121,9 @@ def validate_record(record, source, context):
                     if row['status'] != expected:
                         raise ValueError(f'request frame {request["frame"]}: player {player} status '
                                          f'{row["status"]} violates the receipt frontier {frontiers[player]}')
+                    if expected == 'confirmed' and row['bytes'] != f'{row_at_scheduled(player, request["frame"]):02x}':
+                        raise ValueError(f'confirmed input at frame {request["frame"]} for player {player} '
+                                         f'does not hold the scheduled row')
 
 
 def _local_delay(source, frame):
@@ -132,7 +144,8 @@ def _contexts(source):
     for operation in source['operations']:
         contexts.append((tuple(delivered), frame_delay))
         if operation['kind'] == 'receive':
-            delivered[operation['player']] = max(delivered[operation['player']], operation['frame'])
+            if operation.get('accepted', True):
+                delivered[operation['player']] = max(delivered[operation['player']], operation['frame'])
         elif operation['kind'] == 'submit':
             delivered[operation['player']] = operation['frame'] + _local_delay(source, operation['frame'])
         elif operation['kind'] == 'delay':
