@@ -179,6 +179,8 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
     for field in ('peer', 'now_us'):
         for alias_name, alias in [('float', float(scenario['operations'][0][field])), ('null', None)]:
             value = deepcopy(scenario); value['operations'][0][field] = alias; mutants[alias_name + '_' + field] = value
+    # An explicit null capacity deserializes as absent in some serde patterns; both adapters must reject it.
+    value = deepcopy(scenario); value['queue_capacity'] = None; mutants['capacity_null'] = value
     # Delay changes: before the first step, after another peer's operation, in the bound band, and aliased.
     if scenario['operations'][0]['kind'] == 'step':
         peer = scenario['operations'][0]['peer']

@@ -10,10 +10,14 @@ const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:usize, operations:Vec<Operation>,
- #[serde(default)] queue_capacity:Option<usize>,
+ // An omitted field stays None (the 128-row default); an explicit null is rejected.
+ #[serde(default, deserialize_with="present_capacity")] queue_capacity:Option<usize>,
  #[serde(default, deserialize_with="present_lifecycle")] lifecycle:Option<Lifecycle> }
 fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Lifecycle>, D::Error> {
     Lifecycle::deserialize(deserializer).map(Some)
+}
+fn present_capacity<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
+    usize::deserialize(deserializer).map(Some)
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

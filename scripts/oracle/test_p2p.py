@@ -303,6 +303,7 @@ class P2PContractTests(unittest.TestCase):
         validate_scenario(dict(deepcopy(original), queue_capacity=16, operations=[step]))
         for mutate in (lambda x: x.update(queue_capacity=5), lambda x: x.update(queue_capacity=129),
                        lambda x: x.update(queue_capacity=True), lambda x: x.update(queue_capacity=9.0),
+                       lambda x: x.update(queue_capacity=None),
                        lambda x: x.update(queue_capacity=8), lambda x: x.update(input_delay=1),
                        lambda x: x['operations'][1].update(delay=4)):
             mutant = deepcopy(original); mutate(mutant)

@@ -75,9 +75,13 @@ fi
 
 # Ensure MCP_GITHUB_PAT is available alongside GITHUB_TOKEN for MCP configs
 # that reference it (e.g. Claude Code's ${MCP_GITHUB_PAT} header expansion).
+# Derived keys are environment-only: they are never written back into a source
+# file, so a rotated GITHUB_TOKEN can never leave a stale derived PAT behind.
+declare -A DERIVED=()
 if [[ -n "${VALUE[GITHUB_TOKEN]:-}" && -z "${VALUE[MCP_GITHUB_PAT]:-}" ]]; then
     VALUE[MCP_GITHUB_PAT]="${VALUE[GITHUB_TOKEN]}"
     SOURCE[MCP_GITHUB_PAT]="derived from GITHUB_TOKEN"
+    DERIVED[MCP_GITHUB_PAT]=1
     ORDER+=("MCP_GITHUB_PAT")
 fi
 
@@ -139,6 +143,8 @@ fi
 
 # Export to a profile script so new interactive/non-login shells in a
 # running container inherit updated secrets without requiring a rebuild.
+# The staging file stays private (mktemp 600) and is removed on both paths;
+# only the installed copy in /etc/profile.d survives.
 profile="/etc/profile.d/99-devcontainer-secrets.sh"
 tmp_profile="$(mktemp)"
 {
@@ -148,19 +154,29 @@ tmp_profile="$(mktemp)"
         printf 'export %s=%q\n' "$key" "${VALUE[$key]}"
     done
 } > "$tmp_profile"
-chmod 644 "$tmp_profile"
 if sudo -n install -o root -g root -m 644 "$tmp_profile" "$profile" 2>/dev/null; then
     echo "[sync-env] updated $profile"
 else
-    rm -f "$tmp_profile"
     echo "[sync-env] WARNING: could not write $profile" >&2
 fi
+rm -f "$tmp_profile"
 
 # Keep devcontainer.env in sync with values sourced from .env.local so
 # container recreates (which load --env-file devcontainer.env) pick up
-# the same secrets without manual duplication.
+# the same secrets without manual duplication. Derived keys are excluded:
+# they must be recomputed from the current GITHUB_TOKEN, never stored.
 dev_env="$ROOT/.devcontainer/devcontainer.env"
-if [ -f "$dev_env" ] && [ -w "$dev_env" ]; then
+dev_updates="$(mktemp)"
+stored=0
+for key in "${ORDER[@]}"; do
+    if [[ -n "${DERIVED[$key]:-}" ]]; then
+        continue
+    fi
+    printf '%s\t%s\n' "$key" "${VALUE[$key]}" >> "$dev_updates"
+    stored=$((stored + 1))
+done
+tmp_dev=""
+if [ "$stored" -gt 0 ] && [ -f "$dev_env" ] && [ -w "$dev_env" ]; then
     tmp_dev="$(mktemp)"
     awk -F'\t' '
         NR == FNR { val[$1]=$2; keys[++n]=$1; next }
@@ -179,13 +195,12 @@ if [ -f "$dev_env" ] && [ -w "$dev_env" ]; then
             next
         }
         END { for (i=1;i<=n;i++) if (!(keys[i] in printed)) print keys[i] "=" val[keys[i]] }
-    ' "$updates" "$dev_env" > "$tmp_dev"
+    ' "$dev_updates" "$dev_env" > "$tmp_dev"
     if ! cmp -s "$tmp_dev" "$dev_env"; then
         mv "$tmp_dev" "$dev_env"
         echo "[sync-env] updated .devcontainer/devcontainer.env"
     else
         rm -f "$tmp_dev"
     fi
-else
-    rm -f "$tmp_dev" 2>/dev/null || true
 fi
+rm -f "$dev_updates"
