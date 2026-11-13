@@ -1,6 +1,7 @@
 """Value: corrupt/missing/hostile pins must not become trusted oracle sources."""
 import copy
 import hashlib
+import io
 import json
 from pathlib import Path
 import shutil
@@ -12,6 +13,7 @@ import unittest
 from unittest.mock import patch
 import subprocess
 import zipfile
+import urllib.error
 import run as rust_runner
 import godot_smoke as godot_runner
 
@@ -66,6 +68,36 @@ class ReferenceContracts(unittest.TestCase):
                 with self.assertRaises(FileNotFoundError):
                     fetch(pin, 'artifact', offline=True, cache=root / 'cache')
                 network.assert_not_called()
+
+    # Value: protects=reference availability under transient runner network failures; fails_when=a dropped
+    # connection fails a pinned download a retry would complete, retries mask a deterministic digest mismatch,
+    # or exhaustion never surfaces the original error; seam=fetch.py urlopen and backoff sleep
+    def test_transient_download_failures_are_retried_and_deterministic_ones_are_not(self):
+        payload = b'pinned artifact'
+        pin = {'algorithm': 'sha256', 'digest': hashlib.sha256(payload).hexdigest(), 'url': 'https://invalid.example/artifact'}
+        with tempfile.TemporaryDirectory() as folder:
+            responses = [urllib.error.URLError(OSError(101, 'Network is unreachable')), ConnectionResetError('dropped'), io.BytesIO(payload)]
+            with patch('fetch.ROOT', Path(folder)), patch('fetch.time.sleep') as paused, \
+                    patch('urllib.request.urlopen', side_effect=responses) as network:
+                cached = fetch(pin, 'artifact', cache=Path(folder) / 'cache')
+            self.assertEqual(cached.read_bytes(), payload)
+            self.assertEqual(network.call_count, 3)
+            self.assertEqual([call.args[0] for call in paused.call_args_list], [10, 20])
+        bad = {'algorithm': 'sha256', 'digest': hashlib.sha256(b'other').hexdigest(), 'url': pin['url']}
+        with tempfile.TemporaryDirectory() as folder:
+            with patch('fetch.ROOT', Path(folder)), patch('fetch.time.sleep') as paused, \
+                    patch('urllib.request.urlopen', return_value=io.BytesIO(payload)) as network:
+                with self.assertRaisesRegex(ValueError, 'digest mismatch'):
+                    fetch(bad, 'artifact', cache=Path(folder) / 'cache')
+            network.assert_called_once()
+            paused.assert_not_called()
+        with tempfile.TemporaryDirectory() as folder:
+            with patch('fetch.ROOT', Path(folder)), patch('fetch.time.sleep') as paused, \
+                    patch('urllib.request.urlopen', side_effect=urllib.error.URLError('unreachable')) as network:
+                with self.assertRaises(urllib.error.URLError):
+                    fetch(pin, 'artifact', cache=Path(folder) / 'cache')
+            self.assertEqual(network.call_count, 4)
+            self.assertEqual([call.args[0] for call in paused.call_args_list], [10, 20, 30])
 
     def test_verified_extraction_retains_mtimes_and_repairs_all_cache_mutations(self):
         # Value: verified warm sources avoid rebuilds; byte, mode, extra/missing and symlink mutations still repair.
