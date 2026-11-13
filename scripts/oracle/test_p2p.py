@@ -290,6 +290,32 @@ class P2PContractTests(unittest.TestCase):
         self.assertEqual(expected_delay_error(2, 124, 4), 'INVALID_CONFIGURATION')
         self.assertEqual(godot_max_delay(4), 59)
         self.assertTrue(comparable_delay(59, 4) and comparable_delay(124, 4) and not comparable_delay(123, 4))
+
+    # Value: protects=the explicit queue profile and its capacity-aware bounds; fails_when=a profile production
+    # Godot refuses to configure, a non-power-of-two capacity below the delayed-input lead, an in-band
+    # Godot-refused delay, or a bound formula drift passes; seam=none
+    def test_queue_capacity_profile(self):
+        step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '00000000'}
+        original = {'format': 1, 'players': 3, 'input_delay': 0, 'max_prediction': 4, 'queue_capacity': 9,
+                    'operations': [step, {'kind': 'delay', 'peer': 0, 'delay': 6}]}
+        validate_scenario(original)
+        validate_scenario(dict(deepcopy(original), queue_capacity=128))
+        validate_scenario(dict(deepcopy(original), queue_capacity=16, operations=[step]))
+        for mutate in (lambda x: x.update(queue_capacity=5), lambda x: x.update(queue_capacity=129),
+                       lambda x: x.update(queue_capacity=True), lambda x: x.update(queue_capacity=9.0),
+                       lambda x: x.update(queue_capacity=8), lambda x: x.update(input_delay=1),
+                       lambda x: x['operations'][1].update(delay=4)):
+            mutant = deepcopy(original); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate_scenario(mutant)
+        self.assertEqual(godot_max_delay(4, 9), 0)
+        self.assertEqual(godot_max_delay(4, 8), -1)
+        self.assertEqual(godot_max_delay(4, 12), 1)
+        self.assertTrue(comparable_delay(6, 4, 9) and not comparable_delay(1, 4, 9) and not comparable_delay(4, 4, 9))
+        self.assertTrue(not comparable_delay(0, 4, 8) and comparable_delay(4, 4, 8))
+        self.assertEqual(expected_delay_error(0, 6, 4, 9), 'INVALID_CONFIGURATION')
+        self.assertEqual(expected_delay_error(0, 4, 4, 9), 'INVALID_CONFIGURATION')
+        self.assertEqual(expected_delay_error(0, 0, 4, 8), 'INVALID_CONFIGURATION')
         self.assertEqual(set(DELAY_ERRORS.values()), {'UNSUPPORTED', 'INVALID_CONFIGURATION'})
 
     # Value: protects=upstream-only duplicate-save exception; fails_when=Godot extra callbacks disappear; why_new=source API asymmetry; seam=none

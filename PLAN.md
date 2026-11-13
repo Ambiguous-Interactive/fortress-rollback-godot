@@ -263,7 +263,10 @@ includes a one-way partition: one peer receives nothing while the other keeps
 receiving, both peers latch their own interruption once quiet spans pass the
 shared notify bound, and the schedule ends at
 the starved peer's terminal with both peers' canonical states matching through
-the last shared operation.
+the last shared operation. A non-power-of-two queue profile case builds both
+adapters' rings from an explicit nine-row capacity, forces one deep correction
+through a withheld ten-round flight, wraps the ring three times and
+compares the capacity-aware runtime delay bounds.
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
 retains long-lived partition/fairness vocabulary and first-divergence shrinking.
 These scoped gates do not establish browser or full-feature release parity.

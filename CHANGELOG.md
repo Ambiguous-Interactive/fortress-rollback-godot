@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Compare an explicit non-power-of-two queue profile through the P2P differential oracle: `mesh_3_capacity9_late_flight` builds both adapters' rings from a nine-row scenario capacity, withholds peer 2's flight for ten rounds so slot-2 corrections stay pending at the starved receiver, then forces one deep correction through the released rows and requires three confirmed wraps of the ring on every peer. Runtime delay changes now compare at the capacity-aware bounds, modeled exactly as production computes them — the strict contract also rejects profiles the peer session would refuse to configure — and the only comparable raise at capacity nine is one both implementations refuse. The case documents why public peer scheduling cannot witness full-capacity occupancy: producer frontiers mutually freeze within their prediction windows, so the session-level floor, occupancy and tag observations stay open in #61 as an access-only SyncLayer slice.
+
 ### Fixed
 
 - Require an independent departure witness before an automatic timeout drop certificate commits: a fellow survivor must attest, in its window report and again in its certificate, that its own endpoint for the target latched the departure. The coordinator re-checks the certificate's attestation against the report's and ends the match with `missing_witness` (or `conflicting_history` on a disagreement) instead of freezing on an unwitnessed certificate. Goodbye and explicit departures keep their path, and the strict-majority quorum gate is unchanged. The attestation rides the `DROP_BARRIER` report's former reserved trailer byte, which now decodes only `0` and `1`; a peer built before this change refuses such packets, so upgrade all match participants together.

@@ -9,18 +9,26 @@ DELAY_ERRORS = {'InputDelayDecreaseUnsupported': 'UNSUPPORTED', 'FrameDelayTooLa
                 'ConfigValueOutOfRange': 'INVALID_CONFIGURATION'}
 
 
-def godot_max_delay(max_prediction):
-    """FortressPeerSession.max_input_delay for the oracle's 128-slot queues."""
-    return (128 - 2 * max_prediction - 2) // 2
+def _trunc_div(numerator, denominator):
+    """C++-style truncation, matching GDScript and Rust integer division for negatives."""
+    quotient = numerator // denominator
+    if quotient < 0 and quotient * denominator != numerator:
+        quotient += 1
+    return quotient
 
 
-def comparable_delay(delay, max_prediction):
-    """Upstream accepts up to 127 - max_prediction; Godot's peer bound is lower. Only values outside that band compare."""
-    return delay <= godot_max_delay(max_prediction) or 127 - max_prediction < delay <= 1000
+def godot_max_delay(max_prediction, capacity=128):
+    """FortressPeerSession.max_input_delay for the oracle's configured queues; unclamped, exactly as production computes it."""
+    return _trunc_div(capacity - 2 * max_prediction - 2, 2)
 
 
-def expected_delay_error(current, delay, max_prediction):
-    if delay > godot_max_delay(max_prediction):
+def comparable_delay(delay, max_prediction, capacity=128):
+    """Upstream accepts up to capacity - 1 - max_prediction; Godot's peer bound is lower. Only values outside that band compare."""
+    return delay <= godot_max_delay(max_prediction, capacity) or capacity - 1 - max_prediction < delay <= 1000
+
+
+def expected_delay_error(current, delay, max_prediction, capacity=128):
+    if delay > godot_max_delay(max_prediction, capacity):
         return 'INVALID_CONFIGURATION'
     return 'UNSUPPORTED' if delay < current else None
 
@@ -28,11 +36,20 @@ def expected_delay_error(current, delay, max_prediction):
 def validate_scenario(value):
     if type(value) is not dict:
         raise ValueError('p2p scenario: invalid object')
-    fields(value, 'format players input_delay max_prediction operations' + (' lifecycle' if 'lifecycle' in value else ''), 'p2p scenario')
+    fields(value, 'format players input_delay max_prediction operations' + (' lifecycle' if 'lifecycle' in value else '')
+           + (' queue_capacity' if 'queue_capacity' in value else ''), 'p2p scenario')
     integer(value['format'], 1, 1, 'format')
     integer(value['players'], 2, 8, 'players')
     integer(value['input_delay'], 0, 2, 'delay')
     integer(value['max_prediction'], 2, 8, 'prediction')
+    if 'queue_capacity' in value:
+        # Explicit non-default queue profile; both adapters build their rings from it.
+        integer(value['queue_capacity'], 2, 128, 'queue capacity')
+        if value['queue_capacity'] < value['input_delay'] + value['max_prediction'] + 2:
+            raise ValueError('queue capacity below the delayed-input lead')
+    # The peer session refuses any agreed initial delay above its own unclamped bound.
+    if value['input_delay'] > godot_max_delay(value['max_prediction'], value.get('queue_capacity', 128)):
+        raise ValueError('input delay above the peer bound')
     if 'lifecycle' in value:
         lifecycle.settings(value['lifecycle'], value['players'])
     if type(value['operations']) is not list or not 1 <= len(value['operations']) <= 10000:
@@ -52,7 +69,7 @@ def validate_scenario(value):
             # Source time is shared and Godot's is per peer; they agree after a step/poll/delay on this peer.
             if addressed != op['peer']:
                 raise ValueError('delay change must follow a step, poll or delay on its peer')
-            if not comparable_delay(op['delay'], value['max_prediction']):
+            if not comparable_delay(op['delay'], value['max_prediction'], value.get('queue_capacity', 128)):
                 raise ValueError('delay change outside comparable profile')
             continue
         integer(op['now_us'], previous, 10000000, 'time'); previous = op['now_us']
@@ -188,7 +205,7 @@ def validate(value, scenario, source=False):
             if record['error'] is not None and (type(record['error']) is not str or record['error'] not in allowed):
                 raise ValueError(f'operation {index}: unrecognized delay error')
             error = DELAY_ERRORS[record['error']] if source and record['error'] is not None else record['error']
-            if error != expected_delay_error(delays[peer], op['delay'], scenario['max_prediction']):
+            if error != expected_delay_error(delays[peer], op['delay'], scenario['max_prediction'], scenario.get('queue_capacity', 128)):
                 raise ValueError(f'operation {index}: delay change outcome')
             if record['requests'] or record['frame_before'] != record['frame_after']:
                 raise ValueError(f'operation {index}: delay change advanced')
