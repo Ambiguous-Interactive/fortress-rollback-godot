@@ -1,6 +1,6 @@
 //! Actual upstream multiplayer session, fake transport and application callbacks.
 #![forbid(unsafe_code)]
-use fortress_rollback::{Config, FortressRequest, InputStatus, PlayerHandle, SessionBuilder, Message, NonBlockingSocket, PlayerType,
+use fortress_rollback::{Config, FortressRequest, InputQueueConfig, InputStatus, PlayerHandle, SessionBuilder, Message, NonBlockingSocket, PlayerType,
  ProtocolConfig, SyncConfig, DesyncDetection, FortressEvent, FortressError, InvalidRequestKind};
 use fortress_rollback::network::compression::decode_with_max_len;
 use serde::Deserialize;
@@ -10,9 +10,14 @@ const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:usize, operations:Vec<Operation>,
+ // An omitted field stays None (the 128-row default); an explicit null is rejected.
+ #[serde(default, deserialize_with="present_capacity")] queue_capacity:Option<usize>,
  #[serde(default, deserialize_with="present_lifecycle")] lifecycle:Option<Lifecycle> }
 fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Lifecycle>, D::Error> {
     Lifecycle::deserialize(deserializer).map(Some)
+}
+fn present_capacity<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
+    usize::deserialize(deserializer).map(Some)
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,8 +161,10 @@ fn event(e:FortressEvent<OracleConfig>)->Result<Value,String>{Ok(match e {
   "local_checksum":format!("{local_checksum:032x}"),"remote_checksum":format!("{remote_checksum:032x}"),"peer":addr.parse::<usize>().unwrap()}),
  _=>return Err(format!("unmodeled lifecycle event {e:?}")),
 })}
-/// Compared delays: Godot's peer bound (queue 128) or above upstream's bound; the band between them differs by design.
-fn comparable_delay(delay:usize,max_prediction:usize)->bool{delay<=(126-2*max_prediction)/2||(delay>127-max_prediction&&delay<=1000)}
+/// Compared delays: Godot's peer bound (per configured queue) or above upstream's bound; the band between them differs by design.
+fn godot_max_delay(max_prediction:isize,capacity:isize)->isize{(capacity-2*max_prediction-2)/2}
+fn comparable_delay(delay:usize,max_prediction:usize,capacity:usize)->bool{let godot=godot_max_delay(max_prediction as isize,capacity as isize);
+ delay as isize<=godot||delay>capacity-1-max_prediction&&delay<=1000}
 fn delay_error(e:FortressError)->String{match e {
  FortressError::InvalidRequestStructured{kind:InvalidRequestKind::InputDelayDecreaseUnsupported{..}}=>"InputDelayDecreaseUnsupported".into(),
  FortressError::InvalidRequestStructured{kind:InvalidRequestKind::FrameDelayTooLarge{..}}=>"FrameDelayTooLarge".into(),
@@ -167,6 +174,10 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let scenario:Scenario=serde_json::from_value(original.clone()).map_err(|e|e.to_string())?;
  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
  ||scenario.operations.is_empty()||scenario.operations.len()>10000{return Err("scenario bounds".into());}
+ // An omitted profile keeps the 128-row default; an explicit one configures both adapters' rings.
+ let capacity=match scenario.queue_capacity {None=>128,Some(n)=>n};
+ if !(2..=128).contains(&capacity)||capacity<scenario.input_delay+scenario.max_prediction+2
+ ||(scenario.input_delay as isize)>godot_max_delay(scenario.max_prediction as isize,capacity as isize){return Err("scenario bounds".into());}
  if let Some(l)=&scenario.lifecycle {if l.quality_us<1000||l.keepalive_us<1000||l.notify_us==0||l.notify_us>=l.timeout_us||l.timeout_us>10000000
   ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
   ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
@@ -175,7 +186,8 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
    Operation::Deliver{now_us,..}=>(0,*now_us),Operation::Delay{peer,delay}=>{
     // Godot's agreed config owns the pre-input delay, so only changes after the peer's first step compare.
-    if *peer>=scenario.players||!stepped[*peer]||addressed!=Some(*peer)||!comparable_delay(*delay,scenario.max_prediction){return Err("delay bounds".into());}(*peer,previous)}};
+    if *peer>=scenario.players||!stepped[*peer]||addressed!=Some(*peer)
+    ||!comparable_delay(*delay,scenario.max_prediction,capacity){return Err("delay bounds".into());}(*peer,previous)}};
   if peer>=scenario.players||time<previous||time>10000000{return Err("operation bounds".into());}previous=time;
   if let Operation::Step{peer,..}=op{stepped[*peer]=true;}
   // The shared source clock equals Godot's per-peer clock only after an operation addressed to that peer.
@@ -188,6 +200,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
    protocol_rng_seed:Some(1701+peer as u64),quality_report_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.quality_us)),..Default::default()};
   let sync=SyncConfig{num_sync_packets:1,keepalive_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.keepalive_us)),..Default::default()};
   let mut builder=SessionBuilder::<OracleConfig>::new().with_num_players(scenario.players).map_err(|e|format!("{e:?}"))?
+   .with_input_queue_config(InputQueueConfig{queue_length:capacity})
    .with_max_prediction_window(scenario.max_prediction).with_input_delay(scenario.input_delay).map_err(|e|format!("{e:?}"))?
    .with_protocol_config(protocol).with_sync_config(sync);
   if let Some(l)=&scenario.lifecycle {builder=builder.with_disconnect_timeout(Duration::from_micros(l.timeout_us))

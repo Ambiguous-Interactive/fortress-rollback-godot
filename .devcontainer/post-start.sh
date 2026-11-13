@@ -22,3 +22,10 @@ if [ -f "$PRUNE" ]; then
     echo "[post-start] repository cache (not modified):"
     python3 "$PRUNE" --scope workspace 2>/dev/null | head -n 1 || true
 fi
+
+# Load machine-local secrets (.env.local, devcontainer.env, gh fallback)
+# into /etc/environment so login shells and the OpenCode service inherit
+# them. Never echoes values; never overwrites keys with empty ones.
+if [ -x "$SCRIPT_DIR/sync-env.sh" ]; then
+    "$SCRIPT_DIR/sync-env.sh"
+fi

@@ -222,6 +222,44 @@ Ordinary queue wrap does not prove forced full-capacity reclamation, retained-fl
 side-slot behavior, all queue profiles or complete partition/healing acceptance.
 Those issue requirements remain open.
 
+## Non-power-of-two queue capacity
+
+`mesh_3_capacity9_late_flight` is the first differential case with an explicit
+`queue_capacity`: both adapters build their nine-row rings from the scenario
+profile, and the strict contract validates the profile against the delayed-input
+lead and against the peer session's own unclamped initial-delay bound, so a
+profile production Godot refuses to configure is rejected at the contract seam
+instead of failing inside an adapter. Runtime delay changes compare at the
+capacity-aware bounds, modeled exactly as production computes them (truncating
+integer division, no clamp): at capacity nine with prediction window four,
+upstream accepts raises up to four while the Godot peer bound is zero, so the
+only comparable change is one that both refuse (the witness raises to six;
+upstream rejects the delayed-input span and Godot rejects any raise, and the
+trace records the mapped `INVALID_CONFIGURATION`).
+
+Three peers run forty-four rounds with one-microsecond protocol strides, so no
+input retry timer fires mid-run; the mesh retry cases own retransmission timing.
+From round six every packet from peer 2 to peer 0 is withheld while all other
+routes keep flowing, so peer 0's slot-2 corrections stay pending through the
+stretch. The released flight then forces one deep correction that re-runs the
+withheld rows from a LOAD with every slot's actual input. Every peer must confirm
+at least twenty-seven canonical boundaries — three full wraps of the nine-row
+ring — with ordered requests, packets and states passing the complete existing
+comparison twice per adapter. Controls remove the correction LOAD, hide the
+pending predicted inputs and excuse the refused raise; each must fail at its
+declared diagnostic. The case runs on both engine pins.
+
+The case does not witness full-capacity occupancy. Public peer scheduling
+cannot produce the receipt lead a full ring needs: every producer's frontier is
+capped by its own prediction window over the shared confirmed frontier, so
+mutual freezes bound any receiver's lead well below the ring size (the largest
+contiguous confirmed resim span at the starved receiver here is three rows,
+against a nine-row ring). Direct session receive paths do exercise
+the retained floor and the refusal above it, and the session-level floor,
+occupancy, physical-tag and recoverable-floor-input observations remain an
+access-only SyncLayer oracle slice tracked in
+[#61](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/61).
+
 ## Lifecycle observations
 
 Nine additional two-peer scenarios compare real quality reports, echoed replies,

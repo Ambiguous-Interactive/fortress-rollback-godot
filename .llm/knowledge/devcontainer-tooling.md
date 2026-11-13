@@ -26,6 +26,12 @@ Operational facts learned while building this repo's devcontainer
 | npm latest wrappers can precede their exact native dependencies; Codex uses npm aliases and npm can resolve foreign optional dependencies before platform filtering. | `.devcontainer/install-native-cli.py`; `python3 -m unittest discover -s scripts/tests -p test_native_cli_install.py` covers delayed metadata and install-time ETARGET/E404 with frozen latest. | 2026-10-16 |
 | Retry matching requires a complete package/version token; version-prefix substring matching accepts unrelated releases. | `test_native_cli_install.py` rejects numeric, prerelease, build and path suffix lookalikes for both CLIs. | 2026-10-16 |
 
+## Environment drift
+
+| Fact | Evidence | Verified |
+| --- | --- | --- |
+| A recycled container layer can silently lose apt packages that the image originally installed; Godot then prints `libfontconfig.so.1: cannot open shared object file` to stderr while still running, and any stderr-emptiness gate (e.g. `p2p_controls`' game-input control) fails with an unrelated-looking error. Re-install the package locally (`sudo apt-get update && sudo apt-get install -y libfontconfig1`); CI containers are unaffected when Devcontainer Verify is green. | Local run: stderr 122 bytes before the install, 0 bytes after, exit 0 both times; `p2p_launch.py` control previously failed with `game input control process output`. | 2026-11-13 |
+
 ## npm global packages
 
 | Fact | Evidence | Verified |
