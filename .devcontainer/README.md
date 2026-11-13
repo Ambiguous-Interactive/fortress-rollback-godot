@@ -175,6 +175,8 @@ container-wide (terminals, VS Code, all CLIs). It is gitignored — never commit
 real keys. Format rules: no quotes around values, no inline comments after
 values (both are silently kept as part of the value by `docker --env-file`).
 
+On every container start, `.devcontainer/post-start.sh` runs `sync-env.sh`, which merges `.env.local` and `.devcontainer/devcontainer.env` into `/etc/environment` and exports them for new shells via `/etc/profile.d/99-devcontainer-secrets.sh`. It also derives `MCP_GITHUB_PAT` from `GITHUB_TOKEN` when needed and keeps `.devcontainer/devcontainer.env` aligned so rebuilds pick up the same non-empty secrets.
+
 ### Claude Code provider routing
 
 Default is **native Anthropic** (`claude /login`). To reroute, uncomment the

@@ -18,6 +18,7 @@ venv/
 
 # Devcontainer secrets (template: .devcontainer/devcontainer.env.example)
 .devcontainer/devcontainer.env
+.env.local
 
 # OS
 .DS_Store
