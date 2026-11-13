@@ -70,6 +70,17 @@ impl<T: Config> InputQueue<T> {
 }
 """
 
+# The confirmed-frame bookkeeping wrapper reproduces these pinned setter clamps;
+# each anchor must occur exactly once in the pinned source, so a drift in the
+# clamps the wrapper mirrors fails the run instead of diverging silently.
+CONFIRM_ANCHORS = (
+    """        // never delete stuff ahead of the current frame
+        frame = std::cmp::min(frame, self.current_frame());""",
+    """            .map(InputQueue::first_incorrect_frame)
+            .fold(Frame::NULL, std::cmp::max);""",
+    "        if !first_incorrect.is_null() && first_incorrect < frame {",
+)
+
 # Observation wrappers only: each delegates to an unchanged pinned path, reads
 # private engine state read-only, or stages the confirmed-frame bookkeeping
 # exactly as the pinned setter assigns it after clamps. None of them reclaim
@@ -155,18 +166,24 @@ def publish_tree(source, destination, edits):
 
 def observed_source(tree):
     """Clean wrappers on the untouched sources; returns the tree and provenance."""
-    receipt = {'method': 'unchanged verified source plus access-only delegation wrappers in isolated copy',
+    original = (tree / SYNC_LAYER_SOURCE).read_bytes()
+    for index, anchor in enumerate(CONFIRM_ANCHORS):
+        if original.count(anchor.encode()) != 1:
+            raise ValueError(f'confirmed-frame clamp anchor {index} changed in the pinned source')
+    receipt = {'method': 'unchanged verified source plus access-only wrappers in isolated copy: '
+                          'delegation over crate-private paths, read-only observations, and the '
+                          'confirmed-frame bookkeeping reproducing the pinned setter clamps',
                'original_source_unmodified': True}
     edits = {}
-    for relative, hook in [(SYNC_LAYER_SOURCE, OBSERVATION_HOOK), (QUEUE_SOURCE, QUEUE_RETAINED_HOOK)]:
+    for relative, hook, stem in [(SYNC_LAYER_SOURCE, OBSERVATION_HOOK, 'sync_layer'), (QUEUE_SOURCE, QUEUE_RETAINED_HOOK, 'queue')]:
         original = (tree / relative).read_bytes()
         hooked = original + hook.encode()
         edits[relative] = hooked
-        stem = relative.stem if relative != QUEUE_SOURCE else 'queue'
         receipt[f'{stem}_original_sha256'] = hashlib.sha256(original).hexdigest()
         receipt[f'{stem}_hook_sha256'] = hashlib.sha256(hook.encode()).hexdigest()
         receipt[f'{stem}_observed_sha256'] = hashlib.sha256(hooked).hexdigest()
         receipt['original_source_unmodified'] &= (tree / relative).read_bytes() == original
+    receipt['confirm_anchor_sha256'] = [hashlib.sha256(anchor.encode()).hexdigest() for anchor in CONFIRM_ANCHORS]
     upstream = publish_tree(tree, CACHE / 'sync-floor-observation' / 'fortress', edits)
     return upstream / 'Cargo.toml', receipt
 
@@ -291,12 +308,13 @@ def main():
     receipt.unlink(missing_ok=True)
     identity = git_identity()
     source_paths = sorted(
-        [ROOT / 'addons/fortress_rollback/core/session.gd', ROOT / 'addons/fortress_rollback/core/input_queue.gd',
-         ROOT / 'addons/fortress_rollback/core/config.gd', ROOT / 'addons/fortress_rollback/core/session_types.gd',
-         ROOT / 'scripts/oracle/sync_floor_launch.py', ROOT / 'scripts/oracle/sync_floor_contract.py',
-         ROOT / 'scripts/oracle/sync_floor_corpus.py', ROOT / 'scripts/oracle/rust/src/bin/sync_floor.rs',
-         ROOT / 'tests/oracle/sync_floor_trace.gd', ROOT / 'scripts/reference/engine_path.py',
-         ROOT / 'scripts/reference/receipt_arguments.py'])
+        list((ROOT / 'scripts/oracle').rglob('*.py'))
+        + list((ROOT / 'scripts/oracle/rust/src').rglob('*.rs'))
+        + list((ROOT / 'tests/oracle').glob('*.gd'))
+        + list((ROOT / 'addons/fortress_rollback/core').glob('*.gd'))
+        + [ROOT / 'scripts/reference/fetch.py', ROOT / 'scripts/reference/run.py',
+           ROOT / 'scripts/reference/owned_process.py', ROOT / 'scripts/reference/engine_path.py',
+           ROOT / 'scripts/reference/receipt_arguments.py'])
     source_hashes = {str(path.relative_to(ROOT)): digest(path) for path in source_paths}
     engine = resolve_engine(args.godot)
     manifest = load_manifest()
@@ -306,6 +324,7 @@ def main():
     cargo, _ = setup_rust(manifest, args.offline)
     clean_adapter = write_adapter('adapter-clean', build_manifest(observed_manifest, 'sync_floor'))
     mutant_adapter = write_adapter('adapter-mutant', build_manifest(mutant_manifest, 'sync_floor_mutant'))
+    clean_binary_identity = None
     for name, adapter, binary in [('sync_floor', clean_adapter, 'sync_floor'),
                                   ('sync_floor_mutant', mutant_adapter, 'sync_floor_mutant')]:
         command = [str(cargo), '+' + manifest['rust']['version'], 'build', '--locked',
@@ -313,6 +332,8 @@ def main():
         if args.offline:
             command.append('--offline')
         execute(command, args.output / f'build-{name}.log', timeout=600)
+        if name == 'sync_floor':
+            clean_binary_identity = digest(CACHE / 'target/debug/sync_floor')
     clean_binary = CACHE / 'target/debug/sync_floor'
     mutant_binary = CACHE / 'target/debug/sync_floor_mutant'
     scenario_bundle = validate_bundle(bundle())
@@ -324,7 +345,6 @@ def main():
     game_command = [str(engine), '--headless', '--path', str(ROOT),
                     '--script', 'res://tests/oracle/sync_floor_trace.gd']
     rust_runs, godot_runs = [], []
-    binary_identity = digest(clean_binary)
     for repetition in (1, 2):
         stdout, stderr = execute([str(clean_binary)], args.output / f'rust-{repetition}.log', artifact_text)
         if stderr.strip():
@@ -351,6 +371,7 @@ def main():
     (args.output / 'godot-trace.json').write_text(json.dumps(godot_runs[0], indent=2) + '\n')
     require_unchanged('local source inventory', source_hashes,
                       {str(path.relative_to(ROOT)): digest(path) for path in source_paths})
+    require_unchanged('floor oracle binary', clean_binary_identity, digest(clean_binary))
     require_unchanged('repository identity', identity, git_identity())
     result = {'format': 1, 'passed': True, 'upstream_revision': REVISION,
               'commit': identity['commit'],
@@ -360,7 +381,6 @@ def main():
               'operations': len(scenario_data['operations']), 'repeat_equal': True,
               'controls': controls, 'observation': observation, 'mutant': mutant_receipt,
               'binary_sha256': digest(clean_binary), 'mutant_binary_sha256': digest(mutant_binary),
-              'binary_identity_unchanged': digest(clean_binary) == binary_identity,
               'oracle_lock_sha256': digest(ROOT / 'scripts/oracle/rust/Cargo.lock'),
               'scenario_sha256': digest(artifact),
               'rust_trace_sha256': digest(args.output / 'rust-trace.json'),

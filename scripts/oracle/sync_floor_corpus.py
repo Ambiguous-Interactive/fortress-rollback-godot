@@ -26,6 +26,24 @@ def delayed_local(frame):
     return value(0, frame) if frame < 20 else value(0, max(19, frame - 2))
 
 
+def local_row_at_scheduled(frame):
+    """The local queue's actual row at a scheduled frame, through the delay raise.
+
+    Samples before the raise land at their own frame; the raise's two repeat-latest
+    gap rows carry the last pre-raise actual; later samples land two frames ahead.
+    """
+    if frame < 20:
+        return value(0, frame)
+    if frame in (20, 21):
+        return value(0, 19)
+    return value(0, frame - 2)
+
+
+def row_at_scheduled(player, frame):
+    """The actual row a queue holds at a scheduled frame."""
+    return local_row_at_scheduled(frame) if player == 0 else value(player, frame)
+
+
 def state_bytes(frame, rng, pending, total):
     return frame.to_bytes(4, 'little') + rng.to_bytes(4, 'little') + pending.to_bytes(4, 'little') + total.to_bytes(4, 'little')
 

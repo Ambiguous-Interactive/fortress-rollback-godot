@@ -69,6 +69,8 @@ class SyncFloorCorpusTests(unittest.TestCase):
                 lambda records: records[1].update(floor=records[1]['floor'] + 1),
                 lambda records: records[1]['players'][0].update(range=[2, 1]),
                 lambda records: records[1]['players'][1].update(confirmed_floor='ffff'),
+                lambda records: records[1]['players'][2].update(retained_floor='00'),
+                lambda records: records[2]['requests'][1]['inputs'][0].update(status='predicted'),
                 lambda records: records[2]['requests'][0].update(state_bytes='00' * 16),
                 lambda records: records[2]['requests'][0].update(checksum='00' * 32),
                 lambda records: records[2]['requests'][1].update(inputs=[]),
@@ -101,7 +103,9 @@ class SyncFloorCorpusTests(unittest.TestCase):
             {'index': 2, 'kind': 'advance', 'advanced': True, 'confirmed_frame': -1, 'requests': [
                 {'kind': 'save', 'frame': 0, 'state_bytes': states[0].hex(), 'checksum': checksum(states[0]), 'inputs': []},
                 {'kind': 'advance', 'frame': 0, 'state_bytes': states[1].hex(), 'checksum': checksum(states[1]),
-                 'inputs': [{'player': player, 'bytes': '01', 'status': 'predicted'} for player in range(3)]}]},
+                 'inputs': [{'player': 0, 'bytes': '01', 'status': 'confirmed'},
+                            {'player': 1, 'bytes': '01', 'status': 'predicted'},
+                            {'player': 2, 'bytes': '01', 'status': 'predicted'}]}]},
         ]
         return {'format': 1, 'operations': records}
 

@@ -10,13 +10,14 @@ from the true input history alone.
 import json
 
 from contract import checksum as state_checksum, fields, hex_bytes, integer
+from sync_floor_corpus import row_at_scheduled
 
 REQUEST_KINDS = {'save', 'load', 'advance'}
 INPUT_STATUSES = {'confirmed', 'predicted', 'disconnected'}
 RECORD_KINDS = {'receive', 'submit', 'delay', 'observe', 'advance'}
 
 
-def validate_record(record, source):
+def validate_record(record, source, context):
     integer(record.get('index'), 0, len(source['operations']) - 1, 'record index')
     kind = record.get('kind')
     if kind not in RECORD_KINDS:
@@ -24,6 +25,7 @@ def validate_record(record, source):
     operation = source['operations'][record['index']]
     if kind != operation['kind']:
         raise ValueError(f'record {record["index"]} kind {kind} does not match scheduled {operation["kind"]}')
+    frontiers, frame_delay = context
     if kind in ('receive', 'submit'):
         fields(record, 'index kind player frame bytes accepted' + (' scheduled' if kind == 'submit' else ''), f'{kind} record')
         integer(record['player'], 0, source['players'] - 1, 'record player')
@@ -45,6 +47,11 @@ def validate_record(record, source):
             raise ValueError(f'record {record["index"]}: delay raise must succeed')
         integer(record['frame_delay'], 0, source['queue_capacity'] - 1, 'record frame_delay')
         integer(record['last_added'], 0, 2147483647, 'record last_added')
+        if record['frame_delay'] != record['value']:
+            raise ValueError(f'record {record["index"]}: the raised frame delay must equal the requested value')
+        # The raise appends repeat rows to the staged frontier before its submit.
+        if record['last_added'] != frontiers[record['player']] + record['value'] - frame_delay:
+            raise ValueError(f'record {record["index"]}: delay raise last-added frame is not the staged frontier shift')
     elif kind == 'observe':
         fields(record, 'index kind floor players', 'observe record')
         integer(record['floor'], 0, 2147483647, 'record floor')
@@ -64,11 +71,21 @@ def validate_record(record, source):
                     hex_bytes(observed[edge], source['input_width'], f'observation {player} {edge}')
             if observed['retained_floor'] is not None and observed['confirmed_floor'] is None:
                 raise ValueError(f'observation {player}: recoverable floor row without a confirmed read')
+            if observed['confirmed_floor'] is not None and observed['confirmed_floor'] != observed['retained_floor']:
+                raise ValueError(f'observation {player}: confirmed floor read disagrees with the recoverable row')
+            if span is not None and span[0] <= record['floor'] <= span[1]:
+                expected = row_at_scheduled(player, record['floor'])
+                for edge in ('confirmed_floor', 'retained_floor'):
+                    if observed[edge] is not None and observed[edge] != f'{expected:02x}':
+                        raise ValueError(f'observation {player}: {edge} does not hold the scheduled floor row')
     else:
         fields(record, 'index kind advanced confirmed_frame requests', 'advance record')
         if record['advanced'] is not True:
             raise ValueError(f'record {record["index"]}: the schedule must advance every frame')
         integer(record['confirmed_frame'], -1, 2147483647, 'record confirmed frame')
+        if record['confirmed_frame'] != min(frontiers, default=-1):
+            raise ValueError(f'record {record["index"]}: confirmed frame {record["confirmed_frame"]} '
+                             f'is not the receipt minimum')
         requests = record['requests']
         if not isinstance(requests, list) or not requests:
             raise ValueError('advance record must hold at least one request')
@@ -90,6 +107,11 @@ def validate_record(record, source):
                 hex_bytes(row['bytes'], source['input_width'], 'input bytes')
                 if row['status'] not in INPUT_STATUSES:
                     raise ValueError(f'unknown input status {row["status"]}')
+                if request['kind'] == 'advance':
+                    expected = 'confirmed' if frontiers[player] >= request['frame'] else 'predicted'
+                    if row['status'] != expected:
+                        raise ValueError(f'request frame {request["frame"]}: player {player} status '
+                                         f'{row["status"]} violates the receipt frontier {frontiers[player]}')
 
 
 def _local_delay(source, frame):
@@ -102,17 +124,25 @@ def _current_frame(source, index):
     return sum(1 for operation in source['operations'][:index] if operation['kind'] == 'advance')
 
 
-def _frontiers(source):
-    """Receipt frontiers the schedule delivers, per operation index."""
+def _contexts(source):
+    """Per-operation receipt frontiers and the local frame delay in force."""
     delivered = [-1] * source['players']
-    frontiers = []
+    frame_delay = 0
+    contexts = []
     for operation in source['operations']:
+        contexts.append((tuple(delivered), frame_delay))
         if operation['kind'] == 'receive':
             delivered[operation['player']] = max(delivered[operation['player']], operation['frame'])
         elif operation['kind'] == 'submit':
             delivered[operation['player']] = operation['frame'] + _local_delay(source, operation['frame'])
-        frontiers.append(tuple(delivered))
-    return frontiers
+        elif operation['kind'] == 'delay':
+            frame_delay = operation['value']
+    return contexts
+
+
+def _frontiers(source):
+    """Receipt frontiers the schedule delivers, per operation index."""
+    return [context[0] for context in _contexts(source)]
 
 
 def validate_records(trace, source, complete=True):
@@ -125,15 +155,14 @@ def validate_records(trace, source, complete=True):
         raise ValueError('floor trace must record every scheduled operation')
     if len(operations) > len(source['operations']):
         raise ValueError('floor trace records more operations than the schedule holds')
-    frontiers = _frontiers(source)
+    contexts = _contexts(source)
+    frontiers = [context[0] for context in contexts]
     for position, record in enumerate(operations):
         if record.get('index') != position:
             raise ValueError('floor trace records must follow the scheduled order')
-        validate_record(record, source)
+        validate_record(record, source, contexts[position])
         if record['kind'] == 'advance':
-            # The receipt minimum covers every slot; a slot that never received a row
-            # pins the frontier at -1 exactly like the engines' own bookkeeping.
-            expected = min(frontiers[record['index']], default=-1)
+            expected = min(frontiers[position], default=-1)
             if record['confirmed_frame'] != expected:
                 raise ValueError(f'record {record["index"]}: confirmed frame {record["confirmed_frame"]} '
                                  f'is not the receipt minimum {expected}')
