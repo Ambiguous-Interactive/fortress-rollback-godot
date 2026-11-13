@@ -32,7 +32,9 @@ outside-input decision is not addressed feedback and must remain explicit.
    relevant work; do not stack another PR for the same session.
 2. Implement the authorized work, run applicable checks and reviews, update
    progress and planning evidence, and complete the required retrospective.
-3. Commit coherent changes and push. Find or create the session PR against
+3. Commit coherent changes and push. Create the session branch before the first
+   commit and never run `git reset --hard` while the working tree holds
+   unstaged work — stage, stash or branch first. Find or create the session PR against
    `main`; update its title/body to describe the final diff. Do not explicitly
    request bot reviews.
 4. Read the PR's current head SHA, base, draft status and mergeability. Inspect
