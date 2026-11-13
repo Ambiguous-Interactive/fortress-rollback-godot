@@ -8,8 +8,8 @@ active prediction. The pinned crate is compiled from a verified isolated copy ca
 access-only wrapper block; the shipped session runs unchanged. The comparison covers every
 ordered request and canonical state, each recorded accept or refusal, and the floor,
 occupancy, confirmed-floor and recoverable-floor observations. A mutant build that replaces
-the global floor with the fast player's local high-water must flip floor-protected
-acceptance results, proving the differential detects the whole failure class.
+the global floor with the fast player's local high-water must accept the above-floor add
+the clean floor refuses at the frame-twelve boundary, the comparison's first divergence.
 """
 import copy
 import json
@@ -42,7 +42,7 @@ FAST_FLOOR_SEARCH = """    fn rollback_window_floor(&self) -> Frame {
 FAST_FLOOR_REPLACE = """    fn rollback_window_floor(&self) -> Frame {
         let high_water = self
             .input_queues
-            .first()
+            .get(1)
             .map_or(Frame::new(0), |queue: &InputQueue<T>| queue.oracle_fast_high_water());
         Frame::new(high_water.as_i32().max(0))
     }

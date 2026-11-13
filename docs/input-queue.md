@@ -265,8 +265,7 @@ that the pinned sources stayed unchanged.
 Five malformed-artifact controls run per implementation, and a mutant build replaces the
 global floor with the fast player's local high-water — the exact reclamation defect the
 acceptance names. The mutant must accept the above-floor add the clean floor refuses at
-the frame-twelve boundary, which is the comparison's first divergence, so the differential
-detects the whole wrong-floor class rather than one symptom. Reproduce with
+the frame-twelve boundary, which is the comparison's first divergence. Reproduce with
 `make sync-floor-probes GODOT=/path/to/godot`. This delivers the session-level floor,
 occupancy and tag observation slice of #61; actual P2P transport observations stay open
 there and in #59.

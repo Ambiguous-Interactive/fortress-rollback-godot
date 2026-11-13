@@ -76,26 +76,31 @@ var _error: String = ""
 func _initialize() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if args.size() != 2 or args[0] != "--artifact":
-		_fail("expected --artifact PATH")
+		_error = "expected --artifact PATH"
+		_fail(_error)
 		return
 	var file: FileAccess = FileAccess.open(args[1], FileAccess.READ)
 	if file == null:
-		_fail("cannot read artifact")
+		_error = "cannot read artifact"
+		_fail(_error)
 		return
 	var parser: JSON = JSON.new()
 	if parser.parse(file.get_as_text()) != OK or not parser.data is Dictionary:
-		_fail("artifact is not a JSON object")
+		_error = "artifact is not a JSON object"
+		_fail(_error)
 		return
 	_execute(parser.data)
 	if _error.is_empty():
 		print(PREFIX + JSON.stringify({"format": 1, "operations": _operations}))
 		quit(0)
+	else:
+		_fail(_error)
 
 
 func _execute(source: Dictionary) -> void:
 	var problem: String = _artifact_problem(source)
 	if not problem.is_empty():
-		_fail(problem)
+		_error = problem
 		return
 	var operations: Array = source["operations"]
 	var configuration: RefCounted = Config.new()
@@ -113,7 +118,7 @@ func _execute(source: Dictionary) -> void:
 	configuration.storage_budget_bytes = 65536
 	_session = Session.new()
 	if _session.configure(configuration) != Types.Code.OK:
-		_fail("session configuration rejected")
+		_error = "session configuration rejected"
 		return
 	_game = Game.new()
 	for index: int in range(operations.size()):

@@ -29,6 +29,8 @@ def validate_record(record, source):
         integer(record['player'], 0, source['players'] - 1, 'record player')
         integer(record['frame'], 0, 2147483647, 'record frame')
         hex_bytes(record['bytes'], source['input_width'], 'record bytes')
+        if (record['player'], record['frame'], record['bytes']) != (operation['player'], operation['frame'], operation['bytes']):
+            raise ValueError(f'record {record["index"]}: receipt identity does not match the scheduled operation')
         if record['accepted'] is not operation['accepted']:
             raise ValueError(f'record {record["index"]}: accepted {record["accepted"]} violates the scheduled expectation')
         if kind == 'submit':

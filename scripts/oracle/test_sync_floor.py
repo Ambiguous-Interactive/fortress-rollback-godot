@@ -63,6 +63,9 @@ class SyncFloorCorpusTests(unittest.TestCase):
         for mutate in [
                 lambda records: records[0].update(accepted=not records[0]['accepted']),
                 lambda records: records[0].update(scheduled=records[0]['scheduled'] + 1),
+                lambda records: records[0].update(player=2),
+                lambda records: records[0].update(frame=1),
+                lambda records: records[0].update(bytes='ff'),
                 lambda records: records[1].update(floor=records[1]['floor'] + 1),
                 lambda records: records[1]['players'][0].update(range=[2, 1]),
                 lambda records: records[1]['players'][1].update(confirmed_floor='ffff'),
