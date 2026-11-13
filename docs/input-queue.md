@@ -252,15 +252,17 @@ row. The final resimulation of every confirmed frame must equal an independent
 original-input history computed from the true delayed rows alone.
 
 `scripts/oracle/sync_floor_launch.py` compiles the pinned crate from a verified isolated
-copy carrying access-only wrappers over the crate-private input paths and the floor
-observation, plus one read-only queue wrapper for the private recoverable-history lookup.
-The pinned `rollback_window_floor` body is unchanged. The harness mirrors the pinned P2P
-facade's EveryFrame advance sequence minus protocol polling, collapses the two identical
-upstream frame-0 saves to one same-frame save, mirrors the Session's documented receive
-boundary (sequential adds plus retained-repeat dedup), and trims every queue to the
-committed floor when the batch completes, exactly like the Session's completion pass.
-Receipts record the original, hook and observed source hashes for both hooked files and
-that the pinned sources stayed unchanged.
+copy carrying access-only wrappers: delegation over the crate-private input paths and the
+floor observation, one read-only queue wrapper for the private recoverable-history lookup,
+and a confirmed-frame bookkeeping wrapper that reproduces the pinned setter's clamps —
+each clamp anchored against the pinned source — without the facade's pre-advance discard
+pass. The pinned `rollback_window_floor` body is unchanged. The harness mirrors the pinned
+P2P facade's EveryFrame advance sequence minus protocol polling, collapses the two
+identical upstream frame-0 saves to one same-frame save, mirrors the Session's documented
+receive boundary (sequential adds plus retained-repeat dedup), and trims every queue to
+the committed floor when the batch completes, exactly like the Session's completion pass.
+Receipts record the original, hook and observed source hashes for both hooked files, the
+clamp anchors, and that the pinned sources and the clean oracle binary stayed unchanged.
 
 Five malformed-artifact controls run per implementation, and a mutant build replaces the
 global floor with the fast player's local high-water — the exact reclamation defect the
