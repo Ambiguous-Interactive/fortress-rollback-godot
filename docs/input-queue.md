@@ -236,3 +236,38 @@ the wrapper SHA-256 is
 `7336f7bc2d46909f805354c47273eda5665d482f02820f69dbdd702789e87673`.
 Reproduce with `make queue-probes GODOT=/path/to/godot`. This evidence covers
 queue storage operations; it does not close upstream P2P recovery issue #61.
+
+### Session-engine global-floor differential
+
+The session engine runs the same schedule as `tests/unit/test_rollback.gd::global_floor`
+through both engines in fresh processes, twice per pin: three players, prediction window
+four, capacity nine, a fast queue receiving ahead of the session, a three-frame lagger and
+a delay raise during active prediction. The differential covers every ordered save, load
+and advance request with canonical state bytes and checksums, every recorded acceptance or
+refusal — the above-floor add against the fast queue's pinned ring, retained floor repeats
+before the advance, and the stale floor after it — the receipt-minimum confirmed frame of
+every advance, and per-queue observations of the floor itself, the retained contiguous
+range including the side slot, the confirmed read at the floor and the recoverable floor
+row. The final resimulation of every confirmed frame must equal an independent
+original-input history computed from the true delayed rows alone.
+
+`scripts/oracle/sync_floor_launch.py` compiles the pinned crate from a verified isolated
+copy carrying access-only wrappers: delegation over the crate-private input paths and the
+floor observation, one read-only queue wrapper for the private recoverable-history lookup,
+and a confirmed-frame bookkeeping wrapper that reproduces the pinned setter's clamps —
+each clamp anchored against the pinned source — without the facade's pre-advance discard
+pass. The pinned `rollback_window_floor` body is unchanged. The harness mirrors the pinned
+P2P facade's EveryFrame advance sequence minus protocol polling, collapses the two
+identical upstream frame-0 saves to one same-frame save, mirrors the Session's documented
+receive boundary (sequential adds plus retained-repeat dedup), and trims every queue to
+the committed floor when the batch completes, exactly like the Session's completion pass.
+Receipts record the original, hook and observed source hashes for both hooked files, the
+clamp anchors, and that the pinned sources and the clean oracle binary stayed unchanged.
+
+Five malformed-artifact controls run per implementation, and a mutant build replaces the
+global floor with the fast player's local high-water — the exact reclamation defect the
+acceptance names. The mutant must accept the above-floor add the clean floor refuses at
+the frame-twelve boundary, which is the comparison's first divergence. Reproduce with
+`make sync-floor-probes GODOT=/path/to/godot`. This delivers the session-level floor,
+occupancy and tag observation slice of #61; actual P2P transport observations stay open
+there and in #59.
