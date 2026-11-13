@@ -6,8 +6,11 @@ import json
 from pathlib import Path
 import re
 import shutil
+import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -46,20 +49,35 @@ def fetch(pin, name, offline=False, cache=CACHE):
     if not destination.exists():
         if offline and repository_source is None:
             raise FileNotFoundError(f'offline cache miss: {destination}')
-        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
-            temporary = Path(output.name)
+        # Network failures are transient: retry the download with bounded backoff.
+        # A digest mismatch is deterministic and is never retried.
+        for attempt in range(4):
+            temporary = None
             try:
-                if repository_source is not None:
-                    with repository_source.open('rb') as source:
-                        shutil.copyfileobj(source, output)
-                else:
-                    with urllib.request.urlopen(pin['url'], timeout=60) as response:
-                        shutil.copyfileobj(response, output)
-                output.close()
+                with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as output:
+                    temporary = Path(output.name)
+                    if repository_source is not None:
+                        with repository_source.open('rb') as source:
+                            shutil.copyfileobj(source, output)
+                    else:
+                        with urllib.request.urlopen(pin['url'], timeout=60) as response:
+                            shutil.copyfileobj(response, output)
                 verify(temporary, pin)
                 temporary.replace(destination)
-            finally:
-                temporary.unlink(missing_ok=True)
+                break
+            except (urllib.error.URLError, ConnectionError, TimeoutError) as error:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+                if attempt == 3:
+                    raise
+                delay = 10 * (attempt + 1)
+                print(f'fetch: {name}: transient failure, retry {attempt + 1} of 3 in {delay}s: {error}',
+                      file=sys.stderr, flush=True)
+                time.sleep(delay)
+            except BaseException:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+                raise
     verify(destination, pin)
     return destination
 
