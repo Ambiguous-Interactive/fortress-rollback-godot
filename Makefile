@@ -67,6 +67,10 @@ p2p-probes:
 drop-history-probes:
 	$(PY) scripts/oracle/drop_history_launch.py --godot $(GODOT)
 
+## Actual pinned SyncLayer and session-engine global-floor comparison
+sync-floor-probes:
+	$(PY) scripts/oracle/sync_floor_launch.py --godot $(GODOT)
+
 ## Actual pinned upstream P2P handshake and production Godot byte endpoint
 handshake-probes:
 	$(PY) scripts/oracle/handshake_launch.py --godot $(GODOT)

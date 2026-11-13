@@ -266,7 +266,12 @@ the starved peer's terminal with both peers' canonical states matching through
 the last shared operation. A non-power-of-two queue profile case builds both
 adapters' rings from an explicit nine-row capacity, forces one deep correction
 through a withheld ten-round flight, wraps the ring three times and
-compares the capacity-aware runtime delay bounds.
+compares the capacity-aware runtime delay bounds. A session-engine differential
+drives the `global_floor` schedule — three players, prediction window four,
+capacity nine, a fast queue receiving ahead, a three-frame lagger and a delay
+raise during prediction — through the pinned SyncLayer and the shipped session,
+comparing ordered requests, canonical states, floor and retained-row
+observations and a fast-local-high-water floor mutant.
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
 retains long-lived partition/fairness vocabulary and first-divergence shrinking.
 These scoped gates do not establish browser or full-feature release parity.

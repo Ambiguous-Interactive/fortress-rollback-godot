@@ -37,6 +37,7 @@ LAUNCHERS = {
     'oracle': 'launch.py',
     'handshake': 'handshake_launch.py',
     'queue': 'queue_launch.py',
+    'sync-floor': 'sync_floor_launch.py',
 }
 
 TAIL_LINES = 200
