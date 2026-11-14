@@ -12,6 +12,7 @@ const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
 struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:usize, operations:Vec<Operation>,
  // An omitted field stays None (the 128-row default); an explicit null is rejected.
  #[serde(default, deserialize_with="present_capacity")] queue_capacity:Option<usize>,
+ #[serde(default, deserialize_with="present_layout")] layout:Option<Vec<usize>>,
  #[serde(default, deserialize_with="present_lifecycle")] lifecycle:Option<Lifecycle> }
 fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Lifecycle>, D::Error> {
     Lifecycle::deserialize(deserializer).map(Some)
@@ -19,6 +20,15 @@ fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Resul
 fn present_capacity<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
     usize::deserialize(deserializer).map(Some)
 }
+fn present_layout<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<usize>>, D::Error> {
+    Vec::<usize>::deserialize(deserializer).map(Some)
+}
+/// Local slot lists per machine address; an omitted layout stays one slot per endpoint.
+fn slots_of(players:usize, layout:&Option<Vec<usize>>)->Vec<Vec<usize>>{match layout {
+    None=>(0..players).map(|slot|vec![slot]).collect(),
+    Some(sizes)=>{let mut slots=Vec::new();let mut start=0;for size in sizes{slots.push((start..start+size).collect());start+=size;}slots}}}
+fn owner_of(slots_of:&[Vec<usize>])->Vec<usize>{let mut owner=Vec::new();for (machine,slots) in slots_of.iter().enumerate(){
+    for _slot in slots{owner.push(machine);}}owner}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Lifecycle { quality_us:u64, keepalive_us:u64, notify_us:u64, timeout_us:u64, checksum_interval:u32, divergent_peer:i32 }
@@ -101,15 +111,19 @@ fn state_fields(kind: &str, frame: i32, game: &Game, inputs: Value) -> Value {
 /// flight XOR-deltas each of its rows against the row of the highest frame the
 /// destination has acknowledged, flights join the sender's pending queue at
 /// creation, and a carried `ack_frame` pops the receiving endpoint's own
-/// pending rows when the packet is delivered. One row per frame, four bytes.
+/// pending rows when the packet is delivered. One row per frame, four bytes
+/// per local slot the sender owns, so a multi-local machine's rows are the
+/// ascending concatenation of its slots' inputs.
 #[derive(Default)]
 struct MeshReferences {
+    row_bytes: Vec<usize>,
     acked: BTreeMap<(usize,usize),(i32,Vec<u8>)>,
     pending: BTreeMap<(usize,usize),Vec<(i32,Vec<u8>)>>,
 }
 impl MeshReferences {
+    fn new(slots_of:&[Vec<usize>])->Self{Self{row_bytes:slots_of.iter().map(|slots|4*slots.len()).collect(),..Default::default()}}
     fn reference(&mut self,peer:usize,destination:usize)->Vec<u8>{
-        self.acked.entry((peer,destination)).or_insert((-1,vec![0;4])).1.clone()
+        self.acked.entry((peer,destination)).or_insert((-1,vec![0;self.row_bytes[peer]])).1.clone()
     }
     fn send(&mut self,peer:usize,destination:usize,start:i32,frames:&[Vec<u8>]){
         let flight:Vec<(i32,Vec<u8>)>=(0..frames.len() as i32).map(|offset|(start+offset,frames[offset as usize].clone())).collect();
@@ -145,7 +159,7 @@ impl MeshReferences {
 
 fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Game)->Result<(Vec<Value>,Option<String>),String>{
  let mut records=Vec::new();
- let requests=match session.advance_frame(){Ok(v)=>v,Err(e)=>return Ok((records,Some(format!("{e:?}"))))};
+ let requests=match session.advance_frame(){Ok(v)=>v,Err(e)=>return Ok((records,Some(advance_error(e))))};
  for request in requests { match request {
  FortressRequest::SaveGameState{cell,frame}=>{
   if game.frame!=frame.as_i32() || !cell.save(frame,Some(game.clone()),Some(game.checksum())) {return Err("invalid save boundary".into());}
@@ -172,7 +186,11 @@ fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Gam
  Ok((records,None))
 }
 
-fn project_packet(raw:&Value,peer:usize,destination:usize,references:&mut MeshReferences)->Result<Value,String>{
+/// Compared advance refusals: Godot's own code names; everything else keeps its Debug shape.
+fn advance_error(e:FortressError)->String{match e {
+ FortressError::InvalidRequestStructured{kind:InvalidRequestKind::MissingLocalInput{..}}=>"MissingLocalInput".into(),
+ other=>format!("{other:?}")}}
+fn project_packet(raw:&Value,peer:usize,destination:usize,references:&mut MeshReferences,slots_of:&[Vec<usize>])->Result<Value,String>{
    if raw["body"]=="KeepAlive" {return Ok(json!({"kind":"keep_alive"}));}
    let body=raw["body"].as_object().ok_or("message body")?;let (kind,body)=body.iter().next().ok_or("empty body")?;
    let semantic=match kind.as_str(){
@@ -183,7 +201,7 @@ fn project_packet(raw:&Value,peer:usize,destination:usize,references:&mut MeshRe
      let frames=decode_with_max_len(&reference,&compressed,4096).map_err(|e|format!("{e:?}"))?;
      references.send(peer,destination,start,&frames);
      json!({"kind":"input","start_frame":start,"ack_frame":body["ack_frame"],"statuses":body["peer_connect_status"],
-      "players":[peer],"frames":frames.iter().map(|v|hex(v)).collect::<Vec<_>>()})
+      "players":slots_of[peer].clone(),"frames":frames.iter().map(|v|hex(v)).collect::<Vec<_>>()})
     },"InputAck"=>json!({"kind":"input_ack","ack_frame":body["ack_frame"]}),
     "QualityReport"=>{let ping=body["ping"].to_string().parse::<u128>().map_err(|_|"ping integer")?;
      json!({"kind":"quality_report","frame_advantage":body["frame_advantage"],"ping":format!("{ping:032x}")})},
@@ -226,6 +244,9 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  if let Some(l)=&scenario.lifecycle {if l.quality_us<1000||l.keepalive_us<1000||l.notify_us==0||l.notify_us>=l.timeout_us||l.timeout_us>10000000
   ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
   ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
+ let slots_of=slots_of(scenario.players,&scenario.layout);let owner=owner_of(&slots_of);let machines=slots_of.len();
+ if let Some(sizes)=&scenario.layout {if sizes.is_empty()||machines<2||sizes.iter().any(|size|*size==0)||sizes.iter().sum::<usize>()!=scenario.players
+  ||scenario.operations.iter().any(|op|matches!(op,Operation::Delay{..})){return Err("layout bounds".into());}}
  let mut previous=0;let mut stepped=vec![false;scenario.players];let mut addressed=None;
  for op in &scenario.operations {
   let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
@@ -240,9 +261,9 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  }
  let time=Arc::new(Mutex::new(0u64));let origin=web_time::Instant::now();
  let mut sessions=Vec::new();let mut buffers=Vec::new();let mut games=Vec::new();
- for peer in 0..scenario.players {
+ for machine in 0..machines {
   let clock=time.clone();let protocol=ProtocolConfig{clock:Some(Arc::new(move||origin+Duration::from_micros(*clock.lock().unwrap()))),
-   protocol_rng_seed:Some(1701+peer as u64),quality_report_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.quality_us)),..Default::default()};
+   protocol_rng_seed:Some(1701+machine as u64),quality_report_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.quality_us)),..Default::default()};
   let sync=SyncConfig{num_sync_packets:1,keepalive_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.keepalive_us)),..Default::default()};
   let mut builder=SessionBuilder::<OracleConfig>::new().with_num_players(scenario.players).map_err(|e|format!("{e:?}"))?
    .with_input_queue_config(InputQueueConfig{queue_length:capacity})
@@ -252,10 +273,10 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
    .with_disconnect_notify_delay(Duration::from_micros(l.notify_us))
    .with_desync_detection_mode(if l.checksum_interval==0{DesyncDetection::Off}else{DesyncDetection::On{interval:l.checksum_interval}});}
   else {builder=builder.with_disconnect_timeout(Duration::from_secs(100)).with_disconnect_notify_delay(Duration::from_secs(50));}
-  for slot in 0..scenario.players {builder=builder.add_player(if slot==peer {PlayerType::Local}else{PlayerType::Remote(slot.to_string())},slot.into()).unwrap();}
+  for slot in 0..scenario.players {builder=builder.add_player(if owner[slot]==machine {PlayerType::Local}else{PlayerType::Remote(owner[slot].to_string())},slot.into()).unwrap();}
   let queue=Arc::new(Mutex::new(Buffers::default()));sessions.push(builder.start_p2p_session(Socket(queue.clone())).unwrap());buffers.push(queue);
   let mut game=Game{frame:0,accumulators:vec![0;scenario.players],version:2,rng:8173,pending:0};
-  if scenario.lifecycle.as_ref().is_some_and(|l|l.divergent_peer==peer as i32){game.accumulators[0]=1;}games.push(game);
+  if scenario.lifecycle.as_ref().is_some_and(|l|l.divergent_peer==machine as i32){game.accumulators[0]=1;}games.push(game);
  }
  // Bootstrap uses real peer sessions and messages; no forged synchronization.
  for _ in 0..8 {
@@ -266,9 +287,11 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  }
  for session in &mut sessions {if format!("{:?}",session.current_state())!="Running"{return Err("bootstrap incomplete".into());}session.events().for_each(drop);}
  let mut packets:Vec<(usize,usize,Message)>=Vec::new();let mut packet_values=Vec::new();let mut records=Vec::new();
- let mut references=MeshReferences::default();
+ let mut references=MeshReferences::new(&slots_of);
  for (index,op) in scenario.operations.iter().enumerate(){
-  let (peer,now)=match op {Operation::Step{peer,now_us,..}|Operation::Poll{peer,now_us}=>(*peer,*now_us),
+  // Step and poll operations address one local slot; the driven session is the owning
+  // machine's. Deliveries address the destination machine directly.
+  let (peer,now)=match op {Operation::Step{peer,now_us,..}|Operation::Poll{peer,now_us}=>(owner[*peer],*now_us),
    Operation::Delay{peer,..}=>(*peer,*time.lock().unwrap()),
    Operation::Deliver{packet,now_us}=>{let (sender,destination,message)=packets.get(*packet).ok_or("unknown observed packet")?;
     let raw=serde_json::to_value(message).map_err(|e|format!("{e:?}"))?;
@@ -276,15 +299,15 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
     buffers[*destination].lock().unwrap().incoming.push((sender.to_string(),message.clone()));(*destination,*now_us)}};
   *time.lock().unwrap()=now;let before=sessions[peer].current_frame().as_i32();let pre_state=hex(&games[peer].bytes());
   let pre_confirmed=sessions[peer].confirmed_frame().as_i32();let mut requests=Vec::new();let mut error=None;
-  match op {Operation::Step{bytes,..}=>{
-   error=sessions[peer].add_local_input(PlayerHandle::new(peer),input_bytes(bytes)?).err().map(|e|format!("{e:?}"));
+  match op {Operation::Step{peer:slot,bytes,..}=>{
+   error=sessions[peer].add_local_input(PlayerHandle::new(*slot),input_bytes(bytes)?).err().map(|e|format!("{e:?}"));
    if error.is_none(){(requests,error)=apply(&mut sessions[peer],&mut games[peer])?;}
   },Operation::Delay{delay,..}=>{error=sessions[peer].set_input_delay(PlayerHandle::new(peer),*delay).err().map(delay_error);},
   _=>sessions[peer].poll_remote_clients()}
   let mut outgoing=Vec::new();
   for (destination,message) in std::mem::take(&mut buffers[peer].lock().unwrap().outgoing){
    let destination=destination.parse::<usize>().unwrap();let raw=serde_json::to_value(&message).unwrap();
-   let semantic=project_packet(&raw,peer,destination,&mut references)?;
+   let semantic=project_packet(&raw,peer,destination,&mut references,&slots_of)?;
    let id=packets.len();packets.push((peer,destination,message));
    packet_values.push(json!({"id":id,"from":peer,"to":destination,"raw":raw,"semantic":semantic}));outgoing.push(id);
   }
@@ -304,7 +327,10 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
 fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
  if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
-  let mut references=MeshReferences::default();let packets=value["packets"].as_array().ok_or("packets")?;
+  let scenario_players=value["scenario"]["players"].as_u64().ok_or("players")? as usize;
+   let scenario_layout=value["scenario"].get("layout").and_then(|l|serde_json::from_value::<Vec<usize>>(l.clone()).ok());
+   let slots_of=slots_of(scenario_players,&scenario_layout);
+   let mut references=MeshReferences::new(&slots_of);let packets=value["packets"].as_array().ok_or("packets")?;
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
   let records=value["records"].as_array().ok_or("records")?;
   if operations.len()!=records.len() {return Err("operation bounds".into());}
@@ -320,7 +346,7 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
     visited[packet_id]=true;
     let packet=&packets[packet_id];
     let raw=&packet["raw"];let _:Message=serde_json::from_value(raw.clone()).map_err(|e|e.to_string())?;
-    let semantic=project_packet(raw,packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&mut references)?;
+    let semantic=project_packet(raw,packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&mut references,&slots_of)?;
     if semantic!=packet["semantic"] {return Err("raw compressed semantic mismatch".into());}
    }
   }

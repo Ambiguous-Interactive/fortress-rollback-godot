@@ -258,7 +258,10 @@ shared ordered request engine, local sync-test mode and synchronous game driver.
 bytes, including snapshotted PRNG and pending-event games, directly with pinned upstream sessions. External-input tests verify
 asymmetric prediction and corrected replay. `make p2p-probes` compares actual
 upstream and Godot byte sessions across 2–8 slots, delayed inputs, packet faults
-and scoped timing, checksum and terminal observations. Its lifecycle corpus
+and scoped timing, checksum and terminal observations. Explicit endpoint layouts
+compare couch co-op machines that own several local slots, including a stall
+released through reversed withheld flights and the missing-input refusal a
+partially staged row produces on each engine. Its lifecycle corpus
 includes a one-way partition: one peer receives nothing while the other keeps
 receiving, both peers latch their own interruption once quiet spans pass the
 shared notify bound, and the schedule ends at

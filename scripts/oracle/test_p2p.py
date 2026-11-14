@@ -11,7 +11,7 @@ import p2p_launch
 from p2p_launch import upstream_inventory, executable_identity, require_unchanged
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
-from p2p_contract import DELAY_ERRORS, comparable_delay, expected_delay_error, godot_max_delay
+from p2p_contract import DELAY_ERRORS, INPUT_ERRORS, comparable_delay, expected_delay_error, godot_max_delay, slots_of
 
 
 def timeout_fixture():
@@ -365,6 +365,99 @@ class P2PContractTests(unittest.TestCase):
             mutant = deepcopy(actual); mutant['records'][0]['error'] = error
             with self.assertRaisesRegex(ValueError, 'operation 0: error mismatch'):
                 compare(mutant, expected, scenario)
+
+    # Value: protects=the explicit endpoint-layout grammar shared by both engines and the shrinker;
+    # fails_when=a slot-less machine, a zero slot, a machine-count or slot-total drift, a float size,
+    # a delay raise or lifecycle settings under a layout, or an alias passes; why_new=#363 layout slice; seam=none
+    def test_layout_scenario_rules(self):
+        step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '00000000'}
+        original = {'format': 1, 'players': 4, 'input_delay': 0, 'max_prediction': 4, 'layout': [2, 2],
+                    'operations': [step, dict(step, peer=1, now_us=1), dict(step, peer=2, now_us=2), dict(step, peer=3, now_us=3)]}
+        validate_scenario(original)
+        validate_scenario(dict(original, layout=[2, 2, 2], players=6, operations=[step, dict(step, now_us=1)]))
+        validate_scenario(dict(original, layout=[2, 1, 1]))
+        for mutate in (lambda x: x.update(layout=[4]), lambda x: x.update(layout=[3, 2]),
+                       lambda x: x.update(layout=[2, 2, 2]), lambda x: x.update(layout=[0, 4]),
+                       lambda x: x.update(layout=[2, 1]), lambda x: x.update(layout=[2.0, 2]),
+                       lambda x: x.update(layout=True), lambda x: x.update(layout=[2, 2, 2, 2, 2, 2, 2, 2, 2]),
+                       lambda x: x.update(layout=[]), lambda x: x['operations'].append({'kind': 'delay', 'peer': 0, 'delay': 1}),
+                       lambda x: x.update(lifecycle={'quality_us': 100000, 'keepalive_us': 100000, 'notify_us': 500000,
+                                                     'timeout_us': 5000000, 'checksum_interval': 0, 'divergent_peer': -1})):
+            mutant = deepcopy(original); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate_scenario(mutant)
+
+    # Value: protects=slot-to-machine derivation for records and packet senders; fails_when=an omitted
+    # layout stops being one slot per endpoint or a layout drops or reorders ownership; why_new=#363; seam=none
+    def test_layout_slot_projection(self):
+        self.assertEqual(slots_of({'players': 3}), [[0], [1], [2]])
+        self.assertEqual(slots_of({'players': 6, 'layout': [1, 3, 2]}), [[0], [1, 2, 3], [4, 5]])
+
+    # Value: protects=the multi-local flight row shape; fails_when=a packet whose player list drops,
+    # reorders or extends the sender's owned slots, whose row width is not one four-byte input per
+    # owned slot, or whose sender is not the row's machine passes; why_new=#363 multi-local wire shape; seam=none
+    def test_layout_packet_row_shape(self):
+        scenario = {'format': 1, 'players': 4, 'input_delay': 0, 'max_prediction': 4, 'layout': [2, 2],
+                    'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 0}]}
+        record = {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 0, 'confirmed_frame': -1, 'error': None,
+                  'requests': [], 'events': [], 'extension_events': [], 'outgoing': [0], 'state': initial_game_state(4, 2).hex()}
+        statuses = [{'disconnected': False, 'epoch': 0, 'last_frame': -1} for _ in range(4)]
+        packet0 = {'id': 0, 'from': 0, 'to': 1,
+                   'semantic': {'kind': 'input', 'start_frame': 0, 'ack_frame': -1, 'players': [0, 1],
+                                'frames': ['1100000022000000'], 'statuses': statuses}}
+        trace = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(scenario),
+                 'records': [record], 'packets': [packet0]}
+        validate(deepcopy(trace), scenario)
+        for mutate in (lambda x: x['packets'][0]['semantic'].update(players=[0]),
+                       lambda x: x['packets'][0]['semantic'].update(players=[0, 1, 2]),
+                       lambda x: x['packets'][0]['semantic'].update(players=[1, 0]),
+                       lambda x: x['packets'][0]['semantic'].update(frames=['11000000']),
+                       lambda x: x['packets'][0]['semantic'].update(frames=['1100000022000000ff']),
+                       lambda x: x['packets'][0].update(**{'from': 1}),
+                       lambda x: x['packets'][0]['semantic'].update(players=[2, 3])):
+            mutant = deepcopy(trace); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate(mutant, scenario)
+        # The omitted layout keeps one slot per endpoint with four-byte rows.
+        plain_scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4,
+                          'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 0}]}
+        plain_statuses = [{'disconnected': False, 'epoch': 0, 'last_frame': -1} for _ in range(2)]
+        plain = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(plain_scenario),
+                 'records': [dict(record, peer=0, state=initial_game_state(2, 2).hex())],
+                 'packets': [{'id': 0, 'from': 0, 'to': 1,
+                              'semantic': {'kind': 'input', 'start_frame': 0, 'ack_frame': -1, 'players': [0],
+                                           'frames': ['11000000'], 'statuses': plain_statuses}}]}
+        validate(deepcopy(plain), plain_scenario)
+        mutant = deepcopy(plain); mutant['packets'][0]['semantic'].update(frames=['1100000022000000'])
+        with self.assertRaises(ValueError):
+            validate(mutant, plain_scenario)
+
+    # Value: protects=the partially-staged advance projection; fails_when=a missing-input step that
+    # advanced or kept requests passes, or the source and Godot names stop mapping onto each other;
+    # why_new=#363 multi-local steps; seam=none
+    def test_layout_missing_input_projection(self):
+        scenario = {'format': 1, 'players': 4, 'input_delay': 0, 'max_prediction': 4, 'layout': [2, 2],
+                    'operations': [{'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '11000000'}]}
+        record = {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 0, 'confirmed_frame': -1, 'error': None,
+                  'requests': [], 'events': [], 'outgoing': [], 'state': initial_game_state(4, 2).hex()}
+        expected = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(scenario),
+                    'records': [deepcopy(record)], 'packets': []}
+        expected['records'][0]['error'] = 'MissingLocalInput'
+        actual = deepcopy(expected); actual['records'][0].update(error='MISSING_LOCAL_INPUT', extension_events=[])
+        validate(deepcopy(expected), scenario, True)
+        validate(deepcopy(actual), scenario)
+        compare(actual, expected, scenario)
+        self.assertEqual(normalize(deepcopy(expected), True)['records'][0]['error'], 'MISSING_LOCAL_INPUT')
+        self.assertEqual(normalize(deepcopy(actual))['records'][0]['error'], 'MISSING_LOCAL_INPUT')
+        for mutate in (lambda x: x['records'][0].update(frame_after=1),
+                       lambda x: x['records'][0].update(requests=[{'kind': 'save', 'frame': 0, 'state_bytes': initial_game_state(4, 2).hex(),
+                                                                   'checksum': checksum(initial_game_state(4, 2)), 'inputs': []}])):
+            mutant = deepcopy(actual); mutate(mutant)
+            with self.assertRaisesRegex(ValueError, 'missing-input step advanced'):
+                validate(mutant, scenario)
+            source_mutant = deepcopy(expected); mutate(source_mutant)
+            with self.assertRaisesRegex(ValueError, 'missing-input step advanced'):
+                validate(source_mutant, scenario, True)
 
     # Value: protects=source STEP-only stall projection; fails_when=poll errors or changing-frame errors disappear; why_new=cold review accepted a whole poll trace; seam=none
     def test_source_errors_are_not_projected_to_stall(self):

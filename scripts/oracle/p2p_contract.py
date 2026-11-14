@@ -7,6 +7,21 @@ REVISION = 'd124c89080004d96971a629bb0427056ee1805e3'
 # Source delay refusals and the matching production Godot codes.
 DELAY_ERRORS = {'InputDelayDecreaseUnsupported': 'UNSUPPORTED', 'FrameDelayTooLarge': 'INVALID_CONFIGURATION',
                 'ConfigValueOutOfRange': 'INVALID_CONFIGURATION'}
+# Source advance refusals and the matching production Godot codes; the missing-input
+# refusal is the pinned upstream's partially-staged advance (one row slot missing).
+INPUT_ERRORS = {'MissingLocalInput': 'MISSING_LOCAL_INPUT'}
+
+
+def slots_of(scenario):
+    """Local slot lists per machine address; an omitted layout stays one slot per endpoint."""
+    if 'layout' not in scenario:
+        return [[slot] for slot in range(scenario['players'])]
+    slots = []
+    start = 0
+    for size in scenario['layout']:
+        slots.append(list(range(start, start + size)))
+        start += size
+    return slots
 
 
 def _trunc_div(numerator, denominator):
@@ -37,11 +52,23 @@ def validate_scenario(value):
     if type(value) is not dict:
         raise ValueError('p2p scenario: invalid object')
     fields(value, 'format players input_delay max_prediction operations' + (' lifecycle' if 'lifecycle' in value else '')
-           + (' queue_capacity' if 'queue_capacity' in value else ''), 'p2p scenario')
+           + (' queue_capacity' if 'queue_capacity' in value else '') + (' layout' if 'layout' in value else ''), 'p2p scenario')
     integer(value['format'], 1, 1, 'format')
     integer(value['players'], 2, 8, 'players')
     integer(value['input_delay'], 0, 2, 'delay')
     integer(value['max_prediction'], 2, 8, 'prediction')
+    if 'layout' in value:
+        # Explicit endpoint layout: machine m owns slots [sum(sizes[:m]), sum(sizes[:m+1])).
+        # An omitted field stays one local slot per endpoint; machine-count and per-machine
+        # row-shape rules live here so both engines and the shrinker share one grammar.
+        sizes = value['layout']
+        if type(sizes) is not list or not 2 <= len(sizes) <= value['players']:
+            raise ValueError('layout machine inventory')
+        if sum(sizes) != value['players'] or any(type(size) is not int or size < 1 for size in sizes):
+            raise ValueError('layout slot inventory')
+        if 'lifecycle' in value:
+            # Per-endpoint metric attribution across machines sharing addresses is a separate slice.
+            raise ValueError('lifecycle with explicit layout')
     if 'queue_capacity' in value:
         # Explicit non-default queue profile; both adapters build their rings from it.
         integer(value['queue_capacity'], 2, 128, 'queue capacity')
@@ -63,7 +90,10 @@ def validate_scenario(value):
                     'delay': 'kind peer delay'}.get(kind, ''), 'operation')
         if kind == 'delay':
             # A delay change reuses the previous operation's clock; Godot's API takes no time.
+            # Multi-local endpoints refuse runtime delay raises in production (UNSUPPORTED).
             integer(op['peer'], 0, value['players'] - 1, 'peer'); integer(op['delay'], 0, 1000, 'delay change')
+            if 'layout' in value:
+                raise ValueError('delay change under explicit layout')
             if op['peer'] not in stepped:
                 raise ValueError('delay change precedes first step')
             # Source time is shared and Godot's is per peer; they agree after a step/poll/delay on this peer.
@@ -85,7 +115,7 @@ def validate_scenario(value):
     return value
 
 
-def packet(value, players, source):
+def packet(value, players, source, slots=None):
     fields(value, 'id from to semantic raw' if source else 'id from to semantic', 'packet')
     integer(value['id'], 0, 100000, 'packet id')
     for key in ('from', 'to'):
@@ -106,11 +136,13 @@ def packet(value, players, source):
         integer(body['start_frame'], 0, 10000, 'start')
         if type(body['frames']) is not list or not 1 <= len(body['frames']) <= 128:
             raise ValueError('frames')
+        # One flight row carries one four-byte input per slot the sender owns locally.
         for data in body['frames']:
-            hex_bytes(data, 4, 'frame input')
-        if type(body['players']) is not list or len(body['players']) != 1:
+            hex_bytes(data, 4 * (len(slots) if slots is not None else 1), 'frame input')
+        if type(body['players']) is not list or body['players'] != (slots if slots is not None else [value['from']]):
             raise ValueError('sender players')
-        integer(body['players'][0], value['from'], value['from'], 'sender slot')
+        for slot in body['players']:
+            integer(slot, 0, players - 1, 'sender slot')
         if type(body['statuses']) is not list or len(body['statuses']) != players:
             raise ValueError('status inventory')
         for status in body['statuses']:
@@ -136,7 +168,7 @@ def packet(value, players, source):
                 raise ValueError('raw semantic fields')
             # Independently validate nested raw statuses before Python equality.
             alias = dict(value, semantic=dict(body, statuses=raw_body['peer_connect_status']))
-            packet({k: v for k, v in alias.items() if k != 'raw'}, players, False)
+            packet({k: v for k, v in alias.items() if k != 'raw'}, players, False, slots)
             if type(raw_body['bytes']) is not list or not 1 <= len(raw_body['bytes']) <= 4096:
                 raise ValueError('compressed bytes')
             for byte in raw_body['bytes']:
@@ -167,18 +199,20 @@ def validate(value, scenario, source=False):
         raise ValueError('record inventory')
     if type(value['packets']) is not list or len(value['packets']) > 100000:
         raise ValueError('packet inventory')
+    layout_slots = slots_of(scenario); machines = len(layout_slots)
+    owner = [machine for machine, slots in enumerate(layout_slots) for _ in slots]
     for index, outgoing in enumerate(value['packets']):
-        packet(outgoing, scenario['players'], source)
+        packet(outgoing, scenario['players'], source, layout_slots[outgoing['from']])
         if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in {'input', 'input_ack'}:
             raise ValueError('lifecycle packet outside explicit profile')
         if outgoing['id'] != index:
             raise ValueError('packet position')
-    states = [initial_game_state(scenario['players'], 2) for _ in range(scenario['players'])]
+    states = [initial_game_state(scenario['players'], 2) for _ in range(machines)]
     divergent = scenario.get('lifecycle', {}).get('divergent_peer', -1)
     if divergent >= 0:
         states[divergent] = states[divergent][:4] + (1).to_bytes(4, 'little') + states[divergent][8:]
-    snapshots = [{} for _ in states]; samples = [{} for _ in states]; next_packet = 0
-    delays = [scenario['input_delay']] * len(states); scheduled = [-1] * len(states)
+    snapshots = [{} for _ in states]; samples = [{} for _ in range(scenario['players'])]; next_packet = 0
+    delays = [scenario['input_delay']] * scenario['players']; scheduled = [-1] * scenario['players']
     for index, record in enumerate(value['records']):
         fields(record, 'index peer frame_before frame_after confirmed_frame error requests events outgoing state'
                + ('' if source else ' extension_events') + (' metrics pre_state pre_confirmed' if 'lifecycle' in scenario else ''), 'record')
@@ -189,6 +223,9 @@ def validate(value, scenario, source=False):
             if op['packet'] >= next_packet:
                 raise ValueError('delivery precedes observed packet')
             peer = value['packets'][op['packet']]['to']
+        elif peer is not None:
+            # Step and poll ops address one local slot; the driven session is the owning machine's.
+            peer = owner[peer]
         integer(record['peer'], peer, peer, 'record peer')
         for key in ('frame_before', 'frame_after'):
             integer(record[key], 0, 10000, key)
@@ -196,9 +233,11 @@ def validate(value, scenario, source=False):
         if record['frame_before'] != int.from_bytes(states[peer][:4], 'little'):
             raise ValueError('game/session before frame')
         if op['kind'] == 'step':
-            frame = record['frame_before'] + delays[peer]
-            samples[peer].setdefault(frame, op['bytes']); scheduled[peer] = max(scheduled[peer], frame)
-            if samples[peer][frame] != op['bytes']:
+            # The op addresses one local slot; its scheduled sample lives on the slot's own
+            # delay chain while the record's frames follow the owning machine's game.
+            frame = record['frame_before'] + delays[op['peer']]
+            samples[op['peer']].setdefault(frame, op['bytes']); scheduled[op['peer']] = max(scheduled[op['peer']], frame)
+            if samples[op['peer']][frame] != op['bytes']:
                 raise ValueError('changing stalled local sample')
         if op['kind'] == 'delay':
             allowed = set(DELAY_ERRORS) if source else set(DELAY_ERRORS.values())
@@ -214,9 +253,14 @@ def validate(value, scenario, source=False):
                 for frame in range(scheduled[peer] + 1, scheduled[peer] + 1 + op['delay'] - delays[peer]):
                     samples[peer][frame] = samples[peer][scheduled[peer]]
                 scheduled[peer] += max(0, op['delay'] - delays[peer]); delays[peer] = op['delay']
-        elif record['error'] is not None and (type(record['error']) is not str or record['error'] not in {
-                'PredictionThreshold', 'PREDICTION_STALL', 'DESYNC'}):
+        elif record['error'] is not None and (type(record['error']) is not str or record['error'] not in (
+                {'PredictionThreshold', 'PREDICTION_STALL', 'DESYNC'}
+                | (set(INPUT_ERRORS) if source else set(INPUT_ERRORS.values())))):
             raise ValueError('unrecognized error')
+        if op['kind'] == 'step' and record['error'] in (set(INPUT_ERRORS) if source else set(INPUT_ERRORS.values())):
+            # The partially-staged advance refused without requests, frames or publication.
+            if record['requests'] or record['frame_before'] != record['frame_after']:
+                raise ValueError(f'operation {index}: missing-input step advanced')
         if 'lifecycle' in scenario:
             hex_bytes(record['pre_state'], 4 * (scenario['players'] + 3), 'pre state')
             integer(record['pre_confirmed'], -1, 10000, 'pre confirmed')
@@ -313,10 +357,13 @@ def normalize(value, source=False):
     first_successes = set()
     for record in result['records']:
         record.pop('extension_events', None)
-        if source and result['scenario']['operations'][record['index']]['kind'] == 'delay' and record['error'] is not None:
+        op_kind = result['scenario']['operations'][record['index']]['kind']
+        if source and op_kind == 'delay' and record['error'] is not None:
             record['error'] = DELAY_ERRORS[record['error']]
+        if source and op_kind == 'step' and record['error'] in INPUT_ERRORS:
+            record['error'] = INPUT_ERRORS[record['error']]
         if (source and record['error'] is None
-                and result['scenario']['operations'][record['index']]['kind'] == 'step'
+                and op_kind == 'step'
                 and record['frame_before'] == record['frame_after']):
             record['error'] = 'PREDICTION_STALL'
         # Pinned upstream emits a duplicate identical initial SAVE callback.
