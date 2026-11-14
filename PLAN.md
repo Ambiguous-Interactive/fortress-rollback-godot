@@ -268,7 +268,19 @@ starvation inside the disconnect timeout, delivers the withheld burst, requires
 the resumed starved peer to recover through a deep LOAD correction, re-delivers
 the first withheld report so the same echoed token is answered twice, requires
 peer 0 to re-measure that duplicate against its current clock exactly as the
-pinned oracle does, and ends synchronized with no terminal. Quality echoes
+pinned oracle does, and ends synchronized with no terminal. A three-player
+partition-heal case confirms a real prefix on every link, cuts the direct
+1<->2 link in both directions while both cut peers keep their links to peer 0,
+latches each cut endpoint's remote-attributed interruption past the shared
+notify bound, heals inside the disconnect timeout with deep LOAD corrections
+through the public advance API and ends synchronized with no terminal; its
+controls include retargeting an attributed event peer into a self-interruption.
+The oracle's semantic decompression now mirrors the pinned encoder exactly: every
+flight row XOR-deltas against the destination's last-ACKED row, with delivery-time
+acknowledgement popping the receiver's pending rows, and the trace driver
+publishes each operation's packets in the pinned shared-socket order — every
+endpoint's queued controls first, then each endpoint's checksum reports with the
+step's own input flight. Quality echoes
 resolve their elapsed-millis
 token statelessly with a saturating subtraction, so duplicates and stale-era
 pongs re-measure instead of freezing the gauge; no pending-token inventory

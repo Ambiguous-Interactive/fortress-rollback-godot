@@ -97,6 +97,51 @@ fn state_fields(kind: &str, frame: i32, game: &Game, inputs: Value) -> Value {
         "checksum":format!("{:032x}",game.checksum()),"inputs":inputs})
 }
 
+/// Per-endpoint encoder references, mirroring the pinned session exactly: every
+/// flight XOR-deltas each of its rows against the row of the highest frame the
+/// destination has acknowledged, flights join the sender's pending queue at
+/// creation, and a carried `ack_frame` pops the receiving endpoint's own
+/// pending rows when the packet is delivered. One row per frame, four bytes.
+#[derive(Default)]
+struct MeshReferences {
+    acked: BTreeMap<(usize,usize),(i32,Vec<u8>)>,
+    pending: BTreeMap<(usize,usize),Vec<(i32,Vec<u8>)>>,
+}
+impl MeshReferences {
+    fn reference(&mut self,peer:usize,destination:usize)->Vec<u8>{
+        self.acked.entry((peer,destination)).or_insert((-1,vec![0;4])).1.clone()
+    }
+    fn send(&mut self,peer:usize,destination:usize,start:i32,frames:&[Vec<u8>]){
+        let flight:Vec<(i32,Vec<u8>)>=(0..frames.len() as i32).map(|offset|(start+offset,frames[offset as usize].clone())).collect();
+        self.pending.entry((peer,destination)).or_default().extend(flight);
+    }
+    /// A delivered packet's `ack_frame` acknowledges the sender's own sends;
+    /// the receiving endpoint pops its own pending rows toward the sender.
+    /// The pinned engine admits gameplay packets only while Running; every
+    /// corpus schedule delivers to Running endpoints only, so this model —
+    /// like the frame-range guard below, which mirrors validate()'s frame
+    /// bound — never observes the other protocol states.
+    fn deliver(&mut self,sender:usize,destination:usize,raw:&Value){
+        let Some(body)=raw["body"].as_object() else {return};
+        let Some((kind,value))=body.iter().next() else {return};
+        if kind!="Input" && kind!="InputAck" {return}
+        let Some(ack)=value.get("ack_frame").and_then(|ack|ack.as_i64()) else {return};
+        if !(0..=10000).contains(&ack) {return}
+        let ack=ack as i32;
+        let (receiver,sender)=(destination,sender);
+        let acked=self.acked.entry((receiver,sender)).or_insert((-1,vec![0;4]));
+        if acked.0>=0 && ack<=acked.0 {return}
+        let Some(queue)=self.pending.get_mut(&(receiver,sender)) else {return};
+        let Some(newest)=queue.last() else {return};
+        if ack>newest.0 {return}
+        while let Some(front)=queue.first() {
+            if front.0>ack {break}
+            let popped=queue.remove(0);
+            *acked=(popped.0,popped.1);
+        }
+    }
+}
+
 
 fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Game)->Result<(Vec<Value>,Option<String>),String>{
  let mut records=Vec::new();
@@ -127,16 +172,16 @@ fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Gam
  Ok((records,None))
 }
 
-fn project_packet(raw:&Value,peer:usize,destination:usize,delay:usize,decoded:&mut BTreeMap<(usize,usize,i32),Vec<u8>>)->Result<Value,String>{
+fn project_packet(raw:&Value,peer:usize,destination:usize,references:&mut MeshReferences)->Result<Value,String>{
    if raw["body"]=="KeepAlive" {return Ok(json!({"kind":"keep_alive"}));}
    let body=raw["body"].as_object().ok_or("message body")?;let (kind,body)=body.iter().next().ok_or("empty body")?;
    let semantic=match kind.as_str(){
     "Input"=>{
      let start=body["start_frame"].as_i64().ok_or("start frame")? as i32;
      let compressed=body["bytes"].as_array().ok_or("input bytes")?.iter().map(|v|v.as_u64().unwrap() as u8).collect::<Vec<_>>();
-     let reference=if start<=delay as i32 {vec![0;4]}else{decoded.get(&(peer,destination,start-1)).ok_or("missing actual compression reference")?.clone()};
+     let reference=references.reference(peer,destination);
      let frames=decode_with_max_len(&reference,&compressed,4096).map_err(|e|format!("{e:?}"))?;
-     for (offset,bytes) in frames.iter().enumerate(){decoded.insert((peer,destination,start+offset as i32),bytes.clone());}
+     references.send(peer,destination,start,&frames);
      json!({"kind":"input","start_frame":start,"ack_frame":body["ack_frame"],"statuses":body["peer_connect_status"],
       "players":[peer],"frames":frames.iter().map(|v|hex(v)).collect::<Vec<_>>()})
     },"InputAck"=>json!({"kind":"input_ack","ack_frame":body["ack_frame"]}),
@@ -221,11 +266,13 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  }
  for session in &mut sessions {if format!("{:?}",session.current_state())!="Running"{return Err("bootstrap incomplete".into());}session.events().for_each(drop);}
  let mut packets:Vec<(usize,usize,Message)>=Vec::new();let mut packet_values=Vec::new();let mut records=Vec::new();
- let mut decoded:BTreeMap<(usize,usize,i32),Vec<u8>>=BTreeMap::new();
+ let mut references=MeshReferences::default();
  for (index,op) in scenario.operations.iter().enumerate(){
   let (peer,now)=match op {Operation::Step{peer,now_us,..}|Operation::Poll{peer,now_us}=>(*peer,*now_us),
    Operation::Delay{peer,..}=>(*peer,*time.lock().unwrap()),
    Operation::Deliver{packet,now_us}=>{let (sender,destination,message)=packets.get(*packet).ok_or("unknown observed packet")?;
+    let raw=serde_json::to_value(message).map_err(|e|format!("{e:?}"))?;
+    references.deliver(*sender,*destination,&raw);
     buffers[*destination].lock().unwrap().incoming.push((sender.to_string(),message.clone()));(*destination,*now_us)}};
   *time.lock().unwrap()=now;let before=sessions[peer].current_frame().as_i32();let pre_state=hex(&games[peer].bytes());
   let pre_confirmed=sessions[peer].confirmed_frame().as_i32();let mut requests=Vec::new();let mut error=None;
@@ -237,7 +284,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   let mut outgoing=Vec::new();
   for (destination,message) in std::mem::take(&mut buffers[peer].lock().unwrap().outgoing){
    let destination=destination.parse::<usize>().unwrap();let raw=serde_json::to_value(&message).unwrap();
-   let semantic=project_packet(&raw,peer,destination,scenario.input_delay,&mut decoded)?;
+   let semantic=project_packet(&raw,peer,destination,&mut references)?;
    let id=packets.len();packets.push((peer,destination,message));
    packet_values.push(json!({"id":id,"from":peer,"to":destination,"raw":raw,"semantic":semantic}));outgoing.push(id);
   }
@@ -257,12 +304,27 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
 fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
  if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
-  let delay=value["scenario"]["input_delay"].as_u64().ok_or("delay")? as usize;
-  let mut decoded=BTreeMap::new();let packets=value["packets"].as_array().ok_or("packets")?;
-  for packet in packets {let raw=&packet["raw"];let _:Message=serde_json::from_value(raw.clone()).map_err(|e|e.to_string())?;
-   let semantic=project_packet(raw,packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,delay,&mut decoded)?;
-   if semantic!=packet["semantic"] {return Err("raw compressed semantic mismatch".into());}
+  let mut references=MeshReferences::default();let packets=value["packets"].as_array().ok_or("packets")?;
+  let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
+  let records=value["records"].as_array().ok_or("records")?;
+  if operations.len()!=records.len() {return Err("operation bounds".into());}
+  let mut visited=vec![false;packets.len()];
+  for (index,op) in operations.iter().enumerate() {
+   if op["kind"]=="deliver" {let id=op["packet"].as_u64().ok_or("packet")? as usize;
+    let packet=packets.get(id).ok_or("unknown observed packet")?;
+    references.deliver(packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&packet["raw"]);}
+   for id in records[index]["outgoing"].as_array().ok_or("outgoing")? {
+    let packet_id=id.as_u64().ok_or("id")? as usize;
+    if packet_id>=packets.len() {return Err("unknown observed packet".into());}
+    if visited[packet_id] {return Err("packet observed twice".into());}
+    visited[packet_id]=true;
+    let packet=&packets[packet_id];
+    let raw=&packet["raw"];let _:Message=serde_json::from_value(raw.clone()).map_err(|e|e.to_string())?;
+    let semantic=project_packet(raw,packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&mut references)?;
+    if semantic!=packet["semantic"] {return Err("raw compressed semantic mismatch".into());}
+   }
   }
+  if visited.iter().any(|visited|!visited) {return Err("packet outside every operation outgoing".into());}
   Ok(json!({"complete":true,"packets":packets.len()}))
  }else if std::env::args().len()==1 {run(value,false)}
  else if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--profile-audit"] {run(value,true)}

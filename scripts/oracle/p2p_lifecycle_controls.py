@@ -59,6 +59,10 @@ def mutations_for(actual, expected):
             if event['kind'] == 'network_interrupted':
                 mutations['notify_payload'] = (lambda x, i=index, j=offset: x['records'][i]['events'][j].update(disconnect_timeout=1),
                                                f'operation {index}: events mismatch')
+                # A cut endpoint's interruption names the departed remote; inventing
+                # a self-interruption must fail the attributed comparison.
+                mutations['interrupt_peer'] = (lambda x, i=index, j=offset: x['records'][i]['events'][j].update(peer=x['records'][i]['peer']),
+                                               f'operation {index}: events mismatch')
             if event['kind'] in {'disconnected', 'desync_detected'}:
                 mutations['terminal_peer'] = (lambda x, i=index, j=offset: x['records'][i]['events'][j].update(peer=x['records'][i]['peer']),
                                               f'operation {index}: terminal trigger mismatch')
@@ -101,7 +105,7 @@ def controls(actual, expected, scenario):
 def wire_controls(binary, engine, scenarios, directory):
     root = Path(__file__).resolve().parents[2]
     observer = (root / 'tests/oracle/p2p_trace.gd').read_text(encoding='utf-8')
-    boundary = '\t\tvar message: T.Message = result.message\n'
+    boundary = '\tvar message: T.Message = result.message\n'
     if observer.count(boundary) != 1:
         raise ValueError('lifecycle observer control boundary changed')
     result = []
@@ -115,19 +119,19 @@ def wire_controls(binary, engine, scenarios, directory):
         scenario = scenarios[case]
         expected = json.loads((directory / (case + '-source.json')).read_text(encoding='utf-8'))
         index = next(p['id'] for p in expected['packets'] if p['semantic']['kind'] == {'ping': 'quality_report', 'pong': 'quality_reply', 'checksum': 'checksum_report'}[field])
-        insertion = boundary + f'''\t\tif message.kind == T.Kind.{kind} and not lifecycle_wire_mutated:
-\t\t\tlifecycle_wire_mutated = true
-\t\t\t{mutation}
-\t\t\tvar encoded_control: T.Result = Codec.encode(message, limits)
-\t\t\tif encoded_control.code != T.Code.OK:
-\t\t\t\t_fail("lifecycle wire encode")
-\t\t\t\treturn false
-\t\t\tvar decoded_control: T.Result = Codec.decode(encoded_control.bytes, limits)
-\t\t\tif decoded_control.code != T.Code.OK:
-\t\t\t\t_fail("lifecycle wire decode")
-\t\t\t\treturn false
-\t\t\tmessage = decoded_control.message
-\t\t\tprint("FORTRESS_P4_WIRE " + JSON.stringify(Lifecycle.semantic(message)))
+        insertion = boundary + f'''\tif message.kind == T.Kind.{kind} and not lifecycle_wire_mutated:
+\t\tlifecycle_wire_mutated = true
+\t\t{mutation}
+\t\tvar encoded_control: T.Result = Codec.encode(message, limits)
+\t\tif encoded_control.code != T.Code.OK:
+\t\t\t_fail("lifecycle wire encode")
+\t\t\treturn {{}}
+\t\tvar decoded_control: T.Result = Codec.decode(encoded_control.bytes, limits)
+\t\tif decoded_control.code != T.Code.OK:
+\t\t\t_fail("lifecycle wire decode")
+\t\t\treturn {{}}
+\t\tmessage = decoded_control.message
+\t\tprint("FORTRESS_P4_WIRE " + JSON.stringify(Lifecycle.semantic(message)))
 '''
         script = directory / ('control-p4-wire-' + field + '.gd')
         script.write_text(observer.replace('var limits: T.Limits', 'var lifecycle_wire_mutated: bool = false\nvar limits: T.Limits').replace(boundary, insertion), encoding='utf-8')

@@ -4,7 +4,8 @@ from p2p_contract import validate_scenario
 
 def corpus(binary, observe, selected=None):
     names = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
-             'partition_one_way', 'partition_heal', 'checksums_match', 'checksums_repair', 'checksums_diverge', 'pacing_skew')
+             'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'checksums_match', 'checksums_repair',
+             'checksums_diverge', 'pacing_skew')
     return {name: build(binary, observe, name) for name in names if selected is None or selected == name}
 
 
@@ -40,6 +41,18 @@ def build(binary, observe, name):
                 return
             if reverse:
                 pending.reverse()
+            for packet in pending:
+                delivered.add(packet['id']); append('deliver', packet=packet['id'], refresh=False)
+            latest = observe(binary, scenario)
+        raise ValueError('lifecycle flush not bounded')
+    def cut(packet):
+        return {packet['from'], packet['to']} == {1, 2}
+    def flush_around(dead):
+        nonlocal latest
+        for _ in range(40):
+            pending = [p for p in latest['packets'] if p['id'] not in delivered and not dead(p)]
+            if not pending:
+                return
             for packet in pending:
                 delivered.add(packet['id']); append('deliver', packet=packet['id'], refresh=False)
             latest = observe(binary, scenario)
@@ -147,6 +160,54 @@ def build(binary, observe, name):
             flush()
         append('poll', peer=0, at=2500000)
         append('poll', peer=1, at=2500001)
+    elif name == 'partition_heal_mesh':
+        # Three players confirm a real prefix on every link, then lose the direct
+        # 1<->2 link in both directions while both cut peers keep their links to
+        # peer 0. Each cut endpoint latches its own remote-attributed
+        # network_interrupted past the notify bound and predicts through the quiet
+        # stretch, the withheld burst then arrives well below the disconnect
+        # timeout, both endpoints observe network_resumed and the missing inputs
+        # force deep LOAD corrections through the actual public API; all three
+        # peers resume confirming canonical history together and the schedule
+        # ends synchronized with no terminal.
+        scenario['players'] = 3
+        for _ in range(3):
+            for peer in range(3):
+                step(peer)
+            flush()
+        starved = False
+        for frame in range(6):
+            now = 500000 + frame * 150000
+            for peer in range(3):
+                step(peer, at=now + peer)
+            flush_around(cut)
+            latched = {(r['peer'], e.get('peer')) for r in latest['records'] for e in r['events']
+                       if e['kind'] == 'network_interrupted'}
+            if {(1, 2), (2, 1)} <= latched:
+                starved = True
+        if not starved:
+            raise ValueError('partition heal mesh never attributed both cut interruptions')
+        burst = [p['id'] for p in latest['packets'] if p['id'] not in delivered and cut(p)]
+        if not burst:
+            raise ValueError('partition heal mesh withheld an empty burst')
+        for packet in burst:
+            delivered.add(packet); append('deliver', packet=packet, at=1500000, refresh=False)
+        latest = observe(binary, scenario)
+        resumed = sum(e['kind'] == 'network_resumed' for r in latest['records'] for e in r['events'])
+        if resumed != 2:
+            raise ValueError(f'partition heal mesh resumed {resumed} cut endpoints')
+        for frame in range(3):
+            now = 1600000 + frame * 150000
+            for peer in range(3):
+                step(peer, at=now + peer)
+            flush_around(lambda packet: False)
+        flush_around(lambda packet: False)
+        for peer in range(3):
+            step(peer)
+            flush_around(lambda packet: False)
+        append('poll', peer=0, at=2500000)
+        append('poll', peer=1, at=2500001)
+        append('poll', peer=2, at=2500002)
     else:
         for frame in range(48 if name == 'pacing_skew' else 14):
             if name == 'pacing_skew':

@@ -77,27 +77,32 @@ def profile_audit_controls(binary, directory):
         controls.append('explicit_source_profile_audit_' + str(window))
     return controls
 
+
+def dedent_block(block):
+    """Reduce a two-tab GDScript block to the trace helper's one-tab body depth."""
+    return ''.join(line[1:] if line.startswith('\t') else line for line in block.splitlines(keepends=True))
+
 def wire_mutant(observer, field):
     """Mutate an actual encoded outgoing packet in an isolated observer copy."""
     if field == 'players':
-        anchor = '\t\tvar message: T.Message = result.message\n'
+        anchor = '\tvar message: T.Message = result.message\n'
         mutation = """		if message.kind == T.Kind.INPUT:
 			message.players = PackedByteArray([(player + 1) % peers.size()])
 			var corrupted: T.Result = Codec.encode(message, limits)
 			if corrupted.code != T.Code.OK:
 				_fail("wire control encode")
-				return false
+				return {}
 			packet.bytes = corrupted.bytes
 			var observed: T.Result = Codec.decode(packet.bytes, limits)
 			if observed.code != T.Code.OK:
 				_fail("wire control decode")
-				return false
+				return {}
 			message = observed.message
 			print("FORTRESS_P2P_WIRE_MUTATION " + JSON.stringify({"field": "players", "observed": Array(message.players)}))
 """
-        replacement = anchor + mutation
+        replacement = anchor + dedent_block(mutation)
     elif field in {'session_id', 'sender_id', 'connection_id'}:
-        anchor = '\t\tvar result: T.Result = Codec.decode(packet.bytes, limits)\n'
+        anchor = '\tvar result: T.Result = Codec.decode(packet.bytes, limits)\n'
         value = '_token(1, 0)' if field == 'session_id' else '_id((player + 1) % peers.size())'
         mutation = """		var unbound: T.Limits = T.Limits.new()
 		unbound.player_count = limits.player_count
@@ -105,20 +110,20 @@ def wire_mutant(observer, field):
 		var original: T.Result = Codec.decode(packet.bytes, unbound)
 		if original.code != T.Code.OK:
 			_fail("wire control original decode")
-			return false
+			return {}
 		original.message.FIELD = VALUE
 		var corrupted: T.Result = Codec.encode(original.message, unbound)
 		if corrupted.code != T.Code.OK:
 			_fail("wire control encode")
-			return false
+			return {}
 		packet.bytes = corrupted.bytes
 		var observed: T.Result = Codec.decode(packet.bytes, unbound)
 		if observed.code != T.Code.OK:
 			_fail("wire control decode")
-			return false
+			return {}
 		print("FORTRESS_P2P_WIRE_MUTATION " + JSON.stringify({"field": "FIELD", "observed": observed.message.FIELD.hex_encode()}))
 """.replace('FIELD', field).replace('VALUE', value)
-        replacement = mutation + anchor
+        replacement = dedent_block(mutation) + anchor
     else:
         raise ValueError('unknown wire mutation')
     if observer.count(anchor) != 1:
