@@ -315,8 +315,8 @@ withheld burst then arrives inside the disconnect timeout: both cut endpoints
 observe `network_resumed`, the missing inputs force deep LOAD corrections
 through the actual public advance API, and three more confirmed rounds end the
 schedule synchronized with no terminal on any peer. Peer 0 observes no
-interruption while the cut lasts, though its own idle tail polls latch one
-once traffic stops. The named evidence requires both attributed
+interruption while the cut lasts, though its own idle tail polls latch
+interruptions once traffic stops. The named evidence requires both attributed
 interruptions, both resumes and the recovery LOADs; controls mutate the
 notify payload, remove a resume event and invent a self-interruption by
 retargeting an attributed event peer.
