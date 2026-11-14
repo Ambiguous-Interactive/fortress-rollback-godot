@@ -338,6 +338,9 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
  if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
   let scenario_players=value["scenario"]["players"].as_u64().ok_or("players")? as usize;
+   // Mirror the runner's player bounds before any layout arithmetic: a hostile oversized
+   // player count could otherwise overflow or wrap the layout-total sum.
+   if !(2..=8).contains(&scenario_players) {return Err("scenario bounds".into());}
    // An explicit malformed layout must fail the replay, never silently replay as the default.
    let scenario_layout=match value["scenario"].get("layout") {
     None=>None,
