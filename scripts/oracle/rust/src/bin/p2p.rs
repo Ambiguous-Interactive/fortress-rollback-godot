@@ -245,8 +245,9 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
   ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
  // Validate layout sizes before expanding slot vectors, so a hostile total cannot
- // allocate first; each nonzero size then stays within players by the sum check.
- if let Some(sizes)=&scenario.layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0)||sizes.iter().sum::<usize>()!=scenario.players
+ // allocate or overflow the sum first; each size within [1, players] bounds the sum
+ // by players * players, far below usize range.
+ if let Some(sizes)=&scenario.layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0||*size>scenario.players)||sizes.iter().sum::<usize>()!=scenario.players
   ||scenario.lifecycle.is_some()
   ||scenario.operations.iter().any(|op|matches!(op,Operation::Delay{..})){return Err("layout bounds".into());}}
  let slots_of=slots_of(scenario.players,&scenario.layout);let owner=owner_of(&slots_of);let machines=slots_of.len();
@@ -343,8 +344,8 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
     Some(raw)=>Some(serde_json::from_value::<Vec<usize>>(raw.clone()).map_err(|_|"layout bounds")?)};
    // Mirror the scenario grammar so a trace replayed against a wrong or hostile layout fails
    // cleanly instead of indexing a missing machine.
-   if let Some(sizes)=&scenario_layout {if sizes.is_empty()||sizes.iter().any(|size|*size==0)||sizes.iter().sum::<usize>()!=scenario_players
-    ||sizes.len()<2 {return Err("layout bounds".into());}}
+   if let Some(sizes)=&scenario_layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0||*size>scenario_players)||sizes.iter().sum::<usize>()!=scenario_players
+    {return Err("layout bounds".into());}}
    let slots_of=slots_of(scenario_players,&scenario_layout);
    let mut references=MeshReferences::new(&slots_of);let packets=value["packets"].as_array().ok_or("packets")?;
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
