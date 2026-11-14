@@ -308,17 +308,23 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
   let records=value["records"].as_array().ok_or("records")?;
   if operations.len()!=records.len() {return Err("operation bounds".into());}
+  let mut visited=vec![false;packets.len()];
   for (index,op) in operations.iter().enumerate() {
    if op["kind"]=="deliver" {let id=op["packet"].as_u64().ok_or("packet")? as usize;
     let packet=packets.get(id).ok_or("unknown observed packet")?;
     references.deliver(packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&packet["raw"]);}
    for id in records[index]["outgoing"].as_array().ok_or("outgoing")? {
-    let packet=packets.get(id.as_u64().ok_or("id")? as usize).ok_or("unknown observed packet")?;
+    let packet_id=id.as_u64().ok_or("id")? as usize;
+    if packet_id>=packets.len() {return Err("unknown observed packet".into());}
+    if visited[packet_id] {return Err("packet observed twice".into());}
+    visited[packet_id]=true;
+    let packet=&packets[packet_id];
     let raw=&packet["raw"];let _:Message=serde_json::from_value(raw.clone()).map_err(|e|e.to_string())?;
     let semantic=project_packet(raw,packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&mut references)?;
     if semantic!=packet["semantic"] {return Err("raw compressed semantic mismatch".into());}
    }
   }
+  if visited.iter().any(|visited|!visited) {return Err("packet outside every operation outgoing".into());}
   Ok(json!({"complete":true,"packets":packets.len()}))
  }else if std::env::args().len()==1 {run(value,false)}
  else if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--profile-audit"] {run(value,true)}
