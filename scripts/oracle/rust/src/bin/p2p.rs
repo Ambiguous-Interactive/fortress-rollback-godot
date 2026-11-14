@@ -117,6 +117,10 @@ impl MeshReferences {
     }
     /// A delivered packet's `ack_frame` acknowledges the sender's own sends;
     /// the receiving endpoint pops its own pending rows toward the sender.
+    /// The pinned engine admits gameplay packets only while Running; every
+    /// corpus schedule delivers to Running endpoints only, so this model —
+    /// like the frame-range guard below, which mirrors validate()'s frame
+    /// bound — never observes the other protocol states.
     fn deliver(&mut self,sender:usize,destination:usize,raw:&Value){
         let Some(body)=raw["body"].as_object() else {return};
         let Some((kind,value))=body.iter().next() else {return};

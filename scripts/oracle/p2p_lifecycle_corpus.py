@@ -181,10 +181,12 @@ def build(binary, observe, name):
             for peer in range(3):
                 step(peer, at=now + peer)
             flush_around(cut)
-            if any(e['kind'] == 'network_interrupted' for r in latest['records'] for e in r['events']):
+            latched = {(r['peer'], e.get('peer')) for r in latest['records'] for e in r['events']
+                       if e['kind'] == 'network_interrupted'}
+            if {(1, 2), (2, 1)} <= latched:
                 starved = True
         if not starved:
-            raise ValueError('partition heal mesh never latched the notify bound')
+            raise ValueError('partition heal mesh never attributed both cut interruptions')
         burst = [p['id'] for p in latest['packets'] if p['id'] not in delivered and cut(p)]
         if not burst:
             raise ValueError('partition heal mesh withheld an empty burst')

@@ -309,15 +309,17 @@ mesh. All three links confirm a real prefix together, then the direct 1<->2
 link dies in both directions while both cut peers keep their links to peer 0.
 Each cut endpoint latches its own remote-attributed `network_interrupted` past
 the shared notify bound — the attributed event peer is the departed remote,
-not the observer — and both cut peers predict through six withheld rounds on
-their surviving links. The withheld burst then arrives inside the disconnect
-timeout: both cut endpoints observe `network_resumed`, the missing inputs
-force deep LOAD corrections through the actual public advance API, and three
-more confirmed rounds end the schedule synchronized with no terminal on any
-peer. Peer 0 never observes an interruption: its links stay alive throughout.
-The named evidence requires both attributed interruptions, both resumes and
-the recovery LOADs; controls mutate the notify payload, remove a resume event
-and invent a self-interruption by retargeting an attributed event peer.
+not the observer, and the builder requires both attributed latches — and both
+cut peers predict through six withheld rounds on their surviving links. The
+withheld burst then arrives inside the disconnect timeout: both cut endpoints
+observe `network_resumed`, the missing inputs force deep LOAD corrections
+through the actual public advance API, and three more confirmed rounds end the
+schedule synchronized with no terminal on any peer. Peer 0 observes no
+interruption while the cut lasts, though its own idle tail polls latch one
+once traffic stops. The named evidence requires both attributed
+interruptions, both resumes and the recovery LOADs; controls mutate the
+notify payload, remove a resume event and invent a self-interruption by
+retargeting an attributed event peer.
 
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.

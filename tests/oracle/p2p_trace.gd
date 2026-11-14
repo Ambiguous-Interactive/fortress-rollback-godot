@@ -183,10 +183,15 @@ func _operation(op: Dictionary, index: int) -> bool:
 
 
 ## Publish one operation's outgoing packets in the pinned source's shared-socket
-## order. Every operation flushes each endpoint's queued controls first; a step
-## then publishes checksum reports and its own input flight endpoint by
-## endpoint. Queues here are per endpoint, so an unsplit multi-endpoint step
-## interleaves them and no multi-peer lifecycle schedule can compare at all.
+## order. The per-endpoint drain concatenates queues, but the pinned session
+## flushes every endpoint's queued controls first and then publishes each
+## endpoint's checksum reports with that step's own input flight, so this split
+## moves the advance flight after the controls. The flight is recognized by
+## shape: poll-phase retries stop one frame below the scheduled frame and no
+## current schedule combines delay raises or nudges with lifecycle controls, so
+## a queued input ending exactly at the scheduled frame is always the step's
+## own publication. Deliver and poll operations have no advance pass, so their
+## drained order already matches the pinned socket order.
 ## Returns null after a decode failure has failed the run.
 func _publish(peer: RefCounted, player: int, scheduled: int) -> Variant:
 	var observed: Array[Dictionary] = []
