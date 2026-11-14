@@ -19,6 +19,7 @@ import p2p_lifecycle
 import p2p_lifecycle_controls
 import p2p_recovery
 import p2p_capacity
+import p2p_shrink
 
 PREFIX = 'FORTRESS_P2P_RESULT '
 
@@ -53,6 +54,16 @@ def corpus(binary, selected=None):
             name = f'mesh_{players}_{mode}'
             if selected is None or selected == name:
                 cases[name] = build_case(binary, players, 0, mode)
+    # The maximum comparable prediction window: the ordinary cases hold the deepest configured
+    # rollback boundary, and the stall schedule that exceeds window four instead recovers through
+    # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.
+    for players in (2, 4, 8):
+        name = f'mesh_{players}_window_8'
+        if selected is None or selected == name:
+            cases[name] = build_case(binary, players, 0, 'ordinary', window=8)
+    name = 'mesh_2_window_8_stall'
+    if selected is None or selected == name:
+        cases[name] = build_case(binary, 2, 0, 'stall', window=8)
     for name, (players, delay, mode) in DELAY_CASES.items():
         if selected is None or selected == name:
             cases[name] = build_case(binary, players, delay, mode)
@@ -75,8 +86,8 @@ DELAY_CHANGES = {
 }
 
 
-def build_case(binary, players, delay, mode):
-    scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': 4, 'operations': []}
+def build_case(binary, players, delay, mode, window=4):
+    scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': window, 'operations': []}
     now = 0; delivered = set(); latest = None
     def append(kind, refresh=True, **kwargs):
         nonlocal now, latest
@@ -172,6 +183,74 @@ def negative_controls(actual, expected, scenario):
     return list(controls)
 
 
+def differential_failure(name, binary, engine, scenario, expected, failure, output):
+    """Shrink a fresh differential disagreement to a minimal scenario, confirm it, and raise with the evidence.
+
+    Every probe candidate reruns both sides, so an adopted removal always
+    reproduces the disagreement; the confirmation then replays the minimized
+    scenario under the full green-path gates (twice per side, raw compression
+    validation included) and writes its artifacts next to the shrink logs.
+    """
+    counts = [len(record['outgoing']) for record in expected['records']]
+
+    def probe(candidate):
+        try:
+            validate_scenario(candidate)
+            stdout, stderr = execute([str(binary)], output / f'{name}-shrink-source.log', json.dumps(candidate))
+            if stderr.strip():
+                return None
+            value = json.loads(stdout); validate(value, candidate, True)
+        except ValueError:
+            return None
+        submitted = output / f'{name}-shrink-scenario.json'; submitted.write_text(json.dumps(candidate, indent=2) + '\n')
+        try:
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+                'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())],
+                output / f'{name}-shrink-godot.log')
+            actual = parse_godot(stdout, stderr)
+        except ValueError:
+            return None
+        try:
+            compare(actual, value, candidate)
+        except ValueError as disagreement:
+            return str(disagreement)
+        return None
+
+    minimized, message, stats = p2p_shrink.minimize(scenario, counts, str(failure), probe)
+    submitted = output / f'{name}-minimized-scenario.json'; submitted.write_text(json.dumps(minimized, indent=2) + '\n')
+    source_results = []
+    for repeat in (1, 2):
+        stdout, stderr = execute([str(binary)], output / f'{name}-minimized-source-{repeat}.log', submitted.read_text())
+        if stderr.strip():
+            raise ValueError('minimized source stderr')
+        value = json.loads(stdout); validate(value, minimized, True); source_results.append(value)
+    if source_results[0] != source_results[1]:
+        raise ValueError('minimized source repeat mismatch')
+    verified, stderr = execute([str(binary), '--validate-trace'],
+        output / f'{name}-minimized-raw-validate.log', json.dumps(source_results[0]))
+    raw_validation = json.loads(verified)
+    if (stderr.strip() or type(raw_validation) is not dict or set(raw_validation) != {'complete', 'packets'}
+            or raw_validation['complete'] is not True or raw_validation['packets'] != len(source_results[0]['packets'])):
+        raise ValueError('minimized raw compression validator completion')
+    (output / f'{name}-minimized-source.json').write_text(json.dumps(source_results[0], indent=2) + '\n')
+    for repeat in (1, 2):
+        stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+            'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())],
+            output / f'{name}-minimized-godot-{repeat}.log')
+        actual = parse_godot(stdout, stderr)
+        (output / f'{name}-minimized-actual-{repeat}.json').write_text(json.dumps(actual, indent=2) + '\n')
+        try:
+            compare(actual, source_results[0], minimized)
+        except ValueError:
+            continue
+        raise ValueError('minimized scenario does not reproduce on repeat ' + str(repeat))
+    report = {'case': name, 'original_failure': str(failure), 'minimized_failure': message, 'statistics': stats,
+        'scenario_sha256': digest(submitted), 'source_sha256': digest(output / f'{name}-minimized-source.json')}
+    (output / f'{name}-minimized-report.json').write_text(json.dumps(report, indent=2) + '\n')
+    raise ValueError(f'{name}: differential disagreement survives shrinking from {stats["original_operations"]} to '
+        f'{stats["final_operations"]} operations; first divergence: {message}; evidence in {output}')
+
+
 
 def source_files():
     return [*(ROOT / 'addons/fortress_rollback/core').glob('*.gd'), *(ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'),
@@ -244,7 +323,12 @@ def main():
         for repeat in (1, 2):
             stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                 'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())], args.output / f'{name}-godot-{repeat}.log')
-            actual = parse_godot(stdout, stderr); compare(actual, expected, scenario); actuals.append(actual)
+            actual = parse_godot(stdout, stderr)
+            try:
+                compare(actual, expected, scenario)
+            except ValueError as failure:
+                differential_failure(name, binary, engine, scenario, expected, failure, args.output)
+            actuals.append(actual)
         if actuals[0] != actuals[1]:
             raise ValueError('Godot repeat mismatch')
         path = args.output / (name + '-actual.json'); path.write_text(json.dumps(actuals[0], indent=2) + '\n')

@@ -297,9 +297,15 @@ drives the `global_floor` schedule — three players, prediction window four,
 capacity nine, a fast queue receiving ahead, a three-frame lagger and a delay
 raise during prediction — through the pinned SyncLayer and the shipped session,
 comparing ordered requests, canonical states, floor and retained-row
-observations and a fast-local-high-water floor mutant.
+observations and a fast-local-high-water floor mutant. A failing P2P schedule
+now shrinks to its first divergence: the launcher truncates at the named
+operation, greedily removes remaining operations while both reruns keep
+disagreeing, re-ranks anchored deliveries, and confirms the minimized scenario
+under the full gates. Window-eight cases cover the deepest supported rollback
+boundary, including the stall schedule that window four refuses and window
+eight recovers through one deep rollback.
 [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59)
-retains long-lived partition/fairness vocabulary and first-divergence shrinking.
+retains broader peer/local-slot layouts and full width/profile acceptance.
 These scoped gates do not establish browser or full-feature release parity.
 
 | Layer | Responsibility |
