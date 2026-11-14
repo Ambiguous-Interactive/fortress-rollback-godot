@@ -68,6 +68,11 @@ def corpus(binary, selected=None):
     for name, (layout, mode) in LAYOUT_CASES.items():
         if selected is None or selected == name:
             cases[name] = build_layout_case(binary, layout, mode)
+    # Non-default input widths: the minimum width, wide 32-byte rows under a loss fault,
+    # and the combined maximum profile (window eight, width 32, eight peers).
+    for name, (players, mode, window, width) in WIDTH_CASES.items():
+        if selected is None or selected == name:
+            cases[name] = build_case(binary, players, 0, mode, window=window, width=width)
     for name, (players, delay, mode) in DELAY_CASES.items():
         if selected is None or selected == name:
             cases[name] = build_case(binary, players, delay, mode)
@@ -94,6 +99,12 @@ DELAY_CHANGES = {
 # prediction-window stall released through reversed withheld flights under one layout.
 LAYOUT_CASES = {'mesh_4_couch_2x2': ([2, 2], 'ordinary'), 'mesh_6_split_2x2x2': ([2, 2, 2], 'ordinary'),
                 'mesh_4_couch_loss': ([2, 2], 'loss'), 'mesh_4_couch_stall': ([2, 2], 'stall')}
+
+# Non-default input widths: (players, mode, window, width). The minimum-width cases hold the
+# smallest supported row and a loss fault under it; the wide case carries 32-byte rows; the
+# combined case holds the maximum comparable window at the wide width and full mesh size.
+WIDTH_CASES = {'mesh_2_width_1': (2, 'ordinary', 4, 1), 'mesh_4_width_1_loss': (4, 'loss', 4, 1),
+               'mesh_4_width_32': (4, 'ordinary', 4, 32), 'mesh_8_width_32_window_8': (8, 'ordinary', 8, 32)}
 
 
 def build_layout_case(binary, layout, mode):
@@ -158,8 +169,10 @@ def build_layout_case(binary, layout, mode):
     return scenario
 
 
-def build_case(binary, players, delay, mode, window=4):
+def build_case(binary, players, delay, mode, window=4, width=4):
     scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': window, 'operations': []}
+    if width != 4:
+        scenario['input_width'] = width
     now = 0; delivered = set(); latest = None
     def append(kind, refresh=True, **kwargs):
         nonlocal now, latest
@@ -168,7 +181,8 @@ def build_case(binary, players, delay, mode, window=4):
             latest = source(binary, scenario)
     def step(peer):
         frame = next((r['frame_after'] for r in reversed(latest['records']) if r['peer'] == peer), 0) if latest else 0
-        append('step', peer=peer, bytes=((frame + 1) * (peer + 1) * 17).to_bytes(4, 'little').hex())
+        value = ((frame + 1) * (peer + 1) * 17) % 256 ** width
+        append('step', peer=peer, bytes=value.to_bytes(width, 'little').hex())
     def change(peer, delay):
         nonlocal latest
         scenario['operations'].append({'kind': 'delay', 'peer': peer, 'delay': delay}); latest = source(binary, scenario)
@@ -258,6 +272,15 @@ def negative_controls(actual, expected, scenario):
             x['packets'][layout_packet]['semantic']['frames'][0] = row[:8] + ('ff' if row[8:10] != 'ff' else '00') + row[10:]
         controls['layout_players'] = layout_players
         controls['layout_row'] = layout_row
+    if scenario.get('input_width', 4) != 4:
+        # Non-default input width: flipping the leading byte of a flight row must fail the
+        # comparison, so the observed wide rows are actually consumed by both engines.
+        width_packet = next((i for i, p in enumerate(actual['packets']) if p['semantic']['kind'] == 'input'), None)
+        if width_packet is not None:
+            def width_row(x):
+                row = x['packets'][width_packet]['semantic']['frames'][0]
+                x['packets'][width_packet]['semantic']['frames'][0] = ('ff' if row[:2] != 'ff' else '00') + row[2:]
+            controls['width_row'] = width_row
     for name, mutate in controls.items():
         mutant = deepcopy(actual); mutate(mutant)
         try:

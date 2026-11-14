@@ -350,6 +350,99 @@ class P2PContractTests(unittest.TestCase):
         self.assertEqual(expected_delay_error(0, 0, 4, 8), 'INVALID_CONFIGURATION')
         self.assertEqual(set(DELAY_ERRORS.values()), {'UNSUPPORTED', 'INVALID_CONFIGURATION'})
 
+    # Value: protects=the input-width grammar shared by both engines and the shrinker;
+    # fails_when=an unsupported width, a wrong-length step payload, a bool/float/null alias,
+    # or a width below the game's minimum passes; why_new=#365 width slice; seam=none
+    def test_input_width_scenario_rules(self):
+        step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': 'ff'}
+        original = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'input_width': 1,
+                    'operations': [step, dict(step, peer=1, now_us=1)]}
+        validate_scenario(original)
+        for width, payload in ((4, '00000000'), (32, 'ab' * 32)):
+            validate_scenario(dict(deepcopy(original), input_width=width,
+                                   operations=[dict(step, bytes=payload), dict(step, peer=1, now_us=1, bytes=payload)]))
+        for mutate in (lambda x: x.update(input_width=3), lambda x: x.update(input_width=2),
+                       lambda x: x.update(input_width=8), lambda x: x.update(input_width=16),
+                       lambda x: x.update(input_width=33), lambda x: x.update(input_width=65536),
+                       lambda x: x.update(input_width=0), lambda x: x.update(input_width=True),
+                       lambda x: x.update(input_width=4.0), lambda x: x.update(input_width=None),
+                       lambda x: x.update(input_width='4'),
+                       # A step payload shorter or longer than the configured width is refused.
+                       lambda x: x['operations'][0].update(bytes='ff00'),
+                       lambda x: x['operations'][0].update(bytes='')):
+            mutant = deepcopy(original); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate_scenario(mutant)
+
+    # Value: protects=the width fold shared by both engines; fails_when=a fold that stops
+    # matching the little-endian u32 read at the default width shifts existing fixtures;
+    # why_new=#365 width slice; seam=none
+    def test_input_width_fold_semantics(self):
+        from p2p_contract import fold_input
+        self.assertEqual(fold_input('11000000'), int.from_bytes(bytes.fromhex('11000000'), 'little'))
+        self.assertEqual(fold_input('0a'), 10)
+        self.assertEqual(fold_input('ff' * 4), 4294967295)
+        wide = '0123456789abcdef' * 2
+        expected = 0
+        for index, byte in enumerate(bytes.fromhex(wide)):
+            expected ^= byte << (8 * (index % 4))
+        self.assertEqual(fold_input(wide), expected)
+
+    # Value: protects=the non-default-width flight row shape; fails_when=a packet whose rows
+    # are not one width-sized input per owned slot passes validation; why_new=#365 width slice; seam=none
+    def test_input_width_packet_row_shape(self):
+        scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'input_width': 32,
+                    'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 0}]}
+        record = {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 0, 'confirmed_frame': -1, 'error': None,
+                  'requests': [], 'events': [], 'extension_events': [], 'outgoing': [0],
+                  'state': initial_game_state(2, 2).hex()}
+        statuses = [{'disconnected': False, 'epoch': 0, 'last_frame': -1} for _ in range(2)]
+        row = '11000000' + '00' * 28
+        trace = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(scenario),
+                 'records': [record],
+                 'packets': [{'id': 0, 'from': 0, 'to': 1,
+                              'semantic': {'kind': 'input', 'start_frame': 0, 'ack_frame': -1, 'players': [0],
+                                           'frames': [row], 'statuses': statuses}}]}
+        validate(deepcopy(trace), scenario)
+        for mutate in (lambda x: x['packets'][0]['semantic'].update(frames=['11000000']),
+                       lambda x: x['packets'][0]['semantic'].update(frames=[row + 'ff']),
+                       lambda x: x['packets'][0]['semantic'].update(frames=[row[:-2]])):
+            mutant = deepcopy(trace); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate(mutant, scenario)
+        # The minimum width validates a one-byte row and refuses a four-byte row.
+        narrow_scenario = dict(deepcopy(scenario), input_width=1)
+        narrow = deepcopy(trace); narrow['scenario'] = deepcopy(narrow_scenario)
+        narrow['packets'][0]['semantic']['frames'] = ['11']
+        validate(deepcopy(narrow), narrow_scenario)
+        mutant = deepcopy(narrow); mutant['packets'][0]['semantic']['frames'] = ['11000000']
+        with self.assertRaises(ValueError):
+            validate(mutant, narrow_scenario)
+
+    # Value: protects=the advance reconstruction at non-default widths; fails_when=a confirmed
+    # slot whose bytes carry the wrong width, or a stale-wide neutral prefix, passes; why_new=#365
+    # width slice; seam=none
+    def test_input_width_advance_reconstruction(self):
+        scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'input_width': 1,
+                    'operations': [{'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '11'}]}
+        state = initial_game_state(2, 2)
+        from p2p_contract import fold_input, advance_game_state as advance
+        inputs = [{'player': 0, 'bytes': '11', 'status': 'confirmed'}, {'player': 1, 'bytes': '00', 'status': 'predicted'}]
+        advanced = advance(state, [fold_input('11'), fold_input('00')], 2)
+        save = {'kind': 'save', 'frame': 0, 'state_bytes': state.hex(), 'checksum': checksum(state), 'inputs': []}
+        step = {'kind': 'advance', 'frame': 0, 'state_bytes': advanced.hex(), 'checksum': checksum(advanced), 'inputs': inputs}
+        record = {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 1, 'confirmed_frame': -1, 'error': None,
+                  'requests': [save, step], 'events': [], 'extension_events': [], 'outgoing': [],
+                  'state': advanced.hex()}
+        trace = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(scenario),
+                 'records': [record], 'packets': []}
+        validate(deepcopy(trace), scenario)
+        for mutate in (lambda x: x['records'][0]['requests'][1]['inputs'][0].update(bytes='11000000'),
+                       lambda x: x['records'][0]['requests'][1]['inputs'][1].update(bytes='00000000')):
+            mutant = deepcopy(trace); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate(mutant, scenario)
+
     # Value: protects=upstream-only duplicate-save exception; fails_when=Godot extra callbacks disappear; why_new=source API asymmetry; seam=none
     def test_initial_save_exception_is_source_only(self):
         request = {'kind': 'save', 'frame': 0}

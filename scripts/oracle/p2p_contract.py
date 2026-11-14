@@ -10,6 +10,26 @@ DELAY_ERRORS = {'InputDelayDecreaseUnsupported': 'UNSUPPORTED', 'FrameDelayTooLa
 # Source advance refusals and the matching production Godot codes; the missing-input
 # refusal is the pinned upstream's partially-staged advance (one row slot missing).
 INPUT_ERRORS = {'MissingLocalInput': 'MISSING_LOCAL_INPUT'}
+# Configured input widths both engines compare; an omitted field stays four bytes.
+WIDTHS = (1, 4, 32)
+DEFAULT_WIDTH = 4
+
+
+def scenario_width(scenario):
+    return scenario.get('input_width', DEFAULT_WIDTH)
+
+
+def fold_input(hex_text):
+    """Fold one input of any configured width into the game's u32 accumulator contribution.
+
+    At the default width four this is exactly the little-endian u32 read, so every
+    earlier fixture's arithmetic is unchanged; wider rows fold the remaining bytes
+    positionally, and both engines implement the same fold.
+    """
+    value = 0
+    for index, byte in enumerate(bytes.fromhex(hex_text)):
+        value ^= byte << (8 * (index % 4))
+    return value
 
 
 def slots_of(scenario):
@@ -52,11 +72,17 @@ def validate_scenario(value):
     if type(value) is not dict:
         raise ValueError('p2p scenario: invalid object')
     fields(value, 'format players input_delay max_prediction operations' + (' lifecycle' if 'lifecycle' in value else '')
-           + (' queue_capacity' if 'queue_capacity' in value else '') + (' layout' if 'layout' in value else ''), 'p2p scenario')
+           + (' queue_capacity' if 'queue_capacity' in value else '') + (' input_width' if 'input_width' in value else '')
+           + (' layout' if 'layout' in value else ''), 'p2p scenario')
     integer(value['format'], 1, 1, 'format')
     integer(value['players'], 2, 8, 'players')
     integer(value['input_delay'], 0, 2, 'delay')
     integer(value['max_prediction'], 2, 8, 'prediction')
+    if 'input_width' in value:
+        # Explicit non-default input width; only the compared representative set is accepted.
+        integer(value['input_width'], 1, 32, 'input width')
+        if value['input_width'] not in WIDTHS:
+            raise ValueError('input width outside the compared set')
     if 'layout' in value:
         # Explicit endpoint layout: machine m owns slots [sum(sizes[:m]), sum(sizes[:m+1])).
         # An omitted field stays one local slot per endpoint; machine-count and per-machine
@@ -109,14 +135,14 @@ def validate_scenario(value):
         elif kind in {'step', 'poll'}:
             integer(op['peer'], 0, value['players'] - 1, 'peer')
             if kind == 'step':
-                hex_bytes(op['bytes'], 4, 'input'); stepped.add(op['peer'])
+                hex_bytes(op['bytes'], scenario_width(value), 'input'); stepped.add(op['peer'])
         else:
             raise ValueError('unknown kind')
         addressed = op.get('peer')
     return value
 
 
-def packet(value, players, source, slots_by_machine=None):
+def packet(value, players, source, slots_by_machine=None, width=DEFAULT_WIDTH):
     fields(value, 'id from to semantic raw' if source else 'id from to semantic', 'packet')
     integer(value['id'], 0, 100000, 'packet id')
     # Endpoints are machine addresses; an explicit layout has fewer machines than slots,
@@ -143,9 +169,9 @@ def packet(value, players, source, slots_by_machine=None):
         integer(body['start_frame'], 0, 10000, 'start')
         if type(body['frames']) is not list or not 1 <= len(body['frames']) <= 128:
             raise ValueError('frames')
-        # One flight row carries one four-byte input per slot the sender owns locally.
+        # One flight row carries one width-sized input per slot the sender owns locally.
         for data in body['frames']:
-            hex_bytes(data, 4 * (len(slots) if slots is not None else 1), 'frame input')
+            hex_bytes(data, width * (len(slots) if slots is not None else 1), 'frame input')
         if type(body['players']) is not list:
             raise ValueError('sender players')
         for slot in body['players']:
@@ -177,7 +203,7 @@ def packet(value, players, source, slots_by_machine=None):
                 raise ValueError('raw semantic fields')
             # Independently validate nested raw statuses before Python equality.
             alias = dict(value, semantic=dict(body, statuses=raw_body['peer_connect_status']))
-            packet({k: v for k, v in alias.items() if k != 'raw'}, players, False, slots_by_machine)
+            packet({k: v for k, v in alias.items() if k != 'raw'}, players, False, slots_by_machine, width)
             if type(raw_body['bytes']) is not list or not 1 <= len(raw_body['bytes']) <= 4096:
                 raise ValueError('compressed bytes')
             for byte in raw_body['bytes']:
@@ -210,8 +236,9 @@ def validate(value, scenario, source=False):
         raise ValueError('packet inventory')
     layout_slots = slots_of(scenario); machines = len(layout_slots)
     owner = [machine for machine, slots in enumerate(layout_slots) for _ in slots]
+    width = scenario_width(scenario)
     for index, outgoing in enumerate(value['packets']):
-        packet(outgoing, scenario['players'], source, layout_slots)
+        packet(outgoing, scenario['players'], source, layout_slots, width)
         if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in {'input', 'input_ack'}:
             raise ValueError('lifecycle packet outside explicit profile')
         if outgoing['id'] != index:
@@ -325,14 +352,14 @@ def validate(value, scenario, source=False):
                 incoming = []
                 for slot, entry in enumerate(request['inputs']):
                     fields(entry, 'player bytes status', 'slot')
-                    integer(entry['player'], slot, slot, 'slot position'); hex_bytes(entry['bytes'], 4, 'slot bytes')
+                    integer(entry['player'], slot, slot, 'slot position'); hex_bytes(entry['bytes'], width, 'slot bytes')
                     if type(entry['status']) is not str or entry['status'] not in {'confirmed', 'predicted'}:
                         raise ValueError('input status')
                     if entry['status'] == 'confirmed':
-                        expected = '00000000' if frame < scenario['input_delay'] else samples[slot].get(frame)
+                        expected = '00' * width if frame < scenario['input_delay'] else samples[slot].get(frame)
                         if expected is None or expected != entry['bytes']:
                             raise ValueError(f'operation {index}: submitted confirmed prefix frame {frame} slot {slot}')
-                    incoming.append(int.from_bytes(bytes.fromhex(entry['bytes']), 'little'))
+                    incoming.append(fold_input(entry['bytes']))
                 states[peer] = advance_game_state(states[peer], incoming, 2)
             else:
                 raise ValueError('request kind')
