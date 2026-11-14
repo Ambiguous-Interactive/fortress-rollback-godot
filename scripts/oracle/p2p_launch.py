@@ -181,8 +181,16 @@ def build_case(binary, players, delay, mode, window=4, width=4):
             latest = source(binary, scenario)
     def step(peer):
         frame = next((r['frame_after'] for r in reversed(latest['records']) if r['peer'] == peer), 0) if latest else 0
-        value = ((frame + 1) * (peer + 1) * 17) % 256 ** width
-        append('step', peer=peer, bytes=value.to_bytes(width, 'little').hex())
+        head = ((frame + 1) * (peer + 1) * 17) % 256 ** width
+        if width == 4:
+            append('step', peer=peer, bytes=head.to_bytes(width, 'little').hex())
+            return
+        # Deterministic wide payloads: every byte varies with its position, the frame and
+        # the peer and is kept nonzero, so the fold contribution lives in the tail bytes
+        # too and an engine that ignores them cannot match the confirmed history.
+        payload = bytes(((head >> (8 * (index % 4))) ^ (index * 37 + frame * 11 + peer * 5 + 1)) & 255 | 1
+                        for index in range(width))
+        append('step', peer=peer, bytes=payload.hex())
     def change(peer, delay):
         nonlocal latest
         scenario['operations'].append({'kind': 'delay', 'peer': peer, 'delay': delay}); latest = source(binary, scenario)
@@ -280,7 +288,14 @@ def negative_controls(actual, expected, scenario):
             def width_row(x):
                 row = x['packets'][width_packet]['semantic']['frames'][0]
                 x['packets'][width_packet]['semantic']['frames'][0] = ('ff' if row[:2] != 'ff' else '00') + row[2:]
+            def width_tail(x):
+                # The row's final byte: the sample generation keeps every wide byte nonzero,
+                # so flipping the tail must fail, proving the comparison reads past the head.
+                row = x['packets'][width_packet]['semantic']['frames'][0]
+                start = len(row) - 2
+                x['packets'][width_packet]['semantic']['frames'][0] = row[:start] + ('ff' if row[start:] != 'ff' else '00')
             controls['width_row'] = width_row
+            controls['width_tail'] = width_tail
     for name, mutate in controls.items():
         mutant = deepcopy(actual); mutate(mutant)
         try:

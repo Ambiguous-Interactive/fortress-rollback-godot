@@ -52,7 +52,9 @@ peer session, neutral input, codec limits and flight-row slicing follow the
 same field. The advance fold — one XOR per byte at position `index % 4` — is
 exactly the little-endian u32 read at the default width, so the earlier
 corpus's arithmetic is unchanged, and both engines implement the same fold for
-wider rows.
+wider rows. Wide samples vary every byte deterministically and keep each byte
+nonzero, so the fold contribution lives in the tail bytes as well and an
+engine that ignores them cannot match the confirmed history.
 
 A partially staged machine records the pinned engine's missing-input refusal:
 source `advance_frame` errors `MissingLocalInput` and retains its staged local
@@ -158,8 +160,9 @@ input chunk. Four non-default input-width scenarios compare the width axis:
 `mesh_2_width_1` holds the smallest supported row, `mesh_4_width_1_loss` runs
 the loss fault under it, `mesh_4_width_32` carries one 32-byte input per slot,
 and `mesh_8_width_32_window_8` holds the maximum comparable prediction window
-at the wide width and full mesh size. A `width_row` negative control flips a
-wide row's leading byte, and the scenario grammar rejects unsupported widths
+at the wide width and full mesh size. `width_row` and `width_tail` negative
+controls flip a wide row's leading and final byte, and the scenario grammar
+rejects unsupported widths
 and step payloads whose length differs from the configured width. Full meshes use the upstream gossip minimum for confirmation;
 voluntary idle confirmation can lag the last locally received frame until another
 input packet carries updated gossip. Exhausted-window recovery is separately
