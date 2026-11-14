@@ -46,8 +46,8 @@ def with_cascades(operations, counts, removed):
 
     `counts` must have one entry per operation, taken from the outgoing packet
     counts of a validated run, so every delivery id resolves to a producer.
-    A delivery whose id resolves to no producer is left in place; the probe
-    then rejects the candidate through the schedule's own validation.
+    A delivery whose id resolves to no producer is left in place; `rewrite`
+    then refuses the candidate before any probe runs.
     """
     removed = set(removed)
     changed = True
@@ -67,7 +67,8 @@ def rewrite(operations, counts, removed):
     """Schedule without the removed operations, with surviving delivery ids re-ranked.
 
     Returns None when a delivery would still reference a packet whose producer
-    was removed; callers cascade first, so this only fires on malformed input.
+    was removed or resolves to no producer at all; callers cascade first, so
+    this only fires on malformed input.
     """
     dropped_before = {}
     dropped_packets = 0

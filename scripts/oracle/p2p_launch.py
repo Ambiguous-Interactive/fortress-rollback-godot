@@ -232,7 +232,8 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             output / f'{name}-minimized-raw-validate.log', json.dumps(source_results[0]))
         raw_validation = json.loads(verified)
         if (stderr.strip() or type(raw_validation) is not dict or set(raw_validation) != {'complete', 'packets'}
-                or raw_validation['complete'] is not True or raw_validation['packets'] != len(source_results[0]['packets'])):
+                or raw_validation['complete'] is not True or type(raw_validation['packets']) is not int
+                or raw_validation['packets'] != len(source_results[0]['packets'])):
             raise ValueError('minimized raw compression validator completion')
         (output / f'{name}-minimized-source.json').write_text(json.dumps(source_results[0], indent=2) + '\n')
         for repeat in (1, 2):
