@@ -391,6 +391,10 @@ def main():
         raise ValueError('unsupported engine profile')
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
         str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'p2p'], args.output / 'build.log', timeout=600)
+    # The oracle bin's own unit tests pin the hostile layout and player-count bounds.
+    test_command = [str(cargo), '+' + version, 'test', '--locked', '--offline', '--manifest-path',
+        str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'p2p']
+    execute(test_command, args.output / 'oracle-tests.log', timeout=600)
     binary = CACHE / 'target/debug/p2p'
     binary_identity = executable_identity(binary)
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))

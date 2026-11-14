@@ -334,22 +334,24 @@ fn packet_endpoints(packet:&Value,slots_of:&[Vec<usize>])->Result<(usize,usize),
  let to=packet["to"].as_u64().ok_or("to")? as usize;
  if from>=slots_of.len()||to>=slots_of.len() {return Err("packet machine bounds".into());}
  Ok((from,to))}
+/// The replay's validated scenario: the player count bounds before any widening cast (a
+/// 32-bit `usize` would otherwise truncate a hostile u64 into the valid band), an explicit
+/// layout must deserialize and satisfy the shared grammar, and an omitted layout stays one
+/// slot per endpoint.
+fn replay_scenario_slots(scenario:&Value)->Result<Vec<Vec<usize>>,String>{
+ let players=scenario["players"].as_u64().ok_or("scenario bounds")?;
+ if !(2..=8).contains(&players) {return Err("scenario bounds".into());}
+ let players=players as usize;
+ let layout=match scenario.get("layout") {
+  None=>None,
+  Some(raw)=>Some(serde_json::from_value::<Vec<usize>>(raw.clone()).map_err(|_|"layout bounds")?)};
+ if let Some(sizes)=&layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0||*size>players)||sizes.iter().sum::<usize>()!=players
+  {return Err("layout bounds".into());}}
+ Ok(slots_of(players,&layout))}
 fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
  if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
-  let scenario_players=value["scenario"]["players"].as_u64().ok_or("players")? as usize;
-   // Mirror the runner's player bounds before any layout arithmetic: a hostile oversized
-   // player count could otherwise overflow or wrap the layout-total sum.
-   if !(2..=8).contains(&scenario_players) {return Err("scenario bounds".into());}
-   // An explicit malformed layout must fail the replay, never silently replay as the default.
-   let scenario_layout=match value["scenario"].get("layout") {
-    None=>None,
-    Some(raw)=>Some(serde_json::from_value::<Vec<usize>>(raw.clone()).map_err(|_|"layout bounds")?)};
-   // Mirror the scenario grammar so a trace replayed against a wrong or hostile layout fails
-   // cleanly instead of indexing a missing machine.
-   if let Some(sizes)=&scenario_layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0||*size>scenario_players)||sizes.iter().sum::<usize>()!=scenario_players
-    {return Err("layout bounds".into());}}
-   let slots_of=slots_of(scenario_players,&scenario_layout);
+   let slots_of=replay_scenario_slots(&value["scenario"])?;
    let mut references=MeshReferences::new(&slots_of);let packets=value["packets"].as_array().ok_or("packets")?;
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
   let records=value["records"].as_array().ok_or("records")?;
@@ -378,3 +380,51 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
  else if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--profile-audit"] {run(value,true)}
  else{return Err("unknown argument".into());}})();
  match result{Ok(v)=>println!("{v}"),Err(e)=>{eprintln!("p2p oracle: {e}");std::process::exit(2);}}}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Value: protects=the hostile layout bounds that gate slot-vector expansion; fails_when=a
+    // zero, single-machine, oversized or slot-total-mismatched layout, or an oversized player
+    // count, reaches allocation or the sum; seam=run()'s early rejection path
+    #[test]
+    fn hostile_layouts_fail_before_expansion() {
+        let base = |layout: Value| json!({"format":1u32,"players":4usize,"input_delay":0usize,
+            "max_prediction":4usize,"operations":[{"kind":"poll","peer":0usize,"now_us":0u64}],"layout":layout});
+        for layout in [json!([]), json!([4]), json!([0,4]), json!([2,1]), json!([2,2,2]),
+                       json!([18446744073709551615u64,5])] {
+            let scenario = base(layout);
+            let error = run(scenario, false).expect_err("hostile layout accepted");
+            assert!(error.contains("layout bounds") || error.contains("scenario bounds"), "{error}");
+        }
+        // A non-integer element fails serde deserialization before the grammar runs.
+        let error = run(base(json!([2.0,2])), false).expect_err("hostile layout accepted");
+        assert!(error.contains("invalid number"), "{error}");
+    }
+
+    // Value: protects=the replay's u64 player bound before the usize cast; fails_when=an
+    // oversized count truncates into the valid band on a narrow target or the layout sum
+    // overflows; seam=replay_scenario_slots
+    #[test]
+    fn replay_scenario_bounds_players_before_cast() {
+        let scenario = |players: Value, layout: Option<Value>| {
+            let mut object = json!({"players": players});
+            if let Some(layout) = layout {
+                object["layout"] = layout;
+            }
+            object
+        };
+        for players in [json!(18446744073709551615u64), json!(9), json!(1), json!(0), json!(4.0)] {
+            let error = replay_scenario_slots(&scenario(players, None)).expect_err("hostile players accepted");
+            assert!(error.contains("scenario bounds"), "{error}");
+        }
+        for layout in [json!([]), json!([4]), json!([0,4]), json!([2,1]), json!([2,2,2]),
+                       json!([18446744073709551615u64,5]), json!(null), json!([2.0,2])] {
+            let error = replay_scenario_slots(&scenario(json!(4), Some(layout))).expect_err("hostile layout accepted");
+            assert!(error.contains("layout bounds"), "{error}");
+        }
+        assert_eq!(replay_scenario_slots(&scenario(json!(4), None)).unwrap(), vec![vec![0], vec![1], vec![2], vec![3]]);
+        assert_eq!(replay_scenario_slots(&scenario(json!(4), Some(json!([2,2])))).unwrap(), vec![vec![0,1], vec![2,3]]);
+    }
+}
