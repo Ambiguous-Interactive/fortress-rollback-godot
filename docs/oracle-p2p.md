@@ -262,7 +262,7 @@ access-only SyncLayer oracle slice tracked in
 
 ## Lifecycle observations
 
-Nine additional two-peer scenarios compare real quality reports, echoed replies,
+Ten additional two-peer scenarios compare real quality reports, echoed replies,
 keepalives, interruption and resume events, timeout, pacing recommendations,
 and checksum exchange. Timer cases exercise interval equality and interval plus
 one. Delayed quality replies produce actual RTT observations. One case combines
@@ -284,6 +284,18 @@ poll. Neither side observes a departure other than the single final terminal.
 The comparison requires both peers' frames, stalls and canonical states to
 match through the last shared operation, including the fed peer's prediction
 past its last received input.
+
+The partition-heal case keeps the same one-way starvation inside the disconnect
+timeout instead of ending at a terminal. Peer 1 latches its interruption, keeps
+predicting through six withheld rounds, and the entire withheld burst then
+arrives at once: `network_resumed` fires on the first recovered packet and the
+recovered inputs force a deep LOAD correction through the public advance API.
+Peer 1's unacknowledged replies retransmit once, so peer 0 resolves the same
+quality token twice; both endpoints must re-measure that duplicate identically.
+Three more confirmed rounds follow, and the schedule ends synchronized with no
+terminal on either side. The named evidence requires the interruption, the
+resume and the recovery LOADs; controls mutate the notify payload and remove
+the resume event.
 
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.

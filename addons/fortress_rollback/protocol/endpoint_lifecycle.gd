@@ -11,7 +11,7 @@ static func initial(options: L.Options) -> Dictionary:
 	local.fill(0)
 	return {"last_recv_us": -1, "last_send_us": -1, "last_quality_us": -1, "clock_origin_us": -1,
 		"interrupted": false, "round_trip_time_ms": 0, "local_frame_advantage": 0, "remote_frame_advantage": 0,
-		"average_frame_advantage": 0, "quality_pending": {}, "local_advantages": local, "remote_advantages": local.duplicate(),
+		"average_frame_advantage": 0, "local_advantages": local, "remote_advantages": local.duplicate(),
 		"local_advantage_sum": 0, "remote_advantage_sum": 0}
 
 static func start(state: Dictionary, now_us: int) -> void:
@@ -30,12 +30,10 @@ static func token(millis: int) -> PackedByteArray:
 static func poll(plan: Dictionary, options: L.Options, packet: Callable, encode: Callable, can_send_control: bool = true) -> int:
 	var state: Dictionary = plan.state
 	if can_send_control and state.now_us - state.last_quality_us > options.quality_report_interval_us:
+		# The ping token is this endpoint's own elapsed integer milliseconds; the
+		# peer echoes it verbatim and only this clock resolves it, so probes stay
+		# stateless across lost, reordered and duplicated replies.
 		var millis: int = (state.now_us - state.clock_origin_us) / 1000
-		var key: String = token(millis).hex_encode()
-		if not state.quality_pending.has(key) and state.quality_pending.size() >= options.max_pending_quality:
-			# Expired pings do not prevent liveness traffic during a long partition.
-			state.quality_pending.erase(state.quality_pending.keys()[0])
-		state.quality_pending[key] = millis
 		var report: T.Message = packet.call(T.Kind.QUALITY_REPORT)
 		report.token = token(millis)
 		report.frame_advantage = clampi(state.local_frame_advantage, -32768, 32767)
@@ -69,11 +67,16 @@ static func receive_control(plan: Dictionary, message: T.Message, packet: Callab
 			reply.token = message.token.duplicate()
 			plan.outbox.append(encode.call(reply))
 		T.Kind.QUALITY_REPLY:
-			var key: String = message.token.hex_encode()
-			if plan.state.quality_pending.has(key):
-				var millis: int = (plan.state.now_us - plan.state.clock_origin_us) / 1000
-				plan.state.round_trip_time_ms = maxi(0, millis - plan.state.quality_pending[key])
-				plan.state.quality_pending.erase(key)
+			# Upstream resolves every echo statelessly with a saturating
+			# subtraction, so a lost, reordered, duplicated or stale-era token
+			# re-measures the same sample instead of freezing the gauge at an
+			# earlier reply; a pong wider than the clock range is a harmless
+			# zero that the next report corrects.
+			var millis: int = (plan.state.now_us - plan.state.clock_origin_us) / 1000
+			var pong: int = message.token.decode_u64(0)
+			if message.token.decode_u64(8) != 0 or pong < 0:
+				pong = millis + 1
+			plan.state.round_trip_time_ms = maxi(0, millis - pong)
 		T.Kind.CHECKSUM_REPORT:
 			plan.events.append({"kind": "checksum_received", "frame": message.frame, "checksum": message.checksum.duplicate()})
 		T.Kind.GOODBYE:

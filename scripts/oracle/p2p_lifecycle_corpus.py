@@ -4,7 +4,7 @@ from p2p_contract import validate_scenario
 
 def corpus(binary, observe, selected=None):
     names = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
-             'partition_one_way', 'checksums_match', 'checksums_repair', 'checksums_diverge', 'pacing_skew')
+             'partition_one_way', 'partition_heal', 'checksums_match', 'checksums_repair', 'checksums_diverge', 'pacing_skew')
     return {name: build(binary, observe, name) for name in names if selected is None or selected == name}
 
 
@@ -97,6 +97,46 @@ def build(binary, observe, name):
         append('poll', peer=1, at=3000001)
         if not any(r['peer'] == 1 and e['kind'] == 'disconnected' for r in latest['records'] for e in r['events']):
             raise ValueError('partition starvation never reached the disconnect timeout')
+    elif name == 'partition_heal':
+        # A short confirmed prefix, then a bounded one-way starvation: peer 1
+        # stops receiving everything from peer 0 while peer 0 keeps receiving
+        # peer 1. Peer 1 latches network_interrupted past the notify bound and
+        # predicts through the quiet stretch, the withheld burst then arrives
+        # well below the disconnect timeout, network_resumed fires and the
+        # missing inputs force a deep LOAD correction through the actual
+        # public API; both peers resume confirming canonical history together
+        # and the schedule ends synchronized instead of at a terminal.
+        starved = False
+        for frame in range(6):
+            now = 500000 + frame * 150000
+            step(0, at=now); step(1, at=now + 1)
+            pending = [p['id'] for p in latest['packets'] if p['id'] not in delivered and p['from'] == 1]
+            for packet in pending:
+                delivered.add(packet); append('deliver', packet=packet, refresh=False)
+            latest = observe(binary, scenario)
+            if any(e['kind'] == 'network_interrupted' for r in latest['records'] if r['peer'] == 1 for e in r['events']):
+                starved = True
+        if not starved:
+            raise ValueError('partition heal never latched the notify bound')
+        burst = [p['id'] for p in latest['packets'] if p['id'] not in delivered]
+        if not burst:
+            raise ValueError('partition heal withheld an empty burst')
+        append('deliver', packet=burst[0], at=1500000)
+        for packet in burst[1:]:
+            delivered.add(packet); append('deliver', packet=packet, refresh=False)
+        latest = observe(binary, scenario)
+        if not any(e['kind'] == 'network_resumed' for r in latest['records'] if r['peer'] == 1 for e in r['events']):
+            raise ValueError('partition heal never resumed the starved peer')
+        for frame in range(3):
+            now = 1600000 + frame * 150000
+            step(0, at=now); step(1, at=now + 1)
+            flush()
+        flush()
+        for peer in range(2):
+            step(peer)
+            flush()
+        append('poll', peer=0, at=2500000)
+        append('poll', peer=1, at=2500001)
     else:
         for frame in range(48 if name == 'pacing_skew' else 14):
             if name == 'pacing_skew':

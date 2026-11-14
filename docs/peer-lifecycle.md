@@ -25,9 +25,12 @@ cannot refresh it. Traffic after an interruption publishes `network_resumed`.
 A terminated session cannot resume; create a new session and synchronize again.
 
 `network_status().peers` reports integer `round_trip_time_ms`, local and remote
-frame advantage, averaged frame advantage and interruption state. RTT updates
-only for a retained matching quality token. Lost replies expire from a bounded
-pending inventory. `network_status().frames_ahead` reports the largest peer
+frame advantage, averaged frame advantage and interruption state. The quality
+ping token is this endpoint's own elapsed integer milliseconds, and every echo
+resolves the gauge statelessly with a saturating subtraction, so lost,
+reordered, duplicated or stale-era replies cannot freeze the reported RTT at an
+earlier sample; a pong wider than the clock range measures zero and the next
+report corrects it. `network_status().frames_ahead` reports the largest peer
 recommendation. A `wait_recommendation` event carries `skip_frames`; applications
 choose how to pace local frame submission. The library does not sleep.
 
@@ -79,12 +82,12 @@ GOODBYE packets per link and halts the local game. Receiving GOODBYE halts the
 fixed-membership game. Queue pressure can prevent transmission; the local
 terminal outcome and diagnostic remain observable.
 
-Lifecycle options bound pending quality tokens, averaging samples, retained
-checksum frames per peer and session events. Input options separately bound
-endpoint events, packets and transitions. Drain all publication queues each
-service iteration. Event overflow preserves a reserved `event_capacity_exceeded`
-fatal diagnostic and halts advancement; it does not silently discard a failure.
-Returned byte arrays belong to the caller.
+Lifecycle options bound averaging samples, retained checksum frames per peer
+and session events. Input options separately bound endpoint events, packets and
+transitions. Drain all publication queues each service iteration. Event overflow
+preserves a reserved `event_capacity_exceeded` fatal diagnostic and halts
+advancement; it does not silently discard a failure. Returned byte arrays belong
+to the caller.
 
 The default policy ends the match when a peer stops answering: the session
 reports `PROTOCOL_FAILED` and every peer stops. The optional
