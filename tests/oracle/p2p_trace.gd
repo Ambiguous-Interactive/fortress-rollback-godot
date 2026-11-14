@@ -24,6 +24,16 @@ var limits: T.Limits
 # Runtime input delays per player; a step's own input flight is scheduled at its
 # current frame plus the peer's current delay.
 var delays: Array[int] = []
+# Endpoint layout: local slot lists per machine address and the owning machine per
+# slot. The default stays one local slot per endpoint, so slot == machine there.
+var slots_of: Array = []
+var owner_of: Array[int] = []
+# Driver-side staging of every machine's unconsumed step bytes. Production refuses
+# an incomplete local row without staging, so the driver retains prior step bytes
+# here and re-submits them once the machine's coverage completes — matching the
+# pinned engine, which retains partially staged local inputs across the failed
+# advance and clears them only on a successful one.
+var staged: Array[Dictionary] = []
 
 
 func _initialize() -> void:
@@ -42,15 +52,16 @@ func _initialize() -> void:
 		return
 	var scenario: Dictionary = _canonical(parser.data)
 	scenario_settings = scenario
+	_layout(scenario)
 	delays.resize(scenario.players)
 	delays.fill(scenario.input_delay)
 	limits = T.Limits.new()
 	limits.player_count = scenario.players
 	limits.input_width = 4
-	for player: int in range(scenario.players):
+	for machine: int in range(machines()):
 		var config: RefCounted = Config.new()
 		config.player_count = scenario.players
-		config.local_players = PackedInt32Array([player])
+		config.local_players = PackedInt32Array(slots_of[machine])
 		config.input_width = 4
 		config.neutral_input = PackedByteArray([0, 0, 0, 0])
 		config.input_delay = scenario.input_delay
@@ -63,8 +74,8 @@ func _initialize() -> void:
 		config.storage_budget_bytes = 1048576
 		var local: T.Message = T.Message.new()
 		local.kind = T.Kind.SYNC_REQUEST
-		local.sender_id = _id(player)
-		local.connection_id = _id(player)
+		local.sender_id = _id(machine)
+		local.connection_id = _id(machine)
 		local.session_id = _token(0, 0)
 		local.config.player_count = scenario.players
 		local.config.input_width = 4
@@ -76,11 +87,11 @@ func _initialize() -> void:
 		config.checksums_enabled = local.config.desync_interval > 0
 		local.config.roster.clear()
 		for slot: int in range(scenario.players):
-			local.config.roster.append(_id(slot))
+			local.config.roster.append(_id(owner_of[slot]))
 		var options: H.Options = H.Options.new()
 		options.roundtrips = 1
 		var game: RefCounted = Game.new(scenario.players)
-		if scenario.get("lifecycle", {}).get("divergent_peer", -1) == player:
+		if scenario.get("lifecycle", {}).get("divergent_peer", -1) == machine:
 			game.game.accumulators[0] = 1
 		var peer: RefCounted = Peer.new()
 		if peer.configure(config, local, game, options, I.Options.new(), Lifecycle.options(scenario)) != I.Code.OK:
@@ -88,9 +99,10 @@ func _initialize() -> void:
 			return
 		peers.append(peer)
 		games.append(game)
+		staged.append({})
 		var tokens: Array[PackedByteArray] = []
 		for remote: PackedByteArray in peer.peer_ids():
-			tokens.append(_token(player, remote.decode_u64(0)))
+			tokens.append(_token(machine, remote.decode_u64(0)))
 		if peer.begin(0, tokens) != I.Code.OK:
 			_fail("begin")
 			return
@@ -114,8 +126,30 @@ func _initialize() -> void:
 	quit(0)
 
 
+func machines() -> int:
+	return slots_of.size()
+
+
+## Local slot lists per machine; an omitted layout stays one slot per endpoint.
+func _layout(scenario: Dictionary) -> void:
+	if not scenario.has("layout"):
+		for slot: int in range(scenario.players):
+			slots_of.append([slot])
+			owner_of.append(slot)
+		return
+	var start: int = 0
+	for machine: int in range(scenario.layout.size()):
+		var slots: Array[int] = []
+		for offset: int in range(int(scenario.layout[machine])):
+			slots.append(start + offset)
+			owner_of.append(machine)
+		slots_of.append(slots)
+		start += int(scenario.layout[machine])
+
+
 func _operation(op: Dictionary, index: int) -> bool:
-	var player: int = int(op.get("peer", 0))
+	var slot: int = int(op.get("peer", 0))
+	var player: int = owner_of[slot]
 	if op.kind == "deliver":
 		if op.packet >= packets.size():
 			_fail("unobserved packet")
@@ -129,12 +163,25 @@ func _operation(op: Dictionary, index: int) -> bool:
 	var error: Variant = null
 	match op.kind:
 		"step":
-			var inputs: Array[Driver.LocalInput] = [Driver.LocalInput.new(player, before, String(op.bytes).hex_decode())]
+			staged[player][slot] = String(op.bytes).hex_decode()
+			var inputs: Array[Driver.LocalInput] = []
+			if _covered(player):
+				for owned: int in slots_of[player]:
+					inputs.append(Driver.LocalInput.new(owned, before, staged[player][owned]))
+			else:
+				inputs.append(Driver.LocalInput.new(slot, before, staged[player][slot]))
 			var result: Driver.StepResult = peer.step(op.now_us, inputs)
 			if not result.events.is_empty():
 				_fail("unmodeled core event")
 				return false
 			code = result.code
+			if code == Types.Code.OK:
+				# A successful advance consumed the whole machine's staged row.
+				staged[player].clear()
+			if code == Types.Code.MISSING_LOCAL_INPUT:
+				# The pinned engine polls remote clients before its missing-input gate, so the
+				# refused advance still services timers; production refuses before its own poll.
+				peer.poll(op.now_us)
 			if code != Types.Code.OK:
 				error = Types.Code.find_key(code)
 		"poll":
@@ -151,7 +198,7 @@ func _operation(op: Dictionary, index: int) -> bool:
 	if op.kind not in ["step", "delay"] and code != I.Code.OK and not (scenario_settings.has("lifecycle") and code == I.Code.TERMINATED):
 		_fail("network operation rejected")
 		return false
-	var scheduled: int = before + delays[player] if op.kind == "step" else -1
+	var scheduled: int = before + delays[slot] if op.kind == "step" else -1
 	var published: Variant = _publish(peer, player, scheduled)
 	if published == null:
 		return false
@@ -179,6 +226,15 @@ func _operation(op: Dictionary, index: int) -> bool:
 		records[-1].pre_confirmed = pre_confirmed
 		records[-1].metrics = Lifecycle.metrics(peer, player, peers.size(), op.now_us)
 	game.requests.clear()
+	return true
+
+
+## Every local slot of the machine holds a driver-staged sample, so the step can
+## submit the complete row exactly when this op's slot is the last one missing.
+func _covered(machine: int) -> bool:
+	for owned: int in slots_of[machine]:
+		if not staged[machine].has(owned):
+			return false
 	return true
 
 
@@ -230,9 +286,11 @@ func _decode_outgoing(packet: RefCounted, player: int) -> Dictionary:
 	var message: T.Message = result.message
 	var semantic: Dictionary = {"kind": "input_ack", "ack_frame": message.ack_frame}
 	if message.kind == T.Kind.INPUT:
+		# One flight row carries one four-byte input per slot the sender owns locally.
+		var row: int = 4 * message.players.size()
 		var frames: Array[String] = []
 		for frame: int in range(message.frame_count):
-			frames.append(message.data.slice(frame * 4, (frame + 1) * 4).hex_encode())
+			frames.append(message.data.slice(frame * row, (frame + 1) * row).hex_encode())
 		var statuses: Array[Dictionary] = []
 		for status: T.Status in message.statuses:
 			statuses.append({"disconnected": status.disconnected, "epoch": status.epoch, "last_frame": status.last_frame})
@@ -334,6 +392,8 @@ func _valid(value: Variant) -> bool:
 		required.append("lifecycle")
 	if value is Dictionary and value.has("queue_capacity"):
 		required.append("queue_capacity")
+	if value is Dictionary and value.has("layout"):
+		required.append("layout")
 	if not _fields(value, required):
 		return false
 	for field: String in ["format", "players", "input_delay", "max_prediction"]:
@@ -344,6 +404,21 @@ func _valid(value: Variant) -> bool:
 		if not _integer(value.queue_capacity, 2, 128):
 			return false
 		if int(value.queue_capacity) < int(value.input_delay) + int(value.max_prediction) + 2:
+			return false
+	# Explicit endpoint layout: machine counts, per-machine slot coverage and the shared
+	# slot total. An omitted field stays one local slot per endpoint. Lifecycle timers
+	# stay a single-local slice, exactly like the shared Python grammar.
+	if value.has("layout"):
+		if not value.layout is Array or value.layout.size() < 2 or value.layout.size() > int(value.players):
+			return false
+		var covered: int = 0
+		for size: Variant in value.layout:
+			if not _integer(size, 1, 8):
+				return false
+			covered += int(size)
+		if covered != int(value.players):
+			return false
+		if value.has("lifecycle"):
 			return false
 	# The peer session refuses any agreed initial delay above its own unclamped bound.
 	var capacity_bound: int = int(value.queue_capacity) if value.has("queue_capacity") else 128
@@ -374,7 +449,10 @@ func _valid(value: Variant) -> bool:
 		if not _fields(op, names):
 			return false
 		if op.kind == "delay":
-			# Only changes after the peer's first step, outside the band where the two bounds differ.
+			# Only changes after the peer's first step, outside the band where the two bounds
+			# differ; multi-local endpoints refuse runtime delay raises in production.
+			if value.has("layout"):
+				return false
 			if not _integer(op.peer, 0, int(value.players) - 1) or not stepped.has(int(op.peer)) or addressed != int(op.peer) or not _integer(op.delay, 0, 1000):
 				return false
 			var window: int = int(value.max_prediction)
@@ -402,6 +480,11 @@ func _canonical(source: Dictionary) -> Dictionary:
 		result[field] = int(source[field])
 	if source.has("queue_capacity"):
 		result.queue_capacity = int(source.queue_capacity)
+	if source.has("layout"):
+		var layout: Array = []
+		for size: Variant in source.layout:
+			layout.append(int(size))
+		result.layout = layout
 	var operations: Array[Dictionary] = []
 	for op: Dictionary in source.operations:
 		if op.kind == "delay":

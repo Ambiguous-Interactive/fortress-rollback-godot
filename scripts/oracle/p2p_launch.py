@@ -64,6 +64,10 @@ def corpus(binary, selected=None):
     name = 'mesh_2_window_8_stall'
     if selected is None or selected == name:
         cases[name] = build_case(binary, 2, 0, 'stall', window=8)
+    # Explicit multi-local endpoint layouts: couch co-op machines owning several local slots.
+    for name, (layout, mode) in LAYOUT_CASES.items():
+        if selected is None or selected == name:
+            cases[name] = build_layout_case(binary, layout, mode)
     for name, (players, delay, mode) in DELAY_CASES.items():
         if selected is None or selected == name:
             cases[name] = build_case(binary, players, delay, mode)
@@ -84,6 +88,74 @@ DELAY_CHANGES = {
     'delay_rapid': {**{(1, peer): [3] for peer in range(4)}, (2, 1): [4, 5, 6], (3, 2): [59, 58], (4, 3): [4, 4, 1000], (5, 0): [5]},
     'delay_stall': {(1, 1): [2], (2, 2): [1, 2]},
 }
+
+# Multi-local endpoint layouts: (machine sizes, mode). The couch mesh holds the shared-address
+# row shape, the split holds three machines, and the fault modes hold loss recovery and a
+# prediction-window stall released through reversed withheld flights under one layout.
+LAYOUT_CASES = {'mesh_4_couch_2x2': ([2, 2], 'ordinary'), 'mesh_6_split_2x2x2': ([2, 2, 2], 'ordinary'),
+                'mesh_4_couch_loss': ([2, 2], 'loss'), 'mesh_4_couch_stall': ([2, 2], 'stall')}
+
+
+def build_layout_case(binary, layout, mode):
+    """Schedules where machines own several local slots: step ops address one slot, and a
+    machine's advance happens on the op that completes its row. The stall case withholds the
+    couch machine's flights so the solo machine runs its prediction window out through the
+    pinned engine's silent stall, then releases everything reversed for the deep rollback
+    recovery; the loss case drops round-zero packets and recovers them through later batch
+    flights."""
+    players = sum(layout)
+    scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': 4,
+                'layout': list(layout), 'operations': []}
+    now = 0; delivered = set(); withheld = []; latest = None
+    machines = []
+    start = 0
+    for size in layout:
+        machines.append(list(range(start, start + size))); start += size
+    owner = [machine for machine, slots in enumerate(machines) for _ in slots]
+    def append(kind, refresh=True, **kwargs):
+        nonlocal now, latest
+        now += 1; scenario['operations'].append(dict(kind=kind, now_us=now, **kwargs))
+        if refresh:
+            latest = source(binary, scenario)
+    def step(slot):
+        frame = next((r['frame_after'] for r in reversed(latest['records']) if r['peer'] == owner[slot]), 0) if latest else 0
+        append('step', peer=slot, bytes=((frame + 1) * (slot + 1) * 17).to_bytes(4, 'little').hex())
+    def deliver_new(lose=False, keep=False):
+        nonlocal latest
+        while True:
+            pending = [p for p in latest['packets'] if p['id'] not in delivered]
+            if not pending:
+                return
+            for p in pending:
+                delivered.add(p['id'])
+                if lose and p['id'] % 3 == 1:
+                    continue
+                if keep and p['from'] == 0:
+                    withheld.append(p['id'])
+                    continue
+                append('deliver', refresh=False, packet=p['id'])
+            latest = source(binary, scenario)
+    for frame in range(6):
+        # Stall rounds four and five step only the starved machine, so both machines hold
+        # four predicted frames before the release and converge again through the recovery.
+        stepping = machines if frame < 4 or mode != 'stall' else machines[1:]
+        for slots in stepping:
+            for slot in slots:
+                step(slot)
+        deliver_new(lose=(mode == 'loss' and frame == 0), keep=mode == 'stall')
+    if mode == 'stall':
+        for p in reversed(withheld):
+            append('deliver', refresh=False, packet=p)
+            latest = source(binary, scenario)
+        for frame in range(2):
+            for slots in machines:
+                for slot in slots:
+                    step(slot)
+            deliver_new()
+    for machine in range(len(machines)):
+        append('poll', peer=machines[machine][0])
+    validate_scenario(scenario)
+    return scenario
 
 
 def build_case(binary, players, delay, mode, window=4):
@@ -157,6 +229,7 @@ def negative_controls(actual, expected, scenario):
         return p2p_lifecycle_controls.controls(actual, expected, scenario)
     request_op = next(i for i, r in enumerate(actual['records']) if any(q['kind'] == 'advance' for q in r['requests']))
     request_index = next(i for i, q in enumerate(actual['records'][request_op]['requests']) if q['kind'] == 'advance')
+    save_record = next(i for i, r in enumerate(actual['records']) if r['requests'] and r['requests'][0]['kind'] == 'save')
     controls = {
         'incomplete': lambda x: x.update(complete=False),
         'partial': lambda x: x['records'].pop(),
@@ -165,13 +238,26 @@ def negative_controls(actual, expected, scenario):
         'event': lambda x: x['records'][request_op]['events'].append('Synchronized'),
         'confirmed': lambda x: x['records'][request_op].update(confirmed_frame=42),
         'callback': lambda x: x['records'][request_op]['requests'].pop(request_index),
-        'duplicate_initial_save': lambda x: x['records'][0]['requests'].insert(0, deepcopy(x['records'][0]['requests'][0])),
+        # A layout scenario's first record can be a refused incomplete-row step with no requests.
+        'duplicate_initial_save': lambda x: x['records'][save_record]['requests'].insert(
+            0, deepcopy(x['records'][save_record]['requests'][0])),
         'embedded_bool': lambda x: x['scenario'].update(format=True),
         'packet_ack': lambda x: x['packets'][0]['semantic'].update(ack_frame=42),
     }
     stalled = next((i for i, record in enumerate(actual['records']) if record['error'] == 'PREDICTION_STALL'), None)
     if stalled is not None:
         controls['missing_stall_error'] = lambda x: x['records'][stalled].update(error=None)
+    layout_packet = next((i for i, p in enumerate(actual['packets'])
+                          if p['semantic']['kind'] == 'input' and len(p['semantic']['players']) > 1), None)
+    if layout_packet is not None:
+        # Multi-local row shape: dropping an owned slot or flipping a non-leading chunk must fail.
+        def layout_players(x):
+            x['packets'][layout_packet]['semantic']['players'].pop()
+        def layout_row(x):
+            row = x['packets'][layout_packet]['semantic']['frames'][0]
+            x['packets'][layout_packet]['semantic']['frames'][0] = row[:8] + ('ff' if row[8:10] != 'ff' else '00') + row[10:]
+        controls['layout_players'] = layout_players
+        controls['layout_row'] = layout_row
     for name, mutate in controls.items():
         mutant = deepcopy(actual); mutate(mutant)
         try:
@@ -305,6 +391,10 @@ def main():
         raise ValueError('unsupported engine profile')
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
         str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'p2p'], args.output / 'build.log', timeout=600)
+    # The oracle bin's own unit tests pin the hostile layout and player-count bounds.
+    test_command = [str(cargo), '+' + version, 'test', '--locked', '--offline', '--manifest-path',
+        str(ROOT / 'scripts/oracle/rust/Cargo.toml'), '--bin', 'p2p']
+    execute(test_command, args.output / 'oracle-tests.log', timeout=600)
     binary = CACHE / 'target/debug/p2p'
     binary_identity = executable_identity(binary)
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))

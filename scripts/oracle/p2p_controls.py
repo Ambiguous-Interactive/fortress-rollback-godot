@@ -155,7 +155,7 @@ def wire_controls(binary, engine, directory):
             try:
                 compare(actual, expected, scenario)
             except ValueError as error:
-                if str(error) != 'sender slot: invalid integer':
+                if str(error) != 'sender players':
                     raise ValueError('wire player control wrong boundary') from error
             else:
                 raise ValueError('wrong encoded player slot escaped observation')

@@ -30,17 +30,35 @@ zero/one and runs each explicit low-window audit twice in fresh processes.
 
 ## Actual session boundary
 
-Every peer is an actual upstream session with one local slot and remote slots
-for the other peers. The fake socket retains real `Message` values and their
-attributed sender/destination. Initialization exchanges actual handshake messages
-until every session reports Running. Godot independently exchanges encoded
-production handshake packets. Neither side receives a forged running-state
-flag, callback plan, predicted input or confirmation result.
+Every peer machine is an actual upstream session with local slots and remote
+slots for the other machines. An optional scenario `layout` lists how many
+local slots each machine owns, so `layout: [2, 2]` is a four-player couch
+mesh of two machines; an omitted layout stays one local slot per endpoint,
+which keeps every earlier fixture's meaning. Step and poll operations address
+one local slot; the driven session is the slot's owning machine. Delivery and
+packet attribution stay per machine address. Godot independently exchanges
+encoded production handshake packets. Neither side receives a forged
+running-state flag, callback plan, predicted input or confirmation result.
 
 The submitted scheduler contains `step(peer, now_us, bytes)`,
 `poll(peer, now_us)` and `deliver(observed_packet_id, now_us)` operations.
 Schedules are generated from observed outgoing packet inventories. Input samples
 are submitted explicitly; observed requests never choose Godot game callbacks.
+
+A partially staged machine records the pinned engine's missing-input refusal:
+source `advance_frame` errors `MissingLocalInput` and retains its staged local
+inputs across the failed advance, while Godot's production step refuses an
+incomplete local row atomically before staging or polling. The trace driver
+therefore buffers each machine's earlier step bytes and re-submits them once a
+step completes the machine's coverage, mirroring the upstream retention; a
+successful advance consumes the whole row and clears the buffer on both sides.
+Because the pinned engine polls remote clients before its missing-input gate,
+the driver also polls once after a refused step, so timer service stays inside
+the refused operation's record on both sides.
+Runtime delay raises are rejected under an explicit layout because production
+`set_input_delay` is UNSUPPORTED with several local players, and lifecycle
+timers stay a single-local slice because per-endpoint metric attribution across
+machines that share an address is separate acceptance work.
 
 A source delivery queues a real message, then calls `poll_remote_clients()`.
 That API both receives messages and services endpoint timers. Its Godot boundary
@@ -49,6 +67,11 @@ receipt bank from before delivery, as upstream polls endpoint timers before
 handling their input events in the session. Input retention precedes ACK
 publication; every timer service and outgoing packet remains observed. Step invokes source
 `add_local_input`/`advance_frame` and Godot's production Driver facade.
+A source input flight packs one flat row per frame with one four-byte input per
+slot the sender owns, in ascending slot order, and the receiver splits each
+decoded row across the sender endpoint's handles; the semantic projection
+carries that owned-slot list and the full-width rows, and the Godot driver
+slices rows by the encoded player count.
 
 The injected clock starts at zero and advances only through submitted integer
 microseconds. Each upstream peer has an explicit protocol RNG seed. A clock
@@ -112,7 +135,16 @@ prediction window eight: `mesh_2_window_8`, `mesh_4_window_8` and
 boundary, and `mesh_2_window_8_stall` runs the stall schedule that exceeds
 window four, where the six undelivered rounds predict through and recover
 through one deep rollback instead of stalling at the window-four prediction
-boundary. Full meshes use the upstream gossip minimum for confirmation;
+boundary. Four multi-local layout scenarios compare couch co-op machines that
+own several local slots: `mesh_4_couch_2x2` and `mesh_6_split_2x2x2` compare
+ordinary schedules where every machine's advance happens on the step that
+completes its local row, `mesh_4_couch_loss` recovers dropped round-zero
+flights through later batch flights, and `mesh_4_couch_stall` withholds the
+couch machine's flights until the solo machine exhausts its prediction window,
+then releases them reversed for a rollback-to-zero recovery with both machines
+converging on the same confirmed frame. Negative controls for layout scenarios
+also drop an owned slot from a flight's player list and flip a non-leading
+input chunk. Full meshes use the upstream gossip minimum for confirmation;
 voluntary idle confirmation can lag the last locally received frame until another
 input packet carries updated gossip. Exhausted-window recovery is separately
 covered by `tests/unit/test_stalled_gossip.gd`: drained three/eight-peer meshes,
