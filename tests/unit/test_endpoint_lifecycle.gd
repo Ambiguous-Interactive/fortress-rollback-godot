@@ -132,20 +132,17 @@ func _quality(context: RefCounted) -> void:
 	reply.token = sent.token
 	context.equal(endpoint.receive(f._encode(reply), f._id(2), 250001), I.Code.OK, "known quality echo")
 	context.equal(endpoint.status().round_trip_time_ms, 50, "RTT uses own echoed timestamp")
+	endpoint.receive(f._encode(reply), f._id(2), 300001)
+	context.equal(endpoint.status().round_trip_time_ms, 100, "duplicate echo re-measures against the current clock")
 	reply.token[15] = 255
-	endpoint.receive(f._encode(reply), f._id(2), 260001)
-	context.equal(endpoint.status().round_trip_time_ms, 50, "unknown wide/future pong cannot poison RTT")
-	context.equal(endpoint.status().quality_pending.size(), 0, "matched echo removes bounded pending key")
-	var options: L.Options = L.Options.new()
-	options.max_pending_quality = 1
-	endpoint = _ready(f, Fixture.Sink.new(), options)
-	for now: int in [200001, 400002, 600003]:
-		endpoint.poll(now)
-		endpoint.drain_outbox()
-		endpoint.drain_events()
-	context.equal(endpoint.status().quality_pending.size(), 1, "lost pongs cannot grow or stop probes")
-	context.equal(endpoint.poll(600003.0), I.Code.INVALID_ARGUMENT, "float time rejected")
-	context.equal(endpoint.poll(600002), I.Code.INVALID_ARGUMENT, "clock cannot rewind")
+	endpoint.receive(f._encode(reply), f._id(2), 310001)
+	context.equal(endpoint.status().round_trip_time_ms, 0, "wide/future pong saturates to a harmless zero")
+	reply.token[15] = 0
+	reply.token[7] = 128
+	endpoint.receive(f._encode(reply), f._id(2), 320001)
+	context.equal(endpoint.status().round_trip_time_ms, 0, "u64-wrapped pong saturates to a harmless zero")
+	context.equal(endpoint.poll(310001.0), I.Code.INVALID_ARGUMENT, "float time rejected")
+	context.equal(endpoint.poll(310000), I.Code.INVALID_ARGUMENT, "clock cannot rewind")
 
 func _checksum_goodbye(context: RefCounted) -> void:
 	var f: RefCounted = Fixture.new()
@@ -319,7 +316,6 @@ func _long_running(context: RefCounted) -> void:
 		context.equal(endpoint.receive(f._encode(reply), f._id(2), now + 1), I.Code.OK, "quality echo keeps idle mesh live")
 		endpoint.drain_events()
 		endpoint.drain_transitions()
-	context.equal(endpoint.status().quality_pending.size(), 0, "long healthy run leaves no pending pings")
 	context.equal(endpoint.status().state, "running", "healthy idle link never times out")
 	var before: Dictionary = endpoint.status()
 	context.equal(endpoint.poll(9223372036854775807), I.Code.OK, "maximum injected clock cannot overflow timer arithmetic")
@@ -349,7 +345,6 @@ func _status_nudge_capacity(context: RefCounted) -> void:
 			if not packets.is_empty():
 				context.equal(f._decoded(packets[0]).kind, T.Kind.INPUT, "first packet is retained input")
 			context.equal(endpoint.status().last_quality_us, 0 if capacity == 1 else 200010, "deferred quality leaves timer unchanged")
-			context.equal(endpoint.status().quality_pending.size(), 0 if capacity == 1 else 1, "deferred quality allocates no token")
 			context.equal(endpoint.drain_transitions().size(), 1, "one input transition with lifecycle")
 			context.equal(endpoint.poll(200010, null, statuses, true), I.Code.OK, "same clock service can publish deferred control after drain")
 			packets = endpoint.drain_outbox()

@@ -181,6 +181,7 @@ CORPUS_REQUIREMENTS = {
     'disconnect_boundary': ('network_interrupted disconnected stats_transition',
                             'notify_payload terminal_peer terminal_earlier terminal_unfrozen invented_self_extension'),
     'partition_one_way': ('network_interrupted disconnected', 'notify_payload terminal_peer terminal_earlier terminal_unfrozen invented_self_extension'),
+    'partition_heal': ('network_interrupted network_resumed repair_load duplicate_echo', 'notify_payload resume_event'),
     'checksums_match': ('checksum_report nonzero_checksum', 'checksum_payload'),
     'checksums_repair': ('checksum_report nonzero_checksum repair_load', 'checksum_payload'),
     'checksums_diverge': ('checksum_report nonzero_checksum desync_detected',
@@ -213,6 +214,8 @@ def corpus_evidence(name, source, controls):
     counts['nonzero_checksum'] = sum(p['semantic']['checksum'] != '00' * 16 for p in source['packets']
                                      if p['semantic']['kind'] == 'checksum_report')
     counts['repair_load'] = sum(q['kind'] == 'load' for r in source['records'] for q in r['requests'])
+    echoes = [(p['from'], p['semantic']['pong']) for p in source['packets'] if p['semantic']['kind'] == 'quality_reply']
+    counts['duplicate_echo'] = len(echoes) - len(set(echoes))
     required, mutations = CORPUS_REQUIREMENTS[name]
     for observation in required.split():
         if counts[observation] <= 0:
