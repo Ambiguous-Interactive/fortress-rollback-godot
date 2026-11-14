@@ -275,6 +275,11 @@ latches each cut endpoint's remote-attributed interruption past the shared
 notify bound, heals inside the disconnect timeout with deep LOAD corrections
 through the public advance API and ends synchronized with no terminal; its
 controls include retargeting an attributed event peer into a self-interruption.
+A partition-fairness rotation gives each of the mesh's three links exactly one
+starvation turn: every rotation latches both cut endpoints' attributed
+interruptions, heals inside the disconnect timeout with deep LOAD corrections,
+re-synchronizes the mesh with confirmed rounds before the next link takes its
+turn, and ends with no terminal after all three links have starved once.
 The oracle's semantic decompression now mirrors the pinned encoder exactly: every
 flight row XOR-deltas against the destination's last-ACKED row, with delivery-time
 acknowledgement popping the receiver's pending rows, and the trace driver

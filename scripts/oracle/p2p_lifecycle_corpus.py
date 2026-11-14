@@ -4,8 +4,8 @@ from p2p_contract import validate_scenario
 
 def corpus(binary, observe, selected=None):
     names = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
-             'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'checksums_match', 'checksums_repair',
-             'checksums_diverge', 'pacing_skew')
+             'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'partition_fairness', 'checksums_match',
+             'checksums_repair', 'checksums_diverge', 'pacing_skew')
     return {name: build(binary, observe, name) for name in names if selected is None or selected == name}
 
 
@@ -208,6 +208,68 @@ def build(binary, observe, name):
         append('poll', peer=0, at=2500000)
         append('poll', peer=1, at=2500001)
         append('poll', peer=2, at=2500002)
+    elif name == 'partition_fairness':
+        # Long-lived partition fairness: each of the mesh's three links takes
+        # exactly one starvation turn in rotation. A three-round confirmed
+        # prefix opens the schedule; every starvation turn then withholds one
+        # link in both directions for six rounds — long enough for both cut
+        # endpoints to latch their own remote-attributed network_interrupted
+        # past the shared notify bound — before the withheld burst arrives
+        # inside the disconnect timeout. Exactly the two cut endpoints resume,
+        # the missing inputs force deep LOAD corrections through the public
+        # advance API, and three confirmed rounds re-synchronize the mesh, so
+        # every later turn opens on links that all just confirmed. After all
+        # three rotations the schedule ends synchronized with no terminal: no
+        # link, and no peer, is treated differently by the schedule. The
+        # rotation bases keep each turn's early rounds just under the notify
+        # bound (rotation 0 frame 0 sits 45 us short; later turns 20-22 us
+        # short at frame 2), which only positions the latches; moving a base,
+        # the spacing or the prefix length moves them, so re-check the trace
+        # after any such edit.
+        scenario['players'] = 3
+        for _ in range(3):
+            for peer in range(3):
+                step(peer)
+            flush_around(lambda packet: False)
+        resumed = 0
+        for rotation, (pair, base) in enumerate((((1, 2), 500000), ((0, 1), 2100000), ((0, 2), 3700000))):
+            def cut(packet, pair=pair):
+                return {packet['from'], packet['to']} == set(pair)
+            for frame in range(6):
+                now = base + frame * 150000
+                for peer in range(3):
+                    step(peer, at=now + peer)
+                flush_around(cut)
+            latched = {(r['peer'], e.get('peer')) for r in latest['records'] for e in r['events']
+                       if e['kind'] == 'network_interrupted'}
+            if not {pair, pair[::-1]} <= latched:
+                raise ValueError(f'partition fairness rotation {rotation} never attributed both cut interruptions')
+            burst = [p['id'] for p in latest['packets'] if p['id'] not in delivered and cut(p)]
+            if not burst:
+                raise ValueError(f'partition fairness rotation {rotation} withheld an empty burst')
+            for packet in burst:
+                delivered.add(packet); append('deliver', packet=packet, at=base + 1000000, refresh=False)
+            latest = observe(binary, scenario)
+            count = sum(e['kind'] == 'network_resumed' for r in latest['records'] for e in r['events'])
+            if count != resumed + 2:
+                raise ValueError(f'partition fairness rotation {rotation} resumed {count - resumed} cut endpoints')
+            resumed = count
+            for frame in range(3):
+                now = base + 1100000 + frame * 150000
+                for peer in range(3):
+                    step(peer, at=now + peer)
+                flush_around(lambda packet: False)
+        for frame in range(3):
+            now = 5200000 + frame * 150000
+            for peer in range(3):
+                step(peer, at=now + peer)
+            flush_around(lambda packet: False)
+        final = sum(e['kind'] == 'network_resumed' for r in latest['records'] for e in r['events'])
+        if final != resumed:
+            raise ValueError(f'partition fairness tail fired {final - resumed} extra resumes')
+        append('poll', peer=0, at=5600000)
+        append('poll', peer=1, at=5600001)
+        append('poll', peer=2, at=5600002)
     else:
         for frame in range(48 if name == 'pacing_skew' else 14):
             if name == 'pacing_skew':

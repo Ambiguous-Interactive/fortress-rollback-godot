@@ -321,6 +321,26 @@ interruptions, both resumes and the recovery LOADs; controls mutate the
 notify payload, remove a resume event and invent a self-interruption by
 retargeting an attributed event peer.
 
+The partition-fairness case rotates one bounded starvation through every link
+of the three-player mesh, so the schedule stays long-lived and no link or peer
+receives different treatment. A three-round prefix confirms all three links
+before the first turn, and each turn withholds one link in both directions
+for six rounds: both cut endpoints latch their own remote-attributed
+`network_interrupted`
+past the shared notify bound — the builder requires both attributed latches
+per rotation — while the third peer keeps both of its links alive. The
+withheld burst then arrives inside the disconnect timeout: exactly the two
+cut endpoints observe `network_resumed`, and the missing inputs force deep
+LOAD corrections through the actual public advance API. Three confirmed
+rounds re-synchronize the mesh, so every later turn opens on links that all
+just confirmed, and after all three links have starved exactly once the tail
+rounds and polls end the schedule synchronized with no terminal on any peer.
+The builder requires both attributed latches and exactly two resumes per
+rotation, and requires no further resume through the tail; the named evidence
+requires the interruptions, the resumes and the recovery LOADs. Controls
+mutate the notify payload, remove a resume event and retarget an
+attributed event peer into a self-interruption.
+
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.
 Traces retain that error instead of substituting inferred zero gauges.
