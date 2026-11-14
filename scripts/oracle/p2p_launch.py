@@ -200,7 +200,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
             if stderr.strip():
                 return None
             value = json.loads(stdout); validate(value, candidate, True)
-        except ValueError:
+        except (ValueError, subprocess.TimeoutExpired, OSError):
             return None
         submitted = output / f'{name}-shrink-scenario.json'; submitted.write_text(json.dumps(candidate, indent=2) + '\n')
         try:
@@ -208,7 +208,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
                 'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())],
                 output / f'{name}-shrink-godot.log')
             actual = parse_godot(stdout, stderr)
-        except ValueError:
+        except (ValueError, subprocess.TimeoutExpired, OSError):
             return None
         try:
             compare(actual, value, candidate)
@@ -218,37 +218,44 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
 
     minimized, message, stats = p2p_shrink.minimize(scenario, counts, str(failure), probe)
     submitted = output / f'{name}-minimized-scenario.json'; submitted.write_text(json.dumps(minimized, indent=2) + '\n')
-    source_results = []
-    for repeat in (1, 2):
-        stdout, stderr = execute([str(binary)], output / f'{name}-minimized-source-{repeat}.log', submitted.read_text())
-        if stderr.strip():
-            raise ValueError('minimized source stderr')
-        value = json.loads(stdout); validate(value, minimized, True); source_results.append(value)
-    if source_results[0] != source_results[1]:
-        raise ValueError('minimized source repeat mismatch')
-    verified, stderr = execute([str(binary), '--validate-trace'],
-        output / f'{name}-minimized-raw-validate.log', json.dumps(source_results[0]))
-    raw_validation = json.loads(verified)
-    if (stderr.strip() or type(raw_validation) is not dict or set(raw_validation) != {'complete', 'packets'}
-            or raw_validation['complete'] is not True or raw_validation['packets'] != len(source_results[0]['packets'])):
-        raise ValueError('minimized raw compression validator completion')
-    (output / f'{name}-minimized-source.json').write_text(json.dumps(source_results[0], indent=2) + '\n')
-    for repeat in (1, 2):
-        stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
-            'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())],
-            output / f'{name}-minimized-godot-{repeat}.log')
-        actual = parse_godot(stdout, stderr)
-        (output / f'{name}-minimized-actual-{repeat}.json').write_text(json.dumps(actual, indent=2) + '\n')
-        try:
-            compare(actual, source_results[0], minimized)
-        except ValueError:
-            continue
-        raise ValueError('minimized scenario does not reproduce on repeat ' + str(repeat))
-    report = {'case': name, 'original_failure': str(failure), 'minimized_failure': message, 'statistics': stats,
-        'scenario_sha256': digest(submitted), 'source_sha256': digest(output / f'{name}-minimized-source.json')}
-    (output / f'{name}-minimized-report.json').write_text(json.dumps(report, indent=2) + '\n')
+    statistics = {'case': name, 'original_failure': str(failure), 'minimized_failure': message, 'statistics': stats}
+    try:
+        source_results = []
+        for repeat in (1, 2):
+            stdout, stderr = execute([str(binary)], output / f'{name}-minimized-source-{repeat}.log', submitted.read_text())
+            if stderr.strip():
+                raise ValueError('minimized source stderr')
+            value = json.loads(stdout); validate(value, minimized, True); source_results.append(value)
+        if source_results[0] != source_results[1]:
+            raise ValueError('minimized source repeat mismatch')
+        verified, stderr = execute([str(binary), '--validate-trace'],
+            output / f'{name}-minimized-raw-validate.log', json.dumps(source_results[0]))
+        raw_validation = json.loads(verified)
+        if (stderr.strip() or type(raw_validation) is not dict or set(raw_validation) != {'complete', 'packets'}
+                or raw_validation['complete'] is not True or raw_validation['packets'] != len(source_results[0]['packets'])):
+            raise ValueError('minimized raw compression validator completion')
+        (output / f'{name}-minimized-source.json').write_text(json.dumps(source_results[0], indent=2) + '\n')
+        for repeat in (1, 2):
+            stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
+                'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())],
+                output / f'{name}-minimized-godot-{repeat}.log')
+            actual = parse_godot(stdout, stderr)
+            (output / f'{name}-minimized-actual-{repeat}.json').write_text(json.dumps(actual, indent=2) + '\n')
+            try:
+                compare(actual, source_results[0], minimized)
+            except ValueError:
+                continue
+            raise ValueError('minimized scenario does not reproduce on repeat ' + str(repeat))
+    except (ValueError, subprocess.TimeoutExpired, OSError) as error:
+        statistics.update({'outcome': 'aborted', 'error': str(error)})
+        (output / f'{name}-minimized-report.json').write_text(json.dumps(statistics, indent=2) + '\n')
+        raise ValueError(f'{name}: differential confirmation aborted: {error}; original failure: {failure}') from error
+    statistics.update({'outcome': 'reproduced', 'scenario_sha256': digest(submitted),
+        'source_sha256': digest(output / f'{name}-minimized-source.json')})
+    (output / f'{name}-minimized-report.json').write_text(json.dumps(statistics, indent=2) + '\n')
     raise ValueError(f'{name}: differential disagreement survives shrinking from {stats["original_operations"]} to '
-        f'{stats["final_operations"]} operations; first divergence: {message}; evidence in {output}')
+        f'{stats["final_operations"]} operations; first divergence: {message}; original failure: {failure}; '
+        f'evidence in {output}')
 
 
 
@@ -323,7 +330,11 @@ def main():
         for repeat in (1, 2):
             stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                 'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())], args.output / f'{name}-godot-{repeat}.log')
-            actual = parse_godot(stdout, stderr)
+            try:
+                actual = parse_godot(stdout, stderr)
+            except ValueError as failure:
+                # A rejected trace script is itself a Godot-side disagreement with the validated source run.
+                differential_failure(name, binary, engine, scenario, expected, failure, args.output)
             try:
                 compare(actual, expected, scenario)
             except ValueError as failure:

@@ -111,8 +111,8 @@ prediction window eight: `mesh_2_window_8`, `mesh_4_window_8` and
 `mesh_8_window_8` compare ordinary schedules at the deepest configured rollback
 boundary, and `mesh_2_window_8_stall` runs the stall schedule that exceeds
 window four, where the six undelivered rounds predict through and recover
-through one deep rollback instead of raising the threshold refusal that the
-window-four twin produces. Full meshes use the upstream gossip minimum for confirmation;
+through one deep rollback instead of stalling at the window-four prediction
+boundary. Full meshes use the upstream gossip minimum for confirmation;
 voluntary idle confirmation can lag the last locally received frame until another
 input packet carries updated gossip. Exhausted-window recovery is separately
 covered by `tests/unit/test_stalled_gossip.gd`: drained three/eight-peer meshes,

@@ -2,7 +2,7 @@
 import unittest
 
 from p2p_contract import validate_scenario
-from p2p_shrink import DEFAULT_BUDGET, candidate, divergence_op, minimize, producer_op, rewrite, with_cascades
+from p2p_shrink import DEFAULT_BUDGET, candidate, divergence_op, minimize, producer_op, rewrite, schedule_signature, with_cascades
 
 
 def stub_counts(scenario):
@@ -80,6 +80,39 @@ class CascadeAndRewriteTests(unittest.TestCase):
 
 
 class MinimizeTests(unittest.TestCase):
+    # Value: protects=memo injectivity; fails_when=distinct delay values or bytes share a memo slot and a never-probed candidate is skipped;
+    # why_new=the shipped corpus raises repeated delay changes on one peer; seam=p2p_shrink.schedule_signature
+    def test_signature_distinguishes_delay_values_and_bytes(self):
+        first = [{'kind': 'step', 'peer': 0, 'now_us': 1, 'bytes': '01000000'}, {'kind': 'delay', 'peer': 0, 'delay': 4}]
+        second = [{'kind': 'step', 'peer': 0, 'now_us': 1, 'bytes': '01000000'}, {'kind': 'delay', 'peer': 0, 'delay': 5}]
+        self.assertNotEqual(schedule_signature(first), schedule_signature(second))
+        third = [{'kind': 'step', 'peer': 0, 'now_us': 1, 'bytes': '02000000'}, {'kind': 'delay', 'peer': 0, 'delay': 4}]
+        self.assertNotEqual(schedule_signature(first), schedule_signature(third))
+        self.assertNotIn(None, schedule_signature(second))  # every field renders into the signature
+
+    # Value: protects=minimal convergence on repeated delays; fails_when=a delay op keeps its sibling delay alive or drops the step the delays need;
+    # why_new=reviewer scenario with two consecutive raises; seam=p2p_shrink.minimize probe
+    def test_consecutive_delay_ops_shrink_independently(self):
+        ops = [{'kind': 'step', 'peer': 0, 'now_us': 1, 'bytes': '01000000'},
+               {'kind': 'delay', 'peer': 0, 'delay': 4},
+               {'kind': 'delay', 'peer': 0, 'delay': 5},
+               {'kind': 'poll', 'peer': 0, 'now_us': 3}]
+        scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'operations': ops}
+
+        def probe(candidate_scenario):
+            outcome = make_probe(bug_time=3)(candidate_scenario)
+            if outcome is None:
+                return None
+            if not any(op.get('delay') == 5 for op in candidate_scenario['operations']):
+                return None  # the injected disagreement only manifests under the delay-5 raise
+            return outcome
+
+        best, _, stats = minimize(scenario, stub_counts(scenario), 'operation 3: state mismatch', probe)
+        schedule = best['operations']
+        self.assertEqual([(op['kind'], op.get('delay')) for op in schedule], [('step', None), ('delay', 5), ('poll', None)])
+        validate_scenario(best)
+        self.assertFalse(stats['budget_exhausted'])
+
     # Value: protects=prefix truncation and convergence; fails_when=the shrinker keeps operations after the named divergence or stops before the minimal schedule;
     # why_new=stub world avoids engines; seam=p2p_shrink.minimize probe
     def test_truncates_then_converges_to_minimal(self):
@@ -119,6 +152,22 @@ class MinimizeTests(unittest.TestCase):
         self.assertTrue(stats['budget_exhausted'])
         self.assertEqual(stats['probes'], 2)
         self.assertNotEqual(stats['final_operations'], 12)
+        self.assertIsNotNone(probe(best))
+
+    # Value: protects=budget accounting of the truncation probe; fails_when=the truncation probe bypasses the budget or budget zero still probes;
+    # why_new=reviewer found budget+1 probes; seam=p2p_shrink.minimize probe
+    def test_budget_zero_and_one_gate_every_probe(self):
+        scenario = make_scenario(range(1, 13))
+        probe = make_probe(bug_time=5)
+        best, _, stats = minimize(scenario, stub_counts(scenario), 'operation 4: state mismatch', probe, budget=0)
+        self.assertEqual(stats['probes'], 0)
+        self.assertTrue(stats['budget_exhausted'])
+        self.assertEqual(stats['final_operations'], 12)
+        self.assertIsNotNone(probe(best))
+        best, _, stats = minimize(scenario, stub_counts(scenario), 'operation 4: state mismatch', probe, budget=1)
+        self.assertEqual(stats['probes'], 1)  # the budget gates the truncation probe too
+        self.assertTrue(stats['budget_exhausted'])
+        self.assertEqual(stats['final_operations'], 5)
         self.assertIsNotNone(probe(best))
 
     # Value: protects=conservative validity handling; fails_when=an invalid candidate is adopted or a required step or delay is dropped;
