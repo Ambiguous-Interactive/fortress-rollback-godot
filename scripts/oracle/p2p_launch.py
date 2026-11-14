@@ -236,17 +236,21 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
                 or raw_validation['packets'] != len(source_results[0]['packets'])):
             raise ValueError('minimized raw compression validator completion')
         (output / f'{name}-minimized-source.json').write_text(json.dumps(source_results[0], indent=2) + '\n')
+        godot_actuals = []
         for repeat in (1, 2):
             stdout, stderr = execute([str(engine), '--headless', '--path', str(ROOT), '--script',
                 'res://tests/oracle/p2p_trace.gd', '--', '--scenario', str(submitted.resolve())],
                 output / f'{name}-minimized-godot-{repeat}.log')
             actual = parse_godot(stdout, stderr)
+            godot_actuals.append(actual)
             (output / f'{name}-minimized-actual-{repeat}.json').write_text(json.dumps(actual, indent=2) + '\n')
             try:
                 compare(actual, source_results[0], minimized)
             except ValueError:
                 continue
             raise ValueError('minimized scenario does not reproduce on repeat ' + str(repeat))
+        if godot_actuals[0] != godot_actuals[1]:
+            raise ValueError('minimized Godot repeat mismatch')
     except (ValueError, subprocess.TimeoutExpired, OSError) as error:
         statistics.update({'outcome': 'aborted', 'error': str(error)})
         (output / f'{name}-minimized-report.json').write_text(json.dumps(statistics, indent=2) + '\n')
