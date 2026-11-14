@@ -8,8 +8,8 @@ var game: RefCounted
 var requests: Array[Dictionary] = []
 
 
-func _init(players: int) -> void:
-	game = Reference.new(players, 2)
+func _init(players: int, input_width: int = 4) -> void:
+	game = Reference.new(players, 2, input_width)
 
 
 func _record(kind: String, frame: int, inputs: Array[Dictionary]) -> void:
@@ -39,7 +39,7 @@ func simulate_frame(frame: int, inputs: Types.FrameInputs) -> bool:
 	var traced: Array[Dictionary] = []
 	for player: int in range(size.value):
 		var input: Types.InputResult = inputs.read(player)
-		if input.code != Types.Code.OK or input.status not in [Queue.Status.CONFIRMED, Queue.Status.PREDICTED, Queue.Status.DISCONNECTED] or input.bytes.size() != 4:
+		if input.code != Types.Code.OK or input.status not in [Queue.Status.CONFIRMED, Queue.Status.PREDICTED, Queue.Status.DISCONNECTED] or input.bytes.size() != game.width:
 			return false
 		var status: String = "confirmed" if input.status == Queue.Status.CONFIRMED else ("predicted" if input.status == Queue.Status.PREDICTED else "disconnected")
 		traced.append({"player": player, "bytes": input.bytes.hex_encode(), "status": status})

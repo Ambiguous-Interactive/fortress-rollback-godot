@@ -52,18 +52,21 @@ func _initialize() -> void:
 		return
 	var scenario: Dictionary = _canonical(parser.data)
 	scenario_settings = scenario
+	var width: int = scenario.get("input_width", 4)
 	_layout(scenario)
 	delays.resize(scenario.players)
 	delays.fill(scenario.input_delay)
 	limits = T.Limits.new()
 	limits.player_count = scenario.players
-	limits.input_width = 4
+	limits.input_width = width
+	var neutral: PackedByteArray = PackedByteArray()
+	neutral.resize(width)
 	for machine: int in range(machines()):
 		var config: RefCounted = Config.new()
 		config.player_count = scenario.players
 		config.local_players = PackedInt32Array(slots_of[machine])
-		config.input_width = 4
-		config.neutral_input = PackedByteArray([0, 0, 0, 0])
+		config.input_width = width
+		config.neutral_input = neutral.duplicate()
 		config.input_delay = scenario.input_delay
 		config.max_prediction_frames = scenario.max_prediction
 		config.queue_capacity = scenario.get("queue_capacity", 128)
@@ -78,7 +81,7 @@ func _initialize() -> void:
 		local.connection_id = _id(machine)
 		local.session_id = _token(0, 0)
 		local.config.player_count = scenario.players
-		local.config.input_width = 4
+		local.config.input_width = width
 		local.config.input_delay = scenario.input_delay
 		local.config.max_prediction = scenario.max_prediction
 		local.config.queue_capacity = config.queue_capacity
@@ -90,7 +93,7 @@ func _initialize() -> void:
 			local.config.roster.append(_id(owner_of[slot]))
 		var options: H.Options = H.Options.new()
 		options.roundtrips = 1
-		var game: RefCounted = Game.new(scenario.players)
+		var game: RefCounted = Game.new(scenario.players, width)
 		if scenario.get("lifecycle", {}).get("divergent_peer", -1) == machine:
 			game.game.accumulators[0] = 1
 		var peer: RefCounted = Peer.new()
@@ -286,8 +289,8 @@ func _decode_outgoing(packet: RefCounted, player: int) -> Dictionary:
 	var message: T.Message = result.message
 	var semantic: Dictionary = {"kind": "input_ack", "ack_frame": message.ack_frame}
 	if message.kind == T.Kind.INPUT:
-		# One flight row carries one four-byte input per slot the sender owns locally.
-		var row: int = 4 * message.players.size()
+		# One flight row carries one scenario-width input per slot the sender owns locally.
+		var row: int = scenario_settings.get("input_width", 4) * message.players.size()
 		var frames: Array[String] = []
 		for frame: int in range(message.frame_count):
 			frames.append(message.data.slice(frame * row, (frame + 1) * row).hex_encode())
@@ -392,6 +395,8 @@ func _valid(value: Variant) -> bool:
 		required.append("lifecycle")
 	if value is Dictionary and value.has("queue_capacity"):
 		required.append("queue_capacity")
+	if value is Dictionary and value.has("input_width"):
+		required.append("input_width")
 	if value is Dictionary and value.has("layout"):
 		required.append("layout")
 	if not _fields(value, required):
@@ -400,6 +405,12 @@ func _valid(value: Variant) -> bool:
 		var bounds: Array = {"format": [1, 1], "players": [2, 8], "input_delay": [0, 2], "max_prediction": [2, 8]}[field]
 		if not _integer(value[field], bounds[0], bounds[1]):
 			return false
+	# Explicit non-default input width: only the compared representative set is accepted.
+	var width: int = 4
+	if value.has("input_width"):
+		if not _integer(value.input_width, 1, 32) or int(value.input_width) not in [1, 4, 32]:
+			return false
+		width = int(value.input_width)
 	if value.has("queue_capacity"):
 		if not _integer(value.queue_capacity, 2, 128):
 			return false
@@ -469,7 +480,7 @@ func _valid(value: Variant) -> bool:
 		if op.kind == "deliver":
 			if not _integer(op.packet, 0, 100000):
 				return false
-		elif not _integer(op.peer, 0, int(value.players) - 1) or (op.kind == "step" and not Game.Reference.valid_hex(op.bytes, 8)):
+		elif not _integer(op.peer, 0, int(value.players) - 1) or (op.kind == "step" and not Game.Reference.valid_hex(op.bytes, 2 * width)):
 			return false
 	return true
 
@@ -480,6 +491,8 @@ func _canonical(source: Dictionary) -> Dictionary:
 		result[field] = int(source[field])
 	if source.has("queue_capacity"):
 		result.queue_capacity = int(source.queue_capacity)
+	if source.has("input_width"):
+		result.input_width = int(source.input_width)
 	if source.has("layout"):
 		var layout: Array = []
 		for size: Variant in source.layout:

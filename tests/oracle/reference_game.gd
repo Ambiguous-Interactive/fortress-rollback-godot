@@ -7,16 +7,31 @@ const FNV_OFFSET: int = -3750763034362895579
 const FNV_PRIME: int = 1099511628211
 
 var version: int = 1
+# Configured input width in bytes; four stays the shared default, and the fold below
+# matches the little-endian u32 read at that width exactly.
+var width: int = 4
 var rng: int = 8173
 var pending: int = 0
 var frame: int = 0
 var accumulators: PackedInt64Array = PackedInt64Array()
 
 
-func _init(players: int, format_version: int = 1) -> void:
+func _init(players: int, format_version: int = 1, input_width: int = 4) -> void:
 	version = format_version
+	width = input_width
 	accumulators.resize(players)
 	accumulators.fill(0)
+
+
+## Fold one configured-width input into the game's u32 accumulator contribution.
+## At width four this is exactly the little-endian u32 read, so every earlier
+## fixture's arithmetic is unchanged; wider rows fold the remaining bytes
+## positionally, and the pinned-source oracle implements the same fold.
+func fold_input(bytes: PackedByteArray) -> int:
+	var value: int = 0
+	for index: int in range(bytes.size()):
+		value ^= bytes[index] << (8 * (index % 4))
+	return value & U32_MASK
 
 
 func advance(inputs: Array) -> String:
@@ -31,10 +46,10 @@ func advance(inputs: Array) -> String:
 		var slot: Dictionary = inputs[player]
 		if slot.get("player") != player or slot.get("status") not in ["confirmed", "predicted", "disconnected"]:
 			return "invalid player slot or input status"
-		if not valid_hex(slot.get("bytes"), 8):
+		if not valid_hex(slot.get("bytes"), 2 * width):
 			return "invalid input bytes"
 		var bytes: PackedByteArray = String(slot["bytes"]).hex_decode()
-		decoded.append(bytes.decode_u32(0))
+		decoded.append(fold_input(bytes))
 	var next_pending: int = 0
 	if version == 2:
 		rng = (rng * 1664525 + 1013904223) & U32_MASK

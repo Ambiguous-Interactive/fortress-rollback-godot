@@ -44,6 +44,17 @@ The submitted scheduler contains `step(peer, now_us, bytes)`,
 `poll(peer, now_us)` and `deliver(observed_packet_id, now_us)` operations.
 Schedules are generated from observed outgoing packet inventories. Input samples
 are submitted explicitly; observed requests never choose Godot game callbacks.
+An optional scenario `input_width` sets every session's fixed input width in
+bytes from the compared representative set {1, 4, 32}; an omitted field stays
+four bytes, which keeps every earlier fixture's meaning. The Rust adapter
+generic input type dispatches the configured width at startup, and the Godot
+peer session, neutral input, codec limits and flight-row slicing follow the
+same field. The advance fold — one XOR per byte at position `index % 4` — is
+exactly the little-endian u32 read at the default width, so the earlier
+corpus's arithmetic is unchanged, and both engines implement the same fold for
+wider rows. Wide samples vary every byte deterministically and keep each byte
+nonzero, so the fold contribution lives in the tail bytes as well and an
+engine that ignores them cannot match the confirmed history.
 
 A partially staged machine records the pinned engine's missing-input refusal:
 source `advance_frame` errors `MissingLocalInput` and retains its staged local
@@ -67,7 +78,8 @@ receipt bank from before delivery, as upstream polls endpoint timers before
 handling their input events in the session. Input retention precedes ACK
 publication; every timer service and outgoing packet remains observed. Step invokes source
 `add_local_input`/`advance_frame` and Godot's production Driver facade.
-A source input flight packs one flat row per frame with one four-byte input per
+A source input flight packs one flat row per frame with one input of the
+scenario's configured width per
 slot the sender owns, in ascending slot order, and the receiver splits each
 decoded row across the sender endpoint's handles; the semantic projection
 carries that owned-slot list and the full-width rows, and the Godot driver
@@ -144,7 +156,14 @@ couch machine's flights until the solo machine exhausts its prediction window,
 then releases them reversed for a rollback-to-zero recovery with both machines
 converging on the same confirmed frame. Negative controls for layout scenarios
 also drop an owned slot from a flight's player list and flip a non-leading
-input chunk. Full meshes use the upstream gossip minimum for confirmation;
+input chunk. Four non-default input-width scenarios compare the width axis:
+`mesh_2_width_1` holds the smallest supported row, `mesh_4_width_1_loss` runs
+the loss fault under it, `mesh_4_width_32` carries one 32-byte input per slot,
+and `mesh_8_width_32_window_8` holds the maximum comparable prediction window
+at the wide width and full mesh size. `width_row` and `width_tail` negative
+controls flip a wide row's leading and final byte, and the scenario grammar
+rejects unsupported widths
+and step payloads whose length differs from the configured width. Full meshes use the upstream gossip minimum for confirmation;
 voluntary idle confirmation can lag the last locally received frame until another
 input packet carries updated gossip. Exhausted-window recovery is separately
 covered by `tests/unit/test_stalled_gossip.gd`: drained three/eight-peer meshes,

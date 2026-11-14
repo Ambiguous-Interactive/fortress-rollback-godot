@@ -3,21 +3,28 @@
 use fortress_rollback::{Config, FortressRequest, InputQueueConfig, InputStatus, PlayerHandle, SessionBuilder, Message, NonBlockingSocket, PlayerType,
  ProtocolConfig, SyncConfig, DesyncDetection, FortressEvent, FortressError, InvalidRequestKind};
 use fortress_rollback::network::compression::decode_with_max_len;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::{io::{self, Read}, sync::{Arc, Mutex}, collections::BTreeMap, time::Duration};
 const REVISION: &str = "d124c89080004d96971a629bb0427056ee1805e3";
+/// Configured input widths the adapter monomorphizes over; an omitted field stays four bytes.
+const WIDTHS: [usize; 3] = [1, 4, 32];
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:usize, operations:Vec<Operation>,
  // An omitted field stays None (the 128-row default); an explicit null is rejected.
  #[serde(default, deserialize_with="present_capacity")] queue_capacity:Option<usize>,
+ #[serde(default, deserialize_with="present_width")] input_width:Option<usize>,
  #[serde(default, deserialize_with="present_layout")] layout:Option<Vec<usize>>,
  #[serde(default, deserialize_with="present_lifecycle")] lifecycle:Option<Lifecycle> }
 fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Lifecycle>, D::Error> {
     Lifecycle::deserialize(deserializer).map(Some)
 }
 fn present_capacity<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
+    usize::deserialize(deserializer).map(Some)
+}
+fn present_width<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<usize>, D::Error> {
     usize::deserialize(deserializer).map(Some)
 }
 fn present_layout<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<usize>>, D::Error> {
@@ -80,9 +87,12 @@ impl Game {
 }
 
 #[derive(Debug)]
-struct OracleConfig;
-impl Config for OracleConfig {
-    type Input = [u8; 4];
+struct OracleConfig<const N: usize>;
+// std and serde only implement array traits up to size 32; the dispatch set {1, 4, 32}
+// satisfies every bound, and a wider demand fails to compile instead of silently narrowing.
+impl<const N: usize> Config for OracleConfig<N>
+where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned {
+    type Input = [u8; N];
     type State = Game;
     type Address = String;
 }
@@ -91,15 +101,27 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn input_bytes(text: &str) -> Result<[u8; 4], String> {
-    if text.len() != 8 || !text.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
-        return Err("input bytes must be exactly eight lowercase hexadecimal digits".into());
+fn input_bytes<const N: usize>(text: &str) -> Result<[u8; N], String> {
+    if text.len() != 2 * N || !text.bytes().all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) {
+        return Err("input bytes must be exactly the configured width in lowercase hexadecimal digits".into());
     }
-    let mut bytes = [0; 4];
+    let mut bytes = [0; N];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16).map_err(|error| error.to_string())?;
     }
     Ok(bytes)
+}
+
+/// Fold one input of any configured width into the game's u32 accumulator
+/// contribution. At the default width four this is exactly `u32::from_le_bytes`,
+/// so every earlier fixture's arithmetic is unchanged; wider rows fold the
+/// remaining bytes positionally, and both engines implement the same fold.
+fn fold_input(bytes: &[u8]) -> u32 {
+    let mut value = 0u32;
+    for (index, byte) in bytes.iter().enumerate() {
+        value ^= u32::from(*byte) << ((index % 4) * 8);
+    }
+    value
 }
 
 fn state_fields(kind: &str, frame: i32, game: &Game, inputs: Value) -> Value {
@@ -111,7 +133,8 @@ fn state_fields(kind: &str, frame: i32, game: &Game, inputs: Value) -> Value {
 /// flight XOR-deltas each of its rows against the row of the highest frame the
 /// destination has acknowledged, flights join the sender's pending queue at
 /// creation, and a carried `ack_frame` pops the receiving endpoint's own
-/// pending rows when the packet is delivered. One row per frame, four bytes
+/// pending rows when the packet is delivered. One row per frame, one input of
+/// the scenario's configured width
 /// per local slot the sender owns, so a multi-local machine's rows are the
 /// ascending concatenation of its slots' inputs.
 #[derive(Default)]
@@ -121,7 +144,7 @@ struct MeshReferences {
     pending: BTreeMap<(usize,usize),Vec<(i32,Vec<u8>)>>,
 }
 impl MeshReferences {
-    fn new(slots_of:&[Vec<usize>])->Self{Self{row_bytes:slots_of.iter().map(|slots|4*slots.len()).collect(),..Default::default()}}
+    fn new(slots_of:&[Vec<usize>],width:usize)->Self{Self{row_bytes:slots_of.iter().map(|slots|width*slots.len()).collect(),..Default::default()}}
     fn reference(&mut self,peer:usize,destination:usize)->Vec<u8>{
         self.acked.entry((peer,destination)).or_insert((-1,vec![0;self.row_bytes[peer]])).1.clone()
     }
@@ -157,7 +180,8 @@ impl MeshReferences {
 }
 
 
-fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Game)->Result<(Vec<Value>,Option<String>),String>{
+fn apply<const N: usize>(session:&mut fortress_rollback::P2PSession<OracleConfig<N>>, game:&mut Game)->Result<(Vec<Value>,Option<String>),String>
+where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned{
  let mut records=Vec::new();
  let requests=match session.advance_frame(){Ok(v)=>v,Err(e)=>return Ok((records,Some(advance_error(e))))};
  for request in requests { match request {
@@ -176,7 +200,7 @@ fn apply(session:&mut fortress_rollback::P2PSession<OracleConfig>, game:&mut Gam
   for (player,(input,status)) in inputs.iter().enumerate(){
    let status=match status {InputStatus::Confirmed=>"confirmed",InputStatus::Predicted=>"predicted",InputStatus::Disconnected=>"disconnected"};
    traced.push(json!({"player":player,"bytes":hex(input),"status":status}));
-   let value=u32::from_le_bytes(*input);let event=game.pending.wrapping_add((game.rng&255)*(player as u32+1));
+   let value=fold_input(input);let event=game.pending.wrapping_add((game.rng&255)*(player as u32+1));
    game.accumulators[player]=game.accumulators[player].wrapping_add(value).wrapping_add(event);
    next_pending=next_pending.wrapping_add(value.wrapping_mul(player as u32+1));
   }
@@ -214,7 +238,7 @@ fn project_packet(raw:&Value,peer:usize,destination:usize,references:&mut MeshRe
    };
    Ok(semantic)
 }
-fn event(e:FortressEvent<OracleConfig>)->Result<Value,String>{Ok(match e {
+fn event<const N: usize>(e:FortressEvent<OracleConfig<N>>)->Result<Value,String> where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned{Ok(match e {
  FortressEvent::NetworkInterrupted{addr,disconnect_timeout}=>json!({"kind":"network_interrupted","peer":addr.parse::<usize>().unwrap(),
   "disconnect_timeout":disconnect_timeout as u64}),
  FortressEvent::NetworkResumed{addr}=>json!({"kind":"network_resumed","peer":addr.parse::<usize>().unwrap()}),
@@ -235,7 +259,14 @@ fn delay_error(e:FortressError)->String{match e {
  other=>format!("{other:?}")}}
 fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let scenario:Scenario=serde_json::from_value(original.clone()).map_err(|e|e.to_string())?;
- if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
+ // The dispatch width is validated before any allocation; an explicit null fails
+ // deserialization, and only the monomorphized widths reach session building.
+ let width=scenario.input_width.unwrap_or(4);
+ if !WIDTHS.contains(&width) {return Err("width bounds".into());}
+ match width {1=>run_width::<1>(original,scenario,profile_audit),4=>run_width::<4>(original,scenario,profile_audit),_=>run_width::<32>(original,scenario,profile_audit)}}
+fn run_width<const N:usize>(original:Value,scenario:Scenario,profile_audit:bool)->Result<Value,String>
+where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned{
+  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
  ||scenario.operations.is_empty()||scenario.operations.len()>10000{return Err("scenario bounds".into());}
  // An omitted profile keeps the 128-row default; an explicit one configures both adapters' rings.
  let capacity=match scenario.queue_capacity {None=>128,Some(n)=>n};
@@ -253,7 +284,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  let slots_of=slots_of(scenario.players,&scenario.layout);let owner=owner_of(&slots_of);let machines=slots_of.len();
  let mut previous=0;let mut stepped=vec![false;scenario.players];let mut addressed=None;
  for op in &scenario.operations {
-  let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
+  let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes::<N>(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
    Operation::Deliver{now_us,..}=>(0,*now_us),Operation::Delay{peer,delay}=>{
     // Godot's agreed config owns the pre-input delay, so only changes after the peer's first step compare.
     if *peer>=scenario.players||!stepped[*peer]||addressed!=Some(*peer)
@@ -269,7 +300,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   let clock=time.clone();let protocol=ProtocolConfig{clock:Some(Arc::new(move||origin+Duration::from_micros(*clock.lock().unwrap()))),
    protocol_rng_seed:Some(1701+machine as u64),quality_report_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.quality_us)),..Default::default()};
   let sync=SyncConfig{num_sync_packets:1,keepalive_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.keepalive_us)),..Default::default()};
-  let mut builder=SessionBuilder::<OracleConfig>::new().with_num_players(scenario.players).map_err(|e|format!("{e:?}"))?
+  let mut builder=SessionBuilder::<OracleConfig<N>>::new().with_num_players(scenario.players).map_err(|e|format!("{e:?}"))?
    .with_input_queue_config(InputQueueConfig{queue_length:capacity})
    .with_max_prediction_window(scenario.max_prediction).with_input_delay(scenario.input_delay).map_err(|e|format!("{e:?}"))?
    .with_protocol_config(protocol).with_sync_config(sync);
@@ -291,7 +322,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  }
  for session in &mut sessions {if format!("{:?}",session.current_state())!="Running"{return Err("bootstrap incomplete".into());}session.events().for_each(drop);}
  let mut packets:Vec<(usize,usize,Message)>=Vec::new();let mut packet_values=Vec::new();let mut records=Vec::new();
- let mut references=MeshReferences::new(&slots_of);
+ let mut references=MeshReferences::new(&slots_of,N);
  for (index,op) in scenario.operations.iter().enumerate(){
   // Step and poll operations address one local slot; the driven session is the owning
   // machine's. Deliveries address the destination machine directly.
@@ -304,7 +335,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   *time.lock().unwrap()=now;let before=sessions[peer].current_frame().as_i32();let pre_state=hex(&games[peer].bytes());
   let pre_confirmed=sessions[peer].confirmed_frame().as_i32();let mut requests=Vec::new();let mut error=None;
   match op {Operation::Step{peer:slot,bytes,..}=>{
-   error=sessions[peer].add_local_input(PlayerHandle::new(*slot),input_bytes(bytes)?).err().map(|e|format!("{e:?}"));
+   error=sessions[peer].add_local_input(PlayerHandle::new(*slot),input_bytes::<N>(bytes)?).err().map(|e|format!("{e:?}"));
    if error.is_none(){(requests,error)=apply(&mut sessions[peer],&mut games[peer])?;}
   },Operation::Delay{delay,..}=>{error=sessions[peer].set_input_delay(PlayerHandle::new(peer),*delay).err().map(delay_error);},
   _=>sessions[peer].poll_remote_clients()}
@@ -334,6 +365,12 @@ fn packet_endpoints(packet:&Value,slots_of:&[Vec<usize>])->Result<(usize,usize),
  let to=packet["to"].as_u64().ok_or("to")? as usize;
  if from>=slots_of.len()||to>=slots_of.len() {return Err("packet machine bounds".into());}
  Ok((from,to))}
+/// The replay's validated scenario width: an omitted field stays four bytes and only the
+/// dispatch widths are comparable, so a hostile width fails the replay before decoding.
+fn replay_scenario_width(scenario:&Value)->Result<usize,String>{
+ let width=match scenario.get("input_width") {None=>4,Some(raw)=>serde_json::from_value::<usize>(raw.clone()).map_err(|_|"width bounds")?};
+ if !WIDTHS.contains(&width) {return Err("width bounds".into());}
+ Ok(width)}
 /// The replay's validated scenario: the player count bounds before any widening cast (a
 /// 32-bit `usize` would otherwise truncate a hostile u64 into the valid band), an explicit
 /// layout must deserialize and satisfy the shared grammar, and an omitted layout stays one
@@ -351,8 +388,8 @@ fn replay_scenario_slots(scenario:&Value)->Result<Vec<Vec<usize>>,String>{
 fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
  if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
-   let slots_of=replay_scenario_slots(&value["scenario"])?;
-   let mut references=MeshReferences::new(&slots_of);let packets=value["packets"].as_array().ok_or("packets")?;
+   let slots_of=replay_scenario_slots(&value["scenario"])?;let width=replay_scenario_width(&value["scenario"])?;
+   let mut references=MeshReferences::new(&slots_of,width);let packets=value["packets"].as_array().ok_or("packets")?;
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;
   let records=value["records"].as_array().ok_or("records")?;
   if operations.len()!=records.len() {return Err("operation bounds".into());}
@@ -384,6 +421,39 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Value: protects=the width dispatch bound; fails_when=a hostile, unsupported or null input
+    // width reaches session building or the replay decoder; why_new=#365 width slice; seam=run()
+    #[test]
+    fn hostile_widths_fail_before_dispatch() {
+        let base = |width: Value| {
+            let mut scenario = json!({"format":1u32,"players":2usize,"input_delay":0usize,
+                "max_prediction":4usize,"operations":[{"kind":"poll","peer":0usize,"now_us":0u64}]});
+            // An explicit null must deserialize as an error, not as the omitted default.
+            scenario["input_width"] = if width.is_null() { Value::Null } else { width };
+            scenario
+        };
+        for width in [json!(3), json!(2), json!(8), json!(16), json!(0), json!(33), json!(65536),
+                      json!(18446744073709551615u64), json!(4.0), json!(true), json!("4"), json!(null)] {
+            let error = run(base(width), false).expect_err("hostile width accepted");
+            // Only deserialization failures may name a different reason; every grammar
+            // rejection must come from the dispatch seam, not a later generic bound.
+            assert!(error.contains("width bounds") || error.contains("invalid type")
+                || error.contains("invalid number"), "{error}");
+        }
+        // A step whose bytes do not match the configured width is rejected before execution.
+        let scenario = json!({"format":1u32,"players":2usize,"input_delay":0usize,"max_prediction":4usize,
+            "input_width":1usize,"operations":[{"kind":"step","peer":0usize,"now_us":0u64,"bytes":"00000000"}]});
+        let error = run(scenario, false).expect_err("wrong-width step accepted");
+        assert!(error.contains("input bytes"), "{error}");
+        // The replay validator rejects a hostile width before decoding packets.
+        for width in [json!(3), json!(4.0)] {
+            let error = replay_scenario_width(&base(width)).expect_err("hostile replay width accepted");
+            assert!(error.contains("width bounds"), "{error}");
+        }
+        assert_eq!(replay_scenario_width(&json!({})).unwrap(), 4);
+        assert_eq!(replay_scenario_width(&json!({"input_width":32})).unwrap(), 32);
+    }
 
     // Value: protects=the hostile layout bounds that gate slot-vector expansion; fails_when=a
     // zero, single-machine, oversized or slot-total-mismatched layout, or an oversized player
