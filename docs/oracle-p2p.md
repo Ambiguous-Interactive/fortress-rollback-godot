@@ -72,13 +72,17 @@ ACK frame, player slot, exact frame bytes, and every connection-status slot,
 including epoch and disconnected flags.
 
 The source retains raw serde messages as well. Semantic decompression calls the
-actual upstream `network::compression::decode_with_max_len`; it uses previously
-observed frame bytes as the delta reference. The first delayed packet uses the
-upstream zero initial reference. A second source-process validation re-decodes
-every raw compressed packet and requires exact semantic agreement. The Godot
-side decodes actual production codec bytes. Compression bytes and packet header
-layout differ intentionally between Rust and Godot; exact gameplay semantics
-remain compared.
+actual upstream `network::compression::decode_with_max_len`; every flight row
+XOR-deltas against the destination's last-ACKED row exactly as the pinned
+encoder does, so the adapter tracks one pending queue per directed endpoint:
+flights join the sender's queue at creation, and a carried `ack_frame` pops the
+receiving endpoint's own pending rows when the packet is delivered — not when
+it is created. The initial reference is the upstream zeroed row. A second
+source-process validation replays the scenario's operations, re-decodes every
+raw compressed packet at its delivery-time reference and requires exact
+semantic agreement. The Godot side decodes actual production codec bytes.
+Compression bytes and packet header layout differ intentionally between Rust
+and Godot; exact gameplay semantics remain compared.
 
 Two narrow API differences are explicit. Upstream's first advance emits two
 identical initial saves; comparison removes exactly one adjacent identical
@@ -299,6 +303,21 @@ second interruption there — recorded but never terminal, with most of the
 timeout still ahead. The named evidence requires the interruptions, the resume,
 the recovery LOADs and one per-sender duplicate echo; controls mutate the
 notify payload and remove the resume event.
+
+The three-player partition-heal case extends the same bounded starvation to a
+mesh. All three links confirm a real prefix together, then the direct 1<->2
+link dies in both directions while both cut peers keep their links to peer 0.
+Each cut endpoint latches its own remote-attributed `network_interrupted` past
+the shared notify bound — the attributed event peer is the departed remote,
+not the observer — and both cut peers predict through six withheld rounds on
+their surviving links. The withheld burst then arrives inside the disconnect
+timeout: both cut endpoints observe `network_resumed`, the missing inputs
+force deep LOAD corrections through the actual public advance API, and three
+more confirmed rounds end the schedule synchronized with no terminal on any
+peer. Peer 0 never observes an interruption: its links stay alive throughout.
+The named evidence requires both attributed interruptions, both resumes and
+the recovery LOADs; controls mutate the notify payload, remove a resume event
+and invent a self-interruption by retargeting an attributed event peer.
 
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.

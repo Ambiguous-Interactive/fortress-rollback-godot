@@ -21,6 +21,9 @@ var records: Array[Dictionary] = []
 var scenario_settings: Dictionary = {}
 var observed_events: Array[Dictionary] = []
 var limits: T.Limits
+# Runtime input delays per player; a step's own input flight is scheduled at its
+# current frame plus the peer's current delay.
+var delays: Array[int] = []
 
 
 func _initialize() -> void:
@@ -39,6 +42,8 @@ func _initialize() -> void:
 		return
 	var scenario: Dictionary = _canonical(parser.data)
 	scenario_settings = scenario
+	delays.resize(scenario.players)
+	delays.fill(scenario.input_delay)
 	limits = T.Limits.new()
 	limits.player_count = scenario.players
 	limits.input_width = 4
@@ -141,39 +146,16 @@ func _operation(op: Dictionary, index: int) -> bool:
 			code = peer.set_input_delay(player, op.delay)
 			if code != Types.Code.OK:
 				error = Types.Code.find_key(code)
+			else:
+				delays[player] = int(op.delay)
 	if op.kind not in ["step", "delay"] and code != I.Code.OK and not (scenario_settings.has("lifecycle") and code == I.Code.TERMINATED):
 		_fail("network operation rejected")
 		return false
-	var outgoing: Array[int] = []
-	for packet: RefCounted in peer.drain_outbox():
-		limits.expected_session_id = _token(0, 0)
-		limits.expected_sender_id = _id(player)
-		limits.expected_connection_id = _id(player)
-		var result: T.Result = Codec.decode(packet.bytes, limits)
-		if result.code != T.Code.OK:
-			_fail("outgoing codec")
-			return false
-		var message: T.Message = result.message
-		var semantic: Dictionary = {"kind": "input_ack", "ack_frame": message.ack_frame}
-		if message.kind == T.Kind.INPUT:
-			var frames: Array[String] = []
-			for frame: int in range(message.frame_count):
-				frames.append(message.data.slice(frame * 4, (frame + 1) * 4).hex_encode())
-			var statuses: Array[Dictionary] = []
-			for status: T.Status in message.statuses:
-				statuses.append({"disconnected": status.disconnected, "epoch": status.epoch, "last_frame": status.last_frame})
-			semantic = {
-				"kind": "input", "ack_frame": message.ack_frame, "start_frame": message.start_frame, "players": Array(message.players), "frames": frames, "statuses": statuses
-			}
-		elif message.kind != T.Kind.INPUT_ACK:
-			semantic = Lifecycle.semantic(message)
-			if semantic.is_empty() or not scenario_settings.has("lifecycle"):
-				_fail("unsupported outgoing kind")
-				return false
-		var id: int = packets.size()
-		outgoing.append(id)
-		packets.append({"id": id, "from": player, "to": packet.to.decode_u64(0) - 1, "semantic": semantic})
-		raw_packets.append(packet.bytes.duplicate())
+	var scheduled: int = before + delays[player] if op.kind == "step" else -1
+	var published: Variant = _publish(peer, player, scheduled)
+	if published == null:
+		return false
+	var outgoing: Array[int] = published
 	var game: RefCounted = games[player]
 	observed_events.clear()
 	var extensions: Array[Dictionary] = _events(peer)
@@ -198,6 +180,74 @@ func _operation(op: Dictionary, index: int) -> bool:
 		records[-1].metrics = Lifecycle.metrics(peer, player, peers.size(), op.now_us)
 	game.requests.clear()
 	return true
+
+
+## Publish one operation's outgoing packets in the pinned source's shared-socket
+## order. Every operation flushes each endpoint's queued controls first; a step
+## then publishes checksum reports and its own input flight endpoint by
+## endpoint. Queues here are per endpoint, so an unsplit multi-endpoint step
+## interleaves them and no multi-peer lifecycle schedule can compare at all.
+## Returns null after a decode failure has failed the run.
+func _publish(peer: RefCounted, player: int, scheduled: int) -> Variant:
+	var observed: Array[Dictionary] = []
+	for packet: RefCounted in peer.drain_outbox():
+		var decoded: Dictionary = _decode_outgoing(packet, player)
+		if decoded.is_empty():
+			return null
+		decoded.destination = packet.to.decode_u64(0) - 1
+		decoded.sender = player
+		observed.append(decoded)
+	var controls: Array[Dictionary] = []
+	var flights: Array[Dictionary] = []
+	for item: Dictionary in observed:
+		var semantic: Dictionary = item.semantic
+		if semantic.kind == "checksum_report" or (semantic.kind == "input"
+				and int(semantic.start_frame) + semantic.frames.size() - 1 == scheduled):
+			flights.append(item)
+		else:
+			controls.append(item)
+	var outgoing: Array[int] = []
+	for item: Dictionary in controls:
+		_register(item, outgoing)
+	for item: Dictionary in flights:
+		_register(item, outgoing)
+	return outgoing
+
+
+func _decode_outgoing(packet: RefCounted, player: int) -> Dictionary:
+	limits.expected_session_id = _token(0, 0)
+	limits.expected_sender_id = _id(player)
+	limits.expected_connection_id = _id(player)
+	var result: T.Result = Codec.decode(packet.bytes, limits)
+	if result.code != T.Code.OK:
+		_fail("outgoing codec")
+		return {}
+	var message: T.Message = result.message
+	var semantic: Dictionary = {"kind": "input_ack", "ack_frame": message.ack_frame}
+	if message.kind == T.Kind.INPUT:
+		var frames: Array[String] = []
+		for frame: int in range(message.frame_count):
+			frames.append(message.data.slice(frame * 4, (frame + 1) * 4).hex_encode())
+		var statuses: Array[Dictionary] = []
+		for status: T.Status in message.statuses:
+			statuses.append({"disconnected": status.disconnected, "epoch": status.epoch, "last_frame": status.last_frame})
+		semantic = {
+			"kind": "input", "ack_frame": message.ack_frame, "start_frame": message.start_frame, "players": Array(message.players), "frames": frames, "statuses": statuses
+		}
+	elif message.kind != T.Kind.INPUT_ACK:
+		semantic = Lifecycle.semantic(message)
+		if semantic.is_empty() or not scenario_settings.has("lifecycle"):
+			_fail("unsupported outgoing kind")
+			return {}
+	return {"packet": packet, "semantic": semantic}
+
+
+func _register(item: Dictionary, outgoing: Array[int]) -> void:
+	var packet: RefCounted = item.packet
+	var id: int = packets.size()
+	outgoing.append(id)
+	packets.append({"id": id, "from": item.sender, "to": item.destination, "semantic": item.semantic})
+	raw_packets.append(packet.bytes.duplicate())
 
 
 func _events(peer: RefCounted) -> Array[Dictionary]:
