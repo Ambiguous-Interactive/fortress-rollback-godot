@@ -265,8 +265,9 @@ shared notify bound, and the schedule ends at
 the starved peer's terminal with both peers' canonical states matching through
 the last shared operation. A bounded partition-heal case keeps the same
 starvation inside the disconnect timeout, delivers the withheld burst, requires
-the resumed starved peer to recover through a deep LOAD correction, re-measures
-a retransmitted duplicate quality token identically on both sides and ends
+the resumed starved peer to recover through a deep LOAD correction, re-delivers
+the first withheld report so the same echoed token is answered twice, requires
+both sides to re-measure that duplicate identically and ends
 synchronized with no terminal. Quality echoes resolve their elapsed-millis
 token statelessly with a saturating subtraction, so duplicates and stale-era
 pongs re-measure instead of freezing the gauge; no pending-token inventory

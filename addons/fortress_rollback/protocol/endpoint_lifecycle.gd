@@ -69,9 +69,9 @@ static func receive_control(plan: Dictionary, message: T.Message, packet: Callab
 		T.Kind.QUALITY_REPLY:
 			# Upstream resolves every echo statelessly with a saturating
 			# subtraction, so a lost, reordered, duplicated or stale-era token
-			# re-measures the same sample instead of freezing the gauge at an
-			# earlier reply; a pong wider than the clock range is a harmless
-			# zero that the next report corrects.
+			# re-measures against the current clock instead of freezing the
+			# gauge at an earlier reply; a pong wider than the clock range is a
+			# harmless zero that the next report corrects.
 			var millis: int = (plan.state.now_us - plan.state.clock_origin_us) / 1000
 			var pong: int = message.token.decode_u64(0)
 			if message.token.decode_u64(8) != 0 or pong < 0:

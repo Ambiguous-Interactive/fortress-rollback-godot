@@ -106,6 +106,8 @@ def build(binary, observe, name):
         # missing inputs force a deep LOAD correction through the actual
         # public API; both peers resume confirming canonical history together
         # and the schedule ends synchronized instead of at a terminal.
+        for _ in range(3):
+            step(0); step(1); flush()
         starved = False
         for frame in range(6):
             now = 500000 + frame * 150000
@@ -124,6 +126,7 @@ def build(binary, observe, name):
         append('deliver', packet=burst[0], at=1500000)
         for packet in burst[1:]:
             delivered.add(packet); append('deliver', packet=packet, refresh=False)
+        delivered.add(burst[0])
         latest = observe(binary, scenario)
         if not any(e['kind'] == 'network_resumed' for r in latest['records'] if r['peer'] == 1 for e in r['events']):
             raise ValueError('partition heal never resumed the starved peer')
@@ -131,6 +134,13 @@ def build(binary, observe, name):
             now = 1600000 + frame * 150000
             step(0, at=now); step(1, at=now + 1)
             flush()
+            if frame == 0:
+                # Re-deliver the first withheld report on purpose: the starved
+                # peer answers the same echoed token a second time, and the fed
+                # peer must re-measure that duplicate identically instead of
+                # freezing its RTT at the first reply.
+                append('deliver', packet=burst[0])
+                flush()
         flush()
         for peer in range(2):
             step(peer)

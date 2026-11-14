@@ -133,10 +133,14 @@ func _quality(context: RefCounted) -> void:
 	context.equal(endpoint.receive(f._encode(reply), f._id(2), 250001), I.Code.OK, "known quality echo")
 	context.equal(endpoint.status().round_trip_time_ms, 50, "RTT uses own echoed timestamp")
 	endpoint.receive(f._encode(reply), f._id(2), 300001)
-	context.equal(endpoint.status().round_trip_time_ms, 100, "duplicate echo re-measures instead of freezing")
+	context.equal(endpoint.status().round_trip_time_ms, 100, "duplicate echo re-measures against the current clock")
 	reply.token[15] = 255
 	endpoint.receive(f._encode(reply), f._id(2), 310001)
 	context.equal(endpoint.status().round_trip_time_ms, 0, "wide/future pong saturates to a harmless zero")
+	reply.token[15] = 0
+	reply.token[7] = 128
+	endpoint.receive(f._encode(reply), f._id(2), 320001)
+	context.equal(endpoint.status().round_trip_time_ms, 0, "u64-wrapped pong saturates to a harmless zero")
 	context.equal(endpoint.poll(310001.0), I.Code.INVALID_ARGUMENT, "float time rejected")
 	context.equal(endpoint.poll(310000), I.Code.INVALID_ARGUMENT, "clock cannot rewind")
 
