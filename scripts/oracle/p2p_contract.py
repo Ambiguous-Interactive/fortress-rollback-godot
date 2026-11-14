@@ -115,13 +115,16 @@ def validate_scenario(value):
     return value
 
 
-def packet(value, players, source, slots=None):
+def packet(value, players, source, slots_by_machine=None):
     fields(value, 'id from to semantic raw' if source else 'id from to semantic', 'packet')
     integer(value['id'], 0, 100000, 'packet id')
     for key in ('from', 'to'):
         integer(value[key], 0, players - 1, key)
     if value['from'] == value['to']:
         raise ValueError('self packet')
+    # The sender's owned slot list sizes its flight rows; resolution stays behind the
+    # from-bound check so every hostile packet still raises ValueError.
+    slots = None if slots_by_machine is None else slots_by_machine[value['from']]
     body = value['semantic']
     if type(body) is not dict or type(body.get('kind')) is not str:
         raise ValueError('semantic packet')
@@ -139,10 +142,12 @@ def packet(value, players, source, slots=None):
         # One flight row carries one four-byte input per slot the sender owns locally.
         for data in body['frames']:
             hex_bytes(data, 4 * (len(slots) if slots is not None else 1), 'frame input')
-        if type(body['players']) is not list or body['players'] != (slots if slots is not None else [value['from']]):
+        if type(body['players']) is not list:
             raise ValueError('sender players')
         for slot in body['players']:
             integer(slot, 0, players - 1, 'sender slot')
+        if body['players'] != (slots if slots is not None else [value['from']]):
+            raise ValueError('sender players')
         if type(body['statuses']) is not list or len(body['statuses']) != players:
             raise ValueError('status inventory')
         for status in body['statuses']:
@@ -168,7 +173,7 @@ def packet(value, players, source, slots=None):
                 raise ValueError('raw semantic fields')
             # Independently validate nested raw statuses before Python equality.
             alias = dict(value, semantic=dict(body, statuses=raw_body['peer_connect_status']))
-            packet({k: v for k, v in alias.items() if k != 'raw'}, players, False, slots)
+            packet({k: v for k, v in alias.items() if k != 'raw'}, players, False, slots_by_machine)
             if type(raw_body['bytes']) is not list or not 1 <= len(raw_body['bytes']) <= 4096:
                 raise ValueError('compressed bytes')
             for byte in raw_body['bytes']:
@@ -202,7 +207,7 @@ def validate(value, scenario, source=False):
     layout_slots = slots_of(scenario); machines = len(layout_slots)
     owner = [machine for machine, slots in enumerate(layout_slots) for _ in slots]
     for index, outgoing in enumerate(value['packets']):
-        packet(outgoing, scenario['players'], source, layout_slots[outgoing['from']])
+        packet(outgoing, scenario['players'], source, layout_slots)
         if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in {'input', 'input_ack'}:
             raise ValueError('lifecycle packet outside explicit profile')
         if outgoing['id'] != index:

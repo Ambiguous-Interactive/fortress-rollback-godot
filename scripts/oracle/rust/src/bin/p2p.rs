@@ -143,7 +143,7 @@ impl MeshReferences {
         if !(0..=10000).contains(&ack) {return}
         let ack=ack as i32;
         let (receiver,sender)=(destination,sender);
-        let acked=self.acked.entry((receiver,sender)).or_insert((-1,vec![0;4]));
+        let acked=self.acked.entry((receiver,sender)).or_insert((-1,vec![0;self.row_bytes[receiver]]));
         if acked.0>=0 && ack<=acked.0 {return}
         let Some(queue)=self.pending.get_mut(&(receiver,sender)) else {return};
         let Some(newest)=queue.last() else {return};
@@ -245,7 +245,9 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
   ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
   ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
  let slots_of=slots_of(scenario.players,&scenario.layout);let owner=owner_of(&slots_of);let machines=slots_of.len();
+ // Lifecycle timers stay a single-local slice, exactly like the shared Python grammar.
  if let Some(sizes)=&scenario.layout {if sizes.is_empty()||machines<2||sizes.iter().any(|size|*size==0)||sizes.iter().sum::<usize>()!=scenario.players
+  ||scenario.lifecycle.is_some()
   ||scenario.operations.iter().any(|op|matches!(op,Operation::Delay{..})){return Err("layout bounds".into());}}
  let mut previous=0;let mut stepped=vec![false;scenario.players];let mut addressed=None;
  for op in &scenario.operations {
@@ -329,6 +331,10 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
   let scenario_players=value["scenario"]["players"].as_u64().ok_or("players")? as usize;
    let scenario_layout=value["scenario"].get("layout").and_then(|l|serde_json::from_value::<Vec<usize>>(l.clone()).ok());
+   // Mirror the scenario grammar so a trace replayed against a wrong or hostile layout fails
+   // cleanly instead of indexing a missing machine.
+   if let Some(sizes)=&scenario_layout {if sizes.is_empty()||sizes.iter().any(|size|*size==0)||sizes.iter().sum::<usize>()!=scenario_players
+    ||sizes.len()<2 {return Err("layout bounds".into());}}
    let slots_of=slots_of(scenario_players,&scenario_layout);
    let mut references=MeshReferences::new(&slots_of);let packets=value["packets"].as_array().ok_or("packets")?;
   let operations=value["scenario"]["operations"].as_array().ok_or("operations")?;

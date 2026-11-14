@@ -48,10 +48,13 @@ are submitted explicitly; observed requests never choose Godot game callbacks.
 A partially staged machine records the pinned engine's missing-input refusal:
 source `advance_frame` errors `MissingLocalInput` and retains its staged local
 inputs across the failed advance, while Godot's production step refuses an
-incomplete local row atomically before staging or polling. The Godot driver
+incomplete local row atomically before staging or polling. The trace driver
 therefore buffers each machine's earlier step bytes and re-submits them once a
 step completes the machine's coverage, mirroring the upstream retention; a
 successful advance consumes the whole row and clears the buffer on both sides.
+Because the pinned engine polls remote clients before its missing-input gate,
+the driver also polls once after a refused step, so timer service stays inside
+the refused operation's record on both sides.
 Runtime delay raises are rejected under an explicit layout because production
 `set_input_delay` is UNSUPPORTED with several local players, and lifecycle
 timers stay a single-local slice because per-endpoint metric attribution across

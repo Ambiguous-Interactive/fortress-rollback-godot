@@ -91,6 +91,28 @@ class P2PContractTests(unittest.TestCase):
                     self.assertTrue(result.stderr.startswith('p2p validation: ' + diagnostic), result.stderr)
                     self.assertNotIn('Traceback', result.stderr)
 
+    # Value: protects=the standalone validator's no-traceback contract under a layout scenario;
+    # fails_when=a hostile packet sender raises TypeError/IndexError from the owned-slot lookup
+    # instead of the clean ValueError boundary; why_new=#363 multi-local slots; seam=none
+    def test_standalone_layout_malformed_sender(self):
+        scenario = {'format': 1, 'players': 4, 'input_delay': 0, 'max_prediction': 4, 'layout': [2, 2],
+                    'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 0}]}
+        trace = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(scenario),
+                 'records': [{'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 0, 'confirmed_frame': -1,
+                              'error': None, 'requests': [], 'events': [], 'extension_events': [], 'outgoing': [0],
+                              'state': initial_game_state(4, 2).hex()}],
+                 'packets': [{'id': 0, 'from': 0, 'to': 1, 'semantic': {'kind': 'input_ack', 'ack_frame': 0}}]}
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'scenario.json'; path.write_text(json.dumps(scenario), encoding='utf-8')
+            for bad_from in (9, 1.0, 'x', None, True, -1):
+                mutant = deepcopy(trace); mutant['packets'][0]['from'] = bad_from
+                with self.subTest(bad_from=bad_from):
+                    result = subprocess.run([sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(path)],
+                                            input=json.dumps(mutant), capture_output=True, encoding='utf-8', timeout=10, check=False)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertTrue(result.stderr.startswith('p2p validation: from: invalid integer'), result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
     # Value: protects=raw lifecycle packets validate structure before consumption; fails_when=null raw header tracebacks; why_new=control decoding preceded header checks; seam=none
     def test_standalone_raw_control_shape(self):
         _, original, scenario = timeout_fixture()

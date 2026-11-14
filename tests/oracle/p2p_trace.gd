@@ -178,6 +178,10 @@ func _operation(op: Dictionary, index: int) -> bool:
 			if code == Types.Code.OK:
 				# A successful advance consumed the whole machine's staged row.
 				staged[player].clear()
+			if code == Types.Code.MISSING_LOCAL_INPUT:
+				# The pinned engine polls remote clients before its missing-input gate, so the
+				# refused advance still services timers; production refuses before its own poll.
+				peer.poll(op.now_us)
 			if code != Types.Code.OK:
 				error = Types.Code.find_key(code)
 		"poll":
@@ -402,7 +406,8 @@ func _valid(value: Variant) -> bool:
 		if int(value.queue_capacity) < int(value.input_delay) + int(value.max_prediction) + 2:
 			return false
 	# Explicit endpoint layout: machine counts, per-machine slot coverage and the shared
-	# slot total. An omitted field stays one local slot per endpoint.
+	# slot total. An omitted field stays one local slot per endpoint. Lifecycle timers
+	# stay a single-local slice, exactly like the shared Python grammar.
 	if value.has("layout"):
 		if not value.layout is Array or value.layout.size() < 2 or value.layout.size() > int(value.players):
 			return false
@@ -412,6 +417,8 @@ func _valid(value: Variant) -> bool:
 				return false
 			covered += int(size)
 		if covered != int(value.players):
+			return false
+		if value.has("lifecycle"):
 			return false
 	# The peer session refuses any agreed initial delay above its own unclamped bound.
 	var capacity_bound: int = int(value.queue_capacity) if value.has("queue_capacity") else 128
