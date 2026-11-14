@@ -210,17 +210,22 @@ def build(binary, observe, name):
         append('poll', peer=2, at=2500002)
     elif name == 'partition_fairness':
         # Long-lived partition fairness: each of the mesh's three links takes
-        # exactly one starvation turn in rotation. Every rotation confirms a
-        # real prefix on all three links first, then withholds one link in both
-        # directions for six rounds — long enough for both cut endpoints to
-        # latch their own remote-attributed network_interrupted past the shared
-        # notify bound — before the withheld burst arrives inside the
-        # disconnect timeout. Exactly the two cut endpoints resume, the missing
-        # inputs force deep LOAD corrections through the public advance API,
-        # and three confirmed rounds re-synchronize the mesh before the next
-        # link takes its turn. After all three rotations the schedule ends
-        # synchronized with no terminal: no link, and no peer, is treated
-        # differently by the schedule.
+        # exactly one starvation turn in rotation. A three-round confirmed
+        # prefix opens the schedule; every starvation turn then withholds one
+        # link in both directions for six rounds — long enough for both cut
+        # endpoints to latch their own remote-attributed network_interrupted
+        # past the shared notify bound — before the withheld burst arrives
+        # inside the disconnect timeout. Exactly the two cut endpoints resume,
+        # the missing inputs force deep LOAD corrections through the public
+        # advance API, and three confirmed rounds re-synchronize the mesh, so
+        # every later turn opens on links that all just confirmed. After all
+        # three rotations the schedule ends synchronized with no terminal: no
+        # link, and no peer, is treated differently by the schedule. The
+        # rotation bases keep each turn's early rounds just under the notify
+        # bound (rotation 0 frame 0 sits 45 us short; later turns 20-22 us
+        # short at frame 2), which only positions the latches; moving a base,
+        # the spacing or the prefix length moves them, so re-check the trace
+        # after any such edit.
         scenario['players'] = 3
         for _ in range(3):
             for peer in range(3):
@@ -259,6 +264,9 @@ def build(binary, observe, name):
             for peer in range(3):
                 step(peer, at=now + peer)
             flush_around(lambda packet: False)
+        final = sum(e['kind'] == 'network_resumed' for r in latest['records'] for e in r['events'])
+        if final != resumed:
+            raise ValueError(f'partition fairness tail fired {final - resumed} extra resumes')
         append('poll', peer=0, at=5600000)
         append('poll', peer=1, at=5600001)
         append('poll', peer=2, at=5600002)
