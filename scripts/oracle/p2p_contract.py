@@ -61,10 +61,11 @@ def validate_scenario(value):
         # Explicit endpoint layout: machine m owns slots [sum(sizes[:m]), sum(sizes[:m+1])).
         # An omitted field stays one local slot per endpoint; machine-count and per-machine
         # row-shape rules live here so both engines and the shrinker share one grammar.
+        # Element types are checked before the total, so a hostile element raises ValueError.
         sizes = value['layout']
         if type(sizes) is not list or not 2 <= len(sizes) <= value['players']:
             raise ValueError('layout machine inventory')
-        if sum(sizes) != value['players'] or any(type(size) is not int or size < 1 for size in sizes):
+        if any(type(size) is not int or size < 1 for size in sizes) or sum(sizes) != value['players']:
             raise ValueError('layout slot inventory')
         if 'lifecycle' in value:
             # Per-endpoint metric attribution across machines sharing addresses is a separate slice.

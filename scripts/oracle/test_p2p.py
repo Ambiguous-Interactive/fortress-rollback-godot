@@ -410,6 +410,8 @@ class P2PContractTests(unittest.TestCase):
         for mutate in (lambda x: x.update(layout=[4]), lambda x: x.update(layout=[3, 2]),
                        lambda x: x.update(layout=[2, 2, 2]), lambda x: x.update(layout=[0, 4]),
                        lambda x: x.update(layout=[2, 1]), lambda x: x.update(layout=[2.0, 2]),
+                       lambda x: x.update(layout=[None, 2]), lambda x: x.update(layout=['x', 2]),
+                       lambda x: x.update(layout=[[2], 2]), lambda x: x.update(layout=[True, 3]),
                        lambda x: x.update(layout=True), lambda x: x.update(layout=[2, 2, 2, 2, 2, 2, 2, 2, 2]),
                        lambda x: x.update(layout=[]), lambda x: x['operations'].append({'kind': 'delay', 'peer': 0, 'delay': 1}),
                        lambda x: x.update(lifecycle={'quality_us': 100000, 'keepalive_us': 100000, 'notify_us': 500000,
