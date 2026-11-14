@@ -118,8 +118,11 @@ def validate_scenario(value):
 def packet(value, players, source, slots_by_machine=None):
     fields(value, 'id from to semantic raw' if source else 'id from to semantic', 'packet')
     integer(value['id'], 0, 100000, 'packet id')
+    # Endpoints are machine addresses; an explicit layout has fewer machines than slots,
+    # so the integer-valid-but-machine-invalid band must still raise ValueError.
+    machines = len(slots_by_machine) if slots_by_machine is not None else players
     for key in ('from', 'to'):
-        integer(value[key], 0, players - 1, key)
+        integer(value[key], 0, machines - 1, key)
     if value['from'] == value['to']:
         raise ValueError('self packet')
     # The sender's owned slot list sizes its flight rows; resolution stays behind the

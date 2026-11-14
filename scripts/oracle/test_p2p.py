@@ -104,13 +104,22 @@ class P2PContractTests(unittest.TestCase):
                  'packets': [{'id': 0, 'from': 0, 'to': 1, 'semantic': {'kind': 'input_ack', 'ack_frame': 0}}]}
         with TemporaryDirectory() as root:
             path = Path(root) / 'scenario.json'; path.write_text(json.dumps(scenario), encoding='utf-8')
-            for bad_from in (9, 1.0, 'x', None, True, -1):
+            for bad_from in (9, 1.0, 'x', None, True, -1, 2, 3):
                 mutant = deepcopy(trace); mutant['packets'][0]['from'] = bad_from
                 with self.subTest(bad_from=bad_from):
                     result = subprocess.run([sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(path)],
                                             input=json.dumps(mutant), capture_output=True, encoding='utf-8', timeout=10, check=False)
                     self.assertEqual(result.returncode, 2, result.stderr)
                     self.assertTrue(result.stderr.startswith('p2p validation: from: invalid integer'), result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+            # An unconsumed packet must not silently accept a machine-invalid destination.
+            for bad_to in (9, 2, 3, 1.0, None):
+                mutant = deepcopy(trace); mutant['packets'][0]['to'] = bad_to
+                with self.subTest(bad_to=bad_to):
+                    result = subprocess.run([sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(path)],
+                                            input=json.dumps(mutant), capture_output=True, encoding='utf-8', timeout=10, check=False)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertTrue(result.stderr.startswith('p2p validation: to: invalid integer'), result.stderr)
                     self.assertNotIn('Traceback', result.stderr)
 
     # Value: protects=raw lifecycle packets validate structure before consumption; fails_when=null raw header tracebacks; why_new=control decoding preceded header checks; seam=none

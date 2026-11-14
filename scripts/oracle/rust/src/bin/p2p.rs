@@ -326,6 +326,12 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  }
  Ok(json!({"format":1,"complete":true,"upstream_revision":REVISION,"scenario":original,"records":records,"packets":packet_values}))
 }
+/// Validated packet endpoints; a hostile machine index fails the replay cleanly.
+fn packet_endpoints(packet:&Value,slots_of:&[Vec<usize>])->Result<(usize,usize),String>{
+ let from=packet["from"].as_u64().ok_or("from")? as usize;
+ let to=packet["to"].as_u64().ok_or("to")? as usize;
+ if from>=slots_of.len()||to>=slots_of.len() {return Err("packet machine bounds".into());}
+ Ok((from,to))}
 fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
  if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
@@ -344,7 +350,8 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
   for (index,op) in operations.iter().enumerate() {
    if op["kind"]=="deliver" {let id=op["packet"].as_u64().ok_or("packet")? as usize;
     let packet=packets.get(id).ok_or("unknown observed packet")?;
-    references.deliver(packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&packet["raw"]);}
+    let (from,to)=packet_endpoints(packet,&slots_of)?;
+    references.deliver(from,to,&packet["raw"]);}
    for id in records[index]["outgoing"].as_array().ok_or("outgoing")? {
     let packet_id=id.as_u64().ok_or("id")? as usize;
     if packet_id>=packets.len() {return Err("unknown observed packet".into());}
@@ -352,7 +359,8 @@ fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).r
     visited[packet_id]=true;
     let packet=&packets[packet_id];
     let raw=&packet["raw"];let _:Message=serde_json::from_value(raw.clone()).map_err(|e|e.to_string())?;
-    let semantic=project_packet(raw,packet["from"].as_u64().ok_or("from")? as usize,packet["to"].as_u64().ok_or("to")? as usize,&mut references,&slots_of)?;
+    let (from,to)=packet_endpoints(packet,&slots_of)?;
+    let semantic=project_packet(raw,from,to,&mut references,&slots_of)?;
     if semantic!=packet["semantic"] {return Err("raw compressed semantic mismatch".into());}
    }
   }
