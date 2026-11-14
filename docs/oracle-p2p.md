@@ -291,11 +291,14 @@ predicting through six withheld rounds, and the entire withheld burst then
 arrives at once: `network_resumed` fires on the first recovered packet and the
 recovered inputs force a deep LOAD correction through the public advance API.
 The schedule then re-delivers the first withheld report on purpose, so peer 1
-answers the same echoed token twice and peer 0 must re-measure that duplicate
-identically. Three more confirmed rounds follow, and the schedule ends
-synchronized with no terminal on either side. The named evidence requires the
-interruption, the resume, the recovery LOADs and one per-sender duplicate echo;
-controls mutate the notify payload and remove the resume event.
+answers the same echoed token twice and peer 0 re-measures that duplicate
+against its current clock exactly as the pinned oracle does. Three more
+confirmed rounds follow, and the schedule ends synchronized with no terminal on
+either side. The tail polls sit past the notify bound, so both peers latch a
+second interruption there — recorded but never terminal, with most of the
+timeout still ahead. The named evidence requires the interruptions, the resume,
+the recovery LOADs and one per-sender duplicate echo; controls mutate the
+notify payload and remove the resume event.
 
 Source observations call public `network_stats()` and `frames_ahead()`.
 `network_stats()` returns `NotSynchronized` before one whole elapsed second.
