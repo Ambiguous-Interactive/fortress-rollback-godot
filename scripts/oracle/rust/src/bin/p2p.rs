@@ -396,7 +396,9 @@ mod tests {
                        json!([18446744073709551615u64,5])] {
             let scenario = base(layout);
             let error = run(scenario, false).expect_err("hostile layout accepted");
-            assert!(error.contains("layout bounds") || error.contains("scenario bounds"), "{error}");
+            // On a 32-bit target the u64 element fails usize deserialization before the grammar.
+            assert!(error.contains("layout bounds") || error.contains("scenario bounds")
+                || error.contains("invalid number"), "{error}");
         }
         // A non-integer element fails serde deserialization before the grammar runs.
         let error = run(base(json!([2.0,2])), false).expect_err("hostile layout accepted");
@@ -415,7 +417,7 @@ mod tests {
             }
             object
         };
-        for players in [json!(18446744073709551615u64), json!(9), json!(1), json!(0), json!(4.0)] {
+        for players in [json!(18446744073709551615u64), json!(4294967298u64), json!(9), json!(1), json!(0), json!(4.0)] {
             let error = replay_scenario_slots(&scenario(players, None)).expect_err("hostile players accepted");
             assert!(error.contains("scenario bounds"), "{error}");
         }
@@ -424,6 +426,9 @@ mod tests {
             let error = replay_scenario_slots(&scenario(json!(4), Some(layout))).expect_err("hostile layout accepted");
             assert!(error.contains("layout bounds"), "{error}");
         }
+        // 4294967298 truncates to 2 on a 32-bit target, the exact shape the cast-first code accepted.
+        let error = replay_scenario_slots(&scenario(json!(4294967298u64), Some(json!([1,1])))).expect_err("truncated count accepted");
+        assert!(error.contains("scenario bounds"), "{error}");
         assert_eq!(replay_scenario_slots(&scenario(json!(4), None)).unwrap(), vec![vec![0], vec![1], vec![2], vec![3]]);
         assert_eq!(replay_scenario_slots(&scenario(json!(4), Some(json!([2,2])))).unwrap(), vec![vec![0,1], vec![2,3]]);
     }
