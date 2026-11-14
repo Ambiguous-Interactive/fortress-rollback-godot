@@ -382,11 +382,13 @@ class P2PContractTests(unittest.TestCase):
         self.assertEqual(fold_input('11000000'), int.from_bytes(bytes.fromhex('11000000'), 'little'))
         self.assertEqual(fold_input('0a'), 10)
         self.assertEqual(fold_input('ff' * 4), 4294967295)
-        wide = '0123456789abcdef' * 2
+        # Independent wide-row oracle: the fold equals the XOR of the row's little-endian
+        # u32 words, a formulation that shares no code with the byte-wise implementation.
+        wide = bytes.fromhex('0123456789abcdef' * 2)
         expected = 0
-        for index, byte in enumerate(bytes.fromhex(wide)):
-            expected ^= byte << (8 * (index % 4))
-        self.assertEqual(fold_input(wide), expected)
+        for start in range(0, len(wide), 4):
+            expected ^= int.from_bytes(wide[start:start + 4], 'little')
+        self.assertEqual(fold_input(wide.hex()), expected)
 
     # Value: protects=the non-default-width flight row shape; fails_when=a packet whose rows
     # are not one width-sized input per owned slot passes validation; why_new=#365 width slice; seam=none
@@ -426,9 +428,10 @@ class P2PContractTests(unittest.TestCase):
         scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'input_width': 1,
                     'operations': [{'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '11'}]}
         state = initial_game_state(2, 2)
-        from p2p_contract import fold_input, advance_game_state as advance
+        from p2p_contract import advance_game_state as advance
+        # Independent width-1 oracle: a one-byte little-endian read is the whole fold.
         inputs = [{'player': 0, 'bytes': '11', 'status': 'confirmed'}, {'player': 1, 'bytes': '00', 'status': 'predicted'}]
-        advanced = advance(state, [fold_input('11'), fold_input('00')], 2)
+        advanced = advance(state, [int.from_bytes(bytes.fromhex('11'), 'little'), 0], 2)
         save = {'kind': 'save', 'frame': 0, 'state_bytes': state.hex(), 'checksum': checksum(state), 'inputs': []}
         step = {'kind': 'advance', 'frame': 0, 'state_bytes': advanced.hex(), 'checksum': checksum(advanced), 'inputs': inputs}
         record = {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 1, 'confirmed_frame': -1, 'error': None,

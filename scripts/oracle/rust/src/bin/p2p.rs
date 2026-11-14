@@ -436,8 +436,10 @@ mod tests {
         for width in [json!(3), json!(2), json!(8), json!(16), json!(0), json!(33), json!(65536),
                       json!(18446744073709551615u64), json!(4.0), json!(true), json!("4"), json!(null)] {
             let error = run(base(width), false).expect_err("hostile width accepted");
+            // Only deserialization failures may name a different reason; every grammar
+            // rejection must come from the dispatch seam, not a later generic bound.
             assert!(error.contains("width bounds") || error.contains("invalid type")
-                || error.contains("invalid number") || error.contains("scenario bounds"), "{error}");
+                || error.contains("invalid number"), "{error}");
         }
         // A step whose bytes do not match the configured width is rejected before execution.
         let scenario = json!({"format":1u32,"players":2usize,"input_delay":0usize,"max_prediction":4usize,

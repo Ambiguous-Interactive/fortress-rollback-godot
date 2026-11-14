@@ -273,8 +273,8 @@ def negative_controls(actual, expected, scenario):
         controls['layout_players'] = layout_players
         controls['layout_row'] = layout_row
     if scenario.get('input_width', 4) != 4:
-        # Non-default input width: flipping the leading byte of a flight row must fail the
-        # comparison, so the observed wide rows are actually consumed by both engines.
+        # Non-default input width: flipping a wide row's leading byte must fail the exact
+        # packet comparison, so the observed wide rows are compared byte-exactly, not skipped.
         width_packet = next((i for i, p in enumerate(actual['packets']) if p['semantic']['kind'] == 'input'), None)
         if width_packet is not None:
             def width_row(x):

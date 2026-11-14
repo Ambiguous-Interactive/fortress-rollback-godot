@@ -7,6 +7,7 @@ import sys
 from contract import checksum, initial_game_state, advance_game_state
 from controls import reject
 from launch import execute
+from p2p_contract import fold_input
 from run import rust_environment
 
 
@@ -32,7 +33,7 @@ def temporal_permutation(actual):
                     slot = request['inputs'][0]
                     if slot['status'] == 'confirmed':
                         slot['bytes'] = second if frame == 0 else first
-                incoming = [int.from_bytes(bytes.fromhex(slot['bytes']), 'little') for slot in request['inputs']]
+                incoming = [fold_input(slot['bytes']) for slot in request['inputs']]
                 states[peer] = advance_game_state(states[peer], incoming, 2)
             request['state_bytes'] = states[peer].hex()
             request['checksum'] = checksum(states[peer])
@@ -186,6 +187,12 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
             value = deepcopy(scenario); value['operations'][0][field] = alias; mutants[alias_name + '_' + field] = value
     # An explicit null capacity deserializes as absent in some serde patterns; both adapters must reject it.
     value = deepcopy(scenario); value['queue_capacity'] = None; mutants['capacity_null'] = value
+    # Hostile input widths: unsupported set member, type alias, explicit null, and a step
+    # payload shorter than its configured width; both standalone validators must reject each.
+    value = deepcopy(scenario); value['input_width'] = 3; mutants['width_unsupported'] = value
+    value = deepcopy(scenario); value['input_width'] = True; mutants['width_alias'] = value
+    value = deepcopy(scenario); value['input_width'] = None; mutants['width_null'] = value
+    value = deepcopy(scenario); value['input_width'] = 32; mutants['width_payload'] = value
     # Delay changes: before the first step, after another peer's operation, in the bound band, and aliased.
     if scenario['operations'][0]['kind'] == 'step':
         peer = scenario['operations'][0]['peer']
