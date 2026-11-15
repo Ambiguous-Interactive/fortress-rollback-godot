@@ -74,6 +74,18 @@ Resolve fixed threads after the fix is pushed; explain a declined finding with
 evidence and leave any requested decision explicit. Active change requests or
 unaddressed actionable findings block merge, even when no thread is open.
 
+### External review availability
+
+External automatic reviewers can pause or skip after reviewed commits, or stay
+unavailable for service or billing reasons. Never request one explicitly and
+never change repository or service settings to restore one. Record a paused,
+skipped or failed review check as unavailable coverage in the session record
+together with the exact head it failed to cover and the last reviewed commit
+when the service names one, never as a clean review result, and keep the
+distinction from CI workload failures explicit. The review of record is a
+fresh-context adversarial review plus this complete scan; unavailable external
+coverage is not a merge gate beyond the required CI checks (#307).
+
 Use GitHub MCP to read threads and resolution state. For unsupported surfaces,
 use authenticated `gh` CLI. Then run the authenticated coverage backstop, using
 the full verified head SHA:

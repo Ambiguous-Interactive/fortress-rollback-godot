@@ -145,9 +145,12 @@ before the catch-up flight flushes, and that stamped slot joins the frontier
 immediately; a committed coordinated-drop freeze lifts the frozen slot out of
 the fold and releases its pending ceiling at the same operation. The façade owns
 the mesh fold and re-derives the core's monotone confirmation limit after every
-mutation that moves it — submits, receives, delay raises and committing drop
-services — while the core still refuses any lowering, so a refused
-re-derivation only leaves the conservative bound in place. Upstream's deeper
+mutation that moves it while the match is running and not yet terminated —
+submits, receives, delay raises, committing drop services and the event drains
+that can process a commit, including the public event drain and the collection
+a refused checksum report runs — so a terminated match keeps the last running
+frontier beside its terminal cause. The core still refuses any lowering, so a
+refused re-derivation only leaves the conservative bound in place. Upstream's deeper
 evidence qualifications beyond this shape (the N≥4 relay-floor round machinery
 and the pending-reactivation clamp) stay outside fixed-membership support, where
 no pruned-relay topology or hot-join reactivation exists.

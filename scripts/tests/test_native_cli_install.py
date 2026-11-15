@@ -52,6 +52,9 @@ elif args[:1] == ['install']:
         print('npm http fetch GET https://registry.example/' + package, flush=True)
         print('npm http fetch GET 200 https://registry.example/' + package + '/-/' + package.split('/')[1] + '-' + version + '.tgz?t=SIGNED-QUERY-CREDENTIAL', flush=True)
         print('npm sill runScript postinstall ' + package + '@' + version, flush=True)
+    if scenario.get('install_hang'):
+        (root / 'npm.pid').write_text(str(os.getpid()))
+        time.sleep(60)
     if scenario.get('install_delay'):
         counter = root / 'installs'
         attempt = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -168,29 +171,178 @@ class NativeCliInstallTests(unittest.TestCase):
         # holds the pipe until its own exit, which delays this test far past its bound.
         helper = self.load_helper()
         with tempfile.TemporaryDirectory() as directory:
-            pid_file = Path(directory) / 'grandchild.pid'
-            script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
-                      f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
-            args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
-            stderr = io.StringIO()
-            started = time.monotonic()
-            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
-                with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
-                    helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
-            self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
-            self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
-            self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
-            # A killed process can stay a zombie briefly; poll for its removal.
-            for _ in range(50):
-                try:
-                    os.kill(int(pid_file.read_text()), 0)
-                except ProcessLookupError:
-                    break
-                time.sleep(0.1)
-            else:
-                self.fail('the grandchild pipe holder survived the group kill')
+            # The journal lands inside this test's temporary directory, so no other
+            # suite or concurrent installer shares or cleans the file.
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                evidence = helper.journal_path('@opencode/cli')
+                pid_file = Path(directory) / 'grandchild.pid'
+                script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                          "printf 'npm http fetch GET https://registry.example/partial';"
+                          f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
+                args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+                stderr = io.StringIO()
+                started = time.monotonic()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
+                        helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
+                self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
+                self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
+                self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+                # The consumed bytes of an unterminated final line are evidence too:
+                # the timeout diagnostic and the journal both retain them.
+                self.assertIn('npm http fetch GET https://registry.example/partial', stderr.getvalue())
+                # The streamed journal holds the same redacted evidence on disk, so an
+                # outer deadline that kills this process before it prints keeps it.
+                text = evidence.read_text(encoding='utf-8')
+                self.assertIn('https://registry.example/x.tgz?<redacted>', text)
+                self.assertIn('npm http fetch GET https://registry.example/partial', text)
+                self.assertNotIn('TOK', text, 'the journal never holds query credentials')
+                # A killed process can stay a zombie briefly; poll for its removal.
+                for _ in range(50):
+                    try:
+                        os.kill(int(pid_file.read_text()), 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.1)
+                else:
+                    self.fail('the grandchild pipe holder survived the group kill')
 
-    def invoke(self, package='@opencode/cli', arch='amd64', **scenario):
+    def test_outer_deadline_kill_mid_install_retains_the_streamed_evidence(self):
+        # Value: the recurring #249 failure mode is an outer build deadline that
+        # kills the installer while npm hangs, and the failed Docker layer retained
+        # no partial output; the journal must already hold the redacted acquisition
+        # evidence when the installer dies without running its own timeout path.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'scenario.json').write_text(json.dumps({'package': '@opencode/cli', 'install_hang': True}))
+            npm = root / 'npm'
+            npm.write_text(FAKE_NPM)
+            npm.chmod(0o755)
+            for name in ('opencode', 'codex'):
+                cli = root / name
+                cli.write_text('#!/bin/sh\nexit 0\n')
+                cli.chmod(0o755)
+            # The isolated temporary directory holds the journal, so suites and
+            # concurrent installs neither share nor clean each other's evidence.
+            env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'],
+                       FAKE_ROOT=str(root), TMPDIR=str(root))
+            command = [sys.executable, str(HELPER), '@opencode/cli', 'arm64',
+                       '--attempts', '1', '--interval', '0', '--timeout', '60']
+            evidence = root / 'install-native-cli-opencode-cli.log'
+            process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                # The journal appears as soon as the install command starts streaming;
+                # the generous budget only absorbs a loaded runner's process start.
+                for _ in range(400):
+                    if evidence.exists() and evidence.stat().st_size > 0:
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(evidence.exists() and evidence.stat().st_size > 0,
+                                'the streaming install must journal its first evidence line')
+                process.kill()
+                process.wait(timeout=15)
+                text = evidence.read_text(encoding='utf-8')
+                self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', text,
+                              'the registry acquisition evidence reached the journal before the kill')
+                self.assertNotIn('SIGNED-QUERY-CREDENTIAL', text, 'the journal never holds query credentials')
+            finally:
+                process.kill()
+                process.wait(timeout=15)
+                # The hung fake npm survives its killed parent; end it by the pid it
+                # recorded, so the test leaves no sleeping process behind.
+                pid_file = root / 'npm.pid'
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except (ProcessLookupError, ValueError):
+                        pass
+
+    def test_hostile_journal_path_disables_journaling_without_failing_the_install(self):
+        # Value: the journal is a diagnostic, never a new install failure: a
+        # foreign-owned or planted file at the fixed path must neither stop the
+        # install nor be adopted as this run's evidence, and a run whose journal
+        # was disabled must not send the operator to that path on failure.
+        helper = self.load_helper()
+        for package, arch in (('@opencode/cli', 'amd64'), ('@openai/codex', 'arm64')):
+            with self.subTest(package=package, arch=arch):
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch.object(helper.tempfile, 'tempdir', directory):
+                        evidence = helper.journal_path(package)
+                        evidence.write_text('planted evidence that must not be adopted\n', encoding='utf-8')
+                        evidence.chmod(0o000)
+                        try:
+                            result, calls = self.invoke(package, arch, tmpdir=directory, failures=0)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertIn('install evidence journal disabled', result.stderr)
+                            self.assertTrue(any(call[0] == 'install' for call in calls),
+                                            'the install must proceed without its journal')
+                            self.assertIn('installed ' + package + '@', result.stdout)
+                        finally:
+                            evidence.chmod(0o600)
+                        self.assertIn('planted evidence', evidence.read_text(encoding='utf-8'),
+                                      'the hostile file must not be truncated into this run\u2019s journal')
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch.object(helper.tempfile, 'tempdir', directory):
+                        evidence = helper.journal_path(package)
+                        evidence.write_text('planted evidence that must not be adopted\n', encoding='utf-8')
+                        evidence.chmod(0o000)
+                        try:
+                            result, _ = self.invoke(package, arch, tmpdir=directory, install_error=True)
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertIn('install evidence journal disabled', result.stderr)
+                            self.assertNotIn('partial output retained', result.stderr,
+                                             'a disabled journal must not be named as retention')
+                        finally:
+                            evidence.chmod(0o600)
+
+    def test_symlink_journal_path_disables_journaling_and_spares_the_target(self):
+        # Value: O_NOFOLLOW refuses a planted symlink at the fixed path: the
+        # install proceeds without a journal and the symlink target keeps its
+        # bytes instead of being truncated into this run's evidence.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                target = Path(directory) / 'sentinel.log'
+                target.write_text('sentinel bytes that must survive\n', encoding='utf-8')
+                evidence = helper.journal_path('@opencode/cli')
+                evidence.symlink_to(target)
+                result, _ = self.invoke('@opencode/cli', 'amd64', tmpdir=directory, failures=0)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('install evidence journal disabled', result.stderr)
+                self.assertIn('sentinel bytes that must survive', target.read_text(encoding='utf-8'),
+                              'the planted symlink target must not be truncated or adopted')
+
+    def test_install_failure_retains_its_journal_for_the_next_reader(self):
+        # Value: the retention path for a plain non-timeout install failure: the
+        # journal with the ordered acquisition and lifecycle evidence survives the
+        # failed run, without query credentials.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                evidence = helper.journal_path('@opencode/cli')
+                result, _ = self.invoke(install_error=True, tmpdir=directory)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue(evidence.exists(), 'a failed install keeps its evidence journal')
+                text = evidence.read_text(encoding='utf-8')
+                self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', text)
+                self.assertIn('npm sill runScript postinstall @opencode/cli@', text)
+                self.assertNotIn('SIGNED-QUERY-CREDENTIAL', text, 'the journal never holds query credentials')
+
+    def test_healthy_install_leaves_no_evidence_journal(self):
+        # Value: the journal is failure evidence, not build residue; a green
+        # install on any architecture removes it.
+        helper = self.load_helper()
+        for package, arch in (('@opencode/cli', 'amd64'), ('@openai/codex', 'arm64')):
+            with self.subTest(package=package, arch=arch):
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch.object(helper.tempfile, 'tempdir', directory):
+                        evidence = helper.journal_path(package)
+                        result, _ = self.invoke(package, arch, tmpdir=directory, failures=1, code='ETARGET')
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertFalse(evidence.exists(), 'a healthy install removes its evidence journal')
+
+    def invoke(self, package='@opencode/cli', arch='amd64', tmpdir=None, **scenario):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'scenario.json').write_text(json.dumps(dict(package=package, **scenario)))
@@ -201,7 +353,10 @@ class NativeCliInstallTests(unittest.TestCase):
                 cli = root / name
                 cli.write_text('#!/bin/sh\necho "' + name + ' final runtime version"\nexit ' + str(scenario.get('runtime_exit', 0)) + '\n')
                 cli.chmod(0o755)
-            env = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'], FAKE_ROOT=directory)
+            # The journal follows TMPDIR, so each invocation owns its evidence file
+            # and suites and concurrent installs never share or clean each other's.
+            env = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'], FAKE_ROOT=directory,
+                       TMPDIR=str(tmpdir or directory))
             command = [sys.executable, str(HELPER), package, arch, '--attempts', '3', '--interval', '0',
                        '--timeout', '0.3' if scenario.get('hang') else '10']
             result = subprocess.run(command, capture_output=True, encoding='utf-8', env=env, timeout=15)

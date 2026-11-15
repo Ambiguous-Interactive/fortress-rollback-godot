@@ -735,6 +735,10 @@ func drain_events() -> Array[Dictionary]:
 	if _has_mutation_guard():
 		return result
 	_collect_events()
+	# A barrier commit processed by this drain is a fold-input mutation, so the
+	# caller's immediately following status read must not lag it (#375).
+	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+		_confirmation_code()
 	for event: Dictionary in _events:
 		result.append(_owned_event(event))
 	_events.clear()
@@ -1146,6 +1150,11 @@ func _service_controls(now_us: int, send_reports: bool) -> int:
 							return _checksum_failure(prior_comparison, prior_failure)
 						_collect_events()
 						_check_failure()
+						# The drain or the earlier committing service mutates the fold, and this
+						# return skips the caller's re-derivation, so the failed step's reported
+						# frontier must not lag the mutation past this read (#375).
+						if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+							_confirmation_code()
 						return sent
 					_checksums.sent(_ids[index], scheduled.frame)
 		if prior_comparison != Types.Code.OK:
