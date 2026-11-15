@@ -17,7 +17,7 @@ class CountingEndpoint:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["roundtrips", "echoes", "mismatch", "time", "identity", "backpressure", "timeout_pressure", "ownership"])
+	return PackedStringArray(["roundtrips", "echoes", "mismatch", "delay_profile", "time", "identity", "backpressure", "timeout_pressure", "ownership"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -25,6 +25,7 @@ func run_case(name: String, context: RefCounted) -> void:
 		"roundtrips": _roundtrips(context)
 		"echoes": _echoes(context)
 		"mismatch": _mismatch(context)
+		"delay_profile": _delay_profile(context)
 		"time": _time(context)
 		"identity": _identity(context)
 		"backpressure": _backpressure(context)
@@ -127,10 +128,10 @@ func _echoes(context: RefCounted) -> void:
 func _mismatch(context: RefCounted) -> void:
 	var changes: Array[Dictionary] = [{"min_compat_version": 2}, {"player_count": 3, "roster": [_id(1), _id(2), _id(3)]},
 		{"input_width": 2, "neutral_input": PackedByteArray([0, 0])}, {"fps": 30}, {"max_prediction": 4}, {"desync_interval": 0}, {"features": 1},
-		{"input_delay": 1}, {"input_format": 2}, {"snapshot_format": 2}, {"checksum_algorithm": 2}, {"queue_capacity": 256}, {"neutral_input": PackedByteArray([1])},
+		{"input_format": 2}, {"snapshot_format": 2}, {"checksum_algorithm": 2}, {"queue_capacity": 256}, {"neutral_input": PackedByteArray([1])},
 		{"roster": [_id(2), _id(1)]}, {"config_digest": _id(1)}]
 	var expected: Array[String] = ["min_compat_version", "player_count", "input_width", "fps", "max_prediction", "desync_interval", "features",
-		"input_delay", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster", "config_digest"]
+		"input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster", "config_digest"]
 	for index: int in range(changes.size()):
 		var endpoint: Endpoint = _endpoint()
 		endpoint.begin(0, _id(1, 16))
@@ -152,6 +153,27 @@ func _mismatch(context: RefCounted) -> void:
 	context.equal(endpoint.status().mismatch.field, "fps", "upstream precedence")
 	context.equal(endpoint.status().pending.size(), 0, "bad known echo consumed")
 	context.equal(endpoint.status().remote_connection, "", "bad echo never binds")
+
+
+func _delay_profile(context: RefCounted) -> void:
+	# Input delay is each endpoint's own schedule in the pinned upstream: a peer that declares
+	# a different starting delay still binds and exposes that delay, while every other field
+	# refuses exactly as before.
+	var options: H.Options = H.Options.new()
+	options.roundtrips = 1
+	var endpoint: Endpoint = _endpoint(options)
+	context.equal(endpoint.begin(0, _id(1, 16)), H.Code.OK, "start foreign-delay profile")
+	endpoint.drain_outbox()
+	context.equal(endpoint.receive(_packet(T.Kind.SYNC_REPLY, 1, {"input_delay": 2}), _id(2), 1), H.Code.OK, "foreign delay binds")
+	context.equal(endpoint.status().mismatch, {}, "delay is not an agreement field")
+	context.equal(endpoint.status().remote_input_delay, 2, "declared peer delay exposed")
+	context.equal(endpoint.status().state, "running", "running with a foreign delay")
+	context.equal(endpoint.drain_events().size(), 1, "one synchronized event")
+	var endpoint2: Endpoint = _endpoint(options)
+	endpoint2.begin(0, _id(1, 16))
+	endpoint2.drain_outbox()
+	context.equal(endpoint2.receive(_packet(T.Kind.SYNC_REQUEST, 90, {"input_delay": 2, "queue_capacity": 256}), _id(2), 1), H.Code.OK, "bounded mismatch delivered")
+	context.equal(endpoint2.status().mismatch.get("field", "missing"), "queue_capacity", "delay mismatch reports the next refusing field")
 
 
 func _time(context: RefCounted) -> void:

@@ -12,7 +12,11 @@ static func mismatch(ours: T.Message, theirs: T.Message) -> Dictionary:
 		var second: Variant = theirs.get(field) if field in ["min_compat_version", "features"] else theirs.config.get(field)
 		if first != second:
 			return {"field": field, "ours": first, "theirs": second}
-	for field: String in ["input_delay", "input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster"]:
+	# Input delay is each endpoint's own schedule in the pinned upstream: peers may start
+	# their local slots on different delays, so unlike the other Godot session fields it is
+	# not compared here. The declared peer delay is learned in the handshake and fixes
+	# where that peer's first frame is accepted.
+	for field: String in ["input_format", "snapshot_format", "checksum_algorithm", "queue_capacity", "neutral_input", "roster"]:
 		if ours.config.get(field) != theirs.config.get(field):
 			return {"field": field, "ours": _owned(ours.config.get(field)), "theirs": _owned(theirs.config.get(field))}
 	if ours.config_digest != theirs.config_digest:

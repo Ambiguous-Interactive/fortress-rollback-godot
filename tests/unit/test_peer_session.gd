@@ -29,7 +29,8 @@ func cases() -> PackedStringArray:
 			"request_mismatch",
 			"low_windows",
 			"packet_service",
-			"scheduled_inputs"
+			"scheduled_inputs",
+			"delayed_peers"
 		]
 	)
 
@@ -63,6 +64,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_packet_service(context)
 		"scheduled_inputs":
 			_scheduled_inputs(context)
+		"delayed_peers":
+			_delayed_peers(context)
 	context.finish()
 
 
@@ -88,7 +91,8 @@ func _build(
 	game_override: RefCounted = null,
 	queue_capacity: int = 128,
 	replay_frames: int = 0,
-	expert: bool = false
+	expert: bool = false,
+	delays: Variant = null
 ) -> Dictionary:
 	# Existing P3 fixtures isolate input/ACK traffic; lifecycle fixtures opt in.
 	if lifecycle_options == null:
@@ -109,7 +113,7 @@ func _build(
 				config.local_players.append(slot)
 		config.input_width = 4
 		config.neutral_input = PackedByteArray([0, 0, 0, 0])
-		config.input_delay = delay
+		config.input_delay = delays[player] if delays != null else delay
 		config.queue_capacity = queue_capacity
 		config.max_prediction_frames = window
 		config.history_slots = window + 1
@@ -129,7 +133,7 @@ func _build(
 		local.session_id = _id(90, 16)
 		local.config.player_count = count
 		local.config.input_width = 4
-		local.config.input_delay = delay
+		local.config.input_delay = delays[player] if delays != null else delay
 		local.config.queue_capacity = queue_capacity
 		local.config.max_prediction = window
 		local.config.desync_interval = checksum_interval
@@ -242,6 +246,33 @@ func _run_mesh(context: RefCounted, count: int, delay: int, loss: bool) -> void:
 	for peer: Peer in mesh.peers:
 		context.equal(peer.status().confirmed_frame >= 6 + delay, true, "mesh gossip confirms scheduled prefix")
 	context.state(8, expected.bytes())
+
+
+func _delayed_peers(context: RefCounted) -> void:
+	# Heterogeneous construction delays: pinned upstream gives every endpoint its own starting
+	# schedule, so the mesh still confirms one canonical history with a late and an on-time peer.
+	var mesh: Dictionary = _build(context, 2, 0, false, 128, true, false, 4, null, 60, 0, null, 128, 0, false, [2, 0])
+	for round: int in range(7):
+		mesh.now += 1000
+		_tick(context, mesh)
+		_deliver(context, mesh, _drain(mesh))
+		_deliver(context, mesh, _drain(mesh))
+	mesh.now += 1000
+	_tick(context, mesh)
+	_deliver(context, mesh, _drain(mesh))
+	_deliver(context, mesh, _drain(mesh))
+	var expected: RefCounted = Reference.new(2, 2)
+	for frame: int in range(8):
+		var rows: Array[Dictionary] = []
+		for slot: int in range(2):
+			var start: int = 2 if slot == 0 else 0
+			var bytes: PackedByteArray = _sample(slot, frame - start) if frame >= start else PackedByteArray([0, 0, 0, 0])
+			rows.append({"player": slot, "bytes": bytes.hex_encode(), "status": "confirmed"})
+		context.equal(expected.advance(rows), "", "independent confirmed execution")
+	for game: RefCounted in mesh.games:
+		context.equal(game.game.bytes(), expected.bytes(), "heterogeneous starts converge on confirmed bytes")
+	for peer: Peer in mesh.peers:
+		context.equal(peer.status().confirmed_frame >= 6, true, "both schedules confirm the shared prefix")
 
 
 func _multiple(context: RefCounted) -> void:

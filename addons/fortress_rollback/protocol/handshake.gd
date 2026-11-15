@@ -40,7 +40,7 @@ func configure(local: Variant, remote_sender: Variant, options: Variant) -> int:
 		"max_outbox", "max_events", "max_transitions"]:
 		_options.set(field, options.get(field))
 	_state = {"state": "initializing", "remaining": options.roundtrips, "requests_sent": 0, "pending": {}, "consumed": {}, "remote_connection": "", "mismatch": {},
-		"timeout_sent": false, "now_us": -1, "start_us": 0, "last_send_us": 0, "remote_packet_bytes": options.max_packet_bytes}
+		"timeout_sent": false, "now_us": -1, "start_us": 0, "last_send_us": 0, "remote_packet_bytes": options.max_packet_bytes, "remote_input_delay": -1}
 	return H.Code.OK
 
 
@@ -184,6 +184,10 @@ func _reply(plan: Dictionary, message: T.Message, next_token: Variant) -> int:
 				if plan.state.remote_connection.is_empty():
 					plan.state.remote_connection = message.connection_id.hex_encode()
 				plan.state.remote_packet_bytes = mini(plan.state.remote_packet_bytes, message.max_packet_bytes)
+				# Input delay is each endpoint's own schedule, not an agreement: the declared
+				# peer delay travels in the exchanged config and fixes where that peer's
+				# first frame arrives, exactly like pinned upstream.
+				plan.state.remote_input_delay = int(message.config.input_delay)
 				plan.state.remaining -= 1
 				if plan.state.remaining == 0:
 					plan.state.state = "running"

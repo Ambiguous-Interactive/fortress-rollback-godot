@@ -18,6 +18,9 @@ var _history: History
 var _samples: Array[PackedByteArray] = []
 var _received: PackedInt64Array = PackedInt64Array()
 var _frozen_frames: PackedInt64Array = PackedInt64Array()
+## Expected first frame per remote slot's own schedule; empty (or a negative entry) falls
+## back to the session input_delay, so standalone and sync-test behavior is unchanged.
+var _remote_starts: PackedInt64Array = PackedInt64Array()
 var _current: int = 0
 var _time: int = -1
 var _reason: int = Code.OK
@@ -77,6 +80,7 @@ func configure(config: Config) -> int:
 		_samples[player] = PackedByteArray()
 	_received.resize(config.player_count)
 	_received.fill(-1)
+	_remote_starts = PackedInt64Array()
 	_frozen_frames.resize(config.player_count)
 	_frozen_frames.fill(-1)
 	_current = 0
@@ -172,7 +176,8 @@ func receive_input(player: int, frame: int, bytes: PackedByteArray) -> Types.Res
 	if frame <= _received[player]:
 		var existing: Queue.Result = _queues[player].retained_confirmed_input(frame)
 		return Types.Result.new(Code.OK if existing.code == Queue.Code.OK and existing.bytes == bytes else Code.INPUT_ALREADY_SUBMITTED)
-	if frame != _received[player] + 1 and not (_received[player] == -1 and frame == _config.input_delay):
+	var expected: int = _remote_starts[player] if player < _remote_starts.size() and _remote_starts[player] >= 0 else _config.input_delay
+	if frame != _received[player] + 1 and not (_received[player] == -1 and frame == expected):
 		return Types.Result.new(Code.INVALID_FRAME)
 	# Input delay applies to local samples, not already scheduled remote frames.
 	var result: Queue.Result = _queues[player].add_input_with_reclaim_floor(frame - _queues[player].frame_delay(), bytes, _floor())
@@ -250,6 +255,25 @@ func input_delay(player: int) -> int:
 	if _config == null or player < 0 or player >= _queues.size() or player not in _config.local_players:
 		return -1
 	return _queues[player].frame_delay()
+
+
+## Fixes one remote slot's expected first frame to the owning peer's declared delay, before
+## that slot has received anything. Empty starts keep the session input_delay, which stays
+## the behavior for every non-peer facade.
+func set_remote_start(player: int, start: int) -> Types.Result:
+	var code: int = _mutation_code()
+	if code != Code.OK:
+		return Types.Result.new(code)
+	if _config == null or player < 0 or player >= _queues.size() or player in _config.local_players:
+		return Types.Result.new(Code.INVALID_PLAYER)
+	if start < 0 or start >= _config.queue_capacity:
+		return Types.Result.new(Code.INVALID_CONFIGURATION)
+	if _received[player] != -1:
+		return Types.Result.new(Code.INVALID_FRAME)
+	while _remote_starts.size() <= player:
+		_remote_starts.append(-1)
+	_remote_starts[player] = start
+	return Types.Result.new(Code.OK)
 
 
 ## Before the player's first sample any delay that fits the queue applies. After it, only increases:

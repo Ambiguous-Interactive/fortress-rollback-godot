@@ -16,7 +16,7 @@ const W: String = "00000000-0000-0000-0000-000000000003"
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["ownership", "collision", "negotiation", "mismatch", "attribution", "plans", "lifecycle", "meshes"])
+	return PackedStringArray(["ownership", "collision", "negotiation", "mismatch", "delay_profile", "attribution", "plans", "lifecycle", "meshes"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -30,6 +30,17 @@ func run_case(name: String, context: RefCounted) -> void:
 		"mismatch":
 			for field: String in ["fps", "input_format", "roster", "snapshot_format"]:
 				_negotiate(context, field)
+		"delay_profile":
+			# The digest identifies the shared agreement. Per-peer construction delays are each
+			# endpoint's own schedule in the pinned upstream, so they normalize out of the digest
+			# while every machine's handshake config keeps its own declared delay.
+			var roster: PackedStringArray = PackedStringArray([V, U])
+			var steady: M = _delayed_membership(context, U, roster, 0)
+			var raised: M = _delayed_membership(context, V, PackedStringArray([U, V]), 2)
+			context.equal(steady.handshake_message().config_digest, raised.handshake_message().config_digest, "delay normalizes out of the agreement digest")
+			context.equal(steady.handshake_message().config.input_delay, 0, "steady keeps its declared delay")
+			context.equal(raised.handshake_message().config.input_delay, 2, "raised keeps its declared delay")
+			context.equal(raised.handshake_message().config_digest.hex_encode(), "27d8470a909b9d1d", "normalized digest keeps the delay-zero golden")
 		"attribution":
 			_attribution(context)
 		"plans":
@@ -41,16 +52,21 @@ func run_case(name: String, context: RefCounted) -> void:
 	context.finish()
 
 
-func _membership(context: RefCounted, local: String, roster: PackedStringArray, mismatch: String = "") -> M:
+func _membership(context: RefCounted, local: String, roster: PackedStringArray, mismatch: String = "", delay: int = 0) -> M:
 	var profile: T.Config = T.Config.new()
 	profile.player_count = roster.size()
 	profile.input_width = 4
+	profile.input_delay = delay
 	profile.neutral_input = PackedByteArray([0, 0, 0, 0])
 	if mismatch in ["fps", "input_format", "snapshot_format"]:
 		profile.set(mismatch, profile.get(mismatch) + 1)
 	var membership: M = M.new()
 	context.equal(membership.configure(local, roster, _bytes(7, 16), _bytes(1 if local == U else 2, 8), profile), OK, "membership configure")
 	return membership
+
+
+func _delayed_membership(context: RefCounted, local: String, roster: PackedStringArray, delay: int) -> M:
+	return _membership(context, local, roster, "", delay)
 
 
 func _ownership(context: RefCounted) -> void:

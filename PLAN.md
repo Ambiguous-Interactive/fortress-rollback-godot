@@ -300,7 +300,12 @@ drives the `global_floor` schedule — three players, prediction window four,
 capacity nine, a fast queue receiving ahead, a three-frame lagger and a delay
 raise during prediction — through the pinned SyncLayer and the shipped session,
 comparing ordered requests, canonical states, floor and retained-row
-observations and a fast-local-high-water floor mutant. A failing P2P schedule
+observations and a fast-local-high-water floor mutant. Per-peer construction
+delays are heterogeneous across the mesh: the handshake no longer agrees on input
+delay because each endpoint's declared schedule is its own, the first remote
+frame lands at the peer's declared start, and `mesh_2_delays_2_0`,
+`mesh_3_delays_2_1_0_loss`, `mesh_4_delays_2_0_2_0` and `mesh_4_couch_delays_2_0`
+compare the per-peer delay-profile axis. A failing P2P schedule
 now shrinks to its first divergence: the launcher truncates at the named
 operation, greedily removes remaining operations while both reruns keep
 disagreeing, re-ranks anchored deliveries, and confirms the minimized scenario

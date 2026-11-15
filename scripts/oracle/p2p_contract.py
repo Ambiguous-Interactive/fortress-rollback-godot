@@ -44,6 +44,18 @@ def slots_of(scenario):
     return slots
 
 
+def scenario_delays(scenario):
+    """Per-slot starting delays; an omitted field stays the shared input_delay for every endpoint.
+
+    Each machine constructs its session with its own delay, applied to its local slots,
+    exactly as pinned upstream applies `with_input_delay` per endpoint.
+    """
+    if 'delays' not in scenario:
+        return [scenario['input_delay']] * scenario['players']
+    owner = [machine for machine, slots in enumerate(slots_of(scenario)) for _ in slots]
+    return [scenario['delays'][owner[slot]] for slot in range(scenario['players'])]
+
+
 def _trunc_div(numerator, denominator):
     """C++-style truncation, matching GDScript and Rust integer division for negatives."""
     quotient = numerator // denominator
@@ -73,7 +85,7 @@ def validate_scenario(value):
         raise ValueError('p2p scenario: invalid object')
     fields(value, 'format players input_delay max_prediction operations' + (' lifecycle' if 'lifecycle' in value else '')
            + (' queue_capacity' if 'queue_capacity' in value else '') + (' input_width' if 'input_width' in value else '')
-           + (' layout' if 'layout' in value else ''), 'p2p scenario')
+           + (' layout' if 'layout' in value else '') + (' delays' if 'delays' in value else ''), 'p2p scenario')
     integer(value['format'], 1, 1, 'format')
     integer(value['players'], 2, 8, 'players')
     integer(value['input_delay'], 0, 2, 'delay')
@@ -96,6 +108,17 @@ def validate_scenario(value):
         if 'lifecycle' in value:
             # Per-endpoint metric attribution across machines sharing addresses is a separate slice.
             raise ValueError('lifecycle with explicit layout')
+    # Per-machine construction delays: each endpoint starts its own slots on its own schedule,
+    # exactly like pinned upstream's per-endpoint with_input_delay. The list owns one value
+    # per machine; every element stays inside the compared band and every production bound.
+    if 'delays' in value:
+        profiles = value['delays']
+        machines = len(slots_of(value))
+        if type(profiles) is not list or len(profiles) != machines:
+            raise ValueError('delay profile inventory')
+        if any(type(delay) is not int or not 0 <= delay <= 2 for delay in profiles):
+            raise ValueError('delay profile band')
+    capacity = value.get('queue_capacity', 128)
     if 'queue_capacity' in value:
         # Explicit non-default queue profile; both adapters build their rings from it.
         integer(value['queue_capacity'], 2, 128, 'queue capacity')
@@ -104,6 +127,9 @@ def validate_scenario(value):
     # The peer session refuses any agreed initial delay above its own unclamped bound.
     if value['input_delay'] > godot_max_delay(value['max_prediction'], value.get('queue_capacity', 128)):
         raise ValueError('input delay above the peer bound')
+    if 'delays' in value:
+        if max(value['delays']) > godot_max_delay(value['max_prediction'], capacity):
+            raise ValueError('delay profile above the peer bound')
     if 'lifecycle' in value:
         lifecycle.settings(value['lifecycle'], value['players'])
     if type(value['operations']) is not list or not 1 <= len(value['operations']) <= 10000:
@@ -237,6 +263,7 @@ def validate(value, scenario, source=False):
     layout_slots = slots_of(scenario); machines = len(layout_slots)
     owner = [machine for machine, slots in enumerate(layout_slots) for _ in slots]
     width = scenario_width(scenario)
+    slot_starts = scenario_delays(scenario)
     for index, outgoing in enumerate(value['packets']):
         packet(outgoing, scenario['players'], source, layout_slots, width)
         if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in {'input', 'input_ack'}:
@@ -248,7 +275,7 @@ def validate(value, scenario, source=False):
     if divergent >= 0:
         states[divergent] = states[divergent][:4] + (1).to_bytes(4, 'little') + states[divergent][8:]
     snapshots = [{} for _ in states]; samples = [{} for _ in range(scenario['players'])]; next_packet = 0
-    delays = [scenario['input_delay']] * scenario['players']; scheduled = [-1] * scenario['players']
+    delays = list(slot_starts); scheduled = [-1] * scenario['players']
     for index, record in enumerate(value['records']):
         fields(record, 'index peer frame_before frame_after confirmed_frame error requests events outgoing state'
                + ('' if source else ' extension_events') + (' metrics pre_state pre_confirmed' if 'lifecycle' in scenario else ''), 'record')
@@ -356,7 +383,10 @@ def validate(value, scenario, source=False):
                     if type(entry['status']) is not str or entry['status'] not in {'confirmed', 'predicted'}:
                         raise ValueError('input status')
                     if entry['status'] == 'confirmed':
-                        expected = '00' * width if frame < scenario['input_delay'] else samples[slot].get(frame)
+                        # The confirmed prefix band follows each slot's own STARTING schedule:
+                        # a runtime raise only moves where the slot's next sample lands, so
+                        # rows already confirmed below the start stay checked against it.
+                        expected = '00' * width if frame < slot_starts[slot] else samples[slot].get(frame)
                         if expected is None or expected != entry['bytes']:
                             raise ValueError(f'operation {index}: submitted confirmed prefix frame {frame} slot {slot}')
                     incoming.append(fold_input(entry['bytes']))
