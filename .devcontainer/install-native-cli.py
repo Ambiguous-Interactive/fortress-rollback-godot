@@ -6,9 +6,11 @@ import math
 import os
 from pathlib import Path
 import re
+import select
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -17,6 +19,10 @@ class PublicationPending(Exception):
 
 
 QUERY_CREDENTIALS = re.compile(r'(https?://[^\s?#]+)\?[^\s]*')
+
+# One install's npm http log stays far below this; the cap only bounds a
+# pathological loop so a stuck build cannot fill the disk with evidence.
+JOURNAL_LIMIT_BYTES = 4 * 1024 * 1024
 
 
 def redact_query_strings(text):
@@ -29,10 +35,90 @@ def redact_query_strings(text):
     return QUERY_CREDENTIALS.sub(r'\1?<redacted>', text)
 
 
+def journal_path(package):
+    """The fixed per-package evidence file for the merged install stream.
+
+    The name must be derivable without the installer process: a Docker or CI
+    deadline can kill the installer mid-command, and the next reader has to
+    find the partial acquisition-versus-lifecycle evidence on disk (issue #249).
+    """
+    slug = package.removeprefix('@').replace('/', '-')
+    return Path(tempfile.gettempdir()) / f'install-native-cli-{slug}.log'
+
+
 class Installer:
     def __init__(self, args):
         self.args = args
         self.deadline = time.monotonic() + args.timeout
+
+    @staticmethod
+    def _stream_fileno(process):
+        """The raw descriptor of a real merged pipe, or None for buffered collection."""
+        try:
+            return process.stdout.fileno()
+        except (AttributeError, OSError, ValueError):
+            return None
+
+    def _stream_with_journal(self, process, fileno, budget):
+        """Collect the merged stream line by line into the fixed evidence journal.
+
+        Each completed line is redacted and flushed as npm produces it, so an
+        outer build deadline that kills this process mid-install still leaves
+        the partial registry-versus-lifecycle evidence on disk (issue #249).
+        Lines are buffered whole because the redaction regex needs the URL and
+        its query in one piece. Returns the collected text in npm's order.
+        """
+        path = journal_path(self.args.package)
+        collected = []
+        pending = ''
+        written = 0
+        deadline = time.monotonic() + budget
+        with open(path, 'w', encoding='utf-8') as journal:
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected))
+                ready, _, _ = select.select([fileno], [], [], min(left, 0.5))
+                if not ready:
+                    continue
+                chunk = os.read(fileno, 65536)
+                if not chunk:
+                    break
+                pending += chunk.decode('utf-8', errors='replace')
+                while True:
+                    newline = pending.find('\n')
+                    if newline < 0:
+                        break
+                    line = pending[:newline + 1]
+                    pending = pending[newline + 1:]
+                    collected.append(line)
+                    if written < 0:
+                        continue
+                    if written >= JOURNAL_LIMIT_BYTES:
+                        journal.write('...[journal truncated at the byte budget]\n')
+                        journal.flush()
+                        written = -1
+                        continue
+                    journal.write(redact_query_strings(line))
+                    # The flush is the point: a hard outer kill keeps only what
+                    # already reached the disk.
+                    journal.flush()
+                    written += len(line)
+            if pending:
+                # An incomplete final line is still evidence; keep its redaction safe
+                # because the missing newline cannot split a URL mid-query.
+                collected.append(pending)
+                if 0 <= written < JOURNAL_LIMIT_BYTES:
+                    journal.write(redact_query_strings(pending))
+                    journal.flush()
+        # EOF means every writer closed the pipe; the direct child is exiting, so
+        # this wait is bounded by its own teardown, not by a surviving descendant
+        # (one would still hold the pipe open and prevent the EOF).
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected)) from None
+        return ''.join(collected)
 
     def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
@@ -51,7 +137,12 @@ class Installer:
         process = subprocess.Popen(command, encoding='utf-8', stdout=stdout, stderr=stderr,
                                    start_new_session=True)
         try:
-            stdout, stderr = process.communicate(timeout=min(120, remaining))
+            fileno = self._stream_fileno(process) if merged else None
+            if fileno is not None:
+                print(f'install phase evidence journal: {journal_path(self.args.package)}', file=sys.stderr, flush=True)
+                stdout, stderr = self._stream_with_journal(process, fileno, min(120, remaining)), ''
+            else:
+                stdout, stderr = process.communicate(timeout=min(120, remaining))
         except subprocess.TimeoutExpired as failure:
             # Preserve the first attempt's diagnostics even when the process tree
             # hangs, in the order npm produced them, without registry credentials.
@@ -75,10 +166,14 @@ class Installer:
                     if process.stderr:
                         process.stderr.close()
                     stdout, stderr = '', ''
-            text = (stdout or '') + (stderr or '')
+            early = failure.output or ''
+            if isinstance(early, bytes):
+                early = early.decode('utf-8', errors='replace')
+            text = early + (stdout or '') + (stderr or '')
             if text:
                 print(redact_query_strings(text), end='', file=sys.stderr)
-            raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget') from failure
+            note = f'; partial output retained at {journal_path(self.args.package)}' if merged else ''
+            raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget{note}') from failure
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode:
             combined = redact_query_strings((result.stdout or '') + (result.stderr or ''))
@@ -91,7 +186,11 @@ class Installer:
             missing = publication is True or (publication and any(spec in tokens for spec in publication))
             if missing and codes and codes <= {'ETARGET', 'E404'}:
                 raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
-            raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode})')
+            note = f'; partial output retained at {journal_path(self.args.package)}' if merged else ''
+            raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode}){note}')
+        if merged:
+            # A healthy install leaves no evidence journal behind.
+            journal_path(self.args.package).unlink(missing_ok=True)
         return result.stdout.strip()
 
     def metadata(self, spec, publication=False):
@@ -140,8 +239,11 @@ class Installer:
                 # Foreground scripts stream the wrapper's postinstall (native version probe plus
                 # nested fallback npm) into the merged stream, and the http loglevel names each
                 # registry request, so a hang localizes to lifecycle execution versus acquisition.
-                # npm never prints authorization material at this level, and the merged stream is
-                # only printed on failure or timeout, in its original order.
+                # The merged stream is journaled to disk line by line as npm produces it, so an
+                # outer build deadline that kills this process still leaves the partial evidence
+                # redacted and on disk at a fixed, discoverable path (issue #249). npm never
+                # prints authorization material at this level, and the merged stream is only
+                # printed on failure or timeout, in its original order.
                 self.command(['npm', 'install', '-g', '--include=optional', '--prefer-online',
                               '--foreground-scripts', '--loglevel=http', package + '@' + version],
                              install_specs, phase='global installation', merged=True)

@@ -52,6 +52,8 @@ elif args[:1] == ['install']:
         print('npm http fetch GET https://registry.example/' + package, flush=True)
         print('npm http fetch GET 200 https://registry.example/' + package + '/-/' + package.split('/')[1] + '-' + version + '.tgz?t=SIGNED-QUERY-CREDENTIAL', flush=True)
         print('npm sill runScript postinstall ' + package + '@' + version, flush=True)
+    if scenario.get('install_hang'):
+        time.sleep(60)
     if scenario.get('install_delay'):
         counter = root / 'installs'
         attempt = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -167,28 +169,90 @@ class NativeCliInstallTests(unittest.TestCase):
         # fails_when=the timeout kills only the direct child; a surviving grandchild
         # holds the pipe until its own exit, which delays this test far past its bound.
         helper = self.load_helper()
-        with tempfile.TemporaryDirectory() as directory:
-            pid_file = Path(directory) / 'grandchild.pid'
-            script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
-                      f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
-            args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
-            stderr = io.StringIO()
-            started = time.monotonic()
-            with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
-                with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
-                    helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
-            self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
-            self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
-            self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
-            # A killed process can stay a zombie briefly; poll for its removal.
-            for _ in range(50):
-                try:
-                    os.kill(int(pid_file.read_text()), 0)
-                except ProcessLookupError:
-                    break
-                time.sleep(0.1)
-            else:
-                self.fail('the grandchild pipe holder survived the group kill')
+        evidence = helper.journal_path('@opencode/cli')
+        evidence.unlink(missing_ok=True)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                pid_file = Path(directory) / 'grandchild.pid'
+                script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                          f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
+                args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
+                stderr = io.StringIO()
+                started = time.monotonic()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+                    with self.assertRaisesRegex(ValueError, 'timed out during global installation'):
+                        helper.Installer(args).command(['sh', '-c', script], phase='global installation', merged=True)
+                self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
+                self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
+                self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+                # The streamed journal holds the same redacted evidence on disk, so an
+                # outer deadline that kills this process before it prints keeps it.
+                text = evidence.read_text(encoding='utf-8')
+                self.assertIn('https://registry.example/x.tgz?<redacted>', text)
+                self.assertNotIn('TOK', text, 'the journal never holds query credentials')
+                # A killed process can stay a zombie briefly; poll for its removal.
+                for _ in range(50):
+                    try:
+                        os.kill(int(pid_file.read_text()), 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.1)
+                else:
+                    self.fail('the grandchild pipe holder survived the group kill')
+        finally:
+            evidence.unlink(missing_ok=True)
+
+    def test_outer_deadline_kill_mid_install_retains_the_streamed_evidence(self):
+        # Value: the recurring #249 failure mode is an outer build deadline that
+        # kills the installer while npm hangs, and the failed Docker layer retained
+        # no partial output; the journal must already hold the redacted acquisition
+        # evidence when the installer dies without running its own timeout path.
+        helper = self.load_helper()
+        evidence = helper.journal_path('@opencode/cli')
+        evidence.unlink(missing_ok=True)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'scenario.json').write_text(json.dumps({'package': '@opencode/cli', 'install_hang': True}))
+                npm = root / 'npm'
+                npm.write_text(FAKE_NPM)
+                npm.chmod(0o755)
+                for name in ('opencode', 'codex'):
+                    cli = root / name
+                    cli.write_text('#!/bin/sh\nexit 0\n')
+                    cli.chmod(0o755)
+                env = dict(os.environ, PATH=str(root) + os.pathsep + os.environ['PATH'], FAKE_ROOT=str(root))
+                command = [sys.executable, str(HELPER), '@opencode/cli', 'arm64',
+                           '--attempts', '1', '--interval', '0', '--timeout', '60']
+                process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # The journal appears as soon as the install command starts streaming,
+                # before the fake npm's first line arrives.
+                for _ in range(100):
+                    if evidence.exists() and evidence.stat().st_size > 0:
+                        break
+                    time.sleep(0.05)
+                process.kill()
+                process.wait(timeout=15)
+                self.assertTrue(evidence.exists() and evidence.stat().st_size > 0,
+                                'the hard-killed installer must leave its streamed journal behind')
+                text = evidence.read_text(encoding='utf-8')
+                self.assertIn('npm http fetch GET https://registry.example/@opencode/cli', text,
+                              'the registry acquisition evidence reached the journal before the kill')
+                self.assertNotIn('SIGNED-QUERY-CREDENTIAL', text, 'the journal never holds query credentials')
+        finally:
+            evidence.unlink(missing_ok=True)
+
+    def test_healthy_install_leaves_no_evidence_journal(self):
+        # Value: the journal is failure evidence, not build residue; a green
+        # install on any architecture removes it.
+        helper = self.load_helper()
+        for package, arch in (('@opencode/cli', 'amd64'), ('@openai/codex', 'arm64')):
+            with self.subTest(package=package, arch=arch):
+                evidence = helper.journal_path(package)
+                evidence.unlink(missing_ok=True)
+                result, _ = self.invoke(package, arch, failures=1, code='ETARGET')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(evidence.exists(), 'a healthy install removes its evidence journal')
 
     def invoke(self, package='@opencode/cli', arch='amd64', **scenario):
         with tempfile.TemporaryDirectory() as directory:
