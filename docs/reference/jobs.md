@@ -485,3 +485,47 @@ fail ICE setup deterministically (every peer reports "ICE failed, add a
 STUN server" against the absolute setup deadline) in Reference run
 `42763413592`, the same failure class session 025 recorded for the mixed
 jobs; that cross-browser setup gap remains tracked in #104.
+
+## Tiered workflows (2026-11-15)
+
+Every push used to trigger this entire workflow. Over 2026-11-09..14 the
+workflow ran 100 times in six days and 25 of those runs failed, at roughly
+243 minutes of summed job time per run (52 jobs — 32 ownership parts, eight
+Godot legs, ten SignalFish legs, the negative controls and the pinned Rust
+reference — at ~10.6 minutes wall) — about
+400 runner-hours a week for roughly five sessions of work, with every infra
+flake (APT mirrors, hosted-runner starvation) blocking a session's merge on
+the full matrix. The same window showed sessions polling CI 10-27 times per
+gate and re-verifying the whole inventory locally before pushing, on top of
+the CI run that then repeated it.
+
+The workflow composition now follows the three tiers PLAN.md always defined:
+
+| Tier | Workflow | Trigger | Contents |
+| --- | --- | --- | --- |
+| Gate | `gate.yml` | every push and PR | harness checks, changed-suite unit run on the minimum pin (`run_godot_tests.py --changed`, fail-closed to the full inventory), reference/oracle negative controls when tooling changes |
+| Qualify | `reference-baseline.yml` (this file) | merges to `main`, dispatch | the Chromium matrix on both pins: ownership probes, oracle launcher wave (differential traces, formal check recorded as `formal_skipped`), whole test inventory, transport witnesses |
+| Nightly | `nightly.yml` | schedule, dispatch | the Firefox ownership matrix and Firefox transport witness, the SpectatorSession model and the handshake TLA+ formal check |
+
+Composition is pinned by `scripts/tests/test_workflow_tiers.py`; the
+per-engine job checks stay in
+`scripts/reference/test_reference_baseline_workflow.py`. Package-acquisition
+retry wrappers and APT mirror preparation remain mandatory in every tier
+that installs packages. The handshake launcher gained `--formal off`, which
+records `formal_skipped` in its receipt; nightly runs the launcher with the
+default `--formal on`, so the model evidence keeps a real receipt instead of
+a silent skip.
+
+Expected per-push cost: the Gate workflow targets roughly four minutes of
+wall time for traced changes (the fail-closed full-inventory fallback
+concentrates the whole unit wave on one runner and stays under its 30-minute
+budget), and the qualification matrix moves to one run per merge. The
+nightly workflow runs the moved axes once per day. GitHub-side evidence for
+the new baselines (Gate wall time, Qualify wall time per merge, nightly
+failure rate) accumulates from the first runs after this change; reproduce
+them with the same `gh run view` records as every section above.
+
+A merge queue would let the qualification matrix gate the merge itself
+instead of main's post-merge run; the repository has no branch protection
+configured today, so enabling one is an owner settings decision, not a
+commit this repository can make on its own.

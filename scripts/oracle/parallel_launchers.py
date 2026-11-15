@@ -83,7 +83,8 @@ def run_wave(args, jobs):
     logs = {name: (args.results / f'launcher-{args.suffix}-{name}.log' if args.suffix
                    else args.results / f'launcher-{name}.log')
             for name in LAUNCHERS}
-    commands = {name: launcher_command(name, ORACLE_DIR / script, args.godot, outputs[name])
+    commands = {name: launcher_command(name, ORACLE_DIR / script, args.godot, outputs[name],
+                                       skip_formal=args.skip_formal)
                 for name, script in LAUNCHERS.items()}
     print(f'Running {len(LAUNCHERS)} oracle launchers with {jobs} parallel subprocesses.', flush=True)
     results = {}
@@ -132,8 +133,13 @@ def prefetch_oracle_crates(cargo, environment, manifest, version, log_path):
         raise ValueError('oracle crate pre-fetch failed: ' + (completed.stderr or completed.stdout)[-2000:])
 
 
-def launcher_command(name, script, godot, output):
-    return [sys.executable, str(script), '--godot', godot, '--output', str(output)]
+def launcher_command(name, script, godot, output, skip_formal=False):
+    command = [sys.executable, str(script), '--godot', godot, '--output', str(output)]
+    if skip_formal and name == 'handshake':
+        # The qualify tier owns the differential trace; the nightly workflow owns
+        # the Java model evidence, so the launcher records formal_skipped instead.
+        command += ['--formal', 'off']
+    return command
 
 
 def run_launcher(name, command, log_path, timeout):
@@ -186,6 +192,8 @@ def main() -> int:
     parser.add_argument('--jobs', type=int, default=min(4, os.cpu_count() or 2))
     parser.add_argument('--timeout', type=float, default=0.0,
                         help='per-launcher bound in seconds; 0 keeps the workflow job timeout as the only bound')
+    parser.add_argument('--skip-formal', action='store_true',
+                        help='pass --formal off to the handshake launcher; the nightly workflow owns the model evidence')
     args = parser.parse_args()
     jobs = max(1, min(args.jobs, len(LAUNCHERS)))
     # Every main() run is a fresh wave: a leftover abort from a caught

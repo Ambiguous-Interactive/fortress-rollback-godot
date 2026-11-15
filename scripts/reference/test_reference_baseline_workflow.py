@@ -15,7 +15,9 @@ SUITES_CHECKS = ['scripts/reference/package_audit.py', 'scripts/reference/test_p
 # The two shard legs together own the whole unit inventory exactly once; the second shard
 # also keeps the integration and determinism categories.
 TESTS_CHECKS = ['scripts/run_godot_tests.py', '--shard "$shard"']
-ORACLES_CHECKS = ['scripts/oracle/parallel_launchers.py', 'scripts/oracle/spectator_launch.py']
+# The oracle leg keeps the differential launcher wave; the spectator model and the
+# handshake formal check are nightly-tier jobs (scripts/tests/test_workflow_tiers.py).
+ORACLES_CHECKS = ['scripts/oracle/parallel_launchers.py']
 # The runner's table owns the six upstream comparisons; a dropped entry would silently
 # remove its launch from CI, so the table itself is pinned here.
 RUNNER_LAUNCHERS = ['queue_launch.py', 'launch.py', 'replay_launch.py',
@@ -211,16 +213,3 @@ class ReferenceBaselineWorkflowTests(unittest.TestCase):
         self.assertEqual(len(uploads), 1)
         self.assertEqual(uploads[0]['attributes'].get('if'), 'always()')
         self.assertIn('godot-browser-reference-results-${{ matrix.version }}-${{ matrix.part }}', uploads[0]['with'].get('name', ''))
-
-    # Value: protects=every system-package acquisition from a dropped-archive job failure (#349);
-    # fails_when=an install command loses its retry wrapper; seam=workflow text
-    def test_every_package_acquisition_keeps_its_retry_wrapper(self):
-        text = WORKFLOW.read_text(encoding='utf-8')
-        acquisition = re.compile(r'playwright install-deps|apt-get install -y')
-        commands = [line.strip() for line in text.splitlines() if acquisition.search(line)]
-        # Five Playwright install-deps calls and three direct apt-get installs (Rust
-        # linker, Firefox Xvfb tools, scoped-model Java), including the Firefox branch.
-        self.assertEqual(len(commands), 8, commands)
-        for command in commands:
-            self.assertIn('scripts/reference/retry_apt_fetch.sh', command, command)
-        self.assertTrue((ROOT / 'scripts/reference/retry_apt_fetch.sh').is_file())

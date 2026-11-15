@@ -9,7 +9,7 @@ Advance PLAN.md through a green, reviewed, squash-merged session PR
 - Drive any open dependency to green (incorporate) if relevant.
 - Ensure main CI is green; if it is not, RCA the issue and implement a comprehensive fix.
 - See if there were any draft/in-progress PRs from previous sessions and drive those to completion.
-- Drive `PLAN.md` improvements as far forward as possible towards accomplishing the full work for the next major milestone(s). Then, open a PR that achieves a fully green state (all CI checks passing, all reviewer feedback addressed). Do not explicitly trigger bot reviews.
+- Drive `PLAN.md` improvements as far forward as possible towards accomplishing the full work for the next major milestone(s). Then, open a PR that achieves a fully green state (the Gate workflow passing on the PR head, all reviewer feedback addressed). Do not explicitly trigger bot reviews. The Gate workflow is the per-push tier; the full matrix qualifies the merge on `main` and nightly owns the remaining axes, so do not wait on them before merging.
 - Aggregate all of one session's work into one PR, do not stack PRs.
 - After all current-head CI is green, scan every PR feedback surface with complete pagination, including resolved/outdated thread state and check annotations.
 - Address all actionable feedback, repeat gates after fixes, and recheck feedback immediately before merge. Follow [.llm/skills/ship-session/SKILL.md](.llm/skills/ship-session/SKILL.md).
@@ -58,8 +58,14 @@ Target: consensus among all reviewers that the result needs zero revisions.
 
 ## Sub-agent Loop
 
-1. Use sub-agents for parallel or specialized work.
-2. After a sub-agent completes, have an **adversarial sub-agent** review it critically.
-3. If recommendations exist, have another sub-agent evaluate and implement them.
-4. Repeat until all sub-agents agree the result is exceptional with zero issues (minor or otherwise).
-5. If not using sub-agents, apply this adversarial review loop on the main thread.
+1. Use sub-agents for parallel or specialized work; give each implementation
+   sub-agent its own worktree and a fresh context.
+2. After a sub-agent completes, have an **adversarial sub-agent** review it
+   critically (fresh context: the diff plus the relevant spec excerpt, never
+   the author's rationale).
+3. Address actionable findings in **at most one fix round**, then re-review
+   the updated diff once. Record anything left as follow-up issues instead of
+   looping; repeated review rounds past that point burn tokens without
+   measurably improving the result.
+4. If not using sub-agents, apply the same one-round adversarial review loop
+   on the main thread.

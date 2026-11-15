@@ -495,8 +495,9 @@ Native WebRTC availability is verified independently of browser support.
 
 | Tier | Required evidence |
 | --- | --- |
-| PR | Unit/core tests, fixed differential corpus, short faults, minimum/current Godot |
-| Nightly | Larger seeded exploration, shrinking, mutations, models, browser integration |
+| PR (Gate) | Harness checks, changed-suite unit run on the minimum pin, tooling negative controls on tooling changes |
+| Merge (Qualify) | Full Chromium matrix on both pins: unit/integration/determinism inventory, ownership probes, differential oracle traces, transport witnesses |
+| Nightly | The moved axes: Firefox ownership and transport witness, SpectatorSession and handshake formal model checks |
 | Release | Native state-byte equality, real browser matrix, sustained bounded-memory runs |
 
 Native release comparisons cover Linux, macOS and Windows.

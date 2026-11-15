@@ -1,7 +1,7 @@
 .PHONY: replay-probes p2p-probes drop-history-probes handshake-probes spectator-model queue-probes oracle-probes test-oracle
 .PHONY: hot-path-probes representation-probes lint-source hooks lint-llm test-llm
 .PHONY: test-reference reference-baseline llm-index llm-index-prune pre-commit
-.PHONY: godot-check test-godot test-focus test-changed prune prune-apply disk scratch
+.PHONY: godot-check test-godot test-focus test-changed gate prune prune-apply disk scratch
 
 PY ?= python3
 GODOT ?= godot
@@ -124,6 +124,11 @@ llm-index-prune:
 
 ## Everything the pre-commit hook runs
 pre-commit: lint-source lint-llm test-llm
+
+## Fast pre-push loop: the harness checks plus only suites affected by changes
+## since BASE (default origin/main). The minimum bar before every push; the
+## Gate workflow runs the same selection in CI.
+gate: pre-commit test-changed
 
 ## Validate the Godot project headless (parse scripts, import assets)
 godot-check:

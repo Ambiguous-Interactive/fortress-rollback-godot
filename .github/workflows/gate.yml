@@ -1,0 +1,162 @@
+name: Gate
+
+# Fast per-push tier: harness lint, the changed-suite unit run on the minimum
+# pin, and the reference/oracle negative controls when tooling changes. The full
+# matrix qualifies merges to main (reference-baseline.yml); nightly.yml owns the
+# Firefox axis and the Java model checks.
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  harness:
+    name: Harness checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.15.2"
+
+      - name: Tooling self-tests
+        run: python3 -m unittest discover -s scripts/tests -t scripts -v
+
+      - name: Source line widths
+        run: make lint-source
+
+      - name: File length caps
+        run: python3 scripts/llm/check_llm_file_lengths.py --verbose
+
+      - name: Index freshness
+        run: python3 scripts/llm/generate_llm_index.py --check
+
+      - name: Agent stub freshness
+        run: python3 scripts/llm/generate_skill_stubs.py --check
+
+      - name: Instructions meta-lint
+        run: python3 scripts/llm/lint_llm_instructions.py
+
+      - name: Fail on uncommitted drift
+        run: |
+          STATUS="$(git status --porcelain)"
+          if [ -n "$STATUS" ]; then
+            echo "::error::Working tree dirty after lint steps (generated files committed?):"
+            echo "$STATUS"
+            exit 1
+          fi
+
+  detect:
+    name: Detect tooling changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      scripts: ${{ steps.diff.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        run: |
+          set -o pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="${{ github.event.before }}"
+          fi
+          if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="$(git rev-parse -q --verify origin/main 2>/dev/null || git rev-parse HEAD~1)"
+          fi
+          if ! list="$(git diff --name-only "$base...HEAD" -- scripts Makefile \
+              .github/workflows/gate.yml .github/workflows/reference-baseline.yml \
+              .github/workflows/nightly.yml 2>/dev/null)"; then
+            # An unresolvable base is the suspicious case itself: run the controls.
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$list" ]]; then
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  unit-fast:
+    name: Changed unit suites (Godot 4.3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.15.2"
+
+      - name: Resolve the changed-file base
+        id: base
+        run: |
+          base="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="${{ github.event.before }}"
+          fi
+          if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="$(git rev-parse -q --verify origin/main 2>/dev/null || git rev-parse HEAD~1)"
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare the pinned minimum editor
+        run: |
+          PYTHONPATH=scripts/reference python3 - <<'PY'
+          from fetch import load_manifest, fetch, prepare_zip, CACHE
+          import platform
+          data = load_manifest()
+          arch = {'aarch64': 'arm64', 'x86_64': 'x86_64'}.get(platform.machine())
+          if arch is None:
+              raise SystemExit('editor bootstrap supports Linux arm64/x86_64 only')
+          version = "4.3"
+          name = f'Godot_v{version}-stable_linux.{arch}.zip'
+          directory = CACHE / 'editors' / version
+          directory.mkdir(parents=True, exist_ok=True)
+          prepare_zip(fetch(data['artifacts'][name], name, False), directory, executable_members=(name[:-4],))
+          (directory / name[:-4]).chmod(0o755)
+          PY
+
+      - name: Run the affected unit suites
+        # An untraceable change runs the whole inventory (the selector fails
+        # closed); no affected suite passes with exit 0 and a no_affected_suites
+        # receipt in the uploaded artifact below.
+        run: |
+          editor=".cache/reference/editors/4.3/Godot_v4.3-stable_linux.x86_64"
+          python3 scripts/run_godot_tests.py --godot "$editor" --category unit \
+            --changed "${{ steps.base.outputs.base }}" --timeout 180
+
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: gate-unit-fast-results
+          path: .cache/tests/latest.json
+          if-no-files-found: error
+
+  controls:
+    name: Reference and oracle negative controls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: detect
+    if: needs.detect.outputs.scripts == 'true'
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.15.2"
+
+      - run: make test-reference
+      - run: make test-oracle
