@@ -79,7 +79,10 @@ class WorkflowTierTests(unittest.TestCase):
         # The queue requires the Gate checks on grouped merge candidates; a
         # missing merge_group trigger would leave the queue hanging forever.
         self.assertIn('merge_group:', gate)
-        for path in (QUALIFY, NIGHTLY):
+        # Feature branches verify through their pull_request run; a push
+        # trigger on every branch would run the whole gate twice per change.
+        self.assertRegex(gate, r'on:\n\s+push:\n\s+branches: \[main\]')
+        for path in (NIGHTLY,):
             with self.subTest(workflow=path.name):
                 self.assertNotIn('pull_request:', active_lines(read(path)))
         self.assertFalse(LLM_LINT.exists(), 'the harness checks moved into gate.yml')
@@ -135,9 +138,17 @@ class WorkflowTierTests(unittest.TestCase):
 
     def test_qualify_drops_the_moved_axes(self):
         text = read(QUALIFY).lower()
-        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:', 'pull_request:', 'push:'):
+        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:', 'push:'):
             with self.subTest(moved=moved):
                 self.assertNotIn(moved, text)
+        # The pull_request trigger exists only so the eligibility summary can
+        # report on the PR head (GitHub refuses to enqueue a PR until every
+        # required context reports); every heavy family must skip that event.
+        self.assertIn('pull_request:', active_lines(read(QUALIFY)))
+        for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
+            block = '\n'.join(job_blocks(text)[family])
+            with self.subTest(family=family):
+                self.assertIn("if: github.event_name != 'pull_request'", block)
         self.assertEqual(text.count('browser: chromium'), QUALIFY_CHROMIUM_PARTS)
         self.assertIn('pair: [chromium]', text)
         self.assertIn("--skip-formal", text)
@@ -154,6 +165,9 @@ class WorkflowTierTests(unittest.TestCase):
         self.assertIn('types: [checks_requested]', text)
         block = '\n'.join(job_blocks(text)['qualification'])
         self.assertIn('name: Qualification summary', block)
+        # The summary reports on pull requests too (the enqueue ticket), so it
+        # must NOT be gated off that event like its families are.
+        self.assertNotIn("if: github.event_name != 'pull_request'", block)
         self.assertIn('if: always()', block)
         for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
             with self.subTest(family=family):

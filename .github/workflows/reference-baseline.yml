@@ -10,6 +10,11 @@ name: Reference Baseline
 on:
   merge_group:
     types: [checks_requested]
+  # GitHub refuses to enqueue a PR until every required context reports on the
+  # PR head, so pull requests run this workflow too: every heavy family skips
+  # on that event and only the eligibility summary reports (a skipped need is
+  # not a failure). The queue group run is the real gate.
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -19,6 +24,7 @@ jobs:
   contracts:
     name: Reference negative controls
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
     # Both full suites took over ten minutes together; reserve setup and teardown time.
     timeout-minutes: 15
     steps:
@@ -32,6 +38,7 @@ jobs:
   rust:
     name: Pinned Rust reference
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
@@ -68,6 +75,7 @@ jobs:
   ownership:
     name: Native and Chromium snapshot ownership ${{ matrix.version }}${{ matrix.suffix }}
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -136,6 +144,7 @@ jobs:
   godot:
     name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -255,6 +264,7 @@ jobs:
   signalfish:
     name: SignalFish relay and Chromium WebRTC ${{ matrix.version }} ${{ matrix.part }}
     runs-on: ubuntu-24.04
+    if: github.event_name != 'pull_request'
     timeout-minutes: 180
     strategy:
       fail-fast: false

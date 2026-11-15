@@ -100,9 +100,15 @@ session log or linked issue. Do not make an automated clean claim from counts.
 ## Squash merge and synchronize
 
 1. Re-read PR head/base, checks, statuses and feedback just before merge. If the
-   head changed, repeat all candidate gates. Merge only the reviewed SHA, using
-   squash and the expected-head precondition:
-   `gh pr merge <n> --squash --match-head-commit <reviewed-sha>`.
+   head changed, repeat all candidate gates. Merge through the merge queue:
+   `gh pr merge <n> --squash --auto` enqueues the PR, the queue builds a grouped
+   candidate, and main lands only when the required checks (the Gate jobs and
+   the qualification summary) pass on that candidate. Direct merges to `main`
+   are blocked by the branch ruleset; do not bypass it. A dropped queue entry
+   (failed or cancelled group) leaves the PR unmerged: fix, rescan, re-enqueue.
+   Watch the entry with cheap polls (`gh pr view <n> --json state,mergeQueueEntry`
+   every minute) instead of `gh run watch`, whose polling burns the API rate
+   limit.
 2. Confirm the API reports merged and read the resulting merge commit SHA.
    A successful auto-merge request or closed PR is not proof of a merge.
    After an uncertain response, read state before retrying the mutation.
@@ -111,10 +117,11 @@ session log or linked issue. Do not make an automated clean claim from counts.
    commits; do not discard them with a hard reset. Use a clean worktree if needed.
 4. Verify `HEAD == origin/main` and a clean worktree. The squash commit must be
    reachable from `origin/main`; remote main may have advanced again.
-5. Observe the merge-triggered qualification workflow (the full matrix) to its
-   terminal state; the nightly workflow covers the remaining axes on its
-   schedule and its failures get triaged like any other. Repair new failures
-   within the same authorized goal; do not report success from pre-merge CI alone.
+5. The queue's grouped qualification run is the full-matrix evidence for the
+   merge; there is no separate post-merge main run to babysit. Nightly covers
+   the remaining axes on its schedule and its failures get triaged like any
+   other. Repair a dropped queue entry within the same authorized goal; do not
+   report success from pre-merge CI alone.
 
 ## Source precedents
 
