@@ -1,0 +1,221 @@
+"""Tier composition of the GitHub workflows: gate on every push, qualify on main, nightly axes.
+
+Value: the three-tier CI model keeps every existing gate somewhere while making the
+per-push path fast. A workflow edit that loses an axis from every tier, puts the
+Firefox axis or the Java model checks back on the per-push path, drops the retry
+wrapper from any package acquisition, or removes the pre-push cancel behavior
+fails here. The full engine-job checks stay in
+``scripts/reference/test_reference_baseline_workflow.py``; this file owns which
+jobs run in which tier.
+"""
+import re
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOWS = ROOT / '.github/workflows'
+GATE = WORKFLOWS / 'gate.yml'
+QUALIFY = WORKFLOWS / 'reference-baseline.yml'
+NIGHTLY = WORKFLOWS / 'nightly.yml'
+DEVCONTAINER = WORKFLOWS / 'devcontainer.yml'
+LLM_LINT = WORKFLOWS / 'llm-lint.yml'
+HANDSHAKE = ROOT / 'scripts/oracle/handshake_launch.py'
+PARALLEL = ROOT / 'scripts/oracle/parallel_launchers.py'
+
+# Package-acquisition commands whose failure class (#349 APT mirror hangs) needs
+# the bounded retry wrapper. Counts are per workflow file.
+ACQUISITION = re.compile(r'playwright install-deps|apt-get install -y')
+QUALIFY_ACQUISITIONS = 4
+NIGHTLY_ACQUISITIONS = 6
+# The qualify ownership matrix keeps the whole Chromium axis: both engine pins,
+# both phases, four interleaved suite parts.
+QUALIFY_CHROMIUM_PARTS = 16
+# The nightly ownership matrix owns the Firefox axis with the same shape.
+NIGHTLY_FIREFOX_PARTS = 16
+
+
+def read(path: Path) -> str:
+    return path.read_text(encoding='utf-8')
+
+
+def job_blocks(text):
+    """The workflow job blocks, keyed by job name (same seam as the qualify contract)."""
+    blocks, name, lines = {}, None, []
+    for line in text.splitlines():
+        start = re.match(r'^  ([A-Za-z0-9_-]+):\s*$', line)
+        if start:
+            if name is not None:
+                blocks[name] = lines
+            name, lines = start.group(1), []
+        elif name is not None:
+            lines.append(line)
+    if name is not None:
+        blocks[name] = lines
+    return blocks
+
+
+def acquisition_commands(text):
+    return [line.strip() for line in text.splitlines() if ACQUISITION.search(line)]
+
+
+class WorkflowTierTests(unittest.TestCase):
+
+    def test_reference_tiers_have_no_pull_request_trigger(self):
+        # The Gate workflow owns per-push and pull-request runs; the qualify and
+        # nightly tiers trigger on merges, schedules and explicit dispatches
+        # only. The devcontainer build intentionally keeps its pull_request
+        # trigger outside the tier model.
+        self.assertIn('pull_request:', read(GATE))
+        for path in (QUALIFY, NIGHTLY):
+            with self.subTest(workflow=path.name):
+                self.assertNotIn('pull_request:', read(path))
+        self.assertFalse(LLM_LINT.exists(), 'the harness checks moved into gate.yml')
+
+    def test_gate_jobs_cover_harness_changed_unit_and_controls(self):
+        text = read(GATE)
+        blocks = job_blocks(text)
+        for job in ('harness', 'unit-fast', 'controls', 'detect'):
+            with self.subTest(job=job):
+                self.assertIn(job, blocks)
+        # The harness job keeps every llm-lint check so the absorbed workflow loses nothing.
+        harness = '\n'.join(blocks['harness'])
+        for check in ('check_llm_file_lengths.py', 'generate_llm_index.py --check',
+                      'generate_skill_stubs.py --check', 'lint_llm_instructions.py',
+                      'make lint-source', 'unittest discover -s scripts/tests'):
+            with self.subTest(check=check):
+                self.assertIn(check, harness)
+        # The unit gate runs the changed-suite selector on the minimum pin only.
+        unit = '\n'.join(blocks['unit-fast'])
+        self.assertIn('run_godot_tests.py', unit)
+        self.assertIn('--changed', unit)
+        self.assertNotIn('4.7.2', unit)
+        self.assertIn('fetch-depth: 0', unit)
+        # Tooling negative controls run only when tooling changed (fail-closed detect).
+        controls = '\n'.join(blocks['controls'])
+        self.assertIn("needs.detect.outputs.scripts == 'true'", controls)
+        self.assertIn('make test-reference', controls)
+        self.assertIn('make test-oracle', controls)
+
+    def test_gate_base_resolution_fails_closed_in_both_jobs(self):
+        # detect and unit-fast carry the same base-resolution contract: an empty
+        # or all-zero base (fresh branch, first push, force-push recreation)
+        # falls back to a real commit so the window can never silently be empty,
+        # and an unresolvable base must run the controls rather than skip them.
+        for job in ('detect', 'unit-fast'):
+            block = '\n'.join(job_blocks(read(GATE))[job])
+            with self.subTest(job=job):
+                self.assertIn('github.event.pull_request.base.sha', block)
+                self.assertIn('github.event.before', block)
+                self.assertIn('0000000000000000000000000000000000000000', block)
+                self.assertIn('git rev-parse -q --verify origin/main', block)
+        detect = '\n'.join(job_blocks(read(GATE))['detect'])
+        self.assertIn('An unresolvable base is the suspicious case', detect)
+        self.assertIn('set -o pipefail', detect)
+
+    def test_gate_cancels_superseded_runs(self):
+        text = read(GATE)
+        self.assertIn('concurrency:', text)
+        self.assertIn('cancel-in-progress: ${{ github.event_name == \'pull_request\' }}', text)
+        devcontainer = read(DEVCONTAINER)
+        self.assertIn('concurrency:', devcontainer)
+        self.assertIn('cancel-in-progress: ${{ github.event_name == \'pull_request\' }}', devcontainer)
+
+    def test_qualify_drops_the_moved_axes(self):
+        text = read(QUALIFY).lower()
+        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:'):
+            with self.subTest(moved=moved):
+                self.assertNotIn(moved, text)
+        self.assertEqual(text.count('browser: chromium'), QUALIFY_CHROMIUM_PARTS)
+        self.assertIn('pair: [chromium]', text)
+        self.assertIn("--skip-formal", text)
+        self.assertNotIn('--formal off', text)
+
+    def test_gate_acquires_no_system_packages(self):
+        # The fast tier is pure Python plus the manifest-fetched editor: an apt
+        # or Playwright acquisition added to the gate must be a deliberate tier
+        # change that updates this pin and gains the retry wrapper below.
+        text = read(GATE)
+        self.assertEqual(acquisition_commands(text), [], acquisition_commands(text))
+
+    def test_qualify_and_nightly_acquisitions_keep_the_retry_wrapper(self):
+        for path, expected in ((QUALIFY, QUALIFY_ACQUISITIONS), (NIGHTLY, NIGHTLY_ACQUISITIONS)):
+            text = read(path)
+            commands = acquisition_commands(text)
+            with self.subTest(workflow=path.name, count=len(commands)):
+                self.assertEqual(len(commands), expected, commands)
+            for command in commands:
+                with self.subTest(workflow=path.name, command=command):
+                    self.assertIn('scripts/reference/retry_apt_fetch.sh', command, command)
+
+    def test_every_acquisition_job_prepares_the_apt_mirror(self):
+        # jobs.md: an APT mirror hang consumed the whole job budget before
+        # verification started; every job that installs packages must prepare the
+        # mirror list first (the gate installs nothing).
+        for path in (GATE, QUALIFY, NIGHTLY):
+            text = read(path)
+            for name, block in job_blocks(text).items():
+                joined = '\n'.join(block)
+                if ACQUISITION.search(joined):
+                    with self.subTest(workflow=path.name, job=name):
+                        self.assertIn('prepare_ubuntu_apt.sh', joined)
+
+    def test_nightly_owns_the_moved_axes(self):
+        text = read(NIGHTLY)
+        self.assertIn('schedule:', text)
+        self.assertIn('workflow_dispatch:', text)
+        self.assertNotIn('pull_request:', text)
+        self.assertEqual(text.count('browser: firefox'), NIGHTLY_FIREFOX_PARTS)
+        self.assertIn('pair: [firefox]', text)
+        self.assertIn('spectator_launch.py', text)
+        self.assertIn('handshake_launch.py', text)
+        # Nightly runs the formal model check (default on); the flag that skips it
+        # must never appear in the nightly invocation.
+        self.assertNotIn('--formal off', text)
+        for name, block in job_blocks(text).items():
+            joined = '\n'.join(block)
+            if ACQUISITION.search(joined):
+                with self.subTest(job=name):
+                    self.assertIn('prepare_ubuntu_apt.sh', joined)
+
+    def test_nightly_ownership_matrix_rows_and_artifacts_are_unique(self):
+        # Both nightly phases reuse the compact -part-N suffixes, so the artifact
+        # name must carry the phase itself: upload-artifact v4+ fails a job whose
+        # name collides with an already-uploaded artifact of the same run.
+        text = read(NIGHTLY)
+        self.assertIn('nightly-ownership-firefox-results-${{ matrix.version }}-firefox-${{ matrix.phase }}'
+                      '${{ matrix.part_suffix }}', text)
+        rows = re.findall(r'version: "(4\.3|4\.7\.2)", browser: firefox, phase: (negative|positive), '
+                          r'suite_part: "([1-4])"', text)
+        self.assertEqual(len(rows), NIGHTLY_FIREFOX_PARTS)
+        self.assertEqual(len(set(rows)), NIGHTLY_FIREFOX_PARTS, rows)
+
+    def test_handshake_formal_check_is_tier_scoped(self):
+        launcher = read(HANDSHAKE)
+        self.assertIn("--formal", launcher)
+        self.assertIn('formal_skipped', launcher)
+        self.assertIn("args.formal == 'on'", launcher)
+        parallel = read(PARALLEL)
+        self.assertIn('--skip-formal', parallel)
+        self.assertIn("'--formal', 'off'", parallel)
+
+    def test_parallel_launcher_forwards_the_formal_skip_only_to_handshake(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('parallel_launchers_under_test', PARALLEL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        script = module.ORACLE_DIR / 'handshake_launch.py'
+        other = module.ORACLE_DIR / 'p2p_launch.py'
+        handshake_base = [module.sys.executable, str(script), '--godot', 'godot', '--output', 'out']
+        p2p_base = [module.sys.executable, str(other), '--godot', 'godot', '--output', 'out']
+        # Default: unchanged command shape for every launcher.
+        self.assertEqual(module.launcher_command('handshake', script, 'godot', 'out'), handshake_base)
+        self.assertEqual(module.launcher_command('p2p', other, 'godot', 'out'), p2p_base)
+        # Skip flag: only the handshake launcher gains the formal-off arguments.
+        self.assertEqual(module.launcher_command('handshake', script, 'godot', 'out', skip_formal=True),
+                         handshake_base + ['--formal', 'off'])
+        self.assertEqual(module.launcher_command('p2p', other, 'godot', 'out', skip_formal=True), p2p_base)
+
+
+if __name__ == '__main__':
+    unittest.main()

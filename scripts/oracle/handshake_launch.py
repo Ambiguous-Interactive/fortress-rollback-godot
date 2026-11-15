@@ -74,13 +74,18 @@ def main():
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--tlc-jar', type=Path, default=CACHE / 'tla2tools.jar')
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--formal', choices=('on', 'off'), default='on',
+                        help='run the TLA+ model check on the model_matching scenario; off records'
+                             ' formal_skipped for the tier that owns the model evidence elsewhere')
     parser.add_argument('--output', type=Path, default=CACHE / 'results/handshake-oracle')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     receipt = args.output / 'receipt.json'; receipt.unlink(missing_ok=True)
     identity = git_identity()
     engine = resolve_engine(args.godot)
-    ensure_jar(args.tlc_jar, args.offline)
+    formal_on = args.formal == 'on'
+    if formal_on:
+        ensure_jar(args.tlc_jar, args.offline)
     files = [* (ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'), ROOT / 'tests/oracle/handshake_trace.gd',
              *Path(__file__).parent.glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/handshake.rs',
              ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json',
@@ -120,7 +125,7 @@ def main():
         if actuals[0] != actuals[1]:
             raise ValueError('Godot fresh process divergence')
         actual_path = args.output / f'{name}-actual.json'; actual_path.write_text(json.dumps(actuals[0], indent=2) + '\n')
-        if name == 'model_matching':
+        if name == 'model_matching' and formal_on:
             formal = check_formal(actuals[0], args.output, args.tlc_jar.resolve())
             mutant = deepcopy(actuals[0]); mutant['records'][0]['transitions'][0].update(remaining=0, state='running')
             try:
@@ -148,7 +153,7 @@ def main():
         'working_tree_dirty': identity['working_tree_dirty'],
         'engine': engine_version.strip(), 'cargo': cargo_version.strip(), 'rustc': rust_version.strip(),
         'features': ['handshake-oracle', 'fortress-rollback/trace-validation'], 'default_features': False,
-        'formal': formal, 'malformed_controls': malformed, 'binary_sha256': digest(binary),
+        'formal': formal, 'formal_skipped': not formal_on, 'malformed_controls': malformed, 'binary_sha256': digest(binary),
         'engine_sha256': digest(engine), 'engine_path': str(engine), 'source_sha256': source_hashes, 'cases': evidence}, indent=2) + '\n')
 
 

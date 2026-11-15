@@ -174,8 +174,9 @@ class OwnershipBatchTests(unittest.TestCase):
             with self.subTest(part=part), self.assertRaises(ValueError):
                 probes.select_suites(part)
 
-    # Value: protects=CI retains every declared partition and phase for both browsers; fails_when=matrix drops
-    # a phase or part or command ignores selection; why_new=per-phase jobs match across browsers; seam=none
+    # Value: protects=CI retains every declared partition and phase for the qualify
+    # Chromium matrix and the nightly Firefox matrix; fails_when=any tier's matrix drops
+    # a phase or part or its command ignores selection; why_new=tiers split by browser; seam=none
     def test_chromium_ci_declares_both_parts_and_passes_the_selector(self):
         workflow = (probes.ROOT / '.github/workflows/reference-baseline.yml').read_text()
         pattern = (r'version: "([^"]+)", browser: chromium, phase: (negative|positive), suite_part: "([1-4])", '
@@ -186,20 +187,24 @@ class OwnershipBatchTests(unittest.TestCase):
                     for phase in ('negative', 'positive') for part in ('1', '2', '3', '4')}
         self.assertEqual(set(rows), expected)
         self.assertEqual(len(rows), 16)
-        # The Firefox rows carry the same partition and phase coverage with the
-        # compact part suffix, which must agree with each row's declared part so
-        # artifact names stay unique; dropping one row must fail like Chromium.
+        # The Firefox rows moved to the nightly workflow and carry the same
+        # partition and phase coverage with the compact part suffix, which must
+        # agree with each row's declared part so artifact names stay unique;
+        # dropping one row must fail like Chromium.
+        nightly = (probes.ROOT / '.github/workflows/nightly.yml').read_text()
         firefox = re.findall(r'version: "([^"]+)", browser: firefox, phase: (negative|positive), suite_part: "([1-4])", '
-                             r'suffix: " (negative|positive) part ([1-4])", part_suffix: "-part-([1-4])"', workflow)
+                             r'suffix: " (negative|positive) part ([1-4])", part_suffix: "-part-([1-4])"', nightly)
         self.assertEqual({row[:5] for row in firefox}, {(version, phase, part, phase, part)
                                                         for version, phase, part, _, _, _ in expected})
         self.assertEqual({(version, phase, part, suffix) for version, phase, part, _, _, suffix in firefox},
                          {(version, phase, part, part)
                           for version, phase, part, _, _, _ in expected})
         self.assertEqual(len(firefox), 16)
-        command = workflow.split('          else\n            python3 scripts/reference/ownership_probes.py', 1)[1].split('          fi', 1)[0]
-        self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"', command)
+        for tier in (workflow, nightly):
+            self.assertIn('--phase "${{ matrix.phase }}" --suite-part "${{ matrix.suite_part }}"',
+                          tier.split('python3 scripts/reference/ownership_probes.py', 1)[1])
         self.assertIn("matrix.part_suffix", workflow)
+        self.assertIn("matrix.part_suffix", nightly)
 
     # Value: protects=declared partial receipts retain exact native/Web evidence; fails_when=scope or results lie; why_new=unpartitioned validation; seam=none
     def test_partition_coverage_rejects_missing_foreign_or_mismatched_evidence(self):
