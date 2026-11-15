@@ -107,10 +107,10 @@ DELAY_CHANGES = {
     # Raises start after frame zero's flight is acknowledged: upstream drops a resend that starts at a nonzero initial delay (see docs).
     'delay_rapid': {**{(1, peer): [3] for peer in range(4)}, (2, 1): [4, 5, 6], (3, 2): [59, 58], (4, 3): [4, 4, 1000], (5, 0): [5]},
     'delay_stall': {(1, 1): [2], (2, 2): [1, 2]},
-    # The profile-plus-raise shape: peer 1 raises after its first confirmed row while peer 0's
-    # padded flight is already received, so the confirmed-frontier fold's raise stamping is
-    # compared directly (#373).
-    'delay_profile_raise': {(0, 1): [1]},
+    # The profile-plus-raise shape: peer 1 raises after its frame-one step, following the
+    # frame-zero deliveries, so the confirmed-frontier fold's raise stamping is compared
+    # while a remote slot's received evidence already precedes the raise (#373).
+    'delay_profile_raise': {(1, 1): [1]},
 }
 
 # Multi-local endpoint layouts: (machine sizes, mode). The couch mesh holds the shared-address
