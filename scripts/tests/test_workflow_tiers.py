@@ -68,12 +68,17 @@ def active_lines(text):
 class WorkflowTierTests(unittest.TestCase):
 
     def test_reference_tiers_have_no_pull_request_trigger(self):
-        # The Gate workflow owns per-push and pull-request runs; the qualify and
-        # nightly tiers trigger on merges, schedules and explicit dispatches
-        # only. The devcontainer build intentionally keeps its pull_request
-        # trigger outside the tier model. Assertions read active workflow lines
-        # only: a commented-out trigger neither satisfies nor evades them.
-        self.assertIn('pull_request:', active_lines(read(GATE)))
+        # The Gate workflow owns per-push and pull-request runs and the merge
+        # queue's grouped candidates; the qualify and nightly tiers trigger on
+        # merges, schedules and explicit dispatches only. The devcontainer
+        # build intentionally keeps its pull_request trigger outside the tier
+        # model. Assertions read active workflow lines only: a commented-out
+        # trigger neither satisfies nor evades them.
+        gate = active_lines(read(GATE))
+        self.assertIn('pull_request:', gate)
+        # The queue requires the Gate checks on grouped merge candidates; a
+        # missing merge_group trigger would leave the queue hanging forever.
+        self.assertIn('merge_group:', gate)
         for path in (QUALIFY, NIGHTLY):
             with self.subTest(workflow=path.name):
                 self.assertNotIn('pull_request:', active_lines(read(path)))

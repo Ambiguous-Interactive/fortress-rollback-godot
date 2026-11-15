@@ -8,6 +8,10 @@ name: Gate
 on:
   push:
   pull_request:
+  # The merge queue builds grouped merge candidates and requires this
+  # workflow's checks on them; without the trigger the queue would hang
+  # waiting for checks that never report.
+  merge_group:
 
 concurrency:
   group: gate-${{ github.event.pull_request.number || github.ref }}
@@ -71,6 +75,9 @@ jobs:
           set -o pipefail
           base="${{ github.event.pull_request.base.sha }}"
           if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="${{ github.event.merge_group.base_sha }}"
+          fi
+          if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
             base="${{ github.event.before }}"
           fi
           if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
@@ -104,6 +111,9 @@ jobs:
         id: base
         run: |
           base="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
+            base="${{ github.event.merge_group.base_sha }}"
+          fi
           if [[ -z "$base" || "$base" = "0000000000000000000000000000000000000000" ]]; then
             base="${{ github.event.before }}"
           fi
