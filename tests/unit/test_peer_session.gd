@@ -30,7 +30,8 @@ func cases() -> PackedStringArray:
 			"low_windows",
 			"packet_service",
 			"scheduled_inputs",
-			"delayed_peers"
+			"delayed_peers",
+			"raised_frontier"
 		]
 	)
 
@@ -66,6 +67,8 @@ func run_case(name: String, context: RefCounted) -> void:
 			_scheduled_inputs(context)
 		"delayed_peers":
 			_delayed_peers(context)
+		"raised_frontier":
+			_raised_frontier(context)
 	context.finish()
 
 
@@ -273,6 +276,24 @@ func _delayed_peers(context: RefCounted) -> void:
 		context.equal(game.game.bytes(), expected.bytes(), "heterogeneous starts converge on confirmed bytes")
 	for peer: Peer in mesh.peers:
 		context.equal(peer.status().confirmed_frame >= 6, true, "both schedules confirm the shared prefix")
+
+
+func _raised_frontier(context: RefCounted) -> void:
+	# #373: a runtime raise stamps the local slot to its padded last_added frame, and the
+	# pinned upstream folds connect statuses lazily at every read, so its reported frontier
+	# moves with the raise immediately. The mesh confirmation limit must re-derive before
+	# the next read instead of waiting for the next poll to observe the stamped rows.
+	var mesh: Dictionary = _build(context, 2, 0, false, 128, true, false, 4, null, 60, 0, null, 128, 0, false, [2, 0])
+	mesh.now = 1000
+	context.equal(mesh.peers[0].step(mesh.now, _inputs(mesh, 0)).code, Types.Code.OK, "delayed peer submits its padded row")
+	_deliver(context, mesh, _drain(mesh))
+	_deliver(context, mesh, _drain(mesh))
+	context.equal(mesh.peers[1].step(mesh.now, _inputs(mesh, 1)).code, Types.Code.OK, "on-time peer submits its first row")
+	context.equal(mesh.peers[1].status().current_frame, 1, "the received remote row lets the first frame advance")
+	context.equal(mesh.peers[1].status().confirmed_frame, 0, "the un-raised local slot holds the frontier")
+	context.equal(mesh.peers[1].set_input_delay(1, 1), Types.Code.OK, "raise accepted")
+	context.equal(mesh.peers[1].status().current_frame, 1, "the raise does not advance")
+	context.equal(mesh.peers[1].status().confirmed_frame, 1, "the raise-stamped slot joins the frontier without another poll")
 
 
 func _multiple(context: RefCounted) -> void:

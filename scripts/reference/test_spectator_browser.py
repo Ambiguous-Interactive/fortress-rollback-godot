@@ -11,7 +11,8 @@ import os
 import tempfile
 from copy import deepcopy
 from pathlib import Path
-from types import SimpleNamespace
+
+from spectator_control import Control
 
 from spectator_browser import validate, validate_fault, validate_departure, validate_host_departure
 
@@ -390,13 +391,16 @@ assert.equal(errors.length,3,'deliberate close must not invent a request failure
         browser = {'browser': 'Chromium', 'version': '156.0', 'errors': [],
                    'result': {'passed': False, 'reason': 'browser original-state or membership binding', 'errors': []},
                    'state': {'compared': 0, 'frame': 0, 'simulations': 0, 'accept_pending': False, 'accept_delivered': False}}
-        control = SimpleNamespace(accepted_once=False, received=0, done=None)
+        control = Control()
         validate_fault(1, browser, True, control)
         with self.assertRaises(ValueError):
             validate_fault(1, browser, True, control, 'late browser teardown failure')
         for changes in [{'accepted_once': True}, {'received': 1}, {'done': {}}, {'done': {'complete': True}}]:
             with self.subTest(control=changes), self.assertRaises(ValueError):
-                validate_fault(1, browser, True, SimpleNamespace(**{**vars(control), **changes}))
+                mutated = Control()
+                for key, value in changes.items():
+                    setattr(mutated, key, value)
+                validate_fault(1, browser, True, mutated)
         for field, value in browser['state'].items():
             for bad in [None, True if type(value) is int else 1, 1 if type(value) is int else True, float(value)]:
                 with self.subTest(field=field, value=bad), self.assertRaises(ValueError):
@@ -517,25 +521,25 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
     def test_exact_artifact_is_acknowledged_and_retained_as_evidence(self):
         from spectator_browser import acknowledge_disposal_abort, classify_browser_output
         report = self.browser()
-        classified, failure = classify_browser_output(1, '', json.dumps(report), SimpleNamespace(url=self.CONTROL))
+        classified, failure = classify_browser_output(1, '', json.dumps(report), Control(allowed_origin=self.CONTROL))
         self.assertIsNone(failure, 'the acknowledged disposal abort does not reject exit code 1')
         self.assertEqual(classified['errors'], [], 'the acknowledged abort must not fail the gate')
         self.assertEqual(classified['requestFailures'], [], 'the acknowledged abort moves out of the fatal list')
         self.assertEqual(classified['acknowledged_disposal_abort'], self.ARTIFACT, 'the observation stays visible in the receipt')
         validate_host_departure(self.HOST, classified)
-        healthy, failure = classify_browser_output(0, '', json.dumps({'browser': 'Chromium', 'errors': [], 'result': self.PASSED}), SimpleNamespace(url=self.CONTROL))
+        healthy, failure = classify_browser_output(0, '', json.dumps({'browser': 'Chromium', 'errors': [], 'result': self.PASSED}), Control(allowed_origin=self.CONTROL))
         self.assertIsNone(failure, 'healthy exit stays accepted')
         self.assertNotIn('acknowledged_disposal_abort', healthy, 'healthy reports gain no acknowledgment')
 
     def test_execution_path_rejections(self):
         from spectator_browser import classify_browser_output
         failure = 'exported spectator failed; inspect browser.log'
-        self.assertEqual(classify_browser_output(1, 'node printed an error', '{"errors":[]}', SimpleNamespace(url=self.CONTROL)), (None, failure), 'stderr stays fatal')
-        self.assertEqual(classify_browser_output(1, '', 'not json', SimpleNamespace(url=self.CONTROL)), (None, failure), 'malformed output stays fatal')
+        self.assertEqual(classify_browser_output(1, 'node printed an error', '{"errors":[]}', Control(allowed_origin=self.CONTROL)), (None, failure), 'stderr stays fatal')
+        self.assertEqual(classify_browser_output(1, '', 'not json', Control(allowed_origin=self.CONTROL)), (None, failure), 'malformed output stays fatal')
         for returncode in [1, 3]:
             report = self.browser()
             report['result'].update(passed=False, reason='browser playback step')
-            classified, rejection = classify_browser_output(returncode, '', json.dumps(report), SimpleNamespace(url=self.CONTROL))
+            classified, rejection = classify_browser_output(returncode, '', json.dumps(report), Control(allowed_origin=self.CONTROL))
             self.assertEqual(rejection, failure, f'exit {returncode} without acknowledgment stays rejected')
             self.assertEqual(classified['errors'], ['browser request failed'], f'exit {returncode} keeps its error')
 
@@ -557,7 +561,7 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
             with self.subTest(name=name):
                 report = self.browser()
                 mutate(report)
-                classified, rejection = classify_browser_output(1, '', json.dumps(report), SimpleNamespace(url=self.CONTROL))
+                classified, rejection = classify_browser_output(1, '', json.dumps(report), Control(allowed_origin=self.CONTROL))
                 self.assertEqual(rejection, 'exported spectator failed; inspect browser.log', name + ' must stay fatal')
                 self.assertNotIn('acknowledged_disposal_abort', classified, name + ' stays unacknowledged')
                 self.assertTrue(classified['errors'], name + ' keeps its fatal error')
@@ -568,11 +572,10 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
         from spectator_browser import acknowledge_disposal_abort, validate_fault
         artifact = {**self.ARTIFACT, 'path': '/viewer'}
         report = self.browser(**{'requestFailures': [artifact], 'result': dict(self.REJECTED), 'state': dict(self.STATE)})
-        acknowledged = acknowledge_disposal_abort(report, SimpleNamespace(url=self.CONTROL))
+        acknowledged = acknowledge_disposal_abort(report, Control(allowed_origin=self.CONTROL))
         self.assertEqual(acknowledged['errors'], [], 'the intended rejection keeps no transport error')
         self.assertEqual(acknowledged['acknowledged_disposal_abort'], artifact, 'the observation stays visible')
-        control = SimpleNamespace(url=self.CONTROL, accepted_once=False, received=0, done=None)
-        validate_fault(1, acknowledged, True, control, '')
+        validate_fault(1, acknowledged, True, Control(allowed_origin=self.CONTROL), '')
 
     def test_rejection_paired_abort_mutations_stay_fatal(self):
         from spectator_browser import acknowledge_disposal_abort, validate_fault
@@ -588,11 +591,11 @@ class SpectatorDisposalAbortTests(unittest.TestCase):
             with self.subTest(name=name):
                 report = self.browser(**{'requestFailures': [dict(artifact)], 'result': dict(self.REJECTED)})
                 mutate(report)
-                self.assertIsNone(acknowledge_disposal_abort(report, SimpleNamespace(url=self.CONTROL)).get('acknowledged_disposal_abort'),
+                self.assertIsNone(acknowledge_disposal_abort(report, Control(allowed_origin=self.CONTROL)).get('acknowledged_disposal_abort'),
                                   name + ' must stay unacknowledged')
                 report['errors'] = []
                 with self.assertRaises(ValueError, msg=name + ' fails the admission gate'):
-                    validate_fault(1, report, True, SimpleNamespace(url=self.CONTROL), '')
+                    validate_fault(1, report, True, Control(allowed_origin=self.CONTROL), '')
 
 
 if __name__ == '__main__':

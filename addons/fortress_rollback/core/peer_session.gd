@@ -408,6 +408,10 @@ func _finish_requests(result: Driver.StepResult, forward: bool) -> Driver.StepRe
 		_checksum_confirmation = _core.status().confirmed_frame
 	_busy = false
 	_service_controls(_now, false)
+	# A committing drop freeze lifts a slot out of the fold, so the limit re-derives
+	# after the service; the reported frontier must not lag the mutation (#373).
+	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+		_confirmation_code()
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 		return _result(_core.status().reason, result.frame_before, _core.status().current_frame)
 	return result
@@ -431,6 +435,10 @@ func _prepare_recovery(now_us: Variant) -> Types.Result:
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
 		return Types.Result.new(_step_failure(control_code))
+	# The recovery service can commit a drop freeze, so the limit re-derives before
+	# the core requests read the confirmed frontier (#373).
+	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+		_confirmation_code()
 	_busy = true
 	return _begin_core_requests(now_us, false)
 
@@ -614,6 +622,11 @@ func set_input_delay(player: int, delay: int) -> int:
 			_collect_events()
 			_check_failure()
 			return _step_failure(sent)
+	# The raise stamped the local slot to the padded last_added frame, so the mesh confirmation
+	# limit re-derives here: the pinned upstream folds connect statuses lazily at every read,
+	# and a cached limit would report the pre-raise frontier until the next poll (#373).
+	# A refused re-derivation only leaves the conservative limit in place.
+	_confirmation_code()
 	return Types.Code.OK
 
 
@@ -837,6 +850,11 @@ func _receive(packet: Variant, attributed_sender: PackedByteArray, now_us: int, 
 	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
 		_confirmation_code()
 		_service_controls(now_us, false)
+		# A service control can commit a coordinated-drop freeze, which lifts the frozen slot
+		# out of the fold and releases its pending ceiling, so the limit re-derives after them
+		# as well; the upstream fold never lags a fold-input mutation past the read.
+		if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+			_confirmation_code()
 	return code
 
 
@@ -864,6 +882,10 @@ func _poll(now_us: int, tokens: Array, statuses: Array[T.Status] = [], force_sta
 	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
 		_confirmation_code()
 		_service_controls(now_us, false)
+		# The receive path's post-service re-derivation, applied to the poll path for the
+		# same reason: a committing drop freeze mutates the fold inside the service.
+		if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+			_confirmation_code()
 	return result
 
 

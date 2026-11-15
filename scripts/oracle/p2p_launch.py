@@ -75,6 +75,14 @@ def corpus(binary, selected=None):
     name = 'mesh_4_couch_delays_2_0'
     if selected is None or selected == name:
         cases[name] = build_layout_case(binary, [2, 2], 'ordinary', delays=[2, 0])
+    # The profile-plus-raise differential and its pinned minimized regression schedule.
+    name = 'mesh_2_delays_2_0_raise'
+    if selected is None or selected == name:
+        cases[name] = build_case(binary, 2, 0, 'delay_profile_raise', delays=[2, 0])
+    for name, scenario in MINIMIZED_PROFILES.items():
+        if selected is None or selected == name:
+            validate_scenario(scenario)
+            cases[name] = scenario
     # Non-default input widths: the minimum width, wide 32-byte rows under a loss fault,
     # and the combined maximum profile (window eight, width 32, eight peers).
     for name, (players, mode, window, width) in WIDTH_CASES.items():
@@ -99,6 +107,10 @@ DELAY_CHANGES = {
     # Raises start after frame zero's flight is acknowledged: upstream drops a resend that starts at a nonzero initial delay (see docs).
     'delay_rapid': {**{(1, peer): [3] for peer in range(4)}, (2, 1): [4, 5, 6], (3, 2): [59, 58], (4, 3): [4, 4, 1000], (5, 0): [5]},
     'delay_stall': {(1, 1): [2], (2, 2): [1, 2]},
+    # The profile-plus-raise shape: peer 1 raises after its frame-one step, following the
+    # frame-zero deliveries, so the confirmed-frontier fold's raise stamping is compared
+    # while a remote slot's received evidence already precedes the raise (#373).
+    'delay_profile_raise': {(1, 1): [1]},
 }
 
 # Multi-local endpoint layouts: (machine sizes, mode). The couch mesh holds the shared-address
@@ -112,13 +124,20 @@ LAYOUT_CASES = {'mesh_4_couch_2x2': ([2, 2], 'ordinary'), 'mesh_6_split_2x2x2': 
 # a frame-zero fault; the four-player profile interleaves the extremes across the full mesh.
 DELAY_PROFILES = {'mesh_2_delays_2_0': (2, [2, 0], 'ordinary'), 'mesh_3_delays_2_1_0_loss': (3, [2, 1, 0], 'loss'),
                   'mesh_4_delays_2_0_2_0': (4, [2, 0, 2, 0], 'ordinary')}
-# A per-machine profile combined with a runtime raise stays out of the compared
-# corpus on a reviewed divergence (#373): after peer 1 raises following its first
-# confirmed row, upstream's confirmed frontier counts the raise-stamped local slot
-# while skipping the un-acked remote slot, and Godot's receipt minimum folds the
-# received remote row, so the reported frontiers differ. The minimized scenario,
-# both traces and the shrink report stay pinned under .cache/results/session185
-# as the permanent red that a future fix must turn green.
+# The profile-plus-raise corpus case restores the reviewed #373 divergence as compared
+# coverage: after peer 1 raises following its first confirmed row, upstream's confirmed
+# frontier counts the raise-stamped local slot while skipping the un-acknowledged remote
+# slot's unqualified receipt, and production must re-derive its mesh confirmation limit
+# the same way. The shrinker's pinned minimized schedule stays a separate regression case
+# with its provenance (session185 shrink report, outcome "reproduced").
+MINIMIZED_PROFILES = {'mesh_2_delays_2_0_raise_min': {
+    'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'delays': [2, 0],
+    'operations': [
+        {'kind': 'step', 'peer': 0, 'now_us': 1, 'bytes': '11000000'},
+        {'kind': 'deliver', 'now_us': 3, 'packet': 0},
+        {'kind': 'step', 'peer': 1, 'now_us': 8, 'bytes': '44000000'},
+        {'kind': 'delay', 'peer': 1, 'delay': 1},
+    ]}}
 
 # Non-default input widths: (players, mode, window, width). The minimum-width cases hold the
 # smallest supported row and a loss fault under it; the wide case carries 32-byte rows; the
