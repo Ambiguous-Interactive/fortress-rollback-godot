@@ -68,12 +68,17 @@ def active_lines(text):
 class WorkflowTierTests(unittest.TestCase):
 
     def test_reference_tiers_have_no_pull_request_trigger(self):
-        # The Gate workflow owns per-push and pull-request runs; the qualify and
-        # nightly tiers trigger on merges, schedules and explicit dispatches
-        # only. The devcontainer build intentionally keeps its pull_request
-        # trigger outside the tier model. Assertions read active workflow lines
-        # only: a commented-out trigger neither satisfies nor evades them.
-        self.assertIn('pull_request:', active_lines(read(GATE)))
+        # The Gate workflow owns per-push and pull-request runs and the merge
+        # queue's grouped candidates; the qualify and nightly tiers trigger on
+        # merges, schedules and explicit dispatches only. The devcontainer
+        # build intentionally keeps its pull_request trigger outside the tier
+        # model. Assertions read active workflow lines only: a commented-out
+        # trigger neither satisfies nor evades them.
+        gate = active_lines(read(GATE))
+        self.assertIn('pull_request:', gate)
+        # The queue requires the Gate checks on grouped merge candidates; a
+        # missing merge_group trigger would leave the queue hanging forever.
+        self.assertIn('merge_group:', gate)
         for path in (QUALIFY, NIGHTLY):
             with self.subTest(workflow=path.name):
                 self.assertNotIn('pull_request:', active_lines(read(path)))
@@ -130,13 +135,32 @@ class WorkflowTierTests(unittest.TestCase):
 
     def test_qualify_drops_the_moved_axes(self):
         text = read(QUALIFY).lower()
-        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:'):
+        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:', 'pull_request:', 'push:'):
             with self.subTest(moved=moved):
                 self.assertNotIn(moved, text)
         self.assertEqual(text.count('browser: chromium'), QUALIFY_CHROMIUM_PARTS)
         self.assertIn('pair: [chromium]', text)
         self.assertIn("--skip-formal", text)
         self.assertNotIn('--formal off', text)
+
+    def test_qualification_summary_gates_the_merge_queue(self):
+        # The queue requires one stable context name instead of every matrix
+        # job's display name, so a rename cannot hang the queue. The summary
+        # must run unconditionally (always(): a skipped required check counts
+        # as passing) and fail when any family failed or was cancelled, and it
+        # must need every family, or a family could silently leave the gate.
+        text = read(QUALIFY)
+        self.assertIn('merge_group:', text)
+        self.assertIn('types: [checks_requested]', text)
+        block = '\n'.join(job_blocks(text)['qualification'])
+        self.assertIn('name: Qualification summary', block)
+        self.assertIn('if: always()', block)
+        for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
+            with self.subTest(family=family):
+                self.assertRegex(block, rf'needs: \[[a-z, ]*{family}')
+        self.assertIn("contains(needs.*.result, 'failure')", block)
+        self.assertIn("contains(needs.*.result, 'cancelled')", block)
+        self.assertIn('exit 1', block)
 
     def test_gate_acquires_no_system_packages(self):
         # The fast tier is pure Python plus the manifest-fetched editor: an apt
