@@ -9,7 +9,6 @@ import subprocess
 import shutil
 import threading
 import zipfile
-from urllib.parse import urlsplit
 
 import owned_process  # noqa: E402
 from fetch import CACHE, ROOT, digest, fetch, prepare_zip
@@ -132,7 +131,10 @@ def acknowledge_disposal_abort(browser, control):
     failures = browser.get('requestFailures')
     if not isinstance(failures, list) or len(failures) != 1 or not isinstance(failures[0], dict):
         return browser
-    origin = urlsplit(str(control.url))._replace(path='', query='', fragment='').geturl()
+    origin = control.allowed_origin
+    if origin is None:
+        # Without an export server no fetch can produce this probe's disposal artifact.
+        return browser
     artifact = failures[0]
     expected = {'origin': origin, **DISPOSAL_ABORT}
     if any(type(artifact.get(key)) is not type(value) or artifact.get(key) != value for key, value in expected.items()):
