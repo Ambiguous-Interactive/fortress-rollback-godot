@@ -332,14 +332,20 @@ def negative_controls(actual, expected, scenario):
     if 'delays' in scenario:
         # Per-machine delay profile: flipping machine 0's delay flips that machine's slots'
         # neutral-prefix expectation, so confirmed rows below the real start must fail.
+        # Per-machine delay profile: flipping machine 0's start must reach the confirmed-prefix
+        # band, so the flipped trace embeds the flipped scenario and validation must fail at
+        # exactly the prefix diagnostic — not at an embedded-scenario mismatch, which would
+        # satisfy the control without exercising the per-slot band at all.
         flipped = deepcopy(scenario)
         flipped['delays'][0] = 2 - flipped['delays'][0]
         validate_scenario(flipped)
         mutant = deepcopy(actual)
+        mutant['scenario'] = flipped
         try:
-            compare(mutant, expected, flipped)
-        except ValueError:
-            pass
+            validate(mutant, flipped)
+        except ValueError as disagreement:
+            if 'submitted confirmed prefix' not in str(disagreement):
+                raise ValueError('delay-profile control failed at the wrong boundary: ' + str(disagreement)) from disagreement
         else:
             raise ValueError('negative control survived: delays_profile')
         names.append('delays_profile')

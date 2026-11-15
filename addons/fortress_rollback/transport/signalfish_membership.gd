@@ -48,10 +48,18 @@ func configure(local_uuid: String, roster: PackedStringArray, session_id: Packed
 	owned.roster.clear()
 	for uuid: String in sorted:
 		owned.roster.append(identities[uuid].duplicate())
+	# The digest identifies the shared agreement: the per-peer delay — each endpoint's own
+	# schedule in the pinned upstream, never an agreed field — normalizes to zero before
+	# hashing, while the wire config keeps the machine's declared delay.
+	var digest_profile: T.Config = _copy_profile(profile)
+	digest_profile.input_delay = 0
+	digest_profile.roster.clear()
+	for uuid: String in sorted:
+		digest_profile.roster.append(identities[uuid].duplicate())
 	var bounds: T.Limits = T.Limits.new()
 	bounds.player_count = owned.player_count
 	bounds.input_width = owned.input_width
-	var encoded: T.Result = Codec.encode_config(owned, bounds)
+	var encoded: T.Result = Codec.encode_config(digest_profile, bounds)
 	if encoded.code != T.Code.OK:
 		return ERR_INVALID_DATA
 	var canonical: PackedByteArray = "fortress-signalfish-membership-v1".to_utf8_buffer()
