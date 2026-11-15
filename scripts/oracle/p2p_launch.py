@@ -112,6 +112,13 @@ LAYOUT_CASES = {'mesh_4_couch_2x2': ([2, 2], 'ordinary'), 'mesh_6_split_2x2x2': 
 # a frame-zero fault; the four-player profile interleaves the extremes across the full mesh.
 DELAY_PROFILES = {'mesh_2_delays_2_0': (2, [2, 0], 'ordinary'), 'mesh_3_delays_2_1_0_loss': (3, [2, 1, 0], 'loss'),
                   'mesh_4_delays_2_0_2_0': (4, [2, 0, 2, 0], 'ordinary')}
+# A per-machine profile combined with a runtime raise stays out of the compared
+# corpus on a reviewed divergence (#373): after peer 1 raises following its first
+# confirmed row, upstream's confirmed frontier counts the raise-stamped local slot
+# while skipping the un-acked remote slot, and Godot's receipt minimum folds the
+# received remote row, so the reported frontiers differ. The minimized scenario,
+# both traces and the shrink report stay pinned under .cache/results/session185
+# as the permanent red that a future fix must turn green.
 
 # Non-default input widths: (players, mode, window, width). The minimum-width cases hold the
 # smallest supported row and a loss fault under it; the wide case carries 32-byte rows; the

@@ -270,7 +270,7 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  match width {1=>run_width::<1>(original,scenario,profile_audit),4=>run_width::<4>(original,scenario,profile_audit),_=>run_width::<32>(original,scenario,profile_audit)}}
 fn run_width<const N:usize>(original:Value,scenario:Scenario,profile_audit:bool)->Result<Value,String>
 where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned{
-  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
+  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
  ||scenario.operations.is_empty()||scenario.operations.len()>10000{return Err("scenario bounds".into());}
  // An omitted profile keeps the 128-row default; an explicit one configures both adapters' rings.
  let capacity=match scenario.queue_capacity {None=>128,Some(n)=>n};
@@ -479,6 +479,20 @@ mod tests {
         };
         for delays in [json!([0]), json!([0,0,0]), json!([0,3]), json!([0,1.0]), json!([0,true]),
                        json!(null), json!([]), json!([18446744073709551615u64,0])] {
+            // The shared delay stays inside the compared band even when a profile overrides it,
+            // so the two validators never disagree on the embedded scenario's grammar.
+            let error = run(base(delays), false).expect_err("hostile delays accepted");
+            assert!(error.contains("scenario bounds") || error.contains("invalid type")
+                || error.contains("invalid number"), "{error}");
+        }
+        for scenario in [json!({"format":1u32,"players":2usize,"input_delay":3usize,
+            "max_prediction":4usize,"operations":[{"kind":"poll","peer":0usize,"now_us":0u64}]}),
+            json!({"format":1u32,"players":2usize,"input_delay":999999usize,"max_prediction":4usize,
+            "delays":[2usize,0usize],"operations":[{"kind":"poll","peer":0usize,"now_us":0u64}]})] {
+            let error = run(scenario, false).expect_err("out-of-band shared delay accepted");
+            assert!(error.contains("scenario bounds"), "{error}");
+        }
+        for delays in [json!([])] {
             let error = run(base(delays), false).expect_err("hostile delays accepted");
             assert!(error.contains("scenario bounds") || error.contains("invalid type")
                 || error.contains("invalid number"), "{error}");
