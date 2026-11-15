@@ -177,6 +177,7 @@ class NativeCliInstallTests(unittest.TestCase):
                 evidence = helper.journal_path('@opencode/cli')
                 pid_file = Path(directory) / 'grandchild.pid'
                 script = ("printf 'npm http fetch GET 200 https://registry.example/x.tgz?t=TOK\\n';"
+                          "printf 'npm http fetch GET https://registry.example/partial';"
                           f"sh -c 'echo $$ > {pid_file}; exec sleep 60' & sleep 60")
                 args = SimpleNamespace(timeout=3, package='@opencode/cli', arch='arm64', attempts=1, interval=0)
                 stderr = io.StringIO()
@@ -187,10 +188,14 @@ class NativeCliInstallTests(unittest.TestCase):
                 self.assertLess(time.monotonic() - started, 30, 'the process group must end at the deadline, not at grandchild exit')
                 self.assertIn('https://registry.example/x.tgz?<redacted>', stderr.getvalue())
                 self.assertNotIn('TOK', stderr.getvalue(), 'the timeout path never prints query credentials')
+                # The consumed bytes of an unterminated final line are evidence too:
+                # the timeout diagnostic and the journal both retain them.
+                self.assertIn('npm http fetch GET https://registry.example/partial', stderr.getvalue())
                 # The streamed journal holds the same redacted evidence on disk, so an
                 # outer deadline that kills this process before it prints keeps it.
                 text = evidence.read_text(encoding='utf-8')
                 self.assertIn('https://registry.example/x.tgz?<redacted>', text)
+                self.assertIn('npm http fetch GET https://registry.example/partial', text)
                 self.assertNotIn('TOK', text, 'the journal never holds query credentials')
                 # A killed process can stay a zombie briefly; poll for its removal.
                 for _ in range(50):

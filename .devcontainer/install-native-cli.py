@@ -134,6 +134,12 @@ class Installer:
             while True:
                 left = deadline - time.monotonic()
                 if left <= 0:
+                    if pending:
+                        # The consumed bytes of an unterminated line are still evidence:
+                        # journal them and keep them in the timeout diagnostic.
+                        collected.append(pending)
+                        record(pending)
+                        pending = ''
                     raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected))
                 ready, _, _ = select.select([fileno], [], [], min(left, 0.5))
                 if not ready:
@@ -164,7 +170,13 @@ class Installer:
                 record(pending)
         finally:
             if journal is not None:
-                journal.close()
+                try:
+                    journal.close()
+                except OSError as breakdown:
+                    # A close-time flush failure must not bypass the caller's timeout
+                    # handler, which owns the process-group cleanup.
+                    print(f'install evidence journal close failed ({breakdown}); continuing without it',
+                          file=sys.stderr, flush=True)
         # EOF means every writer closed the pipe; the direct child is exiting, so
         # this wait is bounded by its own teardown, not by a surviving descendant
         # (one would still hold the pipe open and prevent the EOF). The bound
