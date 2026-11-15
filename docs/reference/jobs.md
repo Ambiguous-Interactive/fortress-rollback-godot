@@ -514,7 +514,11 @@ retry wrappers and APT mirror preparation remain mandatory in every tier
 that installs packages. The handshake launcher gained `--formal off`, which
 records `formal_skipped` in its receipt; nightly runs the launcher with the
 default `--formal on`, so the model evidence keeps a real receipt instead of
-a silent skip.
+a silent skip. The Qualify path filter keeps the pre-tier trigger list, so a
+harness-only change (`scripts/tests/**`, `scripts/llm/**`) does not run the
+full matrix: the Gate tier runs the same linters and self-tests plus the
+reference and oracle negative controls for any tooling change, and a
+`scripts/tests` file cannot reach the engine-side matrix.
 
 Expected per-push cost: the Gate workflow targets roughly four minutes of
 wall time for traced changes (the fail-closed full-inventory fallback
