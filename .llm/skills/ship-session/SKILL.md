@@ -36,20 +36,29 @@ outside-input decision is not addressed feedback and must remain explicit.
    commit and never run `git reset --hard` while the working tree holds
    unstaged work — stage, stash or branch first. Find or create the session PR against
    `main`; update its title/body to describe the final diff. Do not explicitly
-   request bot reviews.
+   request bot reviews. The local pre-push minimum is `make gate` (harness
+   checks plus only suites affected by the changes); the qualification matrix
+   re-verifies the merge on `main`, so do not re-run the full matrix locally first.
 4. Read the PR's current head SHA, base, draft status and mergeability. Inspect
    check runs, commit statuses and workflow jobs for that exact SHA. Wait for
-   every applicable CI check to finish successfully. No checks, missing expected
+   every applicable Gate check to finish successfully — the Gate workflow is
+   the per-push tier (harness, changed-suite unit run, tooling negative
+   controls). No checks, missing expected
    workflows, pending jobs, stale successes, failures or cancellations prove green.
    Read step conclusions before claiming a phase passed; an always-running
    artifact upload can follow a failed probe.
    Investigate a skipped job's condition; it is acceptable only when the job
    does not apply to this candidate. Never bypass required checks or protection.
+   Watch runs in the background (`gh run watch` or an equivalent background
+   task) instead of sleeping in a poll loop, and use the wait for retrospectives,
+   issue drafts or other session work.
 
-## Scan feedback after green CI
+## Scan feedback after the Gate is green
 
-Scan after every push, **again after all CI is green**, and immediately before
-merging. CI success alone says nothing about feedback received during the run.
+Scan once per push: after the Gate is green and immediately before merging.
+These are the same moment unless a new push happened; a new push restarts the
+Gate and the scan. CI success alone says nothing about feedback received during
+the run.
 
 | Surface | Authoritative read |
 | --- | --- |
@@ -102,7 +111,9 @@ session log or linked issue. Do not make an automated clean claim from counts.
    commits; do not discard them with a hard reset. Use a clean worktree if needed.
 4. Verify `HEAD == origin/main` and a clean worktree. The squash commit must be
    reachable from `origin/main`; remote main may have advanced again.
-5. Observe merge-triggered main CI to its terminal state. Repair new failures
+5. Observe the merge-triggered qualification workflow (the full matrix) to its
+   terminal state; the nightly workflow covers the remaining axes on its
+   schedule and its failures get triaged like any other. Repair new failures
    within the same authorized goal; do not report success from pre-merge CI alone.
 
 ## Source precedents

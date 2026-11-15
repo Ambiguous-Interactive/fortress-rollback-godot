@@ -110,6 +110,7 @@ across repository source files. File line-count caps remain separate.
 | Check file lengths only | `python3 scripts/llm/check_llm_file_lengths.py` |
 | Validate skills + pointers + links | `python3 scripts/llm/lint_llm_instructions.py` |
 | Run only suites affected by your changes (fastest loop) | `make test-changed` |
+| Pre-push minimum: harness checks + changed suites | `make gate` |
 | Run the game/tests headless | `godot --headless --path .` |
 | Report cache and scratch growth | `make disk` |
 | Report reclaimable caches and scratch | `make prune` |
@@ -194,10 +195,15 @@ drift cannot merge.
   stub freshness, and the meta-lint.
 - **pre-commit framework**: `.pre-commit-config.yaml` exposes the same checks
   as local hooks (`pre-commit run --all-files`).
-- **CI**: `.github/workflows/llm-lint.yml` runs self-tests + every linter on
-  any change touching `.llm/`, `.claude/`, `.agents/`, pointer files, or
-  `scripts/`.
-- **Makefile**: single entry point for all of the above.
+- **CI tiers**: `.github/workflows/gate.yml` runs on every push (harness
+  checks, changed-suite unit run on the minimum pin, tooling negative
+  controls when tooling changes); `.github/workflows/reference-baseline.yml`
+  qualifies every merge to `main` with the full Chromium matrix;
+  `.github/workflows/nightly.yml` owns the Firefox axis and the Java model
+  checks on a schedule. Workflow composition is pinned by
+  `scripts/tests/test_workflow_tiers.py`.
+- **Makefile**: single entry point for all of the above. `make gate` is the
+  pre-push minimum.
 
 ## Encoding and Format Contract
 
