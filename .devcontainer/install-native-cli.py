@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install one latest wrapper after its matching Linux release is published."""
 import argparse
+import codecs
 import json
 import math
 import os
@@ -20,9 +21,12 @@ class PublicationPending(Exception):
 
 QUERY_CREDENTIALS = re.compile(r'(https?://[^\s?#]+)\?[^\s]*')
 
-# One install's npm http log stays far below this; the cap only bounds a
-# pathological loop so a stuck build cannot fill the disk with evidence.
+# One install's npm http log stays far below this; the cap bounds a pathological
+# loop and each single line, so a stuck build cannot fill the disk with evidence.
 JOURNAL_LIMIT_BYTES = 4 * 1024 * 1024
+# A pathological stream without newlines still fills the line buffer; past this
+# bound the partial line is flushed as complete evidence and counting resumes.
+PENDING_LIMIT_BYTES = 1024 * 1024
 
 
 def redact_query_strings(text):
@@ -41,9 +45,26 @@ def journal_path(package):
     The name must be derivable without the installer process: a Docker or CI
     deadline can kill the installer mid-command, and the next reader has to
     find the partial acquisition-versus-lifecycle evidence on disk (issue #249).
+    One host runs one installer per package (one container build per runner), so
+    the fixed name has no concurrent writer; a hostile or stale file at the path
+    disables journaling instead of breaking the install.
     """
     slug = package.removeprefix('@').replace('/', '-')
     return Path(tempfile.gettempdir()) / f'install-native-cli-{slug}.log'
+
+
+def _open_journal(path):
+    """Create or truncate the journal safely, or report why journaling is off.
+
+    O_NOFOLLOW refuses a planted symlink, 0600 keeps other users out, and an
+    unwritable or foreign-owned path must never turn the diagnostic feature
+    into a new install failure, so the caller proceeds without a journal.
+    """
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    except OSError as failure:
+        return None, failure
+    return os.fdopen(descriptor, 'wb'), None
 
 
 class Installer:
@@ -66,14 +87,50 @@ class Installer:
         outer build deadline that kills this process mid-install still leaves
         the partial registry-versus-lifecycle evidence on disk (issue #249).
         Lines are buffered whole because the redaction regex needs the URL and
-        its query in one piece. Returns the collected text in npm's order.
+        its query in one piece; an incremental decoder keeps multi-byte
+        sequences whole across read boundaries. Returns the collected text in
+        npm's order.
         """
         path = journal_path(self.args.package)
+        journal, failure = _open_journal(path)
+        if journal is None:
+            # The diagnostic must never break the install it observes.
+            print(f'install evidence journal disabled ({failure}); continuing without it',
+                  file=sys.stderr, flush=True)
+        else:
+            print(f'install phase evidence journal: {path}', file=sys.stderr, flush=True)
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         collected = []
         pending = ''
         written = 0
+
+        def record(line):
+            """Redact one complete line into the journal within the byte budget."""
+            nonlocal written
+            if journal is None or written < 0:
+                return
+            data = redact_query_strings(line).encode('utf-8', errors='replace')
+            try:
+                if written + len(data) > JOURNAL_LIMIT_BYTES:
+                    take = max(0, JOURNAL_LIMIT_BYTES - written)
+                    journal.write(data[:take])
+                    journal.write(b'\n...[journal truncated at the byte budget]\n')
+                    journal.flush()
+                    written = -1
+                    return
+                journal.write(data)
+                # The flush is the point: a hard outer kill keeps only what
+                # already reached the disk.
+                journal.flush()
+                written += len(data)
+            except OSError as breakdown:
+                # A journal that breaks mid-stream must not corrupt the collection.
+                print(f'install evidence journal write failed ({breakdown}); continuing without it',
+                      file=sys.stderr, flush=True)
+                written = -1
+
         deadline = time.monotonic() + budget
-        with open(path, 'w', encoding='utf-8') as journal:
+        try:
             while True:
                 left = deadline - time.monotonic()
                 if left <= 0:
@@ -83,8 +140,9 @@ class Installer:
                     continue
                 chunk = os.read(fileno, 65536)
                 if not chunk:
+                    pending += decoder.decode(b'', final=True)
                     break
-                pending += chunk.decode('utf-8', errors='replace')
+                pending += decoder.decode(chunk, final=False)
                 while True:
                     newline = pending.find('\n')
                     if newline < 0:
@@ -92,33 +150,30 @@ class Installer:
                     line = pending[:newline + 1]
                     pending = pending[newline + 1:]
                     collected.append(line)
-                    if written < 0:
-                        continue
-                    if written >= JOURNAL_LIMIT_BYTES:
-                        journal.write('...[journal truncated at the byte budget]\n')
-                        journal.flush()
-                        written = -1
-                        continue
-                    journal.write(redact_query_strings(line))
-                    # The flush is the point: a hard outer kill keeps only what
-                    # already reached the disk.
-                    journal.flush()
-                    written += len(line)
+                    record(line)
+                if len(pending) > PENDING_LIMIT_BYTES:
+                    # A pathological stream without newlines cannot buffer forever:
+                    # flush the partial line as complete evidence and keep going.
+                    collected.append(pending + '\n')
+                    record(pending + '\n')
+                    pending = ''
             if pending:
                 # An incomplete final line is still evidence; keep its redaction safe
                 # because the missing newline cannot split a URL mid-query.
                 collected.append(pending)
-                if 0 <= written < JOURNAL_LIMIT_BYTES:
-                    journal.write(redact_query_strings(pending))
-                    journal.flush()
+                record(pending)
+        finally:
+            if journal is not None:
+                journal.close()
         # EOF means every writer closed the pipe; the direct child is exiting, so
         # this wait is bounded by its own teardown, not by a surviving descendant
-        # (one would still hold the pipe open and prevent the EOF).
+        # (one would still hold the pipe open and prevent the EOF). The bound
+        # stays inside the caller's remaining budget.
         try:
-            process.wait(timeout=10)
+            process.wait(timeout=max(0.1, min(10, deadline - time.monotonic())))
         except subprocess.TimeoutExpired:
             raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected)) from None
-        return ''.join(collected)
+        return ''.join(collected), journal is not None
 
     def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
@@ -139,10 +194,11 @@ class Installer:
         try:
             fileno = self._stream_fileno(process) if merged else None
             if fileno is not None:
-                print(f'install phase evidence journal: {journal_path(self.args.package)}', file=sys.stderr, flush=True)
-                stdout, stderr = self._stream_with_journal(process, fileno, min(120, remaining)), ''
+                stdout, journaled = self._stream_with_journal(process, fileno, min(120, remaining))
+                stderr = ''
             else:
                 stdout, stderr = process.communicate(timeout=min(120, remaining))
+                journaled = False
         except subprocess.TimeoutExpired as failure:
             # Preserve the first attempt's diagnostics even when the process tree
             # hangs, in the order npm produced them, without registry credentials.
@@ -188,8 +244,8 @@ class Installer:
                 raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
             note = f'; partial output retained at {journal_path(self.args.package)}' if merged else ''
             raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode}){note}')
-        if merged:
-            # A healthy install leaves no evidence journal behind.
+        if journaled:
+            # A healthy install removes the evidence journal it created.
             journal_path(self.args.package).unlink(missing_ok=True)
         return result.stdout.strip()
 

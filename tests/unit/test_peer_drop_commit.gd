@@ -38,7 +38,10 @@ func run_case(name: String, context: RefCounted) -> void:
 
 ## A mesh whose survivors advanced past the departed receipt before either
 ## observed the silence, so the departed slot binds the reported frontier while
-## the selected packet stays held at the test boundary.
+## the selected real packet stays held at the test boundary. The barrier event is
+## then queued through the endpoint event queue exactly as `Lifecycle.receive_control`
+## queues a received barrier packet — the same seam the production collection reads —
+## because no public sequence leaves a barrier queued past an inline collection.
 func _advanced_fixture(context: RefCounted, hold_phase: int, hold_stage: int, recipient: int) -> Dictionary:
 	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
 	_play(context, mesh, 62, true)
@@ -54,6 +57,7 @@ func _advanced_fixture(context: RefCounted, hold_phase: int, hold_stage: int, re
 		_deliver(context, mesh, _without_peer(_drain(mesh), 2))
 		if not mesh.held.is_empty():
 			break
+	context.equal(mesh.held.is_empty(), false, "the real session emits the selected packet within the advance budget")
 	return mesh
 
 

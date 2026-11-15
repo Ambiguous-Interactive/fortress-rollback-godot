@@ -309,8 +309,10 @@ compare the per-peer delay-profile axis. The confirmed frontier follows the pinn
 upstream's lazily folded connect statuses: a runtime raise stamps the local slot
 to its padded `last_added` frame and joins the frontier immediately, and a
 committing drop freeze releases its ceiling in the same operation, so the peer
-facade re-derives the core's confirmation limit after every fold-input mutation,
-including the event drains that process one;
+facade re-derives the core's confirmation limit after every fold-input mutation
+while the match runs and is not terminated, including the event drains that
+process one; a terminated match keeps its last running frontier beside the
+terminal cause.
 `mesh_2_delays_2_0_raise` compares the profile-plus-raise axis and the pinned
 minimized #373 schedule stays as its regression case. A failing P2P schedule
 now shrinks to its first divergence: the launcher truncates at the named
