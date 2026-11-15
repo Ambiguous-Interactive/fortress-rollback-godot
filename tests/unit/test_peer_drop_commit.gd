@@ -9,6 +9,7 @@ func cases() -> PackedStringArray:
 		"clean_ack_quiescence", "lost_first_ack_recommits", "malformed_committed_ack", "malformed_duplicate_commit",
 		"early_committed_ack", "wrong_sender_commit", "commit_deadline",
 		"duplicate_ready_control", "contradictory_ready_cut", "contradictory_ready_digest",
+		"drained_commit_pins_the_frontier", "refused_checksum_pins_the_frontier",
 	])
 
 
@@ -26,9 +27,98 @@ func run_case(name: String, context: RefCounted) -> void:
 			_wrong_sender_commit(context)
 		"commit_deadline":
 			_commit_deadline(context)
+		"drained_commit_pins_the_frontier":
+			_drained_commit_pins_the_frontier(context)
+		"refused_checksum_pins_the_frontier":
+			_refused_checksum_pins_the_frontier(context)
 		_:
 			_commit_ack(context, bool(SCENARIOS[name]))
 	context.finish()
+
+
+## A mesh whose survivors advanced past the departed receipt before either
+## observed the silence, so the departed slot binds the reported frontier while
+## the selected packet stays held at the test boundary.
+func _advanced_fixture(context: RefCounted, hold_phase: int, hold_stage: int, recipient: int) -> Dictionary:
+	var mesh: Dictionary = _build(context, L.Disconnect.CONTINUE)
+	_play(context, mesh, 62, true)
+	_leave(context, mesh, 2)
+	mesh.merge({"monitor_commit": true, "lose_first": false, "lost_acks": 0, "commits": [], "acks": [], "delivered_acks": 0})
+	_hold_packets(mesh, hold_phase, hold_stage, recipient)
+	for tick: int in range(700):
+		mesh.now += 1000
+		for survivor: int in [0, 1]:
+			mesh.peers[survivor].poll(mesh.now)
+			mesh.peers[survivor].step(mesh.now, _inputs(mesh, survivor))
+		_deliver(context, mesh, _without_peer(_drain(mesh), 2))
+		_deliver(context, mesh, _without_peer(_drain(mesh), 2))
+		if not mesh.held.is_empty():
+			break
+	return mesh
+
+
+## The endpoint event one real received barrier packet queues.
+func _barrier_event(message: T.Message) -> Dictionary:
+	return {
+		"kind": "drop_barrier", "phase": message.phase, "stage": message.stage, "reason": message.reason,
+		"operation": message.operation, "coordinator": message.coordinator, "coordinator_generation": message.coordinator_generation,
+		"target_set_digest": message.target_set_digest, "cut": message.cut, "bound": message.bound,
+		"available_through": message.available_through, "cut_digest": message.cut_digest,
+		"chunk_index": message.chunk_index, "chunk_count": message.chunk_count, "witnessed": message.witnessed,
+		"slots": message.data.duplicate(), "bytes": message.bytes.duplicate(),
+	}
+
+
+# Value: protects=the public event drain re-derives the fold after a commit; fails_when=the caller's next status read lags the drained freeze; why_new=#375 drain window; seam=none
+func _drained_commit_pins_the_frontier(context: RefCounted) -> void:
+	var mesh: Dictionary = _advanced_fixture(context, Drop.Phase.COMMIT, Drop.Stage.NONE, 1)
+	if mesh.held.is_empty():
+		return
+	var commit: Dictionary = mesh.held[0]
+	var follower: Drop.Barrier = mesh.peers[1]._drops.barrier(_id(2).hex_encode())
+	context.equal(follower.state, Drop.PENDING, "hold the real COMMIT before follower dispatch")
+	context.equal(follower.certified, true, "the follower certified the held COMMIT")
+	var decoded: T.Result = Codec.decode(commit.bytes, _limits(mesh.count))
+	context.equal(decoded.code, T.Code.OK, "decode the held COMMIT")
+	# Queue the commit at the coordinator endpoint exactly as a real receive would,
+	# then drain it through the public event API instead of an inline collection.
+	mesh.peers[1]._endpoint(0)._events.append(_barrier_event(decoded.message))
+	var stalled: int = mesh.peers[1].status().confirmed_frame
+	var frame: int = mesh.peers[1].status().current_frame
+	mesh.peers[1].drain_events()
+	context.equal(mesh.peers[1]._core.frozen_frame(2), int(commit.message.cut), "the drained commit froze the departed slot")
+	context.equal(mesh.peers[1].status().lifecycle, Types.Lifecycle.RUNNING, "the drained commit keeps the match running")
+	context.equal(mesh.peers[1].status().current_frame, frame, "the drained commit does not advance simulation")
+	context.equal(mesh.peers[1].status().confirmed_frame > stalled, true, "the public drain does not report a frontier that lags the committed freeze")
+
+
+# Value: protects=the refused checksum-report return re-derives the fold; fails_when=the failed step's frontier lags the service commit; why_new=#375 checksum window; seam=none
+func _refused_checksum_pins_the_frontier(context: RefCounted) -> void:
+	var mesh: Dictionary = _advanced_fixture(context, Drop.Phase.REPORT, Drop.Stage.READY, 0)
+	if mesh.held.is_empty():
+		return
+	var ready: Dictionary = mesh.held[0]
+	var proposer: Drop.Barrier = mesh.peers[0]._drops.barrier(_id(2).hex_encode())
+	context.equal(proposer.state, Drop.PENDING, "hold the follower certificate before the proposer commits")
+	context.equal(proposer.certificates.size(), 0, "the held certificate never reached the proposer")
+	var decoded: T.Result = Codec.decode(ready.bytes, _limits(mesh.count))
+	context.equal(decoded.code, T.Code.OK, "decode the held READY")
+	var endpoint: Variant = mesh.peers[0]._endpoint(0)
+	# Queue the certificate as a receive would and fill the report budget, so the
+	# service commit and the refused checksum report share one send-reports call.
+	endpoint._events.append(_barrier_event(decoded.message))
+	while endpoint._outbox.size() < endpoint._options.max_outbox:
+		endpoint._outbox.append(PackedByteArray())
+	# The next boundary inside the confirmed prefix is due but unsent, so the
+	# send-reports pass attempts one real checksum report.
+	mesh.peers[0]._checksums._next = mini(int(ready.message.cut), mesh.peers[0].status().confirmed_frame)
+	var stalled: int = mesh.peers[0].status().confirmed_frame
+	var refused: int = mesh.peers[0]._service_controls(int(mesh.now), true)
+	context.equal(refused, I.Code.BACKPRESSURE, "the full outbox refuses the checksum report")
+	context.equal(proposer.state, Drop.COMMITTED, "the service committed during the refused report")
+	context.equal(mesh.peers[0]._core.frozen_frame(2), int(ready.message.cut), "the committing freeze kept the agreed frame")
+	context.equal(mesh.peers[0].status().lifecycle, Types.Lifecycle.RUNNING, "the refused report keeps the match running")
+	context.equal(mesh.peers[0].status().confirmed_frame > stalled, true, "the refused report does not report a frontier that lags the committing freeze")
 
 
 # Value: protects=barrier expiry precedes buffered COMMIT; fails_when=receive commits at its deadline; why_new=poll-only timeout coverage; seam=none
