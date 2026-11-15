@@ -45,7 +45,7 @@ MAX_ERROR_LENGTH = 200
 EXPECTED = {
     'res://tests/unit/test_protocol_codec.gd': {'golden', 'truncation', 'malformed', 'limits', 'types', 'ownership', 'semantics', 'hostile_bytes'},
     'res://tests/unit/test_protocol_handshake_fields.gd': {'compatibility', 'geometry', 'bounds'},
-    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'time', 'identity', 'backpressure', 'timeout_pressure', 'ownership'},
+    'res://tests/unit/test_handshake.gd': {'roundtrips', 'echoes', 'mismatch', 'delay_profile', 'time', 'identity', 'backpressure', 'timeout_pressure', 'ownership'},
     'res://tests/determinism/test_buffer_ownership.gd': {'engine_boundaries', 'owned_input', 'snapshot_wraps', 'snapshot_bounds'},
     'res://tests/determinism/test_integer_encoding.gd': {'arithmetic', 'binary', 'bounds', 'checksum'},
 }
@@ -55,12 +55,14 @@ EXPECTED.update({
     'res://tests/unit/test_peer_lifecycle.gd': {'checksum_export', 'healthy_exchange', 'real_desync', 'terminal_timeout', 'close',
         'checksum_conflict', 'checksum_future', 'stale_checksum', 'interrupted_resume', 'checksum_capacity', 'event_capacity', 'statistics',
         'lockstep_checksums', 'later_peer_expiry'},
-    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'retry', 'validation', 'retention', 'capacity', 'ownership',
+    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'delayed_start', 'retry', 'validation', 'retention', 'capacity', 'ownership',
         'status_nudge', 'status_nudge_transitions'},
     'res://tests/unit/test_stalled_gossip.gd': {'drained', 'dropped_reordered', 'missing_receipt', 'step_recovery', 'grouped_locals'},
-    'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save'},
+    'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save', 'delayed_peer_start'},
     'res://tests/unit/test_peer_session.gd': {'mesh', 'loss', 'multiple_locals', 'backpressure', 'ingress',
-        'partial_publication', 'reentry', 'begin_preflight', 'long_runtime', 'request_mismatch', 'low_windows', 'packet_service'},
+        'partial_publication', 'reentry', 'begin_preflight', 'long_runtime', 'request_mismatch', 'low_windows', 'packet_service',
+        # The heterogeneous construction-delay mesh pins the per-peer schedule fold.
+        'delayed_peers'},
     'res://tests/unit/test_peer_checksum_repair.gd': {'pending_repair_is_not_a_loss', 'lost_snapshot_still_fails',
         'lost_snapshot_under_a_repair_still_fails'},
 })
