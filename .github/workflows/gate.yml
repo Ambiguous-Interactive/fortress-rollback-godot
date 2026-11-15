@@ -7,6 +7,9 @@ name: Gate
 
 on:
   push:
+    # Feature branches are verified by their pull_request Gate run; a push
+    # trigger on every branch would run the whole gate twice per change.
+    branches: [main]
   pull_request:
   # The merge queue builds grouped merge candidates and requires this
   # workflow's checks on them; without the trigger the queue would hang

@@ -79,6 +79,9 @@ class WorkflowTierTests(unittest.TestCase):
         # The queue requires the Gate checks on grouped merge candidates; a
         # missing merge_group trigger would leave the queue hanging forever.
         self.assertIn('merge_group:', gate)
+        # Feature branches verify through their pull_request run; a push
+        # trigger on every branch would run the whole gate twice per change.
+        self.assertRegex(gate, r'on:\n\s+push:\n\s+branches: \[main\]')
         for path in (QUALIFY, NIGHTLY):
             with self.subTest(workflow=path.name):
                 self.assertNotIn('pull_request:', active_lines(read(path)))
