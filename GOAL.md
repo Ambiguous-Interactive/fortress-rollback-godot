@@ -64,8 +64,10 @@ Target: consensus among all reviewers that the result needs zero revisions.
    critically (fresh context: the diff plus the relevant spec excerpt, never
    the author's rationale).
 3. Address actionable findings in **at most one fix round**, then re-review
-   the updated diff once. Record anything left as follow-up issues instead of
-   looping; repeated review rounds past that point burn tokens without
-   measurably improving the result.
+   the updated diff once. An in-scope actionable finding blocks merge: fix it
+   before merging or stop the merge; follow-up issues are only for findings
+   outside the accepted scope. Do not loop past the one fix round — repeated
+   review rounds past that point burn tokens without measurably improving
+   the result.
 4. If not using sub-agents, apply the same one-round adversarial review loop
    on the main thread.

@@ -59,17 +59,24 @@ def acquisition_commands(text):
     return [line.strip() for line in text.splitlines() if ACQUISITION.search(line)]
 
 
+def active_lines(text):
+    """The workflow text without full-line YAML comments, so a commented-out
+    trigger cannot satisfy (or evade) a presence or absence assertion."""
+    return '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('#'))
+
+
 class WorkflowTierTests(unittest.TestCase):
 
     def test_reference_tiers_have_no_pull_request_trigger(self):
         # The Gate workflow owns per-push and pull-request runs; the qualify and
         # nightly tiers trigger on merges, schedules and explicit dispatches
         # only. The devcontainer build intentionally keeps its pull_request
-        # trigger outside the tier model.
-        self.assertIn('pull_request:', read(GATE))
+        # trigger outside the tier model. Assertions read active workflow lines
+        # only: a commented-out trigger neither satisfies nor evades them.
+        self.assertIn('pull_request:', active_lines(read(GATE)))
         for path in (QUALIFY, NIGHTLY):
             with self.subTest(workflow=path.name):
-                self.assertNotIn('pull_request:', read(path))
+                self.assertNotIn('pull_request:', active_lines(read(path)))
         self.assertFalse(LLM_LINT.exists(), 'the harness checks moved into gate.yml')
 
     def test_gate_jobs_cover_harness_changed_unit_and_controls(self):
