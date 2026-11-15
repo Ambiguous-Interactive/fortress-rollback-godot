@@ -261,7 +261,8 @@ class NativeCliInstallTests(unittest.TestCase):
     def test_hostile_journal_path_disables_journaling_without_failing_the_install(self):
         # Value: the journal is a diagnostic, never a new install failure: a
         # foreign-owned or planted file at the fixed path must neither stop the
-        # install nor be adopted as this run's evidence.
+        # install nor be adopted as this run's evidence, and a run whose journal
+        # was disabled must not send the operator to that path on failure.
         helper = self.load_helper()
         for package, arch in (('@opencode/cli', 'amd64'), ('@openai/codex', 'arm64')):
             with self.subTest(package=package, arch=arch):
@@ -281,6 +282,36 @@ class NativeCliInstallTests(unittest.TestCase):
                             evidence.chmod(0o600)
                         self.assertIn('planted evidence', evidence.read_text(encoding='utf-8'),
                                       'the hostile file must not be truncated into this run\u2019s journal')
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch.object(helper.tempfile, 'tempdir', directory):
+                        evidence = helper.journal_path(package)
+                        evidence.write_text('planted evidence that must not be adopted\n', encoding='utf-8')
+                        evidence.chmod(0o000)
+                        try:
+                            result, _ = self.invoke(package, arch, tmpdir=directory, install_error=True)
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertIn('install evidence journal disabled', result.stderr)
+                            self.assertNotIn('partial output retained', result.stderr,
+                                             'a disabled journal must not be named as retention')
+                        finally:
+                            evidence.chmod(0o600)
+
+    def test_symlink_journal_path_disables_journaling_and_spares_the_target(self):
+        # Value: O_NOFOLLOW refuses a planted symlink at the fixed path: the
+        # install proceeds without a journal and the symlink target keeps its
+        # bytes instead of being truncated into this run's evidence.
+        helper = self.load_helper()
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(helper.tempfile, 'tempdir', directory):
+                target = Path(directory) / 'sentinel.log'
+                target.write_text('sentinel bytes that must survive\n', encoding='utf-8')
+                evidence = helper.journal_path('@opencode/cli')
+                evidence.symlink_to(target)
+                result, _ = self.invoke('@opencode/cli', 'amd64', tmpdir=directory, failures=0)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('install evidence journal disabled', result.stderr)
+                self.assertIn('sentinel bytes that must survive', target.read_text(encoding='utf-8'),
+                              'the planted symlink target must not be truncated or adopted')
 
     def test_install_failure_retains_its_journal_for_the_next_reader(self):
         # Value: the retention path for a plain non-timeout install failure: the

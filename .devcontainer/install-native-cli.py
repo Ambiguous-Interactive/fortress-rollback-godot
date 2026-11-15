@@ -71,6 +71,9 @@ class Installer:
     def __init__(self, args):
         self.args = args
         self.deadline = time.monotonic() + args.timeout
+        # Whether the merged install stream actually opened its evidence journal;
+        # the failure diagnostics may only name the path when it did.
+        self._journaled = False
 
     @staticmethod
     def _stream_fileno(process):
@@ -93,6 +96,7 @@ class Installer:
         """
         path = journal_path(self.args.package)
         journal, failure = _open_journal(path)
+        self._journaled = journal is not None
         if journal is None:
             # The diagnostic must never break the install it observes.
             print(f'install evidence journal disabled ({failure}); continuing without it',
@@ -113,7 +117,9 @@ class Installer:
             try:
                 if written + len(data) > JOURNAL_LIMIT_BYTES:
                     take = max(0, JOURNAL_LIMIT_BYTES - written)
-                    journal.write(data[:take])
+                    # Decode the clamped head before writing, so the cut lands on
+                    # a character boundary and the file stays valid UTF-8.
+                    journal.write(data[:take].decode('utf-8', errors='replace').encode('utf-8'))
                     journal.write(b'\n...[journal truncated at the byte budget]\n')
                     journal.flush()
                     written = -1
@@ -179,13 +185,14 @@ class Installer:
                           file=sys.stderr, flush=True)
         # EOF means every writer closed the pipe; the direct child is exiting, so
         # this wait is bounded by its own teardown, not by a surviving descendant
-        # (one would still hold the pipe open and prevent the EOF). The bound
-        # stays inside the caller's remaining budget.
+        # (one would still hold the pipe open and prevent the EOF). The floor keeps
+        # the bound positive when EOF lands exactly at the budget; its own expiry
+        # raises into the caller's process-group cleanup.
         try:
             process.wait(timeout=max(0.1, min(10, deadline - time.monotonic())))
         except subprocess.TimeoutExpired:
             raise subprocess.TimeoutExpired(process.args, budget, output=''.join(collected)) from None
-        return ''.join(collected), journal is not None
+        return ''.join(collected)
 
     def command(self, command, publication=False, *, phase, merged=False):
         remaining = self.deadline - time.monotonic()
@@ -206,11 +213,10 @@ class Installer:
         try:
             fileno = self._stream_fileno(process) if merged else None
             if fileno is not None:
-                stdout, journaled = self._stream_with_journal(process, fileno, min(120, remaining))
+                stdout = self._stream_with_journal(process, fileno, min(120, remaining))
                 stderr = ''
             else:
                 stdout, stderr = process.communicate(timeout=min(120, remaining))
-                journaled = False
         except subprocess.TimeoutExpired as failure:
             # Preserve the first attempt's diagnostics even when the process tree
             # hangs, in the order npm produced them, without registry credentials.
@@ -240,7 +246,9 @@ class Installer:
             text = early + (stdout or '') + (stderr or '')
             if text:
                 print(redact_query_strings(text), end='', file=sys.stderr)
-            note = f'; partial output retained at {journal_path(self.args.package)}' if merged else ''
+            # Only a journal this run actually opened may be named as retention;
+            # a disabled journal's path can hold planted foreign content.
+            note = f'; partial output retained at {journal_path(self.args.package)}' if merged and self._journaled else ''
             raise ValueError(f'CLI installation command timed out during {phase} within publication retry budget{note}') from failure
         result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         if result.returncode:
@@ -254,9 +262,9 @@ class Installer:
             missing = publication is True or (publication and any(spec in tokens for spec in publication))
             if missing and codes and codes <= {'ETARGET', 'E404'}:
                 raise PublicationPending(command[2] if publication is True else 'matching native dependency during install')
-            note = f'; partial output retained at {journal_path(self.args.package)}' if merged else ''
+            note = f'; partial output retained at {journal_path(self.args.package)}' if merged and self._journaled else ''
             raise ValueError(f'CLI installation command failed during {phase} (exit {result.returncode}){note}')
-        if journaled:
+        if self._journaled:
             # A healthy install removes the evidence journal it created.
             journal_path(self.args.package).unlink(missing_ok=True)
         return result.stdout.strip()
