@@ -137,6 +137,20 @@ separate disconnect-agreement arm remains outside fixed-membership support.
 Voluntary idle periods with prediction room can retain a final confirmation lag;
 submitting another input propagates fresh gossip. Final-tail convergence and real
 WebRTC/SignalFish delivery have separate roadmap gates.
+
+The reported frontier follows the pinned upstream's lazily folded connect
+statuses, so it can never lag a fold-input mutation past the next read. A
+runtime input-delay raise stamps the local slot to its padded `last_added` frame
+before the catch-up flight flushes, and that stamped slot joins the frontier
+immediately; a committed coordinated-drop freeze lifts the frozen slot out of
+the fold and releases its pending ceiling at the same operation. The façade owns
+the mesh fold and re-derives the core's monotone confirmation limit after every
+mutation that moves it — submits, receives, delay raises and committing drop
+services — while the core still refuses any lowering, so a refused
+re-derivation only leaves the conservative bound in place. Upstream's deeper
+evidence qualifications beyond this shape (the N≥4 relay-floor round machinery
+and the pending-reactivation clamp) stay outside fixed-membership support, where
+no pruned-relay topology or hot-join reactivation exists.
 [Lifecycle controls](peer-lifecycle.md) provide timing observations, confirmed
 game checksums and explicit terminal outcomes. This façade is a usable byte
 session, not a supported browser release.

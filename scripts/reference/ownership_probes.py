@@ -179,6 +179,7 @@ EXPECTED['res://tests/unit/test_signalfish_spectator_host.gd'] = {
     'startup', 'canonical_playback', 'corrected_drop_history', 'pressure', 'lifetimes', 'configuration', 'reentry', 'history_loss', 'player_coexistence', 'active_requests',
     'fair_liveness', 'finish_retry', 'callback_lifetimes', 'setup_callbacks'}
 EXPECTED['res://tests/unit/test_peer_session.gd'].add('scheduled_inputs')
+EXPECTED['res://tests/unit/test_peer_session.gd'].add('raised_frontier')
 EXPECTED['res://tests/unit/test_replay_callbacks.gd'].add('failure_kinds')
 EXPECTED['res://tests/unit/test_replay_diagnostics.gd'].update({'failure_download', 'comparison_domains'})
 EXPECTED['res://tests/unit/test_replay_final_coverage.gd'] = {'final_state_coverage', 'viewer_final_coverage', 'selected_state_coverage', 'terminal_checkpoints'}

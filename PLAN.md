@@ -305,7 +305,13 @@ delays are heterogeneous across the mesh: the handshake no longer agrees on inpu
 delay because each endpoint's declared schedule is its own, the first remote
 frame lands at the peer's declared start, and `mesh_2_delays_2_0`,
 `mesh_3_delays_2_1_0_loss`, `mesh_4_delays_2_0_2_0` and `mesh_4_couch_delays_2_0`
-compare the per-peer delay-profile axis. A failing P2P schedule
+compare the per-peer delay-profile axis. The confirmed frontier follows the pinned
+upstream's lazily folded connect statuses: a runtime raise stamps the local slot
+to its padded `last_added` frame and joins the frontier immediately, and a
+committing drop freeze releases its ceiling in the same operation, so the peer
+facade re-derives the core's confirmation limit after every fold-input mutation;
+`mesh_2_delays_2_0_raise` compares the profile-plus-raise axis and the pinned
+minimized #373 schedule stays as its regression case. A failing P2P schedule
 now shrinks to its first divergence: the launcher truncates at the named
 operation, greedily removes remaining operations while both reruns keep
 disagreeing, re-ranks anchored deliveries, and confirms the minimized scenario
