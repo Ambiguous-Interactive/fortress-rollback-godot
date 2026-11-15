@@ -111,9 +111,9 @@ def build(binary, observe, players, capacity, rounds):
 
 
 def evidence(value, scenario):
-    """Require the wrapped confirmation, the withheld-stretch predictions and
-    silent stalls, the deep flood correction, the single burst delivery run and
-    the duplicates."""
+    """Require, per machine: the wrapped confirmation, a withheld-stretch
+    prediction and a silent stall; plus the deep flood correction, the single
+    burst delivery run and the duplicates."""
     players = scenario['players']
     capacity = scenario.get('queue_capacity', 128)
     if players not in {spec[0] for spec in PROFILES.values()} or scenario['max_prediction'] != WINDOW or scenario['input_delay'] != 0:
@@ -139,11 +139,14 @@ def evidence(value, scenario):
         raise ValueError('wrap witness missing burst run')
     if counts['duplicate_deliveries'] < 2:
         raise ValueError('wrap witness missing duplicate delivery')
-    # Differential evidence: machines predicted through the starved stretch and
-    # stalled silently at the limit, the release re-runs that stretch from one
-    # LOAD with confirmed rows, and every peer's confirmed frontier passes its
-    # ring's capacity.
+    # Differential evidence: every machine predicted through the starved
+    # stretch and stalled silently at the limit, the release re-runs that
+    # stretch from one LOAD with confirmed rows, and every peer's confirmed
+    # frontier passes its ring's capacity.
     boundaries = [set() for _ in range(players)]
+    pending = [0] * players
+    stalls = [0] * players
+    correction = 0
     for record, op in zip(value['records'], scenario['operations']):
         if op['kind'] == 'step':
             for boundary in range(record['confirmed_frame'] + 1):
@@ -153,7 +156,7 @@ def evidence(value, scenario):
             # frame-frozen step to the same PREDICTION_STALL diagnostic.
             if record['error'] == 'PREDICTION_STALL' or (record['error'] is None
                                                          and record['frame_before'] == record['frame_after']):
-                counts['silent_stalls'] += 1
+                stalls[record['peer']] += 1
         run = 0; after_load = False
         for request in record['requests']:
             if request['kind'] == 'load':
@@ -161,26 +164,30 @@ def evidence(value, scenario):
             if request['kind'] != 'advance':
                 continue
             statuses = {entry['status'] for entry in request['inputs']}
-            counts['pending_advances'] += 1 if 'predicted' in statuses else 0
+            if 'predicted' in statuses:
+                pending[record['peer']] += 1
             if after_load and statuses == {'confirmed'}:
                 run += 1
-                counts['correction_rows'] = max(counts['correction_rows'], run)
+                correction = max(correction, run)
             else:
                 run = 0
-    if counts['pending_advances'] < players:
+    counts = {'pending_advances': pending, 'silent_stalls': stalls, 'correction_rows': correction,
+              'burst_delivers': counts['burst_delivers'], 'duplicate_deliveries': counts['duplicate_deliveries'],
+              'confirmed_boundaries': [len(frames) for frames in boundaries]}
+    if min(pending) < 1:
         raise ValueError('wrap witness missing pending advances')
-    if counts['silent_stalls'] < players:
+    if min(stalls) < 1:
         raise ValueError('wrap witness missing silent stalls')
-    if counts['correction_rows'] < CORRECTION_MIN:
+    if correction < CORRECTION_MIN:
         raise ValueError('wrap witness missing flood correction')
-    counts['confirmed_boundaries'] = [len(frames) for frames in boundaries]
     if min(counts['confirmed_boundaries']) < capacity + 1:
         raise ValueError('wrap witness missing confirmed wrap')
     return counts
 
 
 def controls(value, scenario):
-    """Keep the stalls, correction and wrap gates fail closed."""
+    """Keep the per-machine stalls and predictions, the correction and the wrap
+    gates fail closed."""
     evidence(value, scenario)
     mutants = {}
     stripped = deepcopy(value)
@@ -200,6 +207,30 @@ def controls(value, scenario):
             record['error'] = 'MISSING_LOCAL_INPUT'
             record['frame_after'] = record['frame_before'] + 1
     mutants['stall_error_removed'] = (unnormalized, 'wrap witness missing silent stalls')
+    # One machine's witnesses vanish while every aggregate count stays large:
+    # the per-machine floors must hold on their own.
+    hidden = deepcopy(value)
+    for record in hidden['records']:
+        if record['peer'] != 0:
+            continue
+        if record['error'] == 'PREDICTION_STALL' or record['frame_before'] == record['frame_after']:
+            record['error'] = 'MISSING_LOCAL_INPUT'
+            record['frame_after'] = record['frame_before'] + 1
+        for request in record['requests']:
+            if request['kind'] != 'advance':
+                continue
+            for entry in request['inputs']:
+                if entry['status'] == 'predicted':
+                    entry['status'] = 'confirmed'
+    mutants['one_peer_witness_hidden'] = (hidden, 'wrap witness missing pending advances')
+    stashed = deepcopy(value)
+    for record in stashed['records']:
+        if record['peer'] != 0:
+            continue
+        if record['error'] == 'PREDICTION_STALL' or record['frame_before'] == record['frame_after']:
+            record['error'] = 'MISSING_LOCAL_INPUT'
+            record['frame_after'] = record['frame_before'] + 1
+    mutants['one_peer_stall_hidden'] = (stashed, 'wrap witness missing silent stalls')
     result = []
     for name, (mutant, diagnostic) in mutants.items():
         try:
