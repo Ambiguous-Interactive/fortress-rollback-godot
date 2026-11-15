@@ -120,25 +120,25 @@ def evidence(value, scenario):
         raise ValueError('wrap witness profile')
     if not any(spec[0] == players and spec[1] == capacity for spec in PROFILES.values()):
         raise ValueError('wrap witness profile')
-    counts = {'pending_advances': 0, 'correction_rows': 0, 'burst_delivers': 0, 'duplicate_deliveries': 0,
-              'silent_stalls': 0}
-    # Static schedule shape: the flood release is one run of deliver operations
-    # between two step operations carrying the withheld rounds' packets, and at
-    # least two packets are delivered twice.
+    counts = {'correction_rows': 0, 'burst_delivers': 0, 'duplicate_deliveries': 0}
+    # Static schedule shape: at least two packets are delivered twice, and the
+    # release run — the deliver run that ends at the last duplicated
+    # re-delivery — carries at least the withheld stretch's own input share
+    # (one input flight per peer for every withheld round but the first).
     run = 0; seen = set()
     for op in scenario['operations']:
         if op['kind'] != 'deliver':
             run = 0
             continue
         run += 1
-        counts['burst_delivers'] = max(counts['burst_delivers'], run)
         if op['packet'] in seen:
             counts['duplicate_deliveries'] += 1
+            counts['burst_delivers'] = run
         seen.add(op['packet'])
-    if counts['burst_delivers'] < players * 2:
-        raise ValueError('wrap witness missing burst run')
     if counts['duplicate_deliveries'] < 2:
         raise ValueError('wrap witness missing duplicate delivery')
+    if counts['burst_delivers'] < players * (FLOOD_ROUNDS - 1):
+        raise ValueError('wrap witness missing burst run')
     # Differential evidence: every machine predicted through the starved
     # stretch and stalled silently at the limit, the release re-runs that
     # stretch from one LOAD with confirmed rows, and every peer's confirmed

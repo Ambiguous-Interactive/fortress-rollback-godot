@@ -378,19 +378,21 @@ The builder derives each step's payload from the machine's observed frame —
 a stalled step reschedules its current frame, so repeated stalled samples stay
 byte-identical — and re-verifies that model against every observation, so a
 wrong model fails the build instead of shipping an inconsistent schedule. The
-receipt requires, per side: the burst as one deliver run of at least the two
-per-peer withheld rounds, the duplicated deliveries, predicted advances and
-silent stalls through the starved stretch (at least one per machine), a
-correction of at least three rows from one LOAD, and every peer's confirmed
-boundary count past its ring's capacity. Controls clamp every confirmed
-frontier below the capacity, remove the correction LOADs and rename the stall
-diagnostics while advancing their frames; each must fail at its declared
-diagnostic. Both cases run on both engine pins, twice per side, with the raw
-compression validator over the whole trace. The two-peer raw trace stays inside
-the tooling's stdin bound; the eight-peer raw trace exceeded the old
-four-megabyte guard, which is now sixteen megabytes in the oracle binary and
-its standalone Python validator — a denial-of-service guard, not a corpus
-limit.
+receipt requires, per side: a release run — the deliver run ending at the last
+duplicated re-delivery — of at least the withheld stretch's own input share
+(one input flight per peer for every withheld round but the first), the
+duplicated deliveries themselves, predicted advances and silent stalls through
+the starved stretch (at least one per machine), a correction of at least three
+rows from one LOAD, and every peer's confirmed boundary count past its ring's
+capacity. Controls clamp every confirmed frontier below the capacity, remove
+the correction LOADs, rename the stall diagnostics while advancing their
+frames and hide one machine's predictions or stalls while every aggregate
+count stays large; each must fail at its declared diagnostic. Both cases run
+on both engine pins, twice per side, with the raw compression validator over
+the whole trace. The two-peer raw trace stays inside the tooling's stdin
+bound; the four- and eight-peer raw traces exceed the old four-megabyte guard,
+which is now sixteen megabytes in the oracle binary and its standalone Python
+validator — a denial-of-service guard, not a corpus limit.
 
 ## Lifecycle observations
 
