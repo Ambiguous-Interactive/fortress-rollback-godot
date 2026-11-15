@@ -8,9 +8,9 @@ from p2p_contract import validate_scenario
 # production mesh configures by default. The eight-peer full mesh emits seven
 # input packets and seven acknowledgements per peer per round, so a
 # default-capacity wrap would need far more scheduled operations than the
-# oracle's 10000-operation scenario bound admits; the eight-peer scale point
-# therefore wraps a 32-row ring twice while keeping the full fanout and the
-# same flood shape.
+# oracle's 10000-operation scenario bound admits; that scale point instead
+# wraps a 32-row ring at the full fanout (the frontier passes the whole ring
+# and climbs past it) with the same flood shape.
 PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_4_wrap_flood': (4, 128, 142), 'mesh_8_wrap_flood': (8, 32, 44)}
 NAMES = tuple(PROFILES)
 WINDOW = 4

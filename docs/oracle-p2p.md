@@ -357,9 +357,10 @@ climb past row 128 and the default 128-row queues wrap (each peer confirms at
 least 129 canonical boundaries). The eight-peer full mesh emits seven input
 packets and seven acknowledgements per peer per round, so a default-capacity
 wrap would need far more scheduled operations than the oracle's 10000-operation
-scenario bound admits; that scale point instead wraps a 32-row ring twice at
-the full fanout (at least 33 boundaries per peer), and the corpus keeps the
-per-case capacity in its committed profile.
+scenario bound admits; that scale point instead wraps a 32-row ring at the
+full fanout (the frontier passes the whole ring and climbs past it — at least
+33 boundaries per peer), and the corpus keeps the per-case capacity in its
+committed profile.
 
 From round eight every packet — inputs and acknowledgements alike — is
 withheld from every link for six consecutive rounds. The missing
