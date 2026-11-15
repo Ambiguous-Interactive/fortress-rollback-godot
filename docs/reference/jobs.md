@@ -529,7 +529,13 @@ the new baselines (Gate wall time, Qualify wall time per merge, nightly
 failure rate) accumulates from the first runs after this change; reproduce
 them with the same `gh run view` records as every section above.
 
-A merge queue would let the qualification matrix gate the merge itself
-instead of main's post-merge run; the repository has no branch protection
-configured today, so enabling one is an owner settings decision, not a
-commit this repository can make on its own.
+A merge queue gates every merge on the full qualification matrix: the
+`main merge queue and protection` ruleset requires the four Gate checks plus
+the `Qualification summary` context on each grouped merge candidate and
+permits merges only through the queue (squash, HEADGREEN grouping,
+30-minute check timeout, no bypass actors — break-glass means disabling the
+ruleset). `reference-baseline.yml` runs unconditionally on `merge_group`
+events and no longer runs on pushes to `main`, so the group run replaces the
+post-merge qualification and main is green by construction. The Gate
+workflow carries the `merge_group` trigger and the merge-group base SHA for
+the same reason. The queue was created and verified in #368.

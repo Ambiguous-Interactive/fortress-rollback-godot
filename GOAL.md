@@ -11,10 +11,10 @@ Advance PLAN.md through a green, reviewed, squash-merged session PR
 - See if there were any draft/in-progress PRs from previous sessions and drive those to completion.
 - Drive `PLAN.md` improvements as far forward as possible towards accomplishing the full work for the next major milestone(s). Then, open a PR that achieves a fully green state (the Gate workflow passing on the PR head, all reviewer feedback addressed). Do not explicitly trigger bot reviews. The Gate workflow is the per-push tier; the full matrix qualifies the merge on `main` and nightly owns the remaining axes, so do not wait on them before merging.
 - Aggregate all of one session's work into one PR, do not stack PRs.
-- After all current-head CI is green, scan every PR feedback surface with complete pagination, including resolved/outdated thread state and check annotations.
+- After all current-head Gate CI is green, scan every PR feedback surface with complete pagination, including resolved/outdated thread state and check annotations.
 - Address all actionable feedback, repeat gates after fixes, and recheck feedback immediately before merge. Follow [.llm/skills/ship-session/SKILL.md](.llm/skills/ship-session/SKILL.md).
-- Squash merge the session PR to `main` once green and feedback-complete. The repository owner authorizes the agent to run this merge itself (`gh pr merge <n> --squash --match-head-commit <sha>`); no human review, approval or further confirmation is needed. Adversarial sub-agent reviews, bot reviews and the feedback scan are the review. Verify the merge, fetch, and update local `main` to match `origin/main`.
-- Verify merge-triggered main CI before completion.
+- Merge through the merge queue: `gh pr merge <n> --squash --auto`. The branch ruleset blocks direct merges to `main`; the queue lands the squash commit only when the Gate checks and the qualification summary pass on the grouped candidate. No human review, approval or further confirmation is needed. Adversarial sub-agent reviews, bot reviews and the feedback scan are the review. Verify the merge, fetch, and update local `main` to match `origin/main`.
+- Verify the queue's grouped qualification outcome before completion.
 - Apply [.llm/skills/user-copy/SKILL.md](.llm/skills/user-copy/SKILL.md) to comments, PR titles/descriptions, commit messages and CHANGELOG entries.
 - Set editor and formatter maximum source line lengths to 180, and verify all source files with `make lint-source`.
 - Target a session shorter than two hours; retain precise follow-up issues for unfinished roadmap work.
