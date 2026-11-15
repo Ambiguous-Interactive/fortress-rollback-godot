@@ -395,8 +395,8 @@ fn replay_scenario_slots(scenario:&Value)->Result<Vec<Vec<usize>>,String>{
  if let Some(sizes)=&layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0||*size>players)||sizes.iter().sum::<usize>()!=players
   {return Err("layout bounds".into());}}
  Ok(slots_of(players,&layout))}
-fn main(){let result=(||{let mut input=String::new();io::stdin().take(4000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
- if input.len()>4000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
+fn main(){let result=(||{let mut input=String::new();io::stdin().take(16000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
+ if input.len()>16000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
    let slots_of=replay_scenario_slots(&value["scenario"])?;let width=replay_scenario_width(&value["scenario"])?;
    let mut references=MeshReferences::new(&slots_of,width);let packets=value["packets"].as_array().ok_or("packets")?;

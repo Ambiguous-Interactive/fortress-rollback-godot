@@ -24,8 +24,10 @@ def main():
         scenario = json.loads(args.scenario.read_text(encoding='utf-8')); validate_scenario(scenario)
         if args.corpus_case is not None and 'lifecycle' not in scenario:
             raise ValueError('--corpus-case requires lifecycle scenario')
-        raw = sys.stdin.buffer.read(4000001)
-        if len(raw) > 4000000:
+        # The eight-peer wrap trace's raw packet bodies exceed four megabytes;
+        # the bound stays a denial-of-service guard, not a corpus limit.
+        raw = sys.stdin.buffer.read(16000001)
+        if len(raw) > 16000000:
             raise ValueError('trace size bound')
         value = json.loads(raw.decode('utf-8')); validate(value, scenario, args.source)
         if args.expected is not None:

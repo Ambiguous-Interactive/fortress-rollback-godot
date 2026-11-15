@@ -343,6 +343,54 @@ occupancy, physical-tag and recoverable-floor-input observations remain an
 access-only SyncLayer oracle slice tracked in
 [#61](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/61).
 
+## Long ring-wrap flood
+
+`mesh_2_wrap_flood` and `mesh_8_wrap_flood` wrap real queue rings under a
+withheld multi-round flood. Both hold the explicit lifecycle profile with
+desync detection off — the checksum lifecycle cases own that exchange — and
+quality, keepalive, notify and disconnect bounds far above the schedule, and
+protocol time still advances one microsecond per operation, so no timed traffic
+fires and the flood is pure delivery scheduling.
+
+Counts two and four hold the production default: their confirmed frontiers
+climb past row 128 and the default 128-row queues wrap (each peer confirms at
+least 129 canonical boundaries). The eight-peer full mesh emits seven input
+packets and seven acknowledgements per peer per round, so a default-capacity
+wrap would need far more scheduled operations than the oracle's 10000-operation
+scenario bound admits; that scale point instead wraps a 32-row ring twice at
+the full fanout (at least 33 boundaries per peer), and the corpus keeps the
+per-case capacity in its committed profile.
+
+From round eight every packet — inputs and acknowledgements alike — is
+withheld from every link for six consecutive rounds. The missing
+acknowledgements freeze each confirmed frontier, so each machine advances only
+until it hits the shared prediction limit (`frontier + window`) and then stalls
+silently: the raw source trace leaves the refused advance unnamed, Godot names
+it `PREDICTION_STALL`, and the shared normalization maps the silent
+frame-frozen steps to the same diagnostic on both sides. The release is the
+flood: the whole withheld burst arrives back-to-back in reversed order with the
+two newest withheld input packets re-delivered behind it as duplicates, so the
+heal runs through one deep LOAD correction that re-runs the starved stretch
+with every slot's actual input, and normal confirmation resumes afterwards.
+
+The builder derives each step's payload from the machine's observed frame —
+a stalled step reschedules its current frame, so repeated stalled samples stay
+byte-identical — and re-verifies that model against every observation, so a
+wrong model fails the build instead of shipping an inconsistent schedule. The
+receipt requires, per side: the burst as one deliver run of at least the two
+per-peer withheld rounds, the duplicated deliveries, predicted advances and
+silent stalls through the starved stretch (at least one per machine), a
+correction of at least three rows from one LOAD, and every peer's confirmed
+boundary count past its ring's capacity. Controls clamp every confirmed
+frontier below the capacity, remove the correction LOADs and rename the stall
+diagnostics while advancing their frames; each must fail at its declared
+diagnostic. Both cases run on both engine pins, twice per side, with the raw
+compression validator over the whole trace. The two-peer raw trace stays inside
+the tooling's stdin bound; the eight-peer raw trace exceeded the old
+four-megabyte guard, which is now sixteen megabytes in the oracle binary and
+its standalone Python validator — a denial-of-service guard, not a corpus
+limit.
+
 ## Lifecycle observations
 
 Ten additional two-peer scenarios compare real quality reports, echoed replies,

@@ -20,6 +20,7 @@ import p2p_lifecycle_controls
 import p2p_recovery
 import p2p_capacity
 import p2p_shrink
+import p2p_wrap
 
 PREFIX = 'FORTRESS_P2P_RESULT '
 
@@ -95,6 +96,10 @@ def corpus(binary, selected=None):
         cases[p2p_recovery.NAME] = p2p_recovery.build(binary, source)
     if selected is None or selected == p2p_capacity.NAME:
         cases[p2p_capacity.NAME] = p2p_capacity.build(binary, source)
+    # Long ring-wrap runs under a withheld multi-round flood release.
+    for name, (players, capacity, rounds) in p2p_wrap.PROFILES.items():
+        if selected is None or selected == name:
+            cases[name] = p2p_wrap.build(binary, source, players, capacity, rounds)
     cases.update(p2p_lifecycle_corpus.corpus(binary, source, selected))
     return cases
 
@@ -550,10 +555,14 @@ def main():
         if name == p2p_capacity.NAME:
             capacity_evidence = {'source': p2p_capacity.evidence(expected, scenario), 'godot': p2p_capacity.evidence(actuals[0], scenario)}
             controls.extend(p2p_capacity.controls(actuals[0], scenario))
+        wrap_evidence = {}
+        if name in p2p_wrap.NAMES:
+            wrap_evidence = {'source': p2p_wrap.evidence(expected, scenario), 'godot': p2p_wrap.evidence(actuals[0], scenario)}
+            controls.extend(p2p_wrap.controls(actuals[0], scenario))
         evidence.append({'name': name, 'operations': len(scenario['operations']), 'packets': len(expected['packets']),
             'scenario_sha256': digest(submitted), 'source_sha256': digest(raw), 'actual_sha256': digest(path),
             'negative_controls': controls, 'lifecycle_evidence': lifecycle_evidence, 'recovery_evidence': recovery_evidence,
-            'capacity_evidence': capacity_evidence, 'fresh_process_repeat_equal': True})
+            'capacity_evidence': capacity_evidence, 'wrap_evidence': wrap_evidence, 'fresh_process_repeat_equal': True})
         print(name + ': actual input/ACK packets, ordered callbacks and confirmation match twice', flush=True)
     process_evidence = process_controls(binary, engine, cases['mesh_2_delay_0'],
         json.loads((args.output / 'mesh_2_delay_0-source.json').read_text()),
