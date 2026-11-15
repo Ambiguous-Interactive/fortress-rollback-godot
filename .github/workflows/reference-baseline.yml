@@ -2,30 +2,14 @@ name: Reference Baseline
 
 # Qualify tier: the full Chromium verification matrix (both pinned engines,
 # ownership probes, oracle launchers, browser transport witnesses and the whole
-# test inventory) for every merge to main. The per-push Gate workflow keeps the
-# fast loop; nightly.yml owns the axes that moved out of this matrix.
+# test inventory). The merge queue requires the Qualification summary check on
+# every grouped merge candidate, so this workflow runs there unconditionally;
+# workflow_dispatch keeps it available on demand. The per-push Gate workflow
+# keeps the fast loop; nightly.yml owns the axes that moved out of this matrix.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".llm/code-samples/**"
-      - "scripts/reference/**"
-      - "scripts/oracle/**"
-      - "scripts/run_godot_tests.py"
-      - "scripts/changed_suites.py"
-      - "scripts/native_source_snapshot.py"
-      - "scripts/host_capacity.py"
-      - "scripts/git_test_environment.py"
-      - "scripts/package_addon.py"
-      - "docs/package.md"
-      - "tests/**"
-      - "addons/**"
-      - "examples/**"
-      - "docs/test-runner.md"
-      - "docs/reference/**"
-      - "Makefile"
-      - ".github/workflows/reference-baseline.yml"
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -402,3 +386,23 @@ jobs:
             .cache/reference/results/
             !.cache/reference/results/signalfish-server-build/target/
           if-no-files-found: error
+
+  qualification:
+    # The single required context the merge queue gates on: one stable name
+    # instead of every matrix job's display name, so a rename cannot hang the
+    # queue. always() makes this job run and fail when a family failed; a
+    # skipped required check would count as passing, which would defeat the
+    # gate.
+    name: Qualification summary
+    needs: [contracts, rust, ownership, godot, signalfish]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Report the qualification tree result
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "::error::A qualification job family failed or was cancelled: ${{ join(needs.*.result, ' ') }}"
+            exit 1
+          fi
+          echo "All qualification job families reported success."

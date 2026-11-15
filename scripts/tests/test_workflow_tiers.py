@@ -135,13 +135,32 @@ class WorkflowTierTests(unittest.TestCase):
 
     def test_qualify_drops_the_moved_axes(self):
         text = read(QUALIFY).lower()
-        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:'):
+        for moved in ('firefox', 'xvfb', 'java', 'spectator_launch', 'schedule:', 'pull_request:', 'push:'):
             with self.subTest(moved=moved):
                 self.assertNotIn(moved, text)
         self.assertEqual(text.count('browser: chromium'), QUALIFY_CHROMIUM_PARTS)
         self.assertIn('pair: [chromium]', text)
         self.assertIn("--skip-formal", text)
         self.assertNotIn('--formal off', text)
+
+    def test_qualification_summary_gates_the_merge_queue(self):
+        # The queue requires one stable context name instead of every matrix
+        # job's display name, so a rename cannot hang the queue. The summary
+        # must run unconditionally (always(): a skipped required check counts
+        # as passing) and fail when any family failed or was cancelled, and it
+        # must need every family, or a family could silently leave the gate.
+        text = read(QUALIFY)
+        self.assertIn('merge_group:', text)
+        self.assertIn('types: [checks_requested]', text)
+        block = '\n'.join(job_blocks(text)['qualification'])
+        self.assertIn('name: Qualification summary', block)
+        self.assertIn('if: always()', block)
+        for family in ('contracts', 'rust', 'ownership', 'godot', 'signalfish'):
+            with self.subTest(family=family):
+                self.assertRegex(block, rf'needs: \[[a-z, ]*{family}')
+        self.assertIn("contains(needs.*.result, 'failure')", block)
+        self.assertIn("contains(needs.*.result, 'cancelled')", block)
+        self.assertIn('exit 1', block)
 
     def test_gate_acquires_no_system_packages(self):
         # The fast tier is pure Python plus the manifest-fetched editor: an apt
