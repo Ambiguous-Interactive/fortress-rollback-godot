@@ -68,6 +68,13 @@ def corpus(binary, selected=None):
     for name, (layout, mode) in LAYOUT_CASES.items():
         if selected is None or selected == name:
             cases[name] = build_layout_case(binary, layout, mode)
+    # Per-machine construction delays: heterogeneous starting schedules under one shared pin.
+    for name, (players, delays, mode) in DELAY_PROFILES.items():
+        if selected is None or selected == name:
+            cases[name] = build_case(binary, players, 0, mode, delays=delays)
+    name = 'mesh_4_couch_delays_2_0'
+    if selected is None or selected == name:
+        cases[name] = build_layout_case(binary, [2, 2], 'ordinary', delays=[2, 0])
     # Non-default input widths: the minimum width, wide 32-byte rows under a loss fault,
     # and the combined maximum profile (window eight, width 32, eight peers).
     for name, (players, mode, window, width) in WIDTH_CASES.items():
@@ -100,6 +107,12 @@ DELAY_CHANGES = {
 LAYOUT_CASES = {'mesh_4_couch_2x2': ([2, 2], 'ordinary'), 'mesh_6_split_2x2x2': ([2, 2, 2], 'ordinary'),
                 'mesh_4_couch_loss': ([2, 2], 'loss'), 'mesh_4_couch_stall': ([2, 2], 'stall')}
 
+# Per-machine construction delay profiles: (players, per-machine delays, mode). The minimum
+# mesh splits the band's extremes; the three-player loss case holds every compared value under
+# a frame-zero fault; the four-player profile interleaves the extremes across the full mesh.
+DELAY_PROFILES = {'mesh_2_delays_2_0': (2, [2, 0], 'ordinary'), 'mesh_3_delays_2_1_0_loss': (3, [2, 1, 0], 'loss'),
+                  'mesh_4_delays_2_0_2_0': (4, [2, 0, 2, 0], 'ordinary')}
+
 # Non-default input widths: (players, mode, window, width). The minimum-width cases hold the
 # smallest supported row and a loss fault under it; the wide case carries 32-byte rows; the
 # combined case holds the maximum comparable window at the wide width and full mesh size.
@@ -107,7 +120,7 @@ WIDTH_CASES = {'mesh_2_width_1': (2, 'ordinary', 4, 1), 'mesh_4_width_1_loss': (
                'mesh_4_width_32': (4, 'ordinary', 4, 32), 'mesh_8_width_32_window_8': (8, 'ordinary', 8, 32)}
 
 
-def build_layout_case(binary, layout, mode):
+def build_layout_case(binary, layout, mode, delays=None):
     """Schedules where machines own several local slots: step ops address one slot, and a
     machine's advance happens on the op that completes its row. The stall case withholds the
     couch machine's flights so the solo machine runs its prediction window out through the
@@ -117,6 +130,8 @@ def build_layout_case(binary, layout, mode):
     players = sum(layout)
     scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': 4,
                 'layout': list(layout), 'operations': []}
+    if delays is not None:
+        scenario['delays'] = list(delays)
     now = 0; delivered = set(); withheld = []; latest = None
     machines = []
     start = 0
@@ -169,10 +184,12 @@ def build_layout_case(binary, layout, mode):
     return scenario
 
 
-def build_case(binary, players, delay, mode, window=4, width=4):
+def build_case(binary, players, delay, mode, window=4, width=4, delays=None):
     scenario = {'format': 1, 'players': players, 'input_delay': delay, 'max_prediction': window, 'operations': []}
     if width != 4:
         scenario['input_width'] = width
+    if delays is not None:
+        scenario['delays'] = list(delays)
     now = 0; delivered = set(); latest = None
     def append(kind, refresh=True, **kwargs):
         nonlocal now, latest
@@ -304,7 +321,22 @@ def negative_controls(actual, expected, scenario):
             pass
         else:
             raise ValueError('negative control survived: ' + name)
-    return list(controls)
+    names = list(controls)
+    if 'delays' in scenario:
+        # Per-machine delay profile: flipping machine 0's delay flips that machine's slots'
+        # neutral-prefix expectation, so confirmed rows below the real start must fail.
+        flipped = deepcopy(scenario)
+        flipped['delays'][0] = 2 - flipped['delays'][0]
+        validate_scenario(flipped)
+        mutant = deepcopy(actual)
+        try:
+            compare(mutant, expected, flipped)
+        except ValueError:
+            pass
+        else:
+            raise ValueError('negative control survived: delays_profile')
+        names.append('delays_profile')
+    return names
 
 
 def differential_failure(name, binary, engine, scenario, expected, failure, output):

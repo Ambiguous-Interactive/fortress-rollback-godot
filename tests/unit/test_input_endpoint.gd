@@ -31,12 +31,13 @@ class Sink:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["loss_ack", "retry", "validation", "retention", "capacity", "ownership", "status_nudge", "status_nudge_transitions"])
+	return PackedStringArray(["loss_ack", "delayed_start", "retry", "validation", "retention", "capacity", "ownership", "status_nudge", "status_nudge_transitions"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
 		"loss_ack": _loss_ack(context)
+		"delayed_start": _delayed_start(context)
 		"retry": _retry(context)
 		"validation": _validation(context)
 		"retention": _retention(context)
@@ -78,7 +79,8 @@ func _statuses(count: int = 2, last_frame: int = -1) -> Array[T.Status]:
 	return result
 
 
-func _ready(sink: Sink, options: I.Options = null, roster: Array[PackedByteArray] = [], delay: int = 0, max_packet: int = 65536, remote_packet: int = 65536) -> E:
+func _ready(sink: Sink, options: I.Options = null, roster: Array[PackedByteArray] = [], delay: int = 0,
+		max_packet: int = 65536, remote_packet: int = 65536, remote_delay: int = -1) -> E:
 	var endpoint: E = E.new()
 	var handshake_options: H.Options = H.Options.new()
 	handshake_options.roundtrips = 1
@@ -86,7 +88,7 @@ func _ready(sink: Sink, options: I.Options = null, roster: Array[PackedByteArray
 	endpoint.configure(_local(1, roster, delay), _id(2), handshake_options, options if options != null else I.Options.new(), sink.accept)
 	endpoint.begin(0, _id(1, 16))
 	endpoint.drain_outbox()
-	var reply: T.Message = _local(2, roster, delay)
+	var reply: T.Message = _local(2, roster, delay if remote_delay < 0 else remote_delay)
 	reply.kind = T.Kind.SYNC_REPLY
 	reply.token = _id(1, 16)
 	reply.max_packet_bytes = remote_packet
@@ -155,6 +157,20 @@ func _loss_ack(context: RefCounted) -> void:
 	context.equal(endpoint.receive(bytes, _id(2), 10), I.Code.OK, "lost ACK repaired by duplicate")
 	context.equal(sink.frames.size(), 2, "duplicate never reapplies input")
 	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 1, "duplicate cumulative ACK")
+	context.state(0, JSON.stringify(endpoint.status()).to_utf8_buffer())
+
+
+func _delayed_start(context: RefCounted) -> void:
+	# The first frame lands at the peer's own declared delay: a peer that starts two frames
+	# late binds and its rows arrive on time, while an earlier start stays a refused gap.
+	var sink: Sink = Sink.new()
+	var endpoint: E = _ready(sink, null, [], 0, 65536, 65536, 2)
+	context.equal(endpoint.receive(_encode(_input(2, PackedByteArray([9]))), _id(2), 2), I.Code.OK, "peer's declared delay starts its stream")
+	context.equal(sink.frames, {2: PackedByteArray([9])}, "late-start row retained")
+	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 2, "cumulative ACK covers the delayed start")
+	context.equal(endpoint.receive(_encode(_input(1, PackedByteArray([8]))), _id(2), 3), I.Code.OK, "a row below the bound start stays stale")
+	context.equal(sink.frames.size(), 1, "no row below the declared start")
+	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 2, "stale row reACKs the floor")
 	context.state(0, JSON.stringify(endpoint.status()).to_utf8_buffer())
 
 

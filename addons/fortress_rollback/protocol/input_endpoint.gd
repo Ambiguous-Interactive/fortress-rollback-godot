@@ -29,6 +29,8 @@ var _state: Dictionary = {}
 var _outbox: Array[PackedByteArray] = []
 var _events: Array[Dictionary] = []
 var _transitions: Array[Dictionary] = []
+## The agreed peer's own construction delay, learned from its handshake config; -1 before it binds.
+var _peer_delay: int = -1
 
 
 ## Variant ingress prevents implicit conversion of hostile callers.
@@ -88,6 +90,7 @@ func configure(local: Variant, remote_sender: Variant, handshake_options: Varian
 	_state = {"now_us": -1, "last_submitted_frame": -1, "last_sent_frame": -1, "last_received_frame": -1, "last_acked_frame": -1,
 		"last_input_progress_us": -1, "last_input_send_us": -1, "last_nudge_us": -1, "last_acked_input": PackedByteArray(),
 		"pending": {}, "received": {}, "peer_statuses": statuses, "connect_statuses": statuses.duplicate(true), "terminated": false}
+	_peer_delay = -1
 	if _lifecycle != null:
 		_state.merge(Lifecycle.initial(_lifecycle))
 	return I.Code.OK
@@ -473,7 +476,14 @@ func _receive_frames(plan: Dictionary, message: T.Message) -> int:
 		if frame > plan.state.last_received_frame:
 			staged.append({"frame": frame, "data": bytes})
 	var gap: bool = message.start_frame > plan.state.last_received_frame + 1
-	if plan.state.last_received_frame == -1 and message.start_frame == _local.config.input_delay:
+	# The first frame of a match arrives at the peer's own declared delay, not the local
+	# one: input delay is each endpoint's own schedule in the pinned upstream. The value
+	# binds with the accepted handshake reply that started the exchange.
+	if _peer_delay < 0:
+		var remote: Variant = _handshake.status().get("remote_input_delay", -1)
+		if remote is int and remote >= 0:
+			_peer_delay = int(remote)
+	if plan.state.last_received_frame == -1 and message.start_frame == (_peer_delay if _peer_delay >= 0 else _local.config.input_delay):
 		gap = false
 	if gap:
 		staged.clear()

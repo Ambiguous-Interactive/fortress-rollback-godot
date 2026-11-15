@@ -8,7 +8,7 @@ const Queue = preload("res://addons/fortress_rollback/core/input_queue.gd")
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["delay_startup", "scheduled_sample", "confirmation_limit", "mesh_stall_save"])
+	return PackedStringArray(["delay_startup", "scheduled_sample", "confirmation_limit", "mesh_stall_save", "delayed_peer_start"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
@@ -43,6 +43,23 @@ func run_case(name: String, context: RefCounted) -> void:
 			context.equal(session.configure(settings), Session.Code.OK, "fresh explicit-prefix core")
 			for frame: int in range(3):
 				context.equal(session.receive_input(1, frame, PackedByteArray([frame])).code, Session.Code.OK, "explicit remote prefix remains supported")
+		"delayed_peer_start":
+			# A peer's declared delay is its slots' expected first frame. Sequential rows stay
+			# legal exactly as before; the table only admits the declared late start that the
+			# session delay alone would refuse, and every other guard is unchanged.
+			settings.input_delay = 0
+			context.equal(session.configure(settings), Session.Code.OK, "reconfigure zero-delay core")
+			context.equal(session.receive_input(1, 3, PackedByteArray([4])).code, Session.Code.INVALID_FRAME, "a late start refuses without a declared table")
+			context.equal(session.set_remote_start(0, 3).code, Session.Code.INVALID_PLAYER, "local slots keep their own schedule")
+			context.equal(session.set_remote_start(1, -1).code, Session.Code.INVALID_CONFIGURATION, "negative start refused")
+			context.equal(session.set_remote_start(1, settings.queue_capacity).code, Session.Code.INVALID_CONFIGURATION, "start outside the queue refused")
+			context.equal(session.set_remote_start(1, 3).code, Session.Code.OK, "peer starts three frames late")
+			context.equal(session.receive_input(1, 2, PackedByteArray([4])).code, Session.Code.INVALID_FRAME, "a row below the declared start still refuses")
+			context.equal(session.receive_input(1, 3, PackedByteArray([4])).code, Session.Code.OK, "declared start accepts")
+			context.equal(session.receive_input(1, 4, PackedByteArray([5])).code, Session.Code.OK, "stream continues past the start")
+			context.equal(session.set_remote_start(1, 5).code, Session.Code.INVALID_FRAME, "a bound schedule cannot move")
+			context.equal(session.set_remote_start(2, 3).code, Session.Code.INVALID_PLAYER, "unknown slot refused")
+			context.equal(session.receive_input(0, 0, PackedByteArray([6])).code, Session.Code.INVALID_PLAYER, "remote table never touches local slots")
 		"scheduled_sample":
 			context.equal(session.scheduled_local_input(0).code, Session.Code.MISSING_LOCAL_INPUT, "sample absent")
 			context.equal(session.scheduled_local_input(1).code, Session.Code.INVALID_PLAYER, "remote is not a local sample")

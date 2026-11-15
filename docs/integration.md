@@ -618,7 +618,7 @@ A coordinated drop repairs staged rows after the agreed cut; checksums for chang
 
 ## Change input delay during a match
 
-Input delay trades responsiveness for fewer rollbacks. Set the starting value with `config.input_delay`.
+Input delay trades responsiveness for fewer rollbacks. Set the starting value with `config.input_delay`, which applies to every local player of that session. Each peer may start with its own value: input delay is each endpoint's own schedule in the pinned upstream, so peers that declare different starting delays still synchronize, and every peer learns each remote's declared start during the handshake.
 A player on a worse connection can raise it mid-match:
 
 ```gdscript

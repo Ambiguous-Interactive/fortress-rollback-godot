@@ -54,20 +54,23 @@ func _initialize() -> void:
 	scenario_settings = scenario
 	var width: int = scenario.get("input_width", 4)
 	_layout(scenario)
-	delays.resize(scenario.players)
-	delays.fill(scenario.input_delay)
 	limits = T.Limits.new()
 	limits.player_count = scenario.players
 	limits.input_width = width
 	var neutral: PackedByteArray = PackedByteArray()
 	neutral.resize(width)
+	# Per-slot starting delay = the owning machine's construction delay; runtime delay
+	# raises then diverge slots within a machine exactly as before.
+	delays.resize(scenario.players)
+	for slot: int in range(scenario.players):
+		delays[slot] = machine_delay(owner_of[slot])
 	for machine: int in range(machines()):
 		var config: RefCounted = Config.new()
 		config.player_count = scenario.players
 		config.local_players = PackedInt32Array(slots_of[machine])
 		config.input_width = width
 		config.neutral_input = neutral.duplicate()
-		config.input_delay = scenario.input_delay
+		config.input_delay = machine_delay(machine)
 		config.max_prediction_frames = scenario.max_prediction
 		config.queue_capacity = scenario.get("queue_capacity", 128)
 		config.history_slots = scenario.max_prediction + 1
@@ -82,7 +85,7 @@ func _initialize() -> void:
 		local.session_id = _token(0, 0)
 		local.config.player_count = scenario.players
 		local.config.input_width = width
-		local.config.input_delay = scenario.input_delay
+		local.config.input_delay = machine_delay(machine)
 		local.config.max_prediction = scenario.max_prediction
 		local.config.queue_capacity = config.queue_capacity
 		local.config.neutral_input = config.neutral_input.duplicate()
@@ -131,6 +134,11 @@ func _initialize() -> void:
 
 func machines() -> int:
 	return slots_of.size()
+
+
+## The owning machine's construction delay; an omitted profile stays the shared input_delay.
+func machine_delay(machine: int) -> int:
+	return int(scenario_settings.delays[machine]) if scenario_settings.has("delays") else int(scenario_settings.input_delay)
 
 
 ## Local slot lists per machine; an omitted layout stays one slot per endpoint.
@@ -399,6 +407,8 @@ func _valid(value: Variant) -> bool:
 		required.append("input_width")
 	if value is Dictionary and value.has("layout"):
 		required.append("layout")
+	if value is Dictionary and value.has("delays"):
+		required.append("delays")
 	if not _fields(value, required):
 		return false
 	for field: String in ["format", "players", "input_delay", "max_prediction"]:
@@ -411,11 +421,21 @@ func _valid(value: Variant) -> bool:
 		if not _integer(value.input_width, 1, 32) or int(value.input_width) not in [1, 4, 32]:
 			return false
 		width = int(value.input_width)
-	if value.has("queue_capacity"):
-		if not _integer(value.queue_capacity, 2, 128):
+	# Per-machine construction delays: one value per machine, inside the compared band and
+	# the same production bounds the shared delay satisfies. The machine count uses the
+	# layout only when it is already an Array; a hostile layout fails the layout check below.
+	var lead: int = int(value.input_delay)
+	if value.has("delays"):
+		var machines: int = int(value.players)
+		if value.has("layout") and value.layout is Array:
+			machines = value.layout.size()
+		if not value.delays is Array or value.delays.size() != machines:
 			return false
-		if int(value.queue_capacity) < int(value.input_delay) + int(value.max_prediction) + 2:
-			return false
+		for delay: Variant in value.delays:
+			if not _integer(delay, 0, 2):
+				return false
+		for delay: Variant in value.delays:
+			lead = maxi(lead, int(delay))
 	# Explicit endpoint layout: machine counts, per-machine slot coverage and the shared
 	# slot total. An omitted field stays one local slot per endpoint. Lifecycle timers
 	# stay a single-local slice, exactly like the shared Python grammar.
@@ -431,9 +451,12 @@ func _valid(value: Variant) -> bool:
 			return false
 		if value.has("lifecycle"):
 			return false
+	if value.has("queue_capacity"):
+		if not _integer(value.queue_capacity, 2, 128):
+			return false
 	# The peer session refuses any agreed initial delay above its own unclamped bound.
 	var capacity_bound: int = int(value.queue_capacity) if value.has("queue_capacity") else 128
-	if int(value.input_delay) > (capacity_bound - 2 * int(value.max_prediction) - 2) / 2:
+	if lead > (capacity_bound - 2 * int(value.max_prediction) - 2) / 2:
 		return false
 	if value.has("lifecycle"):
 		var settings: Variant = value.lifecycle
@@ -498,6 +521,11 @@ func _canonical(source: Dictionary) -> Dictionary:
 		for size: Variant in source.layout:
 			layout.append(int(size))
 		result.layout = layout
+	if source.has("delays"):
+		var delays: Array = []
+		for delay: Variant in source.delays:
+			delays.append(int(delay))
+		result.delays = delays
 	var operations: Array[Dictionary] = []
 	for op: Dictionary in source.operations:
 		if op.kind == "delay":

@@ -44,6 +44,8 @@ var _config: Config = null
 var _peers: Dictionary = {}
 var _ids: Array[PackedByteArray] = []
 var _slots_by_peer: Array[PackedInt32Array] = []
+# Endpoint indexes that already seeded their slots' expected first frames.
+var _bound_starts: Dictionary = {}
 ## A coordinated drop barrier agrees the frozen frame between the survivors.
 ## The survivor that owns the lowest surviving slot proposes the cut, every other
 ## survivor answers with the frame window it can still freeze, and the proposer
@@ -146,7 +148,7 @@ func _configure(config: Variant, local: Variant, game: Variant, handshake_option
 			if profile.roster[slot] == remotes[key]:
 				slots.append(slot)
 		var endpoint: Endpoint = Endpoint.new()
-		var code: int = endpoint.configure(agreed_local, remotes[key], handshake_options, input_options, _accept_remote.bind(slots), controls)
+		var code: int = endpoint.configure(agreed_local, remotes[key], handshake_options, input_options, _accept_remote.bind(slots, slots_by_peer.size()), controls)
 		if code != I.Code.OK:
 			return code
 		peers[key] = endpoint
@@ -159,6 +161,7 @@ func _configure(config: Variant, local: Variant, game: Variant, handshake_option
 	_config.local_players = locals
 	_peers = peers
 	_slots_by_peer = slots_by_peer
+	_bound_starts = {}
 	_drops.reset()
 	for key: String in keys:
 		_ids.append(remotes[key].duplicate())
@@ -942,10 +945,20 @@ func _confirmation_code() -> int:
 	return _core.set_confirmation_limit(limit).code
 
 
-func _accept_remote(frame: int, bytes: PackedByteArray, slots: PackedInt32Array) -> int:
-	for index: int in range(slots.size()):
-		var start: int = index * _config.input_width
-		var code: int = _core.receive_input(slots[index], frame, bytes.slice(start, start + _config.input_width)).code
+func _accept_remote(frame: int, bytes: PackedByteArray, slots: PackedInt32Array, index: int) -> int:
+	if not _bound_starts.has(index):
+		# The peer's own declared delay is its slots' first frame; seed the core before the
+		# first row lands. The endpoint accepts no other start, so this binds once, early.
+		var declared: Variant = _endpoint(index).status().handshake.get("remote_input_delay", -1)
+		if declared is int and declared >= 0:
+			for slot: int in slots:
+				if _core.set_remote_start(slot, int(declared)).code != Types.Code.OK:
+					_core.terminate(Types.Code.PROTOCOL_FAILED)
+					return Types.Code.INVALID_FRAME
+		_bound_starts[index] = true
+	for position: int in range(slots.size()):
+		var offset: int = position * _config.input_width
+		var code: int = _core.receive_input(slots[position], frame, bytes.slice(offset, offset + _config.input_width)).code
 		if code != Types.Code.OK:
 			_core.terminate(Types.Code.PROTOCOL_FAILED)
 			return code

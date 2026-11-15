@@ -193,6 +193,16 @@ def process_controls(binary, engine, scenario, expected, actual, directory):
     value = deepcopy(scenario); value['input_width'] = True; mutants['width_alias'] = value
     value = deepcopy(scenario); value['input_width'] = None; mutants['width_null'] = value
     value = deepcopy(scenario); value['input_width'] = 32; mutants['width_payload'] = value
+    # Hostile delay profiles: machine-count drift, band escape, type aliases, explicit null,
+    # empty, and a profile above the peer bound (shared delay stays inside it); both
+    # standalone validators must reject each before any session is built.
+    for name, profile in [('delays_short', [0]), ('delays_long', [0, 0, 0]), ('delays_band', [0, 3]),
+                          ('delays_float', [0, 1.0]), ('delays_alias', [0, True]), ('delays_null', None),
+                          ('delays_empty', []), ('delays_bound', [2, 2])]:
+        value = deepcopy(scenario); value['delays'] = profile
+        if name == 'delays_bound':
+            value['queue_capacity'] = 10
+        mutants[name] = value
     # Delay changes: before the first step, after another peer's operation, in the bound band, and aliased.
     if scenario['operations'][0]['kind'] == 'step':
         peer = scenario['operations'][0]['peer']

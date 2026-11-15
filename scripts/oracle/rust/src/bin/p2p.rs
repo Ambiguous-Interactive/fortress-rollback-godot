@@ -17,6 +17,7 @@ struct Scenario { format:u32, players:usize, input_delay:usize, max_prediction:u
  #[serde(default, deserialize_with="present_capacity")] queue_capacity:Option<usize>,
  #[serde(default, deserialize_with="present_width")] input_width:Option<usize>,
  #[serde(default, deserialize_with="present_layout")] layout:Option<Vec<usize>>,
+ #[serde(default, deserialize_with="present_delays")] delays:Option<Vec<usize>>,
  #[serde(default, deserialize_with="present_lifecycle")] lifecycle:Option<Lifecycle> }
 fn present_lifecycle<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Lifecycle>, D::Error> {
     Lifecycle::deserialize(deserializer).map(Some)
@@ -28,6 +29,9 @@ fn present_width<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Op
     usize::deserialize(deserializer).map(Some)
 }
 fn present_layout<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<usize>>, D::Error> {
+    Vec::<usize>::deserialize(deserializer).map(Some)
+}
+fn present_delays<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Vec<usize>>, D::Error> {
     Vec::<usize>::deserialize(deserializer).map(Some)
 }
 /// Local slot lists per machine address; an omitted layout stays one slot per endpoint.
@@ -266,12 +270,11 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
  match width {1=>run_width::<1>(original,scenario,profile_audit),4=>run_width::<4>(original,scenario,profile_audit),_=>run_width::<32>(original,scenario,profile_audit)}}
 fn run_width<const N:usize>(original:Value,scenario:Scenario,profile_audit:bool)->Result<Value,String>
 where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned{
-  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
+  if scenario.format!=1 || !(2..=8).contains(&scenario.players)||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
  ||scenario.operations.is_empty()||scenario.operations.len()>10000{return Err("scenario bounds".into());}
  // An omitted profile keeps the 128-row default; an explicit one configures both adapters' rings.
  let capacity=match scenario.queue_capacity {None=>128,Some(n)=>n};
- if !(2..=128).contains(&capacity)||capacity<scenario.input_delay+scenario.max_prediction+2
- ||(scenario.input_delay as isize)>godot_max_delay(scenario.max_prediction as isize,capacity as isize){return Err("scenario bounds".into());}
+ if !(2..=128).contains(&capacity){return Err("scenario bounds".into());}
  if let Some(l)=&scenario.lifecycle {if l.quality_us<1000||l.keepalive_us<1000||l.notify_us==0||l.notify_us>=l.timeout_us||l.timeout_us>10000000
   ||l.quality_us>100000000||l.keepalive_us>100000000||l.checksum_interval>60||l.divergent_peer< -1
   ||l.divergent_peer>=scenario.players as i32{return Err("lifecycle bounds".into());}}
@@ -282,6 +285,13 @@ where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + Deserialize
   ||scenario.lifecycle.is_some()
   ||scenario.operations.iter().any(|op|matches!(op,Operation::Delay{..})){return Err("layout bounds".into());}}
  let slots_of=slots_of(scenario.players,&scenario.layout);let owner=owner_of(&slots_of);let machines=slots_of.len();
+  // Per-machine construction delays: every endpoint starts its own local slots on its own
+  // schedule, exactly like upstream's per-endpoint with_input_delay. An omitted profile
+  // stays the shared input_delay; every element stays inside the compared band and the
+  // same production bounds the shared delay already satisfies.
+  let delays:Vec<usize>=match &scenario.delays {None=>vec![scenario.input_delay;machines],Some(d)=>d.clone()};
+  if delays.len()!=machines||delays.iter().any(|delay|*delay>2)
+  ||(*delays.iter().max().unwrap_or(&0) as isize)>godot_max_delay(scenario.max_prediction as isize,capacity as isize){return Err("scenario bounds".into());}
  let mut previous=0;let mut stepped=vec![false;scenario.players];let mut addressed=None;
  for op in &scenario.operations {
   let (peer,time)=match op {Operation::Step{peer,now_us,bytes}=>{input_bytes::<N>(bytes)?;(*peer,*now_us)},Operation::Poll{peer,now_us}=>(*peer,*now_us),
@@ -302,7 +312,7 @@ where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + Deserialize
   let sync=SyncConfig{num_sync_packets:1,keepalive_interval:Duration::from_micros(scenario.lifecycle.as_ref().map_or(100000000,|l|l.keepalive_us)),..Default::default()};
   let mut builder=SessionBuilder::<OracleConfig<N>>::new().with_num_players(scenario.players).map_err(|e|format!("{e:?}"))?
    .with_input_queue_config(InputQueueConfig{queue_length:capacity})
-   .with_max_prediction_window(scenario.max_prediction).with_input_delay(scenario.input_delay).map_err(|e|format!("{e:?}"))?
+   .with_max_prediction_window(scenario.max_prediction).with_input_delay(delays[machine]).map_err(|e|format!("{e:?}"))?
    .with_protocol_config(protocol).with_sync_config(sync);
   if let Some(l)=&scenario.lifecycle {builder=builder.with_disconnect_timeout(Duration::from_micros(l.timeout_us))
    .with_disconnect_notify_delay(Duration::from_micros(l.notify_us))
@@ -453,6 +463,35 @@ mod tests {
         }
         assert_eq!(replay_scenario_width(&json!({})).unwrap(), 4);
         assert_eq!(replay_scenario_width(&json!({"input_width":32})).unwrap(), 32);
+    }
+
+    // Value: protects=the per-machine delay profile bounds; fails_when=a wrong-length,
+    // out-of-band, aliased or null profile, or one above the peer bound, reaches session
+    // building; why_new=#371 delay-profile slice; seam=run()
+    #[test]
+    fn hostile_profiles_fail_before_bounds() {
+        let base = |delays: Value| {
+            let mut scenario = json!({"format":1u32,"players":2usize,"input_delay":0usize,
+                "max_prediction":4usize,"operations":[{"kind":"poll","peer":0usize,"now_us":0u64}]});
+            // An explicit null must deserialize as an error, not as the omitted default.
+            scenario["delays"] = if delays.is_null() { Value::Null } else { delays };
+            scenario
+        };
+        for delays in [json!([0]), json!([0,0,0]), json!([0,3]), json!([0,1.0]), json!([0,true]),
+                       json!(null), json!([]), json!([18446744073709551615u64,0])] {
+            let error = run(base(delays), false).expect_err("hostile delays accepted");
+            assert!(error.contains("scenario bounds") || error.contains("invalid type")
+                || error.contains("invalid number"), "{error}");
+        }
+        // The peer bound gates the profile, not just the shared delay: capacity ten leaves
+        // godot_max_delay(4) == 0, so [2,2] runs on the default queue but not on that queue.
+        assert!(run(base(json!([2usize,2usize])), false).is_ok());
+        let mut narrow = base(json!([2usize,2usize]));
+        narrow["queue_capacity"] = json!(10usize);
+        let error = run(narrow, false).expect_err("above-bound profile accepted");
+        assert!(error.contains("scenario bounds"), "{error}");
+        let value = run(base(json!([2usize,0usize])), false).unwrap();
+        assert_eq!(value["complete"], json!(true));
     }
 
     // Value: protects=the hostile layout bounds that gate slot-vector expansion; fails_when=a

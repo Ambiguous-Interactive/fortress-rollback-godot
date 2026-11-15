@@ -374,6 +374,33 @@ class P2PContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_scenario(mutant)
 
+    # Value: protects=the per-machine delay-profile grammar shared by both engines; fails_when=a
+    # wrong-length, out-of-band or aliased profile, or one above the peer bound, reaches a trace;
+    # why_new=#371 delay-profile slice; seam=none
+    def test_delay_profile_scenario_rules(self):
+        step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': 'ff' * 4}
+        original = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'delays': [2, 0],
+                    'operations': [step, dict(step, peer=1, now_us=1)]}
+        validate_scenario(original)
+        validate_scenario(dict(deepcopy(original), layout=[2, 1, 1], players=4,
+                               delays=[2, 0, 1], operations=[step, dict(step, peer=1, now_us=1), dict(step, peer=2, now_us=2), dict(step, peer=3, now_us=3)]))
+        for mutate in (lambda x: x.update(delays=[2]), lambda x: x.update(delays=[2, 0, 0]),
+                       lambda x: x.update(delays=[2, 3]), lambda x: x.update(delays=[2, 0.0]),
+                       lambda x: x.update(delays=[2, True]), lambda x: x.update(delays=None),
+                       lambda x: x.update(delays=[]),
+                       # A profile above the peer bound refuses even when the shared delay stays inside it.
+                       lambda x: x.update(delays=[2, 2], queue_capacity=10),
+                       lambda x: x.update(delays='20')):
+            mutant = deepcopy(original); mutate(mutant)
+            with self.assertRaises(ValueError):
+                validate_scenario(mutant)
+        # An omitted profile keeps the shared delay for every slot, across layouts too.
+        from p2p_contract import scenario_delays
+        self.assertEqual(scenario_delays(original), [2, 0])
+        self.assertEqual(scenario_delays(dict(deepcopy(original), layout=[2, 1, 1], players=4, delays=[2, 0, 1])), [2, 2, 0, 1])
+        self.assertEqual(scenario_delays({'players': 3, 'input_delay': 1, 'operations': []}), [1, 1, 1])
+        self.assertEqual(scenario_delays({'players': 4, 'input_delay': 1, 'layout': [3, 1], 'delays': [2, 0], 'operations': []}), [2, 2, 2, 0])
+
     # Value: protects=the width fold shared by both engines; fails_when=a fold that stops
     # matching the little-endian u32 read at the default width shifts existing fixtures;
     # why_new=#365 width slice; seam=none
@@ -587,6 +614,54 @@ class P2PContractTests(unittest.TestCase):
             source_mutant = deepcopy(expected); mutate(source_mutant)
             with self.assertRaisesRegex(ValueError, 'missing-input step advanced'):
                 validate(source_mutant, scenario, True)
+
+    # Value: protects=per-slot delay scheduling and the per-slot neutral prefix; fails_when=a
+    # confirmed row below the slot's own start or a sample on the wrong slot frame validates;
+    # why_new=#371 delay-profile slice; seam=none
+    def test_delay_profile_trace_rules(self):
+        from p2p_contract import advance_game_state, initial_game_state, checksum
+        steps = [{'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': 'ee000000'},
+                 {'kind': 'step', 'peer': 1, 'now_us': 1, 'bytes': 'ff000000'}]
+        scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'delays': [2, 0], 'operations': steps}
+        state = initial_game_state(2, 2)
+        after0 = advance_game_state(state, [0, 0], 2)
+        after1 = advance_game_state(state, [0, 255], 2)
+        request0 = {'kind': 'advance', 'frame': 0, 'state_bytes': after0.hex(), 'checksum': checksum(after0),
+                    'inputs': [{'player': 0, 'bytes': '00000000', 'status': 'confirmed'},
+                               {'player': 1, 'bytes': '00000000', 'status': 'predicted'}]}
+        request1 = {'kind': 'advance', 'frame': 0, 'state_bytes': after1.hex(), 'checksum': checksum(after1),
+                    'inputs': [{'player': 0, 'bytes': '00000000', 'status': 'predicted'},
+                               {'player': 1, 'bytes': 'ff000000', 'status': 'confirmed'}]}
+        records = [
+            {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 1, 'confirmed_frame': -1, 'error': None,
+             'requests': [request0], 'events': [], 'outgoing': [], 'state': after0.hex()},
+            {'index': 1, 'peer': 1, 'frame_before': 0, 'frame_after': 1, 'confirmed_frame': -1, 'error': None,
+             'requests': [request1], 'events': [], 'outgoing': [], 'state': after1.hex()},
+        ]
+        trace = {'format': 1, 'complete': True, 'upstream_revision': REVISION, 'scenario': deepcopy(scenario),
+                 'records': [deepcopy(records[0]), deepcopy(records[1])], 'packets': []}
+        validate(deepcopy(trace), scenario, True)
+        actual = deepcopy(trace)
+        for record in actual['records']:
+            record['extension_events'] = []
+        validate(actual, scenario)
+        # Each slot's band follows its own machine: peer 1's real row stays legal at frame zero
+        # only while its machine keeps delay zero, and peer 0's zero prefix only while its
+        # machine keeps delay two. One shared-delay reading fails one side every time.
+        for profile in ([2, 2], [0, 0]):
+            shifted = deepcopy(scenario); shifted['delays'] = profile
+            shifted_trace = deepcopy(trace); shifted_trace['scenario'] = shifted
+            with self.assertRaisesRegex(ValueError, 'submitted confirmed prefix frame 0 slot '):
+                validate(shifted_trace, shifted, True)
+        # A nonzero row inside a slot's own prefix band, a record from a different frame than
+        # its operation, and a moved sample still refuse.
+        for mutate, expected in (
+                (lambda x: x['records'][0]['requests'][0]['inputs'][0].update(bytes='ee000000'), 'submitted confirmed prefix frame 0 slot 0'),
+                (lambda x: x['records'][0].update(frame_before=1), 'game/session before frame'),
+                (lambda x: x['scenario']['operations'][1].update(bytes='01000000'), 'submitted confirmed prefix frame 0 slot 1')):
+            mutant = deepcopy(trace); mutate(mutant)
+            with self.assertRaisesRegex(ValueError, expected):
+                validate(mutant, mutant['scenario'], True)
 
     # Value: protects=source STEP-only stall projection; fails_when=poll errors or changing-frame errors disappear; why_new=cold review accepted a whole poll trace; seam=none
     def test_source_errors_are_not_projected_to_stall(self):
