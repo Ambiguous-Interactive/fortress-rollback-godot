@@ -622,6 +622,12 @@ The ownership witness compares the complete driver, replay and spectator case in
 Firefox requires a visible Xvfb window and both declared control phases on each pin; one partition cannot establish qualification.
 This API evidence does not establish live transport or full browser-release acceptance.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
+The P2P differential wraps real queue rings under a withheld multi-round flood:
+counts two and four climb past the default 128-row ring, the eight-peer full
+mesh wraps a 32-row ring at its fanout, the flood withholds every packet for
+six rounds so the frontier freezes and the mesh stalls silently at the
+prediction limit, and the reversed duplicate-carrying burst heals through one
+deep LOAD correction with every later frontier still compared exactly.
 
 Single-host spectators precede redundant-host failover.
 The bounded confirmed-input spectator API shares the player request engine and
