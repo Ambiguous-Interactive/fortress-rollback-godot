@@ -408,6 +408,10 @@ func _finish_requests(result: Driver.StepResult, forward: bool) -> Driver.StepRe
 		_checksum_confirmation = _core.status().confirmed_frame
 	_busy = false
 	_service_controls(_now, false)
+	# A committing drop freeze lifts a slot out of the fold, so the limit re-derives
+	# after the service; the reported frontier must not lag the mutation (#373).
+	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+		_confirmation_code()
 	if _core.status().lifecycle == Types.Lifecycle.TERMINATED:
 		return _result(_core.status().reason, result.frame_before, _core.status().current_frame)
 	return result
@@ -431,6 +435,10 @@ func _prepare_recovery(now_us: Variant) -> Types.Result:
 	var control_code: int = _service_controls(now_us, true)
 	if control_code != I.Code.OK:
 		return Types.Result.new(_step_failure(control_code))
+	# The recovery service can commit a drop freeze, so the limit re-derives before
+	# the core requests read the confirmed frontier (#373).
+	if _running() and _core.status().lifecycle != Types.Lifecycle.TERMINATED:
+		_confirmation_code()
 	_busy = true
 	return _begin_core_requests(now_us, false)
 

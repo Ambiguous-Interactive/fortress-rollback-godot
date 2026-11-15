@@ -1605,8 +1605,10 @@
     },
     "fortress:src/sessions/p2p_session.rs": {
       "applicability": "unknown",
-      "port_test_ids": [],
-      "rationale": "Source-family discovery only; semantic contracts and runtime-specific obligations remain unaudited.",
+      "port_test_ids": [
+        "res://tests/unit/test_peer_session.gd::raised_frontier"
+      ],
+      "rationale": "Scoped confirmed-frontier reconciliation resolved in #373: the reported frontier follows the pinned upstream's lazily folded connect statuses, a runtime raise stamps the local slot to its padded last_added frame, and the mesh confirmation limit re-derives after every fold-input mutation; docs/peer-session.md records the contract and names the out-of-scope relay-floor round and pending-reactivation qualifications. Whole-family semantic audit remains pending.",
       "review": null,
       "status": "pending"
     },
