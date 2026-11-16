@@ -147,6 +147,12 @@ A benchmark is a test of a measurement, and it fails like a test.
 7. Ownership handoff tests must complete expert work with both actual and predicted
    remote inputs, then continue past the delivery delay. Preloading every remote row
    can hide gaps when automatic input production resumes.
+8. **Freeze the tree for the whole duration of an evidence run.** Oracle launchers,
+   ownership probes and the differential wave hash their source inventory at start
+   and re-verify it at the end, so any tracked-file edit mid-run — even in an
+   unrelated directory — fails the whole run at "evidence identity changed" and
+   invalidates every case it already passed. Finish and commit all edits first,
+   then start the runs; two sessions in a row paid a full re-run for this.
 
 ## Evidence references
 
