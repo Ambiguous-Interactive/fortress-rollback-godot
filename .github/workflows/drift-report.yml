@@ -1,0 +1,45 @@
+name: Drift Report
+# M2 (issue #52): the weekly/manual upstream drift report. The reporter only
+# ever writes one deduplicated issue per pinned source; it never advances a
+# pin, rewrites pins.json or regenerates fixtures, so the write scope stays at
+# issues and the run is safe to schedule.
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 06:17 UTC — off the hour so hosted-runner congestion peaks are avoided.
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  # Serialize runs: the reporter's dedup is read-before-write, so two
+  # concurrent runs would still not duplicate issues, but serializing keeps
+  # the observation order and the rate limit spend predictable.
+  group: drift-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Report upstream drift
+        run: |
+          python3 scripts/reference/drift_report.py --summary "$GITHUB_STEP_SUMMARY"
+      - name: Failure summary
+        if: failure()
+        run: |
+          {
+            echo '### Drift report failed'
+            echo
+            echo 'A tooling error (resolver, download, archive binding or issue write) failed at'
+            echo 'least one source. Per-source reasons are printed above; partial results stay'
+            echo 'recorded on their carrier issues. Fix the named error and rerun — a failed'
+            echo 'report is never interpreted as no drift.'
+          } >> "$GITHUB_STEP_SUMMARY"

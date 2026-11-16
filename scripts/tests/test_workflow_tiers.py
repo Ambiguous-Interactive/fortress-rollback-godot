@@ -262,5 +262,35 @@ class WorkflowTierTests(unittest.TestCase):
         self.assertEqual(module.launcher_command('p2p', other, 'godot', 'out', skip_formal=True), p2p_base)
 
 
+DRIFT_REPORT = WORKFLOWS / 'drift-report.yml'
+
+
+class DriftReportWorkflowTests(unittest.TestCase):
+    """The M2 schedule may only ever report: weekly and manual triggers, a
+    minimal issue-writing scope, and no path that advances a pin."""
+
+    def test_drift_report_triggers_and_scope(self):
+        text = read(DRIFT_REPORT)
+        active = active_lines(text)
+        # Weekly plus explicit dispatches only; a push trigger would rerun the
+        # report on every session push and the pull-request path owns review.
+        self.assertIn('workflow_dispatch:', active)
+        self.assertRegex(active, r'schedule:\n\s+- cron:')
+        self.assertNotIn('push:', active)
+        self.assertNotIn('pull_request:', active)
+        # The reporter writes one deduplicated issue per source and nothing
+        # else, so the token scope stays at issues-write over read-only contents.
+        self.assertRegex(active, r'permissions:\n\s+contents: read\n\s+issues: write')
+        for forbidden in ('contents: write', 'pull-requests: write', 'actions: write'):
+            self.assertNotIn(forbidden, active)
+        # Reporting-only: the workflow may not pass the reviewed operator's
+        # advancement flags or rewrite the pins manifest.
+        self.assertIn('drift_report.py', active)
+        self.assertNotIn('--advance', active)
+        self.assertNotRegex(active, r'drift\.py')
+        # Serialized runs keep the observation order deterministic.
+        self.assertIn('group: drift-report', active)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -167,8 +167,7 @@ python3 scripts/reference/drift.py --source fortress \
 The report is the review evidence, not the approval: an advanced pin merges
 only after a full oracle requalification run against it (the Reference
 Baseline workflow runs the complete differential on every pins.json change)
-and a reviewed `requires_review` list. The weekly observation cadence and the
-deduplicated reporting stay in M2 (#52). The binding compares byte for byte
+and a reviewed `requires_review` list. The binding compares byte for byte
 including file modes, so extract the observed tree and run the tool under the
 same umask — a differently-masked extraction is refused loudly, not silently
 accepted. Two boundaries stay explicit: the compared tree is bound to the
@@ -178,6 +177,39 @@ does before an advancement can merge), and `--old` is trusted to be the
 verified pinned extraction (`fetch.sources` output under
 `.cache/reference/`) — pass the wrong tree and the report names visible
 drift, but the evidence is only as honest as that path.
+
+### Weekly reporting
+
+The scheduled/manual cadence and its deduplicated issue reporting are M2
+(#52). The `Drift Report` workflow (Mondays 06:17 UTC, plus
+`workflow_dispatch`) runs `scripts/reference/drift_report.py`: for each pinned
+source it resolves the repository's default-branch revision, stops when that
+revision is the reviewed pin, and otherwise downloads the candidate archive,
+extracts both trees from digest-verified archives, classifies the drift
+through `drift.py`, and appends one observation comment — carrying a stable
+`report-digest` — to exactly one ongoing issue per source. The carrier issue
+is found by a stable marker in its body across open *and* closed issues, not
+through the search API (whose index lags behind writes), so a closed stream
+is reopened rather than duplicated and a repeated observation of an identical
+state comments nothing; two carrier issues for one stream are a tooling error
+that fails the run before any write. The reporter only reports: it never
+rewrites `pins.json`, never advances a pin and never regenerates fixtures —
+advancing stays the reviewed operator flow above, and the issue body carries
+that checklist. Run it by hand the same way the workflow does:
+
+```sh
+GITHUB_REPOSITORY=Ambiguous-Interactive/fortress-rollback-godot \
+python3 scripts/reference/drift_report.py --source fortress \
+    --summary "$GITHUB_STEP_SUMMARY"
+```
+
+Exit code 0 reports or no-ops every requested source; exit 1 names the failed
+sources after the remaining ones still reported (partial failure is visible
+in the workflow summary, never a silent no-drift result). The suite drives
+the whole flow against fake adapters — creation, digest-quiet repeats,
+reopen-not-duplicate, duplicate-carrier refusal, resolver and archive-binding
+failures and a real `gh api` argument contract — before the schedule runs it
+for real.
 
 ## Coverage certification
 
