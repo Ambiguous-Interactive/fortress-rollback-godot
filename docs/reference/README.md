@@ -117,6 +117,24 @@ fixture, model or implementation must retain its source revision, transformation
 and applicable attribution. Godot and Chromium notices are preserved within
 cached upstream distributions.
 
+## Upstream drift classification
+
+[M1](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/51)
+owns conservative drift detection between the reviewed pin and an observed
+upstream tree. `drift.py` compares two trees of one pinned source, classifies
+every changed path (production source, tests/models/fixtures, dependencies,
+build logic, documentation), narrows Rust diffs into signals
+(whitespace/comment-only, constants, attributes/macros, cfg gates), pairs
+same-content renames, and maps each path onto its parity-ledger decision. It
+never claims semantic equivalence: every non-noise change lands in the report's
+`requires_review` list, unmatched paths fail closed, and a broken input is a
+tooling error with a nonzero exit instead of a no-drift report:
+
+```sh
+python3 scripts/reference/drift.py --source fortress --old REVIEWED_TREE --new OBSERVED_TREE \
+    --ledger docs/reference/parity-ledger.json --report drift-report.json
+```
+
 ## Evidence and remaining gates
 
 [baseline.md](baseline.md) records actual results, exact selections, negative
