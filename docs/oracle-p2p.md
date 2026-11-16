@@ -301,9 +301,13 @@ raw compressed-packet revalidation and fresh-process repeats apply unchanged.
 
 This advances [#61](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/61)
 and [#59](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/59).
-Ordinary queue wrap does not prove forced full-capacity reclamation, retained-floor
-side-slot behavior, all queue profiles or complete partition/healing acceptance.
-Those issue requirements remain open.
+The issue's remaining acceptance is delivered elsewhere and closed: the
+global-floor reclamation, retained-floor side slot and the
+fast-local-high-water floor mutant compare through the session-engine
+differential (`sync-floor-probes`, PR #358), and the partition, heal and
+fairness-rotation schedules are lifecycle cases below. This scoped case alone
+still does not cover every queue profile at every roster size; the capacity
+axis has its own section.
 
 ## Non-power-of-two queue capacity
 
@@ -371,7 +375,11 @@ deliberate raise of the oracle's scenario-operation bound to
 32-row eight-peer scale point stays as the fanout witness at the full mesh:
 the frontier passes the whole reduced ring and climbs past it (at least 33
 boundaries per peer), and the corpus keeps each per-case capacity in its
-committed profile.
+committed profile. `mesh_4_wrap_flood_window_8` runs the same four-peer flood
+at the deepest supported prediction window, so the wrap axis is pinned at both
+the family window four and the boundary window eight; its deeper stall cap
+(`frontier + 8`) heals through a deeper LOAD correction (measured seven rows)
+with every later frontier still compared exactly.
 
 From round eight every packet — inputs and acknowledgements alike — is
 withheld from every link for six consecutive rounds. The missing

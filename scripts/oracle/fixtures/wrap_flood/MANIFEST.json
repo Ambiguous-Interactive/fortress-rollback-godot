@@ -8,12 +8,13 @@
     "mesh_6_wrap_flood.json": "4e534a38d2a849f2bd62d58f85a055eae19b3bf54043e28c7333fb6ddcb4dc2c",
     "mesh_7_wrap_flood.json": "977c1cbbc37415b13249d1fa0d1face470c24c0af7169fa81ebd56400d16d29c",
     "mesh_8_wrap_flood.json": "4901fa689dff4a5b5b2e520cb0e19a2fa1c06fe2bb0ada6dc7b3855260e48efb",
-    "mesh_8_wrap_flood_32.json": "23f6e824996bf003abb4320c264af38a932be731163a4eef1dc312e9ec14ccd0"
+    "mesh_8_wrap_flood_32.json": "23f6e824996bf003abb4320c264af38a932be731163a4eef1dc312e9ec14ccd0",
+    "mesh_4_wrap_flood_window_8.json": "33b662433b1e6ba6708ede58d9faff671b45e9487e228b657b556670da013651"
   },
   "provenance": {
     "builder": "scripts/oracle/p2p_wrap.py build()",
     "upstream_revision": "d124c89080004d96971a629bb0427056ee1805e3",
-    "commit": "69b85a4b1945c7c45e70f19fc038a9e072de8363",
+    "commit": "ce3f047ca57fcfea266289b126bf08d66c501762",
     "oracle_binary_sha256": "1d88638188e2ed38dc01ed17634bd674613a9038e138aa864a4e51d45e4ff006",
     "regenerate_with": "python3 scripts/oracle/p2p_wrap_regenerate.py"
   }

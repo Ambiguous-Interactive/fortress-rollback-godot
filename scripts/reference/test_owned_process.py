@@ -90,9 +90,11 @@ class OwnedProcessTests(unittest.TestCase):
                 with self.assertRaises(owned_process.EscapedDescendants) as raised:
                     owned_process.run(command, {}, log, 10)
                 pid = int(marker.read_text())
-                # Both sweeps run before the escape raises, so a descendant
-                # still dying inside the SIGKILL delivery race may be named by
-                # the group sweep and the token sweep alike.
+                # Both sweeps run before the escape raises. A descendant still
+                # dying inside the SIGKILL delivery race is seen by both —
+                # orphan mode stays in the group while carrying the run token —
+                # and the merged report names that pid exactly once, which the
+                # single-entry unpack below pins end to end.
                 named = {item['pid'] for item in raised.exception.survivors}
                 self.assertEqual(named, {pid}, 'the escaped descendant must be identified by its own pid')
                 [survivor] = [item for item in raised.exception.survivors if item['pid'] == pid]
@@ -237,6 +239,19 @@ print('done', flush=True)
                 if state == 'S':
                     (entry / 'cmdline').write_bytes(b'live\0')
             self.assertEqual(owned_process.group_members(77, proc=proc), [{'pid': 72, 'name': 'live'}])
+
+    # Value: protects=the merged survivor report names each killed pid once;
+    # fails_when=a process both sweeps saw is reported as two terminations;
+    # why_new=the orphan-mode escape race double-named one pid under load (#381);
+    # seam=owned_process.merged_survivors
+    def test_merged_survivors_keep_the_first_sighting_of_each_pid(self):
+        group = [{'pid': 10, 'name': 'group-only'}, {'pid': 11, 'name': 'both'}]
+        token = [{'pid': 11, 'name': 'again'}, {'pid': 12, 'name': 'token-only'}]
+        self.assertEqual(owned_process.merged_survivors(group, token),
+                         [{'pid': 10, 'name': 'group-only'}, {'pid': 11, 'name': 'both'},
+                          {'pid': 12, 'name': 'token-only'}])
+        self.assertEqual(owned_process.merged_survivors([], token), token)
+        self.assertEqual(owned_process.merged_survivors(group, []), group)
 
     def test_interruption_terminates_the_tree_before_propagating(self):
         with tempfile.TemporaryDirectory() as folder:

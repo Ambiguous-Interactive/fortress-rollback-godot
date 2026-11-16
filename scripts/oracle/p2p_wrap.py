@@ -3,15 +3,18 @@ from copy import deepcopy
 
 from p2p_contract import validate_scenario
 
-# name -> (players, queue capacity, rounds). Every count two through eight holds
-# the real default ring: the confirmed frontier climbs past the 128-row queues the
-# production mesh configures by default, so the named count cases compare the
-# default-capacity wrap at every supported roster size. The oracle's 20000-operation
-# scenario bound admits the eight-peer default case at its measured 16324
-# operations (129 boundaries at two packets per peer pair per round); the named
-# 32-row eight-peer scale point stays as the full-fanout small-ring witness — the
-# frontier passes the whole reduced ring and climbs past it under the same flood
-# shape — with the per-case capacity kept in its committed profile.
+# name -> (players, queue capacity, rounds, prediction window). Every count two
+# through eight holds the real default ring: the confirmed frontier climbs past
+# the 128-row queues the production mesh configures by default, so the named
+# count cases compare the default-capacity wrap at every supported roster size.
+# The oracle's 20000-operation scenario bound admits the eight-peer default case
+# at its measured 16324 operations (129 boundaries at two packets per peer pair
+# per round); the named 32-row eight-peer scale point stays as the full-fanout
+# small-ring witness — the frontier passes the whole reduced ring and climbs
+# past it under the same flood shape — with the per-case capacity kept in its
+# committed profile. `mesh_4_wrap_flood_window_8` binds the same flood at the
+# deepest supported prediction window, so the wrap axis is covered at the
+# shallow family window and at the boundary window eight in one corpus.
 # The launchers load the committed schedules from scripts/oracle/fixtures/wrap_flood
 # instead of building them: the builder reruns the whole growing scenario once per
 # round, and that quadratic cost inside every CI launch blew the merge queue's
@@ -19,12 +22,13 @@ from p2p_contract import validate_scenario
 # path (scripts/oracle/p2p_wrap_regenerate.py); its per-round model checks keep
 # failing the regeneration on divergence, and every launch still runs the full
 # differential gates against the committed bytes.
-PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_3_wrap_flood': (3, 128, 142),
-            'mesh_4_wrap_flood': (4, 128, 142),
-            'mesh_5_wrap_flood': (5, 128, 142), 'mesh_6_wrap_flood': (6, 128, 142),
-            'mesh_7_wrap_flood': (7, 128, 142), 'mesh_8_wrap_flood': (8, 128, 142),
-            'mesh_8_wrap_flood_32': (8, 32, 44)}
+PROFILES = {'mesh_2_wrap_flood': (2, 128, 142, 4), 'mesh_3_wrap_flood': (3, 128, 142, 4),
+            'mesh_4_wrap_flood': (4, 128, 142, 4),
+            'mesh_5_wrap_flood': (5, 128, 142, 4), 'mesh_6_wrap_flood': (6, 128, 142, 4),
+            'mesh_7_wrap_flood': (7, 128, 142, 4), 'mesh_8_wrap_flood': (8, 128, 142, 4),
+            'mesh_8_wrap_flood_32': (8, 32, 44, 4), 'mesh_4_wrap_flood_window_8': (4, 128, 142, 8)}
 NAMES = tuple(PROFILES)
+# The family's default window; each profile carries its own in PROFILES[name][3].
 WINDOW = 4
 FLOOD_START = 8
 FLOOD_ROUNDS = 6
@@ -42,13 +46,13 @@ CORRECTION_MIN = 3
 # capacity and the queue wraps.
 
 
-def build(binary, observe, players, capacity, rounds):
+def build(binary, observe, players, capacity, rounds, window=WINDOW):
     """Each machine advances one frame per round until the starved frontier
     caps it at confirmed + window, then stalls silently; the builder models
     that cap explicitly, derives each step's payload from the modeled frame and
     re-verifies the model against every observed trace, so a wrong model fails
     the build instead of shipping an inconsistent schedule."""
-    scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': WINDOW, 'operations': [],
+    scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window, 'operations': [],
                 'lifecycle': {'quality_us': 100000000, 'keepalive_us': 100000000, 'notify_us': 5000000,
                               'timeout_us': 10000000, 'checksum_interval': 0, 'divergent_peer': -1}}
     if capacity != 128:
@@ -128,9 +132,10 @@ def evidence(value, scenario):
     burst delivery run and the duplicates."""
     players = scenario['players']
     capacity = scenario.get('queue_capacity', 128)
-    if players not in {spec[0] for spec in PROFILES.values()} or scenario['max_prediction'] != WINDOW or scenario['input_delay'] != 0:
+    if not any(spec[0] == players and spec[1] == capacity and spec[3] == scenario['max_prediction']
+               for spec in PROFILES.values()):
         raise ValueError('wrap witness profile')
-    if not any(spec[0] == players and spec[1] == capacity for spec in PROFILES.values()):
+    if scenario['input_delay'] != 0:
         raise ValueError('wrap witness profile')
     counts = {'correction_rows': 0, 'burst_delivers': 0, 'duplicate_deliveries': 0}
     # Static schedule shape: at least two packets are delivered twice, and the

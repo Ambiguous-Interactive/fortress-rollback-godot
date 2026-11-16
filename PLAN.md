@@ -626,7 +626,10 @@ The P2P differential wraps real queue rings under a withheld multi-round flood:
 every count two through eight climbs past the default 128-row ring — the
 eight-peer default case fits the deliberately raised 20000-operation scenario
 bound — and a named 32-row scale point keeps the full-fanout small-ring
-witness; the flood withholds every packet for six rounds so the frontier
+witness; the same flood at the deepest supported prediction window on four
+peers (`mesh_4_wrap_flood_window_8`) pins the wrap axis at the boundary window
+with its deeper stall cap and LOAD heal. The flood withholds every packet for
+six rounds so the frontier
 freezes and the mesh stalls silently at the prediction limit, and the reversed
 duplicate-carrying burst heals through one deep LOAD correction with every
 later frontier still compared exactly.
@@ -827,6 +830,12 @@ The weekly automation is future work tracked in M2, not activated by this plan.
 
 Classify source, constants/defaults, macros/attributes/cfg, build logic,
 tests/models/fixtures, dependencies and documentation.
+`scripts/reference/drift.py` performs that classification between two pinned
+source trees, maps every changed path onto its parity-ledger entry and fails
+closed on unmatched shapes or broken inputs; its conservative signals
+(whitespace/comment-only, constants, attributes/macros, cfg gates) inform
+review and never clear a path from it. M2 owns wiring the classifier into a
+weekly/manual report.
 Token/AST analysis reduces noise but does not prove semantic equivalence.
 Unknown classification, API failure or incomplete diffs require review.
 

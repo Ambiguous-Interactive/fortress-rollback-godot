@@ -30,6 +30,7 @@ BINARY = CACHE / 'target/debug/p2p'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--only', choices=tuple(p2p_wrap.NAMES), help='regenerate one fixture, merging its digest into the manifest')
     args = parser.parse_args()
     identity = git_identity()
     manifest = load_manifest()
@@ -42,19 +43,40 @@ def main():
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
         str(rust_dir), '--bin', 'p2p'], CACHE / 'results/wrap-regenerate-build.log', timeout=600)
     digests = {}
-    for name, (players, capacity, rounds) in p2p_wrap.PROFILES.items():
-        scenario = p2p_wrap.build(str(BINARY), source, players, capacity, rounds)
+    digests = {}
+    if args.only is not None:
+        # A single-fixture regeneration merges into the committed manifest, so
+        # that manifest and every sibling fixture must exist and load cleanly
+        # before any build rewrites one of them (fail-closed, not repair).
+        if not provenance_path.exists():
+            raise ValueError('--only needs the committed wrap-flood manifest; regenerate without --only first')
+        for name in p2p_wrap.NAMES:
+            if name != args.only:
+                wrap_fixture(name)
+    for name, (players, capacity, rounds, window) in p2p_wrap.PROFILES.items():
+        if args.only is not None and name != args.only:
+            continue
+        scenario = p2p_wrap.build(str(BINARY), source, players, capacity, rounds, window)
         run = subprocess.run([str(BINARY)], input=json.dumps(scenario), capture_output=True,
                              encoding='utf-8', timeout=60, check=True, env=rust_environment())
         validate(json.loads(run.stdout), scenario, True)
         path = FIXTURES / (name + '.json')
         path.write_text(json.dumps(scenario, indent=2) + '\n', encoding='utf-8')
         digests[name + '.json'] = hashlib.sha256(path.read_bytes()).hexdigest()
-    provenance = {'format': 1, 'fixtures': digests, 'provenance': {
-        'builder': 'scripts/oracle/p2p_wrap.py build()', 'upstream_revision': REVISION,
-        'commit': identity['commit'], 'oracle_binary_sha256': hashlib.sha256(BINARY.read_bytes()).hexdigest(),
-        'regenerate_with': 'python3 scripts/oracle/p2p_wrap_regenerate.py'}}
-    (FIXTURES / 'MANIFEST.json').write_text(json.dumps(provenance, indent=2) + '\n', encoding='utf-8')
+    provenance_path = FIXTURES / 'MANIFEST.json'
+    if args.only is None or not provenance_path.exists():
+        provenance = {'format': 1, 'fixtures': digests, 'provenance': {
+            'builder': 'scripts/oracle/p2p_wrap.py build()', 'upstream_revision': REVISION,
+            'commit': identity['commit'], 'oracle_binary_sha256': hashlib.sha256(BINARY.read_bytes()).hexdigest(),
+            'regenerate_with': 'python3 scripts/oracle/p2p_wrap_regenerate.py'}}
+    else:
+        # A single-fixture regeneration keeps the other committed digests and
+        # refreshes only the provenance fields that describe this rebuild.
+        provenance = json.loads(provenance_path.read_text(encoding='utf-8'))
+        provenance['fixtures'].update(digests)
+        provenance['provenance'].update({'upstream_revision': REVISION, 'commit': identity['commit'],
+            'oracle_binary_sha256': hashlib.sha256(BINARY.read_bytes()).hexdigest()})
+    provenance_path.write_text(json.dumps(provenance, indent=2) + '\n', encoding='utf-8')
     # Every committed schedule must still match the launcher's load-time contract.
     for name in p2p_wrap.NAMES:
         wrap_fixture(name)
