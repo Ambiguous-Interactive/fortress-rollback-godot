@@ -141,6 +141,21 @@ def terminate_group(group):
     return members
 
 
+def merged_survivors(members, survivors):
+    """Merge the group and token sweeps, naming each terminated pid once.
+
+    One process can be both a same-group member and a token carrier: a plain
+    fork inherits the run token, so a descendant that stayed in the session is
+    visible to both sweeps, and when it is still dying inside the SIGKILL
+    delivery race the second sweep names it again. The merged report keeps the
+    first sighting of every pid, group attribution first — a pid listed twice
+    reads as two terminations and broke strict callers that unpack one entry
+    per killed process (issue #381).
+    """
+    named = {item['pid'] for item in members}
+    return members + [item for item in survivors if item['pid'] not in named]
+
+
 class _Deadline(Exception):
     """The direct child was still running when its deadline passed.
 
@@ -307,10 +322,10 @@ def _run_until_exit(process, token_value, log, timeout):
                 except OSError:
                     pass  # The child exited in the interrupt race; the sweeps below still run.
                 members = terminate_group(process.pid)
-                survivors = terminate(token_value)
-                if members or survivors:
+                survivors = merged_survivors(members, terminate(token_value))
+                if survivors:
                     try:
-                        log.write_text(f'OWNED_PROCESSES: terminated {members + survivors}\n')
+                        log.write_text(f'OWNED_PROCESSES: terminated {survivors}\n')
                     except OSError:
                         pass  # A failing log sink must not replace the interrupt either.
                 try:
@@ -369,11 +384,11 @@ def run(command, environment, log, timeout, cwd=None, input_text=None):
     # can leave a same-group descendant and a setsid token carrier at once,
     # and reporting only the first would strand the second.
     members = terminate_group(process.pid) if group_alive else []
-    survivors = terminate(token_value)
-    if members or survivors:
-        output += f'OWNED_PROCESSES: terminated {members + survivors}\n'
+    survivors = merged_survivors(members, terminate(token_value))
+    if survivors:
+        output += f'OWNED_PROCESSES: terminated {survivors}\n'
         log.write_text(output)
-        raise EscapedDescendants(members + survivors)
+        raise EscapedDescendants(survivors)
     if post_exit_bytes or feed_failures:
         log.write_text(output)
     return returncode, output
@@ -410,12 +425,12 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None):
     if feed_failures:
         stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
     members = terminate_group(process.pid) if group_alive else []
-    survivors = terminate(token_value)
-    if members or survivors:
+    survivors = merged_survivors(members, terminate(token_value))
+    if survivors:
         # The child's own trusted output stays in the log beside the note,
         # so an escaped run keeps its diagnosis where the caller looks.
-        log.write_text(''.join(parts.values()) + f'OWNED_PROCESSES: terminated {members + survivors}\n')
-        raise EscapedDescendants(members + survivors)
+        log.write_text(''.join(parts.values()) + f'OWNED_PROCESSES: terminated {survivors}\n')
+        raise EscapedDescendants(survivors)
     if post_exit_bytes:
         log.write_text(f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
                        'exited and were withheld\n')
@@ -459,14 +474,14 @@ def finish(process, token_value, grace=5.0):
                     process.kill()
                 process.wait(timeout=grace)
         members = terminate_group(process.pid)
-        survivors = terminate(token_value)
+        survivors = merged_survivors(members, terminate(token_value))
         if process.poll() is None:
             try:
                 process.wait(timeout=grace)
             except subprocess.TimeoutExpired:
                 pass  # The sweeps already killed every group member and carrier.
-        if members or survivors:
-            raise EscapedDescendants(members + survivors)
+        if survivors:
+            raise EscapedDescendants(survivors)
     finally:
         for stream in (process.stdin, process.stdout, process.stderr):
             if stream is not None:
