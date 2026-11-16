@@ -145,7 +145,12 @@ jobs:
     name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request'
-    timeout-minutes: 30
+    # The oracles wave's critical path is the p2p launcher: its builders rerun the
+    # growing scenario every round, and the default-capacity wrap floods through
+    # count eight (#379) put about seventeen thousand operations behind the
+    # eight-peer case, so the leg reserves headroom like its 45-minute ownership
+    # sibling instead of riding the old 30-minute bound.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

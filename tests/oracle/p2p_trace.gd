@@ -469,7 +469,10 @@ func _valid(value: Variant) -> bool:
 			return false
 		if not _integer(settings.checksum_interval, 0, 60) or not _integer(settings.divergent_peer, -1, int(value.players) - 1):
 			return false
-	if not value.operations is Array or value.operations.is_empty() or value.operations.size() > 10000:
+	# The operation bound stays a denial-of-service guard, not a corpus limit: the
+	# eight-peer default-ring wrap flood needs about seventeen thousand operations,
+	# so the deliberate #379 raise mirrors the Python and Rust validators exactly.
+	if not value.operations is Array or value.operations.is_empty() or value.operations.size() > 20000:
 		return false
 	var previous: int = 0
 	var stepped: Dictionary = {}

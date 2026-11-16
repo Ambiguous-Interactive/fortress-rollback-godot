@@ -132,7 +132,12 @@ def validate_scenario(value):
             raise ValueError('delay profile above the peer bound')
     if 'lifecycle' in value:
         lifecycle.settings(value['lifecycle'], value['players'])
-    if type(value['operations']) is not list or not 1 <= len(value['operations']) <= 10000:
+    # The bound stays a denial-of-service guard, not a corpus limit: the eight-peer
+    # default-ring wrap flood needs about seventeen thousand operations (129 confirmed
+    # boundaries at the full mesh's two packets per peer pair per round), so the
+    # deliberate #379 raise admits it with margin while every smaller corpus keeps
+    # its shape.
+    if type(value['operations']) is not list or not 1 <= len(value['operations']) <= 20000:
         raise ValueError('operation inventory')
     previous = 0; stepped = set(); addressed = None
     for op in value['operations']:

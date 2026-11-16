@@ -623,11 +623,13 @@ Firefox requires a visible Xvfb window and both declared control phases on each 
 This API evidence does not establish live transport or full browser-release acceptance.
 Runtime input-delay changes must preserve exact upstream scheduling behavior.
 The P2P differential wraps real queue rings under a withheld multi-round flood:
-counts two and four climb past the default 128-row ring, the eight-peer full
-mesh wraps a 32-row ring at its fanout, the flood withholds every packet for
-six rounds so the frontier freezes and the mesh stalls silently at the
-prediction limit, and the reversed duplicate-carrying burst heals through one
-deep LOAD correction with every later frontier still compared exactly.
+every count two through eight climbs past the default 128-row ring — the
+eight-peer default case fits the deliberately raised 20000-operation scenario
+bound — and a named 32-row scale point keeps the full-fanout small-ring
+witness; the flood withholds every packet for six rounds so the frontier
+freezes and the mesh stalls silently at the prediction limit, and the reversed
+duplicate-carrying burst heals through one deep LOAD correction with every
+later frontier still compared exactly.
 
 Single-host spectators precede redundant-host failover.
 The bounded confirmed-input spectator API shares the player request engine and

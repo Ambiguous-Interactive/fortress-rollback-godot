@@ -298,6 +298,18 @@ class P2PContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_scenario(mutant)
 
+    # Value: protects=the scenario-operation bound stays deliberate; fails_when=the corpus
+    # scale the #379 raise admits drifts, or an above-bound inventory passes; why_new=#379
+    # default-ring wrap floods; seam=validate_scenario's operation inventory
+    def test_operation_inventory_bound(self):
+        original = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'operations': []}
+        original['operations'] = [{'kind': 'poll', 'peer': 0, 'now_us': index} for index in range(1, 20001)]
+        validate_scenario(original)
+        mutant = deepcopy(original)
+        mutant['operations'].append({'kind': 'poll', 'peer': 0, 'now_us': 20001})
+        with self.assertRaises(ValueError):
+            validate_scenario(mutant)
+
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):
         step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '00000000'}
