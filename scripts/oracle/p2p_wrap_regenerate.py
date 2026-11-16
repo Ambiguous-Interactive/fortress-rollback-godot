@@ -43,6 +43,16 @@ def main():
     execute([str(cargo), '+' + version, 'build', '--locked', '--offline', '--manifest-path',
         str(rust_dir), '--bin', 'p2p'], CACHE / 'results/wrap-regenerate-build.log', timeout=600)
     digests = {}
+    digests = {}
+    if args.only is not None:
+        # A single-fixture regeneration merges into the committed manifest, so
+        # that manifest and every sibling fixture must exist and load cleanly
+        # before any build rewrites one of them (fail-closed, not repair).
+        if not provenance_path.exists():
+            raise ValueError('--only needs the committed wrap-flood manifest; regenerate without --only first')
+        for name in p2p_wrap.NAMES:
+            if name != args.only:
+                wrap_fixture(name)
     for name, (players, capacity, rounds, window) in p2p_wrap.PROFILES.items():
         if args.only is not None and name != args.only:
             continue

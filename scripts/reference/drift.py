@@ -24,6 +24,7 @@ import argparse
 import difflib
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -62,42 +63,46 @@ def digest(path):
 
 
 def inventory(tree):
-    """Every file under the tree: relative path -> {sha256, bytes}, bounded."""
+    """Every file under the tree: relative path -> {sha256, bytes}, bounded.
+
+    The walk prunes `.git` directories during descent and enforces both bounds
+    while traversing, so a pathological input fails closed instead of paying
+    an unbounded enumeration first. A file past `MAX_FILE_BYTES` is a tooling
+    error: hashing it would silently turn an oversized-file content change
+    into "unchanged" and report no drift.
+    """
     root = Path(tree)
     if not root.is_dir():
         raise ValueError(f'source tree is missing or not a directory: {root}')
     files = {}
-    for path in sorted(root.rglob('*')):
-        if not path.is_file() or '.git' in path.relative_to(root).parts:
-            continue
-        if len(files) >= MAX_FILES:
-            raise ValueError(f'tree exceeds the {MAX_FILES}-file walk bound: {root}')
-        size = path.stat().st_size
-        files[path.relative_to(root).as_posix()] = {
-            'sha256': digest(path) if size <= MAX_FILE_BYTES else None,
-            'bytes': size,
-        }
+    for folder, directories, names in os.walk(root):
+        directories[:] = sorted(name for name in directories if name != '.git')
+        for name in sorted(names):
+            if len(files) >= MAX_FILES:
+                raise ValueError(f'tree exceeds the {MAX_FILES}-file walk bound: {root}')
+            path = Path(folder) / name
+            size = path.stat().st_size
+            if size > MAX_FILE_BYTES:
+                raise ValueError(f'file exceeds the {MAX_FILE_BYTES}-byte input bound: {path}')
+            files[path.relative_to(root).as_posix()] = {'sha256': digest(path), 'bytes': size}
     return files
 
 
-def _meaningful(lines):
-    """Non-comment lines, whitespace-normalized and order-insensitive.
+def _code_skeleton(lines):
+    """Code lines in source order: blanks and whole-line comments dropped.
 
-    A trailing comment counts as noise here: the normalized text keeps the
-    code and drops everything from the first `//` onward, so a comment added
-    behind unchanged code cannot read as a semantic edit.
+    Line interiors stay verbatim — no whitespace collapsing, no comment-tail
+    stripping — because without a lexer a `//` inside a string literal or a
+    space inside one is indistinguishable from real content, and a noise
+    verdict must never swallow a semantic edit. Order is preserved: swapping
+    two statements changes behavior even though their multiset is unchanged.
     """
     kept = []
     for line in lines:
-        text = line
-        for marker in COMMENT_PREFIXES:
-            index = text.find(marker)
-            if index >= 0:
-                text = text[:index]
-        text = ' '.join(text.split())
-        if text:
+        text = line.strip()
+        if text and not text.startswith(COMMENT_PREFIXES):
             kept.append(text)
-    return sorted(kept)
+    return kept
 
 
 def _changed_lines(old_lines, new_lines):
@@ -115,7 +120,8 @@ def line_signals(old_lines, new_lines):
     """Narrow, conservative signals about what kind of lines differ.
 
     These labels only inform review; they never upgrade a change to safe. A
-    signal list containing `semantic_lines` names real code edits.
+    signal list containing `semantic_lines` names real code edits, and every
+    label except the explicit noise one routes the path to review.
     """
     added, removed = _changed_lines(old_lines, new_lines)
     if not added and not removed:
@@ -123,7 +129,7 @@ def line_signals(old_lines, new_lines):
     stripped = [line.strip() for line in added + removed]
     if all(not line or line.startswith(COMMENT_PREFIXES) for line in stripped):
         return ['whitespace_or_comment_only']
-    if _meaningful(old_lines) == _meaningful(new_lines):
+    if _code_skeleton(old_lines) == _code_skeleton(new_lines):
         return ['whitespace_or_comment_only']
     signals = []
     if all(line.startswith(CONST_PREFIXES) for line in stripped):
@@ -146,29 +152,41 @@ def classify_path(relative):
 
 
 def _read_lines(tree, name):
-    try:
-        return (Path(tree) / name).read_text(encoding='utf-8', errors='replace').splitlines()
-    except OSError:
+    """File lines, or None when the file does not exist on that side.
+
+    Read failures propagate: a file that exists but cannot be read is a
+    tooling error, never a silently unclassified change.
+    """
+    path = Path(tree) / name
+    if not path.is_file():
         return None
+    return path.read_text(encoding='utf-8', errors='replace').splitlines()
 
 
-def classify_change(name, old_tree, new_tree, old_entry, new_entry):
+def classify_change(name, old_tree, new_tree, old_entry, new_entry, old_name=None):
     """One record for one changed path: category, signals, review gate.
 
     The gate is conservative by construction: every change whose differing
     lines are not pure whitespace/comment noise needs review, whatever its
     category — a constant, an attribute, a documentation edit and an unmatched
     path can all move behavior or evidence, and the classifier cannot prove
-    otherwise.
+    otherwise. A rename gates unconditionally: the path is the ledger key, so
+    moving bytes between paths moves the mapping even when the bytes match.
+    Content reads use each tree's own path (`old_name` names a rename's
+    source), so a renamed file's diff compares the real old bytes.
     """
     record = {'path': name, 'kind': 'changed', 'category': classify_path(name), 'signals': [],
               'requires_review': False}
     if record['category'] == UNMATCHED:
         record['requires_review'] = True
     else:
-        old_lines = _read_lines(old_tree, name) if old_entry is not None else []
+        old_lines = _read_lines(old_tree, old_name or name) if old_entry is not None else []
         new_lines = _read_lines(new_tree, name) if new_entry is not None else []
-        if old_lines is not None and new_lines is not None:
+        if old_lines is None or new_lines is None:
+            # A declared file that cannot be read at classification time is a
+            # truncated comparison: gate it instead of passing it silently.
+            record['requires_review'] = True
+        else:
             record['signals'] = line_signals(old_lines, new_lines)
             if any(signal not in NOISE_SIGNALS for signal in record['signals']):
                 record['requires_review'] = True
@@ -190,7 +208,11 @@ def compare(old_tree, new_tree):
 
 
 def detect_renames(diff):
-    """An added path whose bytes a deleted path still holds is a rename."""
+    """An added path whose bytes a deleted path still holds is a rename.
+
+    Each deleted candidate is consumed when paired, so two added copies of one
+    deleted file report one rename and one addition, never two renames.
+    """
     by_digest = {}
     for name in diff['deleted']:
         entry = diff['old'][name]
@@ -201,7 +223,7 @@ def detect_renames(diff):
         entry = diff['new'][name]
         matches = by_digest.get(entry['sha256']) if entry['sha256'] is not None else None
         if matches:
-            renames.append({'from': matches[0], 'to': name})
+            renames.append({'from': matches.pop(0), 'to': name})
     return renames
 
 
@@ -227,9 +249,11 @@ def build_report(source, old_tree, new_tree, ledger=None):
         records.append(record)
     for rename in renames:
         record = classify_change(rename['to'], old_tree, new_tree, diff['old'][rename['from']],
-                                 diff['new'][rename['to']])
+                                 diff['new'][rename['to']], old_name=rename['from'])
         record['kind'] = 'renamed'
         record['rename_from'] = rename['from']
+        record['requires_review'] = True
+        record['signals'] = ['path_moved']
         records.append(record)
     decisions = {}
     if ledger is not None:

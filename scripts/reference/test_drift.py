@@ -39,13 +39,15 @@ class DriftClassificationTests(unittest.TestCase):
         self.assertEqual(report['requires_review'], [])
 
     # Data-driven over issue #51's synthetic change shapes. The review gate is
-    # conservative: every non-noise change gates, whatever its category.
+    # conservative: every non-noise change gates, whatever its category, and
+    # noise is only blanks, whole-line comments and per-line whitespace in
+    # source order — never string contents or line order.
     def test_synthetic_change_shapes(self):
         production = 'pub fn step() -> u32 { 7 }\n'
         cases = [
             # (name, old, new, category, signal or None, requires_review)
             ('whitespace_comment', production, production.replace('{ 7 }', '{  7 }  // tuned\n'),
-             'production_source', 'whitespace_or_comment_only', False),
+             'production_source', 'semantic_lines', True),
             ('comments_only', production, '// guide\n' + production,
              'production_source', 'whitespace_or_comment_only', False),
             ('constant', 'pub const LIMIT: u32 = 8;\n', 'pub const LIMIT: u32 = 9;\n',
@@ -55,6 +57,10 @@ class DriftClassificationTests(unittest.TestCase):
             ('cfg_gate', '#[cfg(target_os = "linux")]\npub fn step() {}\n',
              '#[cfg(unix)]\npub fn step() {}\n', 'production_source', 'cfg_gate_touched', True),
             ('semantic', production, production.replace('7', '11'),
+             'production_source', 'semantic_lines', True),
+            ('string_url', 'let url = "https://a";\n', 'let url = "https://b";\n',
+             'production_source', 'semantic_lines', True),
+            ('swapped_lines', 'v.clear();\nv.push(1);\n', 'v.push(1);\nv.clear();\n',
              'production_source', 'semantic_lines', True),
             ('build_script', 'fn main() {}\n', 'fn main() { println!("cargo:rerun-if-changed=x"); }\n',
              'build_logic', 'semantic_lines', True),
@@ -71,6 +77,7 @@ class DriftClassificationTests(unittest.TestCase):
                 path = {'whitespace_comment': 'src/queue.rs', 'comments_only': 'src/session.rs',
                         'constant': 'src/constants.rs', 'attribute': 'src/hot.rs',
                         'cfg_gate': 'src/platform.rs', 'semantic': 'src/game.rs',
+                        'string_url': 'src/endpoint.rs', 'swapped_lines': 'src/order.rs',
                         'build_script': 'build.rs', 'dependency_manifest': 'Cargo.toml',
                         'test_only': 'tests/sim.rs', 'model_spec': 'specs/model.json',
                         'docs_only': 'docs/guide.md'}[name]
@@ -114,6 +121,22 @@ class DriftClassificationTests(unittest.TestCase):
         self.assertEqual(renamed['kind'], 'renamed')
         self.assertEqual(renamed['rename_from'], 'src/old_name.rs')
         self.assertEqual(renamed['category'], 'production_source')
+        # A rename moves the ledger key even when the bytes match, so the
+        # record gates review unconditionally.
+        self.assertTrue(renamed['requires_review'])
+        self.assertEqual(report['requires_review'], ['src/new_name.rs'])
+
+    def test_duplicate_rename_candidates_are_consumed_once(self):
+        report = self.classify_pair({'src/a.rs': 'pub fn stable() {}\n'},
+                                    {'src/b.rs': 'pub fn stable() {}\n',
+                                     'src/c.rs': 'pub fn stable() {}\n'})
+        self.assertEqual(report['files_renamed'], 1)
+        self.assertEqual(report['files_added'], 1)
+        added = [record for record in report['records'] if record['kind'] == 'added']
+        self.assertEqual([record['path'] for record in added], ['src/c.rs'])
+        renamed = [record for record in report['records'] if record['kind'] == 'renamed'][0]
+        self.assertEqual(renamed['rename_from'], 'src/a.rs')
+        self.assertEqual(renamed['path'], 'src/b.rs')
 
     def test_ledger_mapping_and_unmapped_paths(self):
         ledger = {'decisions': {'fortress:src/session.rs': {'status': 'covered',
@@ -153,6 +176,28 @@ class DriftInputBoundTests(unittest.TestCase):
                     drift.build_report('fortress', base, base)
         finally:
             drift.MAX_FILES = original
+
+    def test_oversized_file_fails_closed_instead_of_no_drift(self):
+        # Two different oversized files must be a tooling error, never "the
+        # hashes are unavailable so nothing changed".
+        original = drift.MAX_FILE_BYTES
+        drift.MAX_FILE_BYTES = 8
+        try:
+            with make_tree({'src/huge.rs': 'pub fn a() {}\n'}) as old_base, \
+                 make_tree({'src/huge.rs': 'pub fn b() {}\n'}) as new_base:
+                with self.assertRaises(ValueError):
+                    drift.build_report('fortress', old_base, new_base)
+        finally:
+            drift.MAX_FILE_BYTES = original
+
+    def test_unreadable_file_is_a_tooling_error(self):
+        with make_tree({'src/a.rs': 'a\n'}) as base:
+            (base / 'src' / 'a.rs').chmod(0)
+            try:
+                with self.assertRaises(OSError):
+                    drift.build_report('fortress', base, base)
+            finally:
+                (base / 'src' / 'a.rs').chmod(0o644)
 
     def test_git_directory_is_ignored(self):
         with make_tree({'src/a.rs': 'a\n'}) as base:

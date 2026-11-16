@@ -119,11 +119,10 @@ cached upstream distributions.
 
 ## Upstream drift classification
 
-[M1](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/issues/51)
-owns conservative drift detection between the reviewed pin and an observed
-upstream tree. `drift.py` compares two trees of one pinned source, classifies
-every changed path (production source, tests/models/fixtures, dependencies,
-build logic, documentation), narrows Rust diffs into signals
+Task M1 (#51) owns conservative drift detection between the reviewed pin and
+an observed upstream tree. `drift.py` compares two trees of one pinned source,
+classifies every changed path (production source, tests/models/fixtures,
+dependencies, build logic, documentation), narrows Rust diffs into signals
 (whitespace/comment-only, constants, attributes/macros, cfg gates), pairs
 same-content renames, and maps each path onto its parity-ledger decision. It
 never claims semantic equivalence: every non-noise change lands in the report's
