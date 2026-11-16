@@ -16,7 +16,7 @@
   "provenance": {
     "builder": "scripts/oracle/p2p_wrap.py build()",
     "upstream_revision": "d124c89080004d96971a629bb0427056ee1805e3",
-    "commit": "1756cfb1d7cc0dbbddaac2fc91a89234922febbb",
+    "commit": "12a50b58f7f52b6e3a61b5d55254b0d8ebfbc6c0",
     "oracle_binary_sha256": "1d88638188e2ed38dc01ed17634bd674613a9038e138aa864a4e51d45e4ff006",
     "regenerate_with": "python3 scripts/oracle/p2p_wrap_regenerate.py"
   }
