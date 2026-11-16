@@ -12,7 +12,8 @@ from p2p_contract import validate_scenario
 # 32-row eight-peer scale point stays as the full-fanout small-ring witness — the
 # frontier passes the whole reduced ring and climbs past it under the same flood
 # shape — with the per-case capacity kept in its committed profile.
-PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_4_wrap_flood': (4, 128, 142),
+PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_3_wrap_flood': (3, 128, 142),
+            'mesh_4_wrap_flood': (4, 128, 142),
             'mesh_5_wrap_flood': (5, 128, 142), 'mesh_6_wrap_flood': (6, 128, 142),
             'mesh_7_wrap_flood': (7, 128, 142), 'mesh_8_wrap_flood': (8, 128, 142),
             'mesh_8_wrap_flood_32': (8, 32, 44)}

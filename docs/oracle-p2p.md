@@ -345,8 +345,9 @@ access-only SyncLayer oracle slice tracked in
 
 ## Long ring-wrap flood
 
-`mesh_2_wrap_flood`, `mesh_4_wrap_flood`, `mesh_5_wrap_flood`,
-`mesh_6_wrap_flood`, `mesh_7_wrap_flood` and `mesh_8_wrap_flood` wrap real
+`mesh_2_wrap_flood`, `mesh_3_wrap_flood`, `mesh_4_wrap_flood`,
+`mesh_5_wrap_flood`, `mesh_6_wrap_flood`, `mesh_7_wrap_flood` and
+`mesh_8_wrap_flood` wrap real
 queue rings under a withheld multi-round flood, and
 `mesh_8_wrap_flood_32` keeps the full-fanout small-ring scale point. All of
 them hold the explicit lifecycle profile with
