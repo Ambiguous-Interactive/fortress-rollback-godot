@@ -360,6 +360,10 @@ class P2PContractTests(unittest.TestCase):
         def run_main(fixtures, only):
             """main() with build/tooling mocked but the real fixture loader active."""
             real = p2p_launch.wrap_fixture
+            # The merge branch digests the oracle binary for provenance; a stub
+            # keeps the test independent of a built binary (CI has none).
+            stub_binary = fixtures / 'oracle-binary'
+            stub_binary.write_bytes(b'oracle')
 
             def loader(name):
                 # Mirror the production contract with the corpus's current manifest:
@@ -376,6 +380,7 @@ class P2PContractTests(unittest.TestCase):
                  patch.object(p2p_wrap_regenerate, 'FIXTURES', fixtures), \
                  patch.object(p2p_launch, 'FIXTURES', fixtures), \
                  patch.object(p2p_wrap_regenerate, 'wrap_fixture', loader), \
+                 patch.object(p2p_wrap_regenerate, 'BINARY', stub_binary), \
                  patch.object(p2p_wrap_regenerate, 'git_identity', lambda: {'commit': 'committed'}), \
                  patch.object(p2p_wrap_regenerate, 'load_manifest', lambda: {'rust': {'version': '1.99.1'}}), \
                  patch.object(p2p_wrap_regenerate, 'sources', lambda manifest, offline: None), \
