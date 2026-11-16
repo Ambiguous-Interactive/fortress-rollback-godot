@@ -344,7 +344,7 @@ def main_with_args(argv):
                       f" drift={result['drift']} requires_review={review}")
             else:
                 print(f"{name}: {result['action']} ({result.get('reason')})")
-        except (ToolingError, ValueError, KeyError, OSError) as error:
+        except (ToolingError, ValueError, KeyError, OSError, tarfile.TarError) as error:
             failures.append(f'{name}: {error}')
             print(f'{name}: tooling error: {error}', file=sys.stderr)
     if args.summary is not None:
