@@ -431,8 +431,6 @@ class P2PContractTests(unittest.TestCase):
             self.assertEqual(merged['provenance']['commit'], 'committed')
             self.assertTrue((committed / 'mesh_4_wrap_flood_window_8.json').exists())
 
-
-
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):
         step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '00000000'}

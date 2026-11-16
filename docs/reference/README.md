@@ -164,7 +164,10 @@ The report is the review evidence, not the approval: an advanced pin merges
 only after a full oracle requalification run against it (the Reference
 Baseline workflow runs the complete differential on every pins.json change)
 and a reviewed `requires_review` list. The weekly observation cadence and the
-deduplicated reporting stay in M2 (#52).
+deduplicated reporting stay in M2 (#52). The binding compares byte for byte
+including file modes, so extract the observed tree and run the tool under the
+same umask — a differently-masked extraction is refused loudly, not silently
+accepted.
 
 ## Coverage certification
 

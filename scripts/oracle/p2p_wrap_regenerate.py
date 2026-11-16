@@ -53,7 +53,12 @@ def main():
         # merge below; a manifest-named fixture missing from disk still refuses.
         if not provenance_path.exists():
             raise ValueError('--only needs the committed wrap-flood manifest; regenerate without --only first')
-        committed = json.loads(provenance_path.read_text(encoding='utf-8')).get('fixtures', {})
+        committed_manifest = json.loads(provenance_path.read_text(encoding='utf-8'))
+        if not isinstance(committed_manifest.get('fixtures'), dict) \
+                or not isinstance(committed_manifest.get('provenance'), dict):
+            raise ValueError('--only needs a well-formed committed wrap-flood manifest '
+                             '(fixtures and provenance objects); regenerate without --only first')
+        committed = committed_manifest['fixtures']
         for name in p2p_wrap.NAMES:
             if name != args.only and name + '.json' in committed:
                 wrap_fixture(name)

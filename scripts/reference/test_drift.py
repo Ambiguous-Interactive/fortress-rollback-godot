@@ -338,7 +338,10 @@ class DriftPinFlowTests(unittest.TestCase):
                     self.assertFalse(report.exists(), name)
                     self.assertNotIn('review', json.loads(pins.read_text())['sources']['sdk'], name)
 
-    def test_oversized_candidate_tree_is_a_tooling_error_before_any_write(self):
+    def test_oversized_compared_tree_is_a_tooling_error_before_any_write(self):
+        # The comparison bounds run before any binding or bookkeeping, so an
+        # oversized compared tree refuses with pins.json byte-identical and no
+        # report on disk.
         original = drift.MAX_FILE_BYTES
         drift.MAX_FILE_BYTES = 8
         try:
@@ -357,7 +360,9 @@ class DriftPinFlowTests(unittest.TestCase):
             base = Path(folder)
             for argv in (['--source', 'sdk', '--old', str(base), '--new', str(base), '--pins', str(base / 'p.json')],
                          ['--source', 'sdk', '--old', str(base), '--new', str(base), '--new-revision', NEW_REVISION,
-                          '--archive', str(base), '--advance']):
+                          '--archive', str(base), '--advance'],
+                         ['--source', 'sdk', '--old', str(base), '--new', str(base),
+                          '--report', str(base / 'r.json'), '--advance']):
                 self.assertEqual(drift.main_with_args(argv), 1, argv)
 
     def test_malformed_bookkeeping_fails_manifest_load(self):

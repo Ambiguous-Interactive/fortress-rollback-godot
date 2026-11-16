@@ -420,6 +420,10 @@ def main_with_args(argv):
               'and --report together (--advance rewrites the pin; without it only the '
               'observation is recorded)', file=sys.stderr)
         return 1
+    if args.advance and not pin_flow:
+        print('drift tooling failed: --advance needs --pins, --new-revision, --archive '
+              'and --report; alone it would silently do nothing', file=sys.stderr)
+        return 1
     try:
         if args.new_revision is not None and re.fullmatch(r'[0-9a-f]{40}', args.new_revision) is None:
             raise ValueError(f'candidate revision is not a 40-hex sha: {args.new_revision}')
@@ -434,6 +438,9 @@ def main_with_args(argv):
             root = entry.get('root', '')
             if not root.endswith('-' + str(old_revision)):
                 raise ValueError(f'pins root does not name the reviewed revision: {root}')
+            if args.advance and (not isinstance(repository, str)
+                                 or not repository.startswith('https://github.com/')):
+                raise ValueError(f'cannot derive an archive URL for repository: {repository}')
             expected_root = root[:-(len(old_revision) + 1)] + '-' + args.new_revision
         report = build_report(args.source, args.old, args.new, args.ledger,
                               repository=repository, old_revision=old_revision,
@@ -441,11 +448,15 @@ def main_with_args(argv):
         report_digest = None
         if pin_flow:
             archive_digest = candidate_tree(args.archive, expected_root, args.new)
-            args.report.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
-            report_digest = digest(args.report)
+            report_bytes = json.dumps(report, indent=2).encode('utf-8') + b'\n'
+            report_digest = hashlib.sha256(report_bytes).hexdigest()
+            # The pins rewrite happens before the report file exists, so a
+            # failed bookkeeping can never leave a report describing an
+            # observation that was never recorded.
             update_pins(args.pins, args.source, args.new_revision, archive_digest,
                         report_digest, args.advance, date.today().isoformat())
-    except (ValueError, OSError, json.JSONDecodeError) as failure:
+            args.report.write_bytes(report_bytes)
+    except (ValueError, OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as failure:
         print(f'drift tooling failed: {failure}', file=sys.stderr)
         return 1
     if args.report is not None and report_digest is None:

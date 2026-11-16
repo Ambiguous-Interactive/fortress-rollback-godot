@@ -29,7 +29,9 @@ def load_manifest(path=MANIFEST):
         if not source['archive']['url'].endswith('/' + source['revision']):
             raise ValueError(f'{name}: archive URL disagrees with revision')
         review = source.get('review')
-        if review is not None:
+        if review is not None and not isinstance(review, dict):
+            raise ValueError(f'{name}: review bookkeeping must be an object')
+        if isinstance(review, dict):
             # Drift bookkeeping (#51): every recorded observation is bound to the
             # revisions and digests it was produced from, so a malformed entry is
             # a manifest error, never silently accepted history.

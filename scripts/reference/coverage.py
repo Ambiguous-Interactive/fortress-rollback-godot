@@ -6,13 +6,13 @@ executable coverage certification. This tool takes the parity ledger and a
 result bundle produced by one actual test execution and checks that every
 declared supported behavior is backed by a passing, complete result that
 executed at the ledger's pinned source revision, on the bundle's declared
-engine, with its named artifact present under the given evidence directory and
-byte-identical to its recorded digest. A status flag or a nonempty
-`port_test_ids` list alone is never coverage: forged identities, stale
-revisions, partial completions and missing artifacts fail for their specific
-reasons. `semantic_audit_complete` is held to the strict shape: with the flag
-set, the verified set must equal the declared supported set exactly — no
-unverified supported decision and no result outside it.
+engine gate, with an integer seed, and with its named artifact present under
+the given evidence directory and byte-identical to its recorded digest. A
+status flag or a nonempty `port_test_ids` list alone is never coverage: forged
+identities, stale revisions, partial completions and missing artifacts fail
+for their specific reasons. `semantic_audit_complete` is held to the strict
+shape: with the flag set, the verified set must equal the declared supported
+set exactly — no unverified supported decision and no result outside it.
 
 Result bundle (schema 1) — produced by the engineer running the port suite:
 
@@ -29,7 +29,11 @@ Result bundle (schema 1) — produced by the engineer running the port suite:
     }
 
 `run_id` binds the bundle: it must equal the SHA-256 of the canonical results
-array, so editing any result without recomputing the identity fails.
+array, so editing any result without recomputing the identity fails. Each
+test identity carries exactly one result entry — a second entry (the stale
+success JSON a failed rerun leaves behind) is a named conflicting-results
+failure — and `seed` must be an integer. A missing evidence directory is a
+tooling error, never a verdict.
 
 Usage:
     python3 scripts/reference/coverage.py --ledger docs/reference/parity-ledger.json \
@@ -63,17 +67,17 @@ def canonical_results_digest(results):
 def supported_decisions(ledger):
     """The ledger decisions that claim executable coverage.
 
-    A decision claiming `covered` applicability without any port-test identity
-    is malformed for certification purposes and surfaces as a named failure,
+    A decision claiming `covered` without applicable applicability, or
+    claiming `covered` applicability without any port-test identity, is
+    malformed for certification purposes and surfaces as a named failure,
     never as silent support.
     """
     supported, malformed = [], []
     for key, decision in ledger.get('decisions', {}).items():
-        if not isinstance(decision, dict) or decision.get('status') not in SUPPORTED_STATUSES \
-                or decision.get('applicability') not in SUPPORTED_APPLICABILITY:
+        if not isinstance(decision, dict) or decision.get('status') not in SUPPORTED_STATUSES:
             continue
         identities = decision.get('port_test_ids') or []
-        if identities:
+        if decision.get('applicability') in SUPPORTED_APPLICABILITY and identities:
             supported.append((key, identities))
         else:
             malformed.append(key)
@@ -81,8 +85,10 @@ def supported_decisions(ledger):
 
 
 def verify(ledger_path, bundle_path, artifacts_dir):
-    """Check one bundle against one ledger; return (verified, reasons)."""
+    """Check one bundle against one ledger; return (verified, reasons, verified count)."""
     ledger_bytes = Path(ledger_path).read_bytes()
+    if not Path(artifacts_dir).is_dir():
+        raise ValueError(f'evidence directory is missing or not a directory: {artifacts_dir}')
     bundle = load_json(bundle_path)
     if bundle.get('schema_version') != 1:
         raise ValueError('unsupported result bundle schema')
@@ -95,7 +101,8 @@ def verify(ledger_path, bundle_path, artifacts_dir):
         reasons.append('bundle certifies a different parity ledger '
                        f'(expected {digest_bytes(ledger_bytes)}, got {bundle.get("ledger_sha256")})')
     ledger = json.loads(ledger_bytes)
-    revision = (ledger.get('inventory', {}).get('source', {}) or {}).get('revision')
+    source = (ledger.get('inventory') or {}).get('source') or {}
+    revision = source.get('revision') if isinstance(source, dict) else None
     if not revision:
         raise ValueError('parity ledger does not record a pinned source revision')
     if bundle.get('source_revision') != revision:
@@ -105,6 +112,8 @@ def verify(ledger_path, bundle_path, artifacts_dir):
         reasons.append('run identity does not match the results array')
     results = {}
     for entry in bundle['results']:
+        if not isinstance(entry, dict):
+            raise ValueError('result entry is not an object')
         test_id = entry.get('test_id')
         if not isinstance(test_id, str) or not test_id:
             raise ValueError('result entry without a test identity')
@@ -114,7 +123,7 @@ def verify(ledger_path, bundle_path, artifacts_dir):
         raise ValueError('result bundle lacks a declared engine gate')
     supported, malformed = supported_decisions(ledger)
     for key in malformed:
-        reasons.append(f'covered decision without port-test identities: {key}')
+        reasons.append(f'covered decision without applicable port-test identities: {key}')
     verified = set()
     for key, identities in supported:
         for identity in identities:
@@ -122,15 +131,23 @@ def verify(ledger_path, bundle_path, artifacts_dir):
             if not entries:
                 reasons.append(f'{key}: no executed result for {identity}')
                 continue
-            passed = [entry for entry in entries
-                      if entry.get('status') == 'passed' and entry.get('complete') is True]
-            if not passed:
+            if len(entries) > 1:
+                # One identity, one verdict: extra entries mean a rerun whose
+                # outcome disagrees with the surviving success, so a stale
+                # success JSON can never certify beside a failed rerun.
+                reasons.append(f'{key}: {identity} has conflicting results '
+                               f'({len(entries)} entries for one identity)')
+                continue
+            entry = entries[0]
+            if entry.get('status') != 'passed' or entry.get('complete') is not True:
                 reasons.append(f'{key}: {identity} never completed with a passing result')
                 continue
-            entry = passed[0]
             if entry.get('engine') != gate_engine:
                 reasons.append(f'{key}: {identity} executed on {entry.get("engine")!r}, '
                                f'gate declares {gate_engine!r}')
+                continue
+            if not isinstance(entry.get('seed'), int) or isinstance(entry.get('seed'), bool):
+                reasons.append(f'{key}: {identity} lacks seed evidence')
                 continue
             name, recorded = entry.get('artifact'), entry.get('artifact_sha256')
             if not isinstance(name, str) or not name or not isinstance(recorded, str):
@@ -160,7 +177,7 @@ def verify(ledger_path, bundle_path, artifacts_dir):
             reasons.append('audit-complete flag set with an entirely pending ledger')
     elif unverified_keys:
         reasons.append('unverified supported decisions: ' + ', '.join(unverified_keys))
-    return not reasons, reasons
+    return not reasons, reasons, len(verified)
 
 
 def summarize(verified, reasons, supported_count, verified_count):
@@ -176,14 +193,14 @@ def main_with_args(argv):
     parser.add_argument('--artifacts', required=True, help='directory holding the cited artifacts')
     args = parser.parse_args(argv)
     try:
-        verified, reasons = verify(args.ledger, args.bundle, args.artifacts)
-    except (ValueError, OSError, json.JSONDecodeError, KeyError) as failure:
+        verified, reasons, verified_count = verify(args.ledger, args.bundle, args.artifacts)
+    except (ValueError, OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as failure:
         print(f'coverage tooling failed: {failure}', file=sys.stderr)
         return 2
     ledger = load_json(args.ledger)
     supported, _ = supported_decisions(ledger)
     total = sum(len(identities) for _, identities in supported)
-    print(summarize(verified, reasons, total, len(supported) and total - len(reasons)))
+    print(summarize(verified, reasons, total, verified_count))
     return 0 if verified else 1
 
 

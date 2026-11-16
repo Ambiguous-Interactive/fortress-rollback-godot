@@ -77,9 +77,10 @@ class CoverageVerifierTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             ledger, bundle, artifacts = self.make_bundle(
                 folder, results=[self.result(artifact_bytes=artifact)])
-            verified, reasons = self.verify(ledger, bundle, artifacts)
+            verified, reasons, count = self.verify(ledger, bundle, artifacts)
             self.assertTrue(verified, reasons)
             self.assertEqual(reasons, [])
+            self.assertEqual(count, 1)
 
     # Data-driven mutation table over issue #55's hostile shapes: each row
     # mutates exactly one evidence property and must fail for its own reason.
@@ -94,12 +95,22 @@ class CoverageVerifierTests(unittest.TestCase):
              'never completed with a passing result'),
             ('wrong_engine', {'results': [self.result(artifact_bytes=artifact, engine='4.7.2.stable')]},
              'gate declares'),
+            ('missing_seed', {'results': [self.result(artifact_bytes=artifact, seed=None)]},
+             'lacks seed evidence'),
             ('missing_artifact', {'results': [self.result(artifact='gone.json',
                                                           artifact_sha256=hashlib.sha256(b'x').hexdigest())]},
              'cites missing artifact'),
             ('stale_revision', {'revision': 'd' * 40}, 'ledger pins'),
             ('ledger_drift', {'ledger_digest': '0' * 64}, 'different parity ledger'),
             ('tampered_run_id', {'run_id': '0' * 64}, 'run identity does not match'),
+            ('covered_without_applicability',
+             {'ledger_decisions': {'fortress:src/queue.rs': {'status': 'covered', 'applicability': 'unknown',
+                                                             'port_test_ids': ['queue_rolls_back']}}},
+             'without applicable port-test identities'),
+            ('conflicting_results',
+             {'results': [self.result(artifact_bytes=artifact, status='failed', complete=True),
+                          self.result(artifact_bytes=artifact)]},
+             'conflicting results'),
             ('flipped_audit_flag',
              {'audit_complete': True,
               'ledger_decisions': {'fortress:src/idle.rs': {'status': 'pending', 'applicability': 'unknown',
@@ -111,7 +122,7 @@ class CoverageVerifierTests(unittest.TestCase):
             with self.subTest(shape=name):
                 with tempfile.TemporaryDirectory() as folder:
                     ledger, bundle, artifacts = self.make_bundle(folder, **options)
-                    verified, reasons = self.verify(ledger, bundle, artifacts)
+                    verified, reasons, _ = self.verify(ledger, bundle, artifacts)
                     self.assertFalse(verified, name)
                     self.assertTrue(any(reason in line for line in reasons),
                                     f'{name}: {reasons}')
@@ -126,7 +137,7 @@ class CoverageVerifierTests(unittest.TestCase):
                                                             'port_test_ids': ['queue_rolls_back']},
                                   'fortress:src/idle.rs': {'status': 'covered', 'applicability': 'applicable',
                                                            'port_test_ids': ['idle_predicted']}})
-            verified, reasons = self.verify(ledger, bundle, artifacts)
+            verified, reasons, _ = self.verify(ledger, bundle, artifacts)
             self.assertFalse(verified)
             self.assertTrue(any('outside the supported set' in line for line in reasons), reasons)
             self.assertTrue(any('idle_predicted' in line for line in reasons), reasons)
@@ -136,7 +147,7 @@ class CoverageVerifierTests(unittest.TestCase):
             real = json.dumps({'suite': 'queue', 'frames': 3}).encode()
             results = [self.result(artifact_bytes=real, artifact_sha256=hashlib.sha256(b'other').hexdigest())]
             ledger, bundle, artifacts = self.make_bundle(folder, results=results)
-            verified, reasons = self.verify(ledger, bundle, artifacts)
+            verified, reasons, _ = self.verify(ledger, bundle, artifacts)
             self.assertFalse(verified)
             self.assertTrue(any('digest drift' in line for line in reasons), reasons)
 
@@ -146,12 +157,17 @@ class CoverageVerifierTests(unittest.TestCase):
             for mutate, message in (
                 (lambda path: path.write_text('{"schema_version": 2}', encoding='utf-8'), 'schema'),
                 (lambda path: path.write_text('{"schema_version": 1}', encoding='utf-8'), 'run identity'),
+                (lambda path: path.write_text('{"schema_version": 1, "run_id": "r", "results": ["x"]}',
+                                              encoding='utf-8'), 'not an object'),
             ):
                 original = bundle.read_text(encoding='utf-8')
                 mutate(bundle)
                 with self.assertRaises(ValueError, msg=message):
                     self.verify(ledger, bundle, artifacts)
                 bundle.write_text(original, encoding='utf-8')
+            # A missing evidence directory is an input failure, never a verdict.
+            with self.assertRaises(ValueError):
+                self.verify(ledger, bundle, Path(folder) / 'absent-artifacts')
 
     def test_malformed_covered_decision_without_identities_fails_closed(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -159,9 +175,9 @@ class CoverageVerifierTests(unittest.TestCase):
                 folder, ledger_decisions={'fortress:src/queue.rs': {'status': 'covered',
                                                                     'applicability': 'applicable',
                                                                     'port_test_ids': []}})
-            verified, reasons = self.verify(ledger, bundle, artifacts)
+            verified, reasons, _ = self.verify(ledger, bundle, artifacts)
             self.assertFalse(verified)
-            self.assertTrue(any('without port-test identities' in line for line in reasons), reasons)
+            self.assertTrue(any('without applicable port-test identities' in line for line in reasons), reasons)
 
     def test_main_exit_codes(self):
         artifact = json.dumps({'suite': 'queue', 'frames': 3}).encode()
@@ -170,6 +186,15 @@ class CoverageVerifierTests(unittest.TestCase):
                 folder, results=[self.result(artifact_bytes=artifact)])
             self.assertEqual(coverage.main_with_args(['--ledger', str(ledger), '--bundle', str(bundle),
                                                       '--artifacts', str(artifacts)]), 0)
+            # Verification failure is exit 1; a missing evidence directory is a
+            # tooling error and stays exit 2.
+            stale = Path(folder) / 'stale.json'
+            stale.write_text(bundle.read_text(encoding='utf-8').replace('"seed": 1234', '"seed": "late"'),
+                             encoding='utf-8')
+            self.assertEqual(coverage.main_with_args(['--ledger', str(ledger), '--bundle', str(stale),
+                                                      '--artifacts', str(artifacts)]), 1)
+            self.assertEqual(coverage.main_with_args(['--ledger', str(ledger), '--bundle', str(bundle),
+                                                      '--artifacts', str(Path(folder) / 'absent')]), 2)
             self.assertEqual(coverage.main_with_args(['--ledger', str(ledger), '--bundle',
                                                       str(Path(folder) / 'absent.json'),
                                                       '--artifacts', str(artifacts)]), 2)
