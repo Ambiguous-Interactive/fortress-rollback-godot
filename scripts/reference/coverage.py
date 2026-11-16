@@ -28,12 +28,16 @@ Result bundle (schema 1) — produced by the engineer running the port suite:
                    "artifact_sha256": "<sha256>"}]
     }
 
-`run_id` binds the bundle: it must equal the SHA-256 of the canonical results
-array, so editing any result without recomputing the identity fails. Each
-test identity carries exactly one result entry — a second entry (the stale
-success JSON a failed rerun leaves behind) is a named conflicting-results
-failure — and `seed` must be an integer. A missing evidence directory is a
-tooling error, never a verdict.
+`run_id` binds the bundle against post-hoc edits: it must equal the SHA-256 of
+the canonical results array, so editing any result without recomputing the
+identity fails. The digest is unkeyed — recomputing it is not authentication,
+and the bundle's provenance rests on the operator producing it from a real
+execution. Each test identity carries exactly one result entry — a second
+entry (the stale success JSON a failed rerun leaves behind) is a named
+conflicting-results failure — `seed` must be an integer, and every supported
+mapping's identity must name an executable repository test
+(`inventory.identity_error`). A missing evidence directory is a tooling
+error, never a verdict.
 
 Usage:
     python3 scripts/reference/coverage.py --ledger docs/reference/parity-ledger.json \
@@ -47,6 +51,9 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from inventory import identity_error
 
 SUPPORTED_STATUSES = {'covered'}
 SUPPORTED_APPLICABILITY = {'applicable'}
@@ -129,6 +136,11 @@ def verify(ledger_path, bundle_path, artifacts_dir):
     verified = set()
     for key, identities in supported:
         for identity in identities:
+            if problem := identity_error(identity):
+                # A supported behavior mapped to a name no executable repository
+                # test carries is forged coverage before any execution matters.
+                reasons.append(f'{key}: {problem}')
+                continue
             entries = results.get(identity)
             if not entries:
                 reasons.append(f'{key}: no executed result for {identity}')

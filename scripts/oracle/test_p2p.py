@@ -354,9 +354,6 @@ class P2PContractTests(unittest.TestCase):
     # genuinely new profile; why_new=the #383 delay wrap profiles are regenerated with
     # --only; seam=p2p_wrap_regenerate.main with the real fixture loader and mocked tooling
     def test_wrap_regenerate_only_precondition_and_merge(self):
-        shape = {'format': 1, 'players': 4, 'input_delay': 0, 'max_prediction': 8, 'queue_capacity': 128,
-                 'operations': [{'kind': 'poll', 'peer': 0, 'now_us': index} for index in range(1, 143)]}
-
         def run_main(fixtures, only):
             """main() with build/tooling mocked but the real fixture loader active."""
             real = p2p_launch.wrap_fixture
@@ -387,7 +384,13 @@ class P2PContractTests(unittest.TestCase):
                  patch.object(p2p_wrap_regenerate, 'setup_rust', lambda manifest, offline: ('cargo', None)), \
                  patch.object(p2p_wrap_regenerate, 'execute', lambda command, log, timeout=0: None), \
                  patch.object(p2p_wrap_regenerate, 'validate', lambda value, scenario, raw: None), \
-                 patch('p2p_wrap.build', lambda *arguments, **keywords: shape), \
+                 patch('p2p_wrap.build', lambda binary, observe, players, capacity, rounds,
+                       window, delays=None: {
+                           'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
+                           'queue_capacity': capacity,
+                           **({'delays': list(delays)} if delays is not None else {}),
+                           'operations': [{'kind': 'poll', 'peer': 0, 'now_us': index}
+                                          for index in range(1, rounds + 1)]}), \
                  patch('p2p_wrap_regenerate.subprocess.run') as fake_run:
                 fake_run.return_value.stdout = '{"format": 1}'
                 p2p_wrap_regenerate.main()
@@ -435,6 +438,18 @@ class P2PContractTests(unittest.TestCase):
                                 digests['mesh_4_wrap_flood_window_8.json'])
             self.assertEqual(merged['provenance']['commit'], 'committed')
             self.assertTrue((committed / 'mesh_4_wrap_flood_window_8.json').exists())
+            # The merge path covers insertion, not only replacement: --only for
+            # a genuinely new name adds its digest while every committed
+            # sibling keeps its exact bytes (the first run's own rewrite is the
+            # one expected exception).
+            run_main(committed, 'mesh_3_wrap_flood_delays_2_1_0')
+            inserted = json.loads(manifest_path.read_text(encoding='utf-8'))
+            self.assertIn('mesh_3_wrap_flood_delays_2_1_0.json', inserted['fixtures'])
+            rewritten = {'mesh_3_wrap_flood_delays_2_1_0.json', 'mesh_4_wrap_flood_window_8.json'}
+            for name, digest in digests.items():
+                if name not in rewritten:
+                    self.assertEqual(inserted['fixtures'][name], digest, name)
+            self.assertTrue((committed / 'mesh_3_wrap_flood_delays_2_1_0.json').exists())
 
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):

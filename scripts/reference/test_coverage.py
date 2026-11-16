@@ -15,6 +15,7 @@ import coverage
 
 
 REVISION = 'c' * 40
+IDENTITY = 'res://tests/unit/test_input_endpoint.gd'
 
 
 class CoverageVerifierTests(unittest.TestCase):
@@ -26,7 +27,7 @@ class CoverageVerifierTests(unittest.TestCase):
                                      'revision': REVISION}},
             'decisions': decisions if decisions is not None else {
                 'fortress:src/queue.rs': {'status': 'covered', 'applicability': 'applicable',
-                                          'port_test_ids': ['queue_rolls_back']},
+                                          'port_test_ids': [IDENTITY]},
                 'fortress:src/idle.rs': {'status': 'pending', 'applicability': 'unknown',
                                          'port_test_ids': []},
             },
@@ -60,7 +61,7 @@ class CoverageVerifierTests(unittest.TestCase):
     def result(**overrides):
         artifact = overrides.pop('artifact_bytes', None)
         entry = {
-            'test_id': 'queue_rolls_back', 'suite': 'tests/unit/test_queue.gd',
+            'test_id': IDENTITY, 'suite': 'tests/unit/test_input_endpoint.gd',
             'status': 'passed', 'complete': True, 'engine': '4.3.stable.official.77dcf97d8',
             'seed': 1234, 'artifact': 'run-queue.json', 'artifact_sha256': 'stale',
         }
@@ -87,8 +88,13 @@ class CoverageVerifierTests(unittest.TestCase):
     def test_hostile_shapes_fail_for_their_specific_reason(self):
         artifact = json.dumps({'suite': 'queue', 'frames': 3}).encode()
         cases = [
-            ('forged_test_id', {'results': [self.result(artifact_bytes=artifact, test_id='ghost_test')]},
+            ('forged_test_id', {'results': [self.result(artifact_bytes=artifact, test_id='res://tests/unit/absent_suite.gd')]},
              'no executed result'),
+            ('shared_forged_identity',
+             {'results': [self.result(artifact_bytes=artifact, test_id='res://tests/unit/absent_suite.gd')],
+              'ledger_decisions': {'fortress:src/queue.rs': {'status': 'covered', 'applicability': 'applicable',
+                                                             'port_test_ids': ['res://tests/unit/absent_suite.gd']}}},
+             'names a missing repository file'),
             ('failed_result', {'results': [self.result(artifact_bytes=artifact, status='failed')]},
              'never completed with a passing result'),
             ('partial_completion', {'results': [self.result(artifact_bytes=artifact, complete=False)]},
@@ -137,18 +143,19 @@ class CoverageVerifierTests(unittest.TestCase):
 
     def test_audit_flag_with_results_outside_the_supported_set(self):
         artifact = json.dumps({'suite': 'queue', 'frames': 3}).encode()
-        results = [self.result(artifact_bytes=artifact), self.result(test_id='stray', artifact='none.json')]
+        results = [self.result(artifact_bytes=artifact),
+                   self.result(test_id='res://tests/unit/absent_suite.gd', artifact='none.json')]
         with tempfile.TemporaryDirectory() as folder:
             ledger, bundle, artifacts = self.make_bundle(
                 folder, results=results, audit_complete=True,
                 ledger_decisions={'fortress:src/queue.rs': {'status': 'covered', 'applicability': 'applicable',
-                                                            'port_test_ids': ['queue_rolls_back']},
+                                                            'port_test_ids': [IDENTITY]},
                                   'fortress:src/idle.rs': {'status': 'covered', 'applicability': 'applicable',
-                                                           'port_test_ids': ['idle_predicted']}})
+                                                           'port_test_ids': ['res://tests/unit/test_session.gd']}})
             verified, reasons, _ = self.verify(ledger, bundle, artifacts)
             self.assertFalse(verified)
             self.assertTrue(any('outside the supported set' in line for line in reasons), reasons)
-            self.assertTrue(any('idle_predicted' in line for line in reasons), reasons)
+            self.assertTrue(any('test_session.gd' in line for line in reasons), reasons)
 
     def test_artifact_digest_drift_fails(self):
         with tempfile.TemporaryDirectory() as folder:

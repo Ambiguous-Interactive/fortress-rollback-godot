@@ -282,17 +282,20 @@ def build_report(source, old_tree, new_tree, ledger=None, repository=None,
         loaded = ledger if isinstance(ledger, dict) else json.loads(Path(ledger).read_text(encoding='utf-8'))
         decisions = loaded.get('decisions', {})
     commit_base = None
-    if repository is not None and new_revision is not None:
+    if repository is not None and new_revision is not None and old_revision is not None:
         if not repository.startswith('https://github.com/'):
             raise ValueError(f'cannot derive commit links for repository: {repository}')
         commit_base = f'{repository}/blob/{new_revision}/'
+        reviewed_base = f'{repository}/blob/{old_revision}/'
     for record in records:
         entry = decisions.get(f'{source}:{record["path"]}')
         record['ledger'] = ({'status': entry.get('status'), 'applicability': entry.get('applicability'),
                              'port_test_ids': entry.get('port_test_ids', [])}
                             if isinstance(entry, dict) else 'unmapped')
         if commit_base is not None:
-            record['url'] = commit_base + record['path']
+            # A deleted path exists only at the reviewed revision; every other
+            # record names its candidate-revision bytes.
+            record['url'] = (reviewed_base if record['kind'] == 'deleted' else commit_base) + record['path']
     report = {
         'schema_version': 1,
         'source': source,
@@ -335,11 +338,18 @@ def summarize(report):
 def candidate_tree(archive_path, expected_root, tree, cache=CACHE):
     """Digest and extract the candidate archive; require it to be the compared tree.
 
-    The extraction is the only accepted identity proof between a claimed
-    revision and the compared tree: the archive's every member must live under
-    `expected_root`, and the extracted bytes must equal `tree` byte for byte,
-    so a mismatched, truncated or root-drifted candidate fails closed before
-    any bookkeeping is recorded. Returns the verified archive digest.
+    The extraction binds the compared tree to the archive the operator
+    supplied — its digest, extraction and byte identity — not to the upstream
+    archive at the claimed revision. `update_pins` records the supplied
+    digest beside the canonical codeload URL, and the next fetch of that URL
+    (the Reference Baseline requalification on the advancement PR) verifies
+    the real upstream bytes against it, failing closed on a mismatch before
+    the pin can merge. The extraction is the only accepted identity proof
+    between the claimed revision and the compared tree: the archive's every
+    member must live under `expected_root`, and the extracted bytes must
+    equal `tree` byte for byte, so a mismatched, truncated or root-drifted
+    candidate fails closed before any bookkeeping is recorded. Returns the
+    verified archive digest.
     """
     archive = Path(archive_path)
     archive_digest = digest(archive)
@@ -447,8 +457,16 @@ def main_with_args(argv):
         report = build_report(args.source, args.old, args.new, args.ledger,
                               repository=repository, old_revision=old_revision,
                               new_revision=args.new_revision)
+        if args.advance and not report['drift']:
+            # An advancement's review evidence is the A-to-B drift itself: two
+            # identical trees produce a clean report no matter what the trees
+            # are, so a B-versus-B submission can never justify rewriting the pin.
+            raise ValueError('the compared trees are identical; an advancement '
+                             'requires drift between the reviewed pin and the candidate')
         report_digest = None
         if pin_flow:
+            if args.report.is_dir():
+                raise ValueError(f'the report destination is a directory: {args.report}')
             archive_digest = candidate_tree(args.archive, expected_root, args.new)
             report_bytes = json.dumps(report, indent=2).encode('utf-8') + b'\n'
             report_digest = hashlib.sha256(report_bytes).hexdigest()

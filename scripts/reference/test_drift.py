@@ -397,6 +397,39 @@ class DriftPinFlowTests(unittest.TestCase):
             self.assertEqual(list(Path(folder).iterdir()),
                              [p for p in Path(folder).iterdir() if p.name not in ('report.json.tmp',)])
 
+    def test_advance_refuses_a_directory_report_destination(self):
+        # The staging write succeeds beside a directory destination and the
+        # final replace then fails — the refusal must fire before the pins
+        # advance, not after.
+        with tempfile.TemporaryDirectory() as folder:
+            pins, old_tree, new_tree, archive = self.corpus(folder)
+            report = Path(folder) / 'report-dir'; report.mkdir()
+            argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
+                    '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
+                    '--report', str(report), '--advance']
+            self.assertEqual(drift.main_with_args(argv), 1)
+            entry = json.loads(pins.read_text(encoding='utf-8'))['sources']['sdk']
+            self.assertEqual(entry['revision'], OLD_REVISION)
+            self.assertNotIn('review', entry)
+            self.assertEqual(list(report.iterdir()), [], 'no staged report litter')
+
+    def test_advance_refuses_identical_trees(self):
+        # The review evidence is the A-to-B drift itself: a B-versus-B
+        # submission produces a clean report whatever the trees are and can
+        # never justify rewriting the pin.
+        with tempfile.TemporaryDirectory() as folder:
+            pins, old_tree, new_tree, archive = self.corpus(folder, tree_files={
+                'src/lib.rs': 'pub fn step() -> u32 { 1 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'})
+            report = Path(folder) / 'report.json'
+            argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
+                    '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
+                    '--report', str(report), '--advance']
+            self.assertEqual(drift.main_with_args(argv), 1)
+            entry = json.loads(pins.read_text(encoding='utf-8'))['sources']['sdk']
+            self.assertEqual(entry['revision'], OLD_REVISION)
+            self.assertNotIn('review', entry)
+            self.assertFalse(report.exists())
+
     def test_plain_report_failure_is_a_named_tooling_error(self):
         with tempfile.TemporaryDirectory() as folder:
             pins, old_tree, new_tree, archive = self.corpus(folder)

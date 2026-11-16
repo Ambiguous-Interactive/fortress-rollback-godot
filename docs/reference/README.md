@@ -167,7 +167,13 @@ and a reviewed `requires_review` list. The weekly observation cadence and the
 deduplicated reporting stay in M2 (#52). The binding compares byte for byte
 including file modes, so extract the observed tree and run the tool under the
 same umask — a differently-masked extraction is refused loudly, not silently
-accepted.
+accepted. Two boundaries stay explicit: the compared tree is bound to the
+archive *you supply* (its digest is proven to be the upstream archive only
+when the next fetch verifies it, which the Reference Baseline requalification
+does before an advancement can merge), and `--old` is trusted to be the
+verified pinned extraction (`fetch.sources` output under
+`.cache/reference/`) — pass the wrong tree and the report names visible
+drift, but the evidence is only as honest as that path.
 
 ## Coverage certification
 
