@@ -110,3 +110,20 @@ checksum mismatch rather than accepting an unrelated callback failure.
 A corruption control may desync before capture; require its typed cause and independently verified altered bytes.
 
 Keep the observed first failure separate from later cleanup termination. A stopped counterpart cannot replace the required desync or erase canonical history.
+
+Receipt and snapshot tooling binds the working tree at run start and refuses
+drift at the end (`launch.require_unchanged` over `source_files()`,
+`native_source_snapshot` over `git ls-files --others`, plus commit and dirty
+identity): never create, edit or commit any tracked file while an oracle
+launcher, receipt capture or the parallel unittest runner holds the tree — including
+creating or editing a non-ignored untracked file, which the same snapshots
+count via `git ls-files --others` (their contents are hashed). Twice recorded before it was systematized: session 190's wrap receipts died
+on "evidence identity changed" from a file created mid-run, and session 191
+repeated it (a tooling file created during `test_godot_runner`, then a
+mid-run commit failing the corpus's repository-identity check). Finish or
+kill the run first; the definitive receipt always comes from the final head
+with a clean tree. Mutant-check hygiene from the same session: never stash a
+working-tree diff with `git diff > patch` and re-apply it later — the captured
+patch goes stale the moment the tree moves (a checkout in between silently
+restored a mutant); re-apply fixes by editing the file and verify the exact
+changed lines after every checkout cycle.

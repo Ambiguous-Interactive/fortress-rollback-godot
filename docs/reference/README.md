@@ -134,6 +134,72 @@ python3 scripts/reference/drift.py --source fortress --old REVIEWED_TREE --new O
     --ledger docs/reference/parity-ledger.json --report drift-report.json
 ```
 
+### Observation and advancement
+
+The pin flow binds the compared trees to the archives you supply before any
+bookkeeping is recorded: the candidate archive is digested, extracted and
+required to match the compared tree byte for byte, and `--old` must byte-match
+the reviewed pin's cached archive (taken offline from the fetch cache against
+the manifest digest — run `python3 scripts/reference/fetch.py` first; a cold
+cache refuses with a named error). Supply the codeload archive for the
+claimed revision: the recorded candidate digest is proven to be the upstream
+archive when the next fetch verifies it. Without `--advance` the tool only
+records the observation under
+`sources[name].review` (`observed_revision`, `observed_on`, and the report and
+archive digests); with `--advance` it additionally rewrites the pin itself —
+`revision`, archive URL, digest and root — records `advanced_from` and
+`advanced_on`, and stamps every changed path with a commit link. Every recorded
+field is validated by `fetch.load_manifest`, so malformed bookkeeping fails the
+next manifest load. Extract the observed tree from the same archive you pass,
+because the binding compares byte for byte including file modes:
+
+```sh
+curl -L -o /tmp/candidate.tar.gz https://codeload.github.com/wallstop/fortress-rollback/tar.gz/<sha>
+mkdir -p /tmp/candidate && tar -xzf /tmp/candidate.tar.gz -C /tmp/candidate
+python3 scripts/reference/drift.py --source fortress \
+    --old .cache/reference/fortress-rollback-<reviewed-sha> \
+    --new /tmp/candidate/fortress-rollback-<sha> \
+    --pins docs/reference/pins.json --new-revision <sha> \
+    --archive /tmp/candidate.tar.gz \
+    --ledger docs/reference/parity-ledger.json --report .cache/scratch/drift-report.json --advance
+```
+
+The report is the review evidence, not the approval: an advanced pin merges
+only after a full oracle requalification run against it (the Reference
+Baseline workflow runs the complete differential on every pins.json change)
+and a reviewed `requires_review` list. The weekly observation cadence and the
+deduplicated reporting stay in M2 (#52). The binding compares byte for byte
+including file modes, so extract the observed tree and run the tool under the
+same umask — a differently-masked extraction is refused loudly, not silently
+accepted. Two boundaries stay explicit: the compared tree is bound to the
+archive *you supply* (its digest is proven to be the upstream archive only
+when the next fetch verifies it, which the Reference Baseline requalification
+does before an advancement can merge), and `--old` is trusted to be the
+verified pinned extraction (`fetch.sources` output under
+`.cache/reference/`) — pass the wrong tree and the report names visible
+drift, but the evidence is only as honest as that path.
+
+## Coverage certification
+
+Task #55 owns the boundary between source-family discovery and executable
+coverage certification. `scripts/reference/coverage.py` verifies a result
+bundle against the parity ledger: a `covered` + `applicable` decision counts
+only when every `port_test_ids` entry names a result that passed and
+completed at the ledger's pinned source revision, on the bundle's declared
+engine gate, with its cited artifact present in the evidence directory and
+byte-identical to its recorded digest. The bundle's `run_id` is the canonical
+digest of its results array and `ledger_sha256` pins the exact ledger bytes,
+so tampered results and bundles certified against an older ledger fail. With
+`semantic_audit_complete` set, the verified set must equal the declared
+supported set exactly — no unverified supported decision, no result outside
+it, and never an entirely pending ledger. Forged identities, flipped flags,
+stale success JSON, partial completions, missing artifacts and stale
+revisions each fail for their specific reason; exit 0 verifies, 1 fails
+verification, 2 is a tooling error. The data-driven mutation table in
+`scripts/reference/test_coverage.py` pins every hostile shape. This is the
+verifier boundary only: producing bundles from actual port-suite executions
+stays with the release-qualification work in #44.
+
 ## Evidence and remaining gates
 
 [baseline.md](baseline.md) records actual results, exact selections, negative

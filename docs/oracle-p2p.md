@@ -379,7 +379,13 @@ committed profile. `mesh_4_wrap_flood_window_8` runs the same four-peer flood
 at the deepest supported prediction window, so the wrap axis is pinned at both
 the family window four and the boundary window eight; its deeper stall cap
 (`frontier + 8`) heals through a deeper LOAD correction (measured seven rows)
-with every later frontier still compared exactly.
+with every later frontier still compared exactly. The two delay profiles carry
+heterogeneous per-peer construction schedules through the same flood:
+`mesh_3_wrap_flood_delays_2_1_0` holds the delay band's three distinct
+extremes across a three-peer mesh and `mesh_4_wrap_flood_delays_2_0`
+interleaves the extremes across four peers, so each machine wraps its ring
+while its delayed early samples stay stamped, compared and confirmed
+end to end.
 
 From round eight every packet — inputs and acknowledgements alike — is
 withheld from every link for six consecutive rounds. The missing

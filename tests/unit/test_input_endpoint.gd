@@ -31,13 +31,14 @@ class Sink:
 
 
 func cases() -> PackedStringArray:
-	return PackedStringArray(["loss_ack", "delayed_start", "retry", "validation", "retention", "capacity", "ownership", "status_nudge", "status_nudge_transitions"])
+	return PackedStringArray(["loss_ack", "delayed_start", "reference_skip", "retry", "validation", "retention", "capacity", "ownership", "status_nudge", "status_nudge_transitions"])
 
 
 func run_case(name: String, context: RefCounted) -> void:
 	match name:
 		"loss_ack": _loss_ack(context)
 		"delayed_start": _delayed_start(context)
+		"reference_skip": _reference_skip(context)
 		"retry": _retry(context)
 		"validation": _validation(context)
 		"retention": _retention(context)
@@ -171,6 +172,30 @@ func _delayed_start(context: RefCounted) -> void:
 	context.equal(endpoint.receive(_encode(_input(1, PackedByteArray([8]))), _id(2), 3), I.Code.OK, "a row below the bound start stays stale")
 	context.equal(sink.frames.size(), 1, "no row below the declared start")
 	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 2, "stale row reACKs the floor")
+	context.state(0, JSON.stringify(endpoint.status()).to_utf8_buffer())
+
+
+func _reference_skip(context: RefCounted) -> void:
+	# The pinned upstream decodes every flight against the row one frame before its start
+	# (the zeroed seed when nothing has arrived yet): a mid-stream flight that re-sends an
+	# unacknowledged prefix carries a reference the receiver never held, so it stages
+	# nothing and re-acks its high-water — climbing past it desynchronizes the mesh's
+	# acknowledged prefix, which the wrap-flood delay corpus caught against the oracle.
+	var sink: Sink = Sink.new()
+	var endpoint: E = _ready(sink, null, [], 0, 65536, 65536, 1)
+	endpoint.submit(0, PackedByteArray([3]), _statuses(), 2)
+	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, -1, "pending row awaits acknowledgement")
+	context.equal(endpoint.receive(_encode(_input(1, PackedByteArray([9]))), _id(2), 3), I.Code.OK, "declared delay starts the stream")
+	context.equal(sink.frames, {1: PackedByteArray([9])}, "first flight stages its row")
+	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 1, "ack covers the staged row")
+	context.equal(endpoint.receive(_encode(_input(1, PackedByteArray([9, 10]), 0)), _id(2), 4), I.Code.OK, "flight against a missing reference accepted")
+	context.equal(sink.frames, {1: PackedByteArray([9])}, "frame 2 never stages past its missing reference")
+	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 1, "reference skip reACKs the high-water")
+	context.equal(endpoint.status().pending_frames, 0, "piggyback ACK consumed without staging")
+	context.equal(endpoint.status().last_received_frame, 1, "high-water unchanged")
+	context.equal(endpoint.receive(_encode(_input(2, PackedByteArray([10]))), _id(2), 5), I.Code.OK, "flight against the held reference decodes")
+	context.equal(sink.frames, {1: PackedByteArray([9]), 2: PackedByteArray([10])}, "row past a held reference stages")
+	context.equal(_decoded(endpoint.drain_outbox()[0]).ack_frame, 2, "ack covers the newly staged row")
 	context.state(0, JSON.stringify(endpoint.status()).to_utf8_buffer())
 
 

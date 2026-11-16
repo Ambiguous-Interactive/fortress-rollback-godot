@@ -487,6 +487,17 @@ func _receive_frames(plan: Dictionary, message: T.Message) -> int:
 		gap = false
 	if gap:
 		staged.clear()
+	# Upstream decodes every flight against the row one frame before its start
+	# (the zeroed seed when nothing has arrived yet): a flight whose reference
+	# row is missing stages nothing and re-acks the high-water exactly like a
+	# stale duplicate, while still consuming the flight's piggyback acknowledgement
+	# and its status merge. Without this gate a mid-stream flight that re-sends an
+	# unacknowledged prefix decodes rows the pinned engine refuses, so the
+	# acknowledgement climbs past the reference the source never staged.
+	var undecodable: bool = plan.state.last_received_frame != -1 and message.start_frame > 0 \
+			and not plan.state.received.has(message.start_frame - 1)
+	if not gap and undecodable:
+		staged.clear()
 	_merge_statuses(plan, message.statuses)
 	if _lifecycle != null:
 		Lifecycle.received(plan)
@@ -494,7 +505,8 @@ func _receive_frames(plan: Dictionary, message: T.Message) -> int:
 	var reply: T.Message = _packet(T.Kind.INPUT_ACK)
 	reply.ack_frame = plan.state.last_received_frame if staged.is_empty() else staged[-1].frame
 	plan.outbox.append(Codec.encode(reply, _limits).bytes)
-	_trace(plan, "receive_input", "gap" if gap else ("duplicate" if staged.is_empty() else "progress"))
+	_trace(plan, "receive_input", "gap" if gap else ("reference" if undecodable else
+			("duplicate" if staged.is_empty() else "progress")))
 	if not staged.is_empty():
 		plan.events.append({"kind": "inputs_received", "start_frame": staged[0].frame, "frame_count": staged.size()})
 	code = _capacity(plan)

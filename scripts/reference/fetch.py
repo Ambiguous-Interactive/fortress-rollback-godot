@@ -28,6 +28,22 @@ def load_manifest(path=MANIFEST):
             raise ValueError(f'{name}: missing or invalid source revision')
         if not source['archive']['url'].endswith('/' + source['revision']):
             raise ValueError(f'{name}: archive URL disagrees with revision')
+        review = source.get('review')
+        if review is not None and not isinstance(review, dict):
+            raise ValueError(f'{name}: review bookkeeping must be an object')
+        if isinstance(review, dict):
+            # Drift bookkeeping (#51): every recorded observation is bound to the
+            # revisions and digests it was produced from, so a malformed entry is
+            # a manifest error, never silently accepted history.
+            for field in ('observed_revision', 'advanced_from'):
+                if field in review and not re.fullmatch(r'[0-9a-f]{40}', str(review[field])):
+                    raise ValueError(f'{name}: invalid review {field}')
+            for field in ('observed_on', 'advanced_on'):
+                if field in review and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', str(review[field])):
+                    raise ValueError(f'{name}: invalid review {field}')
+            for field in ('report_sha256', 'archive_sha256'):
+                if field in review and not re.fullmatch(r'[0-9a-f]{64}', str(review[field])):
+                    raise ValueError(f'{name}: invalid review {field}')
     for pin in [s['archive'] for s in data['sources'].values()] + list(data['artifacts'].values()):
         size = {'sha256': 64, 'sha512': 128}.get(pin['algorithm'])
         if size is None or not re.fullmatch('[0-9a-f]{' + str(size) + '}', pin['digest']):

@@ -1,5 +1,6 @@
 """Strict P2P oracle contracts protect actual observed packet/request evidence."""
 from copy import deepcopy
+import hashlib
 import json
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import p2p_launch
 import p2p_wrap
+import p2p_wrap_regenerate
 from p2p_launch import upstream_inventory, executable_identity, require_unchanged, wrap_fixture
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
@@ -331,18 +333,123 @@ class P2PContractTests(unittest.TestCase):
 
     # Value: protects=the committed wrap-flood fixtures stay consistent with their manifest
     # and the profile table; fails_when=a stale, drifted or re-profiled fixture reaches the
-    # launchers; why_new=#379 fixtures keep the builders off the CI critical path;
+    # launchers, or a per-peer delay profile loses its construction delays; why_new=#379
+    # fixtures keep the builders off the CI critical path, #383 adds the delay profiles;
     # seam=p2p_launch.wrap_fixture
     def test_wrap_fixture_inventory(self):
-        for name, (players, capacity, rounds, window) in p2p_wrap.PROFILES.items():
+        for name, (players, capacity, rounds, window, delays) in p2p_wrap.PROFILES.items():
             with self.subTest(case=name):
                 scenario = wrap_fixture(name)
                 self.assertEqual(scenario['players'], players)
                 self.assertEqual(scenario.get('queue_capacity', 128), capacity)
                 self.assertEqual(scenario['max_prediction'], window)
+                self.assertEqual(scenario.get('delays'), delays)
                 self.assertGreater(len(scenario['operations']), rounds - 2)
         manifest = json.loads((Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood/MANIFEST.json').read_text(encoding='utf-8'))
         self.assertEqual(set(manifest['fixtures']), {name + '.json' for name in p2p_wrap.NAMES})
+
+    # Value: protects=the single-fixture regeneration's fail-closed precondition and its
+    # manifest merge; fails_when=--only crashes before the precondition check (the #382
+    # squash lost the provenance_path hoist), rewrites a committed sibling, or cannot add a
+    # genuinely new profile; why_new=the #383 delay wrap profiles are regenerated with
+    # --only; seam=p2p_wrap_regenerate.main with the real fixture loader and mocked tooling
+    def test_wrap_regenerate_only_precondition_and_merge(self):
+        def run_main(fixtures, only):
+            """main() with build/tooling mocked but the real fixture loader active."""
+            real = p2p_launch.wrap_fixture
+            # The merge branch digests the oracle binary for provenance; a stub
+            # keeps the test independent of a built binary (CI has none).
+            stub_binary = fixtures / 'oracle-binary'
+            stub_binary.write_bytes(b'oracle')
+
+            def loader(name):
+                # Mirror the production contract with the corpus's current manifest:
+                # a probe must name either a manifest-carried fixture or an existing
+                # file; anything else fails loudly instead of silently skipping.
+                manifest = fixtures / 'MANIFEST.json'
+                carried = set(json.loads(manifest.read_text(encoding='utf-8')).get('fixtures', {})) \
+                    if manifest.exists() else set()
+                if name + '.json' not in carried and not (fixtures / (name + '.json')).exists():
+                    raise AssertionError('probed a name the corpus never carried: ' + name)
+                return real(name)
+
+            with patch('sys.argv', ['p2p_wrap_regenerate.py', '--only', only]), \
+                 patch.object(p2p_wrap_regenerate, 'FIXTURES', fixtures), \
+                 patch.object(p2p_launch, 'FIXTURES', fixtures), \
+                 patch.object(p2p_wrap_regenerate, 'wrap_fixture', loader), \
+                 patch.object(p2p_wrap_regenerate, 'BINARY', stub_binary), \
+                 patch.object(p2p_wrap_regenerate, 'git_identity', lambda: {'commit': 'committed'}), \
+                 patch.object(p2p_wrap_regenerate, 'load_manifest', lambda: {'rust': {'version': '1.99.1'}}), \
+                 patch.object(p2p_wrap_regenerate, 'sources', lambda manifest, offline: None), \
+                 patch.object(p2p_wrap_regenerate, 'setup_rust', lambda manifest, offline: ('cargo', None)), \
+                 patch.object(p2p_wrap_regenerate, 'execute', lambda command, log, timeout=0: None), \
+                 patch.object(p2p_wrap_regenerate, 'validate', lambda value, scenario, raw: None), \
+                 patch('p2p_wrap.build', lambda binary, observe, players, capacity, rounds,
+                       window, delays=None: {
+                           'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
+                           'queue_capacity': capacity,
+                           **({'delays': list(delays)} if delays is not None else {}),
+                           'operations': [{'kind': 'poll', 'peer': 0, 'now_us': index}
+                                          for index in range(1, rounds + 1)]}), \
+                 patch('p2p_wrap_regenerate.subprocess.run') as fake_run:
+                fake_run.return_value.stdout = '{"format": 1}'
+                p2p_wrap_regenerate.main()
+
+        with TemporaryDirectory() as root:
+            # Red control: without the committed manifest, --only refuses for its named
+            # reason instead of probing the tree (pre-fix this died on UnboundLocalError).
+            empty = Path(root) / 'empty'; empty.mkdir()
+            with self.assertRaisesRegex(ValueError, '--only needs the committed wrap-flood manifest'):
+                run_main(empty, 'mesh_4_wrap_flood_window_8')
+            # A manifest-named fixture missing from disk still refuses: --only never
+            # repairs a committed corpus entry, it only adds names the manifest lacks.
+            partial = Path(root) / 'partial'; partial.mkdir()
+            (partial / 'MANIFEST.json').write_text(json.dumps(
+                {'format': 1, 'fixtures': {'mesh_2_wrap_flood.json': 'sibling'}, 'provenance': {}}), encoding='utf-8')
+            with self.assertRaisesRegex(OSError, 'mesh_2_wrap_flood.json'):
+                run_main(partial, 'mesh_4_wrap_flood_window_8')
+            # A valid committed corpus gains the genuinely new profile without
+            # rewriting the sibling digest, and the rewrite itself re-loads cleanly.
+            # The two delay profiles stay absent here (no file, no manifest entry):
+            # they are the genuinely new names this regeneration adds.
+            new_names = ('mesh_3_wrap_flood_delays_2_1_0', 'mesh_4_wrap_flood_delays_2_0')
+            committed = Path(root) / 'committed'; committed.mkdir()
+            digests = {}
+            for name, (players, capacity, rounds, window, delays) in p2p_wrap.PROFILES.items():
+                if name in new_names:
+                    continue
+                sibling = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
+                           'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 1}]}
+                if capacity != 128:
+                    sibling['queue_capacity'] = capacity
+                if delays is not None:
+                    sibling['delays'] = list(delays)
+                path = committed / (name + '.json')
+                path.write_text(json.dumps(sibling), encoding='utf-8')
+                digests[name + '.json'] = hashlib.sha256(path.read_bytes()).hexdigest()
+            manifest_path = committed / 'MANIFEST.json'
+            manifest_path.write_text(json.dumps({'format': 1, 'fixtures': digests,
+                                                 'provenance': {'builder': 'b', 'commit': 'old'}}), encoding='utf-8')
+            run_main(committed, 'mesh_4_wrap_flood_window_8')
+            merged = json.loads(manifest_path.read_text(encoding='utf-8'))
+            self.assertEqual(merged['fixtures']['mesh_2_wrap_flood.json'], digests['mesh_2_wrap_flood.json'])
+            self.assertIn('mesh_4_wrap_flood_window_8.json', merged['fixtures'])
+            self.assertNotEqual(merged['fixtures']['mesh_4_wrap_flood_window_8.json'],
+                                digests['mesh_4_wrap_flood_window_8.json'])
+            self.assertEqual(merged['provenance']['commit'], 'committed')
+            self.assertTrue((committed / 'mesh_4_wrap_flood_window_8.json').exists())
+            # The merge path covers insertion, not only replacement: --only for
+            # a genuinely new name adds its digest while every committed
+            # sibling keeps its exact bytes (the first run's own rewrite is the
+            # one expected exception).
+            run_main(committed, 'mesh_3_wrap_flood_delays_2_1_0')
+            inserted = json.loads(manifest_path.read_text(encoding='utf-8'))
+            self.assertIn('mesh_3_wrap_flood_delays_2_1_0.json', inserted['fixtures'])
+            rewritten = {'mesh_3_wrap_flood_delays_2_1_0.json', 'mesh_4_wrap_flood_window_8.json'}
+            for name, digest in digests.items():
+                if name not in rewritten:
+                    self.assertEqual(inserted['fixtures'][name], digest, name)
+            self.assertTrue((committed / 'mesh_3_wrap_flood_delays_2_1_0.json').exists())
 
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):
