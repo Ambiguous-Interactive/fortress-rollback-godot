@@ -3,15 +3,27 @@ from copy import deepcopy
 
 from p2p_contract import validate_scenario
 
-# name -> (players, queue capacity, rounds). Counts two and four hold the real
-# default ring: the confirmed frontier climbs past the 128-row queues the
-# production mesh configures by default. The eight-peer full mesh emits seven
-# input packets and seven acknowledgements per peer per round, so a
-# default-capacity wrap would need far more scheduled operations than the
-# oracle's 10000-operation scenario bound admits; that scale point instead
-# wraps a 32-row ring at the full fanout (the frontier passes the whole ring
-# and climbs past it) with the same flood shape.
-PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_4_wrap_flood': (4, 128, 142), 'mesh_8_wrap_flood': (8, 32, 44)}
+# name -> (players, queue capacity, rounds). Every count two through eight holds
+# the real default ring: the confirmed frontier climbs past the 128-row queues the
+# production mesh configures by default, so the named count cases compare the
+# default-capacity wrap at every supported roster size. The oracle's 20000-operation
+# scenario bound admits the eight-peer default case at its measured 16324
+# operations (129 boundaries at two packets per peer pair per round); the named
+# 32-row eight-peer scale point stays as the full-fanout small-ring witness — the
+# frontier passes the whole reduced ring and climbs past it under the same flood
+# shape — with the per-case capacity kept in its committed profile.
+# The launchers load the committed schedules from scripts/oracle/fixtures/wrap_flood
+# instead of building them: the builder reruns the whole growing scenario once per
+# round, and that quadratic cost inside every CI launch blew the merge queue's
+# 30-minute check-response timeout. build() stays the deliberate regeneration
+# path (scripts/oracle/p2p_wrap_regenerate.py); its per-round model checks keep
+# failing the regeneration on divergence, and every launch still runs the full
+# differential gates against the committed bytes.
+PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_3_wrap_flood': (3, 128, 142),
+            'mesh_4_wrap_flood': (4, 128, 142),
+            'mesh_5_wrap_flood': (5, 128, 142), 'mesh_6_wrap_flood': (6, 128, 142),
+            'mesh_7_wrap_flood': (7, 128, 142), 'mesh_8_wrap_flood': (8, 128, 142),
+            'mesh_8_wrap_flood_32': (8, 32, 44)}
 NAMES = tuple(PROFILES)
 WINDOW = 4
 FLOOD_START = 8

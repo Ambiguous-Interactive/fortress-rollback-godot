@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "fixtures": {
+    "mesh_2_wrap_flood.json": "917c1742754927617d9ed78e72808a5cea4823b1ba01403b88a00f564be37cc3",
+    "mesh_3_wrap_flood.json": "896f3646fac6a7fe5273da06baca12bb0b2f86033dc0c82566c1ad502f9617d7",
+    "mesh_4_wrap_flood.json": "adda0f1f1343bb8a6a52fa7e2cdf849008ae78418105967b1d6454a5c4f6ed0f",
+    "mesh_5_wrap_flood.json": "2b7bf60eb9f5bf4af3de1780fb939e46bc74daa5c0e94279918ce3e5e3bcc930",
+    "mesh_6_wrap_flood.json": "4e534a38d2a849f2bd62d58f85a055eae19b3bf54043e28c7333fb6ddcb4dc2c",
+    "mesh_7_wrap_flood.json": "977c1cbbc37415b13249d1fa0d1face470c24c0af7169fa81ebd56400d16d29c",
+    "mesh_8_wrap_flood.json": "4901fa689dff4a5b5b2e520cb0e19a2fa1c06fe2bb0ada6dc7b3855260e48efb",
+    "mesh_8_wrap_flood_32.json": "23f6e824996bf003abb4320c264af38a932be731163a4eef1dc312e9ec14ccd0"
+  },
+  "provenance": {
+    "builder": "scripts/oracle/p2p_wrap.py build()",
+    "upstream_revision": "d124c89080004d96971a629bb0427056ee1805e3",
+    "commit": "69b85a4b1945c7c45e70f19fc038a9e072de8363",
+    "oracle_binary_sha256": "1d88638188e2ed38dc01ed17634bd674613a9038e138aa864a4e51d45e4ff006",
+    "regenerate_with": "python3 scripts/oracle/p2p_wrap_regenerate.py"
+  }
+}

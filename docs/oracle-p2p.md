@@ -345,21 +345,32 @@ access-only SyncLayer oracle slice tracked in
 
 ## Long ring-wrap flood
 
-`mesh_2_wrap_flood` and `mesh_8_wrap_flood` wrap real queue rings under a
-withheld multi-round flood. Both hold the explicit lifecycle profile with
+`mesh_2_wrap_flood`, `mesh_3_wrap_flood`, `mesh_4_wrap_flood`,
+`mesh_5_wrap_flood`, `mesh_6_wrap_flood`, `mesh_7_wrap_flood` and
+`mesh_8_wrap_flood` wrap real
+queue rings under a withheld multi-round flood, and
+`mesh_8_wrap_flood_32` keeps the full-fanout small-ring scale point. All of
+them hold the explicit lifecycle profile with
 desync detection off — the checksum lifecycle cases own that exchange — and
 quality, keepalive, notify and disconnect bounds far above the schedule, and
 protocol time still advances one microsecond per operation, so no timed traffic
-fires and the flood is pure delivery scheduling.
+fires and the flood is pure delivery scheduling. The committed schedules live
+in `scripts/oracle/fixtures/wrap_flood` with digest provenance in their
+manifest, so CI loads them instead of paying the builder's quadratic per-round
+replays (`p2p_wrap_regenerate.py` owns deliberate regeneration); the launch
+still verifies every gate against the current pinned binary, and a dedicated
+wave launcher runs the wrap corpus beside the rest of the P2P family.
 
-Counts two and four hold the production default: their confirmed frontiers
-climb past row 128 and the default 128-row queues wrap (each peer confirms at
-least 129 canonical boundaries). The eight-peer full mesh emits seven input
-packets and seven acknowledgements per peer per round, so a default-capacity
-wrap would need far more scheduled operations than the oracle's 10000-operation
-scenario bound admits; that scale point instead wraps a 32-row ring at the
-full fanout (the frontier passes the whole ring and climbs past it — at least
-33 boundaries per peer), and the corpus keeps the per-case capacity in its
+Every count two through eight holds the production default: the confirmed
+frontiers climb past row 128 and the default 128-row queues wrap (each peer
+confirms at least 129 canonical boundaries). The eight-peer full mesh emits
+seven input packets and seven acknowledgements per peer per round, so the
+default-capacity wrap there needs 16324 measured scheduled operations; the
+deliberate raise of the oracle's scenario-operation bound to
+20000 (a denial-of-service guard, not a corpus limit) admits it. The named
+32-row eight-peer scale point stays as the fanout witness at the full mesh:
+the frontier passes the whole reduced ring and climbs past it (at least 33
+boundaries per peer), and the corpus keeps each per-case capacity in its
 committed profile.
 
 From round eight every packet — inputs and acknowledgements alike — is
@@ -387,12 +398,12 @@ rows from one LOAD, and every peer's confirmed boundary count past its ring's
 capacity. Controls clamp every confirmed frontier below the capacity, remove
 the correction LOADs, rename the stall diagnostics while advancing their
 frames and hide one machine's predictions or stalls while every aggregate
-count stays large; each must fail at its declared diagnostic. Both cases run
+count stays large; each must fail at its declared diagnostic. Every case runs
 on both engine pins, twice per side, with the raw compression validator over
 the whole trace. The two-peer raw trace stays inside the tooling's stdin
-bound; the four- and eight-peer raw traces exceed the old four-megabyte guard,
-which is now sixteen megabytes in the oracle binary and its standalone Python
-validator — a denial-of-service guard, not a corpus limit.
+bound; the larger default-capacity raw traces exceed the old four-megabyte
+guard, which is now thirty-two megabytes in the oracle binary and its
+standalone Python validator — a denial-of-service guard, not a corpus limit.
 
 ## Lifecycle observations
 

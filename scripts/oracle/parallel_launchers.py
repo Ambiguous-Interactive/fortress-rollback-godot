@@ -30,8 +30,12 @@ from run import rust_environment, setup_rust  # noqa: E402
 # Table order is the reporting and first-failure rejection order, longest launcher
 # first: the pool starts the slowest launcher immediately so the elapsed time
 # approaches its duration instead of its duration plus every shorter launcher.
+# The wrap launcher keeps the committed ring-wrap corpus off the p2p launcher's
+# critical path: its cases load fixtures and run the differential gates while
+# the main p2p launcher builds and runs everything else beside it.
 LAUNCHERS = {
     'p2p': 'p2p_launch.py',
+    'p2p-wrap': 'p2p_wrap_launch.py',
     'drop-history': 'drop_history_launch.py',
     'replay': 'replay_launch.py',
     'oracle': 'launch.py',

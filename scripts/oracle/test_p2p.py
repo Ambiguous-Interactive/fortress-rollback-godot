@@ -8,7 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import p2p_launch
-from p2p_launch import upstream_inventory, executable_identity, require_unchanged
+import p2p_wrap
+from p2p_launch import upstream_inventory, executable_identity, require_unchanged, wrap_fixture
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
 from p2p_contract import DELAY_ERRORS, INPUT_ERRORS, comparable_delay, expected_delay_error, godot_max_delay, slots_of
@@ -297,6 +298,50 @@ class P2PContractTests(unittest.TestCase):
             mutant = deepcopy(original); mutate(mutant)
             with self.assertRaises(ValueError):
                 validate_scenario(mutant)
+
+    # Value: protects=the scenario-operation bound stays deliberate; fails_when=the corpus
+    # scale the #379 raise admits drifts, or an above-bound inventory passes; why_new=#379
+    # default-ring wrap floods; seam=validate_scenario's operation inventory
+    def test_operation_inventory_bound(self):
+        original = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4, 'operations': []}
+        original['operations'] = [{'kind': 'poll', 'peer': 0, 'now_us': index} for index in range(1, 20001)]
+        validate_scenario(original)
+        mutant = deepcopy(original)
+        mutant['operations'].append({'kind': 'poll', 'peer': 0, 'now_us': 20001})
+        with self.assertRaises(ValueError):
+            validate_scenario(mutant)
+
+    # Value: protects=the standalone validator's trace-size denial-of-service guard stays
+    # deliberate; fails_when=the #379 raise drifts back over the seven- and eight-peer wrap
+    # traces (18.2 and 25.9 megabytes spaced); why_new=#379 default-ring wrap floods;
+    # seam=p2p_validate's stdin length bound
+    def test_standalone_trace_size_bound(self):
+        scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4,
+                    'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 0}]}
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'scenario.json'; path.write_text(json.dumps(scenario), encoding='utf-8')
+            command = [sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(path)]
+            at_bound = b'{' + b' ' * (32000000 - 2) + b'}'
+            accepted = subprocess.run(command, input=at_bound, capture_output=True, timeout=30, check=False)
+            self.assertEqual(accepted.returncode, 2, accepted.stderr)
+            self.assertNotIn('trace size bound', accepted.stderr.decode('utf-8', 'replace'))
+            rejected = subprocess.run(command, input=at_bound + b' ', capture_output=True, timeout=30, check=False)
+            self.assertEqual(rejected.returncode, 2, rejected.stderr)
+            self.assertEqual(rejected.stderr, b'p2p validation: trace size bound\n')
+
+    # Value: protects=the committed wrap-flood fixtures stay consistent with their manifest
+    # and the profile table; fails_when=a stale, drifted or re-profiled fixture reaches the
+    # launchers; why_new=#379 fixtures keep the builders off the CI critical path;
+    # seam=p2p_launch.wrap_fixture
+    def test_wrap_fixture_inventory(self):
+        for name, (players, capacity, rounds) in p2p_wrap.PROFILES.items():
+            with self.subTest(case=name):
+                scenario = wrap_fixture(name)
+                self.assertEqual(scenario['players'], players)
+                self.assertEqual(scenario.get('queue_capacity', 128), capacity)
+                self.assertGreater(len(scenario['operations']), rounds - 2)
+        manifest = json.loads((Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood/MANIFEST.json').read_text(encoding='utf-8'))
+        self.assertEqual(set(manifest['fixtures']), {name + '.json' for name in p2p_wrap.NAMES})
 
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):
