@@ -94,6 +94,15 @@ values are invalid. A checksum frame and an input start frame are never null.
 | 12 | `DROP_BARRIER` | phase:u8, stage:u8, reason:u8, reserved:u8, coordinator:u16, coordinator_generation:u16, operation:u32, target_set_digest:u64, cut:i32, nullable, bound:i32, nullable, available_through:i32, nullable, cut_digest:u64, chunk_index:u16, chunk_count:u16, witnessed:u8, reserved:u8, target_bytes:u32, target_bytes[target_bytes], value_bytes:u32, value_bytes[value_bytes] |
 
 The codec preserves all u32 feature masks for endpoint agreement checks.
+Input flights carry the same semantics the pinned upstream gives them: the
+receiver decodes each flight against the row one frame before its
+`start_frame` (the zeroed seed when nothing has arrived yet), so a flight
+whose reference row was never held stages nothing and re-acks the receiver's
+high-water — its piggyback acknowledgement and status merge are still
+consumed. An endpoint that stages past a missing reference acks frames the
+source never verified, and the mesh's acknowledged prefix diverges under any
+withheld-then-released schedule (the wrap-flood delay corpus caught exactly
+this; `test_input_endpoint.gd::reference_skip` pins it).
 The retained-history drop tier uses feature bit `1`; bounded donor transfer adds
 bit `2`. Player sessions enabling `CONTINUE` now require both bits before gameplay.
 Upgrade all match participants together. Other unknown local bits are refused.
