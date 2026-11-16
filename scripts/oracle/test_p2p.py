@@ -334,11 +334,12 @@ class P2PContractTests(unittest.TestCase):
     # launchers; why_new=#379 fixtures keep the builders off the CI critical path;
     # seam=p2p_launch.wrap_fixture
     def test_wrap_fixture_inventory(self):
-        for name, (players, capacity, rounds) in p2p_wrap.PROFILES.items():
+        for name, (players, capacity, rounds, window) in p2p_wrap.PROFILES.items():
             with self.subTest(case=name):
                 scenario = wrap_fixture(name)
                 self.assertEqual(scenario['players'], players)
                 self.assertEqual(scenario.get('queue_capacity', 128), capacity)
+                self.assertEqual(scenario['max_prediction'], window)
                 self.assertGreater(len(scenario['operations']), rounds - 2)
         manifest = json.loads((Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood/MANIFEST.json').read_text(encoding='utf-8'))
         self.assertEqual(set(manifest['fixtures']), {name + '.json' for name in p2p_wrap.NAMES})
