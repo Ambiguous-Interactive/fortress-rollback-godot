@@ -67,17 +67,19 @@ def canonical_results_digest(results):
 def supported_decisions(ledger):
     """The ledger decisions that claim executable coverage.
 
-    A decision claiming `covered` without applicable applicability, or
-    claiming `covered` applicability without any port-test identity, is
-    malformed for certification purposes and surfaces as a named failure,
-    never as silent support.
+    A decision claiming `covered` without applicable applicability, without a
+    list of non-empty string port-test identities, or without any identity at
+    all, is malformed for certification purposes and surfaces as a named
+    failure, never as silent support.
     """
     supported, malformed = [], []
     for key, decision in ledger.get('decisions', {}).items():
         if not isinstance(decision, dict) or decision.get('status') not in SUPPORTED_STATUSES:
             continue
-        identities = decision.get('port_test_ids') or []
-        if decision.get('applicability') in SUPPORTED_APPLICABILITY and identities:
+        identities = decision.get('port_test_ids')
+        well_formed = isinstance(identities, list) and bool(identities) \
+            and all(isinstance(identity, str) and identity for identity in identities)
+        if decision.get('applicability') in SUPPORTED_APPLICABILITY and well_formed:
             supported.append((key, identities))
         else:
             malformed.append(key)
@@ -150,7 +152,12 @@ def verify(ledger_path, bundle_path, artifacts_dir):
                 reasons.append(f'{key}: {identity} lacks seed evidence')
                 continue
             name, recorded = entry.get('artifact'), entry.get('artifact_sha256')
-            if not isinstance(name, str) or not name or not isinstance(recorded, str):
+            contained = isinstance(name, str) and name and '/' not in name and name not in ('.', '..') \
+                and (Path(artifacts_dir) / name).resolve().parent == Path(artifacts_dir).resolve()
+            if not contained or not isinstance(recorded, str):
+                # A cited artifact must be a bare file inside the evidence
+                # directory: `../` escapes and planted symlinks are exactly the
+                # "missing artifact" control satisfied by any readable file.
                 reasons.append(f'{key}: {identity} lacks artifact evidence')
                 continue
             artifact = Path(artifacts_dir) / name
@@ -192,14 +199,14 @@ def main_with_args(argv):
     parser.add_argument('--bundle', required=True, help='the executed result bundle (schema 1)')
     parser.add_argument('--artifacts', required=True, help='directory holding the cited artifacts')
     args = parser.parse_args(argv)
+    total = 0
     try:
         verified, reasons, verified_count = verify(args.ledger, args.bundle, args.artifacts)
+        supported, _ = supported_decisions(load_json(args.ledger))
+        total = sum(len(identities) for _, identities in supported)
     except (ValueError, OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as failure:
         print(f'coverage tooling failed: {failure}', file=sys.stderr)
         return 2
-    ledger = load_json(args.ledger)
-    supported, _ = supported_decisions(ledger)
-    total = sum(len(identities) for _, identities in supported)
     print(summarize(verified, reasons, total, verified_count))
     return 0 if verified else 1
 

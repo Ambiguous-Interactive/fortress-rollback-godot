@@ -365,6 +365,32 @@ class DriftPinFlowTests(unittest.TestCase):
                           '--report', str(base / 'r.json'), '--advance']):
                 self.assertEqual(drift.main_with_args(argv), 1, argv)
 
+    def test_advance_refuses_when_the_report_cannot_land(self):
+        # A failed report write must leave the pin untouched: never an advanced
+        # revision whose recorded report digest names bytes that never existed.
+        with tempfile.TemporaryDirectory() as folder:
+            pins, old_tree, new_tree, archive = self.corpus(folder)
+            report = Path(folder) / 'missing-dir' / 'report.json'
+            argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
+                    '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
+                    '--report', str(report), '--advance']
+            self.assertEqual(drift.main_with_args(argv), 1)
+            entry = json.loads(pins.read_text(encoding='utf-8'))['sources']['sdk']
+            self.assertEqual(entry['revision'], OLD_REVISION)
+            self.assertNotIn('review', entry)
+            self.assertFalse(report.exists())
+            self.assertEqual(list(Path(folder).iterdir()),
+                             [p for p in Path(folder).iterdir() if p.name not in ('report.json.tmp',)])
+
+    def test_plain_report_failure_is_a_named_tooling_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pins, old_tree, new_tree, archive = self.corpus(folder)
+            report = Path(folder) / 'missing-dir' / 'report.json'
+            argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
+                    '--report', str(report)]
+            self.assertEqual(drift.main_with_args(argv), 1)
+            self.assertFalse(report.exists())
+
     def test_malformed_bookkeeping_fails_manifest_load(self):
         import fetch
         with tempfile.TemporaryDirectory() as folder:

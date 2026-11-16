@@ -450,17 +450,25 @@ def main_with_args(argv):
             archive_digest = candidate_tree(args.archive, expected_root, args.new)
             report_bytes = json.dumps(report, indent=2).encode('utf-8') + b'\n'
             report_digest = hashlib.sha256(report_bytes).hexdigest()
-            # The pins rewrite happens before the report file exists, so a
-            # failed bookkeeping can never leave a report describing an
-            # observation that was never recorded.
-            update_pins(args.pins, args.source, args.new_revision, archive_digest,
-                        report_digest, args.advance, date.today().isoformat())
-            args.report.write_bytes(report_bytes)
+            # The report is staged next to its destination and the pins
+            # bookkeeping runs before either lands: a failed advancement leaves
+            # no report describing an unrecorded observation, and a failed
+            # report write leaves the pins untouched — never a half-recorded
+            # advancement whose digest names bytes that never existed.
+            staged = args.report.with_name(args.report.name + '.tmp')
+            try:
+                staged.write_bytes(report_bytes)
+                update_pins(args.pins, args.source, args.new_revision, archive_digest,
+                            report_digest, args.advance, date.today().isoformat())
+                staged.replace(args.report)
+            finally:
+                staged.unlink(missing_ok=True)
+        else:
+            if args.report is not None:
+                args.report.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     except (ValueError, OSError, json.JSONDecodeError, KeyError, TypeError, AttributeError) as failure:
         print(f'drift tooling failed: {failure}', file=sys.stderr)
         return 1
-    if args.report is not None and report_digest is None:
-        args.report.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(summarize(report).splitlines()[0] if args.quiet else summarize(report))
     if pin_flow:
         if report['requires_review']:
