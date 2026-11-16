@@ -360,8 +360,8 @@ Every count two through eight holds the production default: the confirmed
 frontiers climb past row 128 and the default 128-row queues wrap (each peer
 confirms at least 129 canonical boundaries). The eight-peer full mesh emits
 seven input packets and seven acknowledgements per peer per round, so the
-default-capacity wrap there needs about seventeen thousand scheduled
-operations; the deliberate raise of the oracle's scenario-operation bound to
+default-capacity wrap there needs 16324 measured scheduled operations; the
+deliberate raise of the oracle's scenario-operation bound to
 20000 (a denial-of-service guard, not a corpus limit) admits it. The named
 32-row eight-peer scale point stays as the fanout witness at the full mesh:
 the frontier passes the whole reduced ring and climbs past it (at least 33

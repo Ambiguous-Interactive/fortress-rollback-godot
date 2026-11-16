@@ -271,8 +271,8 @@ fn run(original:Value,profile_audit:bool)->Result<Value,String>{
 fn run_width<const N:usize>(original:Value,scenario:Scenario,profile_audit:bool)->Result<Value,String>
 where [u8; N]: Copy + Clone + PartialEq + Eq + Default + Serialize + DeserializeOwned{
   // The operation bound stays a denial-of-service guard, not a corpus limit: the
-  // eight-peer default-ring wrap flood needs about seventeen thousand operations
-  // (129 confirmed boundaries at the full mesh's two packets per peer pair per
+  // eight-peer default-ring wrap flood needs 16324 measured operations (129
+  // confirmed boundaries at the full mesh's two packets per peer pair per
   // round), so the deliberate #379 raise admits it with margin.
   if scenario.format!=1 || !(2..=8).contains(&scenario.players)||scenario.input_delay>2||!((if profile_audit {0}else{2})..=8).contains(&scenario.max_prediction)
  ||scenario.operations.is_empty()||scenario.operations.len()>20000{return Err("scenario bounds".into());}
@@ -399,8 +399,9 @@ fn replay_scenario_slots(scenario:&Value)->Result<Vec<Vec<usize>>,String>{
  if let Some(sizes)=&layout {if sizes.is_empty()||sizes.len()<2||sizes.iter().any(|size|*size==0||*size>players)||sizes.iter().sum::<usize>()!=players
   {return Err("layout bounds".into());}}
  Ok(slots_of(players,&layout))}
-fn main(){let result=(||{let mut input=String::new();io::stdin().take(32000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
- if input.len()>32000000{return Err("input bounds".into());}let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
+fn read_input<R:Read>(mut reader:R)->Result<String,String>{let mut input=String::new();reader.take(32000001).read_to_string(&mut input).map_err(|e|e.to_string())?;
+ if input.len()>32000000{return Err("input bounds".into());}Ok(input)}
+fn main(){let result=(||{let input=read_input(io::stdin())?;let value:Value=serde_json::from_str(&input).map_err(|e|e.to_string())?;
  if std::env::args().skip(1).collect::<Vec<_>>()==vec!["--validate-trace"] {
    let slots_of=replay_scenario_slots(&value["scenario"])?;let width=replay_scenario_width(&value["scenario"])?;
    let mut references=MeshReferences::new(&slots_of,width);let packets=value["packets"].as_array().ok_or("packets")?;
@@ -530,6 +531,18 @@ mod tests {
         // A non-integer element fails serde deserialization before the grammar runs.
         let error = run(base(json!([2.0,2])), false).expect_err("hostile layout accepted");
         assert!(error.contains("invalid number"), "{error}");
+    }
+
+    // Value: protects=the raw-trace stdin denial-of-service guard; fails_when=the #379
+    // raise drifts back over the seven- and eight-peer wrap traces (18.2 and 25.9
+    // megabytes spaced); why_new=#379 default-ring wrap floods; seam=read_input's
+    // length bound
+    #[test]
+    fn hostile_trace_size_fails_closed() {
+        let error = read_input(io::Cursor::new(vec![b' '; 32000001])).expect_err("above-bound trace accepted");
+        assert!(error.contains("input bounds"), "{error}");
+        let accepted = read_input(io::Cursor::new(vec![b' '; 32000000])).unwrap();
+        assert_eq!(accepted.len(), 32000000);
     }
 
     // Value: protects=the scenario-operation bound stays deliberate; fails_when=the corpus

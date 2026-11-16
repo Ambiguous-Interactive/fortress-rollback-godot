@@ -7,7 +7,7 @@ from p2p_contract import validate_scenario
 # the real default ring: the confirmed frontier climbs past the 128-row queues the
 # production mesh configures by default, so the named count cases compare the
 # default-capacity wrap at every supported roster size. The oracle's 20000-operation
-# scenario bound admits the eight-peer default case at about seventeen thousand
+# scenario bound admits the eight-peer default case at its measured 16324
 # operations (129 boundaries at two packets per peer pair per round); the named
 # 32-row eight-peer scale point stays as the full-fanout small-ring witness — the
 # frontier passes the whole reduced ring and climbs past it under the same flood

@@ -133,7 +133,7 @@ def validate_scenario(value):
     if 'lifecycle' in value:
         lifecycle.settings(value['lifecycle'], value['players'])
     # The bound stays a denial-of-service guard, not a corpus limit: the eight-peer
-    # default-ring wrap flood needs about seventeen thousand operations (129 confirmed
+    # default-ring wrap flood needs 16324 measured operations (129 confirmed
     # boundaries at the full mesh's two packets per peer pair per round), so the
     # deliberate #379 raise admits it with margin while every smaller corpus keeps
     # its shape.

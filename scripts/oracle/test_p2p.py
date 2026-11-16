@@ -310,6 +310,24 @@ class P2PContractTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_scenario(mutant)
 
+    # Value: protects=the standalone validator's trace-size denial-of-service guard stays
+    # deliberate; fails_when=the #379 raise drifts back over the seven- and eight-peer wrap
+    # traces (18.2 and 25.9 megabytes spaced); why_new=#379 default-ring wrap floods;
+    # seam=p2p_validate's stdin length bound
+    def test_standalone_trace_size_bound(self):
+        scenario = {'format': 1, 'players': 2, 'input_delay': 0, 'max_prediction': 4,
+                    'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 0}]}
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'scenario.json'; path.write_text(json.dumps(scenario), encoding='utf-8')
+            command = [sys.executable, str(Path(__file__).with_name('p2p_validate.py')), '--scenario', str(path)]
+            at_bound = b'{' + b' ' * (32000000 - 2) + b'}'
+            accepted = subprocess.run(command, input=at_bound, capture_output=True, timeout=30, check=False)
+            self.assertEqual(accepted.returncode, 2, accepted.stderr)
+            self.assertNotIn('trace size bound', accepted.stderr.decode('utf-8', 'replace'))
+            rejected = subprocess.run(command, input=at_bound + b' ', capture_output=True, timeout=30, check=False)
+            self.assertEqual(rejected.returncode, 2, rejected.stderr)
+            self.assertEqual(rejected.stderr, b'p2p validation: trace size bound\n')
+
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):
         step = {'kind': 'step', 'peer': 0, 'now_us': 0, 'bytes': '00000000'}
