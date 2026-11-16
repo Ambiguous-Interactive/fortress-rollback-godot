@@ -166,6 +166,27 @@ Baseline workflow runs the complete differential on every pins.json change)
 and a reviewed `requires_review` list. The weekly observation cadence and the
 deduplicated reporting stay in M2 (#52).
 
+## Coverage certification
+
+Task #55 owns the boundary between source-family discovery and executable
+coverage certification. `scripts/reference/coverage.py` verifies a result
+bundle against the parity ledger: a `covered` + `applicable` decision counts
+only when every `port_test_ids` entry names a result that passed and
+completed at the ledger's pinned source revision, on the bundle's declared
+engine gate, with its cited artifact present in the evidence directory and
+byte-identical to its recorded digest. The bundle's `run_id` is the canonical
+digest of its results array and `ledger_sha256` pins the exact ledger bytes,
+so tampered results and bundles certified against an older ledger fail. With
+`semantic_audit_complete` set, the verified set must equal the declared
+supported set exactly — no unverified supported decision, no result outside
+it, and never an entirely pending ledger. Forged identities, flipped flags,
+stale success JSON, partial completions, missing artifacts and stale
+revisions each fail for their specific reason; exit 0 verifies, 1 fails
+verification, 2 is a tooling error. The data-driven mutation table in
+`scripts/reference/test_coverage.py` pins every hostile shape. This is the
+verifier boundary only: producing bundles from actual port-suite executions
+stays with the release-qualification work in #44.
+
 ## Evidence and remaining gates
 
 [baseline.md](baseline.md) records actual results, exact selections, negative

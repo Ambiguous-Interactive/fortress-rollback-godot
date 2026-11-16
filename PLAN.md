@@ -381,6 +381,11 @@ event identities; presentation state is not a substitute for complete snapshots.
 
 The parity ledger maps upstream behavior/test identity to source revision/hash,
 applicability, target task, port tests and coverage status.
+A future status flag or nonempty `port_test_ids` list alone is never coverage:
+`scripts/reference/coverage.py` certifies supported behaviors only against a
+result bundle whose passing, complete results executed at the ledger's pinned
+revision with their cited artifacts digest-bound, and `semantic_audit_complete`
+is held to the strict verified-equals-supported shape (#55).
 Allowed statuses distinguish pending, covered, deferred, not applicable and
 intentional divergence. Exclusions need a concrete rationale.
 
