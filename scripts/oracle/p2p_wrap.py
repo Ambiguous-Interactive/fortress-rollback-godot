@@ -12,6 +12,13 @@ from p2p_contract import validate_scenario
 # 32-row eight-peer scale point stays as the full-fanout small-ring witness — the
 # frontier passes the whole reduced ring and climbs past it under the same flood
 # shape — with the per-case capacity kept in its committed profile.
+# The launchers load the committed schedules from scripts/oracle/fixtures/wrap_flood
+# instead of building them: the builder reruns the whole growing scenario once per
+# round, and that quadratic cost inside every CI launch blew the merge queue's
+# 30-minute check-response timeout. build() stays the deliberate regeneration
+# path (scripts/oracle/p2p_wrap_regenerate.py); its per-round model checks keep
+# failing the regeneration on divergence, and every launch still runs the full
+# differential gates against the committed bytes.
 PROFILES = {'mesh_2_wrap_flood': (2, 128, 142), 'mesh_3_wrap_flood': (3, 128, 142),
             'mesh_4_wrap_flood': (4, 128, 142),
             'mesh_5_wrap_flood': (5, 128, 142), 'mesh_6_wrap_flood': (6, 128, 142),

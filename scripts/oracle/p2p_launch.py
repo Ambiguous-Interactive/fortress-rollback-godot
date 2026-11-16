@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run actual upstream P2P mesh and shipped Godot byte sessions, twice each."""
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -42,9 +43,40 @@ def source(binary, scenario):
     return value
 
 
-def corpus(binary, selected=None):
+FIXTURES = ROOT / 'scripts/oracle/fixtures/wrap_flood'
+
+
+def wrap_fixture(name):
+    """Load one committed wrap-flood fixture, failing closed on digest or profile drift.
+
+    The corpus was built by p2p_wrap.build() against the pinned oracle and verified
+    byte-identical on both pinned engines; the committed schedules keep the launcher
+    off the builder's quadratic replays so the qualification wave fits the merge
+    queue's check-response timeout. Every launch-time gate still runs against the
+    current binary: validate, compare, evidence, controls and raw compression.
+    """
+    path = FIXTURES / (name + '.json')
+    manifest = json.loads((FIXTURES / 'MANIFEST.json').read_text(encoding='utf-8'))
+    scenario = json.loads(path.read_text(encoding='utf-8'))
+    if manifest.get('format') != 1 or name + '.json' not in manifest.get('fixtures', {}):
+        raise ValueError('wrap fixture manifest entry: ' + name)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != manifest['fixtures'][name + '.json']:
+        raise ValueError('wrap fixture digest drift: ' + name + '; regenerate the fixtures')
+    validate_scenario(scenario)
+    if scenario['players'] != p2p_wrap.PROFILES[name][0] or scenario.get('queue_capacity', 128) != p2p_wrap.PROFILES[name][1]:
+        raise ValueError('wrap fixture profile drift: ' + name)
+    return scenario
+
+
+def corpus(binary, selected=None, wrap_only=False):
     """Schedules derive only from actual sent packet inventories, never request traces."""
     cases = {}
+    if wrap_only:
+        for name in p2p_wrap.NAMES:
+            if selected is None or selected == name:
+                cases[name] = wrap_fixture(name)
+        return cases
     for players in range(2, 9):
         for delay in (0, 2):
             name = f'mesh_{players}_delay_{delay}'
@@ -96,10 +128,11 @@ def corpus(binary, selected=None):
         cases[p2p_recovery.NAME] = p2p_recovery.build(binary, source)
     if selected is None or selected == p2p_capacity.NAME:
         cases[p2p_capacity.NAME] = p2p_capacity.build(binary, source)
-    # Long ring-wrap runs under a withheld multi-round flood release.
-    for name, (players, capacity, rounds) in p2p_wrap.PROFILES.items():
-        if selected is None or selected == name:
-            cases[name] = p2p_wrap.build(binary, source, players, capacity, rounds)
+    # Long ring-wrap runs live in the dedicated wrap launcher's fixture corpus; the
+    # main launcher runs them only when --case names one explicitly, so the wave
+    # never pays the wrap differential twice.
+    if selected in p2p_wrap.NAMES:
+        cases[selected] = wrap_fixture(selected)
     cases.update(p2p_lifecycle_corpus.corpus(binary, source, selected))
     return cases
 
@@ -459,7 +492,7 @@ def differential_failure(name, binary, engine, scenario, expected, failure, outp
 
 def source_files():
     return [*(ROOT / 'addons/fortress_rollback/core').glob('*.gd'), *(ROOT / 'addons/fortress_rollback/protocol').glob('*.gd'),
-        *(ROOT / 'tests/oracle').glob('*.gd'), *Path(__file__).parent.glob('*.py'), ROOT / 'scripts/oracle/rust/src/bin/p2p.rs',
+        *(ROOT / 'tests/oracle').glob('*.gd'), *Path(__file__).parent.glob('*.py'), *FIXTURES.glob('*'), ROOT / 'scripts/oracle/rust/src/bin/p2p.rs',
         ROOT / 'scripts/oracle/rust/Cargo.toml', ROOT / 'scripts/oracle/rust/Cargo.lock', ROOT / 'docs/reference/pins.json',
         *(ROOT / 'scripts/reference').glob('*.py')]
 
@@ -473,7 +506,9 @@ def executable_identity(path):
     return {'path': str(resolved), 'sha256': digest(resolved), 'mode': resolved.stat().st_mode & 0o777}
 
 
-def main():
+def main(wrap_only=False):
+    """Run the differential gates; wrap_only scopes the corpus to the committed
+    wrap-flood fixtures for the wave's separate wrap launcher."""
     parser = ReceiptParser(description=__doc__, receipt='receipt.json')
     parser.add_argument('--godot', required=True, help='engine name on PATH or a path to it')
     parser.add_argument('--offline', action='store_true')
@@ -506,7 +541,7 @@ def main():
     binary_identity = executable_identity(binary)
     require_unchanged('upstream source inventory', upstream_hashes, upstream_inventory(trees['fortress']))
     require_unchanged('Godot executable', engine_identity, executable_identity(engine))
-    cases = corpus(binary, args.case)
+    cases = corpus(binary, args.case, wrap_only=wrap_only)
     if args.case:
         cases = {args.case: cases[args.case]}
     evidence = []

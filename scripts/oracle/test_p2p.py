@@ -8,7 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import p2p_launch
-from p2p_launch import upstream_inventory, executable_identity, require_unchanged
+import p2p_wrap
+from p2p_launch import upstream_inventory, executable_identity, require_unchanged, wrap_fixture
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
 from p2p_contract import DELAY_ERRORS, INPUT_ERRORS, comparable_delay, expected_delay_error, godot_max_delay, slots_of
@@ -327,6 +328,20 @@ class P2PContractTests(unittest.TestCase):
             rejected = subprocess.run(command, input=at_bound + b' ', capture_output=True, timeout=30, check=False)
             self.assertEqual(rejected.returncode, 2, rejected.stderr)
             self.assertEqual(rejected.stderr, b'p2p validation: trace size bound\n')
+
+    # Value: protects=the committed wrap-flood fixtures stay consistent with their manifest
+    # and the profile table; fails_when=a stale, drifted or re-profiled fixture reaches the
+    # launchers; why_new=#379 fixtures keep the builders off the CI critical path;
+    # seam=p2p_launch.wrap_fixture
+    def test_wrap_fixture_inventory(self):
+        for name, (players, capacity, rounds) in p2p_wrap.PROFILES.items():
+            with self.subTest(case=name):
+                scenario = wrap_fixture(name)
+                self.assertEqual(scenario['players'], players)
+                self.assertEqual(scenario.get('queue_capacity', 128), capacity)
+                self.assertGreater(len(scenario['operations']), rounds - 2)
+        manifest = json.loads((Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood/MANIFEST.json').read_text(encoding='utf-8'))
+        self.assertEqual(set(manifest['fixtures']), {name + '.json' for name in p2p_wrap.NAMES})
 
     # Value: protects=delay-change schema stays fail-closed; fails_when=pre-input, stale-clock, divergent-band or alias delays pass; why_new=X2 oracle op; seam=none
     def test_delay_change_schema(self):

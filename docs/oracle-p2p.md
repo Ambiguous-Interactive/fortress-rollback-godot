@@ -354,7 +354,12 @@ them hold the explicit lifecycle profile with
 desync detection off — the checksum lifecycle cases own that exchange — and
 quality, keepalive, notify and disconnect bounds far above the schedule, and
 protocol time still advances one microsecond per operation, so no timed traffic
-fires and the flood is pure delivery scheduling.
+fires and the flood is pure delivery scheduling. The committed schedules live
+in `scripts/oracle/fixtures/wrap_flood` with digest provenance in their
+manifest, so CI loads them instead of paying the builder's quadratic per-round
+replays (`p2p_wrap_regenerate.py` owns deliberate regeneration); the launch
+still verifies every gate against the current pinned binary, and a dedicated
+wave launcher runs the wrap corpus beside the rest of the P2P family.
 
 Every count two through eight holds the production default: the confirmed
 frontiers climb past row 128 and the default 128-row queues wrap (each peer

@@ -145,11 +145,11 @@ jobs:
     name: Godot ${{ matrix.version }} and Chromium ${{ matrix.part }}
     runs-on: ubuntu-24.04
     if: github.event_name != 'pull_request'
-    # The oracles wave's critical path is the p2p launcher: its builders rerun the
-    # growing scenario every round, and the default-capacity wrap floods through
-    # count eight (#379) put 16324 operations behind the
-    # eight-peer case, so the leg reserves headroom like its 45-minute ownership
-    # sibling instead of riding the old 30-minute bound.
+    # The oracles wave's critical path stays bounded by design: the committed
+    # wrap-flood fixtures (#379) keep the quadratic builders out of CI and the
+    # wave runs the wrap corpus in its own launcher beside p2p, but the family
+    # still reserves 45-minute headroom like its ownership sibling so a slow
+    # runner cannot hang the merge queue's 30-minute check-response timeout.
     timeout-minutes: 45
     strategy:
       fail-fast: false
