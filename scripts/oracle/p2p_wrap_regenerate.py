@@ -18,7 +18,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'reference'))
 import p2p_wrap
-from fetch import CACHE, load_manifest
+from fetch import CACHE, load_manifest, sources
 from run import setup_rust, rust_environment
 from launch import execute, git_identity
 from p2p_contract import validate, REVISION
@@ -33,6 +33,9 @@ def main():
     args = parser.parse_args()
     identity = git_identity()
     manifest = load_manifest()
+    # The oracle manifest resolves fortress-rollback through a cache path, so the
+    # pinned upstream tree must exist before the build, exactly like the launchers.
+    sources(manifest, args.offline)
     cargo, _ = setup_rust(manifest, args.offline)
     version = manifest['rust']['version']
     rust_dir = Path(__file__).resolve().parents[1] / 'oracle/rust/Cargo.toml'
