@@ -214,5 +214,171 @@ class DriftInputBoundTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
 
 
+OLD_REVISION = 'a' * 40
+NEW_REVISION = 'b' * 40
+
+
+def make_archive(folder, name, root, files):
+    """A deterministic-enough tar.gz candidate archive for the pin flow."""
+    import tarfile
+    archive = Path(folder) / name
+    staged = Path(folder) / ('stage-' + name)
+    for relative, text in files.items():
+        target = staged / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    with tarfile.open(archive, 'w:gz') as tar:
+        for path in sorted(staged.rglob('*')):
+            if path.is_file():
+                tar.add(path, arcname=str(Path(root) / path.relative_to(staged)))
+    return archive
+
+
+class DriftPinFlowTests(unittest.TestCase):
+    """Value: the observed tree is bound to its claimed revision before any
+    bookkeeping is recorded, an observation never advances the pin by itself,
+    and a failed binding leaves pins.json byte-identical."""
+
+    def corpus(self, folder, tree_files=None, archive_root='sdk-' + NEW_REVISION, archive_files=None):
+        base = Path(folder)
+        pins = base / 'pins.json'
+        pins.write_text(json.dumps({
+            'schema_version': 1,
+            'sources': {'sdk': {
+                'repository': 'https://github.com/example/sdk',
+                'revision': OLD_REVISION,
+                'archive': {'url': f'https://codeload.github.com/example/sdk/tar.gz/{OLD_REVISION}',
+                            'digest': '1' * 64, 'algorithm': 'sha256'},
+                'root': 'sdk-' + OLD_REVISION,
+            }},
+            'artifacts': {'sample.bin': {'url': 'https://example.com/sample.bin',
+                                         'digest': '3' * 64, 'algorithm': 'sha256'}},
+        }), encoding='utf-8')
+        old_tree = base / 'old-tree'; old_tree.mkdir()
+        new_tree = base / 'new-tree'; new_tree.mkdir()
+        old_files = {'src/lib.rs': 'pub fn step() -> u32 { 1 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
+        unchanged = {'src/lib.rs': 'pub fn step() -> u32 { 2 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
+        new_files = tree_files if tree_files is not None else unchanged
+        for name, text in old_files.items():
+            (old_tree / name).parent.mkdir(parents=True, exist_ok=True); (old_tree / name).write_text(text)
+        for name, text in new_files.items():
+            (new_tree / name).parent.mkdir(parents=True, exist_ok=True); (new_tree / name).write_text(text)
+        archive = make_archive(base, 'candidate.tar.gz', archive_root,
+                               archive_files if archive_files is not None else unchanged)
+        return pins, old_tree, new_tree, archive
+
+    def run_flow(self, folder, advance=False, source='sdk', revision=NEW_REVISION, **corpus):
+        pins, old_tree, new_tree, archive = self.corpus(folder, **corpus)
+        report = Path(folder) / 'report.json'
+        argv = ['--source', source, '--old', str(old_tree), '--new', str(new_tree),
+                '--pins', str(pins), '--new-revision', revision, '--archive', str(archive),
+                '--report', str(report)]
+        if advance:
+            argv.append('--advance')
+        return drift.main_with_args(argv), pins, report
+
+    def test_observation_records_bookkeeping_without_advancing_the_pin(self):
+        import hashlib
+        from datetime import date
+        with tempfile.TemporaryDirectory() as folder:
+            code, pins, report = self.run_flow(folder)
+            self.assertEqual(code, 0)
+            data = json.loads(pins.read_text())
+            entry = data['sources']['sdk']
+            self.assertEqual(entry['revision'], OLD_REVISION)
+            review = entry['review']
+            self.assertEqual(review['observed_revision'], NEW_REVISION)
+            self.assertEqual(review['observed_on'], date.today().isoformat())
+            self.assertNotIn('advanced_from', review)
+            self.assertEqual(review['report_sha256'], hashlib.sha256(report.read_bytes()).hexdigest())
+            self.assertEqual(review['archive_sha256'],
+                             hashlib.sha256((Path(folder) / 'candidate.tar.gz').read_bytes()).hexdigest())
+            written = json.loads(report.read_text())
+            self.assertEqual(written['candidate_revision'], NEW_REVISION)
+            self.assertEqual(written['candidate_url'], f'https://github.com/example/sdk/tree/{NEW_REVISION}')
+            self.assertEqual(written['records'][0]['url'], f'https://github.com/example/sdk/blob/{NEW_REVISION}/src/lib.rs')
+            self.assertEqual(written['requires_review'], ['src/lib.rs'])
+
+    def test_advance_rewrites_the_pin_and_the_manifest_stays_loadable(self):
+        from datetime import date
+        import fetch
+        with tempfile.TemporaryDirectory() as folder:
+            code, pins, report = self.run_flow(folder, advance=True)
+            self.assertEqual(code, 0)
+            data = json.loads(pins.read_text())
+            entry = data['sources']['sdk']
+            self.assertEqual(entry['revision'], NEW_REVISION)
+            self.assertEqual(entry['archive']['url'],
+                             f'https://codeload.github.com/example/sdk/tar.gz/{NEW_REVISION}')
+            self.assertEqual(entry['root'], 'sdk-' + NEW_REVISION)
+            self.assertEqual(entry['review']['advanced_from'], OLD_REVISION)
+            self.assertEqual(entry['review']['advanced_on'], date.today().isoformat())
+            # The rewritten manifest must load and validate exactly like a
+            # hand-reviewed pin bump would.
+            fetch.load_manifest(pins)
+
+    # Data-driven over the fail-closed binding controls: every refused flow must
+    # leave pins.json byte-identical and write no report at all.
+    def test_broken_candidates_refuse_without_bookkeeping(self):
+        import hashlib
+        cases = [
+            ('tree_exceeds_archive', {'tree_files': {'src/lib.rs': 'pub fn step() -> u32 { 2 }\n',
+                                                     'Cargo.toml': '[package]\n', 'src/extra.rs': 'x\n'}}),
+            ('archive_root_drift', {'archive_root': 'sdk-' + 'c' * 40}),
+            ('malformed_revision', {'revision': 'not-a-sha'}),
+            ('unknown_source', {'source': 'server'}),
+            ('content_mismatch', {'archive_files': {'src/lib.rs': 'pub fn step() -> u32 { 3 }\n',
+                                                    'Cargo.toml': '[package]\nname = "sdk"\n'}}),
+        ]
+        for name, options in cases:
+            with self.subTest(case=name):
+                with tempfile.TemporaryDirectory() as folder:
+                    code, pins, report = self.run_flow(folder, advance=True, **options)
+                    self.assertEqual(code, 1, name)
+                    self.assertFalse(report.exists(), name)
+                    self.assertNotIn('review', json.loads(pins.read_text())['sources']['sdk'], name)
+
+    def test_oversized_candidate_tree_is_a_tooling_error_before_any_write(self):
+        original = drift.MAX_FILE_BYTES
+        drift.MAX_FILE_BYTES = 8
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                files = {'src/lib.rs': 'pub fn step() -> u32 { 2 }  /* long enough */\n',
+                         'Cargo.toml': '[package]\nname = "sdk"\n'}
+                code, pins, report = self.run_flow(folder, tree_files=files)
+                self.assertEqual(code, 1)
+                self.assertFalse(report.exists())
+                self.assertNotIn('review', json.loads(pins.read_text())['sources']['sdk'])
+        finally:
+            drift.MAX_FILE_BYTES = original
+
+    def test_incomplete_flag_sets_are_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            for argv in (['--source', 'sdk', '--old', str(base), '--new', str(base), '--pins', str(base / 'p.json')],
+                         ['--source', 'sdk', '--old', str(base), '--new', str(base), '--new-revision', NEW_REVISION,
+                          '--archive', str(base), '--advance']):
+                self.assertEqual(drift.main_with_args(argv), 1, argv)
+
+    def test_malformed_bookkeeping_fails_manifest_load(self):
+        import fetch
+        with tempfile.TemporaryDirectory() as folder:
+            pins = Path(folder) / 'pins.json'
+            pins.write_text(json.dumps({
+                'schema_version': 1,
+                'sources': {'sdk': {
+                    'repository': 'https://github.com/example/sdk', 'revision': OLD_REVISION,
+                    'archive': {'url': f'https://codeload.github.com/example/sdk/tar.gz/{OLD_REVISION}',
+                                'digest': '1' * 64, 'algorithm': 'sha256'},
+                    'root': 'sdk-' + OLD_REVISION,
+                    'review': {'observed_revision': NEW_REVISION, 'observed_on': '2026-11-16',
+                               'report_sha256': 'short', 'archive_sha256': '2' * 64},
+                }},
+                'artifacts': {},
+            }), encoding='utf-8')
+            with self.assertRaises(ValueError):
+                fetch.load_manifest(pins)
+
+
 if __name__ == '__main__':
     unittest.main()

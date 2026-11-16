@@ -134,6 +134,38 @@ python3 scripts/reference/drift.py --source fortress --old REVIEWED_TREE --new O
     --ledger docs/reference/parity-ledger.json --report drift-report.json
 ```
 
+### Observation and advancement
+
+The pin flow binds the observed tree to its claimed revision before any
+bookkeeping is recorded: the candidate archive is digested, extracted and
+required to match the compared tree byte for byte, so a mismatched tree,
+archive or revision is a tooling error and `docs/reference/pins.json` stays
+untouched. Without `--advance` the tool only records the observation under
+`sources[name].review` (`observed_revision`, `observed_on`, and the report and
+archive digests); with `--advance` it additionally rewrites the pin itself —
+`revision`, archive URL, digest and root — records `advanced_from` and
+`advanced_on`, and stamps every changed path with a commit link. Every recorded
+field is validated by `fetch.load_manifest`, so malformed bookkeeping fails the
+next manifest load. Extract the observed tree from the same archive you pass,
+because the binding compares byte for byte including file modes:
+
+```sh
+curl -L -o /tmp/candidate.tar.gz https://codeload.github.com/wallstop/fortress-rollback/tar.gz/<sha>
+mkdir -p /tmp/candidate && tar -xzf /tmp/candidate.tar.gz -C /tmp/candidate
+python3 scripts/reference/drift.py --source fortress \
+    --old .cache/reference/fortress-rollback-<reviewed-sha> \
+    --new /tmp/candidate/fortress-rollback-<sha> \
+    --pins docs/reference/pins.json --new-revision <sha> \
+    --archive /tmp/candidate.tar.gz \
+    --ledger docs/reference/parity-ledger.json --report .cache/scratch/drift-report.json --advance
+```
+
+The report is the review evidence, not the approval: an advanced pin merges
+only after a full oracle requalification run against it (the Reference
+Baseline workflow runs the complete differential on every pins.json change)
+and a reviewed `requires_review` list. The weekly observation cadence and the
+deduplicated reporting stay in M2 (#52).
+
 ## Evidence and remaining gates
 
 [baseline.md](baseline.md) records actual results, exact selections, negative

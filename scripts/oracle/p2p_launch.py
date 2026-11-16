@@ -65,7 +65,8 @@ def wrap_fixture(name):
         raise ValueError('wrap fixture digest drift: ' + name + '; regenerate the fixtures')
     validate_scenario(scenario)
     if (scenario['players'] != p2p_wrap.PROFILES[name][0] or scenario.get('queue_capacity', 128) != p2p_wrap.PROFILES[name][1]
-            or scenario['max_prediction'] != p2p_wrap.PROFILES[name][3]):
+            or scenario['max_prediction'] != p2p_wrap.PROFILES[name][3]
+            or scenario.get('delays') != p2p_wrap.PROFILES[name][4]):
         raise ValueError('wrap fixture profile drift: ' + name)
     return scenario
 
