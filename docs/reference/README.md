@@ -136,11 +136,15 @@ python3 scripts/reference/drift.py --source fortress --old REVIEWED_TREE --new O
 
 ### Observation and advancement
 
-The pin flow binds the observed tree to its claimed revision before any
+The pin flow binds the compared trees to the archives you supply before any
 bookkeeping is recorded: the candidate archive is digested, extracted and
-required to match the compared tree byte for byte, so a mismatched tree,
-archive or revision is a tooling error and `docs/reference/pins.json` stays
-untouched. Without `--advance` the tool only records the observation under
+required to match the compared tree byte for byte, and `--old` must byte-match
+the reviewed pin's cached archive (taken offline from the fetch cache against
+the manifest digest — run `python3 scripts/reference/fetch.py` first; a cold
+cache refuses with a named error). Supply the codeload archive for the
+claimed revision: the recorded candidate digest is proven to be the upstream
+archive when the next fetch verifies it. Without `--advance` the tool only
+records the observation under
 `sources[name].review` (`observed_revision`, `observed_on`, and the report and
 archive digests); with `--advance` it additionally rewrites the pin itself —
 `revision`, archive URL, digest and root — records `advanced_from` and

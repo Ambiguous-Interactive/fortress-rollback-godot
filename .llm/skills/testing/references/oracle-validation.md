@@ -116,8 +116,8 @@ drift at the end (`launch.require_unchanged` over `source_files()`,
 `native_source_snapshot` over `git ls-files --others`, plus commit and dirty
 identity): never create, edit or commit any tracked file while an oracle
 launcher, receipt capture or the parallel unittest runner holds the tree — including
-creating a non-ignored untracked file, which the same snapshots count via
-`git ls-files --others`. Twice recorded before it was systematized: session 190's wrap receipts died
+creating or editing a non-ignored untracked file, which the same snapshots
+count via `git ls-files --others` (their contents are hashed). Twice recorded before it was systematized: session 190's wrap receipts died
 on "evidence identity changed" from a file created mid-run, and session 191
 repeated it (a tooling file created during `test_godot_runner`, then a
 mid-run commit failing the corpus's repository-identity check). Finish or

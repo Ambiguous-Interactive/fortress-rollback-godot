@@ -842,10 +842,12 @@ tests/models/fixtures, dependencies and documentation.
 source trees, maps every changed path onto its parity-ledger entry and fails
 closed on unmatched shapes or broken inputs; its conservative signals
 (whitespace/comment-only, constants, attributes/macros, cfg gates) inform
-review and never clear a path from it. Its pin flow binds the observed tree to
-its claimed revision through the candidate archive's digest and extraction,
-records the observation under `sources[name].review` in pins.json, and its
-`--advance` mode rewrites the pin (revision, archive URL, digest and root)
+review and never clear a path from it. Its pin flow binds the compared trees
+to the archives the operator supplies — the candidate archive's digest and
+extraction, and `--old` byte-matched against the reviewed pin's cached
+archive — and records the observation under `sources[name].review` in
+pins.json; its `--advance` mode rewrites the pin (revision, archive URL,
+digest and root)
 with `advanced_from`/`advanced_on` bookkeeping and per-path commit links —
 the report is the review evidence; the pin merges only after a full oracle
 requalification against the new revision. M2 owns wiring the classifier into a

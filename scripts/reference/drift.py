@@ -21,11 +21,16 @@ Usage:
         --pins docs/reference/pins.json --new-revision <sha40> --archive CANDIDATE.tar.gz \
         --ledger docs/reference/parity-ledger.json --report REPORT.json [--advance]
 
-Pin flows (#51): with `--pins`, `--new-revision` and `--archive`, the tool binds
-the observed tree to its claimed revision before any bookkeeping is written —
-the archive is digested, extracted and required to match `--new` byte for byte,
-so a mismatched tree, archive or revision is a tooling error, never a recorded
-observation. Without `--advance` this only records the observation under
+Pin flows (#51): with `--pins`, `--new-revision` and `--archive`, the tool
+binds the compared trees to the archives you supply before any bookkeeping
+is written — the candidate archive is digested, extracted and required to
+match `--new` byte for byte, and `--old` must byte-match the reviewed pin's
+cached archive (`fetch.fetch` offline against the manifest digest), so a
+mismatched tree, archive or revision is a tooling error, never a recorded
+observation. Supply the codeload archive for the claimed revision: the
+recorded candidate digest is proven to be the upstream archive when the
+next fetch verifies it. Without `--advance` this only records the
+observation under
 `sources[name].review` (`observed_revision`, `observed_on`, digests). With
 `--advance` it additionally rewrites the pin itself (`revision`, archive URL,
 digest and root), records `advanced_from`/`advanced_on`, and stamps every
@@ -47,6 +52,7 @@ import tempfile
 from datetime import date
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fetch
 from fetch import CACHE, same_tree
 
 # Walk bounds: one pinned upstream tree holds a few thousand files well inside
@@ -335,7 +341,35 @@ def summarize(report):
     return '\n'.join(lines)
 
 
-def candidate_tree(archive_path, expected_root, tree, cache=CACHE):
+def verify_reviewed_tree(entry, old_tree, cache=None):
+    """Require `old_tree` to be the pinned extraction of the reviewed archive.
+
+    The report's `reviewed_revision` is trusted only when the compared old
+    tree byte-matches the reviewed archive the manifest pins: the archive is
+    taken from the local fetch cache (`fetch.fetch` offline, so no network
+    runs here and a cold cache refuses with a named error telling the
+    operator to fetch first), digested against the manifest's recorded
+    digest, extracted and required to equal `--old` byte for byte. Any other
+    tree — including a second copy of the candidate — fails closed before
+    the comparison runs.
+    """
+    cache = CACHE if cache is None else cache
+    archive = fetch.fetch(entry['archive'], f'{entry["revision"]}.tar.gz', offline=True, cache=cache)
+    expected_root = entry['root']
+    reviewed_digest = digest(archive)
+    with tempfile.TemporaryDirectory(dir=Path(cache)) as temporary:
+        with tarfile.open(archive) as tar:
+            members = tar.getmembers()
+            if not members or any(member.name.split('/')[0] != expected_root for member in members):
+                raise ValueError(f'reviewed archive root mismatch: expected {expected_root}')
+            tar.extractall(temporary, filter='data')
+        if not same_tree(Path(temporary) / expected_root, Path(old_tree)):
+            raise ValueError(f'--old is not the reviewed pin extraction: {old_tree}; '
+                             'run scripts/reference/fetch.py and pass its extraction')
+    return reviewed_digest
+
+
+def candidate_tree(archive_path, expected_root, tree, cache=None):
     """Digest and extract the candidate archive; require it to be the compared tree.
 
     The extraction binds the compared tree to the archive the operator
@@ -353,7 +387,7 @@ def candidate_tree(archive_path, expected_root, tree, cache=CACHE):
     """
     archive = Path(archive_path)
     archive_digest = digest(archive)
-    cache = Path(cache)
+    cache = CACHE if cache is None else Path(cache)
     cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=cache) as temporary:
         with tarfile.open(archive) as tar:
@@ -467,20 +501,21 @@ def main_with_args(argv):
         if pin_flow:
             if args.report.is_dir():
                 raise ValueError(f'the report destination is a directory: {args.report}')
+            verify_reviewed_tree(entry, args.old)
             archive_digest = candidate_tree(args.archive, expected_root, args.new)
             report_bytes = json.dumps(report, indent=2).encode('utf-8') + b'\n'
             report_digest = hashlib.sha256(report_bytes).hexdigest()
-            # The report is staged next to its destination and the pins
-            # bookkeeping runs before either lands: a failed advancement leaves
-            # no report describing an unrecorded observation, and a failed
-            # report write leaves the pins untouched — never a half-recorded
-            # advancement whose digest names bytes that never existed.
+            # The report installs before the pins commit: after staging, the
+            # only failure left is the bookkeeping itself, so every failure
+            # leaves the pin untouched — never an advanced revision whose
+            # recorded report digest names bytes that never landed (a report
+            # left over by a later failure is inert evidence, not bookkeeping).
             staged = args.report.with_name(args.report.name + '.tmp')
             try:
                 staged.write_bytes(report_bytes)
+                staged.replace(args.report)
                 update_pins(args.pins, args.source, args.new_revision, archive_digest,
                             report_digest, args.advance, date.today().isoformat())
-                staged.replace(args.report)
             finally:
                 staged.unlink(missing_ok=True)
         else:

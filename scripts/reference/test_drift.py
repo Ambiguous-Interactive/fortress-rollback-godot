@@ -4,6 +4,7 @@ The classifier must label every synthetic change shape issue #51 lists, route
 unmatched shapes to review, and fail closed on broken inputs instead of
 reporting no drift.
 """
+import hashlib
 import json
 import tempfile
 import unittest
@@ -243,13 +244,24 @@ class DriftPinFlowTests(unittest.TestCase):
     def corpus(self, folder, tree_files=None, archive_root='sdk-' + NEW_REVISION, archive_files=None):
         base = Path(folder)
         pins = base / 'pins.json'
+        old_files = {'src/lib.rs': 'pub fn step() -> u32 { 1 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
+        unchanged = {'src/lib.rs': 'pub fn step() -> u32 { 2 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
+        new_files = tree_files if tree_files is not None else unchanged
+        # The reviewed archive binds --old: tarball the old tree under its
+        # pinned root, seed the offline fetch cache with it and record the
+        # digest in the manifest exactly like a real pin would.
+        reviewed = make_archive(base, 'reviewed.tar.gz', 'sdk-' + OLD_REVISION, old_files)
+        downloads = base / 'cache' / 'downloads'
+        downloads.mkdir(parents=True, exist_ok=True)
+        (downloads / (OLD_REVISION + '.tar.gz')).write_bytes(reviewed.read_bytes())
         pins.write_text(json.dumps({
             'schema_version': 1,
             'sources': {'sdk': {
                 'repository': 'https://github.com/example/sdk',
                 'revision': OLD_REVISION,
                 'archive': {'url': f'https://codeload.github.com/example/sdk/tar.gz/{OLD_REVISION}',
-                            'digest': '1' * 64, 'algorithm': 'sha256'},
+                            'digest': hashlib.sha256(reviewed.read_bytes()).hexdigest(),
+                            'algorithm': 'sha256'},
                 'root': 'sdk-' + OLD_REVISION,
             }},
             'artifacts': {'sample.bin': {'url': 'https://example.com/sample.bin',
@@ -257,9 +269,6 @@ class DriftPinFlowTests(unittest.TestCase):
         }), encoding='utf-8')
         old_tree = base / 'old-tree'; old_tree.mkdir()
         new_tree = base / 'new-tree'; new_tree.mkdir()
-        old_files = {'src/lib.rs': 'pub fn step() -> u32 { 1 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
-        unchanged = {'src/lib.rs': 'pub fn step() -> u32 { 2 }\n', 'Cargo.toml': '[package]\nname = "sdk"\n'}
-        new_files = tree_files if tree_files is not None else unchanged
         for name, text in old_files.items():
             (old_tree / name).parent.mkdir(parents=True, exist_ok=True); (old_tree / name).write_text(text)
         for name, text in new_files.items():
@@ -276,7 +285,11 @@ class DriftPinFlowTests(unittest.TestCase):
                 '--report', str(report)]
         if advance:
             argv.append('--advance')
-        return drift.main_with_args(argv), pins, report
+        # The pin flow reads the reviewed archive from the fetch cache the
+        # corpus seeds; point the tool's cache root at it.
+        with patch.object(drift, 'CACHE', Path(folder) / 'cache'):
+            code = drift.main_with_args(argv)
+        return code, pins, report
 
     def test_observation_records_bookkeeping_without_advancing_the_pin(self):
         import hashlib
@@ -368,10 +381,14 @@ class DriftPinFlowTests(unittest.TestCase):
 
     def test_advance_creates_a_missing_cache_root(self):
         # A fresh checkout has no .cache/reference yet; the extraction staging
-        # area creates its root instead of refusing the whole pin flow.
+        # area creates its root instead of refusing the whole pin flow. The
+        # reviewed archive still comes from the seeded fetch cache.
         with tempfile.TemporaryDirectory() as folder:
             pins, old_tree, new_tree, archive = self.corpus(folder)
             cache = Path(folder) / 'fresh' / 'reference'
+            (cache / 'downloads').mkdir(parents=True)
+            seed = Path(folder) / 'cache' / 'downloads' / (OLD_REVISION + '.tar.gz')
+            (cache / 'downloads' / (OLD_REVISION + '.tar.gz')).write_bytes(seed.read_bytes())
             report = Path(folder) / 'report.json'
             argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
                     '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
@@ -379,6 +396,24 @@ class DriftPinFlowTests(unittest.TestCase):
             with patch.object(drift, 'CACHE', cache):
                 self.assertEqual(drift.main_with_args(argv), 0)
             self.assertTrue((Path(folder) / 'report.json').exists())
+
+    def test_advance_refuses_a_wrong_old_tree(self):
+        # The compared old tree must byte-match the reviewed pin's cached
+        # archive: a second copy of the candidate (or any other tree) fails
+        # closed before the comparison runs, so the report's reviewed_revision
+        # always describes the tree actually compared.
+        with tempfile.TemporaryDirectory() as folder:
+            pins, old_tree, new_tree, archive = self.corpus(folder)
+            report = Path(folder) / 'report.json'
+            argv = ['--source', 'sdk', '--old', str(new_tree), '--new', str(new_tree),
+                    '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
+                    '--report', str(report), '--advance']
+            with patch.object(drift, 'CACHE', Path(folder) / 'cache'):
+                self.assertEqual(drift.main_with_args(argv), 1)
+            entry = json.loads(pins.read_text(encoding='utf-8'))['sources']['sdk']
+            self.assertEqual(entry['revision'], OLD_REVISION)
+            self.assertNotIn('review', entry)
+            self.assertFalse(report.exists())
 
     def test_advance_refuses_when_the_report_cannot_land(self):
         # A failed report write must leave the pin untouched: never an advanced
