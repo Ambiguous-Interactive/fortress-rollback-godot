@@ -633,10 +633,12 @@ eight-peer default case fits the deliberately raised 20000-operation scenario
 bound — and a named 32-row scale point keeps the full-fanout small-ring
 witness; the same flood at the deepest supported prediction window on four
 peers (`mesh_4_wrap_flood_window_8`) pins the wrap axis at the boundary window
-with its deeper stall cap and LOAD heal, and the two delay profiles wrap the
+with its deeper stall cap and LOAD heal, the two delay profiles wrap the
 same flood under heterogeneous per-peer construction delays — the band's three
 distinct extremes on three peers and interleaved extremes on four — so delayed
-early samples stay stamped, compared and confirmed through the heal. The flood withholds every packet for
+early samples stay stamped, compared and confirmed through the heal, and the
+capacity-nine profile runs the same flood on the non-power-of-two nine-row
+ring, so the healed frontier passes the whole reduced ring several rows deep. The flood withholds every packet for
 six rounds so the frontier
 freezes and the mesh stalls silently at the prediction limit, and the reversed
 duplicate-carrying burst heals through one deep LOAD correction with every
