@@ -7,13 +7,15 @@ the reviewed pin through `drift.py`, and reports the result on exactly one
 ongoing GitHub issue per source, so every observation of a stream lands on
 the same thread instead of piling up duplicate issues.
 
-The deduplicated issue is found by a stable marker in its body — never by the
-search API, whose index lags behind writes and cannot implement
-read-before-retry — across open and closed issues, so a closed stream is
-reopened instead of duplicated. Each observation appends one comment carrying
-a `report-digest`; a repeated run with an identical digest (the same upstream
-state observed twice) comments nothing, and more than one carrier issue for a
-stream is a tooling error rather than a silent split stream.
+The deduplicated issue is found by the tool's title plus a stable marker in
+its body — never by the search API, whose index lags behind writes and cannot
+implement read-before-retry — across open and closed issues, so a closed
+stream is reopened when a new observation arrives rather than duplicated, and
+a repeated observation of an identical state (same path-free report identity
+digest) writes nothing at all. Digests are read only from tool-authored,
+marker-carried comments, so a foreign comment cannot suppress an observation;
+more than one carrier issue for a stream is a tooling error rather than a
+silent split stream.
 
 The reporter only reports. It never rewrites pins.json, never advances a pin,
 and never regenerates fixtures: advancing stays the reviewed operator flow
@@ -141,7 +143,7 @@ def download_archive(entry, revision, destination_dir):
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
             raise
-        except (urllib.error.URLError, OSError, http.client.IncompleteRead) as error:
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as error:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
             if attempt == DOWNLOAD_ATTEMPTS - 1:
@@ -257,16 +259,24 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
     `fetch.fetch` guarantees, so its identity is bound by construction; the
     candidate tree is extracted from the downloaded archive under its expected
     root. The carrier check runs before any comparison work, so a broken
-    stream fails closed without writing a report. Returns the per-source
-    result record.
+    stream fails closed without writing a report. Adoption needs the tool's
+    title AND the stream marker; an issue carrying only one of them is named
+    on stderr because it will silently fork the stream. Returns the
+    per-source result record.
     """
     validate_revision(latest)
     expected_title = f'Upstream drift report: {source}'
-    # Adoption requires the marker AND the tool's title: an honest body copy or
-    # a phantom issue with only the marker cannot hijack or fork the stream.
-    carriers = [issue for issue in issues.list_issues()
-                if issue.get('title') == expected_title
-                and f'<!-- {MARKER_PREFIX}:{source} -->' in issue['body']]
+    marker = f'<!-- {MARKER_PREFIX}:{source} -->'
+    all_issues = issues.list_issues()
+    carriers = [issue for issue in all_issues
+                if issue.get('title') == expected_title and marker in issue['body']]
+    for issue in all_issues:
+        has_marker = marker in issue['body']
+        has_title = issue.get('title') == expected_title
+        if has_marker != has_title:
+            print(f'{source}: issue #{issue["number"]} carries only the '
+                  f'{"stream marker" if has_marker else "stream title"} and is not adopted; '
+                  'it can fork the stream until it is closed or retitled', file=sys.stderr)
     if len(carriers) > 1:
         raise ToolingError(f'{source}: {len(carriers)} issues carry the drift-report marker '
                            f'({", ".join("#" + str(issue["number"]) for issue in carriers)}); '

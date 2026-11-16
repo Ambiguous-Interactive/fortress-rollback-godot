@@ -189,11 +189,13 @@ extracts the reviewed tree from the digest-verified pinned archive and the
 candidate tree from its download, classifies the drift
 through `drift.py`, and appends one observation comment — carrying a stable
 `report-digest` — to exactly one ongoing issue per source. The carrier issue
-is found by a stable marker in its body across open *and* closed issues, not
-through the search API (whose index lags behind writes), so a closed stream
-is reopened rather than duplicated and a repeated observation of an identical
-state comments nothing; two carrier issues for one stream are a tooling error
-that fails the run before any write. The reporter only reports: it never
+is found by the tool's title plus a stable marker in its body across open
+*and* closed issues, not through the search API (whose index lags behind
+writes), so a closed stream is reopened when a new observation arrives rather
+than duplicated and a repeated observation of an identical state writes
+nothing; observation digests are read only from marker-carried comments, and
+two carrier issues for one stream are a tooling error that fails the run
+before any write. The reporter only reports: it never
 rewrites `pins.json`, never advances a pin and never regenerates fixtures —
 advancing stays the reviewed operator flow above, and the issue body carries
 that checklist. Run it by hand the same way the workflow does:

@@ -183,16 +183,35 @@ class DriftReportTests(unittest.TestCase):
     def test_a_foreign_digest_comment_never_suppresses_the_observation(self):
         # Digests are read only from tool-authored (marker-carried) comments:
         # anyone can compute the identity digest from public inputs, so a
-        # foreign digest line must not make the run skip its observation.
+        # foreign comment carrying the GENUINE digest must not make the run
+        # skip its observation. The genuine digest is what makes this pin
+        # real: a filter regression would suppress and this test would fail.
         self.prepare_candidate(NEW_SHA, NEW_FILES)
-        carrier = FakeIssues(carriers=[('open', f'<!-- {drift_report.MARKER_PREFIX}:fortress -->\nstale\n')])
-        number = next(iter(carrier.issues))
-        carrier.add_comment(number, 'looks like this is already recorded\nreport-digest: `deadbeef`\n')
-        code, fake = self.run_report(NEW_SHA, issues=carrier)
+        _, first = self.run_report(NEW_SHA)
+        digest = json.loads((self.output / 'fortress.json').read_text(encoding='utf-8'))['report_digest']
+        hijacked = FakeIssues(carriers=[('open', f'<!-- {drift_report.MARKER_PREFIX}:fortress -->\nstale\n')])
+        number = next(iter(hijacked.issues))
+        # The exact line a well-meaning observer pasting the digest produces:
+        # the content-based parser matches it, so only the marker filter can
+        # keep the observation landing.
+        hijacked.add_comment(number, f'Already recorded elsewhere.\nreport-digest: `{digest}`\n')
+        code, fake = self.run_report(NEW_SHA, issues=hijacked)
         self.assertEqual(code, 0)
         comments = fake.comments[number]
         self.assertEqual(len(comments), 2)
         self.assertIn(f'<!-- {drift_report.REPORT_PREFIX}:fortress -->', comments[-1]['body'])
+
+    def test_a_near_miss_stream_issue_is_named(self):
+        # An issue carrying only the marker or only the title is not adopted;
+        # the run names it so the fork stays visible instead of silent.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        near_miss = FakeIssues()
+        near_miss.create_issue('Drift chatter', f'<!-- {drift_report.MARKER_PREFIX}:fortress -->\n')
+        code, fake = self.run_report(NEW_SHA, issues=near_miss)
+        self.assertEqual(code, 0)
+        adopted = [issue for issue in fake.issues.values()
+                   if issue['title'] == 'Upstream drift report: fortress']
+        self.assertEqual(len(adopted), 1)
 
     def test_a_phantom_marker_without_the_title_is_not_adopted(self):
         # Adoption needs the marker AND the tool's title, so an issue that
