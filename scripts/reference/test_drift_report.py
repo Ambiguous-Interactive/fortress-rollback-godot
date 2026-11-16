@@ -55,13 +55,17 @@ def make_archive(files, root, destination):
 
 
 class FakeIssues:
-    def __init__(self, carriers=()):
+    def __init__(self, carriers=(), identity='reporter'):
+        self.identity = identity
         self.issues = {}
         self.comments = {}
         self._next = 1
         for state, body in carriers:
             self.create_issue('Upstream drift report: fortress', body)
             self.issues[self._next - 1]['state'] = state
+
+    def current_login(self):
+        return self.identity
 
     def list_issues(self):
         return [{'number': number, 'state': issue['state'], 'title': issue['title'],
@@ -84,8 +88,8 @@ class FakeIssues:
     def list_comments(self, number):
         return [dict(comment) for comment in self.comments[number]]
 
-    def add_comment(self, number, body):
-        self.comments[number].append({'body': body})
+    def add_comment(self, number, body, author=None):
+        self.comments[number].append({'author': author or self.identity, 'body': body})
 
 
 class DriftReportTests(unittest.TestCase):
@@ -115,8 +119,8 @@ class DriftReportTests(unittest.TestCase):
     def tearDown(self):
         self._root.cleanup()
 
-    def prepare_candidate(self, revision, files):
-        self.candidate[revision] = make_archive(files, f'fortress-{revision}',
+    def prepare_candidate(self, revision, files, stem='fortress'):
+        self.candidate[revision] = make_archive(files, f'{stem}-{revision}',
                                                 Path(self._root.name) / f'candidate-{revision}.tar.gz')
 
     def run_report(self, latest, issues=None, resolve=None, override=True, extra=()):
@@ -194,12 +198,59 @@ class DriftReportTests(unittest.TestCase):
         # The exact line a well-meaning observer pasting the digest produces:
         # the content-based parser matches it, so only the marker filter can
         # keep the observation landing.
-        hijacked.add_comment(number, f'Already recorded elsewhere.\nreport-digest: `{digest}`\n')
+        hijacked.add_comment(number, f'Already recorded elsewhere.\nreport-digest: `{digest}`\n',
+                             author='someone')
         code, fake = self.run_report(NEW_SHA, issues=hijacked)
         self.assertEqual(code, 0)
         comments = fake.comments[number]
         self.assertEqual(len(comments), 2)
         self.assertIn(f'<!-- {drift_report.REPORT_PREFIX}:fortress -->', comments[-1]['body'])
+
+    def test_a_copied_marker_from_a_foreign_author_never_suppresses_the_observation(self):
+        # The marker line is public too, so authorship is the gate: a foreign
+        # author pasting BOTH the marker and the genuine digest must not be
+        # accepted as completion evidence.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        _, first = self.run_report(NEW_SHA)
+        digest = json.loads((self.output / 'fortress.json').read_text(encoding='utf-8'))['report_digest']
+        mimic = FakeIssues(carriers=[('open', f'<!-- {drift_report.MARKER_PREFIX}:fortress -->\nstale\n')])
+        number = next(iter(mimic.issues))
+        mimic.add_comment(number, f'<!-- {drift_report.REPORT_PREFIX}:fortress -->\n'
+                                  f'report-digest: `{digest}`\n', author='mimic')
+        code, fake = self.run_report(NEW_SHA, issues=mimic)
+        self.assertEqual(code, 0)
+        comments = fake.comments[number]
+        self.assertEqual(len(comments), 2)
+        self.assertEqual(comments[-1]['author'], 'reporter')
+
+    def test_the_scheduled_identity_settles_into_a_quiet_cadence(self):
+        # The identity that authored the recorded digest is the one the rule
+        # trusts: a same-identity rerun of the same state stays quiet even
+        # though foreign comments carry the same digest.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        _, fake = self.run_report(NEW_SHA)
+        number = next(iter(fake.issues))
+        fake.add_comment(number, f'report-digest: `{json.loads((self.output / "fortress.json").read_text())["report_digest"]}`\n',
+                         author='someone')
+        code, _ = self.run_report(NEW_SHA, issues=fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.comments[number]), 2)
+
+    def test_affected_port_tests_render_into_the_comment(self):
+        # M2 asks the report to name affected tests: ledger-mapped port-test
+        # identities render into the observation comment.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        ledger = Path(self._root.name) / 'ledger.json'
+        ledger.write_text(json.dumps({'decisions': {'fortress:src/session.rs': {
+            'status': 'covered', 'applicability': 'applicable',
+            'port_test_ids': ['tests/unit/test_session.gd::rollback']}}}), encoding='utf-8')
+        code, fake = self.run_report(NEW_SHA, extra=['--ledger', str(ledger)])
+        self.assertEqual(code, 0)
+        number = next(iter(fake.issues))
+        comment = fake.comments[number][0]['body']
+        self.assertIn('Affected port tests: `src/session.rs`: `tests/unit/test_session.gd::rollback`.',
+                      comment)
+        self.assertIn('Requires review: `src/session.rs`.', comment)
 
     def test_a_near_miss_stream_issue_is_named(self):
         # An issue carrying only the marker or only the title is not adopted;
@@ -377,6 +428,48 @@ class DriftReportTests(unittest.TestCase):
             path.name for path in (self.cache).rglob('*') if path.is_file())
         self.assertEqual(before, after)
 
+    def test_partial_failure_still_reports_the_remaining_sources(self):
+        # Two sources: the first fails on a corrupt candidate archive, the
+        # second still reports, and the run exits 1 naming only the failure.
+        sdk_revision = 'd' * 40
+        sdk_latest = 'e' * 40
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        sdk_archive = make_archive({'src/a.rs': 'fn main() {}\n'}, f'sdk-{sdk_revision}',
+                                   self.cache / 'downloads' / f'{sdk_revision}.tar.gz')
+        sdk_digest = hashlib.sha256(sdk_archive.read_bytes()).hexdigest()
+        data = json.loads(self.pins.read_text(encoding='utf-8'))
+        data['sources']['sdk'] = {
+            'revision': sdk_revision, 'repository': 'https://github.com/example/sdk',
+            'root': f'sdk-{sdk_revision}',
+            'archive': {'url': f'https://github.com/example/sdk/tar.gz/{sdk_revision}',
+                        'digest': sdk_digest, 'algorithm': 'sha256'}}
+        self.pins.write_text(json.dumps(data), encoding='utf-8')
+        self.prepare_candidate(sdk_revision, {'src/a.rs': 'fn main() { 1 }\n'}, stem='sdk')
+        self.prepare_candidate(sdk_latest, {'src/a.rs': 'fn main() { 2 }\n'}, stem='sdk')
+        broken = Path(self._root.name) / 'broken.tar.gz'
+        broken.write_bytes(b'not a gzip file')
+        real_download = self.candidate
+
+        def download(entry, revision, destination_dir):
+            if revision == NEW_SHA:
+                return broken
+            return real_download[revision]
+
+        def resolve(entry):
+            return sdk_latest if entry['root'].startswith('sdk-') else NEW_SHA
+
+        fake = FakeIssues()
+        argv = ['--pins', str(self.pins), '--cache', str(self.cache), '--output', str(self.output),
+                '--repo', 'example/fortress']
+        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+             patch.object(drift_report, 'download_archive', download), \
+             patch.object(drift_report, 'resolve_latest', resolve):
+            code = drift_report.main_with_args(argv)
+        self.assertEqual(code, 1)
+        # sdk still created its stream; fortress has none.
+        streams = sorted(issue['title'] for issue in fake.issues.values())
+        self.assertEqual(streams, ['Upstream drift report: sdk'])
+
 
 class GhIssueClientTests(unittest.TestCase):
     def run_client(self, argv_responses, call):
@@ -432,6 +525,38 @@ class GhIssueClientTests(unittest.TestCase):
         with self.assertRaises(drift_report.ToolingError) as caught:
             self.run_client([('', 4)], lambda client: client.list_issues())
         self.assertIn('boom', str(caught.exception))
+
+    def test_a_timed_out_gh_call_is_a_named_tooling_error(self):
+        # subprocess.TimeoutExpired is not an OSError: the adapters convert it,
+        # so a slow gh call fails its source instead of crashing the run.
+        import subprocess
+
+        def timeout_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd='gh', timeout=120)
+
+        client = drift_report.GhIssueClient('example/fortress')
+        with patch.object(drift_report.subprocess, 'run', timeout_run):
+            with self.assertRaises(drift_report.ToolingError) as caught:
+                client.list_issues()
+        self.assertIn('timed out', str(caught.exception))
+
+    def test_the_reporting_identity_is_resolved_and_validated(self):
+        result, calls = self.run_client([('gh-bot\n', 0)], lambda client: client.current_login())
+        self.assertEqual(result, 'gh-bot')
+        self.assertIn('user', calls[0])
+
+        def empty_login(*args, **kwargs):
+            class Done:
+                returncode = 0
+                stdout = '\n'
+                stderr = ''
+            return Done()
+
+        client = drift_report.GhIssueClient('example/fortress')
+        with patch.object(drift_report.subprocess, 'run', empty_login):
+            with self.assertRaises(drift_report.ToolingError) as caught:
+                client.current_login()
+        self.assertIn('empty login', str(caught.exception))
 
 
 if __name__ == '__main__':

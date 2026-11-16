@@ -13,7 +13,8 @@ implement read-before-retry — across open and closed issues, so a closed
 stream is reopened when a new observation arrives rather than duplicated, and
 a repeated observation of an identical state (same path-free report identity
 digest) writes nothing at all. Digests are read only from tool-authored,
-marker-carried comments, so a foreign comment cannot suppress an observation;
+marker-carried comments authored by this run's reporting identity, so a
+foreign comment cannot suppress an observation even with a copied marker;
 more than one carrier issue for a stream is a tooling error rather than a
 silent split stream.
 
@@ -159,8 +160,11 @@ class GhIssueClient:
         self.repo = repo
 
     def _api(self, args):
-        result = subprocess.run(['gh', 'api', *args], capture_output=True, encoding='utf-8',
-                                timeout=GH_TIMEOUT, check=False)
+        try:
+            result = subprocess.run(['gh', 'api', *args], capture_output=True, encoding='utf-8',
+                                    timeout=GH_TIMEOUT, check=False)
+        except subprocess.TimeoutExpired as error:
+            raise ToolingError(f'gh api timed out after {GH_TIMEOUT}s: {args}') from error
         if result.returncode != 0:
             raise ToolingError(f'gh api failed ({result.returncode}): {result.stderr.strip()}')
         return result.stdout
@@ -192,11 +196,22 @@ class GhIssueClient:
         self._api(['-X', 'PATCH', f'repos/{self.repo}/issues/{number}', *flat])
 
     def list_comments(self, number):
-        return [{'body': item.get('body') or ''}
+        return [{'author': (item.get('user') or {}).get('login') or '', 'body': item.get('body') or ''}
                 for item in self._paged(f'repos/{self.repo}/issues/{number}/comments?per_page=100')]
 
     def add_comment(self, number, body):
         self._api(['-X', 'POST', f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={body}'])
+
+    def current_login(self):
+        """The identity this run reports as; digest evidence is trusted only from it."""
+        result = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], capture_output=True,
+                                encoding='utf-8', timeout=GH_TIMEOUT, check=False)
+        if result.returncode != 0:
+            raise ToolingError(f'cannot resolve the reporting identity: {result.stderr.strip()}')
+        login = result.stdout.strip()
+        if not login:
+            raise ToolingError('the reporting identity resolved to an empty login')
+        return login
 
 
 def render_body(source, entry, latest, report_digest, today):
@@ -227,6 +242,9 @@ def render_body(source, entry, latest, report_digest, today):
 
 def render_comment(source, entry, latest, report, report_digest, archive_digest, today):
     """One observation comment: its digest identity plus the full per-path classification."""
+    affected = [f"`{record['path']}`: " + ', '.join(f'`{test}`' for test in record['ledger']['port_test_ids'])
+                for record in report['records']
+                if isinstance(record['ledger'], dict) and record['ledger'].get('port_test_ids')]
     lines = [
         f'<!-- {REPORT_PREFIX}:{source} -->',
         f'## Observation {today}: `{entry["revision"]}` → `{latest}`',
@@ -240,6 +258,7 @@ def render_comment(source, entry, latest, report, report_digest, archive_digest,
         '',
         f'Requires review: {", ".join(f"`{path}`" for path in report["requires_review"]) or "none"}.',
         f'Ledger-unmapped paths: {", ".join(f"`{path}`" for path in report["ledger_unmapped"]) or "none"}.',
+        f'Affected port tests: {"; ".join(affected) or "none"}.',
     ]
     return '\n'.join(lines) + '\n'
 
@@ -265,6 +284,12 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
     per-source result record.
     """
     validate_revision(latest)
+    # Digest evidence is trusted only from comments this identity authored:
+    # the marker line and the digest are both public, so authorship is the
+    # one thing a foreign comment cannot borrow. A run under a different
+    # identity (a maintainer's manual run after the scheduled bot) therefore
+    # re-observes once before settling into its own quiet cadence.
+    identity = issues.current_login()
     expected_title = f'Upstream drift report: {source}'
     marker = f'<!-- {MARKER_PREFIX}:{source} -->'
     all_issues = issues.list_issues()
@@ -278,9 +303,10 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
                   f'{"stream marker" if has_marker else "stream title"} and is not adopted; '
                   'it can fork the stream until it is closed or retitled', file=sys.stderr)
     if len(carriers) > 1:
-        raise ToolingError(f'{source}: {len(carriers)} issues carry the drift-report marker '
+        raise ToolingError(f'{source}: {len(carriers)} issues carry the drift-report identity '
                            f'({", ".join("#" + str(issue["number"]) for issue in carriers)}); '
-                           'close the duplicates before the next run')
+                           'remove the marker from or retitle all but one — closing them does '
+                           'not help because closed issues are still scanned')
     reviewed_archive = fetch.fetch(entry['archive'], f'{entry["revision"]}.tar.gz', offline=False, cache=cache)
     with tempfile.TemporaryDirectory(dir=Path(cache)) as work:
         reviewed_tree = extract_archive(reviewed_archive, entry['root'], Path(work) / 'reviewed')
@@ -296,9 +322,9 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
         # the same upstream state must produce the same digest wherever they run,
         # so a repeated scheduled run stays noise-free. The written report keeps
         # the full local evidence plus the identity digest it was reported with.
-        identity = {key: value for key, value in report.items() if key not in ('old_tree', 'new_tree')}
+        report_identity = {key: value for key, value in report.items() if key not in ('old_tree', 'new_tree')}
         report_digest = hashlib.sha256(
-            (json.dumps(identity, indent=2, sort_keys=True) + '\n').encode('utf-8')).hexdigest()
+            (json.dumps(report_identity, indent=2, sort_keys=True) + '\n').encode('utf-8')).hexdigest()
         report['report_digest'] = report_digest
         report_bytes = json.dumps(report, indent=2, sort_keys=True) + '\n'
         output.mkdir(parents=True, exist_ok=True)
@@ -311,11 +337,13 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
         else:
             number = carriers[0]['number']
             action = 'commented'
-        # The digest is read only from tool-authored comments (marker-carried):
-        # a foreign comment pasting a digest line must never suppress the
+        # The digest is read only from tool-authored comments (marker-carried
+        # and authored by this run's identity): a foreign comment pasting the
+        # digest — with or without a copied marker — must never suppress the
         # observation's classification evidence.
         recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
-                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body']]
+                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body']
+                    and item.get('author') == identity]
         if report_digest not in recorded:
             if carriers and carriers[0]['state'] != 'open':
                 issues.update_issue(number, state='open')
