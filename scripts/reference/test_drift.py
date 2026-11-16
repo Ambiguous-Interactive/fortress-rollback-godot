@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import drift
 
@@ -364,6 +365,20 @@ class DriftPinFlowTests(unittest.TestCase):
                          ['--source', 'sdk', '--old', str(base), '--new', str(base),
                           '--report', str(base / 'r.json'), '--advance']):
                 self.assertEqual(drift.main_with_args(argv), 1, argv)
+
+    def test_advance_creates_a_missing_cache_root(self):
+        # A fresh checkout has no .cache/reference yet; the extraction staging
+        # area creates its root instead of refusing the whole pin flow.
+        with tempfile.TemporaryDirectory() as folder:
+            pins, old_tree, new_tree, archive = self.corpus(folder)
+            cache = Path(folder) / 'fresh' / 'reference'
+            report = Path(folder) / 'report.json'
+            argv = ['--source', 'sdk', '--old', str(old_tree), '--new', str(new_tree),
+                    '--pins', str(pins), '--new-revision', NEW_REVISION, '--archive', str(archive),
+                    '--report', str(report), '--advance']
+            with patch.object(drift, 'CACHE', cache):
+                self.assertEqual(drift.main_with_args(argv), 0)
+            self.assertTrue((Path(folder) / 'report.json').exists())
 
     def test_advance_refuses_when_the_report_cannot_land(self):
         # A failed report write must leave the pin untouched: never an advanced

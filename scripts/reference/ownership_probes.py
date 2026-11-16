@@ -55,7 +55,7 @@ EXPECTED.update({
     'res://tests/unit/test_peer_lifecycle.gd': {'checksum_export', 'healthy_exchange', 'real_desync', 'terminal_timeout', 'close',
         'checksum_conflict', 'checksum_future', 'stale_checksum', 'interrupted_resume', 'checksum_capacity', 'event_capacity', 'statistics',
         'lockstep_checksums', 'later_peer_expiry'},
-    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'delayed_start', 'retry', 'validation', 'retention', 'capacity', 'ownership',
+    'res://tests/unit/test_input_endpoint.gd': {'loss_ack', 'delayed_start', 'reference_skip', 'retry', 'validation', 'retention', 'capacity', 'ownership',
         'status_nudge', 'status_nudge_transitions'},
     'res://tests/unit/test_stalled_gossip.gd': {'drained', 'dropped_reordered', 'missing_receipt', 'step_recovery', 'grouped_locals'},
     'res://tests/unit/test_session_network_seams.gd': {'delay_startup', 'scheduled_sample', 'confirmation_limit', 'mesh_stall_save', 'delayed_peer_start'},

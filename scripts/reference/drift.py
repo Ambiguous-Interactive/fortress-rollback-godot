@@ -343,6 +343,8 @@ def candidate_tree(archive_path, expected_root, tree, cache=CACHE):
     """
     archive = Path(archive_path)
     archive_digest = digest(archive)
+    cache = Path(cache)
+    cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=cache) as temporary:
         with tarfile.open(archive) as tar:
             members = tar.getmembers()
