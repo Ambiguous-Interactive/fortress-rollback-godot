@@ -64,7 +64,8 @@ class FakeIssues:
             self.issues[self._next - 1]['state'] = state
 
     def list_issues(self):
-        return [{'number': number, 'state': issue['state'], 'body': issue['body']}
+        return [{'number': number, 'state': issue['state'], 'title': issue['title'],
+                 'body': issue['body']}
                 for number, issue in sorted(self.issues.items())]
 
     def create_issue(self, title, body):
@@ -166,6 +167,47 @@ class DriftReportTests(unittest.TestCase):
         self.assertEqual(len(fake.issues), 1)
         self.assertEqual(len(fake.comments[number]), 1)
 
+    def test_a_digest_known_closed_carrier_stays_quiet(self):
+        # A maintainer who closes the stream after reading the observation must
+        # not be fought by the next scheduled run: the recorded digest means
+        # no reopen, no body rewrite and no comment.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        _, fake = self.run_report(NEW_SHA)
+        number = next(iter(fake.issues))
+        fake.update_issue(number, state='closed')
+        code, fake = self.run_report(NEW_SHA, issues=fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.issues[number]['state'], 'closed')
+        self.assertEqual(len(fake.comments[number]), 1)
+
+    def test_a_foreign_digest_comment_never_suppresses_the_observation(self):
+        # Digests are read only from tool-authored (marker-carried) comments:
+        # anyone can compute the identity digest from public inputs, so a
+        # foreign digest line must not make the run skip its observation.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        carrier = FakeIssues(carriers=[('open', f'<!-- {drift_report.MARKER_PREFIX}:fortress -->\nstale\n')])
+        number = next(iter(carrier.issues))
+        carrier.add_comment(number, 'looks like this is already recorded\nreport-digest: `deadbeef`\n')
+        code, fake = self.run_report(NEW_SHA, issues=carrier)
+        self.assertEqual(code, 0)
+        comments = fake.comments[number]
+        self.assertEqual(len(comments), 2)
+        self.assertIn(f'<!-- {drift_report.REPORT_PREFIX}:fortress -->', comments[-1]['body'])
+
+    def test_a_phantom_marker_without_the_title_is_not_adopted(self):
+        # Adoption needs the marker AND the tool's title, so an issue that
+        # merely embeds the marker cannot hijack or fork the stream.
+        phantom = FakeIssues()
+        phantom.create_issue('Random discussion', f'<!-- {drift_report.MARKER_PREFIX}:fortress -->\n')
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        code, fake = self.run_report(NEW_SHA, issues=phantom)
+        self.assertEqual(code, 0)
+        adopted = [issue for issue in fake.issues.values()
+                   if issue['title'] == 'Upstream drift report: fortress']
+        self.assertEqual(len(adopted), 1)
+        number = adopted[0]['number']
+        self.assertEqual(len(fake.comments[number]), 1)
+
     def test_the_digest_skip_gate_is_load_bearing(self):
         # Mutant control: without the recorded-digest check the same weekly
         # state would be commented again on every scheduled run.
@@ -216,6 +258,64 @@ class DriftReportTests(unittest.TestCase):
         code, fake = self.run_report(NEW_SHA, resolve=broken, override=False)
         self.assertEqual(code, 1)
         self.assertEqual(fake.issues, {})
+
+    def test_a_missing_reviewed_baseline_fails_closed(self):
+        # Red-green for the spec's "missing baseline": a cold or broken fetch
+        # cache is a per-source tooling error, never a no-drift report.
+        def cold_cache(pin, name, offline=False, cache=None):
+            raise OSError(f'offline cache miss: {name}')
+
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        with patch.object(drift_report.fetch, 'fetch', cold_cache):
+            code, fake = self.run_report(NEW_SHA)
+        self.assertEqual(code, 1)
+        self.assertEqual(fake.issues, {})
+        self.assertFalse((self.output / 'fortress.json').exists())
+
+    def test_a_classification_failure_is_a_per_source_tooling_error(self):
+        # Red-green for the spec's "oracle failure": a classifier that refuses
+        # the input (for example the tree walk bound) fails that source only.
+        def refusing_build_report(*args, **kwargs):
+            raise ValueError('tree exceeds the file bound')
+
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        with patch.object(drift_report.drift, 'build_report', refusing_build_report):
+            code, fake = self.run_report(NEW_SHA)
+        self.assertEqual(code, 1)
+        self.assertEqual(fake.issues, {})
+        self.assertFalse((self.output / 'fortress.json').exists())
+
+    def test_an_issue_write_failure_recovers_on_the_next_run(self):
+        # Red-green for the spec's "uncertain response": a comment write that
+        # dies after GitHub accepted the issue creation is adopted on the next
+        # run instead of duplicating the stream.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+
+        class FlakyComment(FakeIssues):
+            def __init__(self):
+                super().__init__()
+                self.failed_once = False
+
+            def add_comment(self, number, body):
+                if not self.failed_once:
+                    self.failed_once = True
+                    raise drift_report.ToolingError('comment write lost: gateway timeout')
+                super().add_comment(number, body)
+
+        flaky = FlakyComment()
+        code, fake = self.run_report(NEW_SHA, issues=flaky)
+        self.assertEqual(code, 1)
+        number = next(iter(fake.issues))
+        self.assertEqual(len(fake.comments[number]), 0)
+        code, fake = self.run_report(NEW_SHA, issues=fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.issues), 1)
+        self.assertEqual(len(fake.comments[number]), 1)
+
+    def test_an_empty_summary_argument_is_treated_as_absent(self):
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        code, _ = self.run_report(NEW_SHA, extra=['--summary', ''])
+        self.assertEqual(code, 0)
 
     def test_candidate_root_mismatch_fails_closed_before_any_write(self):
         wrong_root = make_archive(NEW_FILES, f'other-{NEW_SHA}',
@@ -282,8 +382,8 @@ class GhIssueClientTests(unittest.TestCase):
         ])
         result, calls = self.run_client([(pages, 0)],
                                         lambda client: client.list_issues())
-        self.assertEqual(result, [{'number': 2, 'state': 'closed', 'body': 'carrier'},
-                                  {'number': 3, 'state': 'open', 'body': ''}])
+        self.assertEqual(result, [{'number': 2, 'state': 'closed', 'title': '', 'body': 'carrier'},
+                                  {'number': 3, 'state': 'open', 'title': '', 'body': ''}])
         self.assertIn('--paginate', calls[0])
         self.assertIn('--slurp', calls[0])
         self.assertIn('repos/example/fortress/issues?state=all&per_page=100', calls[0])

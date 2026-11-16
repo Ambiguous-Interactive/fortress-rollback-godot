@@ -14,9 +14,11 @@ permissions:
   issues: write
 
 concurrency:
-  # Serialize runs: the reporter's dedup is read-before-write, so two
-  # concurrent runs would still not duplicate issues, but serializing keeps
-  # the observation order and the rate limit spend predictable.
+  # Serialize runs: two racing processes could both see zero carriers and both
+  # create, so the group (not the read-before-write dedup) is what prevents
+  # that here. An out-of-group manual run racing the workflow can still produce
+  # two carriers; the next run then fails closed and names both until a human
+  # closes the duplicate.
   group: drift-report
   cancel-in-progress: false
 

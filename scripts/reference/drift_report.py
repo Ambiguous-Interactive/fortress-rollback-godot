@@ -36,6 +36,7 @@ Exit codes: 0 every source reported or no-op, 1 at least one source failed.
 """
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -108,7 +109,13 @@ def resolve_latest(entry):
 
 
 def download_archive(entry, revision, destination_dir):
-    """Fetch the candidate archive and return its path; digest verification stays with the extractor."""
+    """Fetch the candidate archive and return its path.
+
+    The bytes are bound to the codeload URL over TLS and their sha256 is
+    recorded in the observation; proving those bytes are the upstream archive
+    happens only when a later fetch verifies the recorded digest (the reviewed
+    pin's archive is digest-verified here through `fetch.fetch`).
+    """
     url = entry['repository'].replace('https://github.com/', 'https://codeload.github.com/') + '/tar.gz/' + revision
     destination = Path(destination_dir) / f'candidate-{revision}.tar.gz'
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -130,8 +137,11 @@ def download_archive(entry, revision, destination_dir):
             temporary.replace(destination)
             return destination
         except ToolingError:
+            # The oversized refusal must not leak the partial temp file either.
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
             raise
-        except (urllib.error.URLError, OSError) as error:
+        except (urllib.error.URLError, OSError, http.client.IncompleteRead) as error:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
             if attempt == DOWNLOAD_ATTEMPTS - 1:
@@ -160,8 +170,8 @@ class GhIssueClient:
     def list_issues(self):
         issues = [item for item in self._paged(f'repos/{self.repo}/issues?state=all&per_page=100')
                   if isinstance(item, dict) and 'pull_request' not in item]
-        return [{'number': item['number'], 'state': item['state'], 'body': item.get('body') or ''}
-                for item in issues]
+        return [{'number': item['number'], 'state': item['state'], 'title': item.get('title') or '',
+                 'body': item.get('body') or ''} for item in issues]
 
     def create_issue(self, title, body):
         created = json.loads(self._api(['-X', 'POST', f'repos/{self.repo}/issues',
@@ -251,7 +261,12 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
     result record.
     """
     validate_revision(latest)
-    carriers = [issue for issue in issues.list_issues() if f'<!-- {MARKER_PREFIX}:{source} -->' in issue['body']]
+    expected_title = f'Upstream drift report: {source}'
+    # Adoption requires the marker AND the tool's title: an honest body copy or
+    # a phantom issue with only the marker cannot hijack or fork the stream.
+    carriers = [issue for issue in issues.list_issues()
+                if issue.get('title') == expected_title
+                and f'<!-- {MARKER_PREFIX}:{source} -->' in issue['body']]
     if len(carriers) > 1:
         raise ToolingError(f'{source}: {len(carriers)} issues carry the drift-report marker '
                            f'({", ".join("#" + str(issue["number"]) for issue in carriers)}); '
@@ -280,22 +295,28 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
         (output / f'{source}.json').write_text(report_bytes, encoding='utf-8')
         body = render_body(source, entry, latest, report_digest, today)
         comment = render_comment(source, entry, latest, report, report_digest, archive_digest, today)
-        action = 'commented'
         if not carriers:
             number = issues.create_issue(f'Upstream drift report: {source}', body)
             action = 'created'
         else:
             number = carriers[0]['number']
-            if carriers[0]['state'] != 'open':
+            action = 'commented'
+        # The digest is read only from tool-authored comments (marker-carried):
+        # a foreign comment pasting a digest line must never suppress the
+        # observation's classification evidence.
+        recorded = [comment_digest(item['body']) for item in issues.list_comments(number)
+                    if f'<!-- {REPORT_PREFIX}:{source} -->' in item['body']]
+        if report_digest not in recorded:
+            if carriers and carriers[0]['state'] != 'open':
                 issues.update_issue(number, state='open')
                 action = 'reopened'
-            if carriers[0]['body'] != body:
+            if carriers and carriers[0]['body'] != body:
                 issues.update_issue(number, body=body)
-        recorded = [comment_digest(item['body']) for item in issues.list_comments(number)]
-        if report_digest not in recorded:
             issues.add_comment(number, comment)
         else:
-            action = 'noop' if action == 'commented' else action + '+digest-known'
+            # The state was already observed and recorded: no reopen, no body
+            # rewrite, no comment — a maintainer-muted stream stays quiet.
+            action = 'digest-known'
     return {'source': source, 'action': action, 'latest': latest, 'drift': report['drift'],
             'requires_review': report['requires_review'], 'report_digest': report_digest, 'issue': number}
 
@@ -313,6 +334,11 @@ def main_with_args(argv):
                         help='owner/repo for the issue stream (defaults to GITHUB_REPOSITORY)')
     parser.add_argument('--summary', type=Path, help='append one markdown line per source here')
     args = parser.parse_args(argv)
+    if args.summary is not None and args.summary == Path(''):
+        # An unset environment variable expands to an empty argument, which
+        # Path normalizes to the working directory; treat it as absent instead
+        # of appending to a directory after the work is done.
+        args.summary = None
 
     pins = fetch.load_manifest(args.pins)
     overrides = {}
@@ -329,6 +355,9 @@ def main_with_args(argv):
         raise ToolingError('--repo is required when GITHUB_REPOSITORY is unset')
     issues = GhIssueClient(args.repo)
     ledger = args.ledger if args.ledger.exists() else None
+    if ledger is None:
+        print(f'parity ledger not found at {args.ledger}: every changed path reports as ledger-unmapped',
+              file=sys.stderr)
     today = time.strftime('%Y-%m-%d', time.gmtime())
 
     results, failures = [], []

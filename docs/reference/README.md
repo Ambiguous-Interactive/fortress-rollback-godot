@@ -185,7 +185,8 @@ The scheduled/manual cadence and its deduplicated issue reporting are M2
 `workflow_dispatch`) runs `scripts/reference/drift_report.py`: for each pinned
 source it resolves the repository's default-branch revision, stops when that
 revision is the reviewed pin, and otherwise downloads the candidate archive,
-extracts both trees from digest-verified archives, classifies the drift
+extracts the reviewed tree from the digest-verified pinned archive and the
+candidate tree from its download, classifies the drift
 through `drift.py`, and appends one observation comment — carrying a stable
 `report-digest` — to exactly one ongoing issue per source. The carrier issue
 is found by a stable marker in its body across open *and* closed issues, not
@@ -200,12 +201,15 @@ that checklist. Run it by hand the same way the workflow does:
 ```sh
 GITHUB_REPOSITORY=Ambiguous-Interactive/fortress-rollback-godot \
 python3 scripts/reference/drift_report.py --source fortress \
-    --summary "$GITHUB_STEP_SUMMARY"
+    --summary /tmp/drift-report-summary.md
 ```
 
 Exit code 0 reports or no-ops every requested source; exit 1 names the failed
 sources after the remaining ones still reported (partial failure is visible
-in the workflow summary, never a silent no-drift result). The suite drives
+in the workflow summary, never a silent no-drift result). The candidate
+archive's sha256 is recorded in each observation, not proven: the download is
+bound to the codeload URL over TLS, and a recorded digest is proven to be the
+upstream archive only when a later fetch verifies it. The suite drives
 the whole flow against fake adapters — creation, digest-quiet repeats,
 reopen-not-duplicate, duplicate-carrier refusal, resolver and archive-binding
 failures and a real `gh api` argument contract — before the schedule runs it
