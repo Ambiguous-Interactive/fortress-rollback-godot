@@ -11,6 +11,7 @@ from unittest.mock import patch
 import p2p_launch
 import p2p_wrap
 import p2p_wrap_regenerate
+import profile_report
 from p2p_launch import upstream_inventory, executable_identity, require_unchanged, wrap_fixture
 from contract import initial_game_state, checksum
 from p2p_contract import validate_scenario, validate, packet, normalize, compare, REVISION
@@ -1063,6 +1064,44 @@ class P2PContractTests(unittest.TestCase):
             mutant = deepcopy(trace); mutate(mutant)
             with self.assertRaises(ValueError):
                 validate(mutant, scenario)
+
+
+class ProfileReportTests(unittest.TestCase):
+    """The published P2P profile report stays bound to the committed corpora.
+
+    Value: protects=the published supported-profile claim; fails_when=the report's
+    inventory drifts from the case tables the launchers actually execute; why_new=
+    P5 completion criterion (#34); seam=docs/reference/p2p-profiles.md block markers.
+    """
+
+    def test_committed_report_matches_derived_inventory(self):
+        report = Path(p2p_launch.__file__).parents[2] / 'docs/reference/p2p-profiles.md'
+        self.assertTrue(report.exists(), 'published P2P profile report is missing')
+        self.assertEqual(profile_report.check(report), None)
+
+    # Value: protects=fixture-name honesty of the published wrap inventory; fails_when=the
+    # derived wrap scope and the committed MANIFEST disagree; why_new=P5 report; seam=MANIFEST.
+    def test_derived_scope_names_every_wrap_manifest_fixture(self):
+        fixtures = Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood'
+        manifest = json.loads((fixtures / 'MANIFEST.json').read_text(encoding='utf-8'))
+        scope = profile_report.p2p_scope()['p2p-wrap']
+        self.assertEqual(sorted(scope), sorted(name[:-len('.json')] for name in manifest['fixtures']))
+        self.assertEqual(len(scope), len(set(scope)))
+
+    # Value: protects=fail-closed drift control; fails_when=a tampered report passes;
+    # why_new=P5 report; seam=generated inventory block.
+    def test_check_rejects_report_drift(self):
+        report = Path(p2p_launch.__file__).parents[2] / 'docs/reference/p2p-profiles.md'
+        self.assertTrue(report.exists(), 'published P2P profile report is missing')
+        with TemporaryDirectory() as dir:
+            mutated = Path(dir) / 'p2p-profiles.md'
+            text = report.read_text(encoding='utf-8')
+            self.assertIn('`mesh_2_wrap_flood`', text)
+            mutated.write_text(text.replace('`mesh_2_wrap_flood`', '`mesh_2_wrap_flood_tampered`'),
+                               encoding='utf-8')
+            problem = profile_report.check(mutated)
+            self.assertIsNotNone(problem)
+            self.assertIn('mesh_2_wrap_flood_tampered', problem)
 
 
 if __name__ == '__main__':

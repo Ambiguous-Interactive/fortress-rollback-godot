@@ -3,6 +3,7 @@
 from copy import deepcopy
 import hashlib
 import json
+from functools import partial
 from pathlib import Path
 import subprocess
 import sys
@@ -73,6 +74,60 @@ def wrap_fixture(name):
     return scenario
 
 
+def minimized(scenario):
+    """Validate one pinned minimized regression schedule before it joins the corpus."""
+    validate_scenario(scenario)
+    return scenario
+
+
+def case_builders(binary):
+    """The committed schedule corpus as an ordered name -> zero-arg builder table.
+
+    One table owns both the launcher's executed case set and the published
+    profile report's inventory (scripts/oracle/profile_report.py), so the two
+    cannot drift: the launcher builds from these builders and the report lists
+    exactly these names in exactly this order.
+    """
+    builders = {}
+    for players in range(2, 9):
+        for delay in (0, 2):
+            builders[f'mesh_{players}_delay_{delay}'] = partial(build_case, binary, players, delay, 'ordinary')
+    for players in (2, 4, 8):
+        for mode in ('loss', 'reorder', 'stall', 'retry'):
+            builders[f'mesh_{players}_{mode}'] = partial(build_case, binary, players, 0, mode)
+    # The maximum comparable prediction window: the ordinary cases hold the deepest configured
+    # rollback boundary, and the stall schedule that exceeds window four instead recovers through
+    # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.
+    for players in (2, 4, 8):
+        builders[f'mesh_{players}_window_8'] = partial(build_case, binary, players, 0, 'ordinary', window=8)
+    builders['mesh_2_window_8_stall'] = partial(build_case, binary, 2, 0, 'stall', window=8)
+    # Explicit multi-local endpoint layouts: couch co-op machines owning several local slots.
+    for name, (layout, mode) in LAYOUT_CASES.items():
+        builders[name] = partial(build_layout_case, binary, layout, mode)
+    # Per-machine construction delays: heterogeneous starting schedules under one shared pin.
+    for name, (players, delays, mode) in DELAY_PROFILES.items():
+        builders[name] = partial(build_case, binary, players, 0, mode, delays=delays)
+    builders['mesh_4_couch_delays_2_0'] = partial(build_layout_case, binary, [2, 2], 'ordinary', delays=[2, 0])
+    # The profile-plus-raise differential and its pinned minimized regression schedule.
+    builders['mesh_2_delays_2_0_raise'] = partial(build_case, binary, 2, 0, 'delay_profile_raise', delays=[2, 0])
+    for name, scenario in MINIMIZED_PROFILES.items():
+        builders[name] = partial(minimized, scenario)
+    # Non-default input widths: the minimum width, wide 32-byte rows under a loss fault,
+    # and the combined maximum profile (window eight, width 32, eight peers).
+    for name, (players, mode, window, width) in WIDTH_CASES.items():
+        builders[name] = partial(build_case, binary, players, 0, mode, window=window, width=width)
+    for name, (players, delay, mode) in DELAY_CASES.items():
+        builders[name] = partial(build_case, binary, players, delay, mode)
+    builders[p2p_recovery.NAME] = partial(p2p_recovery.build, binary, source)
+    builders[p2p_capacity.NAME] = partial(p2p_capacity.build, binary, source)
+    return builders
+
+
+def case_names():
+    """The launcher's committed case inventory without building any schedule."""
+    return list(case_builders(None))
+
+
 def corpus(binary, selected=None, wrap_only=False):
     """Schedules derive only from actual sent packet inventories, never request traces."""
     cases = {}
@@ -81,57 +136,9 @@ def corpus(binary, selected=None, wrap_only=False):
             if selected is None or selected == name:
                 cases[name] = wrap_fixture(name)
         return cases
-    for players in range(2, 9):
-        for delay in (0, 2):
-            name = f'mesh_{players}_delay_{delay}'
-            if selected is None or selected == name:
-                cases[name] = build_case(binary, players, delay, 'ordinary')
-    for players in (2, 4, 8):
-        for mode in ('loss', 'reorder', 'stall', 'retry'):
-            name = f'mesh_{players}_{mode}'
-            if selected is None or selected == name:
-                cases[name] = build_case(binary, players, 0, mode)
-    # The maximum comparable prediction window: the ordinary cases hold the deepest configured
-    # rollback boundary, and the stall schedule that exceeds window four instead recovers through
-    # a six-frame prediction run, so both the threshold refusal and the deep recovery path compare.
-    for players in (2, 4, 8):
-        name = f'mesh_{players}_window_8'
+    for name, build in case_builders(binary).items():
         if selected is None or selected == name:
-            cases[name] = build_case(binary, players, 0, 'ordinary', window=8)
-    name = 'mesh_2_window_8_stall'
-    if selected is None or selected == name:
-        cases[name] = build_case(binary, 2, 0, 'stall', window=8)
-    # Explicit multi-local endpoint layouts: couch co-op machines owning several local slots.
-    for name, (layout, mode) in LAYOUT_CASES.items():
-        if selected is None or selected == name:
-            cases[name] = build_layout_case(binary, layout, mode)
-    # Per-machine construction delays: heterogeneous starting schedules under one shared pin.
-    for name, (players, delays, mode) in DELAY_PROFILES.items():
-        if selected is None or selected == name:
-            cases[name] = build_case(binary, players, 0, mode, delays=delays)
-    name = 'mesh_4_couch_delays_2_0'
-    if selected is None or selected == name:
-        cases[name] = build_layout_case(binary, [2, 2], 'ordinary', delays=[2, 0])
-    # The profile-plus-raise differential and its pinned minimized regression schedule.
-    name = 'mesh_2_delays_2_0_raise'
-    if selected is None or selected == name:
-        cases[name] = build_case(binary, 2, 0, 'delay_profile_raise', delays=[2, 0])
-    for name, scenario in MINIMIZED_PROFILES.items():
-        if selected is None or selected == name:
-            validate_scenario(scenario)
-            cases[name] = scenario
-    # Non-default input widths: the minimum width, wide 32-byte rows under a loss fault,
-    # and the combined maximum profile (window eight, width 32, eight peers).
-    for name, (players, mode, window, width) in WIDTH_CASES.items():
-        if selected is None or selected == name:
-            cases[name] = build_case(binary, players, 0, mode, window=window, width=width)
-    for name, (players, delay, mode) in DELAY_CASES.items():
-        if selected is None or selected == name:
-            cases[name] = build_case(binary, players, delay, mode)
-    if selected is None or selected == p2p_recovery.NAME:
-        cases[p2p_recovery.NAME] = p2p_recovery.build(binary, source)
-    if selected is None or selected == p2p_capacity.NAME:
-        cases[p2p_capacity.NAME] = p2p_capacity.build(binary, source)
+            cases[name] = build()
     # Long ring-wrap runs live in the dedicated wrap launcher's fixture corpus; the
     # main launcher runs them only when --case names one explicitly, so the wave
     # never pays the wrap differential twice.

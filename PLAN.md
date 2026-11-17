@@ -75,6 +75,7 @@ Local development contracts and evidence entry points:
 - [SignalFish per-peer fallback, direct restoration and mixed-path ownership](docs/signalfish-fallback.md).
 - [Bounded retained input, cumulative ACK and gossip exchange](docs/input-exchange.md).
 - [Actual upstream/Godot P2P fault traces](docs/oracle-p2p.md).
+- [Published P2P supported network profiles and the reproducible zero-unexplained-divergence report](docs/reference/p2p-profiles.md).
 - [Playable two-peer packet fault example](docs/peer-example.md).
 - [Runnable offline driver with paused single-frame inspection and presentation](docs/offline-example.md).
 - `make test-reference` runs offline tooling negative controls;
