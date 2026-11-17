@@ -208,7 +208,13 @@ python3 scripts/reference/drift_report.py --source fortress \
 
 Exit code 0 reports or no-ops every requested source; exit 1 names the failed
 sources after the remaining ones still reported (partial failure is visible
-in the workflow summary, never a silent no-drift result). The candidate
+in the workflow summary, never a silent no-drift result). The scheduled
+workflow passes `--reporting-identity github-actions[bot]` explicitly, because
+the Actions installation token cannot resolve the authenticated user
+(`gh api user` answers HTTP 403 for installation tokens); a hand run without
+the flag resolves its identity the same way. Digest trust follows whichever
+identity produced the observation, so a maintainer run after a scheduled bot
+re-observes once before settling quiet. The candidate
 archive's sha256 is recorded in each observation, not proven: the download is
 bound to the codeload URL over TLS, and a recorded digest is proven to be the
 upstream archive only when a later fetch verifies it. The suite drives

@@ -26,6 +26,9 @@ Local development contracts and evidence entry points:
 
 - [Pinned reference setup, run instructions and evidence](docs/reference/README.md).
   Source and tool pins were refreshed on 2026-10-28; historical receipts retain their original revisions.
+- [Devcontainer real-browser witnessing capability](.devcontainer/README.md#browser-witnessing-capability-385):
+  digest-pinned Chromium/Firefox and the pinned Playwright package acquired at post-create, verified
+  with real launches by `verify.sh` locally and by Devcontainer Verify on both architectures.
 - [Session/driver/state/transport interface ADR](docs/contracts.md).
 - [Verification and release evidence policy](docs/verification-policy.md).
 - [Fail-closed native test runner](docs/test-runner.md).

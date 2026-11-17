@@ -60,6 +60,17 @@ logs. Reproduction must use committed pins and verified cache artifacts, not a
 developer's undocumented global installations. A cache miss in offline mode,
 digest mismatch, missing feature or tool error fails explicitly.
 
+The devcontainer carries a CI-verified real-browser capability (#385): its
+image installs the pinned Playwright dependency libraries, post-create
+acquires the digest-bound Chromium and Firefox builds recorded in
+`docs/reference/pins.json`, and Devcontainer Verify re-checks the whole
+section — digests included — inside a freshly built container on x64 and
+arm64. Browser-witness evidence may therefore be produced locally in the
+devcontainer when the run records the same pinned browser builds, engine
+pins and receipts a hosted job would; the hosted Reference Baseline and
+Nightly matrices remain the qualification surface for their gates, and the
+devcontainer surface does not substitute for a hosted matrix cell.
+
 ## Test tiers
 
 | Tier | Required scope |

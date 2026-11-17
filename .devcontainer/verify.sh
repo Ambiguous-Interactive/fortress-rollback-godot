@@ -87,6 +87,96 @@ check_cmd bat --version
 check_cmd fzf --version
 check_cmd jq --version
 
+section "Browser witnessing capability"
+# The pinned real-browser capability acquired at post-create (#385). Skips are
+# impossible here by design: in this container a missing browser is a failed
+# verification, not a silent skip, on both architectures.
+browser_env="$ROOT/.cache/reference/browser-env.sh"
+if [ -f "$browser_env" ]; then
+  # shellcheck source=/dev/null
+  . "$browser_env"
+  ok "acquisition record found (${browser_env#"$ROOT"/})"
+else
+  bad "browser acquisition record missing (${browser_env#"$ROOT"/}) — run .devcontainer/acquire-browsers.sh"
+fi
+: "${FORTRESS_CHROMIUM_EXECUTABLE:=}"
+: "${FORTRESS_FIREFOX_EXECUTABLE:=}"
+: "${FORTRESS_PLAYWRIGHT_PACKAGE:=}"
+for recorded in FORTRESS_CHROMIUM_EXECUTABLE FORTRESS_FIREFOX_EXECUTABLE FORTRESS_PLAYWRIGHT_PACKAGE; do
+  if [ -n "${!recorded:-}" ]; then
+    ok "${recorded} recorded"
+  else
+    bad "${recorded} not recorded by the acquisition"
+  fi
+done
+
+case "$(uname -m)" in
+  x86_64) witness_arch=x86_64 ;;
+  aarch64|arm64) witness_arch=arm64 ;;
+  *) witness_arch="" ;;
+esac
+if [ -n "$witness_arch" ]; then
+  if digest_report="$(PYTHONPATH="$ROOT/scripts/reference" python3 - "$witness_arch" <<'PY' 2>&1
+import sys
+
+from fetch import CACHE, digest, load_manifest
+
+data = load_manifest()
+browser = data['browser']
+problems = []
+for name in (f"chromium-{browser['chromium_revision']}-{sys.argv[1]}.zip",
+             f"firefox-{browser['firefox_revision']}-ubuntu24.04-{sys.argv[1]}.zip"):
+    pin = data['artifacts'][name]
+    path = CACHE / 'downloads' / name
+    if not path.is_file():
+        problems.append(f'missing download: {path}')
+    else:
+        actual = digest(path, pin['algorithm'])
+        if actual != pin['digest']:
+            problems.append(f'digest mismatch: {path}: expected {pin["digest"]}, got {actual}')
+for relative in ('@playwright/test', 'playwright', 'playwright-core'):
+    if not (CACHE / 'browser/node_modules' / relative).is_dir():
+        problems.append(f'missing package: node_modules/{relative}')
+registry = CACHE / 'browser/node_modules/playwright-core/browsers.json'
+if registry.is_file():
+    actual = digest(registry)
+    if actual != browser['browser_registry_sha256']:
+        problems.append(f'browser registry digest mismatch: expected {browser["browser_registry_sha256"]}, got {actual}')
+else:
+    problems.append(f'missing Playwright browser registry: {registry}')
+if problems:
+    print('\n'.join(problems))
+    raise SystemExit(1)
+PY
+)"; then
+    ok "pinned downloads, package closure and registry match docs/reference/pins.json (${witness_arch})"
+  else
+    bad "pinned browser artifacts disagree with docs/reference/pins.json"
+    printf '%s\n' "$digest_report"
+  fi
+  for executable in "$FORTRESS_CHROMIUM_EXECUTABLE" "$FORTRESS_FIREFOX_EXECUTABLE"; do
+    if [ -n "$executable" ] && [ -f "$executable" ] && [ -x "$executable" ]; then
+      ok "browser executable present and executable (${executable#"$ROOT"/})"
+    else
+      bad "browser executable missing or not executable (${executable:-<unrecorded>})"
+    fi
+  done
+  if launch="$(timeout 60 node "$SCRIPT_DIR/browser-witness.cjs" chromium 2>&1)"; then
+    ok "headless Chromium launch witness: ${launch}"
+  else
+    bad "headless Chromium launch witness failed"
+    printf '%s\n' "$launch" | tail -n 25
+  fi
+  if launch="$(timeout 120 xvfb-run -a node "$SCRIPT_DIR/browser-witness.cjs" firefox 2>&1)"; then
+    ok "xvfb-run Firefox launch witness: ${launch}"
+  else
+    bad "xvfb-run Firefox launch witness failed"
+    printf '%s\n' "$launch" | tail -n 25
+  fi
+else
+  bad "unsupported architecture for the pinned browsers: $(uname -m)"
+fi
+
 section "GDScript tooling (gdtoolkit via uv)"
 check_cmd gdformat --version
 check_cmd gdlint --version
@@ -151,7 +241,7 @@ else
 fi
 
 if [ "$QUICK" = "1" ]; then
-  printf '\n  (--quick: skipped godot import, harness tests, MCP discovery/handshake)\n'
+  printf '\n  (--quick: skipped godot import, harness tests, MCP discovery/handshake; browser witnessing always runs)\n'
 else
   section "OpenCode runtime MCP discovery"
   check_opencode_runtime "$ROOT"

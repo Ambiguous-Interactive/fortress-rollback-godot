@@ -45,6 +45,8 @@ npx @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-containe
 | uv | pinned `0.13.6` | Python tooling; installs `gdtoolkit` |
 | gdformat / gdlint | pinned `4.5.0` | GDScript formatter/linter (via `uv tool`) |
 | ripgrep, fd, bat, fzf, jq | apt, Ubuntu 24.04 | Fast search/navigation for humans and agents |
+| Chromium `156.0.8078.4` + Firefox `157.0` | digest-pinned in `docs/reference/pins.json` | Real-browser witnessing (`@playwright/test` 1.64.1) |
+| xvfb, xdotool | apt, Ubuntu 24.04 | Firefox window witnesses under a virtual display |
 
 Version policy rationale: the engine and infrastructure (uv, node, MCP
 server) are pinned for reproducibility; the agentic CLIs track latest at
@@ -283,6 +285,44 @@ CI runs it inside a freshly built container.
                                   #       make lint-llm, make test-llm, godot import
 .devcontainer/verify.sh --quick   # skip the slow checks
 ```
+
+### Browser witnessing capability (#385)
+
+The container carries the runtime libraries for the pinned real-browser
+tiers: one apt layer installs exactly the union of the pinned
+`@playwright/test` 1.64.1 dependency lists for ubuntu 24.04 (Chromium +
+Firefox) plus `xvfb` and `xdotool`. The browser builds themselves are **not**
+baked into the image — hosted runners do not persist layer caches, so ~300 MB
+of artifacts would be re-downloaded on every CI build on both architectures.
+Instead, `post-create.sh` runs `.devcontainer/acquire-browsers.sh`, which:
+
+1. installs the pinned Playwright package (`npm ci --ignore-scripts`) into
+   `.cache/reference/browser/node_modules`;
+2. fetches the pinned Chromium and Firefox builds for the container's
+   architecture through the fail-closed reference path
+   (`scripts/reference/fetch.py`, digests bound to `docs/reference/pins.json`)
+   and unpacks them into the cache layouts the harness already reads
+   (`.cache/reference/verified-browser/<arch>`,
+   `.cache/reference/webrtc-firefox/<arch>`);
+3. writes `.cache/reference/browser-env.sh` with `FORTRESS_CHROMIUM_EXECUTABLE`,
+   `FORTRESS_FIREFOX_EXECUTABLE` and `FORTRESS_PLAYWRIGHT_PACKAGE` — the same
+   environment variables CI's browser suites consume — and sources it from
+   `~/.bashrc` once.
+
+Re-run the acquisition by hand after a pin change
+(`bash .devcontainer/acquire-browsers.sh`); it is idempotent and refuses
+digest drift with a named error. `verify.sh`'s **Browser witnessing
+capability** section runs in both full and `--quick` modes and fails closed:
+the acquisition record, all three variables, both executables, the download
+and registry digests, and one real headless Chromium launch plus one
+`xvfb-run` Firefox launch are each required — in this container a missing
+browser is a failed verification, never a silent skip. The same section runs
+inside the freshly built container in CI's Devcontainer Verify on x64 and
+arm64, so the local capability is CI-verified. Browser-witness suites that
+previously skipped on missing environment variables (for example
+`scripts/reference/test_spectator_control.py`) can now run locally in a fresh
+shell; the owned `--web` probes and SignalFish witnesses still need their
+usual invocations (`PYTHONPATH=scripts/reference`, `xvfb-run` for Firefox).
 
 ## Optional: Egress Firewall
 

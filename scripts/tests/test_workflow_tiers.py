@@ -290,6 +290,9 @@ class DriftReportWorkflowTests(unittest.TestCase):
         self.assertNotRegex(active, r'drift\.py')
         # Serialized runs keep the observation order deterministic.
         self.assertIn('group: drift-report', active)
+        # The Actions installation token cannot resolve `gh api user` (HTTP
+        # 403), so the scheduled run names its reporting identity explicitly.
+        self.assertIn('--reporting-identity github-actions[bot]', active)
 
 
 if __name__ == '__main__':

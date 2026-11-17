@@ -28,5 +28,8 @@ if ! grep -qs '\.local/bin' "$HOME/.bashrc"; then
 fi
 export PATH="$HOME/.local/bin:$PATH"
 
+echo "[post-create] acquiring the pinned browser witnessing capability (chromium, firefox, playwright)"
+"$SCRIPT_DIR/acquire-browsers.sh"
+
 echo "[post-create] verifying environment"
 "$SCRIPT_DIR/verify.sh"
