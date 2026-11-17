@@ -646,10 +646,18 @@ the couch layout runs the same flood across two shared-address machines
 that each own two local slots, so every confirmed row folds two local samples
 per machine and the released burst heals both machines' flights through one
 deep LOAD correction with the engines' default desync reports compared past
-frame 60, and the width profile wraps the same default ring on wide 32-byte
-rows (`mesh_4_wrap_flood_width_32`), so every wrapped flight row, XOR-delta
-reference and confirmed fold runs at the compared maximum width with a
-tail-byte control proving the row comparison reads past the head bytes.
+frame 60, the three-machine split and the asymmetric three-slot couch shape
+wrap the same flood across machines that own unequal local-slot inventories
+(`mesh_4_wrap_flood_split_2x1x1`, `mesh_4_wrap_flood_couch_3x1`), so evidence
+addresses machines while every slot count from one to three folds and flies,
+and the width profiles wrap the same default ring on wide 32-byte rows and at
+the compared minimum width (`mesh_4_wrap_flood_width_32`,
+`mesh_4_wrap_flood_width_1`), so every wrapped flight row, XOR-delta
+reference and confirmed fold runs at both compared width extremes with a
+tail-byte control proving the row comparison reads past the head bytes; a
+multi-slot machine advances on its first covered-row step, so layout builds
+observe after every slot step and each payload follows the machine's own
+frame — the committed solo schedules rebuild byte-identically.
 The flood withholds every packet for
 six rounds so the frontier
 freezes and the mesh stalls silently at the prediction limit, and the reversed
