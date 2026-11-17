@@ -246,5 +246,118 @@ eval "$2"
                     self.assertEqual(result.returncode == 0, valid)
 
 
+# The pinned @playwright/test 1.64.1 nativeDeps union for ubuntu24.04
+# (chromium + firefox lists) plus xvfb and xdotool for the Firefox witnesses.
+BROWSER_LAYER_PACKAGES = [
+    "xvfb", "xdotool",
+    "libasound2t64", "libatk-bridge2.0-0t64", "libatk1.0-0t64", "libatspi2.0-0t64",
+    "libavcodec60", "libcairo-gobject2", "libcairo2", "libcups2t64", "libdbus-1-3",
+    "libdrm2", "libfontconfig1", "libfreetype6", "libgbm1", "libgdk-pixbuf-2.0-0",
+    "libglib2.0-0t64", "libgtk-3-0t64", "libnspr4", "libnss3", "libpango-1.0-0",
+    "libpangocairo-1.0-0", "libx11-6", "libx11-xcb1", "libxcb-shm0", "libxcb1",
+    "libxcomposite1", "libxcursor1", "libxdamage1", "libxext6", "libxfixes3",
+    "libxi6", "libxkbcommon0", "libxrandr2", "libxrender1",
+]
+
+
+def browser_layer_packages():
+    """The package names inside the Dockerfile's browser runtime layer."""
+    text = (ROOT / ".devcontainer/Dockerfile").read_text(encoding="utf-8")
+    block = text.split("# Browser witnessing runtime libraries", 1)[1]
+    block = block.split("RUN apt-get update", 1)[1].split("--no-install-recommends", 1)[1]
+    block = block.split("&& rm -rf /var/lib/apt/lists/*", 1)[0]
+    return [line.strip().rstrip("\\").strip() for line in block.splitlines()
+            if line.strip().rstrip("\\").strip()]
+
+
+class BrowserCapabilityTests(unittest.TestCase):
+    """The devcontainer's real-browser capability (#385): acquisition and the
+    verify contract must fail closed — a missing browser is a failed
+    verification, never a silent skip, on both architectures."""
+
+    def test_dockerfile_installs_the_exact_pinned_library_set(self):
+        self.assertEqual(browser_layer_packages(), BROWSER_LAYER_PACKAGES)
+
+    def test_dockerfile_keeps_one_apt_update_per_layer_and_bakes_no_browser_builds(self):
+        text = (ROOT / ".devcontainer/Dockerfile").read_text(encoding="utf-8")
+        self.assertEqual(text.count("apt-get update"), 2, "one apt layer per acquisition group")
+        self.assertNotIn("cdn.playwright.dev", text, "browser builds are post-create acquisitions, not image layers")
+
+    def test_verify_browser_section_runs_before_the_quick_gate(self):
+        script = (ROOT / ".devcontainer/verify.sh").read_text(encoding="utf-8")
+        section_at = script.index('section "Browser witnessing capability"')
+        quick_at = script.index('if [ "$QUICK" = "1" ]')
+        self.assertLess(section_at, quick_at, "the browser section must run in --quick too")
+        self.assertIn("xvfb-run -a node", script)
+        self.assertIn('browser-witness.cjs" chromium', script)
+        self.assertIn("docs/reference/pins.json", script)
+        self.assertIn("acquire-browsers.sh", script)
+        # Success labels print only the identity line, never captured stderr.
+        self.assertIn(r"${launch##*$'\n'}", script)
+        # The digest check names artifacts through the module's builders, so a
+        # pin-name change cannot fork the two spellings.
+        self.assertIn("from devcontainer_browsers import chromium_zip_name, firefox_zip_name", script)
+
+    def test_verify_refuses_to_skip_when_the_acquisition_record_is_missing(self):
+        script = (ROOT / ".devcontainer/verify.sh").read_text(encoding="utf-8")
+        section = script.split('section "Browser witnessing capability"', 1)[1].split('\nsection ', 1)[0]
+        self.assertIn("bad \"browser acquisition record missing", section)
+        for variable in ("FORTRESS_CHROMIUM_EXECUTABLE", "FORTRESS_FIREFOX_EXECUTABLE", "FORTRESS_PLAYWRIGHT_PACKAGE"):
+            self.assertIn(variable, section)
+        # Executables are checked for presence AND the executable bit, so a
+        # non-executable install cannot pass the file check unnoticed.
+        self.assertIn('[ -f "$executable" ] && [ -x "$executable" ]', section)
+
+    def test_post_create_acquires_browsers_before_verifying(self):
+        script = (ROOT / ".devcontainer/post-create.sh").read_text(encoding="utf-8")
+        acquire_at = script.index("acquire-browsers.sh")
+        verify_at = script.index("verify.sh")
+        self.assertLess(acquire_at, verify_at)
+
+    def test_acquire_script_installs_the_pinned_package_exactly_like_ci(self):
+        script = (ROOT / ".devcontainer/acquire-browsers.sh").read_text(encoding="utf-8")
+        # The python module owns the npm install (single ownership point, with
+        # its timeout and named errors); the shell wrapper only maps the arch
+        # and invokes it, so there is no second npm ci to drift from CI.
+        self.assertNotIn("npm ci", script)
+        self.assertIn("devcontainer_browsers.py", script)
+        self.assertIn("x86_64) ARCH=x86_64", script)
+        self.assertIn("aarch64|arm64) ARCH=arm64", script)
+        self.assertIn('echo "unsupported architecture for the pinned browsers', script)
+
+    def test_witness_refuses_missing_configuration_with_named_errors(self):
+        witness = ROOT / ".devcontainer/browser-witness.cjs"
+        base = dict(os.environ)
+        for variable in ("FORTRESS_PLAYWRIGHT_PACKAGE", "FORTRESS_CHROMIUM_EXECUTABLE", "FORTRESS_FIREFOX_EXECUTABLE"):
+            base.pop(variable, None)
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "package"
+            package.mkdir()
+            (package / "package.json").write_text('{"name":"stub","main":"stub.js"}')
+            (package / "stub.js").write_text("module.exports = {};")
+            cases = [
+                # (env overrides, argv, expected exit, expected diagnostic fragment)
+                ({}, ["chromium"], 2, "FORTRESS_PLAYWRIGHT_PACKAGE is not recorded"),
+                ({"FORTRESS_PLAYWRIGHT_PACKAGE": str(package)}, ["webkit"], 2, "unknown witness browser"),
+                ({"FORTRESS_PLAYWRIGHT_PACKAGE": str(package)}, [], 2, "unknown witness browser"),
+                ({"FORTRESS_PLAYWRIGHT_PACKAGE": str(package)}, ["chromium"], 2, "chromium executable is not recorded"),
+                ({"FORTRESS_PLAYWRIGHT_PACKAGE": str(package)}, ["firefox"], 2, "firefox executable is not recorded"),
+            ]
+            for env_overrides, argv, expected_exit, expected_diagnostic in cases:
+                with self.subTest(argv=argv):
+                    result = subprocess.run(
+                        ["node", str(witness), *argv],
+                        env={**base, **env_overrides}, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, expected_exit)
+                    self.assertIn(expected_diagnostic, result.stderr)
+                    self.assertNotIn("ERR_INVALID_ARG_TYPE", result.stderr)
+
+    def test_witness_unknown_kind_is_rejected_before_any_launch(self):
+        # The guard must run before require(): a package that would throw on
+        # import cannot mask an argument error with a crash dump.
+        witness = (ROOT / ".devcontainer/browser-witness.cjs").read_text(encoding="utf-8")
+        self.assertLess(witness.index("unknown witness browser"), witness.index("require(playwrightPackage)"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -277,7 +277,7 @@ def comment_digest(comment_body):
     return None
 
 
-def report_source(source, entry, latest, cache, output, issues, ledger, today):
+def report_source(source, entry, latest, cache, output, issues, ledger, today, identity=None):
     """One source: bind both trees, classify, then update the single carrier issue.
 
     The reviewed tree is extracted from the digest-verified pinned archive that
@@ -286,8 +286,10 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
     root. The carrier check runs before any comparison work, so a broken
     stream fails closed without writing a report. Adoption needs the tool's
     title AND the stream marker; an issue carrying only one of them is named
-    on stderr because it will silently fork the stream. Returns the
-    per-source result record.
+    on stderr because it will silently fork the stream. The reporting identity
+    comes from the caller when it is known (the scheduled workflow's Actions
+    token cannot resolve `gh api user`), otherwise from the issue client.
+    Returns the per-source result record.
     """
     validate_revision(latest)
     # Digest evidence is trusted only from comments this identity authored:
@@ -295,7 +297,7 @@ def report_source(source, entry, latest, cache, output, issues, ledger, today):
     # one thing a foreign comment cannot borrow. A run under a different
     # identity (a maintainer's manual run after the scheduled bot) therefore
     # re-observes once before settling into its own quiet cadence.
-    identity = issues.current_login()
+    identity = identity if identity is not None else issues.current_login()
     expected_title = f'Upstream drift report: {source}'
     marker = f'<!-- {MARKER_PREFIX}:{source} -->'
     all_issues = issues.list_issues()
@@ -377,6 +379,10 @@ def main_with_args(argv):
     parser.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY'),
                         help='owner/repo for the issue stream (defaults to GITHUB_REPOSITORY)')
     parser.add_argument('--summary', type=Path, help='append one markdown line per source here')
+    parser.add_argument('--reporting-identity', metavar='LOGIN',
+                        help='the identity this run reports as; omit to resolve it through `gh api user`. '
+                             'The scheduled workflow passes github-actions[bot] because the Actions '
+                             'installation token cannot resolve the authenticated user (HTTP 403).')
     args = parser.parse_args(argv)
     if args.summary is not None and args.summary == Path(''):
         # An unset environment variable expands to an empty argument, which
@@ -397,6 +403,10 @@ def main_with_args(argv):
         raise ToolingError(f'pins manifest has no source named: {", ".join(unknown)}')
     if args.repo is None or not args.repo.strip():
         raise ToolingError('--repo is required when GITHUB_REPOSITORY is unset')
+    if args.reporting_identity is not None and not args.reporting_identity.strip():
+        # An empty identity would own no comments, so every run would
+        # re-observe: refuse it instead of silently degrading the cadence.
+        raise ToolingError('--reporting-identity must name a login when present')
     issues = GhIssueClient(args.repo)
     ledger = args.ledger if args.ledger.exists() else None
     if ledger is None:
@@ -409,7 +419,8 @@ def main_with_args(argv):
         entry = pins['sources'][name]
         try:
             latest = overrides.get(name) or resolve_latest(entry)
-            result = report_source(name, entry, latest, args.cache, args.output, issues, ledger, today)
+            result = report_source(name, entry, latest, args.cache, args.output, issues, ledger, today,
+                                   identity=args.reporting_identity)
             results.append(result)
             if result['issue'] is not None:
                 review = len(result.get('requires_review') or [])

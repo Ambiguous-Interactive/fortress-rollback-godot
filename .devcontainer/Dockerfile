@@ -2,7 +2,8 @@
 # Fortress Rollback Godot devcontainer.
 #
 # Design goals, in order:
-#   1. Fast rebuilds: one apt layer, pinned versions, everything cacheable.
+#   1. Fast rebuilds: one apt layer per acquisition group, pinned versions,
+#      everything cacheable.
 #   2. Stability: pinned Godot + uv; agentic CLIs track latest by design.
 #   3. Small surface: no secrets baked in; optional tooling stays out.
 
@@ -59,6 +60,55 @@ RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'source
     && rm -rf /var/lib/apt/lists/* \
     && ln -s "$(command -v fdfind)" /usr/local/bin/fd \
     && ln -s "$(command -v batcat)" /usr/local/bin/bat
+
+# Browser witnessing runtime libraries (#385): exactly the union of the pinned
+# @playwright/test 1.64.1 nativeDeps lists for ubuntu24.04 (chromium + firefox;
+# the lists are shared across x86_64/arm64), plus xvfb and xdotool for the
+# Firefox window witnesses. Package names are pinned to the ubuntu-24.04
+# base image's archive (the t64-era names resolve on both architectures, as
+# every hosted build proves). The browser builds themselves are NOT baked into
+# the image: hosted runners do not persist layer caches, so ~300MB of artifacts
+# would be re-pulled on every build on both architectures. post-create
+# acquires them digest-bound from docs/reference/pins.json instead, keeping
+# image builds fast and the pins authoritative.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        xvfb \
+        xdotool \
+        libasound2t64 \
+        libatk-bridge2.0-0t64 \
+        libatk1.0-0t64 \
+        libatspi2.0-0t64 \
+        libavcodec60 \
+        libcairo-gobject2 \
+        libcairo2 \
+        libcups2t64 \
+        libdbus-1-3 \
+        libdrm2 \
+        libfontconfig1 \
+        libfreetype6 \
+        libgbm1 \
+        libgdk-pixbuf-2.0-0 \
+        libglib2.0-0t64 \
+        libgtk-3-0t64 \
+        libnspr4 \
+        libnss3 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libx11-6 \
+        libx11-xcb1 \
+        libxcb-shm0 \
+        libxcb1 \
+        libxcomposite1 \
+        libxcursor1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxi6 \
+        libxkbcommon0 \
+        libxrandr2 \
+        libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Godot official build. Docker amd64/arm64 -> Godot x86_64/arm64.
 RUN case "${TARGETARCH}" in \

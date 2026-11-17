@@ -35,7 +35,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/reference/drift_report.py --summary "$GITHUB_STEP_SUMMARY"
+          python3 scripts/reference/drift_report.py --summary "$GITHUB_STEP_SUMMARY" \
+            --reporting-identity github-actions[bot]
       - name: Failure summary
         if: failure()
         run: |

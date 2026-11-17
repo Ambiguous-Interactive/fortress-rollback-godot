@@ -236,6 +236,25 @@ class DriftReportTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(len(fake.comments[number]), 2)
 
+    def test_an_explicit_reporting_identity_never_resolves_and_owns_its_digests(self):
+        # The scheduled workflow's Actions installation token cannot resolve
+        # `gh api user` (HTTP 403), so it names its reporting identity
+        # explicitly; resolution must not run and digest trust follows the
+        # named identity exactly as if it had been resolved. The fake models
+        # the reality that the token IS the bot: its comments are authored by
+        # the override identity while `current_login` would fail if called.
+        self.prepare_candidate(NEW_SHA, NEW_FILES)
+        strict = FakeIssues(identity='github-actions[bot]')
+        strict.current_login = self.fail  # any call is a regression
+        override = ['--reporting-identity', 'github-actions[bot]']
+        code, fake = self.run_report(NEW_SHA, issues=strict, extra=override)
+        self.assertEqual(code, 0)
+        number = next(iter(fake.issues))
+        self.assertEqual(fake.comments[number][0]['author'], 'github-actions[bot]')
+        code, fake = self.run_report(NEW_SHA, issues=strict, extra=override)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.comments[number]), 1, 'the same identity observing the same state stays quiet')
+
     def test_affected_port_tests_render_into_the_comment(self):
         # M2 asks the report to name affected tests: ledger-mapped port-test
         # identities render into the observation comment.
@@ -403,6 +422,13 @@ class DriftReportTests(unittest.TestCase):
             self.run_report(NEW_SHA, extra=['--latest', 'sdk=' + NEW_SHA])
         with self.assertRaises(drift_report.ToolingError):
             self.run_report(NEW_SHA, extra=['--source', 'sdk'])
+        for empty in ('', '   '):
+            with self.subTest(identity=empty):
+                # An empty identity would own no comments, so every run would
+                # re-observe: refuse it instead of silently degrading the
+                # cadence (the symmetric guard to the `--summary ''` case).
+                with self.assertRaises(drift_report.ToolingError):
+                    self.run_report(NEW_SHA, extra=['--reporting-identity', empty])
 
     def test_summary_records_results_and_failures(self):
         summary = Path(self._root.name) / 'summary.md'
