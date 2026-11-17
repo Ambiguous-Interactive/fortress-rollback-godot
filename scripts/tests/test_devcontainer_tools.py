@@ -292,6 +292,11 @@ class BrowserCapabilityTests(unittest.TestCase):
         self.assertIn('browser-witness.cjs" chromium', script)
         self.assertIn("docs/reference/pins.json", script)
         self.assertIn("acquire-browsers.sh", script)
+        # Success labels print only the identity line, never captured stderr.
+        self.assertIn(r"${launch##*$'\n'}", script)
+        # The digest check names artifacts through the module's builders, so a
+        # pin-name change cannot fork the two spellings.
+        self.assertIn("from devcontainer_browsers import chromium_zip_name, firefox_zip_name", script)
 
     def test_verify_refuses_to_skip_when_the_acquisition_record_is_missing(self):
         script = (ROOT / ".devcontainer/verify.sh").read_text(encoding="utf-8")

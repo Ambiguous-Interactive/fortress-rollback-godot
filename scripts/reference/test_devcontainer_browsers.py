@@ -103,6 +103,21 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(executable, self.cache / 'webrtc-firefox/arm64/firefox/firefox')
         self.assertTrue(executable.is_file())
 
+    def test_acquisition_precleans_a_stale_installation(self):
+        # prepare_zip replaces changed members but never deletes members the
+        # new zip no longer carries, so a pin bump without the pre-clean would
+        # leave the whole old tree behind. The pre-clean makes re-acquisition
+        # over an existing installation authoritative.
+        for acquire, installation in ((browsers.acquire_chromium, self.cache / 'verified-browser' / 'arm64'),
+                                      (browsers.acquire_firefox, self.cache / 'webrtc-firefox' / 'arm64')):
+            with self.subTest(acquire=acquire.__name__):
+                stale = installation / 'stale-member-from-an-older-pin'
+                stale.parent.mkdir(parents=True, exist_ok=True)
+                stale.write_text('old tree')
+                executable = acquire(self.data, 'arm64', offline=True, cache=self.cache)
+                self.assertFalse(stale.exists())
+                self.assertTrue(executable.is_file())
+
     def test_corrupt_cached_download_is_refused_with_the_pinned_digest(self):
         name = browsers.chromium_zip_name(self.data, 'arm64')
         target = self.cache / 'downloads' / name

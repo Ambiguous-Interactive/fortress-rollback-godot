@@ -119,13 +119,13 @@ if [ -n "$witness_arch" ]; then
   if digest_report="$(PYTHONPATH="$ROOT/scripts/reference" python3 - "$witness_arch" <<'PY' 2>&1
 import sys
 
+from devcontainer_browsers import chromium_zip_name, firefox_zip_name
 from fetch import CACHE, digest, load_manifest
 
 data = load_manifest()
 browser = data['browser']
 problems = []
-for name in (f"chromium-{browser['chromium_revision']}-{sys.argv[1]}.zip",
-             f"firefox-{browser['firefox_revision']}-ubuntu24.04-{sys.argv[1]}.zip"):
+for name in (chromium_zip_name(data, sys.argv[1]), firefox_zip_name(data, sys.argv[1])):
     pin = data['artifacts'][name]
     path = CACHE / 'downloads' / name
     if not path.is_file():
