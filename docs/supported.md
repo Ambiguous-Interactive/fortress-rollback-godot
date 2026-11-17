@@ -40,6 +40,11 @@ executed.
 | Sessions | Local sync-test, external-input, and fixed-membership byte sessions |
 | Join and leave | Membership is fixed. A peer that leaves either ends the match or freezes its slot through the coordinated drop barrier |
 
+The product limits above are not the differentially compared envelope: the
+published [P2P supported network profiles](reference/p2p-profiles.md) name the
+compared values per axis, the explicitly excluded profiles and the explained
+divergences behind the zero-unexplained-divergence report.
+
 ## Transport
 
 | Path | Supported | Notes |

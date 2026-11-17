@@ -1,12 +1,13 @@
 """Lifecycle schedules are built from actual public source packet inventories."""
 from p2p_contract import validate_scenario
 
+NAMES = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
+         'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'partition_fairness', 'checksums_match',
+         'checksums_repair', 'checksums_diverge', 'pacing_skew')
+
 
 def corpus(binary, observe, selected=None):
-    names = ('control_boundaries', 'quality_echo_resume', 'quality_rtt_advantage', 'disconnect_boundary',
-             'partition_one_way', 'partition_heal', 'partition_heal_mesh', 'partition_fairness', 'checksums_match',
-             'checksums_repair', 'checksums_diverge', 'pacing_skew')
-    return {name: build(binary, observe, name) for name in names if selected is None or selected == name}
+    return {name: build(binary, observe, name) for name in NAMES if selected is None or selected == name}
 
 
 def build(binary, observe, name):

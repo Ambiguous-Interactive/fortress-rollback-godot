@@ -9,7 +9,10 @@ python3 scripts/oracle/p2p_launch.py --godot godot --offline
 This P3/P4 development harness executes the pinned upstream
 `P2PSession` and the shipped `FortressPeerSession`. It is separate from the
 sync-test oracle and the P2 handshake oracle. Rust remains a development tool;
-the addon has no native extension or Rust dependency.
+the addon has no native extension or Rust dependency. The published
+supported-profile matrix for the whole initial P2P scope, its declared
+exclusions and the reproducible zero-unexplained-divergence report live in
+[the P2P profile report](reference/p2p-profiles.md).
 
 ## Source-only profile audits
 
