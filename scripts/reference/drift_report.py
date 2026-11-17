@@ -104,8 +104,11 @@ def extract_archive(archive_path, expected_root, destination):
 def resolve_latest(entry):
     """The default branch's current commit of the pinned source repository."""
     repository = entry['repository'].removeprefix('https://github.com/')
-    result = subprocess.run(['gh', 'api', f'repos/{repository}/commits/HEAD', '--jq', '.sha'],
-                            capture_output=True, encoding='utf-8', timeout=GH_TIMEOUT, check=False)
+    try:
+        result = subprocess.run(['gh', 'api', f'repos/{repository}/commits/HEAD', '--jq', '.sha'],
+                                capture_output=True, encoding='utf-8', timeout=GH_TIMEOUT, check=False)
+    except subprocess.TimeoutExpired as error:
+        raise ToolingError(f'revision resolution timed out after {GH_TIMEOUT}s: {repository}') from error
     if result.returncode != 0:
         raise ToolingError(f'cannot resolve the latest revision of {repository}: {result.stderr.strip()}')
     return validate_revision(result.stdout.strip())
@@ -204,8 +207,11 @@ class GhIssueClient:
 
     def current_login(self):
         """The identity this run reports as; digest evidence is trusted only from it."""
-        result = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], capture_output=True,
-                                encoding='utf-8', timeout=GH_TIMEOUT, check=False)
+        try:
+            result = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], capture_output=True,
+                                    encoding='utf-8', timeout=GH_TIMEOUT, check=False)
+        except subprocess.TimeoutExpired as error:
+            raise ToolingError(f'identity resolution timed out after {GH_TIMEOUT}s') from error
         if result.returncode != 0:
             raise ToolingError(f'cannot resolve the reporting identity: {result.stderr.strip()}')
         login = result.stdout.strip()
@@ -411,7 +417,8 @@ def main_with_args(argv):
                       f" drift={result['drift']} requires_review={review}")
             else:
                 print(f"{name}: {result['action']} ({result.get('reason')})")
-        except (ToolingError, ValueError, KeyError, OSError, tarfile.TarError) as error:
+        except (ToolingError, ValueError, KeyError, OSError, tarfile.TarError,
+                subprocess.SubprocessError) as error:
             failures.append(f'{name}: {error}')
             print(f'{name}: tooling error: {error}', file=sys.stderr)
     if args.summary is not None:

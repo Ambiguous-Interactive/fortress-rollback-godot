@@ -419,6 +419,44 @@ class DriftReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('### Failures', summary.read_text(encoding='utf-8'))
 
+    def test_a_resolver_timeout_does_not_block_the_remaining_sources(self):
+        # The spec's exact timeout scenario: a timed-out first source fails
+        # alone while the second source still reports (the adapters convert
+        # TimeoutExpired; the per-source handler nets any SubprocessError).
+        sdk_revision = 'd' * 40
+        sdk_latest = 'e' * 40
+        sdk_archive = make_archive({'src/a.rs': 'fn main() {}\n'}, f'sdk-{sdk_revision}',
+                                   self.cache / 'downloads' / f'{sdk_revision}.tar.gz')
+        sdk_digest = hashlib.sha256(sdk_archive.read_bytes()).hexdigest()
+        data = json.loads(self.pins.read_text(encoding='utf-8'))
+        data['sources']['sdk'] = {
+            'revision': sdk_revision, 'repository': 'https://github.com/example/sdk',
+            'root': f'sdk-{sdk_revision}',
+            'archive': {'url': f'https://github.com/example/sdk/tar.gz/{sdk_revision}',
+                        'digest': sdk_digest, 'algorithm': 'sha256'}}
+        self.pins.write_text(json.dumps(data), encoding='utf-8')
+        self.prepare_candidate(sdk_latest, {'src/a.rs': 'fn main() { 2 }\n'}, stem='sdk')
+        import subprocess
+
+        def timing_out_resolve(entry):
+            if entry['root'].startswith('fortress-'):
+                raise subprocess.TimeoutExpired(cmd='gh', timeout=120)
+            return sdk_latest
+
+        def download(entry, revision, destination_dir):
+            return self.candidate[revision]
+
+        fake = FakeIssues()
+        argv = ['--pins', str(self.pins), '--cache', str(self.cache), '--output', str(self.output),
+                '--repo', 'example/fortress']
+        with patch.object(drift_report, 'GhIssueClient', lambda repo: fake), \
+             patch.object(drift_report, 'download_archive', download), \
+             patch.object(drift_report, 'resolve_latest', timing_out_resolve):
+            code = drift_report.main_with_args(argv)
+        self.assertEqual(code, 1)
+        streams = sorted(issue['title'] for issue in fake.issues.values())
+        self.assertEqual(streams, ['Upstream drift report: sdk'])
+
     def test_pins_and_cache_stay_untouched_by_a_reporting_run(self):
         self.prepare_candidate(NEW_SHA, NEW_FILES)
         before = self.pins.read_bytes(), sorted(
@@ -545,18 +583,16 @@ class GhIssueClientTests(unittest.TestCase):
         self.assertEqual(result, 'gh-bot')
         self.assertIn('user', calls[0])
 
-        def empty_login(*args, **kwargs):
-            class Done:
-                returncode = 0
-                stdout = '\n'
-                stderr = ''
-            return Done()
+        import subprocess
+
+        def timeout_run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(cmd='gh', timeout=120)
 
         client = drift_report.GhIssueClient('example/fortress')
-        with patch.object(drift_report.subprocess, 'run', empty_login):
+        with patch.object(drift_report.subprocess, 'run', timeout_run):
             with self.assertRaises(drift_report.ToolingError) as caught:
                 client.current_login()
-        self.assertIn('empty login', str(caught.exception))
+        self.assertIn('timed out', str(caught.exception))
 
 
 if __name__ == '__main__':
