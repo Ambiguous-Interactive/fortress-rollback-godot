@@ -642,11 +642,15 @@ distinct extremes on three peers and interleaved extremes on four — so delayed
 early samples stay stamped, compared and confirmed through the heal, the
 capacity-nine profile runs the same flood on the non-power-of-two nine-row
 ring, so the healed frontier passes the whole reduced ring several rows deep,
-and the couch layout runs the same flood across two shared-address machines
+the couch layout runs the same flood across two shared-address machines
 that each own two local slots, so every confirmed row folds two local samples
 per machine and the released burst heals both machines' flights through one
 deep LOAD correction with the engines' default desync reports compared past
-frame 60. The flood withholds every packet for
+frame 60, and the width profile wraps the same default ring on wide 32-byte
+rows (`mesh_4_wrap_flood_width_32`), so every wrapped flight row, XOR-delta
+reference and confirmed fold runs at the compared maximum width with a
+tail-byte control proving the row comparison reads past the head bytes.
+The flood withholds every packet for
 six rounds so the frontier
 freezes and the mesh stalls silently at the prediction limit, and the reversed
 duplicate-carrying burst heals through one deep LOAD correction with every

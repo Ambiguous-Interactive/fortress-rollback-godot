@@ -1,12 +1,14 @@
 """Long ring-wrap runs under a withheld multi-round flood release."""
 from copy import deepcopy
 
-from p2p_contract import validate_scenario
+from p2p_contract import validate_scenario, WIDTHS
 
 # name -> (players, queue capacity, rounds, prediction window, per-peer construction
-# delays, endpoint layout). A None layout stays one local slot per endpoint; a list
-# gives each machine's local slot count and omits the lifecycle section (the shared
-# grammar refuses that combination; the engines' defaults keep every timer inert).
+# delays, endpoint layout, input width). A None layout stays one local slot per
+# endpoint; a list gives each machine's local slot count and omits the lifecycle
+# section (the shared grammar refuses that combination; the engines' defaults keep
+# every timer inert). A None width stays the four-byte production default; the
+# compared representative set {1, 4, 32} owns the rest.
 # Every count two through eight holds the real default ring: the confirmed frontier climbs past
 # the 128-row queues the production mesh configures by default, so the named
 # count cases compare the default-capacity wrap at every supported roster size.
@@ -36,6 +38,12 @@ from p2p_contract import validate_scenario
 # it does not need one: the engines' omitted-section defaults (quality and
 # keepalive 100 s, disconnect timeout 100 s, notify 50 s) are the same inert
 # no-timer-fires shape the explicit solo values pin.
+# `mesh_4_wrap_flood_width_32` carries the input-width axis through the same
+# flood: four solo machines wrap the default 128-row ring on wide 32-byte rows,
+# so every wrapped flight row, XOR-delta reference and confirmed fold runs at
+# the compared maximum width while the flood freezes and heals the frontier —
+# the width analogue of `mesh_4_width_32`, which owns ordinary width delivery
+# without a ring wrap.
 # The launchers load the committed schedules from scripts/oracle/fixtures/wrap_flood
 # instead of building them: the builder reruns the whole growing scenario once per
 # round, and that quadratic cost inside every CI launch blew the merge queue's
@@ -43,15 +51,17 @@ from p2p_contract import validate_scenario
 # path (scripts/oracle/p2p_wrap_regenerate.py); its per-round model checks keep
 # failing the regeneration on divergence, and every launch still runs the full
 # differential gates against the committed bytes.
-PROFILES = {'mesh_2_wrap_flood': (2, 128, 142, 4, None, None), 'mesh_3_wrap_flood': (3, 128, 142, 4, None, None),
-            'mesh_4_wrap_flood': (4, 128, 142, 4, None, None),
-            'mesh_5_wrap_flood': (5, 128, 142, 4, None, None), 'mesh_6_wrap_flood': (6, 128, 142, 4, None, None),
-            'mesh_7_wrap_flood': (7, 128, 142, 4, None, None), 'mesh_8_wrap_flood': (8, 128, 142, 4, None, None),
-            'mesh_8_wrap_flood_32': (8, 32, 44, 4, None, None), 'mesh_4_wrap_flood_window_8': (4, 128, 142, 8, None, None),
-            'mesh_3_wrap_flood_delays_2_1_0': (3, 128, 142, 4, [2, 1, 0], None),
-            'mesh_4_wrap_flood_delays_2_0': (4, 128, 142, 4, [2, 0, 2, 0], None),
-            'mesh_4_wrap_flood_capacity_9': (4, 9, 24, 4, None, None),
-            'mesh_4_wrap_flood_couch_2x2': (4, 128, 142, 4, None, [2, 2])}
+PROFILES = {'mesh_2_wrap_flood': (2, 128, 142, 4, None, None, None), 'mesh_3_wrap_flood': (3, 128, 142, 4, None, None, None),
+            'mesh_4_wrap_flood': (4, 128, 142, 4, None, None, None),
+            'mesh_5_wrap_flood': (5, 128, 142, 4, None, None, None), 'mesh_6_wrap_flood': (6, 128, 142, 4, None, None, None),
+            'mesh_7_wrap_flood': (7, 128, 142, 4, None, None, None), 'mesh_8_wrap_flood': (8, 128, 142, 4, None, None, None),
+            'mesh_8_wrap_flood_32': (8, 32, 44, 4, None, None, None), 'mesh_4_wrap_flood_window_8': (4, 128, 142, 8, None, None, None),
+            'mesh_3_wrap_flood_delays_2_1_0': (3, 128, 142, 4, [2, 1, 0], None, None),
+            'mesh_4_wrap_flood_delays_2_0': (4, 128, 142, 4, [2, 0, 2, 0], None, None),
+            'mesh_4_wrap_flood_capacity_9': (4, 9, 24, 4, None, None, None),
+            'mesh_4_wrap_flood_couch_2x2': (4, 128, 142, 4, None, [2, 2], None),
+            'mesh_4_wrap_flood_width_32': (4, 128, 142, 4, None, None, 32)}
+# The compared representative width set the shared grammar admits; None and 4 both stay the default row.
 NAMES = tuple(PROFILES)
 # The family's default window; each profile carries its own in PROFILES[name][3].
 WINDOW = 4
@@ -71,7 +81,7 @@ CORRECTION_MIN = 3
 # capacity and the queue wraps.
 
 
-def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None, layout=None):
+def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None, layout=None, width=None):
     """Each machine advances one frame per round until the starved frontier
     caps it at confirmed + window, then stalls silently; the builder models
     that cap explicitly, derives each step's payload from the modeled frame and
@@ -81,8 +91,19 @@ def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None
     changing the one-frame-per-round advance the model tracks. An explicit
     layout gives machines several local slots: steps address one slot, a
     machine's advance happens on the op that completes its row, and every slot
-    of a machine derives its bytes from that machine's modeled frame."""
+    of a machine derives its bytes from that machine's modeled frame. A
+    non-default width widens every submitted row: every byte of a wide payload
+    varies with its position, the modeled frame and the slot and stays nonzero,
+    so the fold contribution lives in the tail bytes too; rows are compared
+    positionally, so an aliased row between two (frame, slot) pairs cannot
+    alias any check."""
+    if width is not None and (type(width) is not int or width not in WIDTHS or width == 4):
+        # Fail with the grammar's own rejection before any payload can carry a
+        # width the compared contract refuses.
+        raise ValueError('input width')
     scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window, 'operations': []}
+    if width is not None:
+        scenario['input_width'] = width
     if layout is not None and (type(layout) is not list or len(layout) < 2
                                or any(type(size) is not int or size < 1 for size in layout)
                                or sum(layout) != players):
@@ -129,9 +150,20 @@ def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None
         # zero), so bytes derived from the modeled frame keep every repeated
         # stalled sample identical while varying across confirmed frames; every
         # slot of one machine shares that frame because a multi-local machine
-        # samples one row per confirmed frame.
+        # samples one row per confirmed frame. Wide rows keep every byte nonzero
+        # and varying with its position, the modeled frame and the slot, so the
+        # fold contribution lives in the tail bytes too; rows are compared
+        # positionally, so an aliased row between two (frame, slot) pairs cannot
+        # alias any check.
         machine = owner[slot]
-        append('step', peer=slot, bytes=((modeled[machine] + 1) * (slot + 1) * 17 % 256 ** 4).to_bytes(4, 'little').hex())
+        frame = modeled[machine] + 1
+        head = frame * (slot + 1) * 17 % 256 ** (width if width is not None else 4)
+        if width is None or width == 4:
+            append('step', peer=slot, bytes=head.to_bytes(4, 'little').hex())
+            return
+        payload = bytes(((head >> (8 * (index % 4))) ^ (index * 37 + frame * 11 + slot * 5 + 1)) & 255 | 1
+                        for index in range(width))
+        append('step', peer=slot, bytes=payload.hex())
 
     def deliver(packet_id):
         delivered.add(packet_id)
@@ -188,9 +220,11 @@ def evidence(value, scenario):
     capacity = scenario.get('queue_capacity', 128)
     delays = scenario.get('delays')
     layout = scenario.get('layout')
+    width = scenario.get('input_width', 4)
     machines = len(layout) if layout is not None else players
     if not any(spec[0] == players and spec[1] == capacity and spec[3] == scenario['max_prediction']
-               and spec[4] == delays and spec[5] == layout for spec in PROFILES.values()):
+               and spec[4] == delays and spec[5] == layout and (spec[6] or 4) == width
+               for spec in PROFILES.values()):
         raise ValueError('wrap witness profile')
     if scenario['input_delay'] != 0:
         raise ValueError('wrap witness profile')
