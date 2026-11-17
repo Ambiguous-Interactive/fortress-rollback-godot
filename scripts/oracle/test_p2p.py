@@ -211,6 +211,45 @@ class P2PContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 control(mutant, True)
 
+    # Value: protects=the layout checksum seam; fails_when=a layout trace loses its
+    # upstream-default desync reports, or a quality/keepalive packet or a solo-mesh
+    # checksum sneaks past the no-lifecycle packet gate; why_new=the couch wrap
+    # flood crosses frame 60 without a lifecycle section; seam=p2p_contract.validate
+    def test_layout_checksum_packet_gate(self):
+        def trace(layout, kind, body):
+            players = sum(layout) if layout else 2
+            scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': 4,
+                        'operations': [{'kind': 'poll', 'peer': 0, 'now_us': 1}]}
+            if layout:
+                scenario['layout'] = list(layout)
+            state = initial_game_state(players, 2).hex()
+            record = {'index': 0, 'peer': 0, 'frame_before': 0, 'frame_after': 0, 'confirmed_frame': -1,
+                      'error': None, 'requests': [], 'events': [], 'extension_events': [], 'outgoing': [0],
+                      'state': state}
+            value = {'format': 1, 'complete': True, 'upstream_revision': REVISION,
+                     'scenario': scenario, 'records': [record],
+                     'packets': [{'id': 0, 'from': 0, 'to': 1, 'semantic': dict(kind=kind, **body)}]}
+            return scenario, value
+        checksum_report = {'frame': 60, 'checksum': '0' * 32}
+        quality_report = {'frame_advantage': 0, 'ping': '0' * 32}
+        quality_reply = {'pong': '0' * 32}
+        goodbye = {'reason': 255}
+        cases = [([1, 1], 'checksum_report', checksum_report, None),
+                 ([2, 2], 'checksum_report', checksum_report, None),
+                 ([1, 1], 'quality_report', quality_report, 'lifecycle packet outside explicit profile'),
+                 ([1, 1], 'quality_reply', quality_reply, 'lifecycle packet outside explicit profile'),
+                 ([1, 1], 'keep_alive', {}, 'lifecycle packet outside explicit profile'),
+                 ([1, 1], 'goodbye', goodbye, 'lifecycle packet outside explicit profile'),
+                 (None, 'checksum_report', checksum_report, 'lifecycle packet outside explicit profile')]
+        for layout, kind, body, failure in cases:
+            with self.subTest(layout=layout, kind=kind):
+                scenario, value = trace(layout, kind, body)
+                if failure is None:
+                    validate(value, scenario, False)
+                else:
+                    with self.assertRaisesRegex(ValueError, failure):
+                        validate(value, scenario, False)
+
     # Value: protects=terminal projection stops onlyfirstfinal event; fails_when=later source operations silently disappear; why_new=membership policy differs; seam=none
     def test_terminal_projection_full_timeout_boundary(self):
         actual, expected, scenario = timeout_fixture()
@@ -337,13 +376,14 @@ class P2PContractTests(unittest.TestCase):
     # fixtures keep the builders off the CI critical path, #383 adds the delay profiles;
     # seam=p2p_launch.wrap_fixture
     def test_wrap_fixture_inventory(self):
-        for name, (players, capacity, rounds, window, delays) in p2p_wrap.PROFILES.items():
+        for name, (players, capacity, rounds, window, delays, layout) in p2p_wrap.PROFILES.items():
             with self.subTest(case=name):
                 scenario = wrap_fixture(name)
                 self.assertEqual(scenario['players'], players)
                 self.assertEqual(scenario.get('queue_capacity', 128), capacity)
                 self.assertEqual(scenario['max_prediction'], window)
                 self.assertEqual(scenario.get('delays'), delays)
+                self.assertEqual(scenario.get('layout'), layout)
                 self.assertGreater(len(scenario['operations']), rounds - 2)
         manifest = json.loads((Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood/MANIFEST.json').read_text(encoding='utf-8'))
         self.assertEqual(set(manifest['fixtures']), {name + '.json' for name in p2p_wrap.NAMES})
@@ -385,10 +425,11 @@ class P2PContractTests(unittest.TestCase):
                  patch.object(p2p_wrap_regenerate, 'execute', lambda command, log, timeout=0: None), \
                  patch.object(p2p_wrap_regenerate, 'validate', lambda value, scenario, raw: None), \
                  patch('p2p_wrap.build', lambda binary, observe, players, capacity, rounds,
-                       window, delays=None: {
+                       window, delays=None, layout=None: {
                            'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
                            'queue_capacity': capacity,
                            **({'delays': list(delays)} if delays is not None else {}),
+                           **({'layout': list(layout)} if layout is not None else {}),
                            'operations': [{'kind': 'poll', 'peer': 0, 'now_us': index}
                                           for index in range(1, rounds + 1)]}), \
                  patch('p2p_wrap_regenerate.subprocess.run') as fake_run:
@@ -415,7 +456,7 @@ class P2PContractTests(unittest.TestCase):
             new_names = ('mesh_3_wrap_flood_delays_2_1_0', 'mesh_4_wrap_flood_delays_2_0')
             committed = Path(root) / 'committed'; committed.mkdir()
             digests = {}
-            for name, (players, capacity, rounds, window, delays) in p2p_wrap.PROFILES.items():
+            for name, (players, capacity, rounds, window, delays, layout) in p2p_wrap.PROFILES.items():
                 if name in new_names:
                     continue
                 sibling = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
@@ -424,6 +465,8 @@ class P2PContractTests(unittest.TestCase):
                     sibling['queue_capacity'] = capacity
                 if delays is not None:
                     sibling['delays'] = list(delays)
+                if layout is not None:
+                    sibling['layout'] = list(layout)
                 path = committed / (name + '.json')
                 path.write_text(json.dumps(sibling), encoding='utf-8')
                 digests[name + '.json'] = hashlib.sha256(path.read_bytes()).hexdigest()

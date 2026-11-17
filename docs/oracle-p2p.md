@@ -391,7 +391,16 @@ capacity profile (524 measured scheduled operations), so the healed frontier
 passes the whole reduced ring and climbs several rows past it (measured 16
 boundaries per peer, six silent stalls each, one three-row LOAD heal) — the
 total-silence complement of the partial-outage `mesh_3_capacity9_late_flight`
-case on the same ring.
+case on the same ring. `mesh_4_wrap_flood_couch_2x2` carries the local-slot
+layout axis through the same flood: two couch machines each own two local
+slots, so every confirmed row folds two local samples per machine and the
+withheld burst releases both machines' shared-address flights through one deep
+LOAD heal. An explicit layout cannot carry the lifecycle section that would
+pin the engine timers, so the case runs the oracle's omitted-lifecycle
+defaults instead — inert quality/keepalive/notify/timeout timers, the same
+shape the solo profiles' explicit values pin — while the genuine upstream
+default `DesyncDetection::On { interval: 60 }` stays in force, so its reports
+stay part of the compared packet traffic past frame 60.
 
 From round eight every packet — inputs and acknowledgements alike — is
 withheld from every link for six consecutive rounds. The missing
