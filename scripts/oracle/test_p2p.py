@@ -305,6 +305,39 @@ class P2PContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'wrong boundary: metric_bool'):
                 controls(actual, expected, scenario)
 
+    # Value: protects=the lifecycle path's wide-row control; fails_when=a wide scenario's
+    # flipped tail byte passes the packet comparison, or a width-four scenario grows the
+    # mutation; why_new=the wrap family gained a width-32 profile whose generic width
+    # controls are unreachable on the lifecycle path; seam=p2p_lifecycle_controls.mutations_for
+    def test_lifecycle_wide_tail_control(self):
+        from p2p_lifecycle_controls import mutations_for
+        actual, expected, scenario = timeout_fixture()
+        row = 'aa' * 32
+        statuses = [{'disconnected': False, 'epoch': 0, 'last_frame': -1} for _ in range(2)]
+        packet = {'id': 0, 'from': 0, 'to': 1,
+                  'semantic': {'kind': 'input', 'start_frame': 0, 'ack_frame': -1, 'statuses': statuses,
+                               'players': [0], 'frames': [row]},
+                  'raw': {'header': {'conn_id': 1, 'flags': 0, 'protocol_version': 2, 'sentinel': [245, 82]},
+                          'body': '0000'}}
+        expected['packets'] = [packet]
+        actual['packets'] = deepcopy(expected['packets'])
+        self.assertNotIn('wide_tail', mutations_for(actual, expected))
+        scenario['input_width'] = 32
+        expected['scenario']['input_width'] = 32
+        mutations = mutations_for(actual, expected)
+        self.assertIn('wide_tail', mutations)
+        mutation, diagnostic = mutations['wide_tail']
+        self.assertEqual(diagnostic, 'packet 0: semantic mismatch')
+        mutant = deepcopy(actual); mutation(mutant)
+        self.assertNotEqual(mutant['packets'][0]['semantic']['frames'][0][-2:], row[-2:])
+        # The flip must reach exactly what compare's packet equality reads: the
+        # normalized semantic frames. The full-comparator firing is exercised on
+        # the real wrap traces by the launcher's control pass itself.
+        normalized_actual = normalize(actual)['packets'][0]['semantic']['frames']
+        normalized_mutant = normalize(mutant)['packets'][0]['semantic']['frames']
+        self.assertNotEqual(normalized_mutant, normalized_actual)
+        self.assertNotEqual(normalized_mutant[0][-2:], normalized_actual[0][-2:])
+
     # Value: protects=named corpus requires nonzero actual evidence; fails_when=empty short profile earns release evidence; why_new=generic parity vacuous; seam=none
     def test_named_corpus_nonzero_gate(self):
         from p2p_lifecycle import corpus_evidence, CORPUS_REQUIREMENTS
@@ -372,11 +405,12 @@ class P2PContractTests(unittest.TestCase):
 
     # Value: protects=the committed wrap-flood fixtures stay consistent with their manifest
     # and the profile table; fails_when=a stale, drifted or re-profiled fixture reaches the
-    # launchers, or a per-peer delay profile loses its construction delays; why_new=#379
-    # fixtures keep the builders off the CI critical path, #383 adds the delay profiles;
-    # seam=p2p_launch.wrap_fixture
+    # launchers, a per-peer delay profile loses its construction delays, or a width
+    # profile drifts off its committed row width; why_new=#379 fixtures keep the
+    # builders off the CI critical path, #383 adds the delay profiles, the width
+    # profile joins the flood family; seam=p2p_launch.wrap_fixture
     def test_wrap_fixture_inventory(self):
-        for name, (players, capacity, rounds, window, delays, layout) in p2p_wrap.PROFILES.items():
+        for name, (players, capacity, rounds, window, delays, layout, width) in p2p_wrap.PROFILES.items():
             with self.subTest(case=name):
                 scenario = wrap_fixture(name)
                 self.assertEqual(scenario['players'], players)
@@ -384,9 +418,36 @@ class P2PContractTests(unittest.TestCase):
                 self.assertEqual(scenario['max_prediction'], window)
                 self.assertEqual(scenario.get('delays'), delays)
                 self.assertEqual(scenario.get('layout'), layout)
+                self.assertEqual(scenario.get('input_width', 4), width or 4)
                 self.assertGreater(len(scenario['operations']), rounds - 2)
         manifest = json.loads((Path(p2p_launch.__file__).parent / 'fixtures/wrap_flood/MANIFEST.json').read_text(encoding='utf-8'))
         self.assertEqual(set(manifest['fixtures']), {name + '.json' for name in p2p_wrap.NAMES})
+
+    # Value: protects=the committed width profile against a re-profiled row width;
+    # fails_when=a grammar-valid fixture whose input_width drifts off its committed
+    # profile loads; why_new=the flood family gained its width axis; the grammar
+    # already rejects row-length drift, so the drifted fixture shrinks its rows to
+    # the claimed width and exercises the profile check itself;
+    # seam=p2p_launch.wrap_fixture
+    def test_wrap_fixture_width_drift_refused(self):
+        source = wrap_fixture('mesh_4_wrap_flood_width_32')
+        drifted = deepcopy(source)
+        drifted['input_width'] = 1
+        for op in drifted['operations']:
+            if op['kind'] == 'step':
+                op['bytes'] = op['bytes'][:2]
+        with TemporaryDirectory() as root:
+            fixtures = Path(root)
+            # The hostile shape: the committed fixture file is rewritten to a
+            # re-profiled schedule and its manifest digest re-stamped to match —
+            # exactly what a hand edit (or a bad regeneration) could leave behind.
+            (fixtures / 'mesh_4_wrap_flood_width_32.json').write_text(json.dumps(drifted), encoding='utf-8')
+            digests = {'mesh_4_wrap_flood_width_32.json':
+                       hashlib.sha256((fixtures / 'mesh_4_wrap_flood_width_32.json').read_bytes()).hexdigest()}
+            (fixtures / 'MANIFEST.json').write_text(json.dumps({'format': 1, 'fixtures': digests}), encoding='utf-8')
+            with patch.object(p2p_launch, 'FIXTURES', fixtures):
+                with self.assertRaisesRegex(ValueError, 'wrap fixture profile drift: mesh_4_wrap_flood_width_32'):
+                    wrap_fixture('mesh_4_wrap_flood_width_32')
 
     # Value: protects=the single-fixture regeneration's fail-closed precondition and its
     # manifest merge; fails_when=--only crashes before the precondition check (the #382
@@ -425,11 +486,12 @@ class P2PContractTests(unittest.TestCase):
                  patch.object(p2p_wrap_regenerate, 'execute', lambda command, log, timeout=0: None), \
                  patch.object(p2p_wrap_regenerate, 'validate', lambda value, scenario, raw: None), \
                  patch('p2p_wrap.build', lambda binary, observe, players, capacity, rounds,
-                       window, delays=None, layout=None: {
+                       window, delays=None, layout=None, width=None: {
                            'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
                            'queue_capacity': capacity,
                            **({'delays': list(delays)} if delays is not None else {}),
                            **({'layout': list(layout)} if layout is not None else {}),
+                           **({'input_width': int(width)} if width is not None else {}),
                            'operations': [{'kind': 'poll', 'peer': 0, 'now_us': index}
                                           for index in range(1, rounds + 1)]}), \
                  patch('p2p_wrap_regenerate.subprocess.run') as fake_run:
@@ -456,7 +518,7 @@ class P2PContractTests(unittest.TestCase):
             new_names = ('mesh_3_wrap_flood_delays_2_1_0', 'mesh_4_wrap_flood_delays_2_0')
             committed = Path(root) / 'committed'; committed.mkdir()
             digests = {}
-            for name, (players, capacity, rounds, window, delays, layout) in p2p_wrap.PROFILES.items():
+            for name, (players, capacity, rounds, window, delays, layout, width) in p2p_wrap.PROFILES.items():
                 if name in new_names:
                     continue
                 sibling = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window,
@@ -467,6 +529,8 @@ class P2PContractTests(unittest.TestCase):
                     sibling['delays'] = list(delays)
                 if layout is not None:
                     sibling['layout'] = list(layout)
+                if width is not None:
+                    sibling['input_width'] = int(width)
                 path = committed / (name + '.json')
                 path.write_text(json.dumps(sibling), encoding='utf-8')
                 digests[name + '.json'] = hashlib.sha256(path.read_bytes()).hexdigest()

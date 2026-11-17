@@ -391,7 +391,15 @@ capacity profile (524 measured scheduled operations), so the healed frontier
 passes the whole reduced ring and climbs several rows past it (measured 16
 boundaries per peer, six silent stalls each, one three-row LOAD heal) — the
 total-silence complement of the partial-outage `mesh_3_capacity9_late_flight`
-case on the same ring. `mesh_4_wrap_flood_couch_2x2` carries the local-slot
+case on the same ring. `mesh_4_wrap_flood_width_32` carries the input-width
+axis through the same flood: four solo machines wrap the default 128-row ring
+on wide 32-byte rows (3828 measured scheduled operations, 3266 packets), so
+every wrapped flight row, XOR-delta reference and confirmed fold runs at the
+compared maximum width — the width analogue of `mesh_4_width_32`, which owns
+ordinary width delivery without a ring wrap. Each machine measured 134
+predicted advances, six silent stalls, one three-row LOAD heal and 134
+confirmed boundaries past the ring, with the row-shape controls proving the
+comparison reads the wide tail bytes. `mesh_4_wrap_flood_couch_2x2` carries the local-slot
 layout axis through the same flood: two couch machines each own two local
 slots, so every confirmed row folds two local samples per machine and the
 withheld burst releases both machines' shared-address flights through one deep

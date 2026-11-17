@@ -44,6 +44,21 @@ def mutations_for(actual, expected):
             index = packet['id']
             mutations[name] = (lambda x, i=index, f=field: x['packets'][i]['semantic'].update({f: '00' * 16}),
                                f'packet {index}: semantic mismatch')
+    if expected['scenario'].get('input_width', 4) != 4:
+        # A wide scenario's generic width controls only exist on the non-lifecycle
+        # path, so the lifecycle path proves its own row comparison: flipping a
+        # wide row's final byte — past the head bytes a four-byte row never grew —
+        # must fail the exact packet comparison.
+        packet = next((p for p in actual['packets'] if p['semantic']['kind'] == 'input'), None)
+        if packet is not None:
+            index = packet['id']
+            row = packet['semantic']['frames'][0]
+            start = len(row) - 2
+
+            def flip_tail(x, i=index, s=start):
+                data = x['packets'][i]['semantic']['frames'][0]
+                x['packets'][i]['semantic']['frames'][0] = data[:s] + ('ff' if data[s:] != 'ff' else '00')
+            mutations['wide_tail'] = (flip_tail, f'packet {index}: semantic mismatch')
     for index, record in enumerate(actual['records']):
         available = next((m for m in record['metrics']['peers'] if m['error'] is None and m['ping'] > 0), None)
         if available is not None and 'measured_rtt' not in mutations:
