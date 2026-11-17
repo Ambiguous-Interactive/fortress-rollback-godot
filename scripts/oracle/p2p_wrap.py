@@ -19,6 +19,12 @@ from p2p_contract import validate_scenario
 # schedules of the delay-profile family through the same withheld flood: the
 # band's extremes and every distinct delay wrap their rings while their
 # delayed construction stamps stay compared end to end.
+# `mesh_4_wrap_flood_capacity_9` is the family's non-power-of-two scale point:
+# the full-fanout four-peer flood on the nine-row ring, so the healed frontier
+# passes the whole reduced ring several rows deep instead of grazing the
+# 128-row default — the complement of the partial-outage capacity-nine case
+# (`mesh_3_capacity9_late_flight`), which wraps the same ring under a single
+# withheld link instead of the total-silence flood.
 # The launchers load the committed schedules from scripts/oracle/fixtures/wrap_flood
 # instead of building them: the builder reruns the whole growing scenario once per
 # round, and that quadratic cost inside every CI launch blew the merge queue's
@@ -32,7 +38,8 @@ PROFILES = {'mesh_2_wrap_flood': (2, 128, 142, 4, None), 'mesh_3_wrap_flood': (3
             'mesh_7_wrap_flood': (7, 128, 142, 4, None), 'mesh_8_wrap_flood': (8, 128, 142, 4, None),
             'mesh_8_wrap_flood_32': (8, 32, 44, 4, None), 'mesh_4_wrap_flood_window_8': (4, 128, 142, 8, None),
             'mesh_3_wrap_flood_delays_2_1_0': (3, 128, 142, 4, [2, 1, 0]),
-            'mesh_4_wrap_flood_delays_2_0': (4, 128, 142, 4, [2, 0, 2, 0])}
+            'mesh_4_wrap_flood_delays_2_0': (4, 128, 142, 4, [2, 0, 2, 0]),
+            'mesh_4_wrap_flood_capacity_9': (4, 9, 24, 4, None)}
 NAMES = tuple(PROFILES)
 # The family's default window; each profile carries its own in PROFILES[name][3].
 WINDOW = 4

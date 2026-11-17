@@ -633,10 +633,12 @@ eight-peer default case fits the deliberately raised 20000-operation scenario
 bound — and a named 32-row scale point keeps the full-fanout small-ring
 witness; the same flood at the deepest supported prediction window on four
 peers (`mesh_4_wrap_flood_window_8`) pins the wrap axis at the boundary window
-with its deeper stall cap and LOAD heal, and the two delay profiles wrap the
+with its deeper stall cap and LOAD heal, the two delay profiles wrap the
 same flood under heterogeneous per-peer construction delays — the band's three
 distinct extremes on three peers and interleaved extremes on four — so delayed
-early samples stay stamped, compared and confirmed through the heal. The flood withholds every packet for
+early samples stay stamped, compared and confirmed through the heal, and the
+capacity-nine profile runs the same flood on the non-power-of-two nine-row
+ring, so the healed frontier passes the whole reduced ring several rows deep. The flood withholds every packet for
 six rounds so the frontier
 freezes and the mesh stalls silently at the prediction limit, and the reversed
 duplicate-carrying burst heals through one deep LOAD correction with every
@@ -834,7 +836,9 @@ These client controls do not close the broader driver equivalence, spectator liv
 
 Monitor Fortress plus relevant SignalFish SDK/server contracts weekly and
 manually. Maintain separate latest-observed and last-reviewed revisions.
-The weekly automation is future work tracked in M2, not activated by this plan.
+The weekly `Drift Report` workflow runs the classifier and appends each
+observation to one deduplicated issue per source; it only ever reports and
+never advances a pin.
 
 Classify source, constants/defaults, macros/attributes/cfg, build logic,
 tests/models/fixtures, dependencies and documentation.
@@ -850,8 +854,10 @@ pins.json; its `--advance` mode rewrites the pin (revision, archive URL,
 digest and root)
 with `advanced_from`/`advanced_on` bookkeeping and per-path commit links —
 the report is the review evidence; the pin merges only after a full oracle
-requalification against the new revision. M2 owns wiring the classifier into a
-weekly/manual report.
+requalification against the new revision. M2's weekly/manual `Drift Report`
+workflow runs the classifier on a schedule and reports each observation on one
+deduplicated carrier issue per source, reopened rather than duplicated and
+quiet for repeated identical states; it never writes pins.json.
 Token/AST analysis reduces noise but does not prove semantic equivalence.
 Unknown classification, API failure or incomplete diffs require review.
 

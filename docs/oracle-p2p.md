@@ -385,7 +385,13 @@ heterogeneous per-peer construction schedules through the same flood:
 extremes across a three-peer mesh and `mesh_4_wrap_flood_delays_2_0`
 interleaves the extremes across four peers, so each machine wraps its ring
 while its delayed early samples stay stamped, compared and confirmed
-end to end.
+end to end. `mesh_4_wrap_flood_capacity_9` is the family's non-power-of-two
+scale point: the same full-fanout four-peer flood on the nine-row ring of the
+capacity profile (524 measured scheduled operations), so the healed frontier
+passes the whole reduced ring and climbs several rows past it (measured 16
+boundaries per peer, six silent stalls each, one three-row LOAD heal) — the
+total-silence complement of the partial-outage `mesh_3_capacity9_late_flight`
+case on the same ring.
 
 From round eight every packet — inputs and acknowledgements alike — is
 withheld from every link for six consecutive rounds. The missing
