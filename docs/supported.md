@@ -43,7 +43,7 @@ executed.
 The product limits above are not the differentially compared envelope: the
 published [P2P supported network profiles](reference/p2p-profiles.md) name the
 compared values per axis, the explicitly excluded profiles and the explained
-divergences behind the zero-unexplained-divergence report. |
+divergences behind the zero-unexplained-divergence report.
 
 ## Transport
 

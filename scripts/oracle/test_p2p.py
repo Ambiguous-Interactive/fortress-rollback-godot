@@ -1103,6 +1103,28 @@ class ProfileReportTests(unittest.TestCase):
             self.assertIsNotNone(problem)
             self.assertIn('mesh_2_wrap_flood_tampered', problem)
 
+    # Value: protects=the CLI's exit contract (0 verified, 1 drift, 2 tooling error); fails_when=a
+    # drift or a broken invocation reports the wrong code; why_new=P5 report; seam=main().
+    def test_cli_exit_codes(self):
+        tool = Path(profile_report.__file__)
+        report = Path(p2p_launch.__file__).parents[2] / 'docs/reference/p2p-profiles.md'
+        cases = {
+            'verified': (['--check', str(report)], 0),
+            'missing': (['--check', str(report.parent / 'no-such-report.md')], 2),
+            'directory': (['--check', str(report.parent)], 2),
+            'exclusive': (['--check', str(report), '--write', str(report)], 2),
+        }
+        for name, (arguments, expected) in cases.items():
+            result = subprocess.run([sys.executable, str(tool), *arguments], capture_output=True, text=True)
+            self.assertEqual(result.returncode, expected, f'{name}: {result.stderr[-300:]}')
+        with TemporaryDirectory() as dir:
+            mutated = Path(dir) / 'drifted.md'
+            mutated.write_text(report.read_text(encoding='utf-8').replace('`mesh_2_wrap_flood`', '`x`'),
+                               encoding='utf-8')
+            result = subprocess.run([sys.executable, str(tool), '--check', str(mutated)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr[-300:])
+
 
 if __name__ == '__main__':
     unittest.main()

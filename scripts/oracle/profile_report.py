@@ -7,9 +7,9 @@ marker comments. This tool renders that block from the same case tables the
 launchers execute — the handshake scenario table, the p2p launcher's builder
 table, the lifecycle names and the committed wrap fixtures — so the published
 matrix can never drift from the corpora the gates actually run. ``--check``
-refuses any drift between the committed page and the derived inventory; the
-exit codes follow the coverage tool's convention: 0 verified, 1 drift,
-2 tooling error.
+refuses any drift between the committed block and the derived inventory; the
+exit codes are the verification tooling's own convention: 0 verified, 1 drift
+(a verification failure), 2 tooling error.
 """
 import argparse
 from pathlib import Path
