@@ -89,7 +89,11 @@ func _initialize() -> void:
 		local.config.max_prediction = scenario.max_prediction
 		local.config.queue_capacity = config.queue_capacity
 		local.config.neutral_input = config.neutral_input.duplicate()
-		local.config.desync_interval = scenario.get("lifecycle", {}).get("checksum_interval", 0)
+		# An explicit layout cannot carry the lifecycle section that would pin the
+		# interval, so it runs the pinned upstream's own default (On, every 60
+		# frames); solo scenarios without a lifecycle section keep detection off
+		# exactly as their explicit checksum_interval: 0 configures upstream.
+		local.config.desync_interval = scenario.get("lifecycle", {}).get("checksum_interval", 60 if scenario.has("layout") else 0)
 		config.checksums_enabled = local.config.desync_interval > 0
 		local.config.roster.clear()
 		for slot: int in range(scenario.players):
@@ -310,7 +314,11 @@ func _decode_outgoing(packet: RefCounted, player: int) -> Dictionary:
 		}
 	elif message.kind != T.Kind.INPUT_ACK:
 		semantic = Lifecycle.semantic(message)
-		if semantic.is_empty() or not scenario_settings.has("lifecycle"):
+		# Layout scenarios run the lifecycle service with the upstream-default
+		# timers (see Lifecycle.options), so their default desync reports publish
+		# exactly like an explicit lifecycle profile's; solo no-lifecycle
+		# scenarios keep refusing every control packet.
+		if semantic.is_empty() or not (scenario_settings.has("lifecycle") or scenario_settings.has("layout")):
 			_fail("unsupported outgoing kind")
 			return {}
 	return {"packet": packet, "semantic": semantic}

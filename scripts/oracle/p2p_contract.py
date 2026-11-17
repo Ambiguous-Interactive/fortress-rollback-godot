@@ -271,7 +271,12 @@ def validate(value, scenario, source=False):
     slot_starts = scenario_delays(scenario)
     for index, outgoing in enumerate(value['packets']):
         packet(outgoing, scenario['players'], source, layout_slots, width)
-        if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in {'input', 'input_ack'}:
+        # An explicit layout cannot carry the lifecycle section that would pin the
+        # desync interval, so the engines' upstream-default checksum reports
+        # (`DesyncDetection::On { interval: 60 }`) stay part of the compared traffic;
+        # every other lifecycle packet still needs the explicit profile that configures it.
+        allowed = {'input', 'input_ack'} | ({'checksum_report'} if 'layout' in scenario else set())
+        if 'lifecycle' not in scenario and outgoing['semantic']['kind'] not in allowed:
             raise ValueError('lifecycle packet outside explicit profile')
         if outgoing['id'] != index:
             raise ValueError('packet position')

@@ -5,12 +5,23 @@ const T = preload("res://addons/fortress_rollback/protocol/protocol_types.gd")
 
 static func options(scenario: Dictionary) -> L.Options:
 	var result: L.Options = L.Options.new()
-	result.enabled = scenario.has("lifecycle")
-	if result.enabled:
+	result.enabled = scenario.has("lifecycle") or scenario.has("layout")
+	if scenario.has("lifecycle"):
 		result.quality_report_interval_us = scenario.lifecycle.quality_us
 		result.keepalive_interval_us = scenario.lifecycle.keepalive_us
 		result.disconnect_notify_us = scenario.lifecycle.notify_us
 		result.disconnect_timeout_us = scenario.lifecycle.timeout_us
+	elif scenario.has("layout"):
+		# An explicit layout cannot carry the lifecycle section that would pin these
+		# intervals, so the fixture applies the oracle binary's own omitted-lifecycle
+		# defaults (quality/keepalive 100 s, notify 50 s, timeout 100 s — the same
+		# inert shape the solo profiles' explicit values pin). None fires under the
+		# corpus's microsecond clocks; enabling the service lets the upstream-default
+		# desync interval stay compared.
+		result.quality_report_interval_us = 100000000
+		result.keepalive_interval_us = 100000000
+		result.disconnect_notify_us = 50000000
+		result.disconnect_timeout_us = 100000000
 	return result
 
 static func wide(bytes: PackedByteArray) -> String:

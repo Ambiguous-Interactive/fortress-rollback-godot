@@ -62,10 +62,10 @@ def main():
         for name in p2p_wrap.NAMES:
             if name != args.only and name + '.json' in committed:
                 wrap_fixture(name)
-    for name, (players, capacity, rounds, window, delays) in p2p_wrap.PROFILES.items():
+    for name, (players, capacity, rounds, window, delays, layout) in p2p_wrap.PROFILES.items():
         if args.only is not None and name != args.only:
             continue
-        scenario = p2p_wrap.build(str(BINARY), source, players, capacity, rounds, window, delays=delays)
+        scenario = p2p_wrap.build(str(BINARY), source, players, capacity, rounds, window, delays=delays, layout=layout)
         run = subprocess.run([str(BINARY)], input=json.dumps(scenario), capture_output=True,
                              encoding='utf-8', timeout=60, check=True, env=rust_environment())
         validate(json.loads(run.stdout), scenario, True)
