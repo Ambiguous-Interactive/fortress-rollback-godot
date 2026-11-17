@@ -399,16 +399,45 @@ compared maximum width — the width analogue of `mesh_4_width_32`, which owns
 ordinary width delivery without a ring wrap. Each machine measured 134
 predicted advances, six silent stalls, one three-row LOAD heal and 134
 confirmed boundaries past the ring, with the row-shape controls proving the
-comparison reads the wide tail bytes. `mesh_4_wrap_flood_couch_2x2` carries the local-slot
+comparison reads the wide tail bytes. `mesh_4_wrap_flood_width_1` holds the
+same flood at the compared minimum width, so the smallest supported row wraps
+the same default ring through the same freeze and heal (identical 3828
+operations and 3266 packets — the width changes the payload bytes, not the
+schedule — with 134 predicted advances, six silent stalls, one three-row LOAD
+heal and 134 confirmed boundaries per machine).
+`mesh_4_wrap_flood_couch_2x2` carries the local-slot
 layout axis through the same flood: two couch machines each own two local
 slots, so every confirmed row folds two local samples per machine and the
 withheld burst releases both machines' shared-address flights through one deep
-LOAD heal. An explicit layout cannot carry the lifecycle section that would
+LOAD heal (137 confirmed boundaries per machine, seven silent stalls each,
+four heal rows). An explicit layout cannot carry the lifecycle section that would
 pin the engine timers, so the case runs the oracle's omitted-lifecycle
 defaults instead — inert quality/keepalive/notify/timeout timers, the same
 shape the solo profiles' explicit values pin — while the genuine upstream
 default `DesyncDetection::On { interval: 60 }` stays in force, so its reports
 stay part of the compared packet traffic past frame 60.
+`mesh_4_wrap_flood_split_2x1x1` holds the three-machine split: one machine
+owns two local slots beside two solo machines, so records and evidence address
+three machines while four slots step (2213 operations, 1646 packets; 134
+confirmed boundaries per machine through a three-row heal, with the couch
+machine's covered-row refusals measured at eleven silent stalls beside the
+solo machines' six). `mesh_4_wrap_flood_couch_3x1` holds the asymmetric
+two-machine shape: one couch machine owns three local slots beside one solo
+machine, so the largest compared flight row carries three slots' inputs in one
+packet (1128 operations, 558 packets; 137 confirmed boundaries per machine
+through the four-row heal).
+
+A multi-slot machine advances on the first step that submits a covered row —
+the staged row stays covered across refused advances, so after the release
+un-caps the frontier that is the group's first slot and the machine's later
+slots land on the already advanced frame. Deriving their bytes from a
+per-round model submitted one machine frame under two different byte rows
+(the trace contract's changing-stalled-sample refusal, first hit by the
+three-machine split's build), so layout builds observe the trace after every
+slot step and each payload follows the machine's own current frame; the
+committed solo schedules are rebuilt byte-identically by the corrected
+builder, and the couch case's dynamics (boundaries, stalls, heal depth) are
+unchanged — only its second-slot payloads moved onto their real frame.
 
 From round eight every packet — inputs and acknowledgements alike — is
 withheld from every link for six consecutive rounds. The missing
