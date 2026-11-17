@@ -29,6 +29,10 @@ def unfreeze(mutant, index, expected):
 
 def mutations_for(actual, expected):
     """Declare diagnostics before invoking the validator; never learn from failures."""
+    if not isinstance(expected.get('scenario'), dict):
+        # A wide scenario's width lives in the embedded scenario; a caller without
+        # one must fail loudly here rather than silently skip the wide control.
+        raise ValueError('lifecycle mutations need an embedded scenario')
     mutations = {
         'metric_bool': (lambda x: x['records'][0]['metrics'].update(frames_ahead=False), 'frames ahead: invalid integer'),
         'pre_state': (lambda x: x['records'][0].update(pre_state='00' * len(bytes.fromhex(x['records'][0]['pre_state']))), 'lifecycle pre state')}

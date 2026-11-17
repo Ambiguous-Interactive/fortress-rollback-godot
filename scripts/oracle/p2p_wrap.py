@@ -1,7 +1,7 @@
 """Long ring-wrap runs under a withheld multi-round flood release."""
 from copy import deepcopy
 
-from p2p_contract import validate_scenario
+from p2p_contract import validate_scenario, WIDTHS
 
 # name -> (players, queue capacity, rounds, prediction window, per-peer construction
 # delays, endpoint layout, input width). A None layout stays one local slot per
@@ -62,7 +62,6 @@ PROFILES = {'mesh_2_wrap_flood': (2, 128, 142, 4, None, None, None), 'mesh_3_wra
             'mesh_4_wrap_flood_couch_2x2': (4, 128, 142, 4, None, [2, 2], None),
             'mesh_4_wrap_flood_width_32': (4, 128, 142, 4, None, None, 32)}
 # The compared representative width set the shared grammar admits; None and 4 both stay the default row.
-WIDTHS = (1, 4, 32)
 NAMES = tuple(PROFILES)
 # The family's default window; each profile carries its own in PROFILES[name][3].
 WINDOW = 4
@@ -93,9 +92,11 @@ def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None
     layout gives machines several local slots: steps address one slot, a
     machine's advance happens on the op that completes its row, and every slot
     of a machine derives its bytes from that machine's modeled frame. A
-    non-default width widens every submitted row: wide payloads vary every byte
-    with position, frame and slot and stay nonzero, so the fold contribution
-    lives in the tail bytes too."""
+    non-default width widens every submitted row: every byte of a wide payload
+    varies with its position, the modeled frame and the slot and stays nonzero,
+    so the fold contribution lives in the tail bytes too; rows are compared
+    positionally, so an aliased row between two (frame, slot) pairs cannot
+    alias any check."""
     if width is not None and (type(width) is not int or width not in WIDTHS or width == 4):
         # Fail with the grammar's own rejection before any payload can carry a
         # width the compared contract refuses.
@@ -103,7 +104,6 @@ def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None
     scenario = {'format': 1, 'players': players, 'input_delay': 0, 'max_prediction': window, 'operations': []}
     if width is not None:
         scenario['input_width'] = width
-        width = int(width)
     if layout is not None and (type(layout) is not list or len(layout) < 2
                                or any(type(size) is not int or size < 1 for size in layout)
                                or sum(layout) != players):
@@ -150,9 +150,11 @@ def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None
         # zero), so bytes derived from the modeled frame keep every repeated
         # stalled sample identical while varying across confirmed frames; every
         # slot of one machine shares that frame because a multi-local machine
-        # samples one row per confirmed frame. Wide rows vary every byte with
-        # position, frame and slot and keep each byte nonzero, so the fold
-        # contribution lives in the tail bytes too.
+        # samples one row per confirmed frame. Wide rows keep every byte nonzero
+        # and varying with its position, the modeled frame and the slot, so the
+        # fold contribution lives in the tail bytes too; rows are compared
+        # positionally, so an aliased row between two (frame, slot) pairs cannot
+        # alias any check.
         machine = owner[slot]
         frame = modeled[machine] + 1
         head = frame * (slot + 1) * 17 % 256 ** (width if width is not None else 4)

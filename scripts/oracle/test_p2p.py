@@ -338,6 +338,32 @@ class P2PContractTests(unittest.TestCase):
         self.assertNotEqual(normalized_mutant, normalized_actual)
         self.assertNotEqual(normalized_mutant[0][-2:], normalized_actual[0][-2:])
 
+    # Value: protects=the builder's and evidence gate's width guards; fails_when=a
+    # hostile build width escapes the builder guard, or an evidence call accepts a
+    # scenario whose width no committed profile carries; why_new=review round A2:
+    # both guards were only exercised positively at launch; seam=p2p_wrap.build/evidence
+    def test_wrap_width_guards(self):
+        from p2p_lifecycle_controls import mutations_for
+        scenario = wrap_fixture('mesh_4_wrap_flood_width_32')
+        drifted = deepcopy(scenario)
+        drifted['input_width'] = 1
+        for op in drifted['operations']:
+            if op['kind'] == 'step':
+                op['bytes'] = op['bytes'][:2]
+        with self.assertRaisesRegex(ValueError, 'wrap witness profile'):
+            p2p_wrap.evidence({'records': []}, drifted)
+        # Hostile widths die at the builder's own grammar-bound guard before any
+        # payload can carry them: anything outside the compared set, non-int
+        # widths, and the literal 4 (the default row must be requested as None).
+        for hostile in (4, 8, 2, 0, 33, 64, '32', True, 4.0):
+            with self.subTest(width=hostile):
+                with self.assertRaisesRegex(ValueError, 'input width'):
+                    p2p_wrap.build(None, None, 4, 128, 142, width=hostile)
+        # The wide control's width lives in the embedded scenario; a caller without
+        # one fails loudly instead of silently skipping the wide control.
+        with self.assertRaisesRegex(ValueError, 'embedded scenario'):
+            mutations_for({'packets': []}, {'records': []})
+
     # Value: protects=named corpus requires nonzero actual evidence; fails_when=empty short profile earns release evidence; why_new=generic parity vacuous; seam=none
     def test_named_corpus_nonzero_gate(self):
         from p2p_lifecycle import corpus_evidence, CORPUS_REQUIREMENTS
