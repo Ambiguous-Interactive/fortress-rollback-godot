@@ -43,7 +43,17 @@ from p2p_contract import validate_scenario, WIDTHS
 # so every wrapped flight row, XOR-delta reference and confirmed fold runs at
 # the compared maximum width while the flood freezes and heals the frontier —
 # the width analogue of `mesh_4_width_32`, which owns ordinary width delivery
-# without a ring wrap.
+# without a ring wrap. `mesh_4_wrap_flood_width_1` holds the same flood at the
+# compared minimum width, so the smallest supported row wraps the same ring and
+# the one-byte fold contribution stays compared through the freeze and heal.
+# `mesh_4_wrap_flood_split_2x1x1` carries the three-machine split through the
+# same flood: one machine owns two local slots beside two solo machines, so
+# records and evidence address three machines while four slots step and the
+# shared-address row heals through the same deep LOAD correction.
+# `mesh_4_wrap_flood_couch_3x1` holds the asymmetric two-machine shape: one
+# couch machine owns three local slots beside one solo machine, so the largest
+# compared flight row (three slots' inputs in one packet) wraps the default
+# ring under the same withheld flood.
 # The launchers load the committed schedules from scripts/oracle/fixtures/wrap_flood
 # instead of building them: the builder reruns the whole growing scenario once per
 # round, and that quadratic cost inside every CI launch blew the merge queue's
@@ -60,7 +70,10 @@ PROFILES = {'mesh_2_wrap_flood': (2, 128, 142, 4, None, None, None), 'mesh_3_wra
             'mesh_4_wrap_flood_delays_2_0': (4, 128, 142, 4, [2, 0, 2, 0], None, None),
             'mesh_4_wrap_flood_capacity_9': (4, 9, 24, 4, None, None, None),
             'mesh_4_wrap_flood_couch_2x2': (4, 128, 142, 4, None, [2, 2], None),
-            'mesh_4_wrap_flood_width_32': (4, 128, 142, 4, None, None, 32)}
+            'mesh_4_wrap_flood_split_2x1x1': (4, 128, 142, 4, None, [2, 1, 1], None),
+            'mesh_4_wrap_flood_couch_3x1': (4, 128, 142, 4, None, [3, 1], None),
+            'mesh_4_wrap_flood_width_32': (4, 128, 142, 4, None, None, 32),
+            'mesh_4_wrap_flood_width_1': (4, 128, 142, 4, None, None, 1)}
 # The compared representative width set the shared grammar admits; None and 4 both stay the default row.
 NAMES = tuple(PROFILES)
 # The family's default window; each profile carries its own in PROFILES[name][3].
@@ -202,6 +215,23 @@ def build(binary, observe, players, capacity, rounds, window=WINDOW, delays=None
             modeled[owner[slots[0]]] = record['frame_after'] if record else 0
             for slot in slots:
                 step(slot)
+                if layout is not None:
+                    # A multi-slot machine advances on the first step that submits a
+                    # covered row — during a stall the staged row stays covered, so
+                    # after the release un-caps the frontier that is the group's
+                    # FIRST slot, and the machine's later slots land on the already
+                    # advanced frame. Deriving their bytes from a per-round model
+                    # would submit one machine frame two different byte rows (the
+                    # trace contract's changing-stalled-sample refusal), so layout
+                    # builds re-read the trace after every slot step, re-derive the
+                    # owning machine's frame from that observation, and each payload
+                    # follows the machine's own current frame. Solo meshes keep the
+                    # single per-round observation: every machine's only step is its
+                    # own, so the round-boundary model is exact and the committed
+                    # solo schedules stay byte-identical.
+                    see()
+                    record = next((r for r in reversed(latest['records']) if r['peer'] == owner[slot]), None)
+                    modeled[owner[slot]] = record['frame_after'] if record else 0
     see()
     for packet in (p for p in latest['packets'] if p['id'] not in delivered):
         deliver(packet['id'])

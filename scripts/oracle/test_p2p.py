@@ -340,16 +340,18 @@ class P2PContractTests(unittest.TestCase):
 
     # Value: protects=the builder's and evidence gate's width guards; fails_when=a
     # hostile build width escapes the builder guard, or an evidence call accepts a
-    # scenario whose width no committed profile carries; why_new=review round A2:
-    # both guards were only exercised positively at launch; seam=p2p_wrap.build/evidence
+    # scenario whose signature no committed profile carries; why_new=review round A2:
+    # both guards were only exercised positively at launch; the width axis saturated
+    # in session 196, so the evidence binding drifts on a grammar-valid but
+    # uncommitted capacity/width combination instead; seam=p2p_wrap.build/evidence
     def test_wrap_width_guards(self):
         from p2p_lifecycle_controls import mutations_for
         scenario = wrap_fixture('mesh_4_wrap_flood_width_32')
         drifted = deepcopy(scenario)
-        drifted['input_width'] = 1
-        for op in drifted['operations']:
-            if op['kind'] == 'step':
-                op['bytes'] = op['bytes'][:2]
+        # Grammar-valid (capacity nine admits the window-four lead) but no committed
+        # profile carries the wide rows on the nine-row ring, so the evidence gate's
+        # profile-identity binding itself must refuse before any witness is read.
+        drifted['queue_capacity'] = 9
         with self.assertRaisesRegex(ValueError, 'wrap witness profile'):
             p2p_wrap.evidence({'records': []}, drifted)
         # Hostile widths die at the builder's own grammar-bound guard before any

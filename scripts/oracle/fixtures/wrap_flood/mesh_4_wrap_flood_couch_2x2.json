@@ -540,7 +540,7 @@
       "kind": "step",
       "now_us": 96,
       "peer": 1,
-      "bytes": "76010000"
+      "bytes": "98010000"
     },
     {
       "kind": "step",
@@ -552,7 +552,7 @@
       "kind": "step",
       "now_us": 98,
       "peer": 3,
-      "bytes": "ec020000"
+      "bytes": "30030000"
     },
     {
       "kind": "deliver",
@@ -614,7 +614,7 @@
       "kind": "step",
       "now_us": 110,
       "peer": 1,
-      "bytes": "98010000"
+      "bytes": "ba010000"
     },
     {
       "kind": "step",
@@ -626,7 +626,7 @@
       "kind": "step",
       "now_us": 112,
       "peer": 3,
-      "bytes": "30030000"
+      "bytes": "74030000"
     },
     {
       "kind": "deliver",
@@ -648,7 +648,7 @@
       "kind": "step",
       "now_us": 116,
       "peer": 1,
-      "bytes": "ba010000"
+      "bytes": "dc010000"
     },
     {
       "kind": "step",
@@ -660,7 +660,7 @@
       "kind": "step",
       "now_us": 118,
       "peer": 3,
-      "bytes": "74030000"
+      "bytes": "b8030000"
     },
     {
       "kind": "deliver",
@@ -692,7 +692,7 @@
       "kind": "step",
       "now_us": 124,
       "peer": 1,
-      "bytes": "dc010000"
+      "bytes": "fe010000"
     },
     {
       "kind": "step",
@@ -704,7 +704,7 @@
       "kind": "step",
       "now_us": 126,
       "peer": 3,
-      "bytes": "b8030000"
+      "bytes": "fc030000"
     },
     {
       "kind": "deliver",
@@ -736,7 +736,7 @@
       "kind": "step",
       "now_us": 132,
       "peer": 1,
-      "bytes": "fe010000"
+      "bytes": "20020000"
     },
     {
       "kind": "step",
@@ -748,7 +748,7 @@
       "kind": "step",
       "now_us": 134,
       "peer": 3,
-      "bytes": "fc030000"
+      "bytes": "40040000"
     },
     {
       "kind": "deliver",
@@ -780,7 +780,7 @@
       "kind": "step",
       "now_us": 140,
       "peer": 1,
-      "bytes": "20020000"
+      "bytes": "42020000"
     },
     {
       "kind": "step",
@@ -792,7 +792,7 @@
       "kind": "step",
       "now_us": 142,
       "peer": 3,
-      "bytes": "40040000"
+      "bytes": "84040000"
     },
     {
       "kind": "deliver",
@@ -824,7 +824,7 @@
       "kind": "step",
       "now_us": 148,
       "peer": 1,
-      "bytes": "42020000"
+      "bytes": "64020000"
     },
     {
       "kind": "step",
@@ -836,7 +836,7 @@
       "kind": "step",
       "now_us": 150,
       "peer": 3,
-      "bytes": "84040000"
+      "bytes": "c8040000"
     },
     {
       "kind": "deliver",
@@ -868,7 +868,7 @@
       "kind": "step",
       "now_us": 156,
       "peer": 1,
-      "bytes": "64020000"
+      "bytes": "86020000"
     },
     {
       "kind": "step",
@@ -880,7 +880,7 @@
       "kind": "step",
       "now_us": 158,
       "peer": 3,
-      "bytes": "c8040000"
+      "bytes": "0c050000"
     },
     {
       "kind": "deliver",
@@ -912,7 +912,7 @@
       "kind": "step",
       "now_us": 164,
       "peer": 1,
-      "bytes": "86020000"
+      "bytes": "a8020000"
     },
     {
       "kind": "step",
@@ -924,7 +924,7 @@
       "kind": "step",
       "now_us": 166,
       "peer": 3,
-      "bytes": "0c050000"
+      "bytes": "50050000"
     },
     {
       "kind": "deliver",
@@ -956,7 +956,7 @@
       "kind": "step",
       "now_us": 172,
       "peer": 1,
-      "bytes": "a8020000"
+      "bytes": "ca020000"
     },
     {
       "kind": "step",
@@ -968,7 +968,7 @@
       "kind": "step",
       "now_us": 174,
       "peer": 3,
-      "bytes": "50050000"
+      "bytes": "94050000"
     },
     {
       "kind": "deliver",
@@ -1000,7 +1000,7 @@
       "kind": "step",
       "now_us": 180,
       "peer": 1,
-      "bytes": "ca020000"
+      "bytes": "ec020000"
     },
     {
       "kind": "step",
@@ -1012,7 +1012,7 @@
       "kind": "step",
       "now_us": 182,
       "peer": 3,
-      "bytes": "94050000"
+      "bytes": "d8050000"
     },
     {
       "kind": "deliver",
@@ -1044,7 +1044,7 @@
       "kind": "step",
       "now_us": 188,
       "peer": 1,
-      "bytes": "ec020000"
+      "bytes": "0e030000"
     },
     {
       "kind": "step",
@@ -1056,7 +1056,7 @@
       "kind": "step",
       "now_us": 190,
       "peer": 3,
-      "bytes": "d8050000"
+      "bytes": "1c060000"
     },
     {
       "kind": "deliver",
@@ -1088,7 +1088,7 @@
       "kind": "step",
       "now_us": 196,
       "peer": 1,
-      "bytes": "0e030000"
+      "bytes": "30030000"
     },
     {
       "kind": "step",
@@ -1100,7 +1100,7 @@
       "kind": "step",
       "now_us": 198,
       "peer": 3,
-      "bytes": "1c060000"
+      "bytes": "60060000"
     },
     {
       "kind": "deliver",
@@ -1132,7 +1132,7 @@
       "kind": "step",
       "now_us": 204,
       "peer": 1,
-      "bytes": "30030000"
+      "bytes": "52030000"
     },
     {
       "kind": "step",
@@ -1144,7 +1144,7 @@
       "kind": "step",
       "now_us": 206,
       "peer": 3,
-      "bytes": "60060000"
+      "bytes": "a4060000"
     },
     {
       "kind": "deliver",
@@ -1176,7 +1176,7 @@
       "kind": "step",
       "now_us": 212,
       "peer": 1,
-      "bytes": "52030000"
+      "bytes": "74030000"
     },
     {
       "kind": "step",
@@ -1188,7 +1188,7 @@
       "kind": "step",
       "now_us": 214,
       "peer": 3,
-      "bytes": "a4060000"
+      "bytes": "e8060000"
     },
     {
       "kind": "deliver",
@@ -1220,7 +1220,7 @@
       "kind": "step",
       "now_us": 220,
       "peer": 1,
-      "bytes": "74030000"
+      "bytes": "96030000"
     },
     {
       "kind": "step",
@@ -1232,7 +1232,7 @@
       "kind": "step",
       "now_us": 222,
       "peer": 3,
-      "bytes": "e8060000"
+      "bytes": "2c070000"
     },
     {
       "kind": "deliver",
@@ -1264,7 +1264,7 @@
       "kind": "step",
       "now_us": 228,
       "peer": 1,
-      "bytes": "96030000"
+      "bytes": "b8030000"
     },
     {
       "kind": "step",
@@ -1276,7 +1276,7 @@
       "kind": "step",
       "now_us": 230,
       "peer": 3,
-      "bytes": "2c070000"
+      "bytes": "70070000"
     },
     {
       "kind": "deliver",
@@ -1308,7 +1308,7 @@
       "kind": "step",
       "now_us": 236,
       "peer": 1,
-      "bytes": "b8030000"
+      "bytes": "da030000"
     },
     {
       "kind": "step",
@@ -1320,7 +1320,7 @@
       "kind": "step",
       "now_us": 238,
       "peer": 3,
-      "bytes": "70070000"
+      "bytes": "b4070000"
     },
     {
       "kind": "deliver",
@@ -1352,7 +1352,7 @@
       "kind": "step",
       "now_us": 244,
       "peer": 1,
-      "bytes": "da030000"
+      "bytes": "fc030000"
     },
     {
       "kind": "step",
@@ -1364,7 +1364,7 @@
       "kind": "step",
       "now_us": 246,
       "peer": 3,
-      "bytes": "b4070000"
+      "bytes": "f8070000"
     },
     {
       "kind": "deliver",
@@ -1396,7 +1396,7 @@
       "kind": "step",
       "now_us": 252,
       "peer": 1,
-      "bytes": "fc030000"
+      "bytes": "1e040000"
     },
     {
       "kind": "step",
@@ -1408,7 +1408,7 @@
       "kind": "step",
       "now_us": 254,
       "peer": 3,
-      "bytes": "f8070000"
+      "bytes": "3c080000"
     },
     {
       "kind": "deliver",
@@ -1440,7 +1440,7 @@
       "kind": "step",
       "now_us": 260,
       "peer": 1,
-      "bytes": "1e040000"
+      "bytes": "40040000"
     },
     {
       "kind": "step",
@@ -1452,7 +1452,7 @@
       "kind": "step",
       "now_us": 262,
       "peer": 3,
-      "bytes": "3c080000"
+      "bytes": "80080000"
     },
     {
       "kind": "deliver",
@@ -1484,7 +1484,7 @@
       "kind": "step",
       "now_us": 268,
       "peer": 1,
-      "bytes": "40040000"
+      "bytes": "62040000"
     },
     {
       "kind": "step",
@@ -1496,7 +1496,7 @@
       "kind": "step",
       "now_us": 270,
       "peer": 3,
-      "bytes": "80080000"
+      "bytes": "c4080000"
     },
     {
       "kind": "deliver",
@@ -1528,7 +1528,7 @@
       "kind": "step",
       "now_us": 276,
       "peer": 1,
-      "bytes": "62040000"
+      "bytes": "84040000"
     },
     {
       "kind": "step",
@@ -1540,7 +1540,7 @@
       "kind": "step",
       "now_us": 278,
       "peer": 3,
-      "bytes": "c4080000"
+      "bytes": "08090000"
     },
     {
       "kind": "deliver",
@@ -1572,7 +1572,7 @@
       "kind": "step",
       "now_us": 284,
       "peer": 1,
-      "bytes": "84040000"
+      "bytes": "a6040000"
     },
     {
       "kind": "step",
@@ -1584,7 +1584,7 @@
       "kind": "step",
       "now_us": 286,
       "peer": 3,
-      "bytes": "08090000"
+      "bytes": "4c090000"
     },
     {
       "kind": "deliver",
@@ -1616,7 +1616,7 @@
       "kind": "step",
       "now_us": 292,
       "peer": 1,
-      "bytes": "a6040000"
+      "bytes": "c8040000"
     },
     {
       "kind": "step",
@@ -1628,7 +1628,7 @@
       "kind": "step",
       "now_us": 294,
       "peer": 3,
-      "bytes": "4c090000"
+      "bytes": "90090000"
     },
     {
       "kind": "deliver",
@@ -1660,7 +1660,7 @@
       "kind": "step",
       "now_us": 300,
       "peer": 1,
-      "bytes": "c8040000"
+      "bytes": "ea040000"
     },
     {
       "kind": "step",
@@ -1672,7 +1672,7 @@
       "kind": "step",
       "now_us": 302,
       "peer": 3,
-      "bytes": "90090000"
+      "bytes": "d4090000"
     },
     {
       "kind": "deliver",
@@ -1704,7 +1704,7 @@
       "kind": "step",
       "now_us": 308,
       "peer": 1,
-      "bytes": "ea040000"
+      "bytes": "0c050000"
     },
     {
       "kind": "step",
@@ -1716,7 +1716,7 @@
       "kind": "step",
       "now_us": 310,
       "peer": 3,
-      "bytes": "d4090000"
+      "bytes": "180a0000"
     },
     {
       "kind": "deliver",
@@ -1748,7 +1748,7 @@
       "kind": "step",
       "now_us": 316,
       "peer": 1,
-      "bytes": "0c050000"
+      "bytes": "2e050000"
     },
     {
       "kind": "step",
@@ -1760,7 +1760,7 @@
       "kind": "step",
       "now_us": 318,
       "peer": 3,
-      "bytes": "180a0000"
+      "bytes": "5c0a0000"
     },
     {
       "kind": "deliver",
@@ -1792,7 +1792,7 @@
       "kind": "step",
       "now_us": 324,
       "peer": 1,
-      "bytes": "2e050000"
+      "bytes": "50050000"
     },
     {
       "kind": "step",
@@ -1804,7 +1804,7 @@
       "kind": "step",
       "now_us": 326,
       "peer": 3,
-      "bytes": "5c0a0000"
+      "bytes": "a00a0000"
     },
     {
       "kind": "deliver",
@@ -1836,7 +1836,7 @@
       "kind": "step",
       "now_us": 332,
       "peer": 1,
-      "bytes": "50050000"
+      "bytes": "72050000"
     },
     {
       "kind": "step",
@@ -1848,7 +1848,7 @@
       "kind": "step",
       "now_us": 334,
       "peer": 3,
-      "bytes": "a00a0000"
+      "bytes": "e40a0000"
     },
     {
       "kind": "deliver",
@@ -1880,7 +1880,7 @@
       "kind": "step",
       "now_us": 340,
       "peer": 1,
-      "bytes": "72050000"
+      "bytes": "94050000"
     },
     {
       "kind": "step",
@@ -1892,7 +1892,7 @@
       "kind": "step",
       "now_us": 342,
       "peer": 3,
-      "bytes": "e40a0000"
+      "bytes": "280b0000"
     },
     {
       "kind": "deliver",
@@ -1924,7 +1924,7 @@
       "kind": "step",
       "now_us": 348,
       "peer": 1,
-      "bytes": "94050000"
+      "bytes": "b6050000"
     },
     {
       "kind": "step",
@@ -1936,7 +1936,7 @@
       "kind": "step",
       "now_us": 350,
       "peer": 3,
-      "bytes": "280b0000"
+      "bytes": "6c0b0000"
     },
     {
       "kind": "deliver",
@@ -1968,7 +1968,7 @@
       "kind": "step",
       "now_us": 356,
       "peer": 1,
-      "bytes": "b6050000"
+      "bytes": "d8050000"
     },
     {
       "kind": "step",
@@ -1980,7 +1980,7 @@
       "kind": "step",
       "now_us": 358,
       "peer": 3,
-      "bytes": "6c0b0000"
+      "bytes": "b00b0000"
     },
     {
       "kind": "deliver",
@@ -2012,7 +2012,7 @@
       "kind": "step",
       "now_us": 364,
       "peer": 1,
-      "bytes": "d8050000"
+      "bytes": "fa050000"
     },
     {
       "kind": "step",
@@ -2024,7 +2024,7 @@
       "kind": "step",
       "now_us": 366,
       "peer": 3,
-      "bytes": "b00b0000"
+      "bytes": "f40b0000"
     },
     {
       "kind": "deliver",
@@ -2056,7 +2056,7 @@
       "kind": "step",
       "now_us": 372,
       "peer": 1,
-      "bytes": "fa050000"
+      "bytes": "1c060000"
     },
     {
       "kind": "step",
@@ -2068,7 +2068,7 @@
       "kind": "step",
       "now_us": 374,
       "peer": 3,
-      "bytes": "f40b0000"
+      "bytes": "380c0000"
     },
     {
       "kind": "deliver",
@@ -2100,7 +2100,7 @@
       "kind": "step",
       "now_us": 380,
       "peer": 1,
-      "bytes": "1c060000"
+      "bytes": "3e060000"
     },
     {
       "kind": "step",
@@ -2112,7 +2112,7 @@
       "kind": "step",
       "now_us": 382,
       "peer": 3,
-      "bytes": "380c0000"
+      "bytes": "7c0c0000"
     },
     {
       "kind": "deliver",
@@ -2144,7 +2144,7 @@
       "kind": "step",
       "now_us": 388,
       "peer": 1,
-      "bytes": "3e060000"
+      "bytes": "60060000"
     },
     {
       "kind": "step",
@@ -2156,7 +2156,7 @@
       "kind": "step",
       "now_us": 390,
       "peer": 3,
-      "bytes": "7c0c0000"
+      "bytes": "c00c0000"
     },
     {
       "kind": "deliver",
@@ -2188,7 +2188,7 @@
       "kind": "step",
       "now_us": 396,
       "peer": 1,
-      "bytes": "60060000"
+      "bytes": "82060000"
     },
     {
       "kind": "step",
@@ -2200,7 +2200,7 @@
       "kind": "step",
       "now_us": 398,
       "peer": 3,
-      "bytes": "c00c0000"
+      "bytes": "040d0000"
     },
     {
       "kind": "deliver",
@@ -2232,7 +2232,7 @@
       "kind": "step",
       "now_us": 404,
       "peer": 1,
-      "bytes": "82060000"
+      "bytes": "a4060000"
     },
     {
       "kind": "step",
@@ -2244,7 +2244,7 @@
       "kind": "step",
       "now_us": 406,
       "peer": 3,
-      "bytes": "040d0000"
+      "bytes": "480d0000"
     },
     {
       "kind": "deliver",
@@ -2276,7 +2276,7 @@
       "kind": "step",
       "now_us": 412,
       "peer": 1,
-      "bytes": "a4060000"
+      "bytes": "c6060000"
     },
     {
       "kind": "step",
@@ -2288,7 +2288,7 @@
       "kind": "step",
       "now_us": 414,
       "peer": 3,
-      "bytes": "480d0000"
+      "bytes": "8c0d0000"
     },
     {
       "kind": "deliver",
@@ -2320,7 +2320,7 @@
       "kind": "step",
       "now_us": 420,
       "peer": 1,
-      "bytes": "c6060000"
+      "bytes": "e8060000"
     },
     {
       "kind": "step",
@@ -2332,7 +2332,7 @@
       "kind": "step",
       "now_us": 422,
       "peer": 3,
-      "bytes": "8c0d0000"
+      "bytes": "d00d0000"
     },
     {
       "kind": "deliver",
@@ -2364,7 +2364,7 @@
       "kind": "step",
       "now_us": 428,
       "peer": 1,
-      "bytes": "e8060000"
+      "bytes": "0a070000"
     },
     {
       "kind": "step",
@@ -2376,7 +2376,7 @@
       "kind": "step",
       "now_us": 430,
       "peer": 3,
-      "bytes": "d00d0000"
+      "bytes": "140e0000"
     },
     {
       "kind": "deliver",
@@ -2408,7 +2408,7 @@
       "kind": "step",
       "now_us": 436,
       "peer": 1,
-      "bytes": "0a070000"
+      "bytes": "2c070000"
     },
     {
       "kind": "step",
@@ -2420,7 +2420,7 @@
       "kind": "step",
       "now_us": 438,
       "peer": 3,
-      "bytes": "140e0000"
+      "bytes": "580e0000"
     },
     {
       "kind": "deliver",
@@ -2452,7 +2452,7 @@
       "kind": "step",
       "now_us": 444,
       "peer": 1,
-      "bytes": "2c070000"
+      "bytes": "4e070000"
     },
     {
       "kind": "step",
@@ -2464,7 +2464,7 @@
       "kind": "step",
       "now_us": 446,
       "peer": 3,
-      "bytes": "580e0000"
+      "bytes": "9c0e0000"
     },
     {
       "kind": "deliver",
@@ -2496,7 +2496,7 @@
       "kind": "step",
       "now_us": 452,
       "peer": 1,
-      "bytes": "4e070000"
+      "bytes": "70070000"
     },
     {
       "kind": "step",
@@ -2508,7 +2508,7 @@
       "kind": "step",
       "now_us": 454,
       "peer": 3,
-      "bytes": "9c0e0000"
+      "bytes": "e00e0000"
     },
     {
       "kind": "deliver",
@@ -2540,7 +2540,7 @@
       "kind": "step",
       "now_us": 460,
       "peer": 1,
-      "bytes": "70070000"
+      "bytes": "92070000"
     },
     {
       "kind": "step",
@@ -2552,7 +2552,7 @@
       "kind": "step",
       "now_us": 462,
       "peer": 3,
-      "bytes": "e00e0000"
+      "bytes": "240f0000"
     },
     {
       "kind": "deliver",
@@ -2584,7 +2584,7 @@
       "kind": "step",
       "now_us": 468,
       "peer": 1,
-      "bytes": "92070000"
+      "bytes": "b4070000"
     },
     {
       "kind": "step",
@@ -2596,7 +2596,7 @@
       "kind": "step",
       "now_us": 470,
       "peer": 3,
-      "bytes": "240f0000"
+      "bytes": "680f0000"
     },
     {
       "kind": "deliver",
@@ -2628,7 +2628,7 @@
       "kind": "step",
       "now_us": 476,
       "peer": 1,
-      "bytes": "b4070000"
+      "bytes": "d6070000"
     },
     {
       "kind": "step",
@@ -2640,7 +2640,7 @@
       "kind": "step",
       "now_us": 478,
       "peer": 3,
-      "bytes": "680f0000"
+      "bytes": "ac0f0000"
     },
     {
       "kind": "deliver",
@@ -2672,7 +2672,7 @@
       "kind": "step",
       "now_us": 484,
       "peer": 1,
-      "bytes": "d6070000"
+      "bytes": "f8070000"
     },
     {
       "kind": "step",
@@ -2684,7 +2684,7 @@
       "kind": "step",
       "now_us": 486,
       "peer": 3,
-      "bytes": "ac0f0000"
+      "bytes": "f00f0000"
     },
     {
       "kind": "deliver",
@@ -2716,7 +2716,7 @@
       "kind": "step",
       "now_us": 492,
       "peer": 1,
-      "bytes": "f8070000"
+      "bytes": "1a080000"
     },
     {
       "kind": "step",
@@ -2728,7 +2728,7 @@
       "kind": "step",
       "now_us": 494,
       "peer": 3,
-      "bytes": "f00f0000"
+      "bytes": "34100000"
     },
     {
       "kind": "deliver",
@@ -2760,7 +2760,7 @@
       "kind": "step",
       "now_us": 500,
       "peer": 1,
-      "bytes": "1a080000"
+      "bytes": "3c080000"
     },
     {
       "kind": "step",
@@ -2772,7 +2772,7 @@
       "kind": "step",
       "now_us": 502,
       "peer": 3,
-      "bytes": "34100000"
+      "bytes": "78100000"
     },
     {
       "kind": "deliver",
@@ -2804,7 +2804,7 @@
       "kind": "step",
       "now_us": 508,
       "peer": 1,
-      "bytes": "3c080000"
+      "bytes": "5e080000"
     },
     {
       "kind": "step",
@@ -2816,7 +2816,7 @@
       "kind": "step",
       "now_us": 510,
       "peer": 3,
-      "bytes": "78100000"
+      "bytes": "bc100000"
     },
     {
       "kind": "deliver",
@@ -2848,7 +2848,7 @@
       "kind": "step",
       "now_us": 516,
       "peer": 1,
-      "bytes": "5e080000"
+      "bytes": "80080000"
     },
     {
       "kind": "step",
@@ -2860,7 +2860,7 @@
       "kind": "step",
       "now_us": 518,
       "peer": 3,
-      "bytes": "bc100000"
+      "bytes": "00110000"
     },
     {
       "kind": "deliver",
@@ -2902,7 +2902,7 @@
       "kind": "step",
       "now_us": 526,
       "peer": 1,
-      "bytes": "80080000"
+      "bytes": "a2080000"
     },
     {
       "kind": "step",
@@ -2914,7 +2914,7 @@
       "kind": "step",
       "now_us": 528,
       "peer": 3,
-      "bytes": "00110000"
+      "bytes": "44110000"
     },
     {
       "kind": "deliver",
@@ -2946,7 +2946,7 @@
       "kind": "step",
       "now_us": 534,
       "peer": 1,
-      "bytes": "a2080000"
+      "bytes": "c4080000"
     },
     {
       "kind": "step",
@@ -2958,7 +2958,7 @@
       "kind": "step",
       "now_us": 536,
       "peer": 3,
-      "bytes": "44110000"
+      "bytes": "88110000"
     },
     {
       "kind": "deliver",
@@ -2990,7 +2990,7 @@
       "kind": "step",
       "now_us": 542,
       "peer": 1,
-      "bytes": "c4080000"
+      "bytes": "e6080000"
     },
     {
       "kind": "step",
@@ -3002,7 +3002,7 @@
       "kind": "step",
       "now_us": 544,
       "peer": 3,
-      "bytes": "88110000"
+      "bytes": "cc110000"
     },
     {
       "kind": "deliver",
@@ -3034,7 +3034,7 @@
       "kind": "step",
       "now_us": 550,
       "peer": 1,
-      "bytes": "e6080000"
+      "bytes": "08090000"
     },
     {
       "kind": "step",
@@ -3046,7 +3046,7 @@
       "kind": "step",
       "now_us": 552,
       "peer": 3,
-      "bytes": "cc110000"
+      "bytes": "10120000"
     },
     {
       "kind": "deliver",
@@ -3078,7 +3078,7 @@
       "kind": "step",
       "now_us": 558,
       "peer": 1,
-      "bytes": "08090000"
+      "bytes": "2a090000"
     },
     {
       "kind": "step",
@@ -3090,7 +3090,7 @@
       "kind": "step",
       "now_us": 560,
       "peer": 3,
-      "bytes": "10120000"
+      "bytes": "54120000"
     },
     {
       "kind": "deliver",
@@ -3122,7 +3122,7 @@
       "kind": "step",
       "now_us": 566,
       "peer": 1,
-      "bytes": "2a090000"
+      "bytes": "4c090000"
     },
     {
       "kind": "step",
@@ -3134,7 +3134,7 @@
       "kind": "step",
       "now_us": 568,
       "peer": 3,
-      "bytes": "54120000"
+      "bytes": "98120000"
     },
     {
       "kind": "deliver",
@@ -3166,7 +3166,7 @@
       "kind": "step",
       "now_us": 574,
       "peer": 1,
-      "bytes": "4c090000"
+      "bytes": "6e090000"
     },
     {
       "kind": "step",
@@ -3178,7 +3178,7 @@
       "kind": "step",
       "now_us": 576,
       "peer": 3,
-      "bytes": "98120000"
+      "bytes": "dc120000"
     },
     {
       "kind": "deliver",
@@ -3210,7 +3210,7 @@
       "kind": "step",
       "now_us": 582,
       "peer": 1,
-      "bytes": "6e090000"
+      "bytes": "90090000"
     },
     {
       "kind": "step",
@@ -3222,7 +3222,7 @@
       "kind": "step",
       "now_us": 584,
       "peer": 3,
-      "bytes": "dc120000"
+      "bytes": "20130000"
     },
     {
       "kind": "deliver",
@@ -3254,7 +3254,7 @@
       "kind": "step",
       "now_us": 590,
       "peer": 1,
-      "bytes": "90090000"
+      "bytes": "b2090000"
     },
     {
       "kind": "step",
@@ -3266,7 +3266,7 @@
       "kind": "step",
       "now_us": 592,
       "peer": 3,
-      "bytes": "20130000"
+      "bytes": "64130000"
     },
     {
       "kind": "deliver",
@@ -3298,7 +3298,7 @@
       "kind": "step",
       "now_us": 598,
       "peer": 1,
-      "bytes": "b2090000"
+      "bytes": "d4090000"
     },
     {
       "kind": "step",
@@ -3310,7 +3310,7 @@
       "kind": "step",
       "now_us": 600,
       "peer": 3,
-      "bytes": "64130000"
+      "bytes": "a8130000"
     },
     {
       "kind": "deliver",
@@ -3342,7 +3342,7 @@
       "kind": "step",
       "now_us": 606,
       "peer": 1,
-      "bytes": "d4090000"
+      "bytes": "f6090000"
     },
     {
       "kind": "step",
@@ -3354,7 +3354,7 @@
       "kind": "step",
       "now_us": 608,
       "peer": 3,
-      "bytes": "a8130000"
+      "bytes": "ec130000"
     },
     {
       "kind": "deliver",
@@ -3386,7 +3386,7 @@
       "kind": "step",
       "now_us": 614,
       "peer": 1,
-      "bytes": "f6090000"
+      "bytes": "180a0000"
     },
     {
       "kind": "step",
@@ -3398,7 +3398,7 @@
       "kind": "step",
       "now_us": 616,
       "peer": 3,
-      "bytes": "ec130000"
+      "bytes": "30140000"
     },
     {
       "kind": "deliver",
@@ -3430,7 +3430,7 @@
       "kind": "step",
       "now_us": 622,
       "peer": 1,
-      "bytes": "180a0000"
+      "bytes": "3a0a0000"
     },
     {
       "kind": "step",
@@ -3442,7 +3442,7 @@
       "kind": "step",
       "now_us": 624,
       "peer": 3,
-      "bytes": "30140000"
+      "bytes": "74140000"
     },
     {
       "kind": "deliver",
@@ -3474,7 +3474,7 @@
       "kind": "step",
       "now_us": 630,
       "peer": 1,
-      "bytes": "3a0a0000"
+      "bytes": "5c0a0000"
     },
     {
       "kind": "step",
@@ -3486,7 +3486,7 @@
       "kind": "step",
       "now_us": 632,
       "peer": 3,
-      "bytes": "74140000"
+      "bytes": "b8140000"
     },
     {
       "kind": "deliver",
@@ -3518,7 +3518,7 @@
       "kind": "step",
       "now_us": 638,
       "peer": 1,
-      "bytes": "5c0a0000"
+      "bytes": "7e0a0000"
     },
     {
       "kind": "step",
@@ -3530,7 +3530,7 @@
       "kind": "step",
       "now_us": 640,
       "peer": 3,
-      "bytes": "b8140000"
+      "bytes": "fc140000"
     },
     {
       "kind": "deliver",
@@ -3562,7 +3562,7 @@
       "kind": "step",
       "now_us": 646,
       "peer": 1,
-      "bytes": "7e0a0000"
+      "bytes": "a00a0000"
     },
     {
       "kind": "step",
@@ -3574,7 +3574,7 @@
       "kind": "step",
       "now_us": 648,
       "peer": 3,
-      "bytes": "fc140000"
+      "bytes": "40150000"
     },
     {
       "kind": "deliver",
@@ -3606,7 +3606,7 @@
       "kind": "step",
       "now_us": 654,
       "peer": 1,
-      "bytes": "a00a0000"
+      "bytes": "c20a0000"
     },
     {
       "kind": "step",
@@ -3618,7 +3618,7 @@
       "kind": "step",
       "now_us": 656,
       "peer": 3,
-      "bytes": "40150000"
+      "bytes": "84150000"
     },
     {
       "kind": "deliver",
@@ -3650,7 +3650,7 @@
       "kind": "step",
       "now_us": 662,
       "peer": 1,
-      "bytes": "c20a0000"
+      "bytes": "e40a0000"
     },
     {
       "kind": "step",
@@ -3662,7 +3662,7 @@
       "kind": "step",
       "now_us": 664,
       "peer": 3,
-      "bytes": "84150000"
+      "bytes": "c8150000"
     },
     {
       "kind": "deliver",
@@ -3694,7 +3694,7 @@
       "kind": "step",
       "now_us": 670,
       "peer": 1,
-      "bytes": "e40a0000"
+      "bytes": "060b0000"
     },
     {
       "kind": "step",
@@ -3706,7 +3706,7 @@
       "kind": "step",
       "now_us": 672,
       "peer": 3,
-      "bytes": "c8150000"
+      "bytes": "0c160000"
     },
     {
       "kind": "deliver",
@@ -3738,7 +3738,7 @@
       "kind": "step",
       "now_us": 678,
       "peer": 1,
-      "bytes": "060b0000"
+      "bytes": "280b0000"
     },
     {
       "kind": "step",
@@ -3750,7 +3750,7 @@
       "kind": "step",
       "now_us": 680,
       "peer": 3,
-      "bytes": "0c160000"
+      "bytes": "50160000"
     },
     {
       "kind": "deliver",
@@ -3782,7 +3782,7 @@
       "kind": "step",
       "now_us": 686,
       "peer": 1,
-      "bytes": "280b0000"
+      "bytes": "4a0b0000"
     },
     {
       "kind": "step",
@@ -3794,7 +3794,7 @@
       "kind": "step",
       "now_us": 688,
       "peer": 3,
-      "bytes": "50160000"
+      "bytes": "94160000"
     },
     {
       "kind": "deliver",
@@ -3826,7 +3826,7 @@
       "kind": "step",
       "now_us": 694,
       "peer": 1,
-      "bytes": "4a0b0000"
+      "bytes": "6c0b0000"
     },
     {
       "kind": "step",
@@ -3838,7 +3838,7 @@
       "kind": "step",
       "now_us": 696,
       "peer": 3,
-      "bytes": "94160000"
+      "bytes": "d8160000"
     },
     {
       "kind": "deliver",
@@ -3870,7 +3870,7 @@
       "kind": "step",
       "now_us": 702,
       "peer": 1,
-      "bytes": "6c0b0000"
+      "bytes": "8e0b0000"
     },
     {
       "kind": "step",
@@ -3882,7 +3882,7 @@
       "kind": "step",
       "now_us": 704,
       "peer": 3,
-      "bytes": "d8160000"
+      "bytes": "1c170000"
     },
     {
       "kind": "deliver",
@@ -3914,7 +3914,7 @@
       "kind": "step",
       "now_us": 710,
       "peer": 1,
-      "bytes": "8e0b0000"
+      "bytes": "b00b0000"
     },
     {
       "kind": "step",
@@ -3926,7 +3926,7 @@
       "kind": "step",
       "now_us": 712,
       "peer": 3,
-      "bytes": "1c170000"
+      "bytes": "60170000"
     },
     {
       "kind": "deliver",
@@ -3958,7 +3958,7 @@
       "kind": "step",
       "now_us": 718,
       "peer": 1,
-      "bytes": "b00b0000"
+      "bytes": "d20b0000"
     },
     {
       "kind": "step",
@@ -3970,7 +3970,7 @@
       "kind": "step",
       "now_us": 720,
       "peer": 3,
-      "bytes": "60170000"
+      "bytes": "a4170000"
     },
     {
       "kind": "deliver",
@@ -4002,7 +4002,7 @@
       "kind": "step",
       "now_us": 726,
       "peer": 1,
-      "bytes": "d20b0000"
+      "bytes": "f40b0000"
     },
     {
       "kind": "step",
@@ -4014,7 +4014,7 @@
       "kind": "step",
       "now_us": 728,
       "peer": 3,
-      "bytes": "a4170000"
+      "bytes": "e8170000"
     },
     {
       "kind": "deliver",
@@ -4046,7 +4046,7 @@
       "kind": "step",
       "now_us": 734,
       "peer": 1,
-      "bytes": "f40b0000"
+      "bytes": "160c0000"
     },
     {
       "kind": "step",
@@ -4058,7 +4058,7 @@
       "kind": "step",
       "now_us": 736,
       "peer": 3,
-      "bytes": "e8170000"
+      "bytes": "2c180000"
     },
     {
       "kind": "deliver",
@@ -4090,7 +4090,7 @@
       "kind": "step",
       "now_us": 742,
       "peer": 1,
-      "bytes": "160c0000"
+      "bytes": "380c0000"
     },
     {
       "kind": "step",
@@ -4102,7 +4102,7 @@
       "kind": "step",
       "now_us": 744,
       "peer": 3,
-      "bytes": "2c180000"
+      "bytes": "70180000"
     },
     {
       "kind": "deliver",
@@ -4134,7 +4134,7 @@
       "kind": "step",
       "now_us": 750,
       "peer": 1,
-      "bytes": "380c0000"
+      "bytes": "5a0c0000"
     },
     {
       "kind": "step",
@@ -4146,7 +4146,7 @@
       "kind": "step",
       "now_us": 752,
       "peer": 3,
-      "bytes": "70180000"
+      "bytes": "b4180000"
     },
     {
       "kind": "deliver",
@@ -4178,7 +4178,7 @@
       "kind": "step",
       "now_us": 758,
       "peer": 1,
-      "bytes": "5a0c0000"
+      "bytes": "7c0c0000"
     },
     {
       "kind": "step",
@@ -4190,7 +4190,7 @@
       "kind": "step",
       "now_us": 760,
       "peer": 3,
-      "bytes": "b4180000"
+      "bytes": "f8180000"
     },
     {
       "kind": "deliver",
@@ -4222,7 +4222,7 @@
       "kind": "step",
       "now_us": 766,
       "peer": 1,
-      "bytes": "7c0c0000"
+      "bytes": "9e0c0000"
     },
     {
       "kind": "step",
@@ -4234,7 +4234,7 @@
       "kind": "step",
       "now_us": 768,
       "peer": 3,
-      "bytes": "f8180000"
+      "bytes": "3c190000"
     },
     {
       "kind": "deliver",
@@ -4266,7 +4266,7 @@
       "kind": "step",
       "now_us": 774,
       "peer": 1,
-      "bytes": "9e0c0000"
+      "bytes": "c00c0000"
     },
     {
       "kind": "step",
@@ -4278,7 +4278,7 @@
       "kind": "step",
       "now_us": 776,
       "peer": 3,
-      "bytes": "3c190000"
+      "bytes": "80190000"
     },
     {
       "kind": "deliver",
@@ -4310,7 +4310,7 @@
       "kind": "step",
       "now_us": 782,
       "peer": 1,
-      "bytes": "c00c0000"
+      "bytes": "e20c0000"
     },
     {
       "kind": "step",
@@ -4322,7 +4322,7 @@
       "kind": "step",
       "now_us": 784,
       "peer": 3,
-      "bytes": "80190000"
+      "bytes": "c4190000"
     },
     {
       "kind": "deliver",
@@ -4354,7 +4354,7 @@
       "kind": "step",
       "now_us": 790,
       "peer": 1,
-      "bytes": "e20c0000"
+      "bytes": "040d0000"
     },
     {
       "kind": "step",
@@ -4366,7 +4366,7 @@
       "kind": "step",
       "now_us": 792,
       "peer": 3,
-      "bytes": "c4190000"
+      "bytes": "081a0000"
     },
     {
       "kind": "deliver",
@@ -4398,7 +4398,7 @@
       "kind": "step",
       "now_us": 798,
       "peer": 1,
-      "bytes": "040d0000"
+      "bytes": "260d0000"
     },
     {
       "kind": "step",
@@ -4410,7 +4410,7 @@
       "kind": "step",
       "now_us": 800,
       "peer": 3,
-      "bytes": "081a0000"
+      "bytes": "4c1a0000"
     },
     {
       "kind": "deliver",
@@ -4442,7 +4442,7 @@
       "kind": "step",
       "now_us": 806,
       "peer": 1,
-      "bytes": "260d0000"
+      "bytes": "480d0000"
     },
     {
       "kind": "step",
@@ -4454,7 +4454,7 @@
       "kind": "step",
       "now_us": 808,
       "peer": 3,
-      "bytes": "4c1a0000"
+      "bytes": "901a0000"
     },
     {
       "kind": "deliver",
@@ -4486,7 +4486,7 @@
       "kind": "step",
       "now_us": 814,
       "peer": 1,
-      "bytes": "480d0000"
+      "bytes": "6a0d0000"
     },
     {
       "kind": "step",
@@ -4498,7 +4498,7 @@
       "kind": "step",
       "now_us": 816,
       "peer": 3,
-      "bytes": "901a0000"
+      "bytes": "d41a0000"
     },
     {
       "kind": "deliver",
@@ -4530,7 +4530,7 @@
       "kind": "step",
       "now_us": 822,
       "peer": 1,
-      "bytes": "6a0d0000"
+      "bytes": "8c0d0000"
     },
     {
       "kind": "step",
@@ -4542,7 +4542,7 @@
       "kind": "step",
       "now_us": 824,
       "peer": 3,
-      "bytes": "d41a0000"
+      "bytes": "181b0000"
     },
     {
       "kind": "deliver",
@@ -4574,7 +4574,7 @@
       "kind": "step",
       "now_us": 830,
       "peer": 1,
-      "bytes": "8c0d0000"
+      "bytes": "ae0d0000"
     },
     {
       "kind": "step",
@@ -4586,7 +4586,7 @@
       "kind": "step",
       "now_us": 832,
       "peer": 3,
-      "bytes": "181b0000"
+      "bytes": "5c1b0000"
     },
     {
       "kind": "deliver",
@@ -4618,7 +4618,7 @@
       "kind": "step",
       "now_us": 838,
       "peer": 1,
-      "bytes": "ae0d0000"
+      "bytes": "d00d0000"
     },
     {
       "kind": "step",
@@ -4630,7 +4630,7 @@
       "kind": "step",
       "now_us": 840,
       "peer": 3,
-      "bytes": "5c1b0000"
+      "bytes": "a01b0000"
     },
     {
       "kind": "deliver",
@@ -4662,7 +4662,7 @@
       "kind": "step",
       "now_us": 846,
       "peer": 1,
-      "bytes": "d00d0000"
+      "bytes": "f20d0000"
     },
     {
       "kind": "step",
@@ -4674,7 +4674,7 @@
       "kind": "step",
       "now_us": 848,
       "peer": 3,
-      "bytes": "a01b0000"
+      "bytes": "e41b0000"
     },
     {
       "kind": "deliver",
@@ -4706,7 +4706,7 @@
       "kind": "step",
       "now_us": 854,
       "peer": 1,
-      "bytes": "f20d0000"
+      "bytes": "140e0000"
     },
     {
       "kind": "step",
@@ -4718,7 +4718,7 @@
       "kind": "step",
       "now_us": 856,
       "peer": 3,
-      "bytes": "e41b0000"
+      "bytes": "281c0000"
     },
     {
       "kind": "deliver",
@@ -4750,7 +4750,7 @@
       "kind": "step",
       "now_us": 862,
       "peer": 1,
-      "bytes": "140e0000"
+      "bytes": "360e0000"
     },
     {
       "kind": "step",
@@ -4762,7 +4762,7 @@
       "kind": "step",
       "now_us": 864,
       "peer": 3,
-      "bytes": "281c0000"
+      "bytes": "6c1c0000"
     },
     {
       "kind": "deliver",
@@ -4794,7 +4794,7 @@
       "kind": "step",
       "now_us": 870,
       "peer": 1,
-      "bytes": "360e0000"
+      "bytes": "580e0000"
     },
     {
       "kind": "step",
@@ -4806,7 +4806,7 @@
       "kind": "step",
       "now_us": 872,
       "peer": 3,
-      "bytes": "6c1c0000"
+      "bytes": "b01c0000"
     },
     {
       "kind": "deliver",
@@ -4838,7 +4838,7 @@
       "kind": "step",
       "now_us": 878,
       "peer": 1,
-      "bytes": "580e0000"
+      "bytes": "7a0e0000"
     },
     {
       "kind": "step",
@@ -4850,7 +4850,7 @@
       "kind": "step",
       "now_us": 880,
       "peer": 3,
-      "bytes": "b01c0000"
+      "bytes": "f41c0000"
     },
     {
       "kind": "deliver",
@@ -4882,7 +4882,7 @@
       "kind": "step",
       "now_us": 886,
       "peer": 1,
-      "bytes": "7a0e0000"
+      "bytes": "9c0e0000"
     },
     {
       "kind": "step",
@@ -4894,7 +4894,7 @@
       "kind": "step",
       "now_us": 888,
       "peer": 3,
-      "bytes": "f41c0000"
+      "bytes": "381d0000"
     },
     {
       "kind": "deliver",
@@ -4926,7 +4926,7 @@
       "kind": "step",
       "now_us": 894,
       "peer": 1,
-      "bytes": "9c0e0000"
+      "bytes": "be0e0000"
     },
     {
       "kind": "step",
@@ -4938,7 +4938,7 @@
       "kind": "step",
       "now_us": 896,
       "peer": 3,
-      "bytes": "381d0000"
+      "bytes": "7c1d0000"
     },
     {
       "kind": "deliver",
@@ -4970,7 +4970,7 @@
       "kind": "step",
       "now_us": 902,
       "peer": 1,
-      "bytes": "be0e0000"
+      "bytes": "e00e0000"
     },
     {
       "kind": "step",
@@ -4982,7 +4982,7 @@
       "kind": "step",
       "now_us": 904,
       "peer": 3,
-      "bytes": "7c1d0000"
+      "bytes": "c01d0000"
     },
     {
       "kind": "deliver",
@@ -5014,7 +5014,7 @@
       "kind": "step",
       "now_us": 910,
       "peer": 1,
-      "bytes": "e00e0000"
+      "bytes": "020f0000"
     },
     {
       "kind": "step",
@@ -5026,7 +5026,7 @@
       "kind": "step",
       "now_us": 912,
       "peer": 3,
-      "bytes": "c01d0000"
+      "bytes": "041e0000"
     },
     {
       "kind": "deliver",
@@ -5058,7 +5058,7 @@
       "kind": "step",
       "now_us": 918,
       "peer": 1,
-      "bytes": "020f0000"
+      "bytes": "240f0000"
     },
     {
       "kind": "step",
@@ -5070,7 +5070,7 @@
       "kind": "step",
       "now_us": 920,
       "peer": 3,
-      "bytes": "041e0000"
+      "bytes": "481e0000"
     },
     {
       "kind": "deliver",
@@ -5102,7 +5102,7 @@
       "kind": "step",
       "now_us": 926,
       "peer": 1,
-      "bytes": "240f0000"
+      "bytes": "460f0000"
     },
     {
       "kind": "step",
@@ -5114,7 +5114,7 @@
       "kind": "step",
       "now_us": 928,
       "peer": 3,
-      "bytes": "481e0000"
+      "bytes": "8c1e0000"
     },
     {
       "kind": "deliver",
@@ -5146,7 +5146,7 @@
       "kind": "step",
       "now_us": 934,
       "peer": 1,
-      "bytes": "460f0000"
+      "bytes": "680f0000"
     },
     {
       "kind": "step",
@@ -5158,7 +5158,7 @@
       "kind": "step",
       "now_us": 936,
       "peer": 3,
-      "bytes": "8c1e0000"
+      "bytes": "d01e0000"
     },
     {
       "kind": "deliver",
@@ -5190,7 +5190,7 @@
       "kind": "step",
       "now_us": 942,
       "peer": 1,
-      "bytes": "680f0000"
+      "bytes": "8a0f0000"
     },
     {
       "kind": "step",
@@ -5202,7 +5202,7 @@
       "kind": "step",
       "now_us": 944,
       "peer": 3,
-      "bytes": "d01e0000"
+      "bytes": "141f0000"
     },
     {
       "kind": "deliver",
@@ -5234,7 +5234,7 @@
       "kind": "step",
       "now_us": 950,
       "peer": 1,
-      "bytes": "8a0f0000"
+      "bytes": "ac0f0000"
     },
     {
       "kind": "step",
@@ -5246,7 +5246,7 @@
       "kind": "step",
       "now_us": 952,
       "peer": 3,
-      "bytes": "141f0000"
+      "bytes": "581f0000"
     },
     {
       "kind": "deliver",
@@ -5278,7 +5278,7 @@
       "kind": "step",
       "now_us": 958,
       "peer": 1,
-      "bytes": "ac0f0000"
+      "bytes": "ce0f0000"
     },
     {
       "kind": "step",
@@ -5290,7 +5290,7 @@
       "kind": "step",
       "now_us": 960,
       "peer": 3,
-      "bytes": "581f0000"
+      "bytes": "9c1f0000"
     },
     {
       "kind": "deliver",
@@ -5322,7 +5322,7 @@
       "kind": "step",
       "now_us": 966,
       "peer": 1,
-      "bytes": "ce0f0000"
+      "bytes": "f00f0000"
     },
     {
       "kind": "step",
@@ -5334,7 +5334,7 @@
       "kind": "step",
       "now_us": 968,
       "peer": 3,
-      "bytes": "9c1f0000"
+      "bytes": "e01f0000"
     },
     {
       "kind": "deliver",
@@ -5366,7 +5366,7 @@
       "kind": "step",
       "now_us": 974,
       "peer": 1,
-      "bytes": "f00f0000"
+      "bytes": "12100000"
     },
     {
       "kind": "step",
@@ -5378,7 +5378,7 @@
       "kind": "step",
       "now_us": 976,
       "peer": 3,
-      "bytes": "e01f0000"
+      "bytes": "24200000"
     },
     {
       "kind": "deliver",
@@ -5410,7 +5410,7 @@
       "kind": "step",
       "now_us": 982,
       "peer": 1,
-      "bytes": "12100000"
+      "bytes": "34100000"
     },
     {
       "kind": "step",
@@ -5422,7 +5422,7 @@
       "kind": "step",
       "now_us": 984,
       "peer": 3,
-      "bytes": "24200000"
+      "bytes": "68200000"
     },
     {
       "kind": "deliver",
@@ -5454,7 +5454,7 @@
       "kind": "step",
       "now_us": 990,
       "peer": 1,
-      "bytes": "34100000"
+      "bytes": "56100000"
     },
     {
       "kind": "step",
@@ -5466,7 +5466,7 @@
       "kind": "step",
       "now_us": 992,
       "peer": 3,
-      "bytes": "68200000"
+      "bytes": "ac200000"
     },
     {
       "kind": "deliver",
@@ -5498,7 +5498,7 @@
       "kind": "step",
       "now_us": 998,
       "peer": 1,
-      "bytes": "56100000"
+      "bytes": "78100000"
     },
     {
       "kind": "step",
@@ -5510,7 +5510,7 @@
       "kind": "step",
       "now_us": 1000,
       "peer": 3,
-      "bytes": "ac200000"
+      "bytes": "f0200000"
     },
     {
       "kind": "deliver",
@@ -5552,7 +5552,7 @@
       "kind": "step",
       "now_us": 1008,
       "peer": 1,
-      "bytes": "78100000"
+      "bytes": "9a100000"
     },
     {
       "kind": "step",
@@ -5564,7 +5564,7 @@
       "kind": "step",
       "now_us": 1010,
       "peer": 3,
-      "bytes": "f0200000"
+      "bytes": "34210000"
     },
     {
       "kind": "deliver",
@@ -5596,7 +5596,7 @@
       "kind": "step",
       "now_us": 1016,
       "peer": 1,
-      "bytes": "9a100000"
+      "bytes": "bc100000"
     },
     {
       "kind": "step",
@@ -5608,7 +5608,7 @@
       "kind": "step",
       "now_us": 1018,
       "peer": 3,
-      "bytes": "34210000"
+      "bytes": "78210000"
     },
     {
       "kind": "deliver",
@@ -5640,7 +5640,7 @@
       "kind": "step",
       "now_us": 1024,
       "peer": 1,
-      "bytes": "bc100000"
+      "bytes": "de100000"
     },
     {
       "kind": "step",
@@ -5652,7 +5652,7 @@
       "kind": "step",
       "now_us": 1026,
       "peer": 3,
-      "bytes": "78210000"
+      "bytes": "bc210000"
     },
     {
       "kind": "deliver",
@@ -5684,7 +5684,7 @@
       "kind": "step",
       "now_us": 1032,
       "peer": 1,
-      "bytes": "de100000"
+      "bytes": "00110000"
     },
     {
       "kind": "step",
@@ -5696,7 +5696,7 @@
       "kind": "step",
       "now_us": 1034,
       "peer": 3,
-      "bytes": "bc210000"
+      "bytes": "00220000"
     },
     {
       "kind": "deliver",
@@ -5728,7 +5728,7 @@
       "kind": "step",
       "now_us": 1040,
       "peer": 1,
-      "bytes": "00110000"
+      "bytes": "22110000"
     },
     {
       "kind": "step",
@@ -5740,7 +5740,7 @@
       "kind": "step",
       "now_us": 1042,
       "peer": 3,
-      "bytes": "00220000"
+      "bytes": "44220000"
     },
     {
       "kind": "deliver",
@@ -5772,7 +5772,7 @@
       "kind": "step",
       "now_us": 1048,
       "peer": 1,
-      "bytes": "22110000"
+      "bytes": "44110000"
     },
     {
       "kind": "step",
@@ -5784,7 +5784,7 @@
       "kind": "step",
       "now_us": 1050,
       "peer": 3,
-      "bytes": "44220000"
+      "bytes": "88220000"
     },
     {
       "kind": "deliver",
@@ -5816,7 +5816,7 @@
       "kind": "step",
       "now_us": 1056,
       "peer": 1,
-      "bytes": "44110000"
+      "bytes": "66110000"
     },
     {
       "kind": "step",
@@ -5828,7 +5828,7 @@
       "kind": "step",
       "now_us": 1058,
       "peer": 3,
-      "bytes": "88220000"
+      "bytes": "cc220000"
     },
     {
       "kind": "deliver",
@@ -5860,7 +5860,7 @@
       "kind": "step",
       "now_us": 1064,
       "peer": 1,
-      "bytes": "66110000"
+      "bytes": "88110000"
     },
     {
       "kind": "step",
@@ -5872,7 +5872,7 @@
       "kind": "step",
       "now_us": 1066,
       "peer": 3,
-      "bytes": "cc220000"
+      "bytes": "10230000"
     },
     {
       "kind": "deliver",
@@ -5904,7 +5904,7 @@
       "kind": "step",
       "now_us": 1072,
       "peer": 1,
-      "bytes": "88110000"
+      "bytes": "aa110000"
     },
     {
       "kind": "step",
@@ -5916,7 +5916,7 @@
       "kind": "step",
       "now_us": 1074,
       "peer": 3,
-      "bytes": "10230000"
+      "bytes": "54230000"
     },
     {
       "kind": "deliver",
@@ -5948,7 +5948,7 @@
       "kind": "step",
       "now_us": 1080,
       "peer": 1,
-      "bytes": "aa110000"
+      "bytes": "cc110000"
     },
     {
       "kind": "step",
@@ -5960,7 +5960,7 @@
       "kind": "step",
       "now_us": 1082,
       "peer": 3,
-      "bytes": "54230000"
+      "bytes": "98230000"
     },
     {
       "kind": "deliver",
@@ -5992,7 +5992,7 @@
       "kind": "step",
       "now_us": 1088,
       "peer": 1,
-      "bytes": "cc110000"
+      "bytes": "ee110000"
     },
     {
       "kind": "step",
@@ -6004,7 +6004,7 @@
       "kind": "step",
       "now_us": 1090,
       "peer": 3,
-      "bytes": "98230000"
+      "bytes": "dc230000"
     },
     {
       "kind": "deliver",
@@ -6036,7 +6036,7 @@
       "kind": "step",
       "now_us": 1096,
       "peer": 1,
-      "bytes": "ee110000"
+      "bytes": "10120000"
     },
     {
       "kind": "step",
@@ -6048,7 +6048,7 @@
       "kind": "step",
       "now_us": 1098,
       "peer": 3,
-      "bytes": "dc230000"
+      "bytes": "20240000"
     },
     {
       "kind": "deliver",
@@ -6080,7 +6080,7 @@
       "kind": "step",
       "now_us": 1104,
       "peer": 1,
-      "bytes": "10120000"
+      "bytes": "32120000"
     },
     {
       "kind": "step",
@@ -6092,7 +6092,7 @@
       "kind": "step",
       "now_us": 1106,
       "peer": 3,
-      "bytes": "20240000"
+      "bytes": "64240000"
     },
     {
       "kind": "deliver",
@@ -6124,7 +6124,7 @@
       "kind": "step",
       "now_us": 1112,
       "peer": 1,
-      "bytes": "32120000"
+      "bytes": "54120000"
     },
     {
       "kind": "step",
@@ -6136,7 +6136,7 @@
       "kind": "step",
       "now_us": 1114,
       "peer": 3,
-      "bytes": "64240000"
+      "bytes": "a8240000"
     },
     {
       "kind": "deliver",
@@ -6168,7 +6168,7 @@
       "kind": "step",
       "now_us": 1120,
       "peer": 1,
-      "bytes": "54120000"
+      "bytes": "76120000"
     },
     {
       "kind": "step",
@@ -6180,7 +6180,7 @@
       "kind": "step",
       "now_us": 1122,
       "peer": 3,
-      "bytes": "a8240000"
+      "bytes": "ec240000"
     },
     {
       "kind": "deliver",
