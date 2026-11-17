@@ -67,11 +67,12 @@ def render():
 
 
 def check(path):
-    """None when the committed block equals the derived inventory, else the drift."""
-    try:
-        text = path.read_text(encoding='utf-8')
-    except OSError as error:
-        return f'profile report unreadable: {error}'
+    """None when the committed block equals the derived inventory, else the drift.
+
+    A missing or unreadable path raises: this caller passed a path that cannot
+    be a report at all, which is a tooling error rather than report drift.
+    """
+    text = path.read_text(encoding='utf-8')
     begin, end = text.find(BEGIN), text.find(END)
     if begin < 0 or end < 0 or end < begin:
         return 'profile report markers missing: ' + str(path)
@@ -79,11 +80,11 @@ def check(path):
     derived = render()
     if committed == derived:
         return None
-    differences = [f'- line {index + 1}: committed `{committed[index]}` vs derived `{derived[index]}`'
+    differences = [f'- block line {index + 1}: committed `{committed[index]}` vs derived `{derived[index]}`'
                    for index in range(min(len(committed), len(derived)))
                    if committed[index] != derived[index]]
     if len(committed) != len(derived):
-        differences.append(f'- line count: committed {len(committed)} vs derived {len(derived)}')
+        differences.append(f'- block line count: committed {len(committed)} vs derived {len(derived)}')
     return ('profile report inventory drift; regenerate with '
             '`python3 scripts/oracle/profile_report.py --write docs/reference/p2p-profiles.md`\n'
             + '\n'.join(differences[:5]))
@@ -105,18 +106,25 @@ def main():
     args = parser.parse_args()
     if args.check is not None and args.write is not None:
         parser.error('--check and --write are exclusive')
-    if args.check is not None:
-        problem = check(args.check)
-        if problem is not None:
-            print(problem, file=sys.stderr)
-            return 1
-        print(f'profile report inventory verified: {sum(len(names) for names in p2p_scope().values())} cases')
+    try:
+        if args.check is not None:
+            if not args.check.is_file():
+                print(f'profile report tooling error: not a file: {args.check}', file=sys.stderr)
+                return 2
+            problem = check(args.check)
+            if problem is not None:
+                print(problem, file=sys.stderr)
+                return 1
+            print(f'profile report inventory verified: {sum(len(names) for names in p2p_scope().values())} cases')
+            return 0
+        if args.write is not None:
+            write(args.write)
+            return 0
+        print('\n'.join(render()))
         return 0
-    if args.write is not None:
-        write(args.write)
-        return 0
-    print('\n'.join(render()))
-    return 0
+    except (OSError, ValueError) as error:
+        print(f'profile report tooling error: {error}', file=sys.stderr)
+        return 2
 
 
 if __name__ == '__main__':
