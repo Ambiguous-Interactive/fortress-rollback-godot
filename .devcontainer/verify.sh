@@ -162,13 +162,13 @@ PY
     fi
   done
   if launch="$(timeout 60 node "$SCRIPT_DIR/browser-witness.cjs" chromium 2>&1)"; then
-    ok "headless Chromium launch witness: ${launch}"
+    ok "headless Chromium launch witness: ${launch##*$'\n'}"
   else
     bad "headless Chromium launch witness failed"
     printf '%s\n' "$launch" | tail -n 25
   fi
   if launch="$(timeout 120 xvfb-run -a node "$SCRIPT_DIR/browser-witness.cjs" firefox 2>&1)"; then
-    ok "xvfb-run Firefox launch witness: ${launch}"
+    ok "xvfb-run Firefox launch witness: ${launch##*$'\n'}"
   else
     bad "xvfb-run Firefox launch witness failed"
     printf '%s\n' "$launch" | tail -n 25

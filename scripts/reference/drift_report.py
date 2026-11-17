@@ -403,6 +403,10 @@ def main_with_args(argv):
         raise ToolingError(f'pins manifest has no source named: {", ".join(unknown)}')
     if args.repo is None or not args.repo.strip():
         raise ToolingError('--repo is required when GITHUB_REPOSITORY is unset')
+    if args.reporting_identity is not None and not args.reporting_identity.strip():
+        # An empty identity would own no comments, so every run would
+        # re-observe: refuse it instead of silently degrading the cadence.
+        raise ToolingError('--reporting-identity must name a login when present')
     issues = GhIssueClient(args.repo)
     ledger = args.ledger if args.ledger.exists() else None
     if ledger is None:

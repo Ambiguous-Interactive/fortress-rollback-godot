@@ -299,6 +299,9 @@ class BrowserCapabilityTests(unittest.TestCase):
         self.assertIn("bad \"browser acquisition record missing", section)
         for variable in ("FORTRESS_CHROMIUM_EXECUTABLE", "FORTRESS_FIREFOX_EXECUTABLE", "FORTRESS_PLAYWRIGHT_PACKAGE"):
             self.assertIn(variable, section)
+        # Executables are checked for presence AND the executable bit, so a
+        # non-executable install cannot pass the file check unnoticed.
+        self.assertIn('[ -f "$executable" ] && [ -x "$executable" ]', section)
 
     def test_post_create_acquires_browsers_before_verifying(self):
         script = (ROOT / ".devcontainer/post-create.sh").read_text(encoding="utf-8")
@@ -308,7 +311,10 @@ class BrowserCapabilityTests(unittest.TestCase):
 
     def test_acquire_script_installs_the_pinned_package_exactly_like_ci(self):
         script = (ROOT / ".devcontainer/acquire-browsers.sh").read_text(encoding="utf-8")
-        self.assertIn("npm ci --ignore-scripts --prefix", script)
+        # The python module owns the npm install (single ownership point, with
+        # its timeout and named errors); the shell wrapper only maps the arch
+        # and invokes it, so there is no second npm ci to drift from CI.
+        self.assertNotIn("npm ci", script)
         self.assertIn("devcontainer_browsers.py", script)
         self.assertIn("x86_64) ARCH=x86_64", script)
         self.assertIn("aarch64|arm64) ARCH=arm64", script)

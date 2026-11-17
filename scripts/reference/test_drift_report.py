@@ -422,6 +422,13 @@ class DriftReportTests(unittest.TestCase):
             self.run_report(NEW_SHA, extra=['--latest', 'sdk=' + NEW_SHA])
         with self.assertRaises(drift_report.ToolingError):
             self.run_report(NEW_SHA, extra=['--source', 'sdk'])
+        for empty in ('', '   '):
+            with self.subTest(identity=empty):
+                # An empty identity would own no comments, so every run would
+                # re-observe: refuse it instead of silently degrading the
+                # cadence (the symmetric guard to the `--summary ''` case).
+                with self.assertRaises(drift_report.ToolingError):
+                    self.run_report(NEW_SHA, extra=['--reporting-identity', empty])
 
     def test_summary_records_results_and_failures(self):
         summary = Path(self._root.name) / 'summary.md'

@@ -51,6 +51,8 @@ def acquire_chromium(data, arch, offline=False, cache=CACHE):
     installation = cache / 'verified-browser' / arch
     member = data['browser']['chromium_executables'][arch]
     executable = installation / member
+    if installation.exists():
+        shutil.rmtree(installation)
     prepare_zip(archive, installation, executable_members=(member,))
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise ValueError(f'{MISSING_EXECUTABLE}: {executable}')
@@ -63,6 +65,8 @@ def acquire_firefox(data, arch, offline=False, cache=CACHE):
     archive = fetch(data['artifacts'][name], name, offline, cache=cache)
     installation = cache / 'webrtc-firefox' / arch
     executable = installation / 'firefox/firefox'
+    if installation.exists():
+        shutil.rmtree(installation)
     prepare_zip(archive, installation, executable_members=('firefox/firefox',))
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise ValueError(f'{MISSING_EXECUTABLE}: {executable}')

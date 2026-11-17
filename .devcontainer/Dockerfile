@@ -2,7 +2,8 @@
 # Fortress Rollback Godot devcontainer.
 #
 # Design goals, in order:
-#   1. Fast rebuilds: one apt layer, pinned versions, everything cacheable.
+#   1. Fast rebuilds: one apt layer per acquisition group, pinned versions,
+#      everything cacheable.
 #   2. Stability: pinned Godot + uv; agentic CLIs track latest by design.
 #   3. Small surface: no secrets baked in; optional tooling stays out.
 
@@ -63,10 +64,10 @@ RUN find /etc/apt -maxdepth 2 -type f \( -name 'ubuntu.sources' -o -name 'source
 # Browser witnessing runtime libraries (#385): exactly the union of the pinned
 # @playwright/test 1.64.1 nativeDeps lists for ubuntu24.04 (chromium + firefox;
 # the lists are shared across x86_64/arm64), plus xvfb and xdotool for the
-# Firefox window witnesses. Package names resolve against the pinned
-# ubuntu-24.04 base image; versions are therefore pinned by the base image,
-# like the layer above. The browser builds themselves are NOT baked into the
-# image: hosted runners do not persist layer caches, so ~300MB of artifacts
+# Firefox window witnesses. Package names are pinned to the ubuntu-24.04
+# base image's archive (the t64-era names resolve on both architectures, as
+# every hosted build proves). The browser builds themselves are NOT baked into
+# the image: hosted runners do not persist layer caches, so ~300MB of artifacts
 # would be re-pulled on every build on both architectures. post-create
 # acquires them digest-bound from docs/reference/pins.json instead, keeping
 # image builds fast and the pins authoritative.
