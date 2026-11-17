@@ -354,6 +354,12 @@ class P2PContractTests(unittest.TestCase):
         drifted['queue_capacity'] = 9
         with self.assertRaisesRegex(ValueError, 'wrap witness profile'):
             p2p_wrap.evidence({'records': []}, drifted)
+        # The positive path must still read witnesses: the undrifted fixture passes
+        # the binding and fails later at the empty-records floor, so a binding
+        # mutant that compares the wrong profile field (rounds for capacity) —
+        # which the capacity drift alone cannot distinguish — is caught here.
+        with self.assertRaisesRegex(ValueError, 'wrap witness missing pending advances'):
+            p2p_wrap.evidence({'records': []}, deepcopy(scenario))
         # Hostile widths die at the builder's own grammar-bound guard before any
         # payload can carry them: anything outside the compared set, non-int
         # widths, and the literal 4 (the default row must be requested as None).
