@@ -8,6 +8,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -147,6 +148,23 @@ class AcquisitionTests(unittest.TestCase):
         self.assertIn('export FORTRESS_PLAYWRIGHT_PACKAGE=/package/path', text)
         self.assertTrue(text.endswith('\n'))
 
+    def test_the_fragment_survives_checkouts_with_spaces_and_metacharacters(self):
+        # The checkout path is user-controlled: quoting must keep every value
+        # whole when a shell sources the record, or the executables truncate.
+        spaces = '/workspaces/browser demo (1)/.cache'
+        chromium = f'{spaces}/verified-browser/arm64/chrome-linux64/chrome'
+        firefox = f"{spaces}/webrtc-firefox/arm64/firefox/fire';fox"
+        package = f'{spaces}/browser/node_modules/@playwright/test'
+        with tempfile.TemporaryDirectory() as folder:
+            fragment = Path(folder) / 'browser-env.sh'
+            browsers.write_environment_fragment(chromium, firefox, package, fragment)
+            observed = subprocess.run(
+                ['bash', '-c',
+                 f'source "{fragment}" && printf \'%s\\n%s\\n%s\\n\' "$FORTRESS_CHROMIUM_EXECUTABLE" '
+                 '"$FORTRESS_FIREFOX_EXECUTABLE" "$FORTRESS_PLAYWRIGHT_PACKAGE"'],
+                capture_output=True, text=True, check=True, timeout=30).stdout.splitlines()
+        self.assertEqual(observed, [chromium, firefox, package])
+
     def test_fragment_write_is_atomic_and_complete(self):
         target = self.cache / 'browser-env.sh'
         written = browsers.write_environment_fragment('/c', '/f', '/p', target)
@@ -195,8 +213,13 @@ class AcquisitionTests(unittest.TestCase):
                 return type('Result', (), {'returncode': 0, 'stdout': '', 'stderr': ''})()
             mocked.side_effect = record
             browsers.npm_install_package(root, self.cache / 'browser', npm=str(fake))
-        self.assertIn('--ignore-scripts', observed['arguments'])
-        self.assertIn('--prefix', observed['arguments'])
+            online = list(observed['arguments'])
+            browsers.npm_install_package(root, self.cache / 'browser', npm=str(fake), offline=True)
+            offline = list(observed['arguments'])
+        self.assertIn('--ignore-scripts', online)
+        self.assertIn('--prefix', online)
+        self.assertNotIn('--offline', online, 'the post-create path stays CI-identical')
+        self.assertIn('--offline', offline)
         self.assertTrue((self.cache / 'browser/package-lock.json').is_file())
 
 
