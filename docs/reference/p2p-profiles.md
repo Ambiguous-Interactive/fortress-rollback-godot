@@ -36,8 +36,9 @@ Single families run directly: `make p2p-probes` (gameplay, lifecycle, layouts,
 widths, capacity), `make handshake-probes` (handshake), and
 `python3 scripts/oracle/p2p_wrap_launch.py --godot godot` for the committed
 ring-wrap fixtures. The oracle tooling negative controls run with
-`make test-oracle`. Receipts land in `.cache/reference/results/<suffix>`
-(machine-local); the public evidence is the merge-triggered Reference Baseline
+`make test-oracle`. Receipts land under `.cache/reference/results/` in a
+per-launcher `<launcher>-<suffix>` directory (machine-local); the public
+evidence is the merge-triggered Reference Baseline
 workflow, whose `oracles` leg executes the same command for both pins — for
 example the qualification run of PR
 [#392](https://github.com/Ambiguous-Interactive/fortress-rollback-godot/pull/392)
