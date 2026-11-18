@@ -1,6 +1,7 @@
 """Bound each browser label by its actual room count and bootstrap allowance."""
 from concurrent.futures import ThreadPoolExecutor
 
+import owned_process
 from run import capture
 
 # Live-page peaks per label: the largest room a label runs. A three-room label
@@ -52,23 +53,33 @@ def label_waves(labels, overlap):
 def run_wave(labels, overlap, operation):
     """Run label waves concurrently, joining every member before naming failures.
 
-    Single-label waves call the operation inline, so a serial plan keeps the
-    historical raw-exception behavior exactly. Packed waves join all members
-    first — an interrupt in the joining caller waits for the running members
-    to reach their own deadlines, and every member's owned-process cleanup
-    runs on its own worker path — and then name every failed label in the
-    caller's label order. Returns one result per label under its label name.
+    Single-label waves call the operation inline with no handle, so a serial
+    plan keeps the historical raw-exception behavior exactly: an interrupt
+    there lands inside the owning call's own cleanup. Packed waves give each
+    member a cancellation handle and join all members first; an interrupt in
+    the joining caller cancels every active tree before joining the workers
+    (#397), so the join waits for cleanup instead of for each member's own
+    deadline, while ordinary per-label failures keep the join-all naming in
+    the caller's label order. Returns one result per label under its name.
     """
     results = {}
     for wave in label_waves(labels, overlap):
         if len(wave) == 1:
-            results[wave[0]] = operation(wave[0])
+            results[wave[0]] = operation(wave[0], None)
             continue
+        handles = {label: owned_process.CancelHandle() for label in wave}
         failures = {}
         with ThreadPoolExecutor(max_workers=len(wave)) as pool:
-            waits = [pool.submit(_guarded, operation, label, results, failures) for label in wave]
-            for wait in waits:
-                wait.result()
+            waits = [pool.submit(_guarded, operation, label, handles[label], results, failures) for label in wave]
+            try:
+                for wait in waits:
+                    wait.result()
+            except BaseException:
+                # Cancel first: every active tree terminates now, so the join
+                # below waits for the workers' cleanup, never for a deadline.
+                for label in wave:
+                    handles[label].cancel()
+                raise
         if failures:
             named = '; '.join(f'{label}: {type(failures[label]).__name__}: {failures[label]}'
                               for label in labels if label in failures)
@@ -76,17 +87,17 @@ def run_wave(labels, overlap, operation):
     return results
 
 
-def _guarded(operation, label, results, failures):
+def _guarded(operation, label, cancel, results, failures):
     try:
-        results[label] = operation(label)
+        results[label] = operation(label, cancel)
     except Exception as error:
         failures[label] = error
 
 
-def run_browser(command, environment, log, rooms):
+def run_browser(command, environment, log, rooms, cancel=None):
     if type(rooms) is not int or rooms not in (1, 3, 4, 5):
         raise ValueError("browser room count must be one, three, four or five")
-    returncode, output = capture(command, environment, log, timeout=rooms * 480 + 60)
+    returncode, output = capture(command, environment, log, timeout=rooms * 480 + 60, cancel=cancel)
     if returncode or 'SCRIPT ERROR:' in output or any(line.startswith('ERROR:') for line in output.splitlines()):
         raise RuntimeError(f'Browser witness failed: {command}; see {log}')
     return output

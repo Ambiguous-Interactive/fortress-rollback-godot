@@ -596,18 +596,19 @@ def main():
                     recording_engine = engine_identity(clock_output, version, actual)
                     run(command + ['--export-release', 'Web', str(export / 'index.html')], environment, args.output / f'{version}-export.log')
                     export_before = inventory({'export': export})
-                    def run_label(label):
+                    def run_label(label, cancel):
                         started = time.monotonic()
                         faults = label == 'faults'
                         browser_command = [str(sources['node']), str(sources['browser_launcher']), str(export),
                                            f'ws://127.0.0.1:{port}/v3/ws', label, str(args.output / f'{version}-{label}-events.log')]
                         if label == 'mixed-disabled':
-                            code, output = capture(browser_command, environment, args.output / f'{version}-{label}.log', timeout=540)
+                            code, output = capture(browser_command, environment, args.output / f'{version}-{label}.log',
+                                                   timeout=540, cancel=cancel)
                             result = validate_disabled_control(code, output)
                             validate_identity(result, pair, pins)
                         else:
                             output = run_browser(browser_command, environment, args.output / f'{version}-{label}.log',
-                                                 rooms=room_count(label))
+                                                 rooms=room_count(label), cancel=cancel)
                             validate_identity(json.loads(output), pair, pins)
                             if label.startswith('peer-drop'):
                                 result = validate_drop_browser(json.loads(output), label == 'peer-drop-corrupt', label == 'peer-drop-close',

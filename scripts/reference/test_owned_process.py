@@ -4,6 +4,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from unittest import mock
@@ -400,6 +401,155 @@ class SpawnedProcessTests(unittest.TestCase):
             process.wait(timeout=10)
             owned_process.finish(process, token, grace=5)
             self.assertEqual(process.returncode, 0, 'a clean host keeps its own exit code')
+
+class CancelHandleTests(unittest.TestCase):
+    """Value: one running owned command can be cancelled from outside its call (#397)."""
+
+    SLOW_TREE = """
+import os, sys, time
+open(sys.argv[1], 'w').write(str(os.getpid()))
+print('started', flush=True)
+time.sleep(60)
+"""
+
+    ESCAPE_TREE = """
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    open(sys.argv[1], 'w').write(str(os.getpid()))
+    time.sleep(60)
+print('started', flush=True)
+time.sleep(60)
+"""
+
+    def start_cancel_run(self, folder, entry, cancel, tree, timeout=30):
+        """Run one slow owned command under the handle on a worker thread."""
+        log = Path(folder) / f'{entry.__name__}.log'
+        log.write_text('')
+        marker = Path(folder) / f'{entry.__name__}.pid'
+        command = [PYTHON, '-c', tree, str(marker)]
+        outcome = {}
+
+        def worker():
+            try:
+                outcome['result'] = entry(command, {}, log, timeout, cancel=cancel)
+            except BaseException as error:  # the worker forwards whatever the run raised
+                outcome['error'] = error
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        pid = None
+        deadline = time.monotonic() + 10
+        while pid is None and time.monotonic() < deadline:
+            if marker.exists():
+                pid = int(marker.read_text())
+            else:
+                time.sleep(0.05)
+        return thread, outcome, log, pid
+
+    def assert_tree_gone(self, pid):
+        deadline = time.monotonic() + 5
+        while alive(pid) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertFalse(alive(pid), 'a cancelled tree must be reaped before the cancel returns its join')
+
+    def test_cancel_stops_a_live_tree_once_and_refuses_a_double_cancel(self):
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with a live tree')
+            began = time.monotonic()
+            handle.cancel()
+            with self.assertRaises(ValueError):
+                handle.cancel()
+            thread.join(timeout=15)
+            self.assertFalse(thread.is_alive(), 'the cancelled run must finish long before its 30-second deadline')
+            self.assertLess(time.monotonic() - began, 15, 'the cancel must not wait out the run own deadline')
+            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled,
+                                  'the cancelled run must raise the cancellation, not a timeout')
+            self.assertIn('started', getattr(outcome['error'], 'output', ''), 'partial output stays the evidence')
+            self.assert_tree_gone(pid)
+            self.assertIn('CANCELLED:', log.read_text(), 'the cancellation must leave its marker in the log the caller reads')
+
+    def test_cancel_names_an_escaped_carrier_exactly_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.ESCAPE_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with a live escaped carrier')
+            survivors = handle.cancel()
+            self.assertEqual([item['pid'] for item in survivors], [pid],
+                             'the group kill cannot reach a setsid carrier, so the token sweep names it')
+            thread.join(timeout=15)
+            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled)
+            self.assert_tree_gone(pid)
+            text = log.read_text()
+            reports = [line for line in text.splitlines() if line.startswith('OWNED_PROCESSES:')]
+            self.assertEqual(len(reports), 1, f'the survivor report must be written once, got {reports}')
+            self.assertEqual(text.count(f"'pid': {pid}"), 1, 'the cancelled pid must be named exactly once (#381)')
+
+    def test_split_cancel_shares_the_same_surface(self):
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run_split, handle, self.SLOW_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with a live tree')
+            handle.cancel()
+            thread.join(timeout=15)
+            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled)
+            self.assert_tree_gone(pid)
+            self.assertIn('CANCELLED:', log.read_text())
+
+    def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
+        handle = owned_process.CancelHandle()
+        self.assertEqual(handle.cancel(), [], 'an empty handle has nothing to cancel')
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'refused.log'
+            with mock.patch.object(owned_process, '_start') as start:
+                with self.assertRaises(ValueError):
+                    owned_process.run([PYTHON, '-c', 'print("no")'], {}, log, 10, cancel=handle)
+                start.assert_not_called()
+
+    def test_a_cancel_landing_between_start_and_registration_cleans_the_tree_up(self):
+        handle = owned_process.CancelHandle()
+        real_start = owned_process._start
+        started = {}
+
+        def racing_start(command, environment, cwd, input_text):
+            process, token_value = real_start(command, environment, cwd, input_text)
+            started['process'] = process
+            handle.cancel()
+            return process, token_value
+
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'raced.log'
+            log.write_text('')
+            with mock.patch.object(owned_process, '_start', side_effect=racing_start):
+                with self.assertRaises(ValueError):
+                    owned_process.run([PYTHON, '-c', 'import time; time.sleep(60)'], {}, log, 10, cancel=handle)
+            process = started['process']
+            self.assert_tree_gone(process.pid)
+            process.wait(timeout=10)  # the cleanup reaps before refusing, so nothing is left to this test
+            self.assertNotIn('OWNED_PROCESSES', log.read_text(),
+                             'a tree killed before it could fork names no survivors')
+
+    def test_cancellation_requires_the_kernel_ownership_surface(self):
+        handle = owned_process.CancelHandle()
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / 'surface.log'
+            with mock.patch.object(owned_process, '_owned_surface', return_value=False):
+                with mock.patch.object(owned_process.subprocess, 'run') as fallback:
+                    with self.assertRaises(ValueError):
+                        owned_process.run([PYTHON, '-c', 'print("no")'], {}, log, 10, cancel=handle)
+                    fallback.assert_not_called()
+
+    # Value: protects=the shared named-pid registry behind once-only survivor naming;
+    # fails_when=the cancel path and the run path both name the same pid (#381's class);
+    # seam=owned_process.CancelHandle.claim
+    def test_claim_names_each_pid_exactly_once(self):
+        handle = owned_process.CancelHandle()
+        first = handle.claim([{'pid': 5, 'name': 'a'}, {'pid': 5, 'name': 'a-again'}, {'pid': 6, 'name': 'b'}])
+        self.assertEqual([item['pid'] for item in first], [5, 6], 'a duplicated candidate is named on first sight only')
+        self.assertEqual(handle.claim([{'pid': 5, 'name': 'a'}, {'pid': 7, 'name': 'c'}]), [{'pid': 7, 'name': 'c'}])
 
 
 if __name__ == '__main__':

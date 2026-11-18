@@ -91,6 +91,17 @@ stay exclusive at eight live pages each; `corrupt`, `default` and
 waves — two pairs and one single). The `mixed` job's four labels keep four waves because every eight-page
 label excludes every other; its wall shape is unchanged by this change.
 
+Every packed wave member runs under its own cancellation handle (#397). An
+interrupt in the joining caller — the launcher's own watchdog or an
+operator's Ctrl-C — cancels every active label's process tree before joining
+the workers, so the wave ends within cleanup time instead of each member's
+remaining deadline; each member's log keeps the `CANCELLED` marker, the
+partial output and the same once-only survivor report a timeout writes.
+Ordinary per-label failures keep the join-all naming: without an interrupt
+every sibling still runs to its own end and the failures name in label
+order. Single-label and headed-Firefox serial plans keep the inline call,
+whose interrupt path was already owned inside the call.
+
 Controlled same-host measurement (arm64 devcontainer, warm caches, Godot
 4.3, Chromium pair; every wall includes ≈22s of fixed export/setup that
 the per-label and per-wave numbers exclude. A packed wave also multiplies

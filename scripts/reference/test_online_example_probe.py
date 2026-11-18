@@ -840,7 +840,7 @@ class OnlineExampleEvidenceTests(unittest.TestCase):
         self.assertEqual([next(keyword.value.value for keyword in call.keywords if keyword.arg == 'rooms') for call in calls], [5, 1])
         with patch.object(webrtc_runner, 'capture', return_value=(0, 'ok')) as capture:
             self.assertEqual(webrtc_runner.run_browser(['node', 'online'], {}, Path('owned.log'), 5), 'ok')
-            capture.assert_called_once_with(['node', 'online'], {}, Path('owned.log'), timeout=2460)
+            capture.assert_called_once_with(['node', 'online'], {}, Path('owned.log'), timeout=2460, cancel=None)
         for rooms in (True, 2, 6):
             with self.subTest(rooms=rooms), patch.object(webrtc_runner, 'capture') as capture:
                 with self.assertRaises(ValueError):
