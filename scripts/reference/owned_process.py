@@ -482,15 +482,20 @@ class CancelHandle:
                 return ("this handle is still publishing another run's report")
             return 'this handle already pins another concurrent run'
 
-    def owns_log(self, log):
-        """Whether the open report phase still belongs to the given run's log.
+    def settle_if_owned(self, log):
+        """Settle only while the open phase still belongs to the given run's log.
 
-        An owning call's defensive settle must act only while its own phase
-        is the one open: after the release a later run registers with its own
-        log, and draining then would steal that run's report stream.
+        The ownership check and the drain happen under one lock hold, so a
+        run registering in the gap cannot have its phase closed or its
+        pending report drained by this run's cleanup (#403 review).
         """
         with self._lock:
-            return self._log is log
+            if self._log is not log:
+                return []
+            report, self._report = self._report, []
+            self._closed = True
+            self._reporting = False
+            return report
 
     def unregister(self):
         """Release the pin; a later cancel then finds nothing left to stop."""
@@ -590,6 +595,13 @@ class CancelHandle:
                         text = (text or '') + f'OWNED_PROCESSES: terminated {_named_all(report)}\n'
                 if text and self._log is not None:
                     self._log.write_text(text)
+            except OSError:
+                # A failed write must not swallow the report it drained: put
+                # it back so the run's defensive settle still appends the
+                # names instead of losing them with the sink (#403 review).
+                with self._lock:
+                    self._report = merged_survivors(self._report, report)
+                raise
             finally:
                 with self._lock:
                     self._reporting = False
@@ -901,13 +913,13 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 _write_final(log, cancel, text)
                 raise subprocess.TimeoutExpired(process.args, timeout, output=text) from None
             finally:
-                if cancel is not None and cancel.owns_log(log):
+                if cancel is not None:
                     # Idempotent on every path that already closed through
                     # emit(): a mid-body interrupt drains and appends whatever
                     # a concurrent cancel published instead of locking the
                     # handle behind the report phase. Skipped when a later run
                     # already owns the phase — its report stream is not ours.
-                    _append_log(log, cancel.settle())
+                    _append_log(log, cancel.settle_if_owned(log))
         except BaseException:
             # An interruption must not strand the tree either: the new session
             # never saw the terminal signal, so both ownership checks run, the
@@ -933,7 +945,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                         # release below no longer depends on the sink.
                         _append_log(log, candidates)
                 elif cancel is not None:
-                    cancel.settle()  # No write remains: close and release here.
+                    cancel.settle_if_owned(log)  # No write remains: close and release here.
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
@@ -944,13 +956,13 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 except OSError:
                     pass
             finally:
-                if cancel is not None and cancel.owns_log(log):
+                if cancel is not None:
                     # Releases the reservation whatever happened above (emit
                     # closed already on the note path); a cleanup failure that
                     # skipped both writes still drains and appends whatever a
                     # concurrent cancel published. Skipped when a later run
                     # already owns the phase.
-                    _append_log(log, cancel.settle())
+                    _append_log(log, cancel.settle_if_owned(log))
             process.poll()
             raise
         return returncode, parts, post_exit_bytes, group_alive, exit_ticks
@@ -1040,6 +1052,35 @@ def _refused_run(cancel, process, token_value, log):
     raise ValueError(f'{refusal}; the started tree was cleaned up before refusing')
 
 
+def _abandon_started_run(cancel, process, token_value, log):
+    """Stop a started tree whose registration can no longer be served, then release.
+
+    A feeder failure or any escape before the runners' cleanup guards leaves
+    the child running, the pin held and the report phase open: the tree is
+    swept and reaped exactly like a refusal, a note lands in the run's own
+    log, and the handle's phase releases through the ownership-checked
+    settle — the caller re-raises its original exception either way.
+    """
+    try:
+        candidates, sweep_anomaly = _terminate_tree(process, token_value)
+        note = f'OWNED_PROCESS_SETUP_FAILED: {sweep_anomaly}\n' if sweep_anomaly is not None else ''
+        if candidates:
+            note = f'OWNED_PROCESSES: terminated {candidates}\n' + note
+        if note:
+            try:
+                log.write_text(note)
+            except OSError:
+                pass  # A failing sink must not replace the original failure.
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass  # The sweeps already killed every group member and carrier.
+    finally:
+        if cancel is not None:
+            _append_log(log, cancel.settle_if_owned(log))
+    process.poll()
+
+
 def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=None):
     """Run one bounded command whose entire descendant tree stays owned.
 
@@ -1074,15 +1115,16 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     if cancel is not None and not cancel.register(process, token_value, log):
         _refused_run(cancel, process, token_value, log)
     feed_failures = []
-    if input_text is not None:
-        _feed_stdin(process, input_text, feed_failures)
+    try:
+        if input_text is not None:
+            _feed_stdin(process, input_text, feed_failures)
+    except BaseException:
+        # A feeder failure must not strand the started tree or the handle's
+        # reservation: the tree is stopped and reaped, the phase releases,
+        # and the original failure propagates (#403 review).
+        _abandon_started_run(cancel, process, token_value, log)
+        raise
     returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel)
-    output = ''.join(parts.values())
-    if feed_failures:
-        output += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
-    if post_exit_bytes:
-        output += ('\nPOST_EXIT_OUTPUT: '
-                   f'{post_exit_bytes} byte(s) arrived after the command exited and were withheld\n')
     # Both ownership checks always run before any escape raises: a command
     # can leave a same-group descendant and a setsid token carrier at once,
     # and reporting only the first would strand the second. The handle's
@@ -1091,11 +1133,17 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     # sides' kills and no pid is ever named twice, or named nowhere (#381's
     # class, #399's windows). The post-reap group scan carries the child's
     # exit boundary, so a group id the kernel reissued names nothing. The
-    # whole tail releases the reservation on any exit: an interrupt landing
-    # here must not lock the handle behind the report phase, and a report
-    # published after a classified raise still reaches the run's own log
-    # through the append door (#403 review).
+    # whole tail — output assembly included — releases the reservation on
+    # any exit: an interrupt landing here must not lock the handle behind
+    # the report phase, and a report published after a classified raise
+    # still reaches the run's own log through the append door (#403 review).
     try:
+        output = ''.join(parts.values())
+        if feed_failures:
+            output += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
+        if post_exit_bytes:
+            output += ('\nPOST_EXIT_OUTPUT: '
+                       f'{post_exit_bytes} byte(s) arrived after the command exited and were withheld\n')
         report = cancel.absorb() if cancel is not None else []
         # Both sweeps are contained: a failing token scan must not skip the group
         # scan, so a token-scrubbed same-group descendant is named and killed even
@@ -1151,12 +1199,12 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
             _note_final(log, cancel, output)
         return returncode, output
     finally:
-        if cancel is not None and cancel.owns_log(log):
+        if cancel is not None:
             # Idempotent on every path that already settled or closed through
             # emit(): a mid-tail interrupt drains and appends whatever a
             # concurrent cancel published instead of locking the handle.
             # Skipped when a later run already owns the phase.
-            _append_log(log, cancel.settle())
+            _append_log(log, cancel.settle_if_owned(log))
 
 
 def run_split(command, environment, log, timeout, cwd=None, input_text=None, cancel=None):
@@ -1189,17 +1237,24 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
         _refused_run(cancel, process, token_value, log)
     stdout_descriptor = process.stdout.fileno()
     feed_failures = []
-    if input_text is not None:
-        _feed_stdin(process, input_text, feed_failures)
+    try:
+        if input_text is not None:
+            _feed_stdin(process, input_text, feed_failures)
+    except BaseException:
+        # A feeder failure must not strand the started tree or the handle's
+        # reservation: the tree is stopped and reaped, the phase releases,
+        # and the original failure propagates (#403 review).
+        _abandon_started_run(cancel, process, token_value, log)
+        raise
     returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel)
-    stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
-    if feed_failures:
-        stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
     # The same report handoff, contained sweep pair and exit-bounded group
     # scan the merged runner uses (#381's class, #399's windows, #398 review).
-    # The whole tail releases the reservation on any exit, exactly like the
-    # merged runner's (#403 review).
+    # The whole tail — output assembly included — releases the reservation on
+    # any exit, exactly like the merged runner's (#403 review).
     try:
+        stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
+        if feed_failures:
+            stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
         report = cancel.absorb() if cancel is not None else []
         swept, tail_anomaly = _contained_sweeps([
             lambda: terminate(token_value),
@@ -1248,12 +1303,12 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
             stderr += f'\n{note}'
         return returncode, parts[stdout_descriptor], stderr
     finally:
-        if cancel is not None and cancel.owns_log(log):
+        if cancel is not None:
             # Idempotent on every path that already settled or closed through
             # emit(): a mid-tail interrupt drains and appends whatever a
             # concurrent cancel published instead of locking the handle.
             # Skipped when a later run already owns the phase.
-            _append_log(log, cancel.settle())
+            _append_log(log, cancel.settle_if_owned(log))
 
 
 def spawn(command, environment=None, stdout=None, stderr=None, cwd=None):
@@ -1310,7 +1365,10 @@ def finish(process, token_value, grace=5.0):
             except subprocess.TimeoutExpired:
                 pass  # The sweeps already killed every group member and carrier.
         if survivors:
-            raise EscapedDescendants(survivors)
+            # The escape is the stronger outcome, and the anomaly rides as its
+            # cause: a caller that sees survivors must still learn the scan
+            # was incomplete (#403 review).
+            raise EscapedDescendants(survivors) from sweep_anomaly
         if sweep_anomaly is not None:
             # No survivor was found to raise instead: a sweep that could not
             # complete its scan is a tooling failure, never a clean teardown.

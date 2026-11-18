@@ -108,6 +108,7 @@ class DriftClassificationTests(unittest.TestCase):
             ('src/config.yml', 'outer:\n  enabled: true\n', 'outer:\nenabled: true\n', True),
             ('src/config.yaml', 'outer:\n  enabled: true\n', 'outer:\nenabled: true\n', True),
             ('Makefile', 'all:\n\techo hi\n', 'all:\necho hi\n', True),
+            ('tests/Makefile.in', 'all:\n\techo hi\n', 'all:\necho hi\n', True),
             ('src/aligned.rs', 'pub fn a() {\n\tstep();\n}\n', 'pub fn a() {\nstep();\n}\n', False),
         ]
         for path, old_text, new_text, review in cases:

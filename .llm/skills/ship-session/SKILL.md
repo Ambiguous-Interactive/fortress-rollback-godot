@@ -129,10 +129,14 @@ session log or linked issue. Do not make an automated clean claim from counts.
    whose polling burns the API rate limit. `gh pr view --json` has no
    merge-queue field (`mergeQueueEntry` fails with `Unknown JSON field`), so
    read `state` plus the queue entry through authenticated GraphQL:
-   `gh api graphql -f query='query($n:Int!,$o:String!,$r:String!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergeQueueEntry{state}}}}' -F n=<number> -F o=<owner> -F r=<repository>`
-   — check `state` first, because a merged PR is also not queued; an empty
-   `mergeQueueEntry` on a PR that is still open means the entry was dropped
-   and the PR needs re-enqueueing after a fresh scan.
+   `gh api graphql -f query='query($n:Int!,$o:String!,$r:String!){repository(owner:$o,name:$r){pullRequest(number:$n){state mergeQueueEntry{state} autoMergeRequest{state}}}}' -F n=<number> -F o=<owner> -F r=<repository>`
+   — check `state` first, because a merged PR is also not queued. On a PR
+   that is still open, an empty `mergeQueueEntry` next to an enabled
+   `autoMergeRequest` can mean the entry has not been created yet (a
+   required check was still pending), not that it was dropped: only start
+   dropped-entry recovery — a fresh scan and re-enqueue — when auto-merge
+   is not enabled, and disable the pending request first if a rescan is
+   needed.
 2. Confirm the API reports merged and read the resulting merge commit SHA.
    A successful auto-merge request or closed PR is not proof of a merge.
    After an uncertain response, read state before retrying the mutation.

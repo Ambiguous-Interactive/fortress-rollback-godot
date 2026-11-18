@@ -37,14 +37,18 @@ def terminated(pid):
     A descendant whose parent died reparents to init, and a container init
     does not always reap promptly — a killed grandchild can stay a zombie
     answering kill(0). A zombie has taken SIGKILL, which is the contract
-    under test; only a live process fails it.
+    under test; only a live process fails it. A /proc read error is never
+    termination: the caller keeps probing instead of passing on a process
+    that may still be alive (#403 review).
     """
     if not alive(pid):
         return True
     try:
         state = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
-    except OSError:
+    except FileNotFoundError:
         return True  # gone from /proc: reaped between the probes
+    except OSError:
+        return False  # a transient read error proves nothing; keep probing
     return state == 'Z'
 
 
@@ -1314,6 +1318,35 @@ time.sleep(0.05)
             self.assertEqual(returncode, 3, 'a completed run keeps its own return code')
             self.assertFalse(handle.stopped_run, 'the cancel stopped nothing and must not claim it did')
             self.assertNotIn('CANCELLED', log.read_text())
+
+    def test_a_failed_emit_write_restores_its_drained_report(self):
+        """A failing sink must not swallow the report emit() drained (#403 review).
+
+        emit() takes the pending report before writing; a sink failure used
+        to lose those names. The report comes back for the run's defensive
+        settle, which appends it through the same door a cancel uses.
+        """
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(60)'], {}, None, False)
+        try:
+            handle = owned_process.CancelHandle()
+
+            class FailingSink:
+                def write_text(self, text):
+                    raise OSError('sink exploded')
+
+            self.assertTrue(handle.register(process, token_value, FailingSink()))
+            handle._publish([{'pid': 999777, 'name': 'cancel-carrier'}])
+            with self.assertRaises(OSError):
+                handle.emit('run text\n')
+            report = handle.settle()
+            self.assertEqual([item['name'] for item in report], ['cancel-carrier'],
+                             'the drained report must survive a failed write')
+        finally:
+            handle.unregister()
+            handle.settle()
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
 
     def test_registration_stays_refused_until_the_report_phase_closes(self):
         """A run finishing its report keeps the handle to itself (#398/#400 review).
