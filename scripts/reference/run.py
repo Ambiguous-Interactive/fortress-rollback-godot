@@ -47,16 +47,18 @@ def captured_text(value):
 
 import owned_process
 
-def capture(cmd, environment, log, timeout, cwd=None):
+def capture(cmd, environment, log, timeout, cwd=None, cancel=None):
     """Run one bounded command whose whole descendant tree stays owned.
 
     owned_process.run keeps the started command, any terminated survivors and
-    the timeout marker inside this log; the exception contract matches the
-    previous subprocess.run shape, so every deadline caller behaves the same.
+    the timeout or cancellation marker inside this log; the exception contract
+    matches the previous subprocess.run shape, so every deadline caller behaves
+    the same. A cancel handle stops the run from outside its call and raises
+    owned_process.Cancelled once the tree is verified gone.
     """
     log.write_text('COMMAND_STARTED: ' + repr(cmd) + '\n')
     try:
-        returncode, output = owned_process.run(cmd, environment, log, timeout, cwd)
+        returncode, output = owned_process.run(cmd, environment, log, timeout, cwd, cancel=cancel)
     except OSError as error:
         log.write_text(f'TOOL_FAILURE: {error}\n')
         raise

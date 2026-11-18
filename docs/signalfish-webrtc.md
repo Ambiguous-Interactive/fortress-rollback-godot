@@ -197,9 +197,12 @@ pages stay within one eight-player room's page count, the busiest shape a
 hosted runner already proves (the packed wave still multiplies browser
 processes, so the constrained-CPU measurement in the job-time record pins
 the packed gates on two CPUs). Every label keeps its own rooms, validators,
-logs and timeouts, and the receipt lists records in label order. A Firefox
-pair keeps the fully serial run its shared display placement pins. Label
-walls, not receipts, are what shrink.
+logs and timeouts, and the receipt lists records in label order. An interrupt
+in the joining caller cancels every active label's tree before the workers
+join, so the wave ends within cleanup time instead of at each member's own
+deadline; ordinary per-label failures keep the join-all naming in label
+order. A Firefox pair keeps the fully serial run its shared display
+placement pins. Label walls, not receipts, are what shrink.
 Mixed runs use both default and selected work budgets. They inject one-link send
 pressure and correlate the same input bytes across physical direct and addressed
 relay delivery. A fallback-disabled control must fail the gameplay watchdog.
