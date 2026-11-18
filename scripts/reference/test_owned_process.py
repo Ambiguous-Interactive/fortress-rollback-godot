@@ -595,7 +595,7 @@ print('child exits', flush=True)
                 with mock.patch.object(handle, 'claim', claiming_mid_sweep), \
                      mock.patch.object(handle, 'stopped_report',
                                        return_value=[{'pid': process.pid, 'name': 'swept'}]), \
-                     mock.patch.object(owned_process, '_terminate_tree', return_value=[]):
+                     mock.patch.object(owned_process, '_terminate_tree', return_value=([], None)):
                     with self.assertRaises(subprocess.TimeoutExpired):
                         owned_process._run_until_exit(process, token_value, log, 0.4, handle)
                 self.assertIn(f"'pid': {process.pid}", log.read_text(),
@@ -611,23 +611,11 @@ print('child exits', flush=True)
             handle = owned_process.CancelHandle()
             thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=1)
             self.assertIsNotNone(pid, 'the control only holds with a live tree')
-            real_terminate = owned_process.terminate
-
-            def flipping_terminate(token_value):
-                if not handle.cancelled:
-                    raise ValueError('token sweep exploded during the stop')
-                return real_terminate(token_value)
-
-            patches = (
-                mock.patch.object(owned_process, '_terminate_tree', side_effect=ValueError('stop exploded')),
-                mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')),
-                mock.patch.object(owned_process, 'terminate_group', side_effect=ValueError('group pass exploded')),
-                mock.patch.object(owned_process, 'terminate', flipping_terminate),
-            )
-            with patches[0], patches[1], patches[2], patches[3]:
+            with mock.patch.object(owned_process, 'terminate_group', side_effect=ValueError('group pass exploded')), \
+                 mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')):
                 with self.assertRaises(ValueError):
-                    handle.cancel()  # the stop fails without killing anything; the deadline still fires
-                thread.join(timeout=20)
+                    handle.cancel()  # the stop's anomaly surfaces only after every sweep ran
+            thread.join(timeout=20)
             self.assertFalse(thread.is_alive(), 'the run must resolve bounded behind a failed verification sweep')
             error = outcome.get('error')
             self.assertIsInstance(error, (owned_process.Cancelled, owned_process.EscapedDescendants),
@@ -778,10 +766,12 @@ print('child exits', flush=True)
             with mock.patch.object(owned_process, 'terminate_group', flaky_group), \
                  mock.patch.object(owned_process, 'terminate',
                                    return_value=[{'pid': process.pid + 1, 'name': 'carrier'}]) as terminate:
-                with self.assertRaises(ValueError):
-                    owned_process._terminate_tree(process, token_value)
+                named, anomaly = owned_process._terminate_tree(process, token_value)
             self.assertEqual(terminate.call_count, 2,
                              'the final token sweep must run even when the post-kill group pass raises')
+            self.assertIsInstance(anomaly, ValueError, 'the sweep anomaly must still resurface')
+            self.assertEqual([item['name'] for item in named], ['leader', 'carrier'],
+                             'the names both sweeps collected must come back beside the anomaly')
         finally:
             if process.poll() is None:
                 process.kill()

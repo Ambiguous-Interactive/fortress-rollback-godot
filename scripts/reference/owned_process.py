@@ -206,15 +206,15 @@ def _terminate_tree(process, token_value, pinned=None):
     rest of the group, and the second pass catches anything that appeared in
     between. Killing first instead would let a fast-dying descendant die
     unnamed, so the same tree reads as an escape failure without the
-    cancellation and as an unrecorded success with one beside it. The first
-    passes are contained on their own, so one failing pass never skips the
-    kill or discards the names earlier passes already earned; a persistent
-    sweep anomaly resurfaces from the uncontained second pass, after the
-    kill has landed. When a pinned leader is given, its liveness gates the
-    group phases — after the owning call reaped the leader the group is no
-    longer ours to name or kill, and the pidfd keeps the group signal off a
-    recycled id. Merging the passes keeps every pid named exactly once
-    (#381's class).
+    cancellation and as an unrecorded success with one beside it. No pass
+    ever skips a later one: the first passes are contained, the kill always
+    runs, and a persistent sweep anomaly from the final passes comes back as
+    the second element of the return after every sweep has run — a caller's
+    reap, log and classification are never skipped by a sweep failure.
+    When a pinned leader is given, its liveness gates the group phases —
+    after the owning call reaped the leader the group is no longer ours to
+    name or kill, and the pidfd keeps the group signal off a recycled id.
+    Merging the passes keeps every pid named exactly once (#381's class).
     """
     def group_phase(action):
         if pinned is not None and _leader_reaped(pinned):
@@ -233,10 +233,11 @@ def _terminate_tree(process, token_value, pinned=None):
         named = merged_survivors(named, group_phase(lambda: terminate_group(process.pid)))
     except Exception as error:
         anomaly = error  # The final token sweep still runs before the anomaly resurfaces.
-    named = merged_survivors(named, terminate(token_value))
-    if anomaly is not None:
-        raise anomaly
-    return named
+    try:
+        named = merged_survivors(named, terminate(token_value))
+    except Exception as error:
+        anomaly = anomaly or error  # Every sweep ran; the first anomaly is the one reported.
+    return named, anomaly
 
 
 class _Deadline(Exception):
@@ -392,7 +393,18 @@ class CancelHandle:
                 # the pidfd-pinned token sweep runs, which can never
                 # misaddress. Without pidfd support the poll guard decides.
                 reaped = _leader_reaped(pinned) if pinned is not None else process.poll() is not None
-                candidates = terminate(token_value) if reaped else _terminate_tree(process, token_value, pinned)
+                if reaped:
+                    candidates = terminate(token_value)
+                else:
+                    candidates, stop_anomaly = _terminate_tree(process, token_value, pinned)
+                    if stop_anomaly is not None:
+                        # The report is published before the anomaly resurfaces,
+                        # so the names the sweeps earned are never discarded.
+                        fresh = self.claim(candidates)
+                        with self._lock:
+                            self._report = fresh
+                        self._swept.set()
+                        raise stop_anomaly
             fresh = self.claim(candidates)
         finally:
             if pinned is not None:
@@ -572,19 +584,12 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 report = cancel.stopped_report()
                 text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
                 text += _drain_after_kill(process) + '\n'
-                # Each verification sweep stands on its own: a failing pass
+                # The verification sweeps come back contained: a failing pass
                 # never skips the token sweep or the reap, so a carrier the
                 # token sweep can still reach is named and stopped, and the
                 # child is reaped, whatever the group pass did.
-                fresh = []
-                try:
-                    fresh = cancel.claim(terminate_group(process.pid))
-                except Exception:
-                    fresh = []
-                try:
-                    fresh = merged_survivors(fresh, cancel.claim(terminate(token_value)))
-                except Exception:
-                    fresh = fresh or []
+                fresh, sweep_anomaly = _terminate_tree(process, token_value)
+                fresh = cancel.claim(fresh)
                 try:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
@@ -593,11 +598,13 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 if named:
                     text += f'OWNED_PROCESSES: terminated {named}\n'
                 text += 'CANCELLED: the owning handle stopped this command\n'
+                if sweep_anomaly is not None:
+                    text += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
                 log.write_text(text)
                 if fresh:
                     raise EscapedDescendants(fresh) from None
                 raise Cancelled(text) from None
-            survivors = _terminate_tree(process, token_value)
+            survivors, sweep_anomaly = _terminate_tree(process, token_value)
             if cancel is not None:
                 own = cancel.claim(survivors)
                 # The flag is re-read after the claim: a cancel that flipped
@@ -609,8 +616,11 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
             process.poll()
             text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
             text += _drain_after_kill(process) + '\n'
-            log.write_text(text + f'TIMEOUT: command exceeded {timeout} seconds\n'
-                           + f'OWNED_PROCESSES: terminated {survivors}\n')
+            text += f'TIMEOUT: command exceeded {timeout} seconds\n'
+            text += f'OWNED_PROCESSES: terminated {survivors}\n'
+            if sweep_anomaly is not None:
+                text += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
+            log.write_text(text)
             raise subprocess.TimeoutExpired(process.args, timeout, output=text) from None
         except BaseException:
             # An interruption must not strand the tree either: the new session
@@ -663,11 +673,8 @@ def _refused_run(cancel, process, token_value, log):
     refuses the run.
     """
     try:
-        try:
-            candidates = _terminate_tree(process, token_value)
-        except Exception:
-            candidates = []  # The refusal is the caller-relevant outcome; the reap still runs.
-        if cancel is not None:
+        candidates, refused_anomaly = _terminate_tree(process, token_value)
+        if refused_anomaly is not None and cancel is not None:
             candidates = cancel.claim(candidates)
         if candidates:
             try:
