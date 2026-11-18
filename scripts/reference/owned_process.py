@@ -1080,8 +1080,11 @@ def finish(process, token_value, grace=5.0):
                     process.kill()
                 process.wait(timeout=grace)
         boundary = _boot_ticks()
+        # The token sweep runs before the group scan, matching the runners'
+        # tails, so a failing group scan can never skip it.
+        carriers = terminate(token_value)
         members = terminate_group(process.pid, started_before=boundary, token_value=token_value)
-        survivors = merged_survivors(members, terminate(token_value))
+        survivors = merged_survivors(members, carriers)
         if process.poll() is None:
             try:
                 process.wait(timeout=grace)

@@ -481,15 +481,15 @@ class SpawnedProcessTests(unittest.TestCase):
             # same process group once the teardown is already running, then exits.
             host, token = owned_process.spawn([PYTHON, '-c', f"""
 import os, signal, sys, time
+open(sys.argv[1] + '.tmp', 'w').write(str(os.getpid()))
+os.rename(sys.argv[1] + '.tmp', sys.argv[1])
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(0.4)
 pid = os.fork()
 if pid == 0:
     scrubbed = {{k: v for k, v in os.environ.items() if k != {owned_process.TOKEN_VARIABLE!r}}}
     os.execve(sys.executable, [sys.executable, '-c', 'import time; time.sleep(30)'], scrubbed)
-marker = sys.argv[1] + '.tmp'
-open(marker, 'w').write(str(os.getpid()))
-os.rename(marker, sys.argv[1])
+time.sleep(0.2)
 """, str(marker)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             try:
                 deadline = time.monotonic() + 5
