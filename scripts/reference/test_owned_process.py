@@ -31,6 +31,23 @@ def alive(pid):
     return True
 
 
+def terminated(pid):
+    """Whether the pid exited: gone entirely, or a zombie this test cannot reap.
+
+    A descendant whose parent died reparents to init, and a container init
+    does not always reap promptly — a killed grandchild can stay a zombie
+    answering kill(0). A zombie has taken SIGKILL, which is the contract
+    under test; only a live process fails it.
+    """
+    if not alive(pid):
+        return True
+    try:
+        state = Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[-1].split()[0]
+    except OSError:
+        return True  # gone from /proc: reaped between the probes
+    return state == 'Z'
+
+
 def escape_child(mode, marker):
     """A parent that exits as soon as its one long-lived descendant is live."""
     return f"""
@@ -483,6 +500,8 @@ class SpawnedProcessTests(unittest.TestCase):
             marker = Path(folder) / 'late-fork.pid'
             # The host ignores SIGTERM, forks a token-scrubbed grandchild in the
             # same process group once the teardown is already running, then exits.
+            # The grandchild records its own pid, so the test asserts the
+            # descendant's recorded pid is gone — not the host's (#400 review).
             host, token = owned_process.spawn([PYTHON, '-c', f"""
 import os, signal, sys, time
 open(sys.argv[1] + '.tmp', 'w').write(str(os.getpid()))
@@ -491,6 +510,8 @@ signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(0.4)
 pid = os.fork()
 if pid == 0:
+    open(sys.argv[1] + '.grand.tmp', 'w').write(str(os.getpid()))
+    os.rename(sys.argv[1] + '.grand.tmp', sys.argv[1] + '.grand')
     scrubbed = {{k: v for k, v in os.environ.items() if k != {owned_process.TOKEN_VARIABLE!r}}}
     os.execve(sys.executable, [sys.executable, '-c', 'import time; time.sleep(30)'], scrubbed)
 time.sleep(0.2)
@@ -507,6 +528,19 @@ time.sleep(0.2)
                     time.sleep(0.1)
                 self.assertFalse(alive(pid),
                                  'a grandchild forked during the teardown grace must not outlive finish()')
+                # The recorded grandchild, not the host pid, is the escape the
+                # sweeps must have stopped (#400 review). Termination, not
+                # reaping: the orphan can zombie under this container's init.
+                deadline = time.monotonic() + 5
+                while not Path(str(marker) + '.grand').exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                grand_pid = int(Path(str(marker) + '.grand').read_text())
+                self.assertNotEqual(grand_pid, pid, 'the grandchild marker must not name the host')
+                deadline = time.monotonic() + 5
+                while not terminated(grand_pid) and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(terminated(grand_pid),
+                                'the recorded grandchild pid must be terminated before finish() returns')
             finally:
                 process = host
                 if process.poll() is None:
@@ -637,6 +671,19 @@ print('child exits', flush=True)
         while alive(pid) and time.monotonic() < deadline:
             time.sleep(0.1)
         self.assertFalse(alive(pid), 'a cancelled tree must be reaped before the cancel returns its join')
+
+    def assert_descendant_terminated(self, pid):
+        """A forked orphan is terminated when it exited; this test cannot reap it.
+
+        After its parent is reaped the descendant reparents to init, and this
+        container's init does not always reap promptly — a killed orphan can
+        stay a zombie answering kill(0). A zombie has taken SIGKILL, which is
+        the contract under test; only a live process fails it.
+        """
+        deadline = time.monotonic() + 5
+        while not terminated(pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(terminated(pid), f'the recorded descendant {pid} must be terminated')
 
     def test_cancel_stops_a_live_tree_once_and_refuses_a_double_cancel(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -815,7 +862,7 @@ print('child exits', flush=True)
                 self.assertGreaterEqual(occurrences(grand_pid), 1,
                                         f'the descendant pid {grand_pid} never reached the log ({text})')
                 self.assertLessEqual(occurrences(grand_pid), 1, f'pid {grand_pid} named twice (#381)')
-                self.assert_tree_gone(grand_pid)
+                self.assert_descendant_terminated(grand_pid)
 
     def test_a_cancel_whose_sweep_fails_still_publishes_its_outcome(self):
         """A sweep error inside cancel must never leave an owning run waiting forever."""
@@ -918,7 +965,7 @@ time.sleep(30)
                 self.assertGreaterEqual(occurrences(pid), 1,
                                         f'killed pid {pid} never reached the written log ({text})')
                 self.assertLessEqual(occurrences(pid), 1, f'pid {pid} named twice across reports (#381)')
-                self.assert_tree_gone(pid)
+                self.assert_descendant_terminated(pid)
 
     # Value: protects=the no-write exit paths' final report drain (#399);
     # fails_when=a report published after absorb sits unconsumed past a clean return;
@@ -1336,11 +1383,11 @@ time.sleep(60)
             try:
                 owned_process._signal_group(process, pinned)
                 deadline = time.monotonic() + 5
-                while (alive(descendant) or process.poll() is None) and time.monotonic() < deadline:
+                while (not terminated(descendant) or process.poll() is None) and time.monotonic() < deadline:
                     time.sleep(0.05)
                 process.wait(timeout=5)  # reap the killed leader; a zombie still answers kill(0)
-                self.assertFalse(alive(descendant),
-                                 'the pinned process-group signal must reach a same-group descendant')
+                self.assertTrue(terminated(descendant),
+                                'the pinned process-group signal must reach a same-group descendant')
                 self.assertFalse(alive(leader), 'the pinned signal must stop the leader itself')
             finally:
                 os.close(pinned)
