@@ -24,6 +24,7 @@ verifies the tree is gone; the handle only terminates it and keeps the
 report, so a cancelled run raises Cancelled with the same evidence a timeout
 leaves behind.
 """
+import errno
 import os
 import select
 import signal
@@ -166,7 +167,38 @@ def merged_survivors(members, survivors):
     return members + [item for item in survivors if item['pid'] not in named]
 
 
-def _terminate_tree(process, token_value):
+def _leader_reaped(pinned):
+    """Whether a pinned leader has been reaped; the pin never lies about a recycled id.
+
+    A pidfd pinned while the leader lived keeps referring to that one
+    process: after the owning call reaps it, signals to the pin fail instead
+    of reaching whatever process later reused the numeric id.
+    """
+    try:
+        signal.pidfd_send_signal(pinned, 0)
+    except OSError:
+        return True  # The pinned process is gone; existence checks fail on it alone.
+    return False
+
+
+def _signal_group(process, pinned):
+    """SIGKILL one owned process group through its pinned leader when possible."""
+    if pinned is not None:
+        try:
+            signal.pidfd_send_signal(pinned, signal.SIGKILL, None, 1)  # PIDFD_SIGNAL_PROCESS_GROUP
+            return
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                return  # The pinned leader is gone; a pid fallback could hit a recycled id.
+        except AttributeError:
+            pass  # Python without pidfd signal support falls back below.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except OSError:
+        pass  # Everything the sweeps named is already dying or dead.
+
+
+def _terminate_tree(process, token_value, pinned=None):
     """Stop one run's whole tree and name everything the termination reached.
 
     The sweeps run before and after the group kill: a scan-then-kill pass
@@ -178,20 +210,25 @@ def _terminate_tree(process, token_value):
     passes are contained on their own, so one failing pass never skips the
     kill or discards the names earlier passes already earned; a persistent
     sweep anomaly resurfaces from the uncontained second pass, after the
-    kill has landed. Merging the passes keeps every pid named exactly once
+    kill has landed. When a pinned leader is given, its liveness gates the
+    group phases — after the owning call reaped the leader the group is no
+    longer ours to name or kill, and the pidfd keeps the group signal off a
+    recycled id. Merging the passes keeps every pid named exactly once
     (#381's class).
     """
+    def group_phase(action):
+        if pinned is not None and _leader_reaped(pinned):
+            return []  # The owning call reaped the leader; the token sweep below still runs.
+        return action()
+
     named = []
-    for sweep in (lambda: terminate_group(process.pid), lambda: terminate(token_value)):
+    for sweep in (lambda: group_phase(lambda: terminate_group(process.pid)), lambda: terminate(token_value)):
         try:
             named = merged_survivors(named, sweep())
         except Exception:
             continue  # The kill and the second sweep still run and name what remains.
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except OSError:
-        pass  # Everything the sweeps named is already dying or dead.
-    named = merged_survivors(named, terminate_group(process.pid))
+    group_phase(lambda: _signal_group(process, pinned))
+    named = merged_survivors(named, group_phase(lambda: terminate_group(process.pid)))
     return merged_survivors(named, terminate(token_value))
 
 
@@ -311,16 +348,19 @@ class CancelHandle:
         try:
             candidates = []
             if process is not None:
-                # After the owning call reaped its child the process group is
-                # no longer owned here — a kill then could reach a recycled
-                # pid — so the group phases are skipped and the cancel stops
-                # only the run's own token carriers, which the pidfd-pinned
-                # sweep can never misaddress. The tree stop contains a first
-                # sweep failure, so the kill and the second sweep still run.
-                if process.poll() is None:
-                    candidates = _terminate_tree(process, token_value)
-                else:
-                    candidates = terminate(token_value)
+                # The leader's pidfd is pinned before anything can reap it, so
+                # every group decision below is made against the process the
+                # handle actually owned: after the owning call reaps its
+                # child the group is no longer ours — a kill then could reach
+                # a recycled id — and only the pidfd-pinned token sweep runs,
+                # which can never misaddress.
+                pinned = None
+                try:
+                    pinned = os.pidfd_open(process.pid)
+                except (AttributeError, OSError):
+                    pinned = None
+                reaped = _leader_reaped(pinned) if pinned is not None else process.poll() is not None
+                candidates = terminate(token_value) if reaped else _terminate_tree(process, token_value, pinned)
             fresh = self.claim(candidates)
         finally:
             with self._lock:

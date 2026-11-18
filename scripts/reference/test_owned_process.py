@@ -688,6 +688,31 @@ print('child exits', flush=True)
                                   'would leave it running to its own deadline instead')
             self.assert_tree_gone(pid)
 
+    def test_the_pinned_leader_probe_never_lies_about_a_reaped_pid(self):
+        process, token_value = owned_process._start([PYTHON, '-c', 'import time; time.sleep(30)'], {}, None, False)
+        pinned = os.pidfd_open(process.pid)
+        try:
+            self.assertFalse(owned_process._leader_reaped(pinned), 'a live pinned leader reads unreaped')
+            process.kill()
+            process.wait(timeout=10)
+            self.assertTrue(owned_process._leader_reaped(pinned),
+                            'once the owner reaps, the pin must read reaped — a recycled id can never fool it')
+        finally:
+            os.close(pinned)
+
+    def test_the_group_kill_survives_a_broken_killpg(self):
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with a live tree')
+            with mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')):
+                handle.cancel()
+            thread.join(timeout=15)
+            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled,
+                                  'the wave of sweeps and the pinned group signal must stop the tree anyway')
+            self.assert_tree_gone(pid)
+            self.assertIn('CANCELLED:', log.read_text())
+
     def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
         handle = owned_process.CancelHandle()
         self.assertEqual(handle.cancel(), [], 'an empty handle has nothing to cancel')
