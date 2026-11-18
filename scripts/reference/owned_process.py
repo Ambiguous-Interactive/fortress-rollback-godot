@@ -222,9 +222,15 @@ class CancelHandle:
                 raise ValueError('this handle already cancelled its run')
 
     def register(self, process, token_value):
-        """Pin one starting run; False means a cancel landed before the pin."""
+        """Pin one starting run; False means the handle cannot pin it.
+
+        False covers a handle that already cancelled and one that is already
+        pinning another concurrent run: a handle is the surface for exactly
+        one run, and silently overwriting the pin would leave the first run
+        uncancellable until its own deadline.
+        """
         with self._lock:
-            if self._cancelled:
+            if self._cancelled or self._process is not None:
                 return False
             self._process, self._token = process, token_value
             return True
@@ -482,11 +488,12 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
 
 
 def _refused_run(cancel, process, token_value, log):
-    """Clean up a tree whose handle was cancelled before the pin, then refuse.
+    """Clean up a tree the handle could not pin, then refuse.
 
-    The kill, both sweeps and the reap mirror the interruption path, so a
-    cancel racing the start window strands nothing and names what it had to
-    terminate before the ValueError refuses the run.
+    The handle either already cancelled or already pins another concurrent
+    run. The kill, both sweeps and the reap mirror the interruption path, so
+    the unpinnable tree strands nothing and names what it had to terminate
+    before the ValueError refuses the run.
     """
     try:
         try:
@@ -513,7 +520,9 @@ def _refused_run(cancel, process, token_value, log):
                 except OSError:
                     pass
         process.poll()
-    raise ValueError('this run was cancelled by its handle before it could be pinned')
+    if cancel is not None and cancel.cancelled:
+        raise ValueError('this handle already cancelled its run; the started tree was cleaned up before refusing')
+    raise ValueError('this handle already pins another concurrent run; the started tree was cleaned up before refusing')
 
 
 def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=None):

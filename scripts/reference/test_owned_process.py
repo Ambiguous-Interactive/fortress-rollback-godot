@@ -499,6 +499,22 @@ time.sleep(60)
             self.assert_tree_gone(pid)
             self.assertIn('CANCELLED:', log.read_text())
 
+    def test_a_handle_pins_exactly_one_run_and_refuses_a_second(self):
+        with tempfile.TemporaryDirectory() as folder:
+            handle = owned_process.CancelHandle()
+            first, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE)
+            self.assertIsNotNone(pid, 'the control only holds with a live pinned run')
+            second_log = Path(folder) / 'second.log'
+            second_log.write_text('')
+            with self.assertRaises(ValueError):
+                owned_process.run([PYTHON, '-c', 'import time; time.sleep(60)'], {}, second_log, 10, cancel=handle)
+            handle.cancel()
+            first.join(timeout=15)
+            self.assertIsInstance(outcome.get('error'), owned_process.Cancelled,
+                                  'the pinned run must still cancel normally — a silently overwritten pin '
+                                  'would leave it running to its own deadline instead')
+            self.assert_tree_gone(pid)
+
     def test_a_cancelled_handle_refuses_a_new_run_before_any_process_starts(self):
         handle = owned_process.CancelHandle()
         self.assertEqual(handle.cancel(), [], 'an empty handle has nothing to cancel')
