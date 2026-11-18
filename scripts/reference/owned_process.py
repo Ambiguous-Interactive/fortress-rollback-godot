@@ -22,7 +22,14 @@ pidfd-pinned kills and the once-only survivor naming the deadline and
 interruption paths use. The owning call still reaps its own child and still
 verifies the tree is gone; the handle only terminates it and keeps the
 report, so a cancelled run raises Cancelled with the same evidence a timeout
-leaves behind.
+leaves behind. The owning call consumes that report at one point — absorb()
+waits out a cancel that has started and drains its names once — and after
+emit() writes the run's final log, a cancel that names fresh sightings
+appends them to the registered log itself under the same once-only registry,
+so a terminated pid can never vanish from the log between the run's last
+flag read and its write (#399). Post-reap ownership sweeps pass the child's
+exit boundary in clock ticks, so a scan against a group id the kernel
+already reissued to an unrelated new leader names nothing it does not own.
 """
 import errno
 import os
@@ -46,6 +53,11 @@ MAX_NAMED_SURVIVORS = 8
 DRAIN_IDLE_SECONDS = 0.5
 POLL_SECONDS = 0.1
 DRAIN_CHUNK = 65536
+# /proc stat reports starttime in scheduler ticks since boot with one tick of
+# granularity: a descendant forked in the same tick as its owner's exit reads
+# as started on the boundary. One tick of slack keeps that descendant named;
+# a recycled unrelated group leader must have started strictly after the exit.
+START_TICK_SLACK = 1
 # After exit, a dead child can leave at most one pipe capacity of unread data
 # per stream. The settle pass is bounded in time and bytes so a same-group
 # descendant that keeps writing can never turn the trusted snapshot into an
@@ -95,7 +107,7 @@ def identities(token_value):
     return sorted(found, key=lambda item: item['pid'])
 
 
-def group_members(group, proc=None):
+def group_members(group, proc=None, started_before=None):
     """Name the live members of one process group; zombies are already dead.
 
     A grandchild that exited before its parent is a zombie until init reaps
@@ -103,6 +115,16 @@ def group_members(group, proc=None):
     hold a pipe or come back, so it is skipped: naming it as a terminated
     survivor would record a dead process, and counting it would fail healthy
     runs whenever reap latency exceeds the drain grace.
+
+    A scan that runs after the owning call reaped its child reads a group id
+    the kernel may already have reissued to an unrelated new group leader.
+    That leader started after our child died; every descendant of ours
+    predates the exit. started_before carries that exit boundary in
+    scheduler ticks since boot, and members that started after it are left
+    unnamed and unharmed — a true descendant forked inside the boundary
+    window inherits the run token and stays the token sweep's catch, so the
+    filter can only spare an unrelated process, never strand one of ours
+    (#399).
     """
     found = []
     for entry in (proc or Path('/proc')).iterdir():
@@ -114,8 +136,26 @@ def group_members(group, proc=None):
             continue
         if not fields or fields[0] in ('Z', 'X') or int(fields[2]) != group:
             continue
+        if started_before is not None and int(fields[19]) > started_before + START_TICK_SLACK:
+            continue  # Started after the owned tree died: a reissued group, not a descendant.
         found.append({'pid': int(entry.name), 'name': _name(entry)})
     return sorted(found, key=lambda item: item['pid'])
+
+
+def _boot_ticks():
+    """The boottime clock in scheduler ticks, the units /proc stat starttime uses.
+
+    None means the platform offers no boottime clock or tick count, and the
+    started-after-exit filter stays off rather than guessing a boundary.
+    """
+    try:
+        ticks = os.sysconf('SC_CLK_TCK')
+    except (AttributeError, ValueError, OSError):
+        ticks = 100
+    try:
+        return int(time.clock_gettime(time.CLOCK_BOOTTIME) * ticks)
+    except (AttributeError, OSError, ValueError):
+        return None
 
 
 def _send_kill(pid):
@@ -144,9 +184,14 @@ def terminate(token_value):
     return survivors
 
 
-def terminate_group(group):
-    """Kill every live member of one process group and return their identities."""
-    members = group_members(group)
+def terminate_group(group, proc=None, started_before=None):
+    """Kill every live member of one process group and return their identities.
+
+    started_before bounds the scan the way group_members does; a post-reap
+    caller passes the owned tree's exit boundary so a recycled group id
+    names nothing it does not own.
+    """
+    members = group_members(group, proc=proc, started_before=started_before)
     for item in members:
         _send_kill(item['pid'])
     return members
@@ -273,34 +318,39 @@ class Cancelled(RuntimeError):
 class CancelHandle:
     """Bounded, thread-safe cancellation for one owned run in flight.
 
-    run() pins its started process group and token on the handle it was
-    given. cancel() then does from another thread exactly what the deadline
-    path does from inside the call: sweep, kill and re-sweep the whole tree
-    so everything the termination reached is named, with pidfd-pinned kills
-    and one merged survivor report that names each pid at most once — a
-    shared registry settles every sighting between the cancel and the owning
-    call's own sweeps (#381's class). After the owning call reaped its child
-    the cancel no longer touches the process group — a kill then could reach
-    a recycled pid — but it still stops the run's own token carriers through
-    the pidfd-pinned sweep, so a surviving carrier belongs to whichever side
-    reached it, named exactly once. Every exit path publishes the report and
-    the swept event, so an owning call waiting on the outcome finishes
-    bounded. The owning call still reaps its child, verifies the tree is
-    gone, writes the report into its log and raises Cancelled; a second
-    cancel is refused because two reports could never both keep their
-    once-only naming.
+    run() pins its started process group, token and log on the handle it
+    was given. cancel() then does from another thread exactly what the
+    deadline path does from inside the call: sweep, kill and re-sweep the
+    whole tree so everything the termination reached is named, with
+    pidfd-pinned kills and one merged survivor report that names each pid
+    at most once. The report moves through one handoff: the cancel claims
+    its sightings into the handle's report, the owning call's absorb() is
+    the single point that waits out a started cancel and drains those
+    names, and emit() writes the run's final log text and closes the
+    handoff — a cancel that names fresh sightings after that close appends
+    them to the registered log itself, so a terminated pid reaches the log
+    the caller reads no matter which side of the write the sweeps landed
+    on (#399). After the owning call reaped its child the cancel no longer
+    touches the process group — a kill then could reach a recycled pid —
+    but it still stops the run's own token carriers through the
+    pidfd-pinned sweep, so a surviving carrier belongs to whichever side
+    reached it, named exactly once. A second cancel is refused because two
+    reports could never both keep their once-only naming.
     """
 
     def __init__(self):
         self._lock = threading.Lock()
+        self._log_lock = threading.Lock()
         self._process = None
         self._token = None
         self._pinned = None
+        self._log = None
         self._named = set()
         self._report = []
+        self._closed = False
         self._stopped_run = False
         self._cancelled = False
-        self._swept = threading.Event()
+        self._done = threading.Event()
 
     def refuse_cancelled(self):
         """Refuse a caller reusing an already-cancelled handle before it starts anything."""
@@ -308,7 +358,7 @@ class CancelHandle:
             if self._cancelled:
                 raise ValueError('this handle already cancelled its run')
 
-    def register(self, process, token_value):
+    def register(self, process, token_value, log=None):
         """Pin one starting run; False means the handle cannot pin it.
 
         False covers a handle that already cancelled and one that is already
@@ -317,7 +367,10 @@ class CancelHandle:
         uncancellable until its own deadline. The leader's pidfd is opened
         here — the child was just started and nothing can have reaped it, so
         the pin can never capture a recycled id — and retained for the
-        cancellation to signal through.
+        cancellation to signal through. The log is retained too: it is where
+        the owning call writes its final text through emit(), and where this
+        handle appends its own sightings when a cancel lands after that
+        write closed the handoff.
         """
         with self._lock:
             if self._cancelled or self._process is not None:
@@ -328,7 +381,9 @@ class CancelHandle:
             except (AttributeError, OSError):
                 pinned = None  # Without pidfd support the poll guard decides below.
             self._pinned = pinned
-            self._process, self._token = process, token_value
+            self._process, self._token, self._log = process, token_value, log
+            self._report = []
+            self._closed = False
             return True
 
     def unregister(self):
@@ -361,11 +416,79 @@ class CancelHandle:
     def claim(self, candidates):
         """Name the not-yet-named candidates and mark every pid claimed exactly once."""
         with self._lock:
-            fresh = []
-            for item in candidates:
-                if item['pid'] not in self._named:
-                    self._named.add(item['pid'])
-                    fresh.append(item)
+            return self._claim_locked(candidates)
+
+    def _claim_locked(self, candidates):
+        fresh = []
+        for item in candidates:
+            if item['pid'] not in self._named:
+                self._named.add(item['pid'])
+                fresh.append(item)
+        return fresh
+
+    def absorb(self):
+        """Wait out a cancel that has started and take its whole report once.
+
+        This is the owning call's single consumption point for the handle's
+        sightings: instead of re-reading flags around its own sweeps and
+        merging whatever snapshot each read took, it waits here until a
+        started cancel finishes sweeping, then drains its names. A cancel
+        that never started costs one flag read, and a cancel that starts
+        after this drained — or after emit() closed the handoff — still
+        reaches the log through the handle's own append (#399).
+        """
+        with self._lock:
+            started = self._cancelled
+        if started:
+            self._done.wait()
+        with self._lock:
+            report, self._report = self._report, []
+            return report
+
+    def emit(self, text):
+        """Write the run's final log text and close the sighting handoff.
+
+        The close re-drains the report first, so a cancel that published in
+        the gap since the owning call's absorb() still reaches this write.
+        The write itself serializes on the log lock, never on the state
+        lock: a cancel starting while this write runs flips its flag and
+        sweeps immediately, and its sightings append to the same log after
+        the write instead of being lost in the gap (#399).
+        """
+        with self._lock:
+            report, self._report = self._report, []
+            self._closed = True
+            if report:
+                text = (text or '') + f'OWNED_PROCESSES: terminated {_named(report)}\n'
+        if text and self._log is not None:
+            with self._log_lock:
+                self._log.write_text(text)
+        return text
+
+    def _append_sightings(self, named):
+        """Append this cancel's own sightings to the registered log once."""
+        if not named or self._log is None:
+            return
+        try:
+            with self._log_lock:
+                with self._log.open('a', encoding='utf-8') as sink:
+                    sink.write(f'OWNED_PROCESSES: terminated {_named(named)}\n')
+        except OSError:
+            pass  # The cancel's return value still names them; a failing sink must not break the stop.
+
+    def _publish(self, candidates):
+        """Claim the sweeps' sightings once and hand them to their one reader.
+
+        The owning call drains the stored report through absorb(); after its
+        emit() closed the handoff, this append is the only way a late
+        sighting still reaches the log the caller reads.
+        """
+        with self._lock:
+            fresh = self._claim_locked(candidates)
+            if self._closed:
+                self._append_sightings(fresh)
+            else:
+                self._report = fresh
             return fresh
 
     def cancel(self):
@@ -374,8 +497,9 @@ class CancelHandle:
         Returns the merged survivor report of the tree this cancel killed,
         naming each pid once. An empty handle — the run already finished and
         unpinned itself — cancels nothing and reports nothing. Every exit
-        path publishes the report and the swept event, so an owning call
-        waiting on the outcome always finishes bounded.
+        path publishes the claimed sightings through the one handoff and
+        sets the done event, so an owning call absorbing the outcome always
+        finishes bounded.
         """
         self.refuse_cancelled()
         with self._lock:
@@ -404,34 +528,17 @@ class CancelHandle:
                     if stop_anomaly is not None:
                         # The report is published before the anomaly resurfaces,
                         # so the names the sweeps earned are never discarded.
-                        fresh = self.claim(candidates)
-                        with self._lock:
-                            self._report = fresh
-                        self._swept.set()
+                        fresh = self._publish(candidates)
                         raise stop_anomaly
-            fresh = self.claim(candidates)
+            fresh = self._publish(candidates)
         finally:
             if pinned is not None:
                 try:
                     os.close(pinned)
                 except OSError:
                     pass  # The pin's job is done; an unclosed fd would leak per cancel.
-            with self._lock:
-                self._report = fresh
-            self._swept.set()
+            self._done.set()
         return fresh
-
-    def stopped_report(self):
-        """Wait for an in-flight cancel's sweeps, then take its survivor report.
-
-        Called by the owning run after it observed its own cancellation, so
-        the report it writes into its log always covers the tree the cancel
-        killed, whatever the sweep timing was.
-        """
-        self._swept.wait()
-        with self._lock:
-            report, self._report = self._report, []
-            return report
 
 
 def _owned_surface():
@@ -471,6 +578,7 @@ def _collect(process, deadline):
     trusted = {}
     post_exit_bytes = 0
     group_alive = False
+    exit_ticks = None
     exit_deadline = None
     while True:
         if not exit_observed and process.poll() is not None:
@@ -488,6 +596,7 @@ def _collect(process, deadline):
                 if not added:
                     break
             trusted = {descriptor: len(buffers[descriptor]) for descriptor in buffers}
+            exit_ticks = _boot_ticks()
             exit_deadline = time.monotonic() + DRAIN_IDLE_SECONDS
             group_alive = bool(group_members(process.pid))
         if exit_observed:
@@ -505,7 +614,7 @@ def _collect(process, deadline):
         _read_available(streams, buffers)
     process.wait()
     parts = {descriptor: bytes(data[:trusted[descriptor]]).decode('utf-8', errors='replace') for descriptor, data in buffers.items()}
-    return process.returncode, parts, post_exit_bytes, group_alive
+    return process.returncode, parts, post_exit_bytes, group_alive, exit_ticks
 
 
 def _wait_readable(streams, timeout):
@@ -569,14 +678,15 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
 
     Both public runners share this tail: a deadline kills the group, keeps the
     partial output and records the timeout marker; an interruption must not
-    strand the tree either. A cancellation handle observed by either path
-    claims its sightings first, so no survivor is named twice (#381's class).
-    Returns the trusted per-stream parts and the exit bookkeeping, or raises
-    with the log already written.
+    strand the tree either. The handle's report is consumed through absorb(),
+    the one point that waits out a started cancel and drains its sightings,
+    so no survivor depends on a flag snapshot taken around the sweeps (#381's
+    class, #399's windows). Returns the trusted per-stream parts and the exit
+    bookkeeping, or raises with the log already written.
     """
     try:
         try:
-            returncode, parts, post_exit_bytes, group_alive = _collect(process, time.monotonic() + timeout)
+            returncode, parts, post_exit_bytes, group_alive, exit_ticks = _collect(process, time.monotonic() + timeout)
         except _Deadline as expired:
             if cancel is not None and cancel.cancelled and cancel.stopped_run:
                 # The handle stopped this run; the deadline only won the poll
@@ -585,7 +695,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 # names and reaps exactly like the natural exit, and a
                 # carrier the run had to terminate itself is an escape, not a
                 # silent cancellation.
-                report = cancel.stopped_report()
+                report = cancel.absorb()
                 text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
                 text += _drain_after_kill(process) + '\n'
                 # The verification sweeps come back contained: a failing pass
@@ -604,19 +714,18 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                 text += 'CANCELLED: the owning handle stopped this command\n'
                 if sweep_anomaly is not None:
                     text += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
-                log.write_text(text)
+                text = cancel.emit(text)
                 if fresh:
                     raise EscapedDescendants(fresh) from None
                 raise Cancelled(text) from None
             survivors, sweep_anomaly = _terminate_tree(process, token_value)
-            if cancel is not None:
-                own = cancel.claim(survivors)
-                # The flag is re-read after the claim: a cancel that flipped
-                # mid-sweep claims its victims into its own report, and this
-                # line must merge that report rather than the empty snapshot
-                # an earlier read took.
-                report = cancel.stopped_report() if cancel.cancelled else []
-                survivors = merged_survivors(report, own)
+            # The report is consumed at one point after the sweeps: a cancel
+            # that was mid-sweep finishes here and its names join the report,
+            # and one starting after emit() wrote this log appends its own
+            # sightings to the same file (#399's timeout window).
+            report = cancel.absorb() if cancel is not None else []
+            own = cancel.claim(survivors) if cancel is not None else survivors
+            survivors = merged_survivors(report, own)
             process.poll()
             text = ''.join(data.decode('utf-8', errors='replace') for data in expired.buffers.values())
             text += _drain_after_kill(process) + '\n'
@@ -624,14 +733,14 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
             text += f'OWNED_PROCESSES: terminated {survivors}\n'
             if sweep_anomaly is not None:
                 text += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
-            log.write_text(text)
+            _write_final(log, cancel, text)
             raise subprocess.TimeoutExpired(process.args, timeout, output=text) from None
         except BaseException:
             # An interruption must not strand the tree either: the new session
             # never saw the terminal signal, so both ownership checks run, the
             # child is reaped, and no cleanup failure replaces the interrupt.
             try:
-                named = cancel.stopped_report() if cancel is not None and cancel.cancelled else []
+                named = cancel.absorb() if cancel is not None else []
                 candidates, sweep_anomaly = _terminate_tree(process, token_value)
                 if cancel is not None:
                     candidates = merged_survivors(named, cancel.claim(candidates))
@@ -640,7 +749,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     if sweep_anomaly is not None:
                         note += f'OWNED_PROCESS_SWEEP_ANOMALY: {sweep_anomaly}\n'
                     try:
-                        log.write_text(note)
+                        _write_final(log, cancel, note)
                     except OSError:
                         pass  # A failing log sink must not replace the interrupt either.
                 try:
@@ -654,7 +763,7 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     pass
             process.poll()
             raise
-        return returncode, parts, post_exit_bytes, group_alive
+        return returncode, parts, post_exit_bytes, group_alive, exit_ticks
     finally:
         if cancel is not None:
             cancel.unregister()
@@ -668,6 +777,20 @@ def _run_until_exit(process, token_value, log, timeout, cancel=None):
                     stream.close()
                 except OSError:
                     pass
+
+
+def _write_final(log, cancel, text):
+    """Write the run's final log text, closing the handle's handoff when one is pinned.
+
+    With a handle, emit() owns the write and the handoff close in one step;
+    without one, the log is the plain sink. An empty text writes nothing but
+    still closes an open handoff.
+    """
+    if cancel is not None:
+        return cancel.emit(text)
+    if text:
+        log.write_text(text)
+    return text
 
 
 def _refused_run(cancel, process, token_value, log):
@@ -685,7 +808,7 @@ def _refused_run(cancel, process, token_value, log):
             candidates = cancel.claim(candidates)
         if candidates:
             try:
-                log.write_text(f'OWNED_PROCESSES: terminated {candidates}\n')
+                _write_final(log, cancel, f'OWNED_PROCESSES: terminated {candidates}\n')
             except OSError:
                 pass  # A failing log sink must not replace the refusal either.
     finally:
@@ -736,12 +859,12 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
     if cancel is not None:
         cancel.refuse_cancelled()
     process, token_value = _start(command, environment, cwd, input_text is not None)
-    if cancel is not None and not cancel.register(process, token_value):
+    if cancel is not None and not cancel.register(process, token_value, log):
         _refused_run(cancel, process, token_value, log)
     feed_failures = []
     if input_text is not None:
         _feed_stdin(process, input_text, feed_failures)
-    returncode, parts, post_exit_bytes, group_alive = _run_until_exit(process, token_value, log, timeout, cancel)
+    returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel)
     output = ''.join(parts.values())
     if feed_failures:
         output += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
@@ -750,40 +873,36 @@ def run(command, environment, log, timeout, cwd=None, input_text=None, cancel=No
                    f'{post_exit_bytes} byte(s) arrived after the command exited and were withheld\n')
     # Both ownership checks always run before any escape raises: a command
     # can leave a same-group descendant and a setsid token carrier at once,
-    # and reporting only the first would strand the second. A sighting the
-    # cancellation already claimed comes back from its report, so no pid is
-    # ever named twice — or named nowhere — across the cancel and the run's
-    # own reports (#381's class). The claim runs before the flag is re-read:
-    # a cancel flipping mid-claim records its victims in its own report, and
-    # the re-read merges that report instead of the empty snapshot an
-    # earlier read took.
-    members = terminate_group(process.pid) if group_alive else []
-    if cancel is not None:
-        fresh = cancel.claim(merged_survivors(members, terminate(token_value)))
-        report = cancel.stopped_report() if cancel.cancelled else []
-    else:
-        fresh = merged_survivors(members, terminate(token_value))
-        report = []
-    candidates = merged_survivors(report, fresh)
+    # and reporting only the first would strand the second. The handle's
+    # report is consumed through absorb() — the one point that waits out a
+    # started cancel — before the sweeps, so the written report covers both
+    # sides' kills and no pid is ever named twice, or named nowhere (#381's
+    # class, #399's windows). The post-reap group scan carries the child's
+    # exit boundary, so a group id the kernel reissued names nothing.
+    report = cancel.absorb() if cancel is not None else []
+    members = terminate_group(process.pid, started_before=exit_ticks) if group_alive else []
+    swept = merged_survivors(members, terminate(token_value))
+    own = cancel.claim(swept) if cancel is not None else swept
+    candidates = merged_survivors(report, own)
+    stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
     if candidates:
         output += f'OWNED_PROCESSES: terminated {candidates}\n'
-        if cancel is not None and cancel.cancelled and cancel.stopped_run:
+        if stopped:
             output += 'CANCELLED: the owning handle stopped this command\n'
-            log.write_text(output)
-            if fresh:
-                raise EscapedDescendants(candidates)
-            raise Cancelled(output) from None
-        log.write_text(output)
+        text = _write_final(log, cancel, output)
+        if own:
+            raise EscapedDescendants(candidates)
+        if stopped:
+            raise Cancelled(text) from None
         raise EscapedDescendants(candidates)
-    if cancel is not None and cancel.cancelled and cancel.stopped_run:
+    if stopped:
         if returncode != 0:
-            text = output + 'CANCELLED: the owning handle stopped this command\n'
-            log.write_text(text)
+            text = _write_final(log, cancel, output + 'CANCELLED: the owning handle stopped this command\n')
             raise Cancelled(text) from None
         # The command finished its own clean exit inside the cancel race and
         # nothing had to be terminated; its verified-clean result stands.
     if post_exit_bytes or feed_failures:
-        log.write_text(output)
+        _write_final(log, cancel, output)
     return returncode, output
 
 
@@ -813,47 +932,46 @@ def run_split(command, environment, log, timeout, cwd=None, input_text=None, can
     if cancel is not None:
         cancel.refuse_cancelled()
     process, token_value = _start(command, environment, cwd, input_text is not None)
-    if cancel is not None and not cancel.register(process, token_value):
+    if cancel is not None and not cancel.register(process, token_value, log):
         _refused_run(cancel, process, token_value, log)
     stdout_descriptor = process.stdout.fileno()
     feed_failures = []
     if input_text is not None:
         _feed_stdin(process, input_text, feed_failures)
-    returncode, parts, post_exit_bytes, group_alive = _run_until_exit(process, token_value, log, timeout, cancel)
+    returncode, parts, post_exit_bytes, group_alive, exit_ticks = _run_until_exit(process, token_value, log, timeout, cancel)
     stderr = ''.join(data for descriptor, data in parts.items() if descriptor != stdout_descriptor)
     if feed_failures:
         stderr += f'\nSTDIN_FEEDER_ERROR: {feed_failures[0]}\n'
-    members = terminate_group(process.pid) if group_alive else []
-    if cancel is not None:
-        fresh = cancel.claim(merged_survivors(members, terminate(token_value)))
-        report = cancel.stopped_report() if cancel.cancelled else []
-    else:
-        fresh = merged_survivors(members, terminate(token_value))
-        report = []
-    candidates = merged_survivors(report, fresh)
+    # The same report handoff and exit-bounded group scan the merged runner
+    # uses (#381's class, #399's windows).
+    report = cancel.absorb() if cancel is not None else []
+    members = terminate_group(process.pid, started_before=exit_ticks) if group_alive else []
+    swept = merged_survivors(members, terminate(token_value))
+    own = cancel.claim(swept) if cancel is not None else swept
+    candidates = merged_survivors(report, own)
+    stopped = cancel is not None and cancel.cancelled and cancel.stopped_run
     if candidates:
         # The child's own trusted output stays in the log beside the note,
         # so an escaped or cancelled run keeps its diagnosis where the caller
         # looks, with every terminated pid named exactly once (#381's class).
         text = ''.join(parts.values()) + f'OWNED_PROCESSES: terminated {candidates}\n'
-        if cancel is not None and cancel.cancelled and cancel.stopped_run:
+        if stopped:
             text += 'CANCELLED: the owning handle stopped this command\n'
-            log.write_text(text)
-            if fresh:
-                raise EscapedDescendants(candidates)
+        _write_final(log, cancel, text)
+        if own:
+            raise EscapedDescendants(candidates)
+        if stopped:
             raise Cancelled(text) from None
-        log.write_text(text)
         raise EscapedDescendants(candidates)
-    if cancel is not None and cancel.cancelled and cancel.stopped_run:
-        if returncode != 0:
-            text = ''.join(parts.values()) + 'CANCELLED: the owning handle stopped this command\n'
-            log.write_text(text)
-            raise Cancelled(text) from None
+    if stopped and returncode != 0:
+        text = ''.join(parts.values()) + 'CANCELLED: the owning handle stopped this command\n'
+        _write_final(log, cancel, text)
+        raise Cancelled(text) from None
     if post_exit_bytes:
-        log.write_text(f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
-                       'exited and were withheld\n')
-        stderr += (f'\nPOST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
-                   'exited and were withheld\n')
+        note = (f'POST_EXIT_OUTPUT: {post_exit_bytes} byte(s) arrived after the command '
+                'exited and were withheld\n')
+        _write_final(log, cancel, note)
+        stderr += f'\n{note}'
     return returncode, parts[stdout_descriptor], stderr
 
 
@@ -876,10 +994,14 @@ def finish(process, token_value, grace=5.0):
     """Stop one spawned process and verify its whole descendant tree is gone.
 
     The direct child is asked to terminate first and is killed at the grace
-    deadline, mirroring the previous host teardown; then both ownership checks
-    run, so any surviving descendant is killed and named instead of being
-    adopted by init. Returns once nothing owned is alive.
+    deadline, mirroring the previous host teardown; then both ownership
+    checks run, so any surviving descendant is killed and named instead of
+    being adopted by init. The group scan carries the teardown boundary in
+    boottime ticks, so a group id the kernel already reissued to an
+    unrelated new leader names nothing (#399). Returns once nothing owned is
+    alive.
     """
+    boundary = _boot_ticks()
     try:
         if process.poll() is None:
             process.terminate()
@@ -891,7 +1013,7 @@ def finish(process, token_value, grace=5.0):
                 except OSError:
                     process.kill()
                 process.wait(timeout=grace)
-        members = terminate_group(process.pid)
+        members = terminate_group(process.pid, started_before=boundary)
         survivors = merged_survivors(members, terminate(token_value))
         if process.poll() is None:
             try:
