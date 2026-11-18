@@ -104,7 +104,14 @@ two pinned CPUs, the control that diagnosed #104's hosted starvation):
 | Same five labels under `taskset -c 0,1` | 97.0s wall (7+7+27+18+16s labels) | 92.2s wall (waves 43s + 28s) — CPU-bound, both pass |
 | `clean`, `faults` (2 labels, 6 rooms, both eight-page exclusive) | 56.3s wall (16s+19s labels) | 58.1s wall (16s+20s labels) — unchanged shape |
 
-Every run passed the unchanged validators and receipts. Within the page
+Every run passed the unchanged validators and receipts. Hosted single pairs
+sit inside this file's documented run-to-run spread, so they record the
+shapes rather than a delta: the grouped pre-change run 44204943160 ran
+4.3 direct 275s, 4.7.2 direct 396s, 4.3 mixed 392s and 4.7.2 mixed 298s;
+the branch dispatch at `d9c07a7` (run 44221042233, all six SignalFish legs
+green) ran 400s/316s/333s/350s. The controlled local A/B above carries the
+causal claim, exactly as this file's methodology notes treat single-run
+comparisons of changing trees. Within the page
 budget the issue's literal lever is infeasible for the labels that own
 most of the wall: a three-room label's own rooms hold 2+4+8 = 14 live
 pages, more than the whole eight-page budget, so its rooms stay serial
