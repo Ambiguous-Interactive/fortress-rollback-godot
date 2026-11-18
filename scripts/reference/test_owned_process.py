@@ -806,15 +806,29 @@ print('child exits', flush=True)
                 process.wait(timeout=10)
 
     def test_a_failing_verification_sweep_still_runs_the_token_sweep_and_reaps(self):
-        """A failing group pass inside the cancelled-deadline branch strands nothing."""
+        """A failing group pass inside the cancelled-deadline branch strands nothing.
+
+        Whether the stop's own anomaly resurfaces depends on a race this
+        schedule cannot pin: after the cancel's group kill, the owning call
+        can reap and unregister before the post-kill pass probes the leader,
+        and a genuinely reaped leader skips its group scans (the id is free),
+        leaving no anomaly to raise. Both outcomes are bounded and complete:
+        the run still resolves to a classified cancellation, the token sweep
+        names the tree in either outcome, and the child is reaped. The
+        containment property itself — a raising sweep never discards names or
+        skips the other sweep — is pinned deterministically by
+        `test_the_final_token_sweep_survives_a_failing_group_pass`.
+        """
         with tempfile.TemporaryDirectory() as folder:
             handle = owned_process.CancelHandle()
             thread, outcome, log, pid = self.start_cancel_run(folder, owned_process.run, handle, self.SLOW_TREE, timeout=5)
             self.assertIsNotNone(pid, 'the control only holds with a live tree')
             with mock.patch.object(owned_process, 'terminate_group', side_effect=ValueError('group pass exploded')), \
                  mock.patch.object(owned_process.os, 'killpg', side_effect=OSError(1, 'broken')):
-                with self.assertRaises(ValueError):
-                    handle.cancel()  # the stop's anomaly surfaces only after every sweep ran
+                try:
+                    handle.cancel()  # the stop's anomaly surfaces only when the passes still ran
+                except ValueError:
+                    pass
             thread.join(timeout=20)
             self.assertFalse(thread.is_alive(), 'the run must resolve bounded behind a failed verification sweep')
             error = outcome.get('error')
